@@ -1,8 +1,9 @@
-namespace App
+namespace Superprojekt
 
 open FSharp.Data.Adaptive
 open Aardvark.Base
 open Adaptify
+open Aardvark.Dom
 
 
 [<ModelType>]
@@ -14,3 +15,14 @@ type Model =
         Points       : IndexList<V3d>
         DraggingPoint : option<Index * V3d>
     }
+
+module Model =
+    let initial =
+        {
+            Value         = 3
+            Hover         = None
+            Points        = IndexList.empty
+            DraggingPoint = None
+            Camera        = OrbitState.create V3d.Zero 1.0 0.3 3.0 Button.Left Button.Middle
+        }
+

@@ -1,7 +1,7 @@
 open Aardworx.WebAssembly.Dom
 open Aardworx.Rendering.WebGL
 open Aardworx.WebAssembly
-open App
+open Superprojekt
 
 [<EntryPoint>]
 let main _ =

@@ -1,4 +1,4 @@
-namespace App
+namespace Superprojekt
 
 open Aardvark.Base
 open Adaptify

@@ -4,12 +4,12 @@
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
 #nowarn "1182" // value is unused
-namespace rec App
+namespace rec Superprojekt
 
 open System
 open FSharp.Data.Adaptive
 open Adaptify
-open App
+open Superprojekt
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveModel(value : Model) =
     let _Camera_ = AdaptiveOrbitState(value.Camera)

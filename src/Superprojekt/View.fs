@@ -1,86 +1,13 @@
-namespace App
+namespace Superprojekt
 
 open Aardvark.Base
 open Aardvark.Rendering
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Adaptify
-open App
+open Superprojekt
 
-module Shader =
-    open FShade
-
-    let nothing (v : Effects.Vertex) =
-        fragment {
-            return v.c
-        }
-
-    type Fragment =
-        {
-            [<Semantic("PickViewPosition")>] vp : V3d
-        }
-
-    let withViewPos (v : Effects.Vertex) =
-        fragment {
-            let vp = uniform.ProjTrafoInv * v.pos
-            let vp = vp.XYZ / vp.W
-            let vp = vp + V3d(0.1, 0.0, 0.0)
-            return { vp = vp.XYZ }
-        }
-
-
-type Message =
-    | Increment
-    | Decrement
-    | Hover        of option<V3d>
-    | Click        of V3d
-    | Update       of Index * V3d
-    | StartDrag    of Index
-    | StopDrag
-    | Delete       of Index
-    | Clear
-    | CameraMessage of OrbitMessage
-
-
-module App =
-
-    let initial =
-        {
-            Value         = 3
-            Hover         = None
-            Points        = IndexList.empty
-            DraggingPoint = None
-            Camera        = OrbitState.create V3d.Zero 1.0 0.3 3.0 Button.Left Button.Middle
-        }
-
-    let update (env : Env<Message>) (model : Model) (msg : Message) =
-        match msg with
-        | CameraMessage msg ->
-            { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
-        | Increment ->
-            { model with Value = model.Value + 1 }
-        | Decrement ->
-            { model with Value = model.Value - 1 }
-        | Hover p ->
-            { model with Hover = p }
-        | Click p ->
-            { model with Points = IndexList.add p model.Points }
-        | Update(idx, p) ->
-            match model.DraggingPoint with
-            | Some (i, _) when i = idx -> { model with DraggingPoint = Some(idx, p) }
-            | _ -> model
-        | StartDrag idx ->
-            { model with DraggingPoint = Some (idx, model.Points.[idx]) }
-        | StopDrag ->
-            match model.DraggingPoint with
-            | Some (idx, pt) ->
-                { model with DraggingPoint = None; Points = IndexList.set idx pt model.Points }
-            | None ->
-                model
-        | Delete p ->
-            { model with Points = IndexList.remove p model.Points }
-        | Clear ->
-            { model with Points = IndexList.empty }
+module View =
 
     let view (env : Env<Message>) (model : AdaptiveModel) =
         body {
@@ -289,10 +216,11 @@ module App =
             }
         }
 
+module App =    
     let app =
         {
-            initial   = initial
-            update    = update
-            view      = view
+            initial   = Model.initial
+            update    = Update.update
+            view      = View.view
             unpersist = Unpersist.instance
         }

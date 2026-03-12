@@ -1,11 +1,11 @@
-namespace App
+namespace Superprojekt
 
 open System
 open Aardvark.Base
 open FSharp.Data.Adaptive
 open Aardvark.Rendering
 open Aardvark.Application
-open App
+open Superprojekt
 open Aardvark.Dom
 
 [<AutoOpen>]

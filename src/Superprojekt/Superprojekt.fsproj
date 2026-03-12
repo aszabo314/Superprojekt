@@ -17,10 +17,12 @@
   <ItemGroup>
     <Compile Include="CameraModel.fs" />
     <Compile Include="CameraModel.g.fs" />
+    <Compile Include="OrbitController.fs" />
     <Compile Include="Model.fs" />
     <Compile Include="Model.g.fs" />
-    <Compile Include="OrbitController.fs" />
-    <Compile Include="App.fs" />
+    <Compile Include="Shader.fs" />
+    <Compile Include="Update.fs" />
+    <Compile Include="View.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <Import Project="..\..\.paket\Paket.Restore.targets" />

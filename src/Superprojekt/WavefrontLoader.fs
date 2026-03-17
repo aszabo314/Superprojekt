@@ -90,3 +90,76 @@ module MeshData =
             let! bytes = client.GetByteArrayAsync(meshUrl) |> Async.AwaitTask
             return decode atlasUrl bytes
         }
+
+
+module Query =
+
+    open System.Net.Http
+    open System.Text
+    open System.Text.Json
+
+    let private post (serverUrl : string) (path : string) (body : obj) : Async<JsonElement> =
+        async {
+            use client = new HttpClient()
+            let json    = JsonSerializer.Serialize(body)
+            use content = new StringContent(json, Encoding.UTF8, "application/json")
+            let! resp = client.PostAsync(serverUrl.TrimEnd('/') + path, content) |> Async.AwaitTask
+            resp.EnsureSuccessStatusCode() |> ignore
+            let! text = resp.Content.ReadAsStringAsync() |> Async.AwaitTask
+            return JsonDocument.Parse(text).RootElement
+        }
+
+    /// POST /query/ray  — returns (hit, t, hitPoint, triangleId) option
+    let rayHit (serverUrl : string) (name : string) (index : int) (origin : V3d) (direction : V3d) =
+        async {
+            let body = {| Name = name; Index = index
+                          Origin    = [| origin.X;    origin.Y;    origin.Z    |]
+                          Direction = [| direction.X; direction.Y; direction.Z |] |}
+            let! r = post serverUrl "/query/ray" body
+            if r.GetProperty("hit").GetBoolean() then
+                let pt = r.GetProperty("point").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                return Some {| t = float32 (r.GetProperty("t").GetDouble())
+                               point = V3d(pt.[0], pt.[1], pt.[2])
+                               triangleId = r.GetProperty("triangleId").GetInt32() |}
+            else
+                return None
+        }
+
+    /// POST /query/closest  — returns (closestPoint, distanceSquared, triangleId) option
+    let closestPoint (serverUrl : string) (name : string) (index : int) (queryPoint : V3d) =
+        async {
+            let body = {| Name = name; Index = index
+                          Point = [| queryPoint.X; queryPoint.Y; queryPoint.Z |] |}
+            let! r = post serverUrl "/query/closest" body
+            if r.GetProperty("found").GetBoolean() then
+                let pt = r.GetProperty("point").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                return Some {| point = V3d(pt.[0], pt.[1], pt.[2])
+                               distanceSquared = float32 (r.GetProperty("distanceSquared").GetDouble())
+                               triangleId = r.GetProperty("triangleId").GetInt32() |}
+            else
+                return None
+        }
+
+    /// POST /query/sphere  — returns triangle indices whose AABB overlaps the sphere
+    let sphereTriangles (serverUrl : string) (name : string) (index : int) (center : V3d) (radius : float) =
+        async {
+            let body = {| Name = name; Index = index
+                          Center = [| center.X; center.Y; center.Z |]; Radius = radius |}
+            let! r = post serverUrl "/query/sphere" body
+            return
+                r.GetProperty("triangleIndices").EnumerateArray()
+                |> Seq.map (fun e -> e.GetInt32())
+                |> Seq.toArray
+        }
+
+    /// POST /query/box  — returns triangle indices whose AABB overlaps the box
+    let boxTriangles (serverUrl : string) (name : string) (index : int) (min : V3d) (max : V3d) =
+        async {
+            let body = {| Name = name; Index = index
+                          Min = [| min.X; min.Y; min.Z |]; Max = [| max.X; max.Y; max.Z |] |}
+            let! r = post serverUrl "/query/box" body
+            return
+                r.GetProperty("triangleIndices").EnumerateArray()
+                |> Seq.map (fun e -> e.GetInt32())
+                |> Seq.toArray
+        }

@@ -1,10 +1,35 @@
 open System
 open System.IO
+open System.Collections.Concurrent
 open Microsoft.AspNetCore.Builder
 open Microsoft.Extensions.DependencyInjection
 open Giraffe
 open Aardvark.Base
 open Aardvark.Data.Wavefront
+open Aardvark.Embree
+
+// ── Raw parsed mesh (OBJ → unified vertex buffer, centroid-relative) ─────────
+
+type ParsedMesh =
+    {
+        centroid  : V3d
+        positions : V3f[]   // centroid-relative
+        uvs       : V2f[]
+        indices   : int[]   // flat triangle list  (triangleCount × 3)
+    }
+
+// ── In-memory Embree scene + BbTree ──────────────────────────────────────────
+
+type LoadedMesh =
+    {
+        parsed   : ParsedMesh
+        device   : Device
+        geometry : TriangleGeometry
+        scene    : Scene
+        bvh      : BbTree   // BVH over per-triangle AABBs (centroid-relative, double)
+    }
+
+// ── OBJ loading ───────────────────────────────────────────────────────────────
 
 module MeshLoader =
 
@@ -26,16 +51,7 @@ module MeshLoader =
         let folder = Path.Combine(dataRoot.Value, name)
         if Directory.Exists folder then objFiles folder |> Array.length else 0
 
-    // Binary layout (little-endian):
-    //   magic           4 bytes  "MESH"
-    //   vertexCount     int32
-    //   indexCount      int32
-    //   centroid X/Y/Z  3 × float64
-    //   positions       vertexCount × 3 × float32   (centroid-relative)
-    //   uvs             vertexCount × 2 × float32
-    //   indices         indexCount × int32
-
-    let serialize (name : string) (index : int) : byte[] =
+    let parseMesh (name : string) (index : int) : ParsedMesh =
         let folder = Path.Combine(dataRoot.Value, name)
         if not (Directory.Exists folder) then failwithf "not found: %s" name
 
@@ -43,11 +59,7 @@ module MeshLoader =
         if index < 0 || index >= files.Length then
             failwithf "mesh index %d out of range (folder has %d)" index files.Length
 
-        let objFile  = files.[index]
-        let baseName = Path.GetFileNameWithoutExtension objFile
-        let jpgFile  = Path.Combine(folder, baseName + "_atlas.jpg")
-        if not (File.Exists jpgFile) then failwithf "atlas not found: %s" jpgFile
-
+        let objFile      = files.[index]
         let centroidFile =
             Directory.GetFiles(folder, "*_centroid.txt") |> Array.tryHead
             |> Option.defaultWith (fun () -> failwithf "no centroid.txt in %s" folder)
@@ -101,23 +113,31 @@ module MeshLoader =
                                     i
                             outIdx.Add idx
 
+        { centroid  = centroid
+          positions = outPos.ToArray()
+          uvs       = outUv.ToArray()
+          indices   = outIdx.ToArray() }
+
+    // Binary layout (little-endian):
+    //   "MESH"  vertexCount  indexCount  centroid(3×f64)
+    //   positions(V3f[])  uvs(V2f[])  indices(int[])
+
+    let serialize (name : string) (index : int) : byte[] =
+        let pm     = parseMesh name index
+        let folder = Path.Combine(dataRoot.Value, name)
+        let files  = objFiles folder
+        let base'  = Path.GetFileNameWithoutExtension files.[index]
+        let jpg    = Path.Combine(folder, base' + "_atlas.jpg")
+        if not (File.Exists jpg) then failwithf "atlas not found: %s" jpg
         use ms = new MemoryStream()
         use bw = new BinaryWriter(ms)
         bw.Write("MESH"B)
-        bw.Write(outPos.Count)
-        bw.Write(outIdx.Count)
-        bw.Write(centroid.X)
-        bw.Write(centroid.Y)
-        bw.Write(centroid.Z)
-        for p in outPos do
-            bw.Write(p.X)
-            bw.Write(p.Y)
-            bw.Write(p.Z)
-        for uv in outUv do
-            bw.Write(uv.X)
-            bw.Write(uv.Y)
-        for i in outIdx do
-            bw.Write(i)
+        bw.Write(pm.positions.Length)
+        bw.Write(pm.indices.Length)
+        bw.Write(pm.centroid.X); bw.Write(pm.centroid.Y); bw.Write(pm.centroid.Z)
+        for p in pm.positions do bw.Write(p.X); bw.Write(p.Y); bw.Write(p.Z)
+        for uv in pm.uvs      do bw.Write(uv.X); bw.Write(uv.Y)
+        for i  in pm.indices  do bw.Write(i)
         ms.ToArray()
 
     let atlasPath (name : string) (index : int) =
@@ -125,16 +145,103 @@ module MeshLoader =
         let files  = objFiles folder
         if index < 0 || index >= files.Length then None
         else
-            let baseName = Path.GetFileNameWithoutExtension files.[index]
-            let jpg = Path.Combine(folder, baseName + "_atlas.jpg")
+            let base' = Path.GetFileNameWithoutExtension files.[index]
+            let jpg   = Path.Combine(folder, base' + "_atlas.jpg")
             if File.Exists jpg then Some jpg else None
 
 
-// GET /centroids         → { "name": [x,y,z], ... }
-// GET /mesh/{name}       → mesh count (int, plain text)
-// GET /mesh/{name}/{i}   → binary mesh data
-// GET /mesh/{name}/{i}/atlas → atlas JPEG
+// ── Embree scene cache (load-on-demand, kept forever) ─────────────────────────
 
+module MeshCache =
+
+    let private cache = ConcurrentDictionary<struct(string * int), LoadedMesh>()
+
+    let get (name : string) (index : int) : LoadedMesh =
+        cache.GetOrAdd(struct(name, index), fun _ ->
+            let pm     = MeshLoader.parseMesh name index
+            let device = new Device()
+            let geom   = new TriangleGeometry(device, ReadOnlyMemory<V3f>(pm.positions), ReadOnlyMemory<int>(pm.indices), RTCBuildQuality.High)
+            let scene  = new Scene(device, RTCBuildQuality.High, false)
+            scene.AttachGeometry(geom)
+            scene.Commit()
+            let triBoxes =
+                let n = pm.indices.Length / 3
+                Array.init n (fun ti ->
+                    let p0 = V3d pm.positions.[pm.indices.[ti * 3    ]]
+                    let p1 = V3d pm.positions.[pm.indices.[ti * 3 + 1]]
+                    let p2 = V3d pm.positions.[pm.indices.[ti * 3 + 2]]
+                    Box3d(Fun.Min(p0, Fun.Min(p1, p2)), Fun.Max(p0, Fun.Max(p1, p2)))
+                )
+            let bvh = BbTree(triBoxes, BbTree.BuildFlags.CreateBoxArrays ||| BbTree.BuildFlags.LeafLimit16)
+            { parsed = pm; device = device; geometry = geom; scene = scene; bvh = bvh }
+        )
+
+
+// ── Spatial query helpers ─────────────────────────────────────────────────────
+
+// Traverse the BbTree, collecting primitive indices whose AABB passes the overlap test.
+let private traverseBvh (bbt : BbTree) (overlaps : Box3d -> bool) =
+    let result = ResizeArray<int>()
+    if bbt.NodeCount > 0 then
+        let idx   = bbt.IndexArray
+        let left  = bbt.LeftBoxArray
+        let right = bbt.RightBoxArray
+        let stack = System.Collections.Generic.Stack<int>()
+        stack.Push 0
+        while stack.Count > 0 do
+            let ni = stack.Pop()
+            let lc = idx.[ni * 2]
+            if overlaps left.[ni] then
+                if lc >= 0 then stack.Push lc else result.Add(-lc - 1)
+            let rc = idx.[ni * 2 + 1]
+            if overlaps right.[ni] then
+                if rc >= 0 then stack.Push rc else result.Add(-rc - 1)
+    result.ToArray()
+
+// Returns triangle indices whose AABB overlaps the query box (centroid-relative, conservative).
+let private trianglesInBox (lm : LoadedMesh) (bMin : V3f) (bMax : V3f) =
+    let qMin = V3d bMin
+    let qMax = V3d bMax
+    traverseBvh lm.bvh (fun b ->
+        b.Min.X <= qMax.X && b.Max.X >= qMin.X &&
+        b.Min.Y <= qMax.Y && b.Max.Y >= qMin.Y &&
+        b.Min.Z <= qMax.Z && b.Max.Z >= qMin.Z)
+
+// Returns triangle indices whose AABB overlaps the query sphere (squared-distance test).
+let private trianglesInSphere (lm : LoadedMesh) (center : V3f) (radius : float32) =
+    let c  = V3d center
+    let r2 = float radius * float radius
+    traverseBvh lm.bvh (fun b ->
+        let dx = max 0.0 (max (b.Min.X - c.X) (c.X - b.Max.X))
+        let dy = max 0.0 (max (b.Min.Y - c.Y) (c.Y - b.Max.Y))
+        let dz = max 0.0 (max (b.Min.Z - c.Z) (c.Z - b.Max.Z))
+        dx*dx + dy*dy + dz*dz <= r2)
+
+
+// ── JSON request/response types ───────────────────────────────────────────────
+
+// All coordinates in absolute world space (double precision).
+// Server converts: localPos = V3f(worldPos - mesh.centroid)
+
+[<CLIMutable>]
+type RayRequest     = { Name: string; Index: int; Origin: float[]; Direction: float[] }
+
+[<CLIMutable>]
+type ClosestRequest = { Name: string; Index: int; Point: float[] }
+
+[<CLIMutable>]
+type SphereRequest  = { Name: string; Index: int; Center: float[]; Radius: float }
+
+[<CLIMutable>]
+type BoxRequest     = { Name: string; Index: int; Min: float[]; Max: float[] }
+
+let inline private toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
+let inline private fromV3d (v : V3d)   = [| v.X; v.Y; v.Z |]
+
+
+// ── HTTP handlers ─────────────────────────────────────────────────────────────
+
+// GET /centroids
 let centroidsHandler : HttpHandler =
     fun next ctx -> task {
         let result = System.Collections.Generic.Dictionary<string, float[]>()
@@ -148,15 +255,15 @@ let centroidsHandler : HttpHandler =
         return! json result next ctx
     }
 
+// GET /mesh/{name}
 let meshCountHandler (name : string) : HttpHandler =
     fun next ctx -> task {
         let count = MeshLoader.meshCount name
-        if count = 0 then
-            return! RequestErrors.notFound (text $"not found: {name}") next ctx
-        else
-            return! text (string count) next ctx
+        if count = 0 then return! RequestErrors.notFound (text $"not found: {name}") next ctx
+        else            return! text (string count) next ctx
     }
 
+// GET /mesh/{name}/{i}
 let meshHandler (name : string, index : int) : HttpHandler =
     fun next ctx -> task {
         try
@@ -164,21 +271,96 @@ let meshHandler (name : string, index : int) : HttpHandler =
             ctx.Response.ContentType <- "application/octet-stream"
             do! ctx.Response.Body.WriteAsync(bytes, 0, bytes.Length)
             return! next ctx
-        with ex ->
-            return! RequestErrors.notFound (text ex.Message) next ctx
+        with ex -> return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
+// GET /mesh/{name}/{i}/atlas
 let atlasHandler (name : string, index : int) : HttpHandler =
     fun next ctx -> task {
         match MeshLoader.atlasPath name index with
-        | None ->
-            return! RequestErrors.notFound (text $"atlas not found: {name}/{index}") next ctx
+        | None -> return! RequestErrors.notFound (text $"atlas not found: {name}/{index}") next ctx
         | Some path ->
             ctx.Response.ContentType <- "image/jpeg"
             let bytes = File.ReadAllBytes path
             do! ctx.Response.Body.WriteAsync(bytes, 0, bytes.Length)
             return! next ctx
     }
+
+// POST /query/ray
+// body: { name, index, origin:[x,y,z], direction:[x,y,z] }
+// resp: { hit, t, point:[x,y,z], triangleId }  or  { hit:false }
+let rayHandler : HttpHandler =
+    fun next ctx -> task {
+        let! req = ctx.BindJsonAsync<RayRequest>()
+        let lm   = MeshCache.get req.Name req.Index
+        let c    = lm.parsed.centroid
+        let orig = V3f(toV3d req.Origin - c)
+        let dir  = V3f(toV3d req.Direction)
+        let mutable hit = RayHit()
+        let ok = lm.scene.Intersect(orig, dir, &hit)
+        if ok then
+            let localHit = orig + dir * hit.T
+            let worldHit = V3d localHit + c
+            return! json {| hit = true; t = hit.T; point = fromV3d worldHit; triangleId = int hit.PrimitiveId |} next ctx
+        else
+            return! json {| hit = false |} next ctx
+    }
+
+// POST /query/closest
+// body: { name, index, point:[x,y,z] }
+// resp: { found, point:[x,y,z], distanceSquared, triangleId }  or  { found:false }
+let closestHandler : HttpHandler =
+    fun next ctx -> task {
+        let! req = ctx.BindJsonAsync<ClosestRequest>()
+        let lm   = MeshCache.get req.Name req.Index
+        let c    = lm.parsed.centroid
+        let qp   = V3f(toV3d req.Point - c)
+        let res  = lm.scene.GetClosestPoint(qp)
+        if res.IsValid then
+            let worldPt = V3d res.Point + c
+            return! json {| found = true; point = fromV3d worldPt; distanceSquared = res.DistanceSquared; triangleId = int res.PrimID |} next ctx
+        else
+            return! json {| found = false |} next ctx
+    }
+
+// POST /query/sphere
+// body: { name, index, center:[x,y,z], radius }
+// resp: { triangleIndices:[...] }
+let sphereHandler : HttpHandler =
+    fun next ctx -> task {
+        let! req = ctx.BindJsonAsync<SphereRequest>()
+        let lm   = MeshCache.get req.Name req.Index
+        let c    = lm.parsed.centroid
+        let lc   = V3f(toV3d req.Center - c)
+        let tris = trianglesInSphere lm lc (float32 req.Radius)
+        return! json {| triangleIndices = tris |} next ctx
+    }
+
+// POST /query/box
+// body: { name, index, min:[x,y,z], max:[x,y,z] }
+// resp: { triangleIndices:[...] }
+let boxHandler : HttpHandler =
+    fun next ctx -> task {
+        let! req = ctx.BindJsonAsync<BoxRequest>()
+        let lm   = MeshCache.get req.Name req.Index
+        let c    = lm.parsed.centroid
+        let lMin = V3f(toV3d req.Min - c)
+        let lMax = V3f(toV3d req.Max - c)
+        let tris = trianglesInBox lm lMin lMax
+        return! json {| triangleIndices = tris |} next ctx
+    }
+
+
+// ── Routing ───────────────────────────────────────────────────────────────────
+
+// GET  /centroids
+// GET  /mesh/{name}
+// GET  /mesh/{name}/{i}
+// GET  /mesh/{name}/{i}/atlas
+// POST /query/ray
+// POST /query/closest
+// POST /query/sphere
+// POST /query/box
 
 let webApp =
     choose [
@@ -187,13 +369,17 @@ let webApp =
         routef "/mesh/%s/%i/atlas"      atlasHandler
         routef "/mesh/%s/%i"            meshHandler
         routef "/mesh/%s"               meshCountHandler
+        route "/query/ray"              >=> rayHandler
+        route "/query/closest"          >=> closestHandler
+        route "/query/sphere"           >=> sphereHandler
+        route "/query/box"              >=> boxHandler
     ]
 
 [<EntryPoint>]
 let main args =
     Aardvark.Init()
     let builder = WebApplication.CreateBuilder(args)
-    builder.Services.AddCors() |> ignore
+    builder.Services.AddCors()    |> ignore
     builder.Services.AddGiraffe() |> ignore
     let app = builder.Build()
     app.UseCors(fun p -> p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader() |> ignore)

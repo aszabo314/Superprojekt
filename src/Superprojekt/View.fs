@@ -108,7 +108,22 @@ module View =
                     if e.Button = Button.Right then
                         env.Emit [Click e.Position]
                         false
-                    else true
+                    else
+                        // test: sphere query at tap position on all loaded meshes
+                        let renderPos = e.Position                              // render-space (relative to commonCentroid)
+                        let cc        = AVal.force model.CommonCentroid
+                        let worldPos  = renderPos + cc                          // absolute world-space for server
+                        let names     = AList.force model.MeshNames
+                        task {
+                            let mutable total = 0
+                            for name in names do
+                                let! tris =
+                                    Query.sphereTriangles "http://localhost:5181" name 0 worldPos 0.5
+                                    |> Async.StartAsTask
+                                total <- total + tris.Length
+                            Log.line "sphere query @ (%.2f, %.2f, %.2f) r=0.5 → %d triangles" worldPos.X worldPos.Y worldPos.Z total
+                        } |> ignore
+                        true
                 )
 
                 Sg.OnLongPress(fun e ->
@@ -183,6 +198,7 @@ module View =
                                 | None   -> Some "pointer"
                             ))
                             Sg.OnTap(true, fun e ->
+                                
                                 if e.Button = Button.Right then
                                     env.Emit [Delete idx]
                                     false

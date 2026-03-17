@@ -17,6 +17,7 @@ type Model =
         MeshNames      : IndexList<string>       // ordered; drives render loop
         MeshVisible    : Map<string, bool>        // aval<Map> — visibility per name
         CommonCentroid : V3d                      // reference origin for rendering
+        MenuOpen       : bool
     }
 
 module Model =
@@ -30,4 +31,5 @@ module Model =
             MeshNames      = IndexList.empty
             MeshVisible    = Map.empty
             CommonCentroid = V3d.Zero
+            MenuOpen       = true
         }

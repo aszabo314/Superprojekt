@@ -18,6 +18,7 @@ type Message =
     | CameraMessage     of OrbitMessage
     | CentroidsLoaded   of (string * V3d)[]
     | SetVisible        of string * bool
+    | ToggleMenu
 
 
 module Update =
@@ -56,3 +57,5 @@ module Update =
             { model with MeshNames = names; MeshVisible = visible; CommonCentroid = common }
         | SetVisible(name, v) ->
             { model with MeshVisible = Map.add name v model.MeshVisible }
+        | ToggleMenu ->
+            { model with MenuOpen = not model.MenuOpen }

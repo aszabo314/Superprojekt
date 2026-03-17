@@ -20,6 +20,7 @@ type AdaptiveModel(value : Model) =
     let _MeshNames_ = FSharp.Data.Adaptive.clist(value.MeshNames)
     let _MeshVisible_ = FSharp.Data.Adaptive.cval(value.MeshVisible)
     let _CommonCentroid_ = FSharp.Data.Adaptive.cval(value.CommonCentroid)
+    let _MenuOpen_ = FSharp.Data.Adaptive.cval(value.MenuOpen)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -36,6 +37,7 @@ type AdaptiveModel(value : Model) =
             _MeshNames_.Value <- value.MeshNames
             _MeshVisible_.Value <- value.MeshVisible
             _CommonCentroid_.Value <- value.CommonCentroid
+            _MenuOpen_.Value <- value.MenuOpen
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.Value = _Value_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.int>
@@ -45,4 +47,5 @@ type AdaptiveModel(value : Model) =
     member __.MeshNames = _MeshNames_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
     member __.MeshVisible = _MeshVisible_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.bool>>
     member __.CommonCentroid = _CommonCentroid_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V3d>
+    member __.MenuOpen = _MenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

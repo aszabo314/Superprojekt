@@ -246,14 +246,12 @@ module View =
             }
 
             // Burger menu toggle (mobile)
-            input {
-                Attribute("type", "checkbox")
-                Attribute("id", "burger-toggle")
-                Class "burger-toggle"
-            }
-            label {
-                Attribute("for", "burger-toggle")
+            button {
+                Attribute("id", "burger-btn")
                 Class "burger-btn"
+                Dom.OnClick(fun _ ->
+                    env.Emit [ToggleMenu]
+                )
                 div { Class "burger-line" }
                 div { Class "burger-line" }
                 div { Class "burger-line" }
@@ -262,6 +260,10 @@ module View =
             // HUD overlay — pure-CSS tabs
             div {
                 Class "tabs"
+                model.MenuOpen |> AVal.map (fun o ->
+                    if o then Some (Class "tabs-open")
+                    else None
+                )
 
                 div {
                     Class "tab-labels"

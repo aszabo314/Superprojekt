@@ -99,10 +99,6 @@ body {
 
 /* ── Burger toggle ─────────────────────────────────────────────────── */
 
-.burger-toggle {
-    display: none;
-}
-
 .burger-btn {
     display: none;
     position: fixed;
@@ -130,16 +126,6 @@ body {
     background: #1a1a2e;
     border-radius: 1px;
     transition: transform 0.2s, opacity 0.2s;
-}
-
-.burger-toggle:checked ~ .burger-btn .burger-line:nth-child(1) {
-    transform: rotate(45deg) translate(5px, 5px);
-}
-.burger-toggle:checked ~ .burger-btn .burger-line:nth-child(2) {
-    opacity: 0;
-}
-.burger-toggle:checked ~ .burger-btn .burger-line:nth-child(3) {
-    transform: rotate(-45deg) translate(5px, -5px);
 }
 
 /* ── Pure-CSS tabs ─────────────────────────────────────────────────── */
@@ -279,7 +265,7 @@ body {
         z-index: 1000;
     }
 
-    .burger-toggle:checked ~ .tabs {
+    .tabs.tabs-open {
         display: block;
     }
 }

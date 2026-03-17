@@ -36,6 +36,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends nginx && rm -rf
 # Copy server app
 COPY --from=build /app/server /app/server
 
+# Copy mesh data
+COPY --from=build /src/src/Superserver/data /app/server/data
+
 # Copy WASM static files for nginx
 COPY --from=build /app/wasm/wwwroot /var/www/html
 

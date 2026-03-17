@@ -10,6 +10,13 @@ open Aardworx.WebAssembly
 
 module View =
 
+    let private apiBase =
+        lazy (
+            let href = Window.Location.Href
+            let uri = System.Uri(href)
+            uri.GetLeftPart(System.UriPartial.Authority) + "/api"
+        )
+
     let render (name : string) (active : aval<bool>) (commonCentroid : aval<V3d>) =
         sg {
             Sg.Active active
@@ -26,7 +33,7 @@ module View =
             let _loader =
                 task {
                     try
-                        let! mesh = MeshData.fetch "https://kingpin.aardvarkians.com/api" name 0
+                        let! mesh = MeshData.fetch apiBase.Value name 0
                         let cc = AVal.force commonCentroid
                         // localPos is centroid-relative → add mesh.centroid for world pos → subtract common centroid
                         let rebased = mesh.positions |> Array.map (fun p -> V3f(mesh.centroid + V3d p - cc))
@@ -60,7 +67,7 @@ module View =
         let _init =
             task {
                 try
-                    let! cs = MeshData.fetchCentroids "https://kingpin.aardvarkians.com/api"
+                    let! cs = MeshData.fetchCentroids apiBase.Value
                     env.Emit [CentroidsLoaded cs]
                 with e ->
                     Log.error "centroids fetch failed: %A" e
@@ -70,6 +77,7 @@ module View =
             OnBoot [
                 "const l = document.getElementById('loader');"
                 "if(l) l.remove();"
+                "document.body.classList.add('loaded');"
             ]
 
             renderControl {
@@ -118,7 +126,7 @@ module View =
                             let mutable total = 0
                             for name in names do
                                 let! tris =
-                                    Query.sphereTriangles "https://kingpin.aardvarkians.com/api" name 0 worldPos 0.5
+                                    Query.sphereTriangles apiBase.Value name 0 worldPos 0.5
                                     |> Async.StartAsTask
                                 total <- total + tris.Length
                             Log.line "sphere query @ (%.2f, %.2f, %.2f) r=0.5 → %d triangles" worldPos.X worldPos.Y worldPos.Z total

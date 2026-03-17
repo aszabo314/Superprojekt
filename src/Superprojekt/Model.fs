@@ -31,5 +31,5 @@ module Model =
             MeshNames      = IndexList.empty
             MeshVisible    = Map.empty
             CommonCentroid = V3d.Zero
-            MenuOpen       = true
+            MenuOpen       = false
         }

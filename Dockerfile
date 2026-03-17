@@ -59,6 +59,7 @@ server {
         text/html html;
         text/css css;
         image/svg+xml svg;
+        image/png png;
         image/x-icon ico;
         image/jpeg jpg jpeg;
     }

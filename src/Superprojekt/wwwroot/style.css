@@ -11,9 +11,14 @@ body {
     height: 100%;
     padding: 0;
     margin: 0;
-    background: #f4f6f8;
+    background: #000000;
     font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
     color: #1a1a2e;
+    touch-action: pan-x pan-y;
+}
+
+body.loaded {
+    background: #f4f6f8;
 }
 
 /* ── Loader ─────────────────────────────────────────────────────────── */
@@ -26,7 +31,7 @@ body {
     display: flex;
     flex-direction: column;
     justify-content: center;
-    background: #f4f6f8;
+    background: #000000;
     align-items: center;
     user-select: none;
     pointer-events: none;
@@ -56,7 +61,7 @@ body {
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: #1a56db;
+    background: #ffffff;
     margin: -4px 0 0 -4px;
 }
 
@@ -100,7 +105,7 @@ body {
 /* ── Burger toggle ─────────────────────────────────────────────────── */
 
 .burger-btn {
-    display: none;
+    display: flex;
     position: fixed;
     top: 10px;
     left: 10px;
@@ -131,12 +136,18 @@ body {
 /* ── Pure-CSS tabs ─────────────────────────────────────────────────── */
 
 .tabs {
+    display: none;
     position: fixed;
     top: 12px;
-    left: 12px;
+    left: 56px;
     width: 300px;
     font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
     font-size: 13px;
+    z-index: 1000;
+}
+
+.tabs.tabs-open {
+    display: block;
 }
 
 .tab-labels input[type="radio"] {
@@ -247,25 +258,14 @@ body {
     display: block;
 }
 
-/* ── Mobile: burger collapse ──────────────────────────────────────── */
+/* ── Mobile adjustments ───────────────────────────────────────────── */
 
 @media (max-width: 600px) {
-    .burger-btn {
-        display: flex;
-    }
-
     .tabs {
-        display: none;
-        top: 56px;
         left: 8px;
         right: 8px;
         width: auto;
         max-height: calc(100vh - 70px);
         overflow-y: auto;
-        z-index: 1000;
-    }
-
-    .tabs.tabs-open {
-        display: block;
     }
 }

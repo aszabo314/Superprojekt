@@ -1,6 +1,9 @@
 # ── Build stage ───────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 
+# Python needed by emscripten for WASM native compilation
+RUN apt-get update && apt-get install -y --no-install-recommends python3 && rm -rf /var/lib/apt/lists/*
+
 # Install wasm-tools workload for Blazor WASM native build
 RUN dotnet workload install wasm-tools
 

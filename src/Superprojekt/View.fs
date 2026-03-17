@@ -26,7 +26,7 @@ module View =
             let _loader =
                 task {
                     try
-                        let! mesh = MeshData.fetch "http://localhost:5181" name 0
+                        let! mesh = MeshData.fetch "/api" name 0
                         let cc = AVal.force commonCentroid
                         // localPos is centroid-relative → add mesh.centroid for world pos → subtract common centroid
                         let rebased = mesh.positions |> Array.map (fun p -> V3f(mesh.centroid + V3d p - cc))
@@ -60,7 +60,7 @@ module View =
         let _init =
             task {
                 try
-                    let! cs = MeshData.fetchCentroids "http://localhost:5181"
+                    let! cs = MeshData.fetchCentroids "/api"
                     env.Emit [CentroidsLoaded cs]
                 with e ->
                     Log.error "centroids fetch failed: %A" e
@@ -118,7 +118,7 @@ module View =
                             let mutable total = 0
                             for name in names do
                                 let! tris =
-                                    Query.sphereTriangles "http://localhost:5181" name 0 worldPos 0.5
+                                    Query.sphereTriangles "/api" name 0 worldPos 0.5
                                     |> Async.StartAsTask
                                 total <- total + tris.Length
                             Log.line "sphere query @ (%.2f, %.2f, %.2f) r=0.5 → %d triangles" worldPos.X worldPos.Y worldPos.Z total

@@ -42,7 +42,7 @@ module Interactions =
                     + (model.CommonCentroid |> AVal.force)
                 let! b = Query.sphereTriangles MeshView.apiBase.Value "Hess-201803" 0 a 1.0
                 env.Emit [
-                    LogDebug (sprintf "hover query result: %A %A" a b)
+                    //LogDebug (sprintf "hover query result: %A %A" a b)
                     SetFilters (a, HashMap.ofList [("Hess-201803", b)])
                 ]
         } |> Async.Start

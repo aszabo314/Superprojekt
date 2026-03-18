@@ -54,7 +54,7 @@ module Update =
             { model with Filtered = HashMap.empty; FilterCenter = None }
         | LogDebug s ->
             let log = model.DebugLog.InsertAt (0,s)
-            let log = if log.Count > 20 then IndexList.take (log.Count - 20) log else log
+            let log = if log.Count > 20 then IndexList.take 20 log else log
             { model with DebugLog = log }
         | SetCurrentHoverPosition p ->
             {model with CurrentHoverPosition=p}

@@ -4,10 +4,15 @@
         <meta charset="utf-8" />
         <title>SUPER</title>
         <link rel="icon" type="image/x-icon" href="./favicon.ico">
+        <link rel="apple-touch-icon" href="./icon-192.png">
         <meta
              name='viewport'
-             content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0'
+             content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'
         />
+        <meta name="apple-mobile-web-app-capable" content="yes">
+        <meta name="apple-mobile-web-app-status-bar-style" content="black">
+        <meta name="theme-color" content="#000000">
+        <link rel="manifest" href="./manifest.json" />
         <link rel="stylesheet" href="./style.css" />
     </head>
 
@@ -26,5 +31,10 @@
                 <div></div>
             </div>
         </div>
+        <script>
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('./sw.js');
+        }
+        </script>
     </body>
 </html>

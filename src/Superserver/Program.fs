@@ -318,9 +318,21 @@ let closestHandler : HttpHandler =
             return! json {| found = false |} next ctx
     }
 
+let private binaryIndices (tris : int[]) : HttpHandler =
+    fun next ctx -> task {
+        ctx.SetContentType "application/octet-stream"
+        let len = tris.Length
+        let buf = Array.zeroCreate<byte> (4 + len * 4)
+        System.BitConverter.TryWriteBytes(buf.AsSpan(0, 4), len) |> ignore
+        System.Buffer.BlockCopy(tris, 0, buf, 4, len * 4)
+        ctx.Response.ContentLength <- Nullable<int64>(int64 buf.Length)
+        do! ctx.Response.Body.WriteAsync(buf, 0, buf.Length)
+        return Some ctx
+    }
+
 // POST /query/sphere
 // body: { name, index, center:[x,y,z], radius }
-// resp: { triangleIndices:[...] }
+// resp: binary  int32 count | int32[] indices
 let sphereHandler : HttpHandler =
     fun next ctx -> task {
         let! req = ctx.BindJsonAsync<SphereRequest>()
@@ -328,12 +340,12 @@ let sphereHandler : HttpHandler =
         let c    = lm.parsed.centroid
         let lc   = V3f(toV3d req.Center - c)
         let tris = trianglesInSphere lm lc (float32 req.Radius)
-        return! json {| triangleIndices = tris |} next ctx
+        return! binaryIndices tris next ctx
     }
 
 // POST /query/box
 // body: { name, index, min:[x,y,z], max:[x,y,z] }
-// resp: { triangleIndices:[...] }
+// resp: binary  int32 count | int32[] indices
 let boxHandler : HttpHandler =
     fun next ctx -> task {
         let! req = ctx.BindJsonAsync<BoxRequest>()
@@ -342,7 +354,7 @@ let boxHandler : HttpHandler =
         let lMin = V3f(toV3d req.Min - c)
         let lMax = V3f(toV3d req.Max - c)
         let tris = trianglesInBox lm lMin lMax
-        return! json {| triangleIndices = tris |} next ctx
+        return! binaryIndices tris next ctx
     }
 
 
@@ -359,15 +371,14 @@ let boxHandler : HttpHandler =
 
 let webApp =
     choose [
-        route "/"                       >=> text "hello"
-        route "/centroids"              >=> centroidsHandler
-        routef "/mesh/%s/%i/atlas"      atlasHandler
-        routef "/mesh/%s/%i"            meshHandler
-        routef "/mesh/%s"               meshCountHandler
-        route "/query/ray"              >=> rayHandler
-        route "/query/closest"          >=> closestHandler
-        route "/query/sphere"           >=> sphereHandler
-        route "/query/box"              >=> boxHandler
+        route "/api/centroids"              >=> centroidsHandler
+        routef "/api/mesh/%s/%i/atlas"      atlasHandler
+        routef "/api/mesh/%s/%i"            meshHandler
+        routef "/api/mesh/%s"               meshCountHandler
+        route "/api/query/ray"              >=> rayHandler
+        route "/api/query/closest"          >=> closestHandler
+        route "/api/query/sphere"           >=> sphereHandler
+        route "/api/query/box"              >=> boxHandler
     ]
 
 [<EntryPoint>]
@@ -377,7 +388,10 @@ let main args =
     builder.Services.AddCors()    |> ignore
     builder.Services.AddGiraffe() |> ignore
     let app = builder.Build()
-    app.UseCors(fun p -> p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader() |> ignore)
-    app.UseGiraffe(webApp)
+    app.UseCors(fun p -> p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader() |> ignore) |> ignore
+    app.UseBlazorFrameworkFiles() |> ignore
+    app.UseStaticFiles()         |> ignore
+    app.UseGiraffe(webApp)       |> ignore
+    app.MapFallbackToFile("index.html") |> ignore
     app.Run()
     0

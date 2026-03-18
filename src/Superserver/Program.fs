@@ -323,9 +323,21 @@ let closestHandler : HttpHandler =
             return! json {| found = false |} next ctx
     }
 
+let private binaryIndices (tris : int[]) : HttpHandler =
+    fun next ctx -> task {
+        ctx.SetContentType "application/octet-stream"
+        let len = tris.Length
+        let buf = Array.zeroCreate<byte> (4 + len * 4)
+        System.BitConverter.TryWriteBytes(buf.AsSpan(0, 4), len) |> ignore
+        System.Buffer.BlockCopy(tris, 0, buf, 4, len * 4)
+        ctx.Response.ContentLength <- Nullable<int64>(int64 buf.Length)
+        do! ctx.Response.Body.WriteAsync(buf, 0, buf.Length)
+        return Some ctx
+    }
+
 // POST /query/sphere
 // body: { name, index, center:[x,y,z], radius }
-// resp: { triangleIndices:[...] }
+// resp: binary  int32 count | int32[] indices
 let sphereHandler : HttpHandler =
     fun next ctx -> task {
         let! req = ctx.BindJsonAsync<SphereRequest>()
@@ -333,12 +345,12 @@ let sphereHandler : HttpHandler =
         let c    = lm.parsed.centroid
         let lc   = V3f(toV3d req.Center - c)
         let tris = trianglesInSphere lm lc (float32 req.Radius)
-        return! json {| triangleIndices = tris |} next ctx
+        return! binaryIndices tris next ctx
     }
 
 // POST /query/box
 // body: { name, index, min:[x,y,z], max:[x,y,z] }
-// resp: { triangleIndices:[...] }
+// resp: binary  int32 count | int32[] indices
 let boxHandler : HttpHandler =
     fun next ctx -> task {
         let! req = ctx.BindJsonAsync<BoxRequest>()
@@ -347,7 +359,7 @@ let boxHandler : HttpHandler =
         let lMin = V3f(toV3d req.Min - c)
         let lMax = V3f(toV3d req.Max - c)
         let tris = trianglesInBox lm lMin lMax
-        return! json {| triangleIndices = tris |} next ctx
+        return! binaryIndices tris next ctx
     }
 
 

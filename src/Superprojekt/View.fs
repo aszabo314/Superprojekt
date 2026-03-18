@@ -25,6 +25,7 @@ module View =
 
         let cursorPosition = cval None
         let shiftHeld      = cval false
+        let spaceHeld      = cval false
 
         body {
             OnBoot [
@@ -34,7 +35,7 @@ module View =
             ]
 
             Dom.OnMouseWheel((fun e ->
-                if e.Shift then
+                if e.Shift || spaceHeld |> AVal.force then
                     env.Emit [ CycleMeshOrder (sign e.DeltaY) ]
                     false
                 else
@@ -123,7 +124,7 @@ module View =
                     )
                 )
 
-                Revolver.build info view proj cursorPosition shiftHeld model
+                Revolver.build info view proj cursorPosition spaceHeld shiftHeld model
                 
                 // green teapot
                 sg {
@@ -168,6 +169,12 @@ module View =
             )
             Dom.OnKeyUp(fun e ->
                 if e.Key = "Shift" then transact (fun () -> shiftHeld.Value <- false)
+            )
+            Dom.OnKeyDown(fun e ->
+                if e.Key = " " then transact (fun () -> spaceHeld.Value <- true)
+            )
+            Dom.OnKeyUp(fun e ->
+                if e.Key = " " then transact (fun () -> spaceHeld.Value <- false)
             )
 
             Gui.burgerButton env

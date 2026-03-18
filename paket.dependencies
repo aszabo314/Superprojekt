@@ -22,6 +22,8 @@ nuget Aardworx.WebAssembly.Dom  ~> 1.1.14
 nuget Aardvark.Data.Wavefront ~> 5.3.10
 nuget Aardvark.Embree          ~> 0.4.2
 
+nuget Microsoft.AspNetCore.Components.WebAssembly.Server ~> 8.0.10
+
 nuget Adaptify.Core ~> 1.3.7
 
 nuget Microsoft.AspNetCore.Components.Forms ~> 8.0.10

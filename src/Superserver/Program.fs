@@ -376,15 +376,14 @@ let boxHandler : HttpHandler =
 
 let webApp =
     choose [
-        route "/"                       >=> text "hello"
-        route "/centroids"              >=> centroidsHandler
-        routef "/mesh/%s/%i/atlas"      atlasHandler
-        routef "/mesh/%s/%i"            meshHandler
-        routef "/mesh/%s"               meshCountHandler
-        route "/query/ray"              >=> rayHandler
-        route "/query/closest"          >=> closestHandler
-        route "/query/sphere"           >=> sphereHandler
-        route "/query/box"              >=> boxHandler
+        route "/api/centroids"              >=> centroidsHandler
+        routef "/api/mesh/%s/%i/atlas"      atlasHandler
+        routef "/api/mesh/%s/%i"            meshHandler
+        routef "/api/mesh/%s"               meshCountHandler
+        route "/api/query/ray"              >=> rayHandler
+        route "/api/query/closest"          >=> closestHandler
+        route "/api/query/sphere"           >=> sphereHandler
+        route "/api/query/box"              >=> boxHandler
     ]
 
 [<EntryPoint>]
@@ -394,7 +393,10 @@ let main args =
     builder.Services.AddCors()    |> ignore
     builder.Services.AddGiraffe() |> ignore
     let app = builder.Build()
-    app.UseCors(fun p -> p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader() |> ignore)
-    app.UseGiraffe(webApp)
+    app.UseCors(fun p -> p.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader() |> ignore) |> ignore
+    app.UseBlazorFrameworkFiles() |> ignore
+    app.UseStaticFiles()         |> ignore
+    app.UseGiraffe(webApp)       |> ignore
+    app.MapFallbackToFile("index.html") |> ignore
     app.Run()
     0

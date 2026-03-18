@@ -298,6 +298,7 @@ NUGET
       Microsoft.Extensions.Logging (>= 8.0.1)
       Microsoft.JSInterop.WebAssembly (>= 8.0.23)
     Microsoft.AspNetCore.Components.WebAssembly.DevServer (8.0.23)
+    Microsoft.AspNetCore.Components.WebAssembly.Server (8.0.25)
     Microsoft.AspNetCore.Connections.Abstractions (8.0.23)
       Microsoft.Extensions.Features (>= 8.0.23)
       System.IO.Pipelines (>= 8.0)

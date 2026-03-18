@@ -81,6 +81,37 @@ module MeshData =
                 |> Seq.toArray
         }
 
+    /// Create a sub-mesh by selecting only the given triangle IDs.
+    /// Reuses the original vertex/uv arrays — just replaces the index buffer.
+    let filterByTriangles (triangleIds : int[]) (mesh : MeshData) : MeshData =
+        let indices = Array.zeroCreate (triangleIds.Length * 3)
+        for i = 0 to triangleIds.Length - 1 do
+            let src = triangleIds.[i] * 3
+            let dst = i * 3
+            indices.[dst]     <- mesh.indices.[src]
+            indices.[dst + 1] <- mesh.indices.[src + 1]
+            indices.[dst + 2] <- mesh.indices.[src + 2]
+        { mesh with indices = indices }
+
+    /// Compact a mesh so it contains only the vertices referenced by its indices.
+    /// Builds a remap from old vertex index → new vertex index using a dictionary
+    /// (never iterates over all original vertices).
+    let compact (mesh : MeshData) : MeshData =
+        let remap = System.Collections.Generic.Dictionary<int, int>()
+        let positions = System.Collections.Generic.List<V3f>()
+        let uvs       = System.Collections.Generic.List<V2f>()
+        let newIndices = Array.zeroCreate mesh.indices.Length
+        for i = 0 to mesh.indices.Length - 1 do
+            let oldIdx = mesh.indices.[i]
+            let mutable newIdx = 0
+            if not (remap.TryGetValue(oldIdx, &newIdx)) then
+                newIdx <- positions.Count
+                remap.[oldIdx] <- newIdx
+                positions.Add(mesh.positions.[oldIdx])
+                uvs.Add(mesh.uvs.[oldIdx])
+            newIndices.[i] <- newIdx
+        { mesh with positions = positions.ToArray(); uvs = uvs.ToArray(); indices = newIndices }
+
     let fetch (serverUrl : string) (name : string) (index : int) : Async<MeshData> =
         async {
             use client = new System.Net.Http.HttpClient()
@@ -98,10 +129,11 @@ module Query =
     open System.Text
     open System.Text.Json
 
-    let private post (serverUrl : string) (path : string) (body : obj) : Async<JsonElement> =
+    let private v3 (v : V3d) = sprintf "[%.17g,%.17g,%.17g]" v.X v.Y v.Z
+
+    let private post (serverUrl : string) (path : string) (json : string) : Async<JsonElement> =
         async {
             use client = new HttpClient()
-            let json    = JsonSerializer.Serialize(body)
             use content = new StringContent(json, Encoding.UTF8, "application/json")
             let! resp = client.PostAsync(serverUrl.TrimEnd('/') + path, content) |> Async.AwaitTask
             resp.EnsureSuccessStatusCode() |> ignore
@@ -112,10 +144,8 @@ module Query =
     /// POST /query/ray  — returns (hit, t, hitPoint, triangleId) option
     let rayHit (serverUrl : string) (name : string) (index : int) (origin : V3d) (direction : V3d) =
         async {
-            let body = {| Name = name; Index = index
-                          Origin    = [| origin.X;    origin.Y;    origin.Z    |]
-                          Direction = [| direction.X; direction.Y; direction.Z |] |}
-            let! r = post serverUrl "/query/ray" body
+            let json = sprintf """{"name":"%s","index":%d,"origin":%s,"direction":%s}""" name index (v3 origin) (v3 direction)
+            let! r = post serverUrl "/query/ray" json
             if r.GetProperty("hit").GetBoolean() then
                 let pt = r.GetProperty("point").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                 return Some {| t = float32 (r.GetProperty("t").GetDouble())
@@ -128,9 +158,8 @@ module Query =
     /// POST /query/closest  — returns (closestPoint, distanceSquared, triangleId) option
     let closestPoint (serverUrl : string) (name : string) (index : int) (queryPoint : V3d) =
         async {
-            let body = {| Name = name; Index = index
-                          Point = [| queryPoint.X; queryPoint.Y; queryPoint.Z |] |}
-            let! r = post serverUrl "/query/closest" body
+            let json = sprintf """{"name":"%s","index":%d,"point":%s}""" name index (v3 queryPoint)
+            let! r = post serverUrl "/query/closest" json
             if r.GetProperty("found").GetBoolean() then
                 let pt = r.GetProperty("point").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                 return Some {| point = V3d(pt.[0], pt.[1], pt.[2])
@@ -140,26 +169,25 @@ module Query =
                 return None
         }
 
-    /// POST /query/sphere  — returns triangle indices whose AABB overlaps the sphere
-    let sphereTriangles (serverUrl : string) (name : string) (index : int) (center : V3d) (radius : float) =
+    let private postBinaryIndices (serverUrl : string) (path : string) (json : string) : Async<int[]> =
         async {
-            let body = {| Name = name; Index = index
-                          Center = [| center.X; center.Y; center.Z |]; Radius = radius |}
-            let! r = post serverUrl "/query/sphere" body
-            return
-                r.GetProperty("triangleIndices").EnumerateArray()
-                |> Seq.map (fun e -> e.GetInt32())
-                |> Seq.toArray
+            use client = new HttpClient()
+            use content = new StringContent(json, Encoding.UTF8, "application/json")
+            let! resp = client.PostAsync(serverUrl.TrimEnd('/') + path, content) |> Async.AwaitTask
+            resp.EnsureSuccessStatusCode() |> ignore
+            let! buf = resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
+            let count = System.BitConverter.ToInt32(buf, 0)
+            let indices = Array.zeroCreate<int> count
+            System.Buffer.BlockCopy(buf, 4, indices, 0, count * 4)
+            return indices
         }
 
-    /// POST /query/box  — returns triangle indices whose AABB overlaps the box
+    /// POST /query/sphere  — returns triangle indices (binary: int32 count + int32[])
+    let sphereTriangles (serverUrl : string) (name : string) (index : int) (center : V3d) (radius : float) =
+        let json = sprintf """{"name":"%s","index":%d,"center":%s,"radius":%.17g}""" name index (v3 center) radius
+        postBinaryIndices serverUrl "/query/sphere" json
+
+    /// POST /query/box  — returns triangle indices (binary: int32 count + int32[])
     let boxTriangles (serverUrl : string) (name : string) (index : int) (min : V3d) (max : V3d) =
-        async {
-            let body = {| Name = name; Index = index
-                          Min = [| min.X; min.Y; min.Z |]; Max = [| max.X; max.Y; max.Z |] |}
-            let! r = post serverUrl "/query/box" body
-            return
-                r.GetProperty("triangleIndices").EnumerateArray()
-                |> Seq.map (fun e -> e.GetInt32())
-                |> Seq.toArray
-        }
+        let json = sprintf """{"name":"%s","index":%d,"min":%s,"max":%s}""" name index (v3 min) (v3 max)
+        postBinaryIndices serverUrl "/query/box" json

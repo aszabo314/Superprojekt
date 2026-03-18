@@ -9,15 +9,14 @@ type Message =
     | Increment
     | Decrement
     | Hover             of option<V3d>
-    | Click             of V3d
-    | Update            of Index * V3d
-    | StartDrag         of Index
-    | StopDrag
-    | Delete            of Index
-    | Clear
     | CameraMessage     of OrbitMessage
     | CentroidsLoaded   of (string * V3d)[]
     | SetVisible        of string * bool
+    | ToggleMenu
+    | ShowFilteredMesh  of V3d                  // render-space selection point
+    | FilteredMeshLoaded of string * V3d * int[] // (mesh name, selection point, index buffer)
+    | ClearFilteredMesh
+    | LogDebug        of string
 
 
 module Update =
@@ -31,24 +30,6 @@ module Update =
             { model with Value = model.Value - 1 }
         | Hover p ->
             { model with Hover = p }
-        | Click p ->
-            { model with Points = IndexList.add p model.Points }
-        | Update(idx, p) ->
-            match model.DraggingPoint with
-            | Some (i, _) when i = idx -> { model with DraggingPoint = Some(idx, p) }
-            | _ -> model
-        | StartDrag idx ->
-            { model with DraggingPoint = Some (idx, model.Points.[idx]) }
-        | StopDrag ->
-            match model.DraggingPoint with
-            | Some (idx, pt) ->
-                { model with DraggingPoint = None; Points = IndexList.set idx pt model.Points }
-            | None ->
-                model
-        | Delete p ->
-            { model with Points = IndexList.remove p model.Points }
-        | Clear ->
-            { model with Points = IndexList.empty }
         | CentroidsLoaded centroids ->
             let common  = if centroids.Length > 0 then snd centroids.[0] else V3d.Zero
             let names   = centroids |> Array.map fst |> IndexList.ofArray
@@ -56,3 +37,15 @@ module Update =
             { model with MeshNames = names; MeshVisible = visible; CommonCentroid = common }
         | SetVisible(name, v) ->
             { model with MeshVisible = Map.add name v model.MeshVisible }
+        | ToggleMenu ->
+            { model with MenuOpen = not model.MenuOpen }
+        | ShowFilteredMesh renderPos ->
+            model // async work happens in the view; model unchanged here
+        | FilteredMeshLoaded(name, selPt, indices) ->
+            { model with FilteredMesh = Some(name, selPt, indices) }
+        | ClearFilteredMesh ->
+            { model with FilteredMesh = None }
+        | LogDebug s ->
+            let log = model.DebugLog.Add s
+            let log = if log.Count > 20 then IndexList.skip (log.Count - 20) log else log
+            { model with DebugLog = log }

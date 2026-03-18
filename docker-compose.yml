@@ -1,0 +1,25 @@
+services:
+  kingpin:
+    build: .
+    container_name: kingpin
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - web
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=web"
+      - "traefik.http.routers.kingpin.entrypoints=http"
+      - "traefik.http.routers.kingpin.rule=Host(`kingpin.aardvarkians.com`)"
+      - "traefik.http.routers.kingpin.middlewares=https-redirect"
+      - "traefik.http.routers.kingpin.service=kingpin"
+      - "traefik.http.routers.kingpin-secure.rule=Host(`kingpin.aardvarkians.com`)"
+      - "traefik.http.routers.kingpin-secure.entrypoints=https"
+      - "traefik.http.routers.kingpin-secure.service=kingpin"
+      - "traefik.http.routers.kingpin-secure.tls.certresolver=httpresolver"
+      - "traefik.http.services.kingpin.loadbalancer.server.port=80"
+
+networks:
+  web:
+    external: true

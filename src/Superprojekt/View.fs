@@ -27,6 +27,15 @@ module View =
         let shiftHeld      = cval false
         let spaceHeld      = cval false
 
+        let revolverActive   = AVal.map2 (||) (shiftHeld :> aval<_>) model.RevolverOn
+        let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
+        let revolverBase =
+            AVal.custom (fun t ->
+                if (shiftHeld :> aval<_>).GetValue(t) then (cursorPosition :> aval<_>).GetValue(t)
+                elif (model.RevolverOn :> aval<_>).GetValue(t) then Some ((model.RevolverCenter :> aval<_>).GetValue(t))
+                else None
+            )
+
         body {
             OnBoot [
                 "const l = document.getElementById('loader');"
@@ -124,7 +133,15 @@ module View =
                     )
                 )
 
-                Revolver.build info view proj cursorPosition spaceHeld shiftHeld model
+                Dom.OnPointerDown(fun e ->
+                    if AVal.force model.RevolverOn && not (AVal.force shiftHeld) then
+                        let b = e.ClientRect
+                        let tc = (V2d e.ClientPosition - b.Min) / b.Size
+                        let ndc = V2d(2.0 * tc.X - 1.0, 1.0 - 2.0 * tc.Y)
+                        env.Emit [SetRevolverCenter ndc]
+                )
+
+                Revolver.build info view proj revolverBase revolverActive fullscreenActive model
                 
                 // green teapot
                 sg {

@@ -20,6 +20,9 @@ type Message =
     | LogDebug        of string
     | SetCurrentHoverPosition of Option<V3d>
     | CycleMeshOrder of int
+    | ToggleRevolver
+    | ToggleFullscreen
+    | SetRevolverCenter of V2d
 
 
 module Update =
@@ -71,3 +74,9 @@ module Update =
                     (idx + delta) % n
                 )
             { model with MeshOrder = newOrder }
+        | ToggleRevolver ->
+            { model with RevolverOn = not model.RevolverOn }
+        | ToggleFullscreen ->
+            { model with FullscreenOn = not model.FullscreenOn }
+        | SetRevolverCenter ndc ->
+            { model with RevolverCenter = ndc }

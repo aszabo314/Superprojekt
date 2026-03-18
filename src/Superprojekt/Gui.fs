@@ -40,40 +40,17 @@ module Gui =
                         Attribute("name", "hud-tabs")
                         Attribute("id",   "hud-tab2")
                     }
-                    "Info"
-                }
-                label {
-                    input {
-                        Attribute("type", "radio")
-                        Attribute("name", "hud-tabs")
-                        Attribute("id",   "hud-tab3")
-                    }
-                    "Settings"
+                    "Overlay"
                 }
             }
 
             div {
                 Class "tab-panels"
 
-                // ── Tab 1: Scene ──────────────────────────────────
+                // ── Tab 1: Scene ──────────────────────────────────────────
                 div {
                     Class "tab-panel"
                     Attribute("id", "hud-panel1")
-
-                    h1 {
-                        "Counter: "
-                        model.Value |> AVal.map string
-                    }
-                    button { "+"; Dom.OnClick(fun _ -> env.Emit [Increment]) }
-                    button { "-"; Dom.OnClick(fun _ -> env.Emit [Decrement]) }
-                    button { "Clear Filter"; Dom.OnClick(fun _ -> env.Emit [ClearFilteredMesh]) }
-
-                    h2 {
-                        model.Hover |> AVal.map (function
-                            | Some p -> "Hover: " + p.ToString("0.00")
-                            | None   -> "Hover: none"
-                        )
-                    }
 
                     h3 { "Meshes" }
                     model.MeshNames |> AList.map (fun name ->
@@ -97,28 +74,62 @@ module Gui =
                         }
                     )
 
+                    button { "Clear Filter"; Dom.OnClick(fun _ -> env.Emit [ClearFilteredMesh]) }
+
                     ul {
-                        li { "ctrl+click or long-press to filter mesh" }
+                        li { "ctrl+click or long-press to filter" }
                         li { "double-click to focus camera" }
+                        li { "shift+scroll to cycle mesh order" }
                     }
                 }
 
-                // ── Tab 2: Info ───────────────────────────────────
+                // ── Tab 2: Overlay ────────────────────────────────────────
                 div {
                     Class "tab-panel"
                     Attribute("id", "hud-panel2")
-                    h1 { "Info" }
-                    p { "Aardvark.Dom WebAssembly scaffold." }
-                    p { "Elm-style architecture: Model / Update / View." }
-                    p { "Rendering via WebGL with an orbit camera." }
-                }
 
-                // ── Tab 3: Settings ───────────────────────────────
-                div {
-                    Class "tab-panel"
-                    Attribute("id", "hud-panel3")
-                    h1 { "Settings" }
-                    p { "Nothing to configure yet." }
+                    h3 { "Revolver" }
+                    p { "Magnifier disks per mesh (also: hold Shift)" }
+                    button {
+                        model.RevolverOn |> AVal.map (fun on ->
+                            if on then Some (Class "btn-active") else None
+                        )
+                        Dom.OnClick(fun _ -> env.Emit [ToggleRevolver])
+                        model.RevolverOn |> AVal.map (fun on ->
+                            if on then "Revolver: ON" else "Revolver: OFF"
+                        )
+                    }
+                    p {
+                        model.RevolverOn |> AVal.map (fun on ->
+                            if on then "Tap on the 3D view to reposition the magnifier." else ""
+                        )
+                    }
+
+                    h3 { "Fullscreen overlay" }
+                    p { "Show each mesh in a tile (also: hold Space)" }
+                    button {
+                        model.FullscreenOn |> AVal.map (fun on ->
+                            if on then Some (Class "btn-active") else None
+                        )
+                        Dom.OnClick(fun _ -> env.Emit [ToggleFullscreen])
+                        model.FullscreenOn |> AVal.map (fun on ->
+                            if on then "Fullscreen: ON" else "Fullscreen: OFF"
+                        )
+                    }
+
+                    h3 { "Mesh order" }
+                    p { "Determines stacking order of revolver and fullscreen tiles." }
+                    div {
+                        Class "btn-row"
+                        button { "◀ Prev"; Dom.OnClick(fun _ -> env.Emit [CycleMeshOrder -1]) }
+                        button { "Next ▶"; Dom.OnClick(fun _ -> env.Emit [CycleMeshOrder  1]) }
+                    }
+                    model.MeshNames |> AList.map (fun name ->
+                        let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                        div {
+                            order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) name)
+                        }
+                    )
                 }
             }
         }

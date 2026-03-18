@@ -24,6 +24,10 @@ type Model =
         DebugLog       : IndexList<string>
         
         CurrentHoverPosition : Option<V3d>
+
+        RevolverOn     : bool   // GUI toggle — revolver magnifier overlay
+        FullscreenOn   : bool   // GUI toggle — fullscreen mesh texture overlay
+        RevolverCenter : V2d    // NDC anchor for GUI-pinned revolver (default = center)
     }
 
 module Model =
@@ -41,4 +45,7 @@ module Model =
             FilterCenter    = None
             DebugLog       = IndexList.empty
             CurrentHoverPosition = None
+            RevolverOn     = false
+            FullscreenOn   = false
+            RevolverCenter = V2d.Zero
         }

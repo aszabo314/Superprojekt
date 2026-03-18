@@ -1,5 +1,5 @@
-//df68f1a0-7b8a-efec-7e74-d67c808aa9c3
-//8434c694-1412-8a1f-0a2f-bd4d1be5c755
+//66a5be19-ed9c-c054-ff8d-1fd4b3e7e76c
+//efdeab52-25fe-e6d3-f60b-db9262ecac6c
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -24,6 +24,9 @@ type AdaptiveModel(value : Model) =
     let _FilterCenter_ = FSharp.Data.Adaptive.cval(value.FilterCenter)
     let _DebugLog_ = FSharp.Data.Adaptive.clist(value.DebugLog)
     let _CurrentHoverPosition_ = FSharp.Data.Adaptive.cval(value.CurrentHoverPosition)
+    let _RevolverOn_ = FSharp.Data.Adaptive.cval(value.RevolverOn)
+    let _FullscreenOn_ = FSharp.Data.Adaptive.cval(value.FullscreenOn)
+    let _RevolverCenter_ = FSharp.Data.Adaptive.cval(value.RevolverCenter)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -44,6 +47,9 @@ type AdaptiveModel(value : Model) =
             _FilterCenter_.Value <- value.FilterCenter
             _DebugLog_.Value <- value.DebugLog
             _CurrentHoverPosition_.Value <- value.CurrentHoverPosition
+            _RevolverOn_.Value <- value.RevolverOn
+            _FullscreenOn_.Value <- value.FullscreenOn
+            _RevolverCenter_.Value <- value.RevolverCenter
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.Value = _Value_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.int>
@@ -57,4 +63,7 @@ type AdaptiveModel(value : Model) =
     member __.FilterCenter = _FilterCenter_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.DebugLog = _DebugLog_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
     member __.CurrentHoverPosition = _CurrentHoverPosition_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.Option<Aardvark.Base.V3d>>
+    member __.RevolverOn = _RevolverOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.FullscreenOn = _FullscreenOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.RevolverCenter = _RevolverCenter_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V2d>
 

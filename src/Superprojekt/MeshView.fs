@@ -65,7 +65,7 @@ module MeshView =
             } |> ignore
             m
 
-    let renderMesh (loaded : LoadedMesh) (active : aval<bool>) (commonCentroid : aval<V3d>) (clipBox : aval<Box3d>) =
+    let renderMesh (loaded : LoadedMesh) (order : aval<int>)  (active : aval<bool>) (commonCentroid : aval<V3d>) (clipBox : aval<Box3d>) =
         let clipMin = AVal.map2 (fun (b : Box3d) cc -> b.Min - cc) clipBox commonCentroid
         let clipMax = AVal.map2 (fun (b : Box3d) cc -> b.Max - cc) clipBox commonCentroid
         sg {
@@ -78,6 +78,7 @@ module MeshView =
             Sg.Uniform("DiffuseColorTexture", loaded.tex)
             Sg.Uniform("ClipMin", clipMin)
             Sg.Uniform("ClipMax", clipMax)
+            Sg.Uniform("Order", order)
             Sg.VertexAttributes(
                 HashMap.ofList [
                     string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
@@ -89,9 +90,9 @@ module MeshView =
             Sg.Render loaded.fvc
         }
 
-    let render (name : string) (active : aval<bool>) (commonCentroid : aval<V3d>) (clipBox : aval<Box3d>) =
+    let render (name : string) (order : aval<int>) (active : aval<bool>) (commonCentroid : aval<V3d>) (clipBox : aval<Box3d>) =
         let loaded = loadMeshAsync name
-        renderMesh loaded active commonCentroid clipBox
+        renderMesh loaded order active commonCentroid clipBox
 
     let buildMeshTextures (info : Aardvark.Dom.RenderControlInfo) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
         let signature =
@@ -99,13 +100,15 @@ module MeshView =
                 DefaultSemantic.Colors,       TextureFormat.Rgba8
                 DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
             ]
+        
         model.MeshNames |> AList.toASet |> ASet.mapToAMap (fun name ->
+            let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
             let mesh =
                 sg {
                     Sg.View view
                     Sg.Proj proj
                     Sg.Uniform("ViewportSize", info.ViewportSize)
-                    render name (AVal.constant true) model.CommonCentroid model.ClipBox
+                    render name order (AVal.constant true) model.CommonCentroid model.ClipBox
                 }
             let objs  = mesh.GetRenderObjects(TraversalState.empty info.Runtime)
             let task  = info.Runtime.CompileRender(signature, objs)

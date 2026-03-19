@@ -83,7 +83,15 @@ module Shader =
     type UniformScope with
         member x.ClipMin : V3d = x?ClipMin
         member x.ClipMax : V3d = x?ClipMax
+        member x.Order : int = x?Order
 
+    [<ReflectedDefinition>]
+    let orderColor (o : int) =
+        match o % 3 with
+        | 0 -> V4d(1.0, 1.0, 0.0, 1.0)
+        | 1 -> V4d(0.5, 1.0, 0.5, 1.0)
+        | 2 -> V4d(1.0, 0.5, 1.0, 1.0)
+        | _ -> V4d(1.0, 1.0, 1.0, 1.0)
     // Discards fragments outside [ClipMin, ClipMax] in render space.
     // ClipMin/ClipMax are worldClipBox.Min/Max − commonCentroid (computed on CPU).
     // v.wp is set by DefaultSurfaces.trafo as ModelTrafo * v.pos (render-space position).
@@ -101,9 +109,10 @@ module Shader =
             let dzm = abs (uniform.ClipMin.Z - p.Z)
             let dzM = abs (uniform.ClipMax.Z - p.Z)
             let d = min (min dxm dxM) (min (min dym dyM) (min dzm dzM))
+            let ocol = orderColor uniform.Order
             let c = 
                 if d < t then
-                    lerp V4d.IIOI v.c (d / t)
+                    lerp ocol v.c (d / t)
                 else
                     v.c
             

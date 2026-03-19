@@ -1,5 +1,5 @@
-//66a5be19-ed9c-c054-ff8d-1fd4b3e7e76c
-//efdeab52-25fe-e6d3-f60b-db9262ecac6c
+//035acf87-0742-1017-2d7d-ccfb9a764ad7
+//4c6af6ba-9132-b70f-f803-5f1239d6612d
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -13,8 +13,6 @@ open Superprojekt
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveModel(value : Model) =
     let _Camera_ = AdaptiveOrbitState(value.Camera)
-    let _Value_ = FSharp.Data.Adaptive.cval(value.Value)
-    let _Hover_ = FSharp.Data.Adaptive.cval(value.Hover)
     let _MeshOrder_ = FSharp.Data.Adaptive.cmap(value.MeshOrder)
     let _MeshNames_ = FSharp.Data.Adaptive.clist(value.MeshNames)
     let _MeshVisible_ = FSharp.Data.Adaptive.cval(value.MeshVisible)
@@ -23,7 +21,6 @@ type AdaptiveModel(value : Model) =
     let _Filtered_ = FSharp.Data.Adaptive.cmap(value.Filtered)
     let _FilterCenter_ = FSharp.Data.Adaptive.cval(value.FilterCenter)
     let _DebugLog_ = FSharp.Data.Adaptive.clist(value.DebugLog)
-    let _CurrentHoverPosition_ = FSharp.Data.Adaptive.cval(value.CurrentHoverPosition)
     let _RevolverOn_ = FSharp.Data.Adaptive.cval(value.RevolverOn)
     let _FullscreenOn_ = FSharp.Data.Adaptive.cval(value.FullscreenOn)
     let _RevolverCenter_ = FSharp.Data.Adaptive.cval(value.RevolverCenter)
@@ -36,8 +33,6 @@ type AdaptiveModel(value : Model) =
             __value <- value
             __adaptive.MarkOutdated()
             _Camera_.Update(value.Camera)
-            _Value_.Value <- value.Value
-            _Hover_.Value <- value.Hover
             _MeshOrder_.Value <- value.MeshOrder
             _MeshNames_.Value <- value.MeshNames
             _MeshVisible_.Value <- value.MeshVisible
@@ -46,14 +41,11 @@ type AdaptiveModel(value : Model) =
             _Filtered_.Value <- value.Filtered
             _FilterCenter_.Value <- value.FilterCenter
             _DebugLog_.Value <- value.DebugLog
-            _CurrentHoverPosition_.Value <- value.CurrentHoverPosition
             _RevolverOn_.Value <- value.RevolverOn
             _FullscreenOn_.Value <- value.FullscreenOn
             _RevolverCenter_.Value <- value.RevolverCenter
     member __.Current = __adaptive
     member __.Camera = _Camera_
-    member __.Value = _Value_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.int>
-    member __.Hover = _Hover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
     member __.MeshNames = _MeshNames_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
     member __.MeshVisible = _MeshVisible_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.bool>>
@@ -62,7 +54,6 @@ type AdaptiveModel(value : Model) =
     member __.Filtered = _Filtered_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.int)[]>
     member __.FilterCenter = _FilterCenter_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.DebugLog = _DebugLog_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
-    member __.CurrentHoverPosition = _CurrentHoverPosition_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.Option<Aardvark.Base.V3d>>
     member __.RevolverOn = _RevolverOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.FullscreenOn = _FullscreenOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.RevolverCenter = _RevolverCenter_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V2d>

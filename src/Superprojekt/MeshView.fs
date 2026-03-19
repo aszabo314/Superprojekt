@@ -1,10 +1,10 @@
 namespace Superprojekt
 
 open Aardvark.Base
+open Aardworx.WebAssembly
 open Aardvark.Rendering
 open FSharp.Data.Adaptive
 open Aardvark.Dom
-open Aardworx.WebAssembly
 
 type LoadedMesh =
     {
@@ -87,3 +87,38 @@ module MeshView =
     let render (name : string) (active : aval<bool>) (commonCentroid : aval<V3d>) =
         let loaded = loadMeshAsync name
         renderMesh loaded active commonCentroid
+
+    let buildMeshTextures (info : Aardvark.Dom.RenderControlInfo) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
+        let signature =
+            info.Runtime.CreateFramebufferSignature [
+                DefaultSemantic.Colors,       TextureFormat.Rgba8
+                DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
+            ]
+        model.MeshNames |> AList.toASet |> ASet.mapToAMap (fun name ->
+            let mesh =
+                sg {
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.Uniform("ViewportSize", info.ViewportSize)
+                    render name (AVal.constant true) model.CommonCentroid
+                }
+            let objs  = mesh.GetRenderObjects(TraversalState.empty info.Runtime)
+            let task  = info.Runtime.CompileRender(signature, objs)
+            let color, depth =
+                task |> RenderTask.renderToColorAndDepthWithClear info.ViewportSize (clear { color C4f.Zero; depth 1.0 })
+            color, depth
+        )
+
+    let blitQuad (meshVisible : aval<Map<string, bool>>) (fullscreenActive : aval<bool>) (revolverActive : aval<bool>) name (color : IAdaptiveResource<IBackendTexture>) (depth : IAdaptiveResource<IBackendTexture>) =
+        let active    = meshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+        let colorTex  = color |> AdaptiveResource.map (fun t -> t :> ITexture)
+        let depthTex  = depth |> AdaptiveResource.map (fun t -> t :> ITexture)
+        let superActive = AVal.logicalAnd [active; AVal.map not fullscreenActive]
+        sg {
+            Sg.Active superActive
+            Sg.Shader { BlitShader.read }
+            Sg.Uniform("RevolverVisible", revolverActive)
+            Sg.Uniform("ColorTexture",    colorTex)
+            Sg.Uniform("DepthTexture",    depthTex)
+            Primitives.FullscreenQuad
+        }

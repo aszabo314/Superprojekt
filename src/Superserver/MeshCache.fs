@@ -5,8 +5,6 @@ open System.Collections.Concurrent
 open Aardvark.Base
 open Aardvark.Embree
 
-// ── In-memory Embree scene + BbTree ──────────────────────────────────────────
-
 type LoadedMesh =
     {
         parsed   : MeshLoader.ParsedMesh
@@ -16,12 +14,11 @@ type LoadedMesh =
         bvh      : BbTree   // BVH over per-triangle AABBs (centroid-relative, double)
     }
 
-// ── Cache (load-on-demand, kept forever) ─────────────────────────────────────
-
 let private cache = ConcurrentDictionary<struct(string * int), LoadedMesh>()
 
 let get (name : string) (index : int) : LoadedMesh =
     cache.GetOrAdd(struct(name, index), fun _ ->
+        Log.line "loading mesh %s/%d" name index
         let pm     = MeshLoader.parseMesh name index
         let device = new Device()
         let geom   = new TriangleGeometry(device, ReadOnlyMemory<V3f>(pm.positions), ReadOnlyMemory<int>(pm.indices), RTCBuildQuality.High)
@@ -39,8 +36,6 @@ let get (name : string) (index : int) : LoadedMesh =
         let bvh = BbTree(triBoxes, BbTree.BuildFlags.CreateBoxArrays)
         { parsed = pm; device = device; geometry = geom; scene = scene; bvh = bvh }
     )
-
-// ── Spatial query helpers ─────────────────────────────────────────────────────
 
 // Traverse the BbTree, collecting primitive indices whose AABB passes the overlap test.
 let traverseBvh (indices : int[]) (bbt : BbTree) (overlaps : Box3d -> bool) =

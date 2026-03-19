@@ -47,7 +47,6 @@ module Gui =
             div {
                 Class "tab-panels"
 
-                // ── Tab 1: Scene ──────────────────────────────────────────
                 div {
                     Class "tab-panel"
                     Attribute("id", "hud-panel1")
@@ -83,7 +82,6 @@ module Gui =
                     }
                 }
 
-                // ── Tab 2: Overlay ────────────────────────────────────────
                 div {
                     Class "tab-panel"
                     Attribute("id", "hud-panel2")

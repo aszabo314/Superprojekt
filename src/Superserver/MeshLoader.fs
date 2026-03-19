@@ -5,8 +5,6 @@ open System.IO
 open Aardvark.Base
 open Aardvark.Data.Wavefront
 
-// ── Raw parsed mesh (OBJ → unified vertex buffer, centroid-relative) ─────────
-
 type ParsedMesh =
     {
         centroid  : V3d
@@ -14,8 +12,6 @@ type ParsedMesh =
         uvs       : V2f[]
         indices   : int[]   // flat triangle list  (triangleCount × 3)
     }
-
-// ── OBJ loading ───────────────────────────────────────────────────────────────
 
 let private findDataRoot () =
     let mutable dir = AppContext.BaseDirectory
@@ -35,6 +31,23 @@ let meshCount (name : string) =
     let folder = Path.Combine(dataRoot.Value, name)
     if Directory.Exists folder then objFiles folder |> Array.length else 0
 
+let private parseCentroid (folder : string) =
+    match Directory.GetFiles(folder, "*_centroid.txt") |> Array.tryHead with
+    | None   -> failwithf "no centroid.txt in %s" folder
+    | Some f ->
+        let parts = File.ReadAllText(f).Trim().Split(' ')
+        V3d(float parts.[0], float parts.[1], float parts.[2])
+
+let getCentroid (name : string) : V3d option =
+    let folder = Path.Combine(dataRoot.Value, name)
+    if not (Directory.Exists folder) then None
+    else
+        match Directory.GetFiles(folder, "*_centroid.txt") |> Array.tryHead with
+        | None   -> None
+        | Some f ->
+            let parts = File.ReadAllText(f).Trim().Split(' ')
+            Some (V3d(float parts.[0], float parts.[1], float parts.[2]))
+
 let parseMesh (name : string) (index : int) : ParsedMesh =
     let folder = Path.Combine(dataRoot.Value, name)
     if not (Directory.Exists folder) then failwithf "not found: %s" name
@@ -43,30 +56,22 @@ let parseMesh (name : string) (index : int) : ParsedMesh =
     if index < 0 || index >= files.Length then
         failwithf "mesh index %d out of range (folder has %d)" index files.Length
 
-    let objFile      = files.[index]
-    let centroidFile =
-        Directory.GetFiles(folder, "*_centroid.txt") |> Array.tryHead
-        |> Option.defaultWith (fun () -> failwithf "no centroid.txt in %s" folder)
-
-    let centroid =
-        let parts = File.ReadAllText(centroidFile).Trim().Split(' ')
-        V3d(float parts.[0], float parts.[1], float parts.[2])
-
-    let mesh = ObjParser.Load objFile
+    let centroid = parseCentroid folder
+    let mesh     = ObjParser.Load files.[index]
 
     let positions =
         match mesh.Vertices with
-        | :? System.Collections.Generic.IList<V3f> as v -> v |> Seq.map V3d |> Seq.toArray
-        | :? System.Collections.Generic.IList<V3d> as v -> v |> Seq.toArray
-        | :? System.Collections.Generic.IList<V4f> as v -> v |> Seq.map (fun p -> V3d(float p.X, float p.Y, float p.Z)) |> Seq.toArray
-        | :? System.Collections.Generic.IList<V4d> as v -> v |> Seq.map (fun p -> V3d(p.X, p.Y, p.Z)) |> Seq.toArray
+        | :? Collections.Generic.IList<V3f> as v -> v |> Seq.map V3d |> Seq.toArray
+        | :? Collections.Generic.IList<V3d> as v -> v |> Seq.toArray
+        | :? Collections.Generic.IList<V4f> as v -> v |> Seq.map (fun p -> V3d(float p.X, float p.Y, float p.Z)) |> Seq.toArray
+        | :? Collections.Generic.IList<V4d> as v -> v |> Seq.map (fun p -> V3d(p.X, p.Y, p.Z)) |> Seq.toArray
         | _ -> [||]
 
     let texCoords =
         if isNull mesh.TextureCoordinates then [||]
         else mesh.TextureCoordinates |> Seq.map Vec.xy |> Seq.toArray
 
-    let vertexMap = System.Collections.Generic.Dictionary<struct(int * int), int>()
+    let vertexMap = Collections.Generic.Dictionary<struct(int * int), int>()
     let outPos = ResizeArray<V3f>()
     let outUv  = ResizeArray<V2f>()
     let outIdx = ResizeArray<int>()

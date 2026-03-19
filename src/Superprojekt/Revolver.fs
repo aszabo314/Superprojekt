@@ -5,108 +5,8 @@ open Aardvark.Rendering
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-// ── Shaders ───────────────────────────────────────────────────────────────────
-
-module BlitShader =
-    open FShade
-
-    type Fragment =
-        {
-            [<Color>] c : V4d
-            [<Depth>] d : float
-        }
-
-    type UniformScope with
-        member x.RevolverVisible : bool = x?RevolverVisible
-        member x.TextureOffset   : V2d  = x?TextureOffset
-        member x.TextureScale    : V2d  = x?TextureScale
-
-    let colorSam =
-        sampler2d {
-            texture uniform?ColorTexture
-            filter Filter.MinMagPoint
-            addressU WrapMode.Wrap
-            addressV WrapMode.Wrap
-        }
-    let depthSam =
-        sampler2d {
-            texture uniform?DepthTexture
-            filter Filter.MinMagPoint
-            addressU WrapMode.Wrap
-            addressV WrapMode.Wrap
-        }
-
-    let read (v : Effects.Vertex) =
-        fragment {
-            let c =
-                let original = colorSam.SampleLevel(v.tc, 0.0)
-                if uniform.RevolverVisible then lerp original V4d.IIII 0.5
-                else original
-            return { c = c; d = depthSam.SampleLevel(v.tc, 0.0).X }
-        }
-    let readColorTex (v : Effects.Vertex) =
-        fragment {
-            let c = colorSam.SampleLevel(v.tc, 0.0)
-            return c
-        }
-    let readColorDepthTex (v : Effects.Vertex) =
-        fragment {
-            return { c = colorSam.SampleLevel(v.tc, 0.0); d = depthSam.SampleLevel(v.tc, 0.0).X }
-        }
-
-    // Circular magnifier: clips to unit circle, samples with offset+scale.
-    let readColor (v : Effects.Vertex) =
-        fragment {
-            let ndc = 2.0 * v.tc - V2d.II
-            if Vec.lengthSquared ndc > 1.0 then discard()
-            let b = colorSam.SampleLevel(uniform.TextureOffset + uniform.TextureScale * v.tc, 0.0)
-            return b
-        }
-
-
-// ── Revolver overlay ──────────────────────────────────────────────────────────
-
 module Revolver =
 
-    /// Renders each mesh into its own off-screen color+depth texture.
-    let private buildMeshTextures (info : Aardvark.Dom.RenderControlInfo) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
-        let signature =
-            info.Runtime.CreateFramebufferSignature [
-                DefaultSemantic.Colors,       TextureFormat.Rgba8
-                DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
-            ]
-        model.MeshNames |> AList.toASet |> ASet.mapToAMap (fun name ->
-            let mesh =
-                sg {
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.Uniform("ViewportSize", info.ViewportSize)
-                    MeshView.render name (AVal.constant true) model.CommonCentroid
-                }
-            let objs        = mesh.GetRenderObjects(TraversalState.empty info.Runtime)
-            let task        = info.Runtime.CompileRender(signature, objs)
-            let color, depth =
-                task |> RenderTask.renderToColorAndDepthWithClear info.ViewportSize (clear { color C4f.Zero; depth 1.0 })
-            color, depth
-        )
-
-    /// Full-screen quad that blits one mesh texture back to the screen.
-    /// Dims the scene when the revolver is active (RevolverVisible uniform).
-    let private blitQuad (meshVisible : aval<Map<string, bool>>) (fullscreenActive : aval<bool>) (revolverActive : aval<bool>) name (color : IAdaptiveResource<IBackendTexture>) (depth : IAdaptiveResource<IBackendTexture>) =
-        let active = meshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-        let colorTex = color |> AdaptiveResource.map (fun t -> t :> ITexture)
-        let depthTex = depth |> AdaptiveResource.map (fun t -> t :> ITexture)
-        let superActive = AVal.logicalAnd [active; AVal.map not fullscreenActive]
-        sg {
-            Sg.Active superActive
-            Sg.Shader { BlitShader.read }
-            Sg.Uniform("RevolverVisible", revolverActive)
-            Sg.Uniform("ColorTexture",    colorTex)
-            Sg.Uniform("DepthTexture",    depthTex)
-            Primitives.FullscreenQuad
-        }
-
-    /// Circular magnifier disk positioned at `renderPositionNdc`.
     let private disk
             (revolverActive  : aval<bool>)
             (revolverBase    : aval<option<V2d>>)
@@ -156,22 +56,19 @@ module Revolver =
             Primitives.FullscreenQuad
         }
 
-    /// Builds the complete revolver scene graph:
-    ///   - blit quads (one per mesh, optional dim when active)
-    ///   - magnifier disks (one per mesh, stacked vertically by MeshOrder)
     let build
         (info : Aardvark.Dom.RenderControlInfo)
         (view : aval<Trafo3d>)
         (proj : aval<Trafo3d>)
-        (revolverBase    : aval<option<V2d>>)   // cursor pos when shift; pinned center when GUI toggle
-        (revolverActive  : aval<bool>)           // shift || RevolverOn
-        (fullscreenActive : aval<bool>)          // space || FullscreenOn
+        (revolverBase    : aval<option<V2d>>) 
+        (revolverActive  : aval<bool>)     
+        (fullscreenActive : aval<bool>) 
         (model : AdaptiveModel) =
-        let textures = buildMeshTextures info view proj model
+        let textures = MeshView.buildMeshTextures info view proj model
 
         let blitNodes =
             textures |> AMap.toASet |> ASet.map (fun (name, (color, depth)) ->
-                blitQuad model.MeshVisible fullscreenActive revolverActive name color depth
+                MeshView.blitQuad model.MeshVisible fullscreenActive revolverActive name color depth
             )
         let fullOverlayNodes =
             textures |> AMap.toASet |> ASet.map (fun (name, (colorTex, depthTex)) ->

@@ -32,17 +32,3 @@ module Interactions =
             with e ->
                 env.Emit [LogDebug (sprintf "triggerFilter ERROR: %s" (string e))]
         } |> ignore
-
-    let startHoverQuery (env : Env<Message>) (model : AdaptiveModel) =
-        async {
-            while true do
-                do! Async.Sleep(100)
-                let a =
-                    (model.CurrentHoverPosition |> AVal.force |> Option.defaultValue V3d.Zero)
-                    + (model.CommonCentroid |> AVal.force)
-                let! b = Query.sphereTriangles MeshView.apiBase.Value "Hess-201803" 0 a 1.0
-                env.Emit [
-                    //LogDebug (sprintf "hover query result: %A %A" a b)
-                    SetFilters (a, HashMap.ofList [("Hess-201803", b)])
-                ]
-        } |> Async.Start

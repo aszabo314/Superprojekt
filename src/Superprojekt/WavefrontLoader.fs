@@ -112,6 +112,21 @@ module MeshData =
             newIndices.[i] <- newIdx
         { mesh with positions = positions.ToArray(); uvs = uvs.ToArray(); indices = newIndices }
 
+    let fetchBboxes (serverUrl : string) : Async<(string * Box3d)[]> =
+        async {
+            use client = new System.Net.Http.HttpClient()
+            let! json = client.GetStringAsync(serverUrl.TrimEnd('/') + "/bboxes") |> Async.AwaitTask
+            let doc = System.Text.Json.JsonDocument.Parse(json)
+            return
+                doc.RootElement.EnumerateObject()
+                |> Seq.map (fun prop ->
+                    let mn = prop.Value.GetProperty("min").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                    let mx = prop.Value.GetProperty("max").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                    prop.Name, Box3d(V3d(mn.[0], mn.[1], mn.[2]), V3d(mx.[0], mx.[1], mx.[2]))
+                )
+                |> Seq.toArray
+        }
+
     let fetch (serverUrl : string) (name : string) (index : int) : Async<MeshData> =
         async {
             use client = new System.Net.Http.HttpClient()

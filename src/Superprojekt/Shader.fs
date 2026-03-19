@@ -79,3 +79,33 @@ module Shader =
             let vp = vp + V3d(0.1, 0.0, 0.0)
             return { vp = vp.XYZ }
         }
+
+    type UniformScope with
+        member x.ClipMin : V3d = x?ClipMin
+        member x.ClipMax : V3d = x?ClipMax
+
+    // Discards fragments outside [ClipMin, ClipMax] in render space.
+    // ClipMin/ClipMax are worldClipBox.Min/Max − commonCentroid (computed on CPU).
+    // v.wp is set by DefaultSurfaces.trafo as ModelTrafo * v.pos (render-space position).
+    let clip (v : Effects.Vertex) =
+        fragment {
+            let p = v.wp.XYZ
+            if p.X < uniform.ClipMin.X || p.X > uniform.ClipMax.X ||
+               p.Y < uniform.ClipMin.Y || p.Y > uniform.ClipMax.Y ||
+               p.Z < uniform.ClipMin.Z || p.Z > uniform.ClipMax.Z then discard()
+            let t = 1.0
+            let dxm = abs (uniform.ClipMin.X - p.X)
+            let dxM = abs (uniform.ClipMax.X - p.X)
+            let dym = abs (uniform.ClipMin.Y - p.Y)
+            let dyM = abs (uniform.ClipMax.Y - p.Y)
+            let dzm = abs (uniform.ClipMin.Z - p.Z)
+            let dzM = abs (uniform.ClipMax.Z - p.Z)
+            let d = min (min dxm dxM) (min (min dym dyM) (min dzm dzM))
+            let c = 
+                if d < t then
+                    lerp V4d.IIOI v.c (d / t)
+                else
+                    v.c
+            
+            return c
+        }

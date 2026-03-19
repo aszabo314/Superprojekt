@@ -19,6 +19,11 @@ module View =
                     env.Emit [CentroidsLoaded cs]
                 with e ->
                     Log.error "centroids fetch failed: %A" e
+                try
+                    let! bboxes = MeshData.fetchBboxes MeshView.apiBase.Value
+                    env.Emit [ClipBoundsLoaded bboxes]
+                with e ->
+                    Log.error "bboxes fetch failed: %A" e
             }
 
         let cursorPosition = cval None

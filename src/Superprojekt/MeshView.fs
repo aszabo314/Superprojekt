@@ -65,14 +65,19 @@ module MeshView =
             } |> ignore
             m
 
-    let renderMesh (loaded : LoadedMesh) (active : aval<bool>) (commonCentroid : aval<V3d>) =
+    let renderMesh (loaded : LoadedMesh) (active : aval<bool>) (commonCentroid : aval<V3d>) (clipBox : aval<Box3d>) =
+        let clipMin = AVal.map2 (fun (b : Box3d) cc -> b.Min - cc) clipBox commonCentroid
+        let clipMax = AVal.map2 (fun (b : Box3d) cc -> b.Max - cc) clipBox commonCentroid
         sg {
             Sg.Translate((commonCentroid, loaded.centroid) ||> AVal.map2 (fun common mesh -> mesh - common))
             Sg.Shader {
                 DefaultSurfaces.trafo
                 DefaultSurfaces.diffuseTexture
+                Shader.clip
             }
             Sg.Uniform("DiffuseColorTexture", loaded.tex)
+            Sg.Uniform("ClipMin", clipMin)
+            Sg.Uniform("ClipMax", clipMax)
             Sg.VertexAttributes(
                 HashMap.ofList [
                     string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
@@ -84,9 +89,9 @@ module MeshView =
             Sg.Render loaded.fvc
         }
 
-    let render (name : string) (active : aval<bool>) (commonCentroid : aval<V3d>) =
+    let render (name : string) (active : aval<bool>) (commonCentroid : aval<V3d>) (clipBox : aval<Box3d>) =
         let loaded = loadMeshAsync name
-        renderMesh loaded active commonCentroid
+        renderMesh loaded active commonCentroid clipBox
 
     let buildMeshTextures (info : Aardvark.Dom.RenderControlInfo) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
         let signature =
@@ -100,7 +105,7 @@ module MeshView =
                     Sg.View view
                     Sg.Proj proj
                     Sg.Uniform("ViewportSize", info.ViewportSize)
-                    render name (AVal.constant true) model.CommonCentroid
+                    render name (AVal.constant true) model.CommonCentroid model.ClipBox
                 }
             let objs  = mesh.GetRenderObjects(TraversalState.empty info.Runtime)
             let task  = info.Runtime.CompileRender(signature, objs)

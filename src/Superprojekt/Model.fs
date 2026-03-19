@@ -24,6 +24,9 @@ type Model =
         RevolverOn     : bool
         FullscreenOn   : bool
         RevolverCenter : V2d
+
+        ClipBox        : Box3d   // active clip range (render-space uniforms computed from this)
+        ClipBounds     : Box3d   // world-space union of all dataset bboxes; Box3d.Invalid until loaded
     }
 
 module Model =
@@ -41,4 +44,6 @@ module Model =
             RevolverOn     = false
             FullscreenOn   = false
             RevolverCenter = V2d.Zero
+            ClipBox        = Box3d(V3d(-1e10), V3d(1e10))
+            ClipBounds     = Box3d.Invalid
         }

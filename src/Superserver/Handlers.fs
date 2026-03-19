@@ -175,9 +175,35 @@ let boxHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
+// GET /api/bboxes
+// resp: { meshName: { min:[x,y,z], max:[x,y,z] } } — world-space AABBs, one entry per dataset
+let bboxesHandler : HttpHandler =
+    fun next ctx -> task {
+        let log    = ctx.GetLogger "Superserver"
+        let result = Collections.Generic.Dictionary<string, {| min: float[]; max: float[] |}>()
+        for dir in Directory.GetDirectories(MeshLoader.dataRoot.Value) |> Array.sort do
+            let name  = Path.GetFileName dir
+            let count = MeshLoader.meshCount name
+            if count > 0 then
+                let mutable wMin = V3d( infinity,  infinity,  infinity)
+                let mutable wMax = V3d(-infinity, -infinity, -infinity)
+                for i in 0 .. count - 1 do
+                    let pm = (MeshCache.get name i).parsed
+                    if not pm.bbox.IsInvalid then
+                        let bMin = pm.centroid + pm.bbox.Min
+                        let bMax = pm.centroid + pm.bbox.Max
+                        wMin <- V3d(min wMin.X bMin.X, min wMin.Y bMin.Y, min wMin.Z bMin.Z)
+                        wMax <- V3d(max wMax.X bMax.X, max wMax.Y bMax.Y, max wMax.Z bMax.Z)
+                if wMin.X <= wMax.X then
+                    result.[name] <- {| min = fromV3d wMin; max = fromV3d wMax |}
+        log.LogInformation("bboxes: {Count} meshes", result.Count)
+        return! json result next ctx
+    }
+
 let webApp : HttpHandler =
     choose [
         route "/api/centroids"              >=> centroidsHandler
+        route "/api/bboxes"                 >=> bboxesHandler
         routef "/api/mesh/%s/%i/atlas"      atlasHandler
         routef "/api/mesh/%s/%i"            meshHandler
         routef "/api/mesh/%s"               meshCountHandler

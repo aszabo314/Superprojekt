@@ -11,6 +11,7 @@ type ParsedMesh =
         positions : V3f[]   // centroid-relative
         uvs       : V2f[]
         indices   : int[]   // flat triangle list  (triangleCount × 3)
+        bbox      : Box3d   // AABB of positions (centroid-relative)
     }
 
 let private findDataRoot () =
@@ -102,10 +103,23 @@ let parseMesh (name : string) (index : int) : ParsedMesh =
                                 i
                         outIdx.Add idx
 
+    let posArr = outPos.ToArray()
+    let bbox =
+        if posArr.Length = 0 then Box3d.Invalid
+        else
+            let mutable bmin = V3d( infinity,  infinity,  infinity)
+            let mutable bmax = V3d(-infinity, -infinity, -infinity)
+            for p in posArr do
+                let v = V3d p
+                bmin <- V3d(min bmin.X v.X, min bmin.Y v.Y, min bmin.Z v.Z)
+                bmax <- V3d(max bmax.X v.X, max bmax.Y v.Y, max bmax.Z v.Z)
+            Box3d(bmin, bmax)
+
     { centroid  = centroid
-      positions = outPos.ToArray()
+      positions = posArr
       uvs       = outUv.ToArray()
-      indices   = outIdx.ToArray() }
+      indices   = outIdx.ToArray()
+      bbox      = bbox }
 
 let atlasPath (name : string) (index : int) =
     let folder = Path.Combine(dataRoot.Value, name)

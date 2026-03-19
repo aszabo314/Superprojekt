@@ -17,6 +17,9 @@ type Message =
     | ToggleRevolver
     | ToggleFullscreen
     | SetRevolverCenter  of V2d
+    | ClipBoundsLoaded   of (string * Box3d)[]
+    | SetClipBox         of Box3d
+    | ResetClip
 
 
 module Update =
@@ -52,3 +55,17 @@ module Update =
             { model with FullscreenOn = not model.FullscreenOn }
         | SetRevolverCenter ndc ->
             { model with RevolverCenter = ndc }
+        | ClipBoundsLoaded bboxes ->
+            if bboxes.Length = 0 then model
+            else
+                let union =
+                    bboxes |> Array.fold (fun (acc : Box3d) (_, b) ->
+                        Box3d(
+                            V3d(min acc.Min.X b.Min.X, min acc.Min.Y b.Min.Y, min acc.Min.Z b.Min.Z),
+                            V3d(max acc.Max.X b.Max.X, max acc.Max.Y b.Max.Y, max acc.Max.Z b.Max.Z)
+                        )) Box3d.Invalid
+                { model with ClipBounds = union; ClipBox = union }
+        | SetClipBox box ->
+            { model with ClipBox = box }
+        | ResetClip ->
+            { model with ClipBox = model.ClipBounds }

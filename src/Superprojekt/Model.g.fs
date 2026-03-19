@@ -1,5 +1,5 @@
-//035acf87-0742-1017-2d7d-ccfb9a764ad7
-//4c6af6ba-9132-b70f-f803-5f1239d6612d
+//68d97f0a-dad7-fb6f-de26-fbc0990ef3a9
+//cf4d9d1b-7e3d-f2a2-5bc6-c0192b5e37a9
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -24,6 +24,8 @@ type AdaptiveModel(value : Model) =
     let _RevolverOn_ = FSharp.Data.Adaptive.cval(value.RevolverOn)
     let _FullscreenOn_ = FSharp.Data.Adaptive.cval(value.FullscreenOn)
     let _RevolverCenter_ = FSharp.Data.Adaptive.cval(value.RevolverCenter)
+    let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
+    let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -44,6 +46,8 @@ type AdaptiveModel(value : Model) =
             _RevolverOn_.Value <- value.RevolverOn
             _FullscreenOn_.Value <- value.FullscreenOn
             _RevolverCenter_.Value <- value.RevolverCenter
+            _ClipBox_.Value <- value.ClipBox
+            _ClipBounds_.Value <- value.ClipBounds
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -57,4 +61,6 @@ type AdaptiveModel(value : Model) =
     member __.RevolverOn = _RevolverOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.FullscreenOn = _FullscreenOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.RevolverCenter = _RevolverCenter_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V2d>
+    member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
+    member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
 

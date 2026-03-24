@@ -66,11 +66,13 @@ module BlitShader =
         }
 
     type UniformScope with
-        member x.RevolverVisible : bool = x?RevolverVisible
-        member x.TextureOffset   : V2d  = x?TextureOffset
-        member x.TextureScale    : V2d  = x?TextureScale
-
-        member x.TextureCount : int = x?TextureCount
+        member x.RevolverVisible      : bool  = x?RevolverVisible
+        member x.TextureOffset        : V2d   = x?TextureOffset
+        member x.TextureScale         : V2d   = x?TextureScale
+        member x.TextureCount         : int   = x?TextureCount
+        member x.DifferenceRendering  : bool  = x?DifferenceRendering
+        member x.MinDifferenceDepth   : float = x?MinDifferenceDepth
+        member x.MaxDifferenceDepth   : float = x?MaxDifferenceDepth
     
     let colorSam =
         sampler2d {
@@ -138,8 +140,8 @@ module BlitShader =
             let b = b.XYZ / b.W
             
             let dist = Vec.length (a - b)
-            if dist > 3.0 then
-                let h = (dist - 3.0) / 10.0 |> float32 |> Heat.heat |> V4d
+            if uniform.DifferenceRendering && dist > uniform.MinDifferenceDepth then
+                let h = (dist - uniform.MinDifferenceDepth) / uniform.MaxDifferenceDepth |> float32 |> Heat.heat |> V4d
                 color <- h * color
             return { c = color; d = d }
         }   

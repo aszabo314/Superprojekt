@@ -133,9 +133,26 @@ module Gui =
                                 )
                                 Dom.OnClick(fun _ -> env.Emit [ToggleDifferenceRendering])
                             }
-                            " Show pixel-wise difference between meshes"
+                            " Show mesh difference"
                         }
                     }
+                    let numInput (label : string) (current : aval<float>) (msg : float -> Message) =
+                        div {
+                            label + "  "
+                            input {
+                                Attribute("type", "number")
+                                Attribute("step", "any")
+                                Style [Width "80px"]
+                                current |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.4g" v)))
+                                Dom.OnInput(fun e ->
+                                    match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+                                    | true, v -> env.Emit [msg v]
+                                    | _ -> ()
+                                )
+                            }
+                        }
+                    numInput "Min depth" model.MinDifferenceDepth SetMinDifferenceDepth
+                    numInput "Max depth" model.MaxDifferenceDepth SetMaxDifferenceDepth
 
                     h3 { "Mesh order" }
                     p { "Determines stacking order of revolver and fullscreen tiles." }

@@ -18,6 +18,8 @@ type Message =
     | ToggleFullscreen
     | SetRevolverCenter         of V2d
     | ToggleDifferenceRendering
+    | SetMinDifferenceDepth of float
+    | SetMaxDifferenceDepth of float
     | ClipBoundsLoaded   of (string * Box3d)[]
     | SetClipBox         of Box3d
     | ResetClip
@@ -58,6 +60,10 @@ module Update =
             { model with RevolverCenter = ndc }
         | ToggleDifferenceRendering ->
             { model with DifferenceRendering = not model.DifferenceRendering }
+        | SetMinDifferenceDepth v ->
+            { model with MinDifferenceDepth = v }
+        | SetMaxDifferenceDepth v ->
+            { model with MaxDifferenceDepth = v }
         | ClipBoundsLoaded bboxes ->
             if bboxes.Length = 0 then model
             else

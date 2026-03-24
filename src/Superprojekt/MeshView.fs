@@ -189,13 +189,19 @@ module MeshView =
     let composeMeshTextures
         (count : aval<int>)
         (colors : aval<IBackendTexture>)
-        (depths : aval<IBackendTexture>) =
-        let colorTex  = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
-        let depthTex  = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
+        (depths : aval<IBackendTexture>)
+        (differenceRendering : aval<bool>)
+        (minDifferenceDepth  : aval<float>)
+        (maxDifferenceDepth  : aval<float>) =
+        let colorTex = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
+        let depthTex = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
         sg {
             Sg.Shader { BlitShader.readArray }
-            Sg.Uniform("TextureCount", count)
-            Sg.Uniform("ColorTexture",    colorTex)
-            Sg.Uniform("DepthTexture",    depthTex)
+            Sg.Uniform("TextureCount",          count)
+            Sg.Uniform("ColorTexture",          colorTex)
+            Sg.Uniform("DepthTexture",          depthTex)
+            Sg.Uniform("DifferenceRendering",   differenceRendering)
+            Sg.Uniform("MinDifferenceDepth",    minDifferenceDepth)
+            Sg.Uniform("MaxDifferenceDepth",    maxDifferenceDepth)
             Primitives.FullscreenQuad
         }

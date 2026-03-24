@@ -1,5 +1,5 @@
-//3aaca9f2-9fe4-940f-f7ae-3a03104b8e3e
-//7a8d5173-a01d-6197-6ce4-65216695087d
+//05d29d67-8a92-20a6-1c3f-e6f82feed215
+//fd3ac45e-6742-63fe-7cf2-aa863c7e3285
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -25,6 +25,8 @@ type AdaptiveModel(value : Model) =
     let _FullscreenOn_ = FSharp.Data.Adaptive.cval(value.FullscreenOn)
     let _RevolverCenter_ = FSharp.Data.Adaptive.cval(value.RevolverCenter)
     let _DifferenceRendering_ = FSharp.Data.Adaptive.cval(value.DifferenceRendering)
+    let _MinDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MinDifferenceDepth)
+    let _MaxDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MaxDifferenceDepth)
     let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
     let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
     let mutable __value = value
@@ -48,6 +50,8 @@ type AdaptiveModel(value : Model) =
             _FullscreenOn_.Value <- value.FullscreenOn
             _RevolverCenter_.Value <- value.RevolverCenter
             _DifferenceRendering_.Value <- value.DifferenceRendering
+            _MinDifferenceDepth_.Value <- value.MinDifferenceDepth
+            _MaxDifferenceDepth_.Value <- value.MaxDifferenceDepth
             _ClipBox_.Value <- value.ClipBox
             _ClipBounds_.Value <- value.ClipBounds
     member __.Current = __adaptive
@@ -64,6 +68,8 @@ type AdaptiveModel(value : Model) =
     member __.FullscreenOn = _FullscreenOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.RevolverCenter = _RevolverCenter_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V2d>
     member __.DifferenceRendering = _DifferenceRendering_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.MinDifferenceDepth = _MinDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.MaxDifferenceDepth = _MaxDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
 

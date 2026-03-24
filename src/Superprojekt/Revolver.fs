@@ -66,7 +66,7 @@ module Revolver =
         (model : AdaptiveModel) =
         let cnt, colors, depths = MeshView.buildMeshTextures info view proj model
 
-        MeshView.composeMeshTextures cnt colors depths
+        MeshView.composeMeshTextures cnt colors depths model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth
         
         // let blitNodes =
         //     textures |> AMap.toASet |> ASet.map (fun (name, (color, depth)) ->

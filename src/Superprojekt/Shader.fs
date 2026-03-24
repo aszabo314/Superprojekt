@@ -73,6 +73,7 @@ module BlitShader =
         member x.DifferenceRendering  : bool  = x?DifferenceRendering
         member x.MinDifferenceDepth   : float = x?MinDifferenceDepth
         member x.MaxDifferenceDepth   : float = x?MaxDifferenceDepth
+        member x.SliceIndex           : int   = x?SliceIndex
     
     let colorSam =
         sampler2d {
@@ -146,6 +147,22 @@ module BlitShader =
             return { c = color; d = d }
         }   
         
+    // Single array slice with depth — for fullscreen tiles.
+    let readArraySlice (v : Effects.Vertex) =
+        fragment {
+            let i = uniform.SliceIndex
+            return { c = colon.SampleLevel(v.tc, i, 0.0)
+                     d = deputy.SampleLevel(v.tc, i, 0.0).X }
+        }
+
+    // Circular magnifier on array slice — for revolver disks.
+    let readArraySliceColor (v : Effects.Vertex) =
+        fragment {
+            let ndc = 2.0 * v.tc - V2d.II
+            if Vec.lengthSquared ndc > 1.0 then discard()
+            return colon.SampleLevel(uniform.TextureOffset + uniform.TextureScale * v.tc, uniform.SliceIndex, 0.0)
+        }
+
     let readColorTex (v : Effects.Vertex) =
         fragment {
             let c = colorSam.SampleLevel(v.tc, 0.0)

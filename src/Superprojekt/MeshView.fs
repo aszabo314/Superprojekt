@@ -139,7 +139,8 @@ module MeshView =
                             Sg.View view
                             Sg.Proj proj
                             Sg.Uniform("ViewportSize", info.ViewportSize)
-                            render name order (AVal.constant true) model.CommonCentroid model.ClipBox
+                            let isVis = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+                    render name order isVis model.CommonCentroid model.ClipBox
                         }
                     let objs  = mesh.GetRenderObjects(TraversalState.empty info.Runtime)
                     let task  = info.Runtime.CompileRender(signature, objs)
@@ -164,7 +165,7 @@ module MeshView =
             )
         let colorTex = AdaptiveResource.map fst output
         let depthTex = AdaptiveResource.map snd output
-        model.MeshNames |> AList.count, colorTex, depthTex
+        model.MeshNames |> AList.count, colorTex, depthTex, meshIndices
 
     let blitQuad
         (meshVisible : aval<Map<string, bool>>)

@@ -6,6 +6,59 @@ open Aardvark.Rendering
 module BlitShader =
     open FShade
 
+    module Heat = 
+        let heatMapColors =
+            let fromInt (i : int) =
+                C4b(
+                    byte ((i >>> 16) &&& 0xFF),
+                    byte ((i >>> 8) &&& 0xFF),
+                    byte (i &&& 0xFF),
+                    255uy
+                ).ToC4f().ToV4f()   
+            Array.map fromInt [|
+                0x1639fa
+                0x2050fa
+                0x3275fb
+                0x459afa
+                0x55bdfb
+                0x67e1fc
+                0x72f9f4
+                0x72f8d3
+                0x72f7ad
+                0x71f787
+                0x71f55f
+                0x70f538
+                0x74f530
+                0x86f631
+                0x9ff633
+                0xbbf735
+                0xd9f938
+                0xf7fa3b
+                0xfae238
+                0xf4be31
+                0xf29c2d
+                0xee7627
+                0xec5223
+                0xeb3b22
+            |]
+
+        [<ReflectedDefinition>]
+        let heat (tc : float32) =
+            let tc = clamp 0.0f 1.0f tc
+            let fid = tc * float32 24 - 0.5f
+            let id = int (floor fid)
+            if id < 0 then 
+                heatMapColors.[0]
+            elif id >= 24 - 1 then
+                heatMapColors.[24 - 1]
+            else
+                let c0 = heatMapColors.[id]
+                let c1 = heatMapColors.[id + 1]
+                let t = fid - float32 id
+                //if t>0.5f then c1 else c0
+                (c0 * (1.0f - t) + c1 * t)
+
+    
     type Fragment =
         {
             [<Color>] c : V4d
@@ -17,6 +70,8 @@ module BlitShader =
         member x.TextureOffset   : V2d  = x?TextureOffset
         member x.TextureScale    : V2d  = x?TextureScale
 
+        member x.TextureCount : int = x?TextureCount
+    
     let colorSam =
         sampler2d {
             texture uniform?ColorTexture
@@ -40,6 +95,55 @@ module BlitShader =
                 else original
             return { c = c; d = depthSam.SampleLevel(v.tc, 0.0).X }
         }
+        
+    let colon =
+        sampler2dArray {
+            texture uniform?ColorTexture
+            filter Filter.MinMagPoint
+            addressU WrapMode.Wrap
+            addressV WrapMode.Wrap
+        }
+    let deputy =
+        sampler2dArray {
+            texture uniform?DepthTexture
+            filter Filter.MinMagPoint
+            addressU WrapMode.Wrap
+            addressV WrapMode.Wrap
+        }
+    let readArray (v : Effects.Vertex) =
+        fragment {
+            
+            let mutable minDepth = 10.0
+            let mutable maxDepth = -10.0
+            
+            let mutable d = 10.0
+            let mutable color = V4d.IOOI
+            for i in 0 .. uniform.TextureCount - 1 do
+                let di = deputy.SampleLevel(v.tc, i, 0.0).X
+                let c = colon.SampleLevel(v.tc, i, 0.0)
+                
+                if di < 1.0 && c.W >= 0.01 then
+                    minDepth <- min di minDepth
+                    maxDepth <- max di maxDepth
+                    
+                if di < d then
+                    d <- di
+                    color <- c
+                    
+            let ndc = v.pos.XY / v.pos.W
+            let a = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * minDepth - 1.0, 1.0)
+            let b = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * maxDepth - 1.0, 1.0)
+                    
+            let a = a.XYZ / a.W
+            let b = b.XYZ / b.W
+            
+            let dist = Vec.length (a - b)
+            if dist > 3.0 then
+                let h = (dist - 3.0) / 10.0 |> float32 |> Heat.heat |> V4d
+                color <- h * color
+            return { c = color; d = d }
+        }   
+        
     let readColorTex (v : Effects.Vertex) =
         fragment {
             let c = colorSam.SampleLevel(v.tc, 0.0)

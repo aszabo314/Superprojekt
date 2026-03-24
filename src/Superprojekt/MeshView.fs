@@ -101,23 +101,78 @@ module MeshView =
                 DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
             ]
         
-        model.MeshNames |> AList.toASet |> ASet.mapToAMap (fun name ->
-            let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-            let mesh =
-                sg {
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.Uniform("ViewportSize", info.ViewportSize)
-                    render name order (AVal.constant true) model.CommonCentroid model.ClipBox
-                }
-            let objs  = mesh.GetRenderObjects(TraversalState.empty info.Runtime)
-            let task  = info.Runtime.CompileRender(signature, objs)
-            let color, depth =
-                task |> RenderTask.renderToColorAndDepthWithClear info.ViewportSize (clear { color C4f.Zero; depth 1.0 })
-            color, depth
-        )
+        let meshIndices =
+            model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
+                names |> Seq.mapi (fun i a -> a, i) |> Map.ofSeq    
+            )
+        let texCount = model.MeshNames |> AList.count |> AVal.map (max 1)
+        let colorTex =
+            info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Rgba8, 1, 1, texCount)
+        
+        let depthTex =
+            info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Depth24Stencil8, 1, 1, texCount)
+        
+        
+        
+        
+        let fbos =
+            (colorTex, depthTex) ||> AdaptiveResource.bind2 (fun color depth ->
+                texCount |> AVal.map (fun cnt ->
+                    Array.init cnt (fun i ->
+                        info.Runtime.CreateFramebuffer(
+                            signature, [
+                                DefaultSemantic.Colors, color.[TextureAspect.Color, 0, i] :> IFramebufferOutput
+                                DefaultSemantic.DepthStencil, depth.[TextureAspect.DepthStencil, 0, i] :> IFramebufferOutput
+                            ]
+                        )    
+                    )
+                )
+  
+            )
+        
+        let tasks =
+            meshIndices |> AList.bind (fun meshIndices ->
+                model.MeshNames |> AList.map (fun name ->
+                    let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                    let mesh =
+                        sg {
+                            Sg.View view
+                            Sg.Proj proj
+                            Sg.Uniform("ViewportSize", info.ViewportSize)
+                            render name order (AVal.constant true) model.CommonCentroid model.ClipBox
+                        }
+                    let objs  = mesh.GetRenderObjects(TraversalState.empty info.Runtime)
+                    let task  = info.Runtime.CompileRender(signature, objs)
+                    meshIndices.[name], task
+                )
+            )
+            
+        let clear =
+            info.Runtime.CompileClear(signature, clear { color C4f.Zero; depth 1.0; stencil 0 })
+            
+        let output = 
+            (colorTex, depthTex, fbos) |||> AdaptiveResource.bind3 (fun color depth fbos ->
+                AList.toAVal tasks |> AVal.bind (fun tasks ->
+                    AVal.custom (fun t ->
+                        for (i, task) in tasks do
+                            clear.Run(t, RenderToken.Empty, fbos.[i])
+                            task.Run(t, RenderToken.Empty, fbos.[i])
+                    
+                        color, depth
+                    )
+                )
+            )
+        let colorTex = AdaptiveResource.map fst output
+        let depthTex = AdaptiveResource.map snd output
+        model.MeshNames |> AList.count, colorTex, depthTex
 
-    let blitQuad (meshVisible : aval<Map<string, bool>>) (fullscreenActive : aval<bool>) (revolverActive : aval<bool>) name (color : IAdaptiveResource<IBackendTexture>) (depth : IAdaptiveResource<IBackendTexture>) =
+    let blitQuad
+        (meshVisible : aval<Map<string, bool>>)
+        (fullscreenActive : aval<bool>)
+        (revolverActive : aval<bool>)
+        name
+        (color : IAdaptiveResource<IBackendTexture>)
+        (depth : IAdaptiveResource<IBackendTexture>) =
         let active    = meshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
         let colorTex  = color |> AdaptiveResource.map (fun t -> t :> ITexture)
         let depthTex  = depth |> AdaptiveResource.map (fun t -> t :> ITexture)
@@ -126,6 +181,20 @@ module MeshView =
             Sg.Active superActive
             Sg.Shader { BlitShader.read }
             Sg.Uniform("RevolverVisible", revolverActive)
+            Sg.Uniform("ColorTexture",    colorTex)
+            Sg.Uniform("DepthTexture",    depthTex)
+            Primitives.FullscreenQuad
+        }
+
+    let composeMeshTextures
+        (count : aval<int>)
+        (colors : aval<IBackendTexture>)
+        (depths : aval<IBackendTexture>) =
+        let colorTex  = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
+        let depthTex  = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
+        sg {
+            Sg.Shader { BlitShader.readArray }
+            Sg.Uniform("TextureCount", count)
             Sg.Uniform("ColorTexture",    colorTex)
             Sg.Uniform("DepthTexture",    depthTex)
             Primitives.FullscreenQuad

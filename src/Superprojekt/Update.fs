@@ -16,7 +16,8 @@ type Message =
     | CycleMeshOrder     of int
     | ToggleRevolver
     | ToggleFullscreen
-    | SetRevolverCenter  of V2d
+    | SetRevolverCenter         of V2d
+    | ToggleDifferenceRendering
     | ClipBoundsLoaded   of (string * Box3d)[]
     | SetClipBox         of Box3d
     | ResetClip
@@ -55,6 +56,8 @@ module Update =
             { model with FullscreenOn = not model.FullscreenOn }
         | SetRevolverCenter ndc ->
             { model with RevolverCenter = ndc }
+        | ToggleDifferenceRendering ->
+            { model with DifferenceRendering = not model.DifferenceRendering }
         | ClipBoundsLoaded bboxes ->
             if bboxes.Length = 0 then model
             else

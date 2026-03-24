@@ -123,6 +123,20 @@ module Gui =
                         )
                     }
 
+                    h3 { "Difference rendering" }
+                    div {
+                        label {
+                            input {
+                                Attribute("type", "checkbox")
+                                model.DifferenceRendering |> AVal.map (fun on ->
+                                    if on then Some (Attribute("checked", "checked")) else None
+                                )
+                                Dom.OnClick(fun _ -> env.Emit [ToggleDifferenceRendering])
+                            }
+                            " Show pixel-wise difference between meshes"
+                        }
+                    }
+
                     h3 { "Mesh order" }
                     p { "Determines stacking order of revolver and fullscreen tiles." }
                     div {

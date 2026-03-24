@@ -18,6 +18,7 @@ type Message =
     | ToggleFullscreen
     | SetRevolverCenter         of V2d
     | ToggleDifferenceRendering
+    | ToggleGhostSilhouette
     | SetMinDifferenceDepth of float
     | SetMaxDifferenceDepth of float
     | ClipBoundsLoaded   of (string * Box3d)[]
@@ -60,6 +61,8 @@ module Update =
             { model with RevolverCenter = ndc }
         | ToggleDifferenceRendering ->
             { model with DifferenceRendering = not model.DifferenceRendering }
+        | ToggleGhostSilhouette ->
+            { model with GhostSilhouette = not model.GhostSilhouette }
         | SetMinDifferenceDepth v ->
             { model with MinDifferenceDepth = v }
         | SetMaxDifferenceDepth v ->

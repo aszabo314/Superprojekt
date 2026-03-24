@@ -125,7 +125,7 @@ module BlitShader =
                 let di = deputy.SampleLevel(v.tc, i, 0.0).X
                 let c = colon.SampleLevel(v.tc, i, 0.0)
                 
-                if di < 1.0 && c.W >= 0.01 then
+                if di < 1.0 && c.W >= 0.5 then
                     minDepth <- min di minDepth
                     maxDepth <- max di maxDepth
                     
@@ -206,7 +206,14 @@ module Shader =
     type UniformScope with
         member x.ClipMin : V3d = x?ClipMin
         member x.ClipMax : V3d = x?ClipMax
-        member x.Order : int = x?Order
+        member x.Order   : int = x?Order
+
+    // Desaturate and reduce alpha — used as the ghost pre-pass shader.
+    let ghost (v : Effects.Vertex) =
+        fragment {
+            let lum = 0.299 * v.c.X + 0.587 * v.c.Y + 0.114 * v.c.Z
+            return V4d(lum, lum, lum, 0.2)
+        }
 
     [<ReflectedDefinition>]
     let orderColor (o : int) =

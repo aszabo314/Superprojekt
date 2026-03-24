@@ -1,5 +1,5 @@
-//05d29d67-8a92-20a6-1c3f-e6f82feed215
-//fd3ac45e-6742-63fe-7cf2-aa863c7e3285
+//6a7a8a50-0222-070f-2e43-ff0de5c5453b
+//30dc3a6d-35e7-e65f-45cd-0ac07c153100
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -27,6 +27,7 @@ type AdaptiveModel(value : Model) =
     let _DifferenceRendering_ = FSharp.Data.Adaptive.cval(value.DifferenceRendering)
     let _MinDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MinDifferenceDepth)
     let _MaxDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MaxDifferenceDepth)
+    let _GhostSilhouette_ = FSharp.Data.Adaptive.cval(value.GhostSilhouette)
     let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
     let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
     let mutable __value = value
@@ -52,6 +53,7 @@ type AdaptiveModel(value : Model) =
             _DifferenceRendering_.Value <- value.DifferenceRendering
             _MinDifferenceDepth_.Value <- value.MinDifferenceDepth
             _MaxDifferenceDepth_.Value <- value.MaxDifferenceDepth
+            _GhostSilhouette_.Value <- value.GhostSilhouette
             _ClipBox_.Value <- value.ClipBox
             _ClipBounds_.Value <- value.ClipBounds
     member __.Current = __adaptive
@@ -70,6 +72,7 @@ type AdaptiveModel(value : Model) =
     member __.DifferenceRendering = _DifferenceRendering_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MinDifferenceDepth = _MinDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.MaxDifferenceDepth = _MaxDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.GhostSilhouette = _GhostSilhouette_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
 

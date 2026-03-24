@@ -65,6 +65,27 @@ module MeshView =
             } |> ignore
             m
 
+    let renderMeshGhost (loaded : LoadedMesh) (commonCentroid : aval<V3d>) =
+        sg {
+            Sg.Translate((commonCentroid, loaded.centroid) ||> AVal.map2 (fun common mesh -> mesh - common))
+            Sg.Shader {
+                DefaultSurfaces.trafo
+                DefaultSurfaces.diffuseTexture
+                Shader.ghost
+            }
+            Sg.Uniform("DiffuseColorTexture", loaded.tex)
+            Sg.VertexAttributes(
+                HashMap.ofList [
+                    string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
+                    string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
+                ]
+            )
+            Sg.BlendMode BlendMode.Blend
+            Sg.Active(loaded.fvc |> AVal.map (fun c -> c > 3))
+            Sg.Index(BufferView(loaded.idx, typeof<int>))
+            Sg.Render loaded.fvc
+        }
+
     let renderMesh (loaded : LoadedMesh) (order : aval<int>)  (active : aval<bool>) (commonCentroid : aval<V3d>) (clipBox : aval<Box3d>) =
         let clipMin = AVal.map2 (fun (b : Box3d) cc -> b.Min - cc) clipBox commonCentroid
         let clipMax = AVal.map2 (fun (b : Box3d) cc -> b.Max - cc) clipBox commonCentroid
@@ -133,32 +154,41 @@ module MeshView =
         let tasks =
             meshIndices |> AList.bind (fun meshIndices ->
                 model.MeshNames |> AList.map (fun name ->
-                    let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-                    let mesh =
+                    let order  = model.MeshOrder   |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                    let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+                    let loaded = loadMeshAsync name
+                    let ghostSg =
                         sg {
                             Sg.View view
                             Sg.Proj proj
                             Sg.Uniform("ViewportSize", info.ViewportSize)
-                            let isVis = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-                    render name order isVis model.CommonCentroid model.ClipBox
+                            Sg.Active model.GhostSilhouette
+                            renderMeshGhost loaded model.CommonCentroid
                         }
-                    let objs  = mesh.GetRenderObjects(TraversalState.empty info.Runtime)
-                    let task  = info.Runtime.CompileRender(signature, objs)
-                    meshIndices.[name], task
+                    let mainSg =
+                        sg {
+                            Sg.View view
+                            Sg.Proj proj
+                            Sg.Uniform("ViewportSize", info.ViewportSize)
+                            renderMesh loaded order isVis model.CommonCentroid model.ClipBox
+                        }
+                    let ghostTask = info.Runtime.CompileRender(signature, ghostSg.GetRenderObjects(TraversalState.empty info.Runtime))
+                    let mainTask  = info.Runtime.CompileRender(signature, mainSg.GetRenderObjects(TraversalState.empty info.Runtime))
+                    meshIndices.[name], ghostTask, mainTask
                 )
             )
-            
+
         let clear =
             info.Runtime.CompileClear(signature, clear { color C4f.Zero; depth 1.0; stencil 0 })
-            
-        let output = 
+
+        let output =
             (colorTex, depthTex, fbos) |||> AdaptiveResource.bind3 (fun color depth fbos ->
                 AList.toAVal tasks |> AVal.bind (fun tasks ->
                     AVal.custom (fun t ->
-                        for (i, task) in tasks do
+                        for (i, ghostTask, mainTask) in tasks do
                             clear.Run(t, RenderToken.Empty, fbos.[i])
-                            task.Run(t, RenderToken.Empty, fbos.[i])
-                    
+                            ghostTask.Run(t, RenderToken.Empty, fbos.[i])
+                            mainTask.Run(t, RenderToken.Empty, fbos.[i])
                         color, depth
                     )
                 )

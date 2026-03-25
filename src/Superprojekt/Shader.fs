@@ -175,14 +175,15 @@ module BlitShader =
                             color <- c
                             index <- i
                             
-            for i in 0 .. uniform.MeshCount - 1 do
-                let di = deputy.SampleLevel(v.tc, 2*i+1, 0.0).X
-                let mutable c = colon.SampleLevel(v.tc, 2*i+1, 0.0)
-                if di < minDepth then
-                    if index >= 0 then
-                        c <- V4d(c.XYZ, c.W * 1.0)
-                    color.XYZ <- color.XYZ * (1.0 - c.W) + c.XYZ * c.W
-                    color.W <- color.W * (1.0 - c.W) + c.W
+            if uniform.GhostSilhouette then
+                for i in 0 .. uniform.MeshCount - 1 do
+                    let di = deputy.SampleLevel(v.tc, 2*i+1, 0.0).X
+                    let mutable c = colon.SampleLevel(v.tc, 2*i+1, 0.0)
+                    if di < minDepth then
+                        if index >= 0 then
+                            c <- V4d(c.XYZ, c.W * 1.0)
+                        color.XYZ <- color.XYZ * (1.0 - c.W) + c.XYZ * c.W
+                        color.W <- color.W * (1.0 - c.W) + c.W
                     // let new_alpha  = color.W * (1.0 - c.W) + c.W
                     // color.XYZ  <- (c.XYZ * c.W + color.XYZ * color.W * (1.0 - c.W)) / new_alpha
                     // color.W    <- new_alpha

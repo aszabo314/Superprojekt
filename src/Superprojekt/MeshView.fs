@@ -31,7 +31,7 @@ module MeshView =
 
     let private meshes = System.Collections.Generic.Dictionary<string, LoadedMesh>()
 
-    let loadMeshAsync (name : string) : LoadedMesh =
+    let loadMeshAsync (finished : unit -> unit) (name : string) : LoadedMesh =
         match meshes.TryGetValue(name) with
         | true, m -> m
         | _ ->
@@ -60,6 +60,8 @@ module MeshView =
                     )
                     let! img = JSImage.load mesh.atlasUrl
                     transact (fun () -> (m.tex :?> cval<ITexture>).Value <- JSTexture(img, true))
+                    
+                    finished()
                 with e ->
                     Log.error "failed to load mesh %s: %A" name e
             } |> ignore

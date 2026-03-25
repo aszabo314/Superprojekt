@@ -1,6 +1,7 @@
 namespace Superprojekt
 
 open Aardvark.Base
+open Aardworx.WebAssembly
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Superprojekt
@@ -8,6 +9,7 @@ open Superprojekt
 type Message =
     | CameraMessage      of OrbitMessage
     | CentroidsLoaded    of (string * V3d)[]
+    | LoadFinished       of string
     | SetVisible         of string * bool
     | ToggleMenu
     | FilteredMeshLoaded of string * V3d * int[]    // (mesh name, selection point, index buffer)
@@ -43,6 +45,19 @@ module Update =
             { model with MenuOpen = not model.MenuOpen }
         | FilteredMeshLoaded(name, selPt, indices) ->
             { model with Filtered = HashMap.add name indices model.Filtered; FilterCenter = Some selPt }
+        | LoadFinished name ->
+            let model = { model with MeshesLoaded = HashSet.add name model.MeshesLoaded }
+            
+            
+            let missing = HashSet.difference (HashSet.ofSeq model.MeshNames) model.MeshesLoaded
+            if missing.Count = 0 then
+                let d = Window.Document.CreateElement("div")
+                d.Id <- "loading-done"
+                d.Style.Visibility <- "hidden"
+                d.Style.Position <- "fixed"
+                d.Style.PointerEvents <- "none"
+                Window.Document.Body.AppendChild(d) |> ignore
+            model
         | ClearFilteredMesh ->
             { model with Filtered = HashMap.empty; FilterCenter = None }
         | LogDebug s ->

@@ -67,7 +67,13 @@ module View =
 
                 OrbitController.getAttributes (Env.map CameraMessage env)
 
+                
+                
+                let mutable initial = true
                 RenderControl.OnRendered(fun _ ->
+                    if initial then
+                        
+                        initial <- false
                     env.Emit [CameraMessage OrbitMessage.Rendered]
                 )
 
@@ -135,8 +141,9 @@ module View =
                         let ndc = V2d(2.0 * tc.X - 1.0, 1.0 - 2.0 * tc.Y)
                         env.Emit [SetRevolverCenter ndc]
                 )
+                
 
-                Revolver.build info view proj revolverBase revolverActive fullscreenActive model
+                Revolver.build env info view proj revolverBase revolverActive fullscreenActive model
             }
 
             Dom.OnKeyDown(fun e ->

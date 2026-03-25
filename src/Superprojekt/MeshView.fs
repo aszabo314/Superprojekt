@@ -130,7 +130,7 @@ module MeshView =
             Sg.Render loaded.fvc
         }
 
-    let buildMeshTextures (info : RenderControlInfo) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
+    let buildMeshTextures (info : RenderControlInfo) (loadFinished : string -> unit) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
         
         
         let signature =
@@ -169,7 +169,7 @@ module MeshView =
             let filter = (model.ClipBox, model.CommonCentroid) ||> AVal.map2 (-) 
             meshIndices |> AList.bind (fun meshIndices ->
                 model.MeshNames |> AList.collect (fun name ->
-                    let loaded = loadMeshAsync name
+                    let loaded = loadMeshAsync (fun () -> loadFinished name) name
                     let meshIndex = meshIndices.[name]
                     let textureIndexSolid = 2*meshIndex
                     let textureIndexGhost = textureIndexSolid+1

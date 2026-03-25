@@ -60,7 +60,7 @@ module Revolver =
         let loadFinished (name : string) =
             env.Emit [ LoadFinished name ]
         
-        let cnt, colors, depths, meshIndices = MeshView.buildMeshTextures loadFinished info view proj model
+        let cnt, colors, depths, meshIndices = MeshView.buildMeshTextures info loadFinished view proj model
         let colorArrTex = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
         let depthArrTex = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
 

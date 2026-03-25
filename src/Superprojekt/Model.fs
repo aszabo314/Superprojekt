@@ -4,7 +4,7 @@ open FSharp.Data.Adaptive
 open Aardvark.Base
 open Adaptify
 open Aardvark.Dom
-
+open FSharp.Data.Adaptive
 
 [<ModelType>]
 type Model =
@@ -13,6 +13,7 @@ type Model =
         MeshOrder      : HashMap<string,int>
         MeshNames      : IndexList<string>
         MeshVisible    : Map<string, bool>
+        MeshesLoaded   : HashSet<string>
         CommonCentroid : V3d
         MenuOpen       : bool
 
@@ -38,6 +39,7 @@ module Model =
             Camera         = OrbitState.create V3d.Zero 1.0 0.3 3.0 Button.Left Button.Middle
             MeshOrder      = HashMap.empty
             MeshNames      = IndexList.empty
+            MeshesLoaded   = HashSet.empty
             MeshVisible    = Map.empty
             CommonCentroid = V3d.Zero
             MenuOpen       = false

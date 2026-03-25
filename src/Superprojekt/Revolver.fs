@@ -48,6 +48,7 @@ module Revolver =
         }
 
     let build
+        (env : Env<Message>)
         (info : Aardvark.Dom.RenderControlInfo)
         (view : aval<Trafo3d>)
         (proj : aval<Trafo3d>)
@@ -55,7 +56,11 @@ module Revolver =
         (revolverActive   : aval<bool>)
         (fullscreenActive : aval<bool>)
         (model : AdaptiveModel) =
-        let cnt, colors, depths, meshIndices = MeshView.buildMeshTextures info view proj model
+        
+        let loadFinished (name : string) =
+            env.Emit [ LoadFinished name ]
+        
+        let cnt, colors, depths, meshIndices = MeshView.buildMeshTextures loadFinished info view proj model
         let colorArrTex = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
         let depthArrTex = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
 

@@ -31,7 +31,7 @@ module MeshView =
 
     let private meshes = System.Collections.Generic.Dictionary<string, LoadedMesh>()
 
-    let loadMeshAsync (name : string) : LoadedMesh =
+    let loadMeshAsync (finished : unit -> unit) (name : string) : LoadedMesh =
         match meshes.TryGetValue(name) with
         | true, m -> m
         | _ ->
@@ -60,6 +60,8 @@ module MeshView =
                     )
                     let! img = JSImage.load mesh.atlasUrl
                     transact (fun () -> (m.tex :?> cval<ITexture>).Value <- JSTexture(img, true))
+                    
+                    finished()
                 with e ->
                     Log.error "failed to load mesh %s: %A" name e
             } |> ignore
@@ -90,11 +92,11 @@ module MeshView =
             Sg.Render loaded.fvc
         }
 
-    let render (name : string) (order : aval<int>) (active : aval<bool>) (commonCentroid : aval<V3d>) (clipBox : aval<Box3d>) =
-        let loaded = loadMeshAsync name
+    let render (loadFinished : unit -> unit) (name : string) (order : aval<int>) (active : aval<bool>) (commonCentroid : aval<V3d>) (clipBox : aval<Box3d>) =
+        let loaded = loadMeshAsync loadFinished name
         renderMesh loaded order active commonCentroid clipBox
 
-    let buildMeshTextures (info : Aardvark.Dom.RenderControlInfo) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
+    let buildMeshTextures (loadFinished : string -> unit) (info : Aardvark.Dom.RenderControlInfo) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
         let signature =
             info.Runtime.CreateFramebufferSignature [
                 DefaultSemantic.Colors,       TextureFormat.Rgba8
@@ -140,7 +142,7 @@ module MeshView =
                             Sg.Proj proj
                             Sg.Uniform("ViewportSize", info.ViewportSize)
                             let isVis = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-                    render name order isVis model.CommonCentroid model.ClipBox
+                            render (fun () -> loadFinished name) name order isVis model.CommonCentroid model.ClipBox
                         }
                     let objs  = mesh.GetRenderObjects(TraversalState.empty info.Runtime)
                     let task  = info.Runtime.CompileRender(signature, objs)

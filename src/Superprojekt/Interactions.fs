@@ -20,7 +20,7 @@ module Interactions =
                         |> Async.StartAsTask
                     env.Emit [LogDebug (sprintf "  %s: %d triangles" name triIds.Length)]
                     if triIds.Length > 0 then
-                        let loaded = MeshView.loadMeshAsync name
+                        let loaded = MeshView.loadMeshAsync ignore name
                         match loaded.mesh.Value with
                         | Some mesh ->
                             let filtered = { mesh with indices = triIds }

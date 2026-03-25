@@ -1,5 +1,5 @@
-//05d29d67-8a92-20a6-1c3f-e6f82feed215
-//fd3ac45e-6742-63fe-7cf2-aa863c7e3285
+//d78e984e-45e9-cfa5-7061-e8937ffbbb8f
+//1db742ca-5520-300b-7eff-5644c6b3bd30
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -16,6 +16,7 @@ type AdaptiveModel(value : Model) =
     let _MeshOrder_ = FSharp.Data.Adaptive.cmap(value.MeshOrder)
     let _MeshNames_ = FSharp.Data.Adaptive.clist(value.MeshNames)
     let _MeshVisible_ = FSharp.Data.Adaptive.cval(value.MeshVisible)
+    let _MeshesLoaded_ = FSharp.Data.Adaptive.cset(value.MeshesLoaded)
     let _CommonCentroid_ = FSharp.Data.Adaptive.cval(value.CommonCentroid)
     let _MenuOpen_ = FSharp.Data.Adaptive.cval(value.MenuOpen)
     let _Filtered_ = FSharp.Data.Adaptive.cmap(value.Filtered)
@@ -41,6 +42,7 @@ type AdaptiveModel(value : Model) =
             _MeshOrder_.Value <- value.MeshOrder
             _MeshNames_.Value <- value.MeshNames
             _MeshVisible_.Value <- value.MeshVisible
+            _MeshesLoaded_.Value <- value.MeshesLoaded
             _CommonCentroid_.Value <- value.CommonCentroid
             _MenuOpen_.Value <- value.MenuOpen
             _Filtered_.Value <- value.Filtered
@@ -59,6 +61,7 @@ type AdaptiveModel(value : Model) =
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
     member __.MeshNames = _MeshNames_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
     member __.MeshVisible = _MeshVisible_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.bool>>
+    member __.MeshesLoaded = _MeshesLoaded_ :> FSharp.Data.Adaptive.aset<Microsoft.FSharp.Core.string>
     member __.CommonCentroid = _CommonCentroid_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V3d>
     member __.MenuOpen = _MenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.Filtered = _Filtered_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.int)[]>

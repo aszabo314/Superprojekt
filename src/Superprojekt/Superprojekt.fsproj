@@ -15,6 +15,7 @@
 <!--    <PostBuildEvent>dotnet fshadeaot $(MSBuildThisFileDirectory)/bin/$(Configuration)/$(TargetFramework)/Interactions.WASM.dll</PostBuildEvent>-->
   </PropertyGroup>
   <ItemGroup>
+    <None Include="paket.references" />
     <Compile Include="WavefrontLoader.fs" />
     <Compile Include="CameraModel.fs" />
     <Compile Include="CameraModel.g.fs" />
@@ -28,7 +29,14 @@
     <Compile Include="Revolver.fs" />
     <Compile Include="Gui.fs" />
     <Compile Include="View.fs" />
+    <Compile Include="ShaderCache.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
+  
+  
+  <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <Exec Command="dotnet fshadeaot $(ProjectDir)/bin/$(ConfigurationName)/net8.0/Superprojekt.dll --verbose" />
+  </Target>
+  
   <Import Project="..\..\.paket\Paket.Restore.targets" />
 </Project>

@@ -5,6 +5,7 @@
     <RootNamespace>_</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
+    <None Include="paket.references" />
     <Compile Include="MeshLoader.fs" />
     <Compile Include="MeshCache.fs" />
     <Compile Include="Handlers.fs" />

@@ -10,7 +10,7 @@ The client is thin and must work on desktop and mobile. The server does all heav
 ## Intended workflow (partially implemented)
 
 1. User loads a dataset (multiple meshes or pointclouds) from the server
-2. User explores with: juxtaposition overlays, filters, *(mesh difference + false color — not yet)*, *(clipping volume — not yet)*
+2. User explores with: juxtaposition overlays, filters, workspace clipping, mesh difference + false color
 3. User places 3D annotations with alternative renderings and statistics *(not yet)*; separate 2D diagrams/charts provide data insights *(not yet)*
 4. UX: tabbed side panel (implemented); extra page area for diagrams *(not yet)*
 5. User produces screenshots or a report
@@ -33,9 +33,9 @@ OrbitController.fs
 Model.fs / Model.g.fs        ← [<ModelType>], Adaptify-generated .g.fs
 Shader.fs                    ← BlitShader + Shader modules
 Update.fs                    ← Message DU + update function
-MeshView.fs                  ← LoadedMesh, mesh loading, off-screen render, blit
-Interactions.fs              ← triggerFilter
-Revolver.fs                  ← revolver/fullscreen overlay scene graph
+MeshView.fs                  ← LoadedMesh, mesh loading, off-screen render, composition
+ServerActions.fs             ← init (fetch centroids + bboxes), triggerFilter
+Revolver.fs                  ← builds full scene graph; owns buildMeshTextures call
 Gui.fs                       ← DOM panels and controls
 View.fs                      ← view function + App module
 Program.fs
@@ -45,24 +45,51 @@ Program.fs
 
 `Model` — application state. `[<ModelType>]` triggers Adaptify to generate `AdaptiveModel` in `Model.g.fs` — never edit `.g.fs` manually.
 
-`MeshView` — `loadMeshAsync` fetches binary mesh from server (lazy, cached by name). `buildMeshTextures` renders each mesh off-screen into color+depth textures. `blitQuad` composites them back.
+`MeshView` — `loadMeshAsync` fetches binary mesh from server (lazy, cached by name). `buildMeshTextures` and `composeMeshTextures` implement the off-screen render pipeline (see below).
 
-`Revolver` — overlay scene graph: blit quads (with optional dimming), fullscreen tile overlay, circular magnifier disks stacked by mesh order.
+`Revolver` — owns the `buildMeshTextures` call; builds the full render scene graph: the composition quad (normal view), fullscreen tile overlay, and circular magnifier disks.
 
-`Gui` — burger button + tabbed HUD (Scene tab: visibility, filter; Overlay tab: revolver/fullscreen toggles, mesh order). `debugLog` overlay.
+`Gui` — burger button + tabbed HUD (Scene tab: visibility, ghost, filter; Overlay tab: revolver/fullscreen toggles, mesh order, difference rendering; Clip tab: per-axis range sliders). `debugLog` overlay.
 
-`Interactions` — `triggerFilter`: sphere query on all meshes at tap/long-press position, emits `FilteredMeshLoaded`.
+`ServerActions` — `init`: fetches centroids and bboxes on startup, emits `CentroidsLoaded`/`ClipBoundsLoaded`. `triggerFilter`: sphere query on all meshes at tap/long-press position, emits `FilteredMeshLoaded`.
 
 `View` — wires up renderControl, orbit camera, keyboard/pointer events, revolver state (`shiftHeld`, `spaceHeld`, `cursorPosition` as local `cval`s), calls `Revolver.build`.
+
+## Off-screen render pipeline
+
+Each mesh has **two texture slices** in a packed `Texture2DArray`: slice `2i` (solid) and slice `2i+1` (ghost). Both are rendered every frame into separate FBO attachments via `buildMeshTextures`.
+
+**Per-mesh off-screen pass** (`MeshView.renderMesh`, shader `BlitShader.clippy`):
+- **Solid slice** (`IsGhost=false`): discards fragments outside `[ClipMin, ClipMax]`; highlights boundary in a per-mesh color from `colorMap`; respects `active` (mesh visibility drives the clip range — hidden mesh gets infinite clip so it still renders, making its depth available)
+- **Ghost slice** (`IsGhost=true`): discards fragments *inside* the clip box (opposite of solid); renders a tinted semi-transparent color for the clipped-away / hidden region
+
+**Composition pass** (`MeshView.composeMeshTextures`, shader `BlitShader.readArray`):
+
+Runs as a fullscreen quad over all mesh slices. Two loops:
+
+1. **Solid loop** — finds the front-most solid fragment among visible meshes (`MeshVisibilityMask` bitmask); tracks `minDepth`/`maxDepth` for difference metric
+2. **Ghost loop** (only when `GhostSilhouette=true`) — blends ghost fragments in front of the solid winner using alpha compositing
+
+After the loops, applies **difference rendering**: reconstructs world-space positions of `minDepth`/`maxDepth` via `ViewProjTrafoInv`, computes distance, maps to heat color if `> MinDifferenceDepth`.
+
+Output: single color+depth fragment composited into the main framebuffer.
+
+**Revolver / fullscreen overlay** — instead of the composition quad, `readArraySlice` samples a single slice for fullscreen tile layout; `readArraySliceColor` clips to a circle and applies offset+scale for magnifier disks.
 
 ## Client model fields
 
 ```fsharp
-Camera, MeshOrder, MeshNames, MeshVisible, CommonCentroid, MenuOpen
-Filtered, FilterCenter      // active filter: HashMap<meshName, vertexIndices[]>
-DebugLog                    // rolling log, max 20 entries
-RevolverOn, FullscreenOn    // GUI toggles (combined with shift/space keys in View)
-RevolverCenter              // NDC anchor when revolver activated via GUI (not shift)
+Camera, MeshOrder, MeshNames, MeshVisible, MeshesLoaded, CommonCentroid, MenuOpen
+Filtered, FilterCenter        // active filter: HashMap<meshName, vertexIndices[]>
+DebugLog                      // rolling log, max 20 entries
+RevolverOn, FullscreenOn      // GUI toggles (combined with shift/space keys in View)
+RevolverCenter                // NDC anchor when revolver activated via GUI (not shift)
+DifferenceRendering           // heat-color depth difference between mesh layers
+MinDifferenceDepth            // world-space distance threshold to start heat coloring
+MaxDifferenceDepth            // world-space distance for full heat color saturation
+GhostSilhouette               // show semi-transparent ghost of clipped/hidden geometry
+ClipBox                       // active clip range (Box3d in world space)
+ClipBounds                    // world-space union of all dataset bboxes; Box3d.Invalid until loaded
 ```
 
 ## Server architecture

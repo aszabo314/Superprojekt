@@ -131,8 +131,6 @@ module MeshView =
         }
 
     let buildMeshTextures (info : RenderControlInfo) (loadFinished : string -> unit) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
-        
-        
         let signature =
             info.Runtime.CreateFramebufferSignature [
                 DefaultSemantic.Colors,       TextureFormat.Rgba8
@@ -159,10 +157,9 @@ module MeshView =
                                 DefaultSemantic.Colors, color.[TextureAspect.Color, 0, i] :> IFramebufferOutput
                                 DefaultSemantic.DepthStencil, depth.[TextureAspect.DepthStencil, 0, i] :> IFramebufferOutput
                             ]
-                        )    
+                        )
                     )
                 )
-  
             )
         
         let tasks =
@@ -215,26 +212,6 @@ module MeshView =
         let colorTex = AdaptiveResource.map fst output
         let depthTex = AdaptiveResource.map snd output
         model.MeshNames |> AList.count, colorTex, depthTex, meshIndices
-
-    let blitQuad
-        (meshVisible : aval<Map<string, bool>>)
-        (fullscreenActive : aval<bool>)
-        (revolverActive : aval<bool>)
-        name
-        (color : IAdaptiveResource<IBackendTexture>)
-        (depth : IAdaptiveResource<IBackendTexture>) =
-        let active    = meshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-        let colorTex  = color |> AdaptiveResource.map (fun t -> t :> ITexture)
-        let depthTex  = depth |> AdaptiveResource.map (fun t -> t :> ITexture)
-        let superActive = AVal.logicalAnd [active; AVal.map not fullscreenActive]
-        sg {
-            Sg.Active superActive
-            Sg.Shader { BlitShader.read }
-            Sg.Uniform("RevolverVisible", revolverActive)
-            Sg.Uniform("ColorTexture",    colorTex)
-            Sg.Uniform("DepthTexture",    depthTex)
-            Primitives.FullscreenQuad
-        }
 
     let composeMeshTextures
         (count : aval<int>)

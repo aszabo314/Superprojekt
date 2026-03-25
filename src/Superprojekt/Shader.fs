@@ -55,7 +55,6 @@ module BlitShader =
                 let c0 = heatMapColors.[id]
                 let c1 = heatMapColors.[id + 1]
                 let t = fid - float32 id
-                //if t>0.5f then c1 else c0
                 (c0 * (1.0f - t) + c1 * t)
 
     
@@ -66,10 +65,9 @@ module BlitShader =
         }
 
     type UniformScope with
-        member x.RevolverVisible      : bool  = x?RevolverVisible
         member x.TextureOffset        : V2d   = x?TextureOffset
         member x.TextureScale         : V2d   = x?TextureScale
-        member x.MeshCount         : int   = x?MeshCount
+        member x.MeshCount            : int   = x?MeshCount
         member x.DifferenceRendering  : bool  = x?DifferenceRendering
         member x.MinDifferenceDepth   : float = x?MinDifferenceDepth
         member x.MaxDifferenceDepth   : float = x?MaxDifferenceDepth
@@ -78,33 +76,9 @@ module BlitShader =
         member x.ClipMax              : V3d   = x?ClipMax
         member x.GhostSilhouette      : bool  = x?GhostSilhouette
         member x.MeshVisibilityMask   : int   = x?MeshVisibilityMask
-        member x.IsGhost : bool = x?IsGhost
-        member x.MeshIndex : int = x?MeshIndex
+        member x.IsGhost              : bool  = x?IsGhost
+        member x.MeshIndex            : int   = x?MeshIndex
     
-    let colorSam =
-        sampler2d {
-            texture uniform?ColorTexture
-            filter Filter.MinMagPoint
-            addressU WrapMode.Wrap
-            addressV WrapMode.Wrap
-        }
-    let depthSam =
-        sampler2d {
-            texture uniform?DepthTexture
-            filter Filter.MinMagPoint
-            addressU WrapMode.Wrap
-            addressV WrapMode.Wrap
-        }
-
-    let read (v : Effects.Vertex) =
-        fragment {
-            let c =
-                let original = colorSam.SampleLevel(v.tc, 0.0)
-                if uniform.RevolverVisible then lerp original V4d.IIII 0.5
-                else original
-            return { c = c; d = depthSam.SampleLevel(v.tc, 0.0).X }
-        }
-        
     let colorMap =
         [|
             V4d(1.0,  1.0,  0.0,  1.0)   // yellow
@@ -131,11 +105,9 @@ module BlitShader =
                 if bdist < 1.0 then
                     color <- lerp colorMap.[uniform.MeshIndex%5] color bdist
             else
-                let c = color
                 if insideClip then
                     discard()
-                //let lum = //0.299 * c.X + 0.587 * c.Y + 0.114 * c.Z
-                color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, 0.1) //V4d(lum, lum, lum, 0.2)
+                color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, 0.1)
                 
             return color
         }
@@ -178,37 +150,11 @@ module BlitShader =
             if uniform.GhostSilhouette then
                 for i in 0 .. uniform.MeshCount - 1 do
                     let di = deputy.SampleLevel(v.tc, 2*i+1, 0.0).X
-                    let mutable c = colon.SampleLevel(v.tc, 2*i+1, 0.0)
+                    let c = colon.SampleLevel(v.tc, 2*i+1, 0.0)
                     if di < minDepth then
-                        if index >= 0 then
-                            c <- V4d(c.XYZ, c.W * 1.0)
                         color.XYZ <- color.XYZ * (1.0 - c.W) + c.XYZ * c.W
                         color.W <- color.W * (1.0 - c.W) + c.W
-                    // let new_alpha  = color.W * (1.0 - c.W) + c.W
-                    // color.XYZ  <- (c.XYZ * c.W + color.XYZ * color.W * (1.0 - c.W)) / new_alpha
-                    // color.W    <- new_alpha
-
                     
-                
-                    // blend(a, [0,0,0,0]) = a
-                    // blend([x,y,z,0], b) = b
-                    // blend([x,y,z,1], b) = [x,y,z,1]
-            
-            
-                    // blend(a, b).W = a.W * f(a.W,b.W) + b.W * g(a.W,b.W)
-                
-                    //!!!!! f = 1-b.W
-                  
-                    
-                    // g(0,b.W) = 1
-                    // !!!!!!g = 1-a.W
-                    
-                    
-                    
-                    // (1-b.W)  = 1
-                    
-                    
-            // Difference rendering on main fragments
             let a = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * minDepth - 1.0, 1.0)
             let b = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * maxDepth - 1.0, 1.0)
             let a = a.XYZ / a.W
@@ -221,7 +167,6 @@ module BlitShader =
             return { c = color; d = minDepth }
         }
         
-    // Single array slice with depth — for fullscreen tiles.
     let readArraySlice (v : Effects.Vertex) =
         fragment {
             let i = uniform.SliceIndex
@@ -229,31 +174,11 @@ module BlitShader =
                      d = deputy.SampleLevel(v.tc, i, 0.0).X }
         }
 
-    // Circular magnifier on array slice — for revolver disks.
     let readArraySliceColor (v : Effects.Vertex) =
         fragment {
             let ndc = 2.0 * v.tc - V2d.II
             if Vec.lengthSquared ndc > 1.0 then discard()
             return colon.SampleLevel(uniform.TextureOffset + uniform.TextureScale * v.tc, uniform.SliceIndex, 0.0)
-        }
-
-    let readColorTex (v : Effects.Vertex) =
-        fragment {
-            let c = colorSam.SampleLevel(v.tc, 0.0)
-            return c
-        }
-    let readColorDepthTex (v : Effects.Vertex) =
-        fragment {
-            return { c = colorSam.SampleLevel(v.tc, 0.0); d = depthSam.SampleLevel(v.tc, 0.0).X }
-        }
-
-    // Circular magnifier: clips to unit circle, samples with offset+scale.
-    let readColor (v : Effects.Vertex) =
-        fragment {
-            let ndc = 2.0 * v.tc - V2d.II
-            if Vec.lengthSquared ndc > 1.0 then discard()
-            let b = colorSam.SampleLevel(uniform.TextureOffset + uniform.TextureScale * v.tc, 0.0)
-            return b
         }
 
 module Shader =
@@ -276,5 +201,3 @@ module Shader =
             let vp = vp + V3d(0.1, 0.0, 0.0)
             return { vp = vp.XYZ }
         }
-
-

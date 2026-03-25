@@ -12,7 +12,7 @@
     <WasmBuildNative>true</WasmBuildNative>
     <ScanForPInvokes>true</ScanForPInvokes>
     <LocalAdaptify>true</LocalAdaptify>
-<!--    <PostBuildEvent>dotnet fshadeaot $(MSBuildThisFileDirectory)/bin/$(Configuration)/$(TargetFramework)/Interactions.WASM.dll</PostBuildEvent>-->
+<!--    <PostBuildEvent>dotnet fshadeaot $(MSBuildThisFileDirectory)/bin/$(Configuration)/$(TargetFramework)/ServerActions.WASM.dll</PostBuildEvent>-->
   </PropertyGroup>
   <ItemGroup>
     <None Include="paket.references" />
@@ -25,7 +25,7 @@
     <Compile Include="Shader.fs" />
     <Compile Include="Update.fs" />
     <Compile Include="MeshView.fs" />
-    <Compile Include="Interactions.fs" />
+    <Compile Include="ServerActions.fs" />
     <Compile Include="Revolver.fs" />
     <Compile Include="Gui.fs" />
     <Compile Include="View.fs" />

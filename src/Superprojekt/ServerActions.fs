@@ -4,7 +4,21 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-module Interactions =
+module ServerActions =
+
+    let init (env : Env<Message>) =
+        task {
+            try
+                let! cs = MeshData.fetchCentroids MeshView.apiBase.Value
+                env.Emit [CentroidsLoaded cs]
+            with e ->
+                Log.error "centroids fetch failed: %A" e
+            try
+                let! bboxes = MeshData.fetchBboxes MeshView.apiBase.Value
+                env.Emit [ClipBoundsLoaded bboxes]
+            with e ->
+                Log.error "bboxes fetch failed: %A" e
+        } |> ignore
 
     let triggerFilter (env : Env<Message>) (model : AdaptiveModel) (renderPos : V3d) =
         let cc       = AVal.force model.CommonCentroid

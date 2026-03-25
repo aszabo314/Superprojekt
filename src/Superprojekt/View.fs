@@ -12,19 +12,7 @@ module View =
 
     let view (env : Env<Message>) (model : AdaptiveModel) =
 
-        let _init =
-            task {
-                try
-                    let! cs = MeshData.fetchCentroids MeshView.apiBase.Value
-                    env.Emit [CentroidsLoaded cs]
-                with e ->
-                    Log.error "centroids fetch failed: %A" e
-                try
-                    let! bboxes = MeshData.fetchBboxes MeshView.apiBase.Value
-                    env.Emit [ClipBoundsLoaded bboxes]
-                with e ->
-                    Log.error "bboxes fetch failed: %A" e
-            }
+        ServerActions.init env
 
         let cursorPosition = cval None
         let shiftHeld      = cval false
@@ -94,14 +82,14 @@ module View =
                 Sg.OnTap(fun e ->
                     if e.Ctrl && e.Button = Button.Left then
                         env.Emit [ClearFilteredMesh]
-                        Interactions.triggerFilter env model e.Position
+                        ServerActions.triggerFilter env model e.Position
                         false
                     else true
                 )
 
                 Sg.OnLongPress(fun e ->
                     env.Emit [ClearFilteredMesh]
-                    Interactions.triggerFilter env model e.Position
+                    ServerActions.triggerFilter env model e.Position
                     false
                 )
 

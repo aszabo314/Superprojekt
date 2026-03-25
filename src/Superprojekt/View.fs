@@ -57,6 +57,10 @@ module View =
             renderControl {
                 RenderControl.Samples 1
                 Class "render-control"
+                
+                Dom.Style [
+                    Css.Background "rgb(244, 246, 248)"
+                ]
 
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize

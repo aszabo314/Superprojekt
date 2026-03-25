@@ -69,11 +69,17 @@ module BlitShader =
         member x.RevolverVisible      : bool  = x?RevolverVisible
         member x.TextureOffset        : V2d   = x?TextureOffset
         member x.TextureScale         : V2d   = x?TextureScale
-        member x.TextureCount         : int   = x?TextureCount
+        member x.MeshCount         : int   = x?MeshCount
         member x.DifferenceRendering  : bool  = x?DifferenceRendering
         member x.MinDifferenceDepth   : float = x?MinDifferenceDepth
         member x.MaxDifferenceDepth   : float = x?MaxDifferenceDepth
         member x.SliceIndex           : int   = x?SliceIndex
+        member x.ClipMin              : V3d   = x?ClipMin
+        member x.ClipMax              : V3d   = x?ClipMax
+        member x.GhostSilhouette      : bool  = x?GhostSilhouette
+        member x.MeshVisibilityMask   : int   = x?MeshVisibilityMask
+        member x.IsGhost : bool = x?IsGhost
+        member x.MeshIndex : int = x?MeshIndex
     
     let colorSam =
         sampler2d {
@@ -99,6 +105,41 @@ module BlitShader =
             return { c = c; d = depthSam.SampleLevel(v.tc, 0.0).X }
         }
         
+    let colorMap =
+        [|
+            V4d(1.0,  1.0,  0.0,  1.0)   // yellow
+            V4d(0.0,  0.85, 1.0,  1.0)   // cyan
+            V4d(0.75, 0.1,  1.0,  1.0)   // violet
+            V4d(1.0,  0.35, 0.0,  1.0)   // orange
+            V4d(0.0,  1.0,  0.45, 1.0)   // spring green
+        |]
+    let clippy (v : Effects.Vertex) =
+        fragment {
+            let p = v.wp.XYZ / v.wp.W
+            let insideClip =
+                p.X >= uniform.ClipMin.X && p.X <= uniform.ClipMax.X &&
+                p.Y >= uniform.ClipMin.Y && p.Y <= uniform.ClipMax.Y &&
+                p.Z >= uniform.ClipMin.Z && p.Z <= uniform.ClipMax.Z
+            let mutable color = v.c
+            if not uniform.IsGhost then
+                if not insideClip then
+                    discard()
+                let bdist =
+                        min (min (abs (uniform.ClipMin.X - p.X)) (abs (uniform.ClipMax.X - p.X)))
+                            (min (min (abs (uniform.ClipMin.Y - p.Y)) (abs (uniform.ClipMax.Y - p.Y)))
+                                 (min (abs (uniform.ClipMin.Z - p.Z)) (abs (uniform.ClipMax.Z - p.Z))))
+                if bdist < 1.0 then
+                    color <- lerp colorMap.[uniform.MeshIndex%5] color bdist
+            else
+                let c = color
+                if insideClip then
+                    discard()
+                //let lum = //0.299 * c.X + 0.587 * c.Y + 0.114 * c.Z
+                color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, 0.1) //V4d(lum, lum, lum, 0.2)
+                
+            return color
+        }
+        
     let colon =
         sampler2dArray {
             texture uniform?ColorTexture
@@ -115,37 +156,69 @@ module BlitShader =
         }
     let readArray (v : Effects.Vertex) =
         fragment {
-            
-            let mutable minDepth = 10.0
-            let mutable maxDepth = -10.0
-            
-            let mutable d = 10.0
-            let mutable color = V4d.IOOI
-            for i in 0 .. uniform.TextureCount - 1 do
-                let di = deputy.SampleLevel(v.tc, i, 0.0).X
-                let c = colon.SampleLevel(v.tc, i, 0.0)
-                
-                if di < 1.0 && c.W >= 0.5 then
-                    minDepth <- min di minDepth
-                    maxDepth <- max di maxDepth
-                    
-                if di < d then
-                    d <- di
-                    color <- c
-                    
             let ndc = v.pos.XY / v.pos.W
+
+            let mutable maxDepth = -10.0
+            let mutable minDepth = 10.0
+            let mutable color = V4d.Zero
+            let mutable index = -1
+
+            for i in 0 .. uniform.MeshCount - 1 do
+                let di = deputy.SampleLevel(v.tc, 2*i, 0.0).X
+                let c = colon.SampleLevel(v.tc, 2*i, 0.0)
+                if di < 1.0 then
+                    let isVis = (uniform.MeshVisibilityMask >>> i) &&& 1 <> 0
+                    if isVis then
+                        maxDepth <- max di maxDepth
+                        if di < minDepth then
+                            minDepth <- di
+                            color <- c
+                            index <- i
+                            
+            for i in 0 .. uniform.MeshCount - 1 do
+                let di = deputy.SampleLevel(v.tc, 2*i+1, 0.0).X
+                let mutable c = colon.SampleLevel(v.tc, 2*i+1, 0.0)
+                if di < minDepth then
+                    if index >= 0 then
+                        c <- V4d(c.XYZ, c.W * 1.0)
+                    color.XYZ <- color.XYZ * (1.0 - c.W) + c.XYZ * c.W
+                    color.W <- color.W * (1.0 - c.W) + c.W
+                    // let new_alpha  = color.W * (1.0 - c.W) + c.W
+                    // color.XYZ  <- (c.XYZ * c.W + color.XYZ * color.W * (1.0 - c.W)) / new_alpha
+                    // color.W    <- new_alpha
+
+                    
+                
+                    // blend(a, [0,0,0,0]) = a
+                    // blend([x,y,z,0], b) = b
+                    // blend([x,y,z,1], b) = [x,y,z,1]
+            
+            
+                    // blend(a, b).W = a.W * f(a.W,b.W) + b.W * g(a.W,b.W)
+                
+                    //!!!!! f = 1-b.W
+                  
+                    
+                    // g(0,b.W) = 1
+                    // !!!!!!g = 1-a.W
+                    
+                    
+                    
+                    // (1-b.W)  = 1
+                    
+                    
+            // Difference rendering on main fragments
             let a = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * minDepth - 1.0, 1.0)
             let b = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * maxDepth - 1.0, 1.0)
-                    
             let a = a.XYZ / a.W
             let b = b.XYZ / b.W
-            
             let dist = Vec.length (a - b)
             if uniform.DifferenceRendering && dist > uniform.MinDifferenceDepth then
                 let h = (dist - uniform.MinDifferenceDepth) / uniform.MaxDifferenceDepth |> float32 |> Heat.heat |> V4d
                 color <- h * color
-            return { c = color; d = d }
-        }   
+
+            return { c = color; d = minDepth }
+        }
         
     // Single array slice with depth — for fullscreen tiles.
     let readArraySlice (v : Effects.Vertex) =
@@ -203,48 +276,4 @@ module Shader =
             return { vp = vp.XYZ }
         }
 
-    type UniformScope with
-        member x.ClipMin : V3d = x?ClipMin
-        member x.ClipMax : V3d = x?ClipMax
-        member x.Order   : int = x?Order
 
-    // Desaturate and reduce alpha — used as the ghost pre-pass shader.
-    let ghost (v : Effects.Vertex) =
-        fragment {
-            let lum = 0.299 * v.c.X + 0.587 * v.c.Y + 0.114 * v.c.Z
-            return V4d(lum, lum, lum, 0.2)
-        }
-
-    [<ReflectedDefinition>]
-    let orderColor (o : int) =
-        match o % 3 with
-        | 0 -> V4d(1.0, 1.0, 0.0, 1.0)
-        | 1 -> V4d(0.5, 1.0, 0.5, 1.0)
-        | 2 -> V4d(1.0, 0.5, 1.0, 1.0)
-        | _ -> V4d(1.0, 1.0, 1.0, 1.0)
-    // Discards fragments outside [ClipMin, ClipMax] in render space.
-    // ClipMin/ClipMax are worldClipBox.Min/Max − commonCentroid (computed on CPU).
-    // v.wp is set by DefaultSurfaces.trafo as ModelTrafo * v.pos (render-space position).
-    let clip (v : Effects.Vertex) =
-        fragment {
-            let p = v.wp.XYZ
-            if p.X < uniform.ClipMin.X || p.X > uniform.ClipMax.X ||
-               p.Y < uniform.ClipMin.Y || p.Y > uniform.ClipMax.Y ||
-               p.Z < uniform.ClipMin.Z || p.Z > uniform.ClipMax.Z then discard()
-            let t = 1.0
-            let dxm = abs (uniform.ClipMin.X - p.X)
-            let dxM = abs (uniform.ClipMax.X - p.X)
-            let dym = abs (uniform.ClipMin.Y - p.Y)
-            let dyM = abs (uniform.ClipMax.Y - p.Y)
-            let dzm = abs (uniform.ClipMin.Z - p.Z)
-            let dzM = abs (uniform.ClipMax.Z - p.Z)
-            let d = min (min dxm dxM) (min (min dym dyM) (min dzm dzM))
-            let ocol = orderColor uniform.Order
-            let c = 
-                if d < t then
-                    lerp ocol v.c (d / t)
-                else
-                    v.c
-            
-            return c
-        }

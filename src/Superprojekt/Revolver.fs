@@ -62,10 +62,20 @@ module Revolver =
         let sliceOf name =
             meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
 
+        let clipMin = AVal.map2 (fun (b : Box3d) cc -> b.Min - cc) model.ClipBox model.CommonCentroid
+        let clipMax = AVal.map2 (fun (b : Box3d) cc -> b.Max - cc) model.ClipBox model.CommonCentroid
+
+        let meshVisibilityMask =
+            (model.MeshVisible, meshIndices) ||> AVal.map2 (fun vis indices ->
+                indices |> Map.fold (fun mask name i ->
+                    if Map.tryFind name vis |> Option.defaultValue true then mask ||| (1 <<< i) else mask
+                ) 0
+            )
+
         let composite =
             sg {
                 Sg.Active (AVal.map not fullscreenActive)
-                MeshView.composeMeshTextures cnt colors depths model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth
+                MeshView.composeMeshTextures cnt colors depths model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth clipMin clipMax model.GhostSilhouette meshVisibilityMask
             }
 
         let fullscreenNodes =

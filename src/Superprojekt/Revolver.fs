@@ -65,7 +65,7 @@ module Revolver =
         let depthArrTex = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
 
         let sliceOf name =
-            meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
+            meshIndices |> AVal.map (fun m -> 2 * (Map.tryFind name m |> Option.defaultValue 0))
 
         let clipMin = AVal.map2 (fun (b : Box3d) cc -> b.Min - cc) model.ClipBox model.CommonCentroid
         let clipMax = AVal.map2 (fun (b : Box3d) cc -> b.Max - cc) model.ClipBox model.CommonCentroid

@@ -295,7 +295,7 @@ module Gui =
             model.ActiveDataset |> AVal.map (fun ds ->
                 match ds with
                 | Some d -> div { Style [FontWeight "bold"; MarginBottom "4px"]; d }
-                | None   -> div {}
+                | None   -> div { []  }
             )
             model.MeshNames |> AList.map (fun name ->
                 let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)

@@ -24,10 +24,12 @@ type Message =
     | SetMinDifferenceDepth of float
     | SetMaxDifferenceDepth of float
     | ClipBoundsLoaded   of (string * Box3d)[]
+    | ToggleClip
     | SetClipBox         of Box3d
     | ResetClip
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
+    | SetDatasetScale    of string * float
 
 
 module Update =
@@ -107,7 +109,10 @@ module Update =
                             V3d(min acc.Min.X b.Min.X, min acc.Min.Y b.Min.Y, min acc.Min.Z b.Min.Z),
                             V3d(max acc.Max.X b.Max.X, max acc.Max.Y b.Max.Y, max acc.Max.Z b.Max.Z)
                         )) Box3d.Invalid
-                { model with ClipBounds = union; ClipBox = union }
+                let padded = Box3d(union.Min - V3d.III, union.Max + V3d.III)
+                { model with ClipBounds = padded; ClipBox = padded }
+        | ToggleClip ->
+            { model with ClipActive = not model.ClipActive }
         | SetClipBox box ->
             { model with ClipBox = box }
         | ResetClip ->
@@ -116,3 +121,5 @@ module Update =
             { model with Datasets = datasets |> Array.toList }
         | SetActiveDataset dataset ->
             { model with ActiveDataset = Some dataset }
+        | SetDatasetScale(dataset, scale) ->
+            { model with DatasetScales = Map.add dataset scale model.DatasetScales }

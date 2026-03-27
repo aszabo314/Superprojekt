@@ -33,6 +33,7 @@ type AdaptiveModel(value : Model) =
     let _MinDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MinDifferenceDepth)
     let _MaxDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MaxDifferenceDepth)
     let _GhostSilhouette_ = FSharp.Data.Adaptive.cval(value.GhostSilhouette)
+    let _ClipActive_ = FSharp.Data.Adaptive.cval(value.ClipActive)
     let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
     let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
     let mutable __value = value
@@ -64,6 +65,7 @@ type AdaptiveModel(value : Model) =
             _MinDifferenceDepth_.Value <- value.MinDifferenceDepth
             _MaxDifferenceDepth_.Value <- value.MaxDifferenceDepth
             _GhostSilhouette_.Value <- value.GhostSilhouette
+            _ClipActive_.Value <- value.ClipActive
             _ClipBox_.Value <- value.ClipBox
             _ClipBounds_.Value <- value.ClipBounds
     member __.Current = __adaptive
@@ -88,6 +90,7 @@ type AdaptiveModel(value : Model) =
     member __.MinDifferenceDepth = _MinDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.MaxDifferenceDepth = _MaxDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.GhostSilhouette = _GhostSilhouette_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ClipActive = _ClipActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
 

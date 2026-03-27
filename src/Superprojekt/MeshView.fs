@@ -75,11 +75,9 @@ module MeshView =
         (active : aval<bool>)
         (commonCentroid : aval<V3d>)
         (meshScale : aval<float>) =
-        let delta = AVal.map2 (-) loaded.centroid commonCentroid
         let scaledFilter =
-            (delta, meshScale, filter) |||> AVal.map3 (fun (d : V3d) scale (f : Box3d) ->
-                let k = 1.0 - scale
-                Box3d(d * k + f.Min * scale, d * k + f.Max * scale)
+            (meshScale, filter) ||> AVal.map2 (fun scale (f : Box3d) ->
+                Box3d(f.Min * scale, f.Max * scale)
             )
         let clipMin =
             active |> AVal.bind (fun a ->
@@ -155,7 +153,10 @@ module MeshView =
             )
         
         let tasks =
-            let filter = (model.ClipBox, model.CommonCentroid) ||> AVal.map2 (-)
+            let filter =
+                (model.ClipActive, model.ClipBox, model.CommonCentroid) |||> AVal.map3 (fun active box cc ->
+                    if active then box - cc else Box3d(V3d(-1e10), V3d(1e10))
+                )
             let scaleFor (name : string) =
                 let dataset = name.Split('/', 2).[0]
                 model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)

@@ -95,6 +95,30 @@ module Gui =
                         )
                     }
 
+                    div {
+                        "Scale  "
+                        input {
+                            Attribute("type", "number")
+                            Attribute("step", "0.1")
+                            Style [Width "80px"]
+                            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun ds scales ->
+                                let s = ds |> Option.bind (fun d -> Map.tryFind d scales) |> Option.defaultValue 1.0
+                                Some (Attribute("value", sprintf "%.4g" s))
+                            )
+                            model.ActiveDataset |> AVal.map (fun ds ->
+                                if ds.IsNone then Some (Attribute("disabled", "disabled")) else None
+                            )
+                            Dom.OnInput(fun e ->
+                                match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+                                | true, v ->
+                                    match AVal.force model.ActiveDataset with
+                                    | Some dataset -> env.Emit [SetDatasetScale(dataset, v)]
+                                    | None -> ()
+                                | _ -> ()
+                            )
+                        }
+                    }
+
                     h3 { "Meshes" }
                     model.MeshNames |> AList.map (fun name ->
                         let isVis =
@@ -223,6 +247,19 @@ module Gui =
                     Attribute("id", "hud-panel3")
 
                     h3 { "Workspace Clip" }
+
+                    div {
+                        label {
+                            input {
+                                Attribute("type", "checkbox")
+                                model.ClipActive |> AVal.map (fun on ->
+                                    if on then Some (Attribute("checked", "checked")) else None
+                                )
+                                Dom.OnClick(fun _ -> env.Emit [ToggleClip])
+                            }
+                            " Enable clipping"
+                        }
+                    }
 
                     let slider (getValue : Box3d -> float)
                                (setValue : Box3d -> float -> Box3d)

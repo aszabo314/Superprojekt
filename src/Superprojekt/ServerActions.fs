@@ -7,26 +7,31 @@ open Aardvark.Dom
 module ServerActions =
 
     let init (env : Env<Message>) =
+        env.Emit [LogDebug "fetching datasets..."]
         task {
             try
                 let! datasets = MeshData.fetchDatasets MeshView.apiBase.Value
+                env.Emit [LogDebug (sprintf "datasets: %A" datasets)]
                 env.Emit [DatasetsLoaded datasets]
             with e ->
-                Log.error "datasets fetch failed: %A" e
+                env.Emit [LogDebug (sprintf "datasets fetch failed: %A" e)]
         } |> ignore
 
     let loadDataset (env : Env<Message>) (dataset : string) =
+        env.Emit [LogDebug (sprintf "loading dataset %s..." dataset)]
         task {
             try
                 let! cs = MeshData.fetchCentroids MeshView.apiBase.Value dataset
+                env.Emit [LogDebug (sprintf "%s: %d centroids loaded" dataset cs.Length)]
                 env.Emit [CentroidsLoaded cs]
             with e ->
-                Log.error "centroids fetch failed: %A" e
+                env.Emit [LogDebug (sprintf "%s centroids failed: %A" dataset e)]
             try
                 let! bboxes = MeshData.fetchBboxes MeshView.apiBase.Value dataset
+                env.Emit [LogDebug (sprintf "%s: %d bboxes loaded" dataset bboxes.Length)]
                 env.Emit [ClipBoundsLoaded bboxes]
             with e ->
-                Log.error "bboxes fetch failed: %A" e
+                env.Emit [LogDebug (sprintf "%s bboxes failed: %A" dataset e)]
         } |> ignore
 
     let triggerFilter (env : Env<Message>) (model : AdaptiveModel) (renderPos : V3d) =

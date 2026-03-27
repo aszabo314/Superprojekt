@@ -67,16 +67,25 @@ module MeshData =
 
         { centroid = centroid; positions = positions; uvs = uvs; indices = indices; atlasUrl = atlasUrl }
 
-    let fetchCentroids (serverUrl : string) : Async<(string * V3d)[]> =
+    let fetchDatasets (serverUrl : string) : Async<string[]> =
         async {
             use client = new System.Net.Http.HttpClient()
-            let! json = client.GetStringAsync(serverUrl.TrimEnd('/') + "/centroids") |> Async.AwaitTask
+            let! json = client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets") |> Async.AwaitTask
+            let doc = System.Text.Json.JsonDocument.Parse(json)
+            return doc.RootElement.EnumerateArray() |> Seq.map (fun e -> e.GetString()) |> Seq.toArray
+        }
+
+    let fetchCentroids (serverUrl : string) (dataset : string) : Async<(string * V3d)[]> =
+        async {
+            use client = new System.Net.Http.HttpClient()
+            let url = sprintf "%s/datasets/%s/centroids" (serverUrl.TrimEnd('/')) dataset
+            let! json = client.GetStringAsync(url) |> Async.AwaitTask
             let doc = System.Text.Json.JsonDocument.Parse(json)
             return
                 doc.RootElement.EnumerateObject()
                 |> Seq.map (fun prop ->
                     let a = prop.Value.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                    prop.Name, V3d(a.[0], a.[1], a.[2])
+                    dataset + "/" + prop.Name, V3d(a.[0], a.[1], a.[2])
                 )
                 |> Seq.toArray
         }
@@ -112,27 +121,31 @@ module MeshData =
             newIndices.[i] <- newIdx
         { mesh with positions = positions.ToArray(); uvs = uvs.ToArray(); indices = newIndices }
 
-    let fetchBboxes (serverUrl : string) : Async<(string * Box3d)[]> =
+    let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d)[]> =
         async {
             use client = new System.Net.Http.HttpClient()
-            let! json = client.GetStringAsync(serverUrl.TrimEnd('/') + "/bboxes") |> Async.AwaitTask
+            let url = sprintf "%s/datasets/%s/bboxes" (serverUrl.TrimEnd('/')) dataset
+            let! json = client.GetStringAsync(url) |> Async.AwaitTask
             let doc = System.Text.Json.JsonDocument.Parse(json)
             return
                 doc.RootElement.EnumerateObject()
                 |> Seq.map (fun prop ->
                     let mn = prop.Value.GetProperty("min").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                     let mx = prop.Value.GetProperty("max").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                    prop.Name, Box3d(V3d(mn.[0], mn.[1], mn.[2]), V3d(mx.[0], mx.[1], mx.[2]))
+                    dataset + "/" + prop.Name, Box3d(V3d(mn.[0], mn.[1], mn.[2]), V3d(mx.[0], mx.[1], mx.[2]))
                 )
                 |> Seq.toArray
         }
 
     let fetch (serverUrl : string) (name : string) (index : int) : Async<MeshData> =
         async {
+            let parts    = name.Split([|'/'|], 2)
+            let dataset  = parts.[0]
+            let meshName = parts.[1]
             use client = new System.Net.Http.HttpClient()
             let base' = serverUrl.TrimEnd('/')
-            let meshUrl  = sprintf "%s/mesh/%s/%d"       base' name index
-            let atlasUrl = sprintf "%s/mesh/%s/%d/atlas" base' name index
+            let meshUrl  = sprintf "%s/datasets/%s/mesh/%s/%d"       base' dataset meshName index
+            let atlasUrl = sprintf "%s/datasets/%s/mesh/%s/%d/atlas" base' dataset meshName index
             let! bytes = client.GetByteArrayAsync(meshUrl) |> Async.AwaitTask
             return decode atlasUrl bytes
         }

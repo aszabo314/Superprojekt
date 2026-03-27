@@ -22,6 +22,11 @@ type Model =
         FilterCenter   : option<V3d>
         DebugLog       : IndexList<string>
 
+        Datasets         : string list
+        ActiveDataset    : string option
+        DatasetScales    : Map<string, float>
+        DatasetCentroids : Map<string, V3d>
+
         RevolverOn           : bool
         FullscreenOn         : bool
         RevolverCenter       : V2d
@@ -47,6 +52,11 @@ module Model =
             Filtered       = HashMap.empty
             FilterCenter   = None
             DebugLog       = IndexList.empty
+            Datasets         = []
+            ActiveDataset    = None
+            DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
+            DatasetCentroids = Map.empty
+
             RevolverOn          = false
             FullscreenOn        = false
             RevolverCenter      = V2d.Zero

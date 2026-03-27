@@ -9,12 +9,21 @@ module ServerActions =
     let init (env : Env<Message>) =
         task {
             try
-                let! cs = MeshData.fetchCentroids MeshView.apiBase.Value
+                let! datasets = MeshData.fetchDatasets MeshView.apiBase.Value
+                env.Emit [DatasetsLoaded datasets]
+            with e ->
+                Log.error "datasets fetch failed: %A" e
+        } |> ignore
+
+    let loadDataset (env : Env<Message>) (dataset : string) =
+        task {
+            try
+                let! cs = MeshData.fetchCentroids MeshView.apiBase.Value dataset
                 env.Emit [CentroidsLoaded cs]
             with e ->
                 Log.error "centroids fetch failed: %A" e
             try
-                let! bboxes = MeshData.fetchBboxes MeshView.apiBase.Value
+                let! bboxes = MeshData.fetchBboxes MeshView.apiBase.Value dataset
                 env.Emit [ClipBoundsLoaded bboxes]
             with e ->
                 Log.error "bboxes fetch failed: %A" e

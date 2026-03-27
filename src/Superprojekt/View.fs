@@ -149,6 +149,7 @@ module View =
 
             Gui.burgerButton env
             Gui.hudTabs env model
+            Gui.fullscreenInfo model
             Gui.debugLog model
         }
 

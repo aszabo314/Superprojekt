@@ -28,30 +28,46 @@ let dataRoot = lazy findDataRoot ()
 let private objFiles (folder : string) =
     Directory.GetFiles(folder, "*.obj") |> Array.sort
 
-let meshCount (name : string) =
-    let folder = Path.Combine(dataRoot.Value, name)
+let datasets () =
+    if Directory.Exists dataRoot.Value then
+        Directory.GetDirectories(dataRoot.Value) |> Array.map Path.GetFileName |> Array.sort
+    else [||]
+
+let meshNames (dataset : string) =
+    let folder = Path.Combine(dataRoot.Value, dataset)
+    if Directory.Exists folder then
+        Directory.GetDirectories(folder) |> Array.map Path.GetFileName |> Array.sort
+    else [||]
+
+let meshCount (dataset : string) (name : string) =
+    let folder = Path.Combine(dataRoot.Value, dataset, name)
     if Directory.Exists folder then objFiles folder |> Array.length else 0
 
-let private parseCentroid (folder : string) =
-    match Directory.GetFiles(folder, "*_centroid.txt") |> Array.tryHead with
-    | None   -> failwithf "no centroid.txt in %s" folder
-    | Some f ->
-        let parts = File.ReadAllText(f).Trim().Split(' ')
+let private parseCentroidFile (path : string) =
+    let lines =
+        File.ReadAllLines(path)
+        |> Array.filter (fun l -> not (l.TrimStart().StartsWith("#")) && l.Trim().Length > 0)
+    if lines.Length = 0 then V3d.Zero
+    else
+        let parts = lines.[0].Trim().Split([|' '; '\t'|], StringSplitOptions.RemoveEmptyEntries)
         V3d(float parts.[0], float parts.[1], float parts.[2])
 
-let getCentroid (name : string) : V3d option =
-    let folder = Path.Combine(dataRoot.Value, name)
+let private parseCentroid (folder : string) =
+    match Directory.GetFiles(folder, "*centroid.txt") |> Array.tryHead with
+    | None   -> V3d.Zero
+    | Some f -> parseCentroidFile f
+
+let getCentroid (dataset : string) (name : string) : V3d option =
+    let folder = Path.Combine(dataRoot.Value, dataset, name)
     if not (Directory.Exists folder) then None
     else
-        match Directory.GetFiles(folder, "*_centroid.txt") |> Array.tryHead with
-        | None   -> None
-        | Some f ->
-            let parts = File.ReadAllText(f).Trim().Split(' ')
-            Some (V3d(float parts.[0], float parts.[1], float parts.[2]))
+        match Directory.GetFiles(folder, "*centroid.txt") |> Array.tryHead with
+        | None   -> Some V3d.Zero
+        | Some f -> Some (parseCentroidFile f)
 
-let parseMesh (name : string) (index : int) : ParsedMesh =
-    let folder = Path.Combine(dataRoot.Value, name)
-    if not (Directory.Exists folder) then failwithf "not found: %s" name
+let parseMesh (dataset : string) (name : string) (index : int) : ParsedMesh =
+    let folder = Path.Combine(dataRoot.Value, dataset, name)
+    if not (Directory.Exists folder) then failwithf "not found: %s/%s" dataset name
 
     let files = objFiles folder
     if index < 0 || index >= files.Length then
@@ -121,11 +137,14 @@ let parseMesh (name : string) (index : int) : ParsedMesh =
       indices   = outIdx.ToArray()
       bbox      = bbox }
 
-let atlasPath (name : string) (index : int) =
-    let folder = Path.Combine(dataRoot.Value, name)
+let atlasPath (dataset : string) (name : string) (index : int) =
+    let folder = Path.Combine(dataRoot.Value, dataset, name)
     let files  = objFiles folder
     if index < 0 || index >= files.Length then None
     else
         let base' = Path.GetFileNameWithoutExtension files.[index]
-        let jpg   = Path.Combine(folder, base' + "_atlas.jpg")
-        if File.Exists jpg then Some jpg else None
+        let jpg1  = Path.Combine(folder, base' + "_atlas.jpg")
+        let jpg2  = Path.Combine(folder, base' + ".jpg")
+        if   File.Exists jpg1 then Some jpg1
+        elif File.Exists jpg2 then Some jpg2
+        else None

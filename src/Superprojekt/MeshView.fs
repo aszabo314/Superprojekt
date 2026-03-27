@@ -73,40 +73,32 @@ module MeshView =
         (isGhost : aval<bool>)
         (meshIndex : aval<int>)
         (active : aval<bool>)
-        (commonCentroid : aval<V3d>) =
+        (commonCentroid : aval<V3d>)
+        (meshScale : aval<float>) =
+        let delta = AVal.map2 (-) loaded.centroid commonCentroid
+        let scaledFilter =
+            (delta, meshScale, filter) |||> AVal.map3 (fun (d : V3d) scale (f : Box3d) ->
+                let k = 1.0 - scale
+                Box3d(d * k + f.Min * scale, d * k + f.Max * scale)
+            )
         let clipMin =
             active |> AVal.bind (fun a ->
-                if a then
-                    filter |> AVal.map _.Min
-                else 
-                    isGhost |> AVal.map (fun g ->
-                        if g then
-                            V3d.III * 10000.0
-                        else
-                            V3d.III * -10000.0
-                )
-            )
+                if a then scaledFilter |> AVal.map _.Min
+                else isGhost |> AVal.map (fun g ->
+                    if g then V3d.III * 10000.0 else V3d.III * -10000.0))
         let clipMax =
             active |> AVal.bind (fun a ->
-                if a then
-                    filter |> AVal.map _.Max
-                else
-                    isGhost |> AVal.map (fun g ->
-                        if g then
-                            V3d.III * -10000.0
-                        else
-                            V3d.III * 10000.0
-                )
-            )
+                if a then scaledFilter |> AVal.map _.Max
+                else isGhost |> AVal.map (fun g ->
+                    if g then V3d.III * -10000.0 else V3d.III * 10000.0))
         let depthTestMode =
-            isGhost |> AVal.map (fun g ->
-                if g then
-                    DepthTest.Always
-                else
-                    DepthTest.LessOrEqual
+            isGhost |> AVal.map (fun g -> if g then DepthTest.Always else DepthTest.LessOrEqual)
+        let trafo =
+            (commonCentroid, loaded.centroid, meshScale) |||> AVal.map3 (fun common mesh scale ->
+                Trafo3d.Translation(mesh - common) * Trafo3d.Scale(scale)
             )
         sg {
-            Sg.Translate((commonCentroid, loaded.centroid) ||> AVal.map2 (fun common mesh -> mesh - common))
+            Sg.Trafo trafo
             Sg.Shader {
                 DefaultSurfaces.trafo
                 DefaultSurfaces.diffuseTexture
@@ -163,7 +155,10 @@ module MeshView =
             )
         
         let tasks =
-            let filter = (model.ClipBox, model.CommonCentroid) ||> AVal.map2 (-) 
+            let filter = (model.ClipBox, model.CommonCentroid) ||> AVal.map2 (-)
+            let scaleFor (name : string) =
+                let dataset = name.Split('/', 2).[0]
+                model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
             meshIndices |> AList.bind (fun meshIndices ->
                 model.MeshNames |> AList.collect (fun name ->
                     let loaded = loadMeshAsync (fun () -> loadFinished name) name
@@ -171,21 +166,22 @@ module MeshView =
                     let textureIndexSolid = 2*meshIndex
                     let textureIndexGhost = textureIndexSolid+1
                     let isActive = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+                    let scale = scaleFor name
                     let solidSg =
                         sg {
                             Sg.View view
                             Sg.Proj proj
                             Sg.Uniform("ViewportSize", info.ViewportSize)
-                            renderMesh loaded filter (AVal.constant false) (AVal.constant meshIndex) isActive model.CommonCentroid
+                            renderMesh loaded filter (AVal.constant false) (AVal.constant meshIndex) isActive model.CommonCentroid scale
                         }
                     let solidTask = info.Runtime.CompileRender(signature, solidSg.GetRenderObjects(TraversalState.empty info.Runtime))
-                    
+
                     let ghostSg =
                         sg {
                             Sg.View view
                             Sg.Proj proj
                             Sg.Uniform("ViewportSize", info.ViewportSize)
-                            renderMesh loaded filter (AVal.constant true) (AVal.constant meshIndex) isActive model.CommonCentroid
+                            renderMesh loaded filter (AVal.constant true) (AVal.constant meshIndex) isActive model.CommonCentroid scale
                         }
                     let ghostTask = info.Runtime.CompileRender(signature, ghostSg.GetRenderObjects(TraversalState.empty info.Runtime))
                     AList.ofList [

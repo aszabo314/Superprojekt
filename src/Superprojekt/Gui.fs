@@ -6,6 +6,16 @@ open Aardvark.Dom
 
 module Gui =
 
+    let private shortName (name : string) =
+        let mesh =
+            let s = name.IndexOf('/')
+            if s >= 0 then name.[s + 1 ..] else name
+        if mesh.Length > 8 && mesh.[8] = '_' then
+            let date = mesh.[..7]
+            let si = mesh.LastIndexOf("_seg")
+            if si > 0 then date + "_" + mesh.[si + 1 ..] else date
+        else mesh
+
     let burgerButton (env : Env<Message>) =
         button {
             Attribute("id", "burger-btn")
@@ -59,6 +69,32 @@ module Gui =
                     Class "tab-panel"
                     Attribute("id", "hud-panel1")
 
+                    h3 { "Dataset" }
+                    div {
+                        Class "btn-row"
+                        model.Datasets |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun dataset ->
+                            let isActive = model.ActiveDataset |> AVal.map (fun a -> a = Some dataset)
+                            let tooltip =
+                                (model.DatasetCentroids, model.DatasetScales) ||> AVal.map2 (fun centroids scales ->
+                                    let cStr =
+                                        match Map.tryFind dataset centroids with
+                                        | Some v -> sprintf "(%.0f, %.0f, %.0f)" v.X v.Y v.Z
+                                        | None   -> "not loaded"
+                                    let s = Map.tryFind dataset scales |> Option.defaultValue 1.0
+                                    sprintf "centroid: %s\nscale: %.3g" cStr s
+                                )
+                            button {
+                                isActive |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
+                                tooltip |> AVal.map (fun t -> Some (Attribute("title", t)))
+                                Dom.OnClick(fun _ ->
+                                    env.Emit [SetActiveDataset dataset]
+                                    ServerActions.loadDataset env dataset
+                                )
+                                dataset
+                            }
+                        )
+                    }
+
                     h3 { "Meshes" }
                     model.MeshNames |> AList.map (fun name ->
                         let isVis =
@@ -76,7 +112,7 @@ module Gui =
                                         env.Emit [SetVisible(name, not current)]
                                     )
                                 }
-                                " " + name
+                                " " + shortName name
                             }
                         }
                     )
@@ -177,7 +213,7 @@ module Gui =
                     model.MeshNames |> AList.map (fun name ->
                         let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                         div {
-                            order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) name)
+                            order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (shortName name))
                         }
                     )
                 }
@@ -243,6 +279,30 @@ module Gui =
                     button { "Reset to bounds"; Dom.OnClick(fun _ -> env.Emit [ResetClip]) }
                 }
             }
+        }
+
+    let fullscreenInfo (model : AdaptiveModel) =
+        div {
+            model.FullscreenOn |> AVal.map (fun on ->
+                if not on then Some (Style [Display "none"]) else None
+            )
+            Style [
+                Position "fixed"; Top "10px"; Left "10px"
+                Background "rgba(255,255,255,0.88)"; Padding "6px 10px"
+                BorderRadius "4px"; FontSize "12px"; PointerEvents "none"
+                ZIndex 100; BorderLeft "3px solid #1a56db"
+            ]
+            model.ActiveDataset |> AVal.map (fun ds ->
+                match ds with
+                | Some d -> div { Style [FontWeight "bold"; MarginBottom "4px"]; d }
+                | None   -> div {}
+            )
+            model.MeshNames |> AList.map (fun name ->
+                let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                div {
+                    order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (shortName name))
+                }
+            )
         }
 
     let debugLog (model : AdaptiveModel) =

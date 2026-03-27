@@ -8,8 +8,9 @@ open Giraffe
 open Aardvark.Base
 open Aardvark.Embree
 
-// All coordinates in absolute world space (double precision).
+// All query coordinates in absolute world space (double precision).
 // Server converts: localPos = V3f(worldPos - mesh.centroid)
+// Query Name field uses "dataset/meshName" format.
 
 [<CLIMutable>]
 type RayRequest     = { Name: string; Index: int; Origin: float[]; Direction: float[] }
@@ -26,35 +27,68 @@ type BoxRequest     = { Name: string; Index: int; Min: float[]; Max: float[] }
 let inline private toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
 let inline private fromV3d (v : V3d)   = [| v.X; v.Y; v.Z |]
 
-// GET /api/centroids
-let centroidsHandler : HttpHandler =
+let private splitName (fullName : string) =
+    let parts = fullName.Split([|'/'|], 2)
+    if parts.Length = 2 then parts.[0], parts.[1]
+    else "", fullName
+
+// GET /api/datasets
+let datasetsHandler : HttpHandler =
+    fun next ctx -> task {
+        let datasets = MeshLoader.datasets ()
+        return! json datasets next ctx
+    }
+
+// GET /api/datasets/{dataset}/centroids
+let centroidsHandler (dataset : string) : HttpHandler =
     fun next ctx -> task {
         let log    = ctx.GetLogger "Superserver"
         let result = Collections.Generic.Dictionary<string, float[]>()
-        for dir in Directory.GetDirectories(MeshLoader.dataRoot.Value) |> Array.sort do
-            let name = Path.GetFileName dir
-            match MeshLoader.getCentroid name with
+        for name in MeshLoader.meshNames dataset do
+            match MeshLoader.getCentroid dataset name with
             | Some c -> result.[name] <- [| c.X; c.Y; c.Z |]
             | None   -> ()
-        log.LogInformation("centroids: {Count} datasets", result.Count)
+        log.LogInformation("centroids {Dataset}: {Count} meshes", dataset, result.Count)
         return! json result next ctx
     }
 
-// GET /api/mesh/{name}
-let meshCountHandler (name : string) : HttpHandler =
+// GET /api/datasets/{dataset}/bboxes
+let bboxesHandler (dataset : string) : HttpHandler =
     fun next ctx -> task {
-        let count = MeshLoader.meshCount name
-        if count = 0 then return! RequestErrors.notFound (text $"not found: {name}") next ctx
+        let log    = ctx.GetLogger "Superserver"
+        let result = Collections.Generic.Dictionary<string, {| min: float[]; max: float[] |}>()
+        for name in MeshLoader.meshNames dataset do
+            let count = MeshLoader.meshCount dataset name
+            if count > 0 then
+                let mutable wMin = V3d( infinity,  infinity,  infinity)
+                let mutable wMax = V3d(-infinity, -infinity, -infinity)
+                for i in 0 .. count - 1 do
+                    let pm = (MeshCache.get dataset name i).parsed
+                    if not pm.bbox.IsInvalid then
+                        let bMin = pm.centroid + pm.bbox.Min
+                        let bMax = pm.centroid + pm.bbox.Max
+                        wMin <- V3d(min wMin.X bMin.X, min wMin.Y bMin.Y, min wMin.Z bMin.Z)
+                        wMax <- V3d(max wMax.X bMax.X, max wMax.Y bMax.Y, max wMax.Z bMax.Z)
+                if wMin.X <= wMax.X then
+                    result.[name] <- {| min = fromV3d wMin; max = fromV3d wMax |}
+        log.LogInformation("bboxes {Dataset}: {Count} meshes", dataset, result.Count)
+        return! json result next ctx
+    }
+
+// GET /api/datasets/{dataset}/mesh/{name}
+let meshCountHandler (dataset : string, name : string) : HttpHandler =
+    fun next ctx -> task {
+        let count = MeshLoader.meshCount dataset name
+        if count = 0 then return! RequestErrors.notFound (text $"not found: {dataset}/{name}") next ctx
         else            return! text (string count) next ctx
     }
 
-// GET /api/mesh/{name}/{i}
-// resp: binary  "MESH" | int32 posCount | int32 idxCount | float64×3 centroid | float32×3[] positions | float32×2[] uvs | int32[] indices
-let meshHandler (name : string, index : int) : HttpHandler =
+// GET /api/datasets/{dataset}/mesh/{name}/{i}
+let meshHandler (dataset : string, name : string, index : int) : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"
         try
-            let lm   = MeshCache.get name index
+            let lm   = MeshCache.get dataset name index
             let pm   = lm.parsed
             let size = 4 + 4 + 4 + 24 + pm.positions.Length * 12 + pm.uvs.Length * 8 + pm.indices.Length * 4
             use ms = new MemoryStream(size)
@@ -69,18 +103,18 @@ let meshHandler (name : string, index : int) : HttpHandler =
             ctx.Response.ContentType <- "application/octet-stream"
             ctx.Response.ContentLength <- Nullable<int64>(int64 size)
             do! ctx.Response.Body.WriteAsync(ms.GetBuffer(), 0, size)
-            log.LogInformation("mesh {Name}/{Index}: {Verts} verts, {Indices} indices, {Bytes}B", name, index, pm.positions.Length, pm.indices.Length, size)
+            log.LogInformation("mesh {Dataset}/{Name}/{Index}: {Verts} verts, {Indices} indices", dataset, name, index, pm.positions.Length, pm.indices.Length)
             return! next ctx
         with ex ->
-            log.LogError(ex, "mesh {Name}/{Index} failed", name, index)
+            log.LogError(ex, "mesh {Dataset}/{Name}/{Index} failed", dataset, name, index)
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
-// GET /api/mesh/{name}/{i}/atlas
-let atlasHandler (name : string, index : int) : HttpHandler =
+// GET /api/datasets/{dataset}/mesh/{name}/{i}/atlas
+let atlasHandler (dataset : string, name : string, index : int) : HttpHandler =
     fun next ctx -> task {
-        match MeshLoader.atlasPath name index with
-        | None -> return! RequestErrors.notFound (text $"atlas not found: {name}/{index}") next ctx
+        match MeshLoader.atlasPath dataset name index with
+        | None -> return! RequestErrors.notFound (text $"atlas not found: {dataset}/{name}/{index}") next ctx
         | Some path ->
             ctx.Response.ContentType <- "image/jpeg"
             let bytes = File.ReadAllBytes path
@@ -89,13 +123,12 @@ let atlasHandler (name : string, index : int) : HttpHandler =
     }
 
 // POST /api/query/ray
-// body: { name, index, origin:[x,y,z], direction:[x,y,z] }
-// resp: { hit, t, point:[x,y,z], triangleId }  or  { hit:false }
 let rayHandler : HttpHandler =
     fun next ctx -> task {
         try
             let! req = ctx.BindJsonAsync<RayRequest>()
-            let lm   = MeshCache.get req.Name req.Index
+            let dataset, name = splitName req.Name
+            let lm   = MeshCache.get dataset name req.Index
             let c    = lm.parsed.centroid
             let orig = V3f(toV3d req.Origin - c)
             let dir  = V3f(toV3d req.Direction)
@@ -110,13 +143,12 @@ let rayHandler : HttpHandler =
     }
 
 // POST /api/query/closest
-// body: { name, index, point:[x,y,z] }
-// resp: { found, point:[x,y,z], distanceSquared, triangleId }  or  { found:false }
 let closestHandler : HttpHandler =
     fun next ctx -> task {
         try
             let! req = ctx.BindJsonAsync<ClosestRequest>()
-            let lm   = MeshCache.get req.Name req.Index
+            let dataset, name = splitName req.Name
+            let lm   = MeshCache.get dataset name req.Index
             let c    = lm.parsed.centroid
             let res  = lm.scene.GetClosestPoint(V3f(toV3d req.Point - c))
             if res.IsValid then
@@ -140,14 +172,13 @@ let private binaryIndices (tris : int[]) : HttpHandler =
     }
 
 // POST /api/query/sphere
-// body: { name, index, center:[x,y,z], radius }
-// resp: binary  int32 count | int32[] indices
 let sphereHandler : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"
         try
             let! req  = ctx.BindJsonAsync<SphereRequest>()
-            let lm    = MeshCache.get req.Name req.Index
+            let dataset, name = splitName req.Name
+            let lm    = MeshCache.get dataset name req.Index
             let lc    = V3f(toV3d req.Center - lm.parsed.centroid)
             let tris  = MeshCache.trianglesInSphere lm lc (float32 req.Radius)
             log.LogDebug("sphere {Name}: r={Radius:F2}, {Count} indices", req.Name, req.Radius, tris.Length)
@@ -158,14 +189,13 @@ let sphereHandler : HttpHandler =
     }
 
 // POST /api/query/box
-// body: { name, index, min:[x,y,z], max:[x,y,z] }
-// resp: binary  int32 count | int32[] indices
 let boxHandler : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"
         try
             let! req  = ctx.BindJsonAsync<BoxRequest>()
-            let lm    = MeshCache.get req.Name req.Index
+            let dataset, name = splitName req.Name
+            let lm    = MeshCache.get dataset name req.Index
             let c     = lm.parsed.centroid
             let tris  = MeshCache.trianglesInBox lm (V3f(toV3d req.Min - c)) (V3f(toV3d req.Max - c))
             log.LogDebug("box {Name}: {Count} indices", req.Name, tris.Length)
@@ -175,40 +205,16 @@ let boxHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
-// GET /api/bboxes
-// resp: { meshName: { min:[x,y,z], max:[x,y,z] } } — world-space AABBs, one entry per dataset
-let bboxesHandler : HttpHandler =
-    fun next ctx -> task {
-        let log    = ctx.GetLogger "Superserver"
-        let result = Collections.Generic.Dictionary<string, {| min: float[]; max: float[] |}>()
-        for dir in Directory.GetDirectories(MeshLoader.dataRoot.Value) |> Array.sort do
-            let name  = Path.GetFileName dir
-            let count = MeshLoader.meshCount name
-            if count > 0 then
-                let mutable wMin = V3d( infinity,  infinity,  infinity)
-                let mutable wMax = V3d(-infinity, -infinity, -infinity)
-                for i in 0 .. count - 1 do
-                    let pm = (MeshCache.get name i).parsed
-                    if not pm.bbox.IsInvalid then
-                        let bMin = pm.centroid + pm.bbox.Min
-                        let bMax = pm.centroid + pm.bbox.Max
-                        wMin <- V3d(min wMin.X bMin.X, min wMin.Y bMin.Y, min wMin.Z bMin.Z)
-                        wMax <- V3d(max wMax.X bMax.X, max wMax.Y bMax.Y, max wMax.Z bMax.Z)
-                if wMin.X <= wMax.X then
-                    result.[name] <- {| min = fromV3d wMin; max = fromV3d wMax |}
-        log.LogInformation("bboxes: {Count} meshes", result.Count)
-        return! json result next ctx
-    }
-
 let webApp : HttpHandler =
     choose [
-        route "/api/centroids"              >=> centroidsHandler
-        route "/api/bboxes"                 >=> bboxesHandler
-        routef "/api/mesh/%s/%i/atlas"      atlasHandler
-        routef "/api/mesh/%s/%i"            meshHandler
-        routef "/api/mesh/%s"               meshCountHandler
-        route "/api/query/ray"              >=> rayHandler
-        route "/api/query/closest"          >=> closestHandler
-        route "/api/query/sphere"           >=> sphereHandler
-        route "/api/query/box"              >=> boxHandler
+        route  "/api/datasets"                                  >=> datasetsHandler
+        routef "/api/datasets/%s/centroids"                     centroidsHandler
+        routef "/api/datasets/%s/bboxes"                        bboxesHandler
+        routef "/api/datasets/%s/mesh/%s/%i/atlas"              (fun (d,n,i) -> atlasHandler(d,n,i))
+        routef "/api/datasets/%s/mesh/%s/%i"                    (fun (d,n,i) -> meshHandler(d,n,i))
+        routef "/api/datasets/%s/mesh/%s"                       (fun (d,n)   -> meshCountHandler(d,n))
+        route  "/api/query/ray"                                 >=> rayHandler
+        route  "/api/query/closest"                             >=> closestHandler
+        route  "/api/query/sphere"                              >=> sphereHandler
+        route  "/api/query/box"                                 >=> boxHandler
     ]

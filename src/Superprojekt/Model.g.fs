@@ -1,5 +1,5 @@
-//6a7a8a50-0222-070f-2e43-ff0de5c5453b
-//30dc3a6d-35e7-e65f-45cd-0ac07c153100
+//adb916c1-7f01-3186-3307-f2b0e61e7cf9
+//7f565224-d956-922d-ef7c-7bb38d868f06
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -22,6 +22,10 @@ type AdaptiveModel(value : Model) =
     let _Filtered_ = FSharp.Data.Adaptive.cmap(value.Filtered)
     let _FilterCenter_ = FSharp.Data.Adaptive.cval(value.FilterCenter)
     let _DebugLog_ = FSharp.Data.Adaptive.clist(value.DebugLog)
+    let _Datasets_ = FSharp.Data.Adaptive.cval(value.Datasets)
+    let _ActiveDataset_ = FSharp.Data.Adaptive.cval(value.ActiveDataset)
+    let _DatasetScales_ = FSharp.Data.Adaptive.cval(value.DatasetScales)
+    let _DatasetCentroids_ = FSharp.Data.Adaptive.cval(value.DatasetCentroids)
     let _RevolverOn_ = FSharp.Data.Adaptive.cval(value.RevolverOn)
     let _FullscreenOn_ = FSharp.Data.Adaptive.cval(value.FullscreenOn)
     let _RevolverCenter_ = FSharp.Data.Adaptive.cval(value.RevolverCenter)
@@ -49,6 +53,10 @@ type AdaptiveModel(value : Model) =
             _Filtered_.Value <- value.Filtered
             _FilterCenter_.Value <- value.FilterCenter
             _DebugLog_.Value <- value.DebugLog
+            _Datasets_.Value <- value.Datasets
+            _ActiveDataset_.Value <- value.ActiveDataset
+            _DatasetScales_.Value <- value.DatasetScales
+            _DatasetCentroids_.Value <- value.DatasetCentroids
             _RevolverOn_.Value <- value.RevolverOn
             _FullscreenOn_.Value <- value.FullscreenOn
             _RevolverCenter_.Value <- value.RevolverCenter
@@ -69,6 +77,10 @@ type AdaptiveModel(value : Model) =
     member __.Filtered = _Filtered_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.int)[]>
     member __.FilterCenter = _FilterCenter_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.DebugLog = _DebugLog_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
+    member __.Datasets = _Datasets_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
+    member __.ActiveDataset = _ActiveDataset_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.DatasetScales = _DatasetScales_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
+    member __.DatasetCentroids = _DatasetCentroids_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.V3d>>
     member __.RevolverOn = _RevolverOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.FullscreenOn = _FullscreenOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.RevolverCenter = _RevolverCenter_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V2d>

@@ -26,6 +26,8 @@ type Message =
     | ClipBoundsLoaded   of (string * Box3d)[]
     | SetClipBox         of Box3d
     | ResetClip
+    | DatasetsLoaded     of string[]
+    | SetActiveDataset   of string
 
 
 module Update =
@@ -34,11 +36,25 @@ module Update =
         | CameraMessage msg ->
             { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
         | CentroidsLoaded centroids ->
-            let common  = if centroids.Length > 0 then snd centroids.[0] else V3d.Zero
+            let common  = if centroids.Length > 0 then centroids |> Array.averageBy snd else V3d.Zero
             let names   = centroids |> Array.map fst |> IndexList.ofArray
             let visible = centroids |> Array.fold (fun m (n, _) -> Map.add n true m) Map.empty
             let indices = centroids |> Array.mapi (fun i (n,_) -> n,i) |> HashMap.ofArray
-            { model with MeshNames = names; MeshVisible = visible; CommonCentroid = common; MeshOrder = indices }
+            let dataset =
+                if centroids.Length > 0 then
+                    let n = fst centroids.[0] in let s = n.IndexOf('/') in if s >= 0 then n.[..s-1] else ""
+                else ""
+            { model with
+                MeshNames        = names
+                MeshVisible      = visible
+                CommonCentroid   = common
+                MeshOrder        = indices
+                MeshesLoaded     = HashSet.empty
+                Filtered         = HashMap.empty
+                FilterCenter     = None
+                ClipBounds       = Box3d.Invalid
+                ClipBox          = Box3d(V3d(-1e10), V3d(1e10))
+                DatasetCentroids = if dataset <> "" then Map.add dataset common model.DatasetCentroids else model.DatasetCentroids }
         | SetVisible(name, v) ->
             { model with MeshVisible = Map.add name v model.MeshVisible }
         | ToggleMenu ->
@@ -96,3 +112,7 @@ module Update =
             { model with ClipBox = box }
         | ResetClip ->
             { model with ClipBox = model.ClipBounds }
+        | DatasetsLoaded datasets ->
+            { model with Datasets = datasets |> Array.toList }
+        | SetActiveDataset dataset ->
+            { model with ActiveDataset = Some dataset }

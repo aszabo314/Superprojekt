@@ -14,12 +14,12 @@ type LoadedMesh =
         bvh      : BbTree   // BVH over per-triangle AABBs (centroid-relative, double)
     }
 
-let private cache = ConcurrentDictionary<struct(string * int), LoadedMesh>()
+let private cache = ConcurrentDictionary<struct(string * string * int), LoadedMesh>()
 
-let get (name : string) (index : int) : LoadedMesh =
-    cache.GetOrAdd(struct(name, index), fun _ ->
-        Log.line "loading mesh %s/%d" name index
-        let pm     = MeshLoader.parseMesh name index
+let get (dataset : string) (name : string) (index : int) : LoadedMesh =
+    cache.GetOrAdd(struct(dataset, name, index), fun _ ->
+        Log.line "loading mesh %s/%s/%d" dataset name index
+        let pm     = MeshLoader.parseMesh dataset name index
         let device = new Device()
         let geom   = new TriangleGeometry(device, ReadOnlyMemory<V3f>(pm.positions), ReadOnlyMemory<int>(pm.indices), RTCBuildQuality.High)
         let scene  = new Scene(device, RTCBuildQuality.High, false)

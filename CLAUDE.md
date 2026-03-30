@@ -49,9 +49,9 @@ Program.fs
 
 `Revolver` — owns the `buildMeshTextures` call; builds the full render scene graph: the composition quad (normal view), fullscreen tile overlay, and circular magnifier disks.
 
-`Gui` — burger button + tabbed HUD (Scene tab: visibility, ghost, filter; Overlay tab: revolver/fullscreen toggles, mesh order, difference rendering; Clip tab: per-axis range sliders). `debugLog` overlay.
+`Gui` — burger button + tabbed HUD (Scene tab: dataset selector buttons + scale input, mesh visibility, ghost; Overlay tab: revolver/fullscreen toggles, mesh order, difference rendering; Clip tab: enable toggle + per-axis range sliders). `fullscreenInfo` overlay (shown when fullscreen is on). `debugLog` overlay.
 
-`ServerActions` — `init`: fetches centroids and bboxes on startup, emits `CentroidsLoaded`/`ClipBoundsLoaded`. `triggerFilter`: sphere query on all meshes at tap/long-press position, emits `FilteredMeshLoaded`.
+`ServerActions` — `init`: fetches dataset list, emits `DatasetsLoaded`. `loadDataset`: fetches centroids + bboxes for a dataset, emits `CentroidsLoaded`/`ClipBoundsLoaded`. `triggerFilter`: sphere query on all meshes at tap/long-press position, emits `FilteredMeshLoaded`.
 
 `View` — wires up renderControl, orbit camera, keyboard/pointer events, revolver state (`shiftHeld`, `spaceHeld`, `cursorPosition` as local `cval`s), calls `Revolver.build`.
 
@@ -60,7 +60,8 @@ Program.fs
 Each mesh has **two texture slices** in a packed `Texture2DArray`: slice `2i` (solid) and slice `2i+1` (ghost). Both are rendered every frame into separate FBO attachments via `buildMeshTextures`.
 
 **Per-mesh off-screen pass** (`MeshView.renderMesh`, shader `BlitShader.clippy`):
-- **Solid slice** (`IsGhost=false`): discards fragments outside `[ClipMin, ClipMax]`; highlights boundary in a per-mesh color from `colorMap`; respects `active` (mesh visibility drives the clip range — hidden mesh gets infinite clip so it still renders, making its depth available)
+- Applies per-dataset scale via `Trafo3d.Translation(delta) * Trafo3d.Scale(scale)` where `DatasetScales` provides scale (default 1.0; SETSM_glacier = 0.01). Clip bounds are scaled to match.
+- **Solid slice** (`IsGhost=false`): discards fragments outside `[ClipMin, ClipMax]` (only when `ClipActive`); highlights boundary in a per-mesh color from `colorMap`; respects `active` (mesh visibility drives the clip range — hidden mesh gets infinite clip so it still renders, making its depth available)
 - **Ghost slice** (`IsGhost=true`): discards fragments *inside* the clip box (opposite of solid); renders a tinted semi-transparent color for the clipped-away / hidden region
 
 **Composition pass** (`MeshView.composeMeshTextures`, shader `BlitShader.readArray`):
@@ -82,12 +83,17 @@ Output: single color+depth fragment composited into the main framebuffer.
 Camera, MeshOrder, MeshNames, MeshVisible, MeshesLoaded, CommonCentroid, MenuOpen
 Filtered, FilterCenter        // active filter: HashMap<meshName, vertexIndices[]>
 DebugLog                      // rolling log, max 20 entries
+Datasets                      // list of dataset names from server
+ActiveDataset                 // currently loaded dataset name
+DatasetScales                 // per-dataset render scale (default: {"SETSM_glacier" → 0.01})
+DatasetCentroids              // per-dataset mean centroid, populated on CentroidsLoaded
 RevolverOn, FullscreenOn      // GUI toggles (combined with shift/space keys in View)
 RevolverCenter                // NDC anchor when revolver activated via GUI (not shift)
 DifferenceRendering           // heat-color depth difference between mesh layers
 MinDifferenceDepth            // world-space distance threshold to start heat coloring
 MaxDifferenceDepth            // world-space distance for full heat color saturation
 GhostSilhouette               // show semi-transparent ghost of clipped/hidden geometry
+ClipActive                    // whether workspace clipping is enabled
 ClipBox                       // active clip range (Box3d in world space)
 ClipBounds                    // world-space union of all dataset bboxes; Box3d.Invalid until loaded
 ```
@@ -105,24 +111,28 @@ Program.fs       ← ASP.NET startup
 **Data layout on disk:**
 ```
 data/
-  <dataset-name>/
-    *.obj                   ← one file per mesh part (sorted = index order)
-    *_centroid.txt          ← "x y z" absolute world-space centroid
-    *_atlas.jpg             ← texture atlas per mesh part
+  <dataset>/
+    <mesh>/
+      *.obj                 ← one file per mesh part (sorted = index order)
+      *centroid.txt         ← "x y z" (may have # comment lines); V3d.Zero if absent
+      *_atlas.jpg or *.jpg  ← texture atlas (both patterns tried)
 ```
 
 **API endpoints:**
 ```
-GET  /api/centroids              → { name: [x,y,z] }
-GET  /api/mesh/{name}            → count of OBJ files
-GET  /api/mesh/{name}/{i}        → binary: "MESH" | int32 posCount | int32 idxCount | float64×3 centroid | float32×3[] positions | float32×2[] uvs | int32[] indices
-GET  /api/mesh/{name}/{i}/atlas  → JPEG
-POST /api/query/ray              → { hit, t, point, triangleId }
+GET  /api/datasets                              → string[]
+GET  /api/datasets/{dataset}/centroids          → { meshName: [x,y,z] }
+GET  /api/datasets/{dataset}/bboxes             → { meshName: { min:[x,y,z], max:[x,y,z] } }
+GET  /api/datasets/{dataset}/mesh/{name}        → count of OBJ files
+GET  /api/datasets/{dataset}/mesh/{name}/{i}    → binary mesh (same format as before)
+GET  /api/datasets/{dataset}/mesh/{name}/{i}/atlas → JPEG
+POST /api/query/ray              → { hit, t, point, triangleId }   Name = "dataset/mesh"
 POST /api/query/closest          → { found, point, distanceSquared, triangleId }
 POST /api/query/sphere           → binary: int32 count | int32[] vertexIndices
 POST /api/query/box              → binary: int32 count | int32[] vertexIndices
 ```
 
+Client mesh names use `"dataset/meshName"` format throughout. Query `Name` field uses the same format; server splits on first `/`.
 All query coordinates are **absolute world space**. Server converts: `localPos = V3f(worldPos - centroid)`.
 Sphere/box results return **vertex indices** (3 per triangle), not triangle IDs.
 

@@ -342,10 +342,39 @@ module Gui =
             )
         }
 
-    let debugLog (model : AdaptiveModel) =
+    let coordinateDisplay (coord : aval<V3d option>) =
         div {
             Style [
-                Position "fixed"; Bottom "0"; Left "0"; Right "0"
+                Position "fixed"; Bottom "8px"; Left "50%"
+                StyleProperty("transform", "translateX(-50%)")
+                Background "rgba(255,255,255,0.88)"; Padding "3px 12px"
+                BorderRadius "4px"; FontSize "12px"; FontFamily "monospace"
+                PointerEvents "none"; ZIndex 100
+            ]
+            coord |> AVal.map (fun c ->
+                match c with
+                | None   -> ""
+                | Some p -> sprintf "X: %.2f   Y: %.2f   Z: %.2f" p.X p.Y p.Z
+            )
+        }
+
+    let debugLogToggle (visible : cval<bool>) =
+        button {
+            Style [
+                Position "fixed"; Bottom "0"; Left "0"
+                Background "rgba(0,0,0,0.7)"; Color "#0f0"
+                Border "none"; FontFamily "monospace"; FontSize "11px"
+                Padding "2px 8px"; Css.Cursor "pointer"; ZIndex 10000
+            ]
+            Dom.OnClick(fun _ -> transact (fun () -> visible.Value <- not visible.Value))
+            (visible :> aval<bool>) |> AVal.map (fun v -> if v then "▼ log" else "▲ log")
+        }
+
+    let debugLog (visible : aval<bool>) (model : AdaptiveModel) =
+        div {
+            visible |> AVal.map (fun v -> if not v then Some (Style [Display "none"]) else None)
+            Style [
+                Position "fixed"; Bottom "0"; Left "30px"; Right "0"
                 MaxHeight "30vh"; OverflowY "auto"
                 Background "rgba(0,0,0,0.8)"; Color "#0f0"
                 FontFamily "monospace"; FontSize "11px"

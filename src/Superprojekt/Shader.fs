@@ -184,6 +184,12 @@ module BlitShader =
 module Shader =
     open FShade
 
+    type UniformScope with
+        member x.FlatColor : V4d = x?FlatColor
+
+    let flatColor (_v : Effects.Vertex) =
+        fragment { return uniform.FlatColor }
+
     let nothing (v : Effects.Vertex) =
         fragment {
             return v.c

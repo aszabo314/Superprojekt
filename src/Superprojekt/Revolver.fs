@@ -2,10 +2,44 @@ namespace Superprojekt
 
 open Aardvark.Base
 open Aardvark.Rendering
+open Aardworx.WebAssembly
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
 module Revolver =
+
+    let private boxPos =
+        [|  V3f(-0.5f, -0.5f, -0.5f); V3f( 0.5f, -0.5f, -0.5f); V3f( 0.5f,  0.5f, -0.5f); V3f(-0.5f,  0.5f, -0.5f)
+            V3f(-0.5f, -0.5f,  0.5f); V3f( 0.5f, -0.5f,  0.5f); V3f( 0.5f,  0.5f,  0.5f); V3f(-0.5f,  0.5f,  0.5f) |]
+    let private boxIdx =
+        [| 0;1;2; 0;2;3;  5;4;7; 5;7;6;  4;0;3; 4;3;7;  1;5;6; 1;6;2;  0;4;5; 0;5;1;  3;2;6; 3;6;7 |]
+
+    let private axisBox (color : V4d) (trafo : Trafo3d) =
+        sg {
+            Sg.Trafo (AVal.constant trafo)
+            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+            Sg.Uniform("FlatColor", AVal.constant color)
+            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+            Sg.NoEvents
+            Sg.VertexAttributes(
+                HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer boxPos :> IBuffer), typeof<V3f>) ]
+            )
+            Sg.Index(BufferView(AVal.constant (ArrayBuffer boxIdx :> IBuffer), typeof<int>))
+            Sg.Render (AVal.constant boxIdx.Length)
+        }
+
+    // Axis indicator at render-space origin (= common centroid).
+    // +Y = North (green, dominant), +X = East (red), +Z = Up (blue). Sizes in render-space units.
+    let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
+        let box color trafo =
+            sg { Sg.Active active; Sg.View view; Sg.Proj proj; axisBox color trafo }
+        ASet.ofList [
+            box (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 1.5)
+            box (V4d(0.1,  0.72, 0.1,  1.0)) (Trafo3d.Scale(1.0, 5.0, 1.0) * Trafo3d.Translation(0.0, 2.5, 0.0))  // N shaft
+            box (V4d(0.1,  0.72, 0.1,  1.0)) (Trafo3d.Scale(2.2, 2.0, 2.2) * Trafo3d.Translation(0.0, 6.0, 0.0))  // N tip
+            box (V4d(0.82, 0.15, 0.1,  1.0)) (Trafo3d.Scale(3.0, 0.75, 0.75) * Trafo3d.Translation(1.5, 0.0, 0.0)) // E
+            box (V4d(0.15, 0.35, 0.9,  1.0)) (Trafo3d.Scale(0.75, 0.75, 3.0) * Trafo3d.Translation(0.0, 0.0, 1.5)) // U
+        ]
 
     let private disk
             (revolverActive    : aval<bool>)
@@ -121,4 +155,5 @@ module Revolver =
                 disk revolverActive revolverBase colorArrTex info.ViewportSize (sliceOf name) renderPos
             ) |> AList.toASet
 
-        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes])
+        let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)
+        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes])

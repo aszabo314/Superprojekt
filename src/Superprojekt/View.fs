@@ -17,6 +17,8 @@ module View =
         let cursorPosition = cval None
         let shiftHeld      = cval false
         let spaceHeld      = cval false
+        let logVisible     = cval true
+        let hoverCoord     = cval<V3d option> None
 
         let revolverActive   = AVal.map2 (||) (shiftHeld :> aval<_>) model.RevolverOn
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
@@ -80,6 +82,12 @@ module View =
                 )
 
                 Sg.OnTap(fun e ->
+                    let scale =
+                        AVal.force model.ActiveDataset
+                        |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
+                        |> Option.defaultValue 1.0
+                    let cc = AVal.force model.CommonCentroid
+                    transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
                     if e.Ctrl && e.Button = Button.Left then
                         env.Emit [ClearFilteredMesh]
                         ServerActions.triggerFilter env model e.Position
@@ -88,30 +96,16 @@ module View =
                 )
 
                 Sg.OnLongPress(fun e ->
+                    let scale =
+                        AVal.force model.ActiveDataset
+                        |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
+                        |> Option.defaultValue 1.0
+                    let cc = AVal.force model.CommonCentroid
+                    transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
                     env.Emit [ClearFilteredMesh]
                     ServerActions.triggerFilter env model e.Position
                     false
                 )
-
-                Sg.Shader {
-                    DefaultSurfaces.trafo
-                    DefaultSurfaces.simpleLighting
-                    Shader.nothing
-                }
-
-                sg {
-                    Sg.Scale 10.0
-                    Primitives.Quad(Quad3d(V3d(-1, -1, 0), V3d(2, 0, 0), V3d(0.0, 2.0, 0.0)), C4b.SandyBrown)
-                }
-
-                sg {
-                    Sg.Shader {
-                        DefaultSurfaces.trafo
-                        DefaultSurfaces.simpleLighting
-                        Shader.withViewPos
-                    }
-                    Primitives.Teapot(C4b.Green)
-                }
 
                 Dom.OnPointerMove(fun e ->
                     transact (fun () ->
@@ -150,7 +144,9 @@ module View =
             Gui.burgerButton env
             Gui.hudTabs env model
             Gui.fullscreenInfo model
-            Gui.debugLog model
+            Gui.debugLogToggle logVisible
+            Gui.debugLog (logVisible :> aval<bool>) model
+            Gui.coordinateDisplay (hoverCoord :> aval<V3d option>)
         }
 
 

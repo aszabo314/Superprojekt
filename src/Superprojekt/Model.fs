@@ -38,6 +38,8 @@ type Model =
         ClipActive     : bool
         ClipBox        : Box3d   // active clip range (render-space uniforms computed from this)
         ClipBounds     : Box3d   // world-space union of all dataset bboxes; Box3d.Invalid until loaded
+
+        ScanPins       : ScanPinModel
     }
 
 module Model =
@@ -68,4 +70,6 @@ module Model =
             ClipActive     = false
             ClipBox        = Box3d(V3d(-1e10), V3d(1e10))
             ClipBounds     = Box3d.Invalid
+
+            ScanPins       = ScanPinModel.initial
         }

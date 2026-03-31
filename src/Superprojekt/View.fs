@@ -1,6 +1,7 @@
 namespace Superprojekt
 
 open Aardvark.Base
+open Aardvark.Dom.Utilities.OrbitController
 open Aardvark.Rendering
 open FSharp.Data.Adaptive
 open Aardvark.Dom
@@ -51,13 +52,14 @@ module View =
                 Dom.Style [
                     Css.Background "rgb(244, 246, 248)"
                 ]
+                (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap ->
+                    if pm.IsSome || ap.IsSome then Some (Dom.Style [Css.Cursor "crosshair"]) else None
+                )
 
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
 
                 OrbitController.getAttributes (Env.map CameraMessage env)
-
-                
                 
                 let mutable initial = true
                 RenderControl.OnRendered(fun _ ->
@@ -66,7 +68,7 @@ module View =
                         initial <- false
                     env.Emit [CameraMessage OrbitMessage.Rendered]
                 )
-
+                
                 let view = model.Camera.view |> AVal.map CameraView.viewTrafo
                 let proj =
                     size |> AVal.map (fun s ->
@@ -87,8 +89,14 @@ module View =
                         |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
                         |> Option.defaultValue 1.0
                     let cc = AVal.force model.CommonCentroid
-                    transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
-                    if e.Ctrl && e.Button = Button.Left then
+                    let worldPos = e.WorldPosition / scale + cc
+                    transact (fun () -> hoverCoord.Value <- Some worldPos)
+                    let inPlacement = (AVal.force model.ScanPins.PlacingMode).IsSome || (AVal.force model.ScanPins.ActivePlacement).IsSome
+                    if inPlacement then
+                        let camFwd = (AVal.force view).Forward.GetViewDirectionLH() |> Vec.normalize
+                        env.Emit [ScanPinMsg (SetAnchor(worldPos, e.WorldPosition, V3d camFwd))]
+                        false
+                    elif e.Ctrl && e.Button = Button.Left then
                         env.Emit [ClearFilteredMesh]
                         ServerActions.triggerFilter env model e.Position
                         false
@@ -130,8 +138,9 @@ module View =
 
             Dom.OnKeyDown(fun e ->
                 match e.Key with
-                | "Shift" -> transact (fun () -> shiftHeld.Value <- true)
-                | " "     -> transact (fun () -> spaceHeld.Value <- true)
+                | "Shift"  -> transact (fun () -> shiftHeld.Value <- true)
+                | " "      -> transact (fun () -> spaceHeld.Value <- true)
+                | "Escape" -> env.Emit [ScanPinMsg CancelPlacement]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
@@ -143,6 +152,7 @@ module View =
 
             Gui.burgerButton env
             Gui.hudTabs env model
+            Gui.pinDiagram model
             Gui.fullscreenInfo model
             Gui.debugLogToggle logVisible
             Gui.debugLog (logVisible :> aval<bool>) model

@@ -41,6 +41,67 @@ module Revolver =
             box (V4d(0.15, 0.35, 0.9,  1.0)) (Trafo3d.Scale(0.75, 0.75, 3.0) * Trafo3d.Translation(0.0, 0.0, 1.5)) // U
         ]
 
+    let private buildPrismWireframe (prism : SelectionPrism) (thickness : float) =
+        let axis = prism.AxisDirection |> Vec.normalize
+        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
+        let right = Vec.cross axis up |> Vec.normalize
+        let fwd = Vec.cross right axis |> Vec.normalize
+        let n = prism.Footprint.Vertices.Length
+        if n < 3 then [||], [||]
+        else
+            let to3d (v : V2d) offset = prism.AnchorPoint + right * v.X + fwd * v.Y + axis * offset
+            let topVerts  = prism.Footprint.Vertices |> List.map (fun v -> to3d v prism.ExtentForward)  |> Array.ofList
+            let botVerts  = prism.Footprint.Vertices |> List.map (fun v -> to3d v (-prism.ExtentBackward)) |> Array.ofList
+            let positions = System.Collections.Generic.List<V3f>()
+            let indices   = System.Collections.Generic.List<int>()
+            let addEdge (a : V3d) (b : V3d) =
+                let dir = b - a
+                let perp =
+                    let c = Vec.cross dir axis
+                    if c.Length < 1e-10 then Vec.cross dir right |> Vec.normalize else c |> Vec.normalize
+                let off = perp * thickness * 0.5
+                let i0 = positions.Count
+                positions.Add(V3f(a + off))
+                positions.Add(V3f(a - off))
+                positions.Add(V3f(b + off))
+                positions.Add(V3f(b - off))
+                indices.Add(i0); indices.Add(i0+1); indices.Add(i0+2)
+                indices.Add(i0+1); indices.Add(i0+3); indices.Add(i0+2)
+            for i in 0 .. n - 1 do
+                let j = (i + 1) % n
+                addEdge topVerts.[i] topVerts.[j]
+                addEdge botVerts.[i] botVerts.[j]
+            for i in 0 .. n - 1 do
+                addEdge topVerts.[i] botVerts.[i]
+            positions.ToArray(), indices.ToArray()
+
+    let private buildCutPlaneQuad (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
+        let axis = prism.AxisDirection |> Vec.normalize
+        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
+        let right = Vec.cross axis up |> Vec.normalize
+        let fwd = Vec.cross right axis |> Vec.normalize
+        let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+        match cutPlane with
+        | CutPlaneMode.AlongAxis angleDeg ->
+            let a = angleDeg * Constant.RadiansPerDegree
+            let planeDir = right * cos a + fwd * sin a
+            let hw = r * 1.2
+            let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
+            let center = prism.AnchorPoint + axis * (prism.ExtentForward - prism.ExtentBackward) * 0.5
+            [| V3f(center - planeDir * hw - axis * hh)
+               V3f(center + planeDir * hw - axis * hh)
+               V3f(center + planeDir * hw + axis * hh)
+               V3f(center - planeDir * hw + axis * hh) |],
+            [| 0;1;2; 0;2;3 |]
+        | CutPlaneMode.AcrossAxis dist ->
+            let center = prism.AnchorPoint + axis * dist
+            let hw = r * 1.2
+            [| V3f(center - right * hw - fwd * hw)
+               V3f(center + right * hw - fwd * hw)
+               V3f(center + right * hw + fwd * hw)
+               V3f(center - right * hw + fwd * hw) |],
+            [| 0;1;2; 0;2;3 |]
+
     let private disk
             (revolverActive    : aval<bool>)
             (revolverBase      : aval<option<V2d>>)
@@ -156,4 +217,88 @@ module Revolver =
             ) |> AList.toASet
 
         let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)
-        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes])
+
+        let pinDots =
+            let notFullscreen = AVal.map not fullscreenActive
+            let selectedId = model.ScanPins.SelectedPin
+            model.ScanPins.Pins |> AMap.toASet |> ASet.map (fun (id, pin) ->
+                let color =
+                    selectedId |> AVal.map (fun sel ->
+                        if sel = Some id then V4d(1.0, 0.9, 0.0, 1.0)
+                        elif pin.Phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 1.0)
+                        else V4d(1.0, 0.3, 0.3, 1.0))
+                sg {
+                    Sg.Active notFullscreen
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.Trafo (AVal.constant (Trafo3d.Scale(0.5) * Trafo3d.Translation(pin.Prism.AnchorPoint)))
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", color)
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.OnTap(fun _ ->
+                        let sel = AVal.force selectedId
+                        if sel = Some id then env.Emit [ScanPinMsg (SelectPin None)]
+                        else env.Emit [ScanPinMsg (SelectPin (Some id))]
+                        false)
+                    Sg.OnDoubleTap(fun _ ->
+                        env.Emit [ScanPinMsg (FocusPin id)]
+                        false)
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer boxPos :> IBuffer), typeof<V3f>) ]
+                    )
+                    Sg.Index(BufferView(AVal.constant (ArrayBuffer boxIdx :> IBuffer), typeof<int>))
+                    Sg.Render (AVal.constant boxIdx.Length)
+                }
+            )
+
+        let pinPrisms =
+            let notFullscreen = AVal.map not fullscreenActive
+            let selectedId = model.ScanPins.SelectedPin
+            model.ScanPins.Pins |> AMap.toASet |> ASet.collect (fun (id, pin) ->
+                let wireColor =
+                    selectedId |> AVal.map (fun sel ->
+                        if sel = Some id then V4d(1.0, 0.85, 0.0, 0.7)
+                        elif pin.Phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 0.5)
+                        else V4d(0.6, 0.6, 0.6, 0.35))
+                let planeColor =
+                    selectedId |> AVal.map (fun sel ->
+                        if sel = Some id then V4d(1.0, 0.9, 0.3, 0.25)
+                        else V4d(0.5, 0.5, 0.8, 0.12))
+                let wirePos, wireIdx = buildPrismWireframe pin.Prism 0.05
+                let planePos, planeIdx = buildCutPlaneQuad pin.Prism pin.CutPlane
+                let prismSg =
+                    if wireIdx.Length = 0 then None
+                    else Some (
+                        sg {
+                            Sg.Active notFullscreen
+                            Sg.View view
+                            Sg.Proj proj
+                            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                            Sg.Uniform("FlatColor", wireColor)
+                            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                            Sg.NoEvents
+                            Sg.VertexAttributes(
+                                HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer wirePos :> IBuffer), typeof<V3f>) ])
+                            Sg.Index(BufferView(AVal.constant (ArrayBuffer wireIdx :> IBuffer), typeof<int>))
+                            Sg.Render (AVal.constant wireIdx.Length)
+                        })
+                let planeSg =
+                    sg {
+                        Sg.Active notFullscreen
+                        Sg.View view
+                        Sg.Proj proj
+                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                        Sg.Uniform("FlatColor", planeColor)
+                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                        Sg.NoEvents
+                        Sg.VertexAttributes(
+                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer planePos :> IBuffer), typeof<V3f>) ])
+                        Sg.Index(BufferView(AVal.constant (ArrayBuffer planeIdx :> IBuffer), typeof<int>))
+                        Sg.Render (AVal.constant planeIdx.Length)
+                    }
+                match prismSg with
+                | Some w -> ASet.ofList [w; planeSg]
+                | None   -> ASet.single planeSg
+            )
+
+        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms])

@@ -20,6 +20,8 @@
     <Compile Include="CameraModel.fs" />
     <Compile Include="CameraModel.g.fs" />
     <Compile Include="OrbitController.fs" />
+    <Compile Include="ScanPinModel.fs" />
+    <Compile Include="ScanPinModel.g.fs" />
     <Compile Include="Model.fs" />
     <Compile Include="Model.g.fs" />
     <Compile Include="Shader.fs" />

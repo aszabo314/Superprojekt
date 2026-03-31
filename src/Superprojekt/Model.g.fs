@@ -1,5 +1,5 @@
-//b97fb451-060f-04e2-14d3-1269f5b5ddd0
-//bdaa4f5a-b03e-6ffe-426b-5a4b105f7955
+//d9d02fae-0901-2e39-202e-2f78a587823a
+//6da3de77-c7c6-81c7-eb7e-d18a89255133
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -36,6 +36,7 @@ type AdaptiveModel(value : Model) =
     let _ClipActive_ = FSharp.Data.Adaptive.cval(value.ClipActive)
     let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
     let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
+    let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -68,6 +69,7 @@ type AdaptiveModel(value : Model) =
             _ClipActive_.Value <- value.ClipActive
             _ClipBox_.Value <- value.ClipBox
             _ClipBounds_.Value <- value.ClipBounds
+            _ScanPins_.Update(value.ScanPins)
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -93,4 +95,5 @@ type AdaptiveModel(value : Model) =
     member __.ClipActive = _ClipActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
+    member __.ScanPins = _ScanPins_
 

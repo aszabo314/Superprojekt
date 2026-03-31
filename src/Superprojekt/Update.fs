@@ -30,7 +30,158 @@ type Message =
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
     | SetDatasetScale    of string * float
+    | ScanPinMsg         of ScanPinMessage
 
+and ScanPinMessage =
+    | StartPlacement of FootprintMode
+    | CancelPlacement
+    | SetAnchor of point : V3d * renderPos : V3d * cameraForward : V3d
+    | SetFootprintRadius of float
+    | CloseFootprint
+    | SetCutPlaneMode of CutPlaneMode
+    | SetCutPlaneAngle of float
+    | SetCutPlaneDistance of float
+    | SetFootprintScale of float
+    | CommitPin
+    | DeletePin of ScanPinId
+    | SelectPin of ScanPinId option
+    | FocusPin of ScanPinId
+
+module ScanPinUpdate =
+
+    let private meshColors =
+        [| C4b(228uy,26uy,28uy); C4b(55uy,126uy,184uy); C4b(77uy,175uy,74uy); C4b(152uy,78uy,163uy)
+           C4b(255uy,127uy,0uy); C4b(255uy,255uy,51uy); C4b(166uy,86uy,40uy); C4b(247uy,129uy,191uy); C4b(153uy,153uy,153uy) |]
+
+    let private assignColors (meshNames : IndexList<string>) =
+        meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, meshColors.[i % meshColors.Length]) |> Map.ofArray
+
+    let private makeDefaultPrism (anchor : V3d) (axis : V3d) (radius : float) =
+        let n = 32
+        let verts = [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * radius ]
+        { AnchorPoint = anchor; AxisDirection = axis
+          Footprint = { Vertices = verts }
+          ExtentForward = 100.0; ExtentBackward = 100.0 }
+
+    let private dummyCutResults (meshNames : IndexList<string>) (prism : SelectionPrism) (_cutPlane : CutPlaneMode) =
+        let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+        meshNames |> IndexList.toArray |> Array.mapi (fun i name ->
+            let offset = float i * 0.3
+            let pts = [ for x in -20 .. 20 -> V2d(float x * r * 0.1, sin (float x * 0.3 + offset) * r * 0.2 + offset * r * 0.15) ]
+            name, { MeshName = name; Polylines = [pts] }
+        ) |> Map.ofArray
+
+    let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
+        match msg with
+        | StartPlacement mode ->
+            let sp =
+                match sp.ActivePlacement with
+                | Some id -> { sp with Pins = HashMap.remove id sp.Pins; ActivePlacement = None }
+                | None -> sp
+            { sp with PlacingMode = Some mode }
+
+        | CancelPlacement ->
+            let sp =
+                match sp.ActivePlacement with
+                | Some id -> { sp with Pins = HashMap.remove id sp.Pins; ActivePlacement = None }
+                | None -> sp
+            { sp with PlacingMode = None }
+
+        | SetAnchor(_worldPos, renderPos, camFwd) ->
+            let sp =
+                match sp.ActivePlacement with
+                | Some oldId -> { sp with Pins = HashMap.remove oldId sp.Pins }
+                | None -> sp
+            let id = ScanPinId.create()
+            let axis = -camFwd |> Vec.normalize
+            let prism = makeDefaultPrism renderPos axis 1.0
+            let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
+            let pin =
+                { Id = id; Phase = PinPhase.Placement; Prism = prism
+                  CutPlane = CutPlaneMode.AlongAxis 0.0
+                  CreationCameraState = cam
+                  CutResults = dummyCutResults model.MeshNames prism (CutPlaneMode.AlongAxis 0.0)
+                  DatasetColors = assignColors model.MeshNames }
+            { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id; PlacingMode = None }
+
+        | SetFootprintRadius radius ->
+            match sp.ActivePlacement with
+            | Some id ->
+                match HashMap.tryFind id sp.Pins with
+                | Some pin when pin.Phase = PinPhase.Placement ->
+                    let r = max 0.1 radius
+                    let prism = makeDefaultPrism pin.Prism.AnchorPoint pin.Prism.AxisDirection r
+                    let pin = { pin with Prism = prism; CutResults = dummyCutResults model.MeshNames prism pin.CutPlane }
+                    { sp with Pins = HashMap.add id pin sp.Pins }
+                | _ -> sp
+            | None -> sp
+
+        | CloseFootprint -> sp
+
+        | SetCutPlaneMode mode ->
+            match sp.ActivePlacement with
+            | Some id ->
+                match HashMap.tryFind id sp.Pins with
+                | Some pin when pin.Phase = PinPhase.Placement ->
+                    let pin = { pin with CutPlane = mode; CutResults = dummyCutResults model.MeshNames pin.Prism mode }
+                    { sp with Pins = HashMap.add id pin sp.Pins }
+                | _ -> sp
+            | None -> sp
+
+        | SetCutPlaneAngle deg ->
+            match sp.ActivePlacement with
+            | Some id ->
+                match HashMap.tryFind id sp.Pins with
+                | Some pin when pin.Phase = PinPhase.Placement ->
+                    let mode = CutPlaneMode.AlongAxis deg
+                    let pin = { pin with CutPlane = mode; CutResults = dummyCutResults model.MeshNames pin.Prism mode }
+                    { sp with Pins = HashMap.add id pin sp.Pins }
+                | _ -> sp
+            | None -> sp
+
+        | SetCutPlaneDistance dist ->
+            match sp.ActivePlacement with
+            | Some id ->
+                match HashMap.tryFind id sp.Pins with
+                | Some pin when pin.Phase = PinPhase.Placement ->
+                    let mode = CutPlaneMode.AcrossAxis dist
+                    let pin = { pin with CutPlane = mode; CutResults = dummyCutResults model.MeshNames pin.Prism mode }
+                    { sp with Pins = HashMap.add id pin sp.Pins }
+                | _ -> sp
+            | None -> sp
+
+        | SetFootprintScale scale ->
+            match sp.ActivePlacement with
+            | Some id ->
+                match HashMap.tryFind id sp.Pins with
+                | Some pin when pin.Phase = PinPhase.Placement ->
+                    let s = max 0.1 scale
+                    let prism = makeDefaultPrism pin.Prism.AnchorPoint pin.Prism.AxisDirection s
+                    let pin = { pin with Prism = prism; CutResults = dummyCutResults model.MeshNames prism pin.CutPlane }
+                    { sp with Pins = HashMap.add id pin sp.Pins }
+                | _ -> sp
+            | None -> sp
+
+        | CommitPin ->
+            match sp.ActivePlacement with
+            | Some id ->
+                match HashMap.tryFind id sp.Pins with
+                | Some pin ->
+                    let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
+                    let pin = { pin with Phase = PinPhase.Committed; CreationCameraState = cam }
+                    { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = None; PlacingMode = None }
+                | None -> sp
+            | None -> sp
+
+        | DeletePin id ->
+            let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
+            let active = if sp.ActivePlacement = Some id then None else sp.ActivePlacement
+            { sp with Pins = HashMap.remove id sp.Pins; SelectedPin = selected; ActivePlacement = active }
+
+        | SelectPin id ->
+            { sp with SelectedPin = id }
+
+        | FocusPin _ -> sp
 
 module Update =
     let update (env : Env<Message>) (model : Model) (msg : Message) =
@@ -65,8 +216,8 @@ module Update =
             { model with Filtered = HashMap.add name indices model.Filtered; FilterCenter = Some selPt }
         | LoadFinished name ->
             let model = { model with MeshesLoaded = HashSet.add name model.MeshesLoaded }
-            
-            
+
+
             let missing = HashSet.difference (HashSet.ofSeq model.MeshNames) model.MeshesLoaded
             if missing.Count = 0 then
                 let d = Window.Document.CreateElement("div")
@@ -123,3 +274,15 @@ module Update =
             { model with ActiveDataset = Some dataset }
         | SetDatasetScale(dataset, scale) ->
             { model with DatasetScales = Map.add dataset scale model.DatasetScales }
+        | ScanPinMsg msg ->
+            let sp = model.ScanPins
+            let sp' = ScanPinUpdate.update model msg sp
+            match msg with
+            | FocusPin id ->
+                match HashMap.tryFind id sp.Pins with
+                | Some pin ->
+                    let c = pin.CreationCameraState
+                    env.Emit [CameraMessage (OrbitMessage.SetTarget(true, c.Center, c.Radius, c.Phi, c.Theta))]
+                | None -> ()
+            | _ -> ()
+            { model with ScanPins = sp' }

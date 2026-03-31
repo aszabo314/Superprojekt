@@ -274,10 +274,10 @@ body.loaded {
 
 .pin-diagram {
     position: fixed;
-    bottom: 40px;
-    right: 12px;
+    left: 0;
+    top: 0;
     width: 310px;
-    background: #ffffff;
+    background: rgba(255,255,255,0.95);
     border: 1px solid #c5cdd8;
     border-radius: 6px;
     box-shadow: 0 4px 16px rgba(0,0,0,0.12);
@@ -285,6 +285,9 @@ body.loaded {
     z-index: 1000;
     font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
     font-size: 13px;
+    pointer-events: auto;
+    max-height: 50vh;
+    overflow-y: auto;
 }
 
 .pin-diagram h3 {

@@ -20,6 +20,7 @@ module View =
         let spaceHeld      = cval false
         let logVisible     = cval true
         let hoverCoord     = cval<V3d option> None
+        let viewportSize   = cval (V2i(1, 1))
 
         let revolverActive   = AVal.map2 (||) (shiftHeld :> aval<_>) model.RevolverOn
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
@@ -64,8 +65,8 @@ module View =
                 let mutable initial = true
                 RenderControl.OnRendered(fun _ ->
                     if initial then
-                        
                         initial <- false
+                    transact (fun () -> viewportSize.Value <- AVal.force size)
                     env.Emit [CameraMessage OrbitMessage.Rendered]
                 )
                 
@@ -152,7 +153,7 @@ module View =
 
             Gui.burgerButton env
             Gui.hudTabs env model
-            Gui.pinDiagram model
+            Gui.pinDiagram model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
             Gui.fullscreenInfo model
             Gui.debugLogToggle logVisible
             Gui.debugLog (logVisible :> aval<bool>) model

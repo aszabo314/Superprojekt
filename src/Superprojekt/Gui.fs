@@ -1,6 +1,7 @@
 namespace Superprojekt
 
 open Aardvark.Base
+open Aardvark.Rendering
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
@@ -532,7 +533,7 @@ module Gui =
             sprintf "{\"paths\":[%s],\"legend\":[%s],\"xMin\":%.4g,\"xMax\":%.4g,\"yMin\":%.4g,\"yMax\":%.4g}"
                 (paths |> String.concat ",") (legend |> String.concat ",") xMin xMax yMin yMax
 
-    let pinDiagram (model : AdaptiveModel) =
+    let pinDiagram (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =
         let selectedPin =
             (model.ScanPins.SelectedPin, model.ScanPins.Pins |> AMap.toAVal) ||> AVal.map2 (fun sel pins ->
                 sel |> Option.bind (fun id -> HashMap.tryFind id pins))
@@ -540,10 +541,38 @@ module Gui =
         let svgW, svgH = 280.0, 180.0
         let pad = 30.0
 
+        let screenPos =
+            (selectedPin, viewTrafo, vpSize) |||> AVal.map3 (fun pinOpt (vt : Trafo3d) sz ->
+                match pinOpt with
+                | None -> None
+                | Some pin ->
+                    let pt = pin.Prism.AnchorPoint
+                    let aspect = float sz.X / max 1.0 (float sz.Y)
+                    let proj = Frustum.perspective 90.0 0.5 1000.0 aspect |> Frustum.projTrafo
+                    let m = proj.Forward * vt.Forward
+                    let h = m * V4d(pt, 1.0)
+                    if h.W < 0.1 then None
+                    else
+                        let ndc = h.XYZ / h.W
+                        if abs ndc.X > 1.5 || abs ndc.Y > 1.5 then None
+                        else
+                            let px = (ndc.X * 0.5 + 0.5) * float sz.X
+                            let py = (1.0 - (ndc.Y * 0.5 + 0.5)) * float sz.Y
+                            Some (V2d(px, py))
+            )
+
         div {
             Class "pin-diagram"
             selectedPin |> AVal.map (fun p ->
                 if p.IsNone then Some (Style [Display "none"]) else None)
+            screenPos |> AVal.map (fun pos ->
+                match pos with
+                | Some p ->
+                    Some (Style [
+                        Left (sprintf "%.0fpx" (p.X + 20.0))
+                        Top (sprintf "%.0fpx" (p.Y - 120.0))
+                    ])
+                | None -> None)
 
             h3 { "Profile" }
 

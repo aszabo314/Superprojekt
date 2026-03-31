@@ -11,8 +11,8 @@ The client is thin and must work on desktop and mobile. The server does all heav
 
 1. User loads a dataset (multiple meshes or pointclouds) from the server
 2. User explores with: juxtaposition overlays, filters, workspace clipping, mesh difference + false color
-3. User places 3D annotations with alternative renderings and statistics *(not yet)*; separate 2D diagrams/charts provide data insights *(not yet)*
-4. UX: tabbed side panel (implemented); extra page area for diagrams *(not yet)*
+3. User places 3D annotations ("ScanPins") with cut-plane diagrams *(partially implemented)*
+4. UX: tabbed side panel (implemented); floating pin diagrams near 3D anchor points *(implemented)*
 5. User produces screenshots or a report
 
 ## Style
@@ -28,16 +28,20 @@ Elm-style: `Model` → `Update.update` → `View.view` → `Boot.run`
 
 **Compile order** (Superprojekt.fsproj):
 ```
+WavefrontLoader.fs
 CameraModel.fs / CameraModel.g.fs
 OrbitController.fs
-Model.fs / Model.g.fs        ← [<ModelType>], Adaptify-generated .g.fs
-Shader.fs                    ← BlitShader + Shader modules
-Update.fs                    ← Message DU + update function
-MeshView.fs                  ← LoadedMesh, mesh loading, off-screen render, composition
-ServerActions.fs             ← init (fetch centroids + bboxes), triggerFilter
-Revolver.fs                  ← builds full scene graph; owns buildMeshTextures call
-Gui.fs                       ← DOM panels and controls
-View.fs                      ← view function + App module
+ScanPinModel.fs / ScanPinModel.g.fs  ← ScanPin types + serialization
+Model.fs / Model.g.fs                ← [<ModelType>], Adaptify-generated .g.fs
+Shader.fs                            ← BlitShader + Shader modules
+Update.fs                            ← Message DU, ScanPinUpdate module, Update module
+MeshView.fs                          ← LoadedMesh, mesh loading, off-screen render, composition
+ServerActions.fs                     ← init (fetch centroids + bboxes), triggerFilter
+Revolver.fs                          ← full scene graph; owns buildMeshTextures; pin dots + prism wireframes
+GuiPins.fs                           ← ScanPin tab panel + floating SVG diagram overlay
+Gui.fs                               ← burger button, HUD tabs (Scene/Overlay/Clip), overlays
+View.fs                              ← view function + App module
+ShaderCache.fs
 Program.fs
 ```
 
@@ -47,13 +51,33 @@ Program.fs
 
 `MeshView` — `loadMeshAsync` fetches binary mesh from server (lazy, cached by name). `buildMeshTextures` and `composeMeshTextures` implement the off-screen render pipeline (see below).
 
-`Revolver` — owns the `buildMeshTextures` call; builds the full render scene graph: the composition quad (normal view), fullscreen tile overlay, and circular magnifier disks.
+`Revolver` — owns the `buildMeshTextures` call; builds the full render scene graph: the composition quad (normal view), fullscreen tile overlay, circular magnifier disks, and ScanPin 3D elements (`pinDots` for clickable markers, `pinPrisms` for wireframe prisms + cut plane quads).
 
-`Gui` — burger button + tabbed HUD (Scene tab: dataset selector buttons + scale input, mesh visibility, ghost; Overlay tab: revolver/fullscreen toggles, mesh order, difference rendering; Clip tab: enable toggle + per-axis range sliders). `fullscreenInfo` overlay (shown when fullscreen is on). `debugLog` overlay.
+`GuiPins` — ScanPin-specific GUI: `pinsTabPanel` (placement controls, cut plane sliders, pin list with focus/delete), `pinDiagram` (floating SVG overlay positioned via 3D→screen projection, rendered via OnBoot JS + MutationObserver on `data-diagram` attribute). Also owns `shortName` utility used across GUI modules.
+
+`Gui` — burger button + tabbed HUD (Scene tab: dataset selector buttons + scale input, mesh visibility, ghost; Overlay tab: revolver/fullscreen toggles, mesh order, difference rendering; Clip tab: enable toggle + per-axis range sliders). Delegates Pins tab to `GuiPins.pinsTabPanel`. Also: `fullscreenInfo` overlay, `debugLog` overlay, `coordinateDisplay`.
 
 `ServerActions` — `init`: fetches dataset list, emits `DatasetsLoaded`. `loadDataset`: fetches centroids + bboxes for a dataset, emits `CentroidsLoaded`/`ClipBoundsLoaded`. `triggerFilter`: sphere query on all meshes at tap/long-press position, emits `FilteredMeshLoaded`.
 
-`View` — wires up renderControl, orbit camera, keyboard/pointer events, revolver state (`shiftHeld`, `spaceHeld`, `cursorPosition` as local `cval`s), calls `Revolver.build`.
+`View` — wires up renderControl, orbit camera, keyboard/pointer events, revolver state (`shiftHeld`, `spaceHeld`, `cursorPosition` as local `cval`s), calls `Revolver.build`. Passes view trafo + viewport size to `GuiPins.pinDiagram` for perspective-correct positioning.
+
+`ScanPinModel` — data types (`ScanPinId`, `SelectionPrism`, `CutPlaneMode`, `ScanPin`, `ScanPinModel`, etc.) + `ScanPinSerialize` module (JSON export only, no import yet).
+
+`Update` — contains `ScanPinUpdate` module (must appear before `Update` module to avoid F# forward-reference errors). `ScanPinUpdate.update` handles all `ScanPinMessage` cases. Currently uses `dummyCutResults` (fake sine waves) instead of real mesh-plane intersection.
+
+## ScanPin system
+
+A ScanPin is a 3D annotation: a selection prism (32-gon cylinder) extruded along an axis, with a cutting plane that intersects loaded meshes. The cut produces polylines rendered as an SVG elevation profile diagram.
+
+**Placement workflow:** Place pin button → tap on 3D surface → prism created at anchor with camera-forward axis → adjust cut plane (along/across), angle/distance, radius via sliders → commit or discard. Escape cancels.
+
+**State:** `PlacingMode : FootprintMode option` (waiting for anchor click) + `ActivePlacement : ScanPinId option` (pin being edited). The `PlacementState` DU in ScanPinModel.fs is dead code (orphaned from original spec).
+
+**3D rendering** (in Revolver.fs): `pinDots` renders clickable spheres at anchor points (tap=select, double-tap=focus camera). `pinPrisms` renders wireframe (thin triangle-quads, no GL_LINES) + translucent cut plane quad per pin.
+
+**Diagram** (in GuiPins.fs): `pinDiagram` computes screen position via `proj.Forward * view.Forward * V4d(pt, 1.0)` (column-vector convention: clip = proj * view * pos). Hidden when behind camera (W < 0.1) or off-screen (|ndc| > 1.5). SVG rendered by JS reading `data-diagram` JSON attribute, with MutationObserver for reactive updates.
+
+**Open TODOs:** See `scanpin-v1-spec.md` — key gaps: dummy cut results (no real mesh intersection), no polygon mode, no arcball gizmo, no deserialization.
 
 ## Off-screen render pipeline
 
@@ -96,6 +120,7 @@ GhostSilhouette               // show semi-transparent ghost of clipped/hidden g
 ClipActive                    // whether workspace clipping is enabled
 ClipBox                       // active clip range (Box3d in world space)
 ClipBounds                    // world-space union of all dataset bboxes; Box3d.Invalid until loaded
+ScanPins                      // ScanPinModel: pins, active placement, selected pin, placing mode
 ```
 
 ## Server architecture
@@ -143,6 +168,8 @@ Sphere/box results return **vertex indices** (3 per triangle), not triangle IDs.
 - CSS `~` sibling combinator breaks (Aardvark inserts wrapper nodes) — use `:has()` on a known ancestor
 - Active tab CSS: `.tab-labels label:has(:checked)` and `.tabs:has(#hud-tabN:checked) #hud-panelN`
 - `RenderControlInfo` and `TraversalState` both have `.Runtime` — annotate `(info : Aardvark.Dom.RenderControlInfo)` when ambiguous
+- `yield!` is not supported in Aardvark.Dom computation expression builders — use OnBoot JS with MutationObserver for dynamic SVG/canvas rendering
+- `NodeBuilder "svg" { ... }` can create arbitrary HTML elements but SVG attributes need special handling
 
 ## CSS / design
 
@@ -150,9 +177,13 @@ Sphere/box results return **vertex indices** (3 per triangle), not triangle IDs.
 - Body bg `#f4f6f8`, panel bg `#ffffff`, text `#0f172a`
 - Render canvas (`.render-control`): `linear-gradient(to top, #d0dce8, #eaf1f8)`
 - All styles in `wwwroot/style.css`; no inline styles except model-dependent ones (e.g. cursor)
+- `.pin-diagram`: fixed-position floating overlay, positioned via inline style from 3D projection
+- `.btn-active`: darker blue with inset shadow for toggle buttons
+- Tab IDs: `hud-tab1/2/3/4`, panel IDs: `hud-panel1/2/3/4`, radio name: `hud-tabs`
 
 ## fsproj notes
 
 - Client: `Microsoft.NET.Sdk.BlazorWebAssembly`, `net8.0`, `WasmBuildNative=true`, `LocalAdaptify=true`
 - Server: `Microsoft.NET.Sdk.Web`, `net8.0`; references client project for static file hosting
 - Server runs on `http://localhost:5000`
+- Run Adaptify with `adaptify.cmd` (not `dotnet adaptify`)

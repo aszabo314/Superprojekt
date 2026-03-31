@@ -29,6 +29,7 @@
     <Compile Include="MeshView.fs" />
     <Compile Include="ServerActions.fs" />
     <Compile Include="Revolver.fs" />
+    <Compile Include="GuiPins.fs" />
     <Compile Include="Gui.fs" />
     <Compile Include="View.fs" />
     <Compile Include="ShaderCache.fs" />

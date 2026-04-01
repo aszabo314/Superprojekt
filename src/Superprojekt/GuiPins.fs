@@ -381,7 +381,7 @@ module GuiPins =
                 ]
             }
 
-            h3 { "3D Detail" }
+            h3 { "Core Sample" }
 
             renderControl {
                 RenderControl.Samples 1
@@ -398,7 +398,7 @@ module GuiPins =
                 let miniView = model.PinViewCamera.view |> AVal.map CameraView.viewTrafo
                 let miniProj =
                     size |> AVal.map (fun s ->
-                        Frustum.perspective 90.0 0.1 500.0 (float s.X / float s.Y) |> Frustum.projTrafo)
+                        Frustum.perspective 60.0 0.5 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo)
 
                 Sg.View miniView
                 Sg.Proj miniProj

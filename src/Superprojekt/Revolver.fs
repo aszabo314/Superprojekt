@@ -255,15 +255,12 @@ module Revolver =
             let notFullscreen = AVal.map not fullscreenActive
             let selectedId = model.ScanPins.SelectedPin
             model.ScanPins.Pins |> AMap.toASet |> ASet.collect (fun (id, pin) ->
+                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
                 let wireColor =
                     selectedId |> AVal.map (fun sel ->
                         if sel = Some id then V4d(1.0, 0.85, 0.0, 0.7)
                         elif pin.Phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 0.5)
                         else V4d(0.6, 0.6, 0.6, 0.35))
-                let planeColor =
-                    selectedId |> AVal.map (fun sel ->
-                        if sel = Some id then V4d(1.0, 0.9, 0.3, 0.25)
-                        else V4d(0.5, 0.5, 0.8, 0.12))
                 let wirePos, wireIdx = buildPrismWireframe pin.Prism 0.05
                 let planePos, planeIdx = buildCutPlaneQuad pin.Prism pin.CutPlane
                 let prismSg =
@@ -284,11 +281,11 @@ module Revolver =
                         })
                 let planeSg =
                     sg {
-                        Sg.Active notFullscreen
+                        Sg.Active (AVal.map2 (&&) notFullscreen isSelected)
                         Sg.View view
                         Sg.Proj proj
                         Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                        Sg.Uniform("FlatColor", planeColor)
+                        Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.9, 0.3, 0.25)))
                         Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                         Sg.NoEvents
                         Sg.VertexAttributes(

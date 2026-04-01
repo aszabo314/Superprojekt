@@ -34,6 +34,7 @@ type Model =
         MinDifferenceDepth   : float
         MaxDifferenceDepth   : float
         GhostSilhouette      : bool
+        GhostOpacity         : float
 
         ClipActive     : bool
         ClipBox        : Box3d   // active clip range (render-space uniforms computed from this)
@@ -68,6 +69,7 @@ module Model =
             MinDifferenceDepth  = 3.0
             MaxDifferenceDepth  = 10.0
             GhostSilhouette     = false
+            GhostOpacity        = 0.1
             ClipActive     = false
             ClipBox        = Box3d(V3d(-1e10), V3d(1e10))
             ClipBounds     = Box3d.Invalid

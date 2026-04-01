@@ -8,7 +8,7 @@ open Aardvark.Dom
 module GuiPins =
 
     let private coreSampleTrafo (prism : SelectionPrism) =
-        let axis = prism.AxisDirection |> Vec.normalize
+        let axis = -(prism.AxisDirection |> Vec.normalize)
         let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
         let right = Vec.cross axis up |> Vec.normalize
         let fwd = Vec.cross right axis |> Vec.normalize
@@ -351,27 +351,6 @@ module GuiPins =
                     "    });"
                     "    svg.appendChild(p);"
                     "  });"
-                    "  if(data.legend && data.legend.length > 0) {"
-                    "    var leg = document.createElement('div');"
-                    "    leg.style.marginTop = '6px';"
-                    "    leg.style.fontSize = '11px';"
-                    "    data.legend.forEach(function(item) {"
-                    "      var row = document.createElement('div');"
-                    "      row.style.display = 'flex';"
-                    "      row.style.alignItems = 'center';"
-                    "      row.style.gap = '4px';"
-                    "      row.style.marginBottom = '2px';"
-                    "      var sw = document.createElement('div');"
-                    "      sw.style.width = '14px';"
-                    "      sw.style.height = '3px';"
-                    "      sw.style.background = item.c;"
-                    "      sw.style.flexShrink = '0';"
-                    "      row.appendChild(sw);"
-                    "      row.appendChild(document.createTextNode(item.n));"
-                    "      leg.appendChild(row);"
-                    "    });"
-                    "    el.appendChild(leg);"
-                    "  }"
                     "}"
                     "render();"
                     "var obs = new MutationObserver(function(m) {"

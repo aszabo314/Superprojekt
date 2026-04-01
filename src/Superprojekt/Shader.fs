@@ -79,6 +79,7 @@ module BlitShader =
         member x.IsGhost              : bool  = x?IsGhost
         member x.MeshIndex            : int   = x?MeshIndex
         member x.CoreRadius           : float = x?CoreRadius
+        member x.GhostOpacity         : float = x?GhostOpacity
     
     let colorMap =
         [|
@@ -108,7 +109,7 @@ module BlitShader =
             else
                 if insideClip then
                     discard()
-                color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, 0.1)
+                color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, uniform.GhostOpacity)
                 
             return color
         }

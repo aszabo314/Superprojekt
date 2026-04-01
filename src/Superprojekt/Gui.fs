@@ -150,6 +150,22 @@ module Gui =
                             }
                             " Ghost silhouette"
                         }
+                        div {
+                            model.GhostSilhouette |> AVal.map (fun on ->
+                                if on then None else Some (Style [Display "none"]))
+                            "Opacity  "
+                            input {
+                                Attribute("type", "range")
+                                Attribute("min", "0.01"); Attribute("max", "1.0"); Attribute("step", "0.01")
+                                Style [Width "100%"]
+                                model.GhostOpacity |> AVal.map (fun v ->
+                                    Some (Attribute("value", sprintf "%.2f" v)))
+                                Dom.OnInput(fun e ->
+                                    match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+                                    | true, v -> env.Emit [SetGhostOpacity v]
+                                    | _ -> ())
+                            }
+                        }
                     }
 
                     button { "Clear Filter"; Dom.OnClick(fun _ -> env.Emit [ClearFilteredMesh]) }

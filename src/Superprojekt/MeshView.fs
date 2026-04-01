@@ -74,7 +74,8 @@ module MeshView =
         (meshIndex : aval<int>)
         (active : aval<bool>)
         (commonCentroid : aval<V3d>)
-        (meshScale : aval<float>) =
+        (meshScale : aval<float>)
+        (ghostOpacity : aval<float>) =
         let scaledFilter =
             (meshScale, filter) ||> AVal.map2 (fun scale (f : Box3d) ->
                 Box3d(f.Min * scale, f.Max * scale)
@@ -107,6 +108,7 @@ module MeshView =
             Sg.Uniform("ClipMax", clipMax)
             Sg.Uniform("IsGhost", isGhost)
             Sg.Uniform("MeshIndex", meshIndex)
+            Sg.Uniform("GhostOpacity", ghostOpacity)
             Sg.BlendMode BlendMode.Blend
             Sg.DepthTest depthTestMode
             Sg.VertexAttributes(
@@ -173,7 +175,7 @@ module MeshView =
                             Sg.View view
                             Sg.Proj proj
                             Sg.Uniform("ViewportSize", info.ViewportSize)
-                            renderMesh loaded filter (AVal.constant false) (AVal.constant meshIndex) isActive model.CommonCentroid scale
+                            renderMesh loaded filter (AVal.constant false) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity
                         }
                     let solidTask = info.Runtime.CompileRender(signature, solidSg.GetRenderObjects(TraversalState.empty info.Runtime))
 
@@ -182,7 +184,7 @@ module MeshView =
                             Sg.View view
                             Sg.Proj proj
                             Sg.Uniform("ViewportSize", info.ViewportSize)
-                            renderMesh loaded filter (AVal.constant true) (AVal.constant meshIndex) isActive model.CommonCentroid scale
+                            renderMesh loaded filter (AVal.constant true) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity
                         }
                     let ghostTask = info.Runtime.CompileRender(signature, ghostSg.GetRenderObjects(TraversalState.empty info.Runtime))
                     AList.ofList [

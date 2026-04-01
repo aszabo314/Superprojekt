@@ -79,6 +79,11 @@ module View =
                 Sg.View view
                 Sg.Proj proj
 
+                Sg.OnDoubleTap(fun e ->
+                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
+                    false
+                )
+
                 Sg.OnTap(fun e ->
                     let scale =
                         AVal.force model.ActiveDataset

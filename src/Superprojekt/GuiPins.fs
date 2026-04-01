@@ -16,7 +16,7 @@ module GuiPins =
                           fwd.X,   fwd.Y,   fwd.Z,   0.0,
                           axis.X,  axis.Y,  axis.Z,  0.0,
                           0.0,     0.0,     0.0,     1.0)
-        Trafo3d(rotFwd, rotFwd.Transposed) * Trafo3d.Translation(-prism.AnchorPoint)
+        Trafo3d.Translation(-prism.AnchorPoint) * Trafo3d(rotFwd, rotFwd.Transposed)
 
     let shortName (name : string) =
         let mesh =
@@ -424,7 +424,7 @@ module GuiPins =
                     let meshTrafo =
                         (model.CommonCentroid, loaded.centroid, scale) |||> AVal.map3 (fun common mesh s ->
                             Trafo3d.Translation(mesh - common) * Trafo3d.Scale(s))
-                    let trafo = (coreTrafo, meshTrafo) ||> AVal.map2 (fun core mt -> core * mt)
+                    let trafo = (coreTrafo, meshTrafo) ||> AVal.map2 (fun core mt -> mt*core)
                     let meshIdx = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
                     sg {
                         Sg.Trafo trafo

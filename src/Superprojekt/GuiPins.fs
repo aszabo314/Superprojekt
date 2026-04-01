@@ -7,6 +7,17 @@ open Aardvark.Dom
 
 module GuiPins =
 
+    let private coreSampleTrafo (prism : SelectionPrism) =
+        let axis = prism.AxisDirection |> Vec.normalize
+        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
+        let right = Vec.cross axis up |> Vec.normalize
+        let fwd = Vec.cross right axis |> Vec.normalize
+        let rotFwd = M44d(right.X, right.Y, right.Z, 0.0,
+                          fwd.X,   fwd.Y,   fwd.Z,   0.0,
+                          axis.X,  axis.Y,  axis.Z,  0.0,
+                          0.0,     0.0,     0.0,     1.0)
+        Trafo3d(rotFwd, rotFwd.Transposed) * Trafo3d.Translation(-prism.AnchorPoint)
+
     let shortName (name : string) =
         let mesh =
             let s = name.IndexOf('/')
@@ -221,7 +232,7 @@ module GuiPins =
             )
         }
 
-    let pinDiagram (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =
+    let pinDiagram (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =
         let selectedPin =
             (model.ScanPins.SelectedPin, model.ScanPins.Pins |> AMap.toAVal) ||> AVal.map2 (fun sel pins ->
                 sel |> Option.bind (fun id -> HashMap.tryFind id pins))
@@ -368,5 +379,118 @@ module GuiPins =
                     "});"
                     "obs.observe(el, {attributes:true});"
                 ]
+            }
+
+            h3 { "3D Detail" }
+
+            renderControl {
+                RenderControl.Samples 1
+                Class "pin-mini-view"
+
+                OrbitController.getAttributes (Env.map PinViewCameraMessage env)
+
+                let! size = RenderControl.ViewportSize
+
+                RenderControl.OnRendered(fun _ ->
+                    env.Emit [PinViewCameraMessage OrbitMessage.Rendered]
+                )
+
+                let miniView = model.PinViewCamera.view |> AVal.map CameraView.viewTrafo
+                let miniProj =
+                    size |> AVal.map (fun s ->
+                        Frustum.perspective 90.0 0.1 500.0 (float s.X / float s.Y) |> Frustum.projTrafo)
+
+                Sg.View miniView
+                Sg.Proj miniProj
+
+                let coreTrafo = selectedPin |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin -> coreSampleTrafo pin.Prism
+                    | None -> Trafo3d.Identity)
+
+                let coreRadius = selectedPin |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin -> match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                    | None -> 1e10)
+
+                let meshIndices =
+                    model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
+                        names |> Seq.mapi (fun i a -> a, i) |> Map.ofSeq)
+
+                model.MeshNames |> AList.toASet |> ASet.map (fun name ->
+                    let loaded = MeshView.loadMeshAsync ignore name
+                    let dataset = name.Split('/', 2).[0]
+                    let scale = model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
+                    let meshTrafo =
+                        (model.CommonCentroid, loaded.centroid, scale) |||> AVal.map3 (fun common mesh s ->
+                            Trafo3d.Translation(mesh - common) * Trafo3d.Scale(s))
+                    let trafo = (coreTrafo, meshTrafo) ||> AVal.map2 (fun core mt -> core * mt)
+                    let meshIdx = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
+                    sg {
+                        Sg.Trafo trafo
+                        Sg.Shader {
+                            DefaultSurfaces.trafo
+                            DefaultSurfaces.diffuseTexture
+                            BlitShader.coreClip
+                        }
+                        Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                        Sg.Uniform("CoreRadius", coreRadius)
+                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                        Sg.NoEvents
+                        Sg.VertexAttributes(
+                            HashMap.ofList [
+                                string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
+                                string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc, typeof<V2f>)
+                            ])
+                        Sg.Active(loaded.fvc |> AVal.map (fun c -> c > 3))
+                        Sg.Index(BufferView(loaded.idx, typeof<int>))
+                        Sg.Render loaded.fvc
+                    }
+                )
+
+                let wireData = selectedPin |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin ->
+                        let pos, idx = Revolver.buildPrismWireframe pin.Prism 0.05
+                        let t = coreSampleTrafo pin.Prism
+                        let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
+                        pos, idx
+                    | None -> [||], [||])
+                let wirePos = wireData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
+                let wireIdx = wireData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
+                let wireFvc = wireData |> AVal.map (fun (_, i) -> i.Length)
+                sg {
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.85, 0.0, 0.7)))
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(wirePos, typeof<V3f>) ])
+                    Sg.Index(BufferView(wireIdx, typeof<int>))
+                    Sg.Render wireFvc
+                }
+
+                let planeData = selectedPin |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin ->
+                        let pos, idx = Revolver.buildCutPlaneQuad pin.Prism pin.CutPlane
+                        let t = coreSampleTrafo pin.Prism
+                        let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
+                        pos, idx
+                    | None -> [||], [||])
+                let planePos = planeData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
+                let planeIdx = planeData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
+                let planeFvc = planeData |> AVal.map (fun (_, i) -> i.Length)
+                sg {
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.9, 0.3, 0.25)))
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode BlendMode.Blend
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(planePos, typeof<V3f>) ])
+                    Sg.Index(BufferView(planeIdx, typeof<int>))
+                    Sg.Render planeFvc
+                }
             }
         }

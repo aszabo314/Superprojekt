@@ -33,12 +33,12 @@ CameraModel.fs / CameraModel.g.fs
 OrbitController.fs
 ScanPinModel.fs / ScanPinModel.g.fs  ← ScanPin types + serialization
 Model.fs / Model.g.fs                ← [<ModelType>], Adaptify-generated .g.fs
-Shader.fs                            ← BlitShader + Shader modules
+Shader.fs                            ← BlitShader (clippy, coreClip, readArray…) + Shader (flatColor)
 Update.fs                            ← Message DU, ScanPinUpdate module, Update module
 MeshView.fs                          ← LoadedMesh, mesh loading, off-screen render, composition
 ServerActions.fs                     ← init (fetch centroids + bboxes), triggerFilter
 Revolver.fs                          ← full scene graph; owns buildMeshTextures; pin dots + prism wireframes
-GuiPins.fs                           ← ScanPin tab panel + floating SVG diagram overlay
+GuiPins.fs                           ← ScanPin tab panel + floating diagram overlay (SVG + core sample 3D view)
 Gui.fs                               ← burger button, HUD tabs (Scene/Overlay/Clip), overlays
 View.fs                              ← view function + App module
 ShaderCache.fs
@@ -51,9 +51,9 @@ Program.fs
 
 `MeshView` — `loadMeshAsync` fetches binary mesh from server (lazy, cached by name). `buildMeshTextures` and `composeMeshTextures` implement the off-screen render pipeline (see below).
 
-`Revolver` — owns the `buildMeshTextures` call; builds the full render scene graph: the composition quad (normal view), fullscreen tile overlay, circular magnifier disks, and ScanPin 3D elements (`pinDots` for clickable markers, `pinPrisms` for wireframe prisms + cut plane quads).
+`Revolver` — owns the `buildMeshTextures` call; builds the full render scene graph: the composition quad (normal view), fullscreen tile overlay, circular magnifier disks, and ScanPin 3D elements (`pinDots` for clickable markers, `pinPrisms` for wireframe prisms + cut plane quads). `buildPrismWireframe` and `buildCutPlaneQuad` are public — reused by GuiPins for the core sample view.
 
-`GuiPins` — ScanPin-specific GUI: `pinsTabPanel` (placement controls, cut plane sliders, pin list with focus/delete), `pinDiagram` (floating SVG overlay positioned via 3D→screen projection, rendered via OnBoot JS + MutationObserver on `data-diagram` attribute). Also owns `shortName` utility used across GUI modules.
+`GuiPins` — ScanPin-specific GUI: `pinsTabPanel` (placement controls, cut plane sliders, pin list with focus/delete), `pinDiagram` (floating overlay positioned via 3D→screen projection: SVG profile via OnBoot JS + MutationObserver, and a secondary `renderControl` "core sample" 3D view). Also owns `shortName` utility, `coreSampleTrafo` (aligns prism axis to Z).
 
 `Gui` — burger button + tabbed HUD (Scene tab: dataset selector buttons + scale input, mesh visibility, ghost; Overlay tab: revolver/fullscreen toggles, mesh order, difference rendering; Clip tab: enable toggle + per-axis range sliders). Delegates Pins tab to `GuiPins.pinsTabPanel`. Also: `fullscreenInfo` overlay, `debugLog` overlay, `coordinateDisplay`.
 
@@ -77,7 +77,9 @@ A ScanPin is a 3D annotation: a selection prism (32-gon cylinder) extruded along
 
 **Diagram** (in GuiPins.fs): `pinDiagram` computes screen position via `proj.Forward * view.Forward * V4d(pt, 1.0)` (column-vector convention: clip = proj * view * pos). Hidden when behind camera (W < 0.1) or off-screen (|ndc| > 1.5). SVG rendered by JS reading `data-diagram` JSON attribute, with MutationObserver for reactive updates.
 
-**Open TODOs:** See `scanpin-v1-spec.md` — key gaps: dummy cut results (no real mesh intersection), no polygon mode, no arcball gizmo, no deserialization.
+**Core sample 3D view** (in GuiPins.fs): A secondary `renderControl` embedded in `pinDiagram`, stacked below the SVG profile. Shows the selected pin's region as a vertical "core sample" — the prism axis is rotated to Z and centered at the origin via `coreSampleTrafo`. Meshes are rendered with `BlitShader.coreClip` (cylindrical discard: fragments with XY distance > footprint radius are discarded). The prism wireframe and cut plane quad are pre-transformed into core sample space. Has its own orbit camera (`PinViewCamera` in Model) initialized to match the main camera orientation, centered at the origin. `PinViewCameraMessage` routes orbit messages through the Elm update loop.
+
+**Open TODOs:** See `scanpin-v1-spec.md` — key gaps: dummy cut results (no real mesh intersection), no arcball gizmo, no deserialization.
 
 ## Off-screen render pipeline
 
@@ -101,6 +103,8 @@ Output: single color+depth fragment composited into the main framebuffer.
 
 **Revolver / fullscreen overlay** — instead of the composition quad, `readArraySlice` samples a single slice for fullscreen tile layout; `readArraySliceColor` clips to a circle and applies offset+scale for magnifier disks.
 
+**Core sample shader** (`BlitShader.coreClip`): used by the mini 3D view in GuiPins. Discards fragments where XY distance from origin exceeds `CoreRadius` uniform — a cylindrical clip in core sample space (Z = prism axis, origin = anchor). No box clipping.
+
 ## Client model fields
 
 ```fsharp
@@ -121,6 +125,7 @@ ClipActive                    // whether workspace clipping is enabled
 ClipBox                       // active clip range (Box3d in world space)
 ClipBounds                    // world-space union of all dataset bboxes; Box3d.Invalid until loaded
 ScanPins                      // ScanPinModel: pins, active placement, selected pin, placing mode
+PinViewCamera                 // OrbitState for the core sample mini 3D view (independent orbit)
 ```
 
 ## Server architecture
@@ -170,6 +175,10 @@ Sphere/box results return **vertex indices** (3 per triangle), not triangle IDs.
 - `RenderControlInfo` and `TraversalState` both have `.Runtime` — annotate `(info : Aardvark.Dom.RenderControlInfo)` when ambiguous
 - `yield!` is not supported in Aardvark.Dom computation expression builders — use OnBoot JS with MutationObserver for dynamic SVG/canvas rendering
 - `NodeBuilder "svg" { ... }` can create arbitrary HTML elements but SVG attributes need special handling
+- `renderControl { ... }` can be nested inside `div { ... }` — it creates a WebGL canvas as a child element
+- `AVal.map4` does not exist — combine with `AVal.map2`/`AVal.map3` instead
+- `Dom.Style` for renderControl; `Style` for HTML elements (div, button, etc.)
+- `Css.Custom` does not exist — use CSS classes in `style.css` for properties not covered by `Css.*`
 
 ## CSS / design
 
@@ -178,6 +187,7 @@ Sphere/box results return **vertex indices** (3 per triangle), not triangle IDs.
 - Render canvas (`.render-control`): `linear-gradient(to top, #d0dce8, #eaf1f8)`
 - All styles in `wwwroot/style.css`; no inline styles except model-dependent ones (e.g. cursor)
 - `.pin-diagram`: fixed-position floating overlay, positioned via inline style from 3D projection
+- `.pin-mini-view`: 280×200 secondary renderControl inside pin-diagram (core sample 3D view)
 - `.btn-active`: darker blue with inset shadow for toggle buttons
 - Tab IDs: `hud-tab1/2/3/4`, panel IDs: `hud-panel1/2/3/4`, radio name: `hud-tabs`
 

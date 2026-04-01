@@ -30,7 +30,8 @@ type Message =
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
     | SetDatasetScale    of string * float
-    | ScanPinMsg         of ScanPinMessage
+    | ScanPinMsg              of ScanPinMessage
+    | PinViewCameraMessage    of OrbitMessage
 
 and ScanPinMessage =
     | StartPlacement of FootprintMode
@@ -274,6 +275,8 @@ module Update =
             { model with ActiveDataset = Some dataset }
         | SetDatasetScale(dataset, scale) ->
             { model with DatasetScales = Map.add dataset scale model.DatasetScales }
+        | PinViewCameraMessage msg ->
+            { model with PinViewCamera = OrbitController.update (Env.map PinViewCameraMessage env) model.PinViewCamera msg }
         | ScanPinMsg msg ->
             let sp = model.ScanPins
             let sp' = ScanPinUpdate.update model msg sp
@@ -285,4 +288,14 @@ module Update =
                     env.Emit [CameraMessage (OrbitMessage.SetTarget(true, c.Center, c.Radius, c.Phi, c.Theta))]
                 | None -> ()
             | _ -> ()
-            { model with ScanPins = sp' }
+            let model = { model with ScanPins = sp' }
+            if sp'.SelectedPin <> sp.SelectedPin then
+                match sp'.SelectedPin with
+                | Some id ->
+                    match HashMap.tryFind id sp'.Pins with
+                    | Some pin ->
+                        let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length * 4.0 | _ -> 4.0
+                        { model with PinViewCamera = OrbitState.create V3d.Zero model.Camera.phi model.Camera.theta r Button.Left Button.Middle }
+                    | None -> model
+                | None -> model
+            else model

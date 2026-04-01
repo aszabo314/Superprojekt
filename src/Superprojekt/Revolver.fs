@@ -41,7 +41,7 @@ module Revolver =
             box (V4d(0.15, 0.35, 0.9,  1.0)) (Trafo3d.Scale(0.75, 0.75, 3.0) * Trafo3d.Translation(0.0, 0.0, 1.5)) // U
         ]
 
-    let private buildPrismWireframe (prism : SelectionPrism) (thickness : float) =
+    let buildPrismWireframe (prism : SelectionPrism) (thickness : float) =
         let axis = prism.AxisDirection |> Vec.normalize
         let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
         let right = Vec.cross axis up |> Vec.normalize
@@ -75,7 +75,7 @@ module Revolver =
                 addEdge topVerts.[i] botVerts.[i]
             positions.ToArray(), indices.ToArray()
 
-    let private buildCutPlaneQuad (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
+    let buildCutPlaneQuad (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
         let axis = prism.AxisDirection |> Vec.normalize
         let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
         let right = Vec.cross axis up |> Vec.normalize

@@ -297,6 +297,18 @@ body.loaded {
     margin: 0 0 8px 0;
 }
 
+/* ── Pin mini 3D view ───────────────────────────────────────────── */
+
+.pin-mini-view {
+    width: 280px;
+    height: 200px;
+    border: 1px solid #e2e8f0;
+    border-radius: 4px;
+    background: linear-gradient(to top, #d0dce8, #eaf1f8);
+    display: block;
+    margin-top: 4px;
+}
+
 /* ── Mobile adjustments ───────────────────────────────────────────── */
 
 @media (max-width: 600px) {

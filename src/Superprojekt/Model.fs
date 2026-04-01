@@ -40,6 +40,7 @@ type Model =
         ClipBounds     : Box3d   // world-space union of all dataset bboxes; Box3d.Invalid until loaded
 
         ScanPins       : ScanPinModel
+        PinViewCamera  : OrbitState
     }
 
 module Model =
@@ -72,4 +73,5 @@ module Model =
             ClipBounds     = Box3d.Invalid
 
             ScanPins       = ScanPinModel.initial
+            PinViewCamera  = OrbitState.create V3d.Zero 1.0 0.3 3.0 Button.Left Button.Middle
         }

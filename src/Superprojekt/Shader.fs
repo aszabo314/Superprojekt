@@ -78,6 +78,7 @@ module BlitShader =
         member x.MeshVisibilityMask   : int   = x?MeshVisibilityMask
         member x.IsGhost              : bool  = x?IsGhost
         member x.MeshIndex            : int   = x?MeshIndex
+        member x.CoreRadius           : float = x?CoreRadius
     
     let colorMap =
         [|
@@ -111,7 +112,15 @@ module BlitShader =
                 
             return color
         }
-        
+
+    let coreClip (v : Effects.Vertex) =
+        fragment {
+            let p = v.wp.XYZ / v.wp.W
+            if sqrt(p.X * p.X + p.Y * p.Y) > uniform.CoreRadius then
+                discard()
+            return v.c
+        }
+
     let colon =
         sampler2dArray {
             texture uniform?ColorTexture

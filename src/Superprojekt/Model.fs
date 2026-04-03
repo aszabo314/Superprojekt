@@ -40,8 +40,12 @@ type Model =
         ClipBox        : Box3d   // active clip range (render-space uniforms computed from this)
         ClipBounds     : Box3d   // world-space union of all dataset bboxes; Box3d.Invalid until loaded
 
-        ScanPins       : ScanPinModel
-        PinViewCamera  : OrbitState
+        ScanPins              : ScanPinModel
+        PinAxisVertical       : bool
+        CoreSampleViewMode    : CoreSampleViewMode
+        CoreSampleRotation    : float
+        CoreSamplePanZ        : float
+        CoreSampleZoom        : float
     }
 
 module Model =
@@ -74,6 +78,10 @@ module Model =
             ClipBox        = Box3d(V3d(-1e10), V3d(1e10))
             ClipBounds     = Box3d.Invalid
 
-            ScanPins       = ScanPinModel.initial
-            PinViewCamera  = OrbitState.create V3d.Zero 1.0 0.3 3.0 Button.Left Button.Middle
+            ScanPins              = ScanPinModel.initial
+            PinAxisVertical       = false
+            CoreSampleViewMode    = SideView
+            CoreSampleRotation    = 0.0
+            CoreSamplePanZ        = 0.0
+            CoreSampleZoom        = 4.0
         }

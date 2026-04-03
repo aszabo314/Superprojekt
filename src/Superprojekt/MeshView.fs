@@ -19,15 +19,7 @@ type LoadedMesh =
 
 module MeshView =
 
-    let apiBase =
-        lazy (
-            let href = Window.Location.Href
-            let uri = System.Uri(href)
-            let mutable path = uri.AbsolutePath
-            if path.Contains('.') then path <- path.Substring(0, path.LastIndexOf('/') + 1)
-            path <- path.TrimEnd('/')
-            uri.GetLeftPart(System.UriPartial.Authority) + path + "/api"
-        )
+    let apiBase = ApiConfig.apiBase
 
     let private meshes = System.Collections.Generic.Dictionary<string, LoadedMesh>()
 

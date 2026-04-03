@@ -85,6 +85,16 @@ module GuiPins =
                         if on then "Cancel" else "Place pin")
                 }
             }
+            label {
+                Style [Display "flex"; AlignItems "center"; MarginTop "4px"; FontSize "13px"]
+                input {
+                    Attribute("type", "checkbox")
+                    model.PinAxisVertical |> AVal.map (fun v ->
+                        if v then Some (Attribute("checked", "checked")) else None)
+                    Dom.OnChange(fun _ -> env.Emit [TogglePinAxisVertical])
+                }
+                "Place along Z axis"
+            }
             p {
                 sp.PlacingMode |> AVal.map (fun pm ->
                     if pm.IsSome then "Tap on the 3D view to place anchor." else "")
@@ -97,72 +107,6 @@ module GuiPins =
                 activePin |> AVal.map (fun p ->
                     if p.IsNone then Some (Style [Display "none"]) else None)
 
-                h3 { "Cut plane" }
-                div {
-                    Class "btn-row"
-                    button {
-                        activePin |> AVal.map (fun p ->
-                            match p with
-                            | Some pin -> match pin.CutPlane with CutPlaneMode.AlongAxis _ -> Some (Class "btn-active") | _ -> None
-                            | None -> None)
-                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SetCutPlaneAngle 0.0)])
-                        "Along axis"
-                    }
-                    button {
-                        activePin |> AVal.map (fun p ->
-                            match p with
-                            | Some pin -> match pin.CutPlane with CutPlaneMode.AcrossAxis _ -> Some (Class "btn-active") | _ -> None
-                            | None -> None)
-                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SetCutPlaneDistance 0.0)])
-                        "Across axis"
-                    }
-                }
-                div {
-                    activePin |> AVal.map (fun p ->
-                        match p with
-                        | Some pin -> match pin.CutPlane with CutPlaneMode.AlongAxis _ -> None | _ -> Some (Style [Display "none"])
-                        | None -> Some (Style [Display "none"]))
-                    "Angle  "
-                    input {
-                        Attribute("type", "range")
-                        Attribute("min", "0"); Attribute("max", "360"); Attribute("step", "1")
-                        Style [Width "100%"]
-                        activePin |> AVal.map (fun p ->
-                            match p with
-                            | Some pin ->
-                                match pin.CutPlane with
-                                | CutPlaneMode.AlongAxis a -> Some (Attribute("value", sprintf "%.0f" a))
-                                | _ -> Some (Attribute("value", "0"))
-                            | None -> None)
-                        Dom.OnInput(fun e ->
-                            match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-                            | true, v -> env.Emit [ScanPinMsg (SetCutPlaneAngle v)]
-                            | _ -> ())
-                    }
-                }
-                div {
-                    activePin |> AVal.map (fun p ->
-                        match p with
-                        | Some pin -> match pin.CutPlane with CutPlaneMode.AcrossAxis _ -> None | _ -> Some (Style [Display "none"])
-                        | None -> Some (Style [Display "none"]))
-                    "Distance  "
-                    input {
-                        Attribute("type", "range")
-                        Attribute("min", "-100"); Attribute("max", "100"); Attribute("step", "0.5")
-                        Style [Width "100%"]
-                        activePin |> AVal.map (fun p ->
-                            match p with
-                            | Some pin ->
-                                match pin.CutPlane with
-                                | CutPlaneMode.AcrossAxis d -> Some (Attribute("value", sprintf "%.1f" d))
-                                | _ -> Some (Attribute("value", "0"))
-                            | None -> None)
-                        Dom.OnInput(fun e ->
-                            match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-                            | true, v -> env.Emit [ScanPinMsg (SetCutPlaneDistance v)]
-                            | _ -> ())
-                    }
-                }
                 div {
                     "Radius  "
                     input {
@@ -362,25 +306,81 @@ module GuiPins =
 
             h3 { "Core Sample" }
 
+            div {
+                Class "btn-row"
+                button {
+                    model.CoreSampleViewMode |> AVal.map (fun m ->
+                        if m = SideView then Some (Class "btn-active") else None)
+                    Dom.OnClick(fun _ ->
+                        env.Emit [SetCoreSampleViewMode SideView; ScanPinMsg (SetCutPlaneDistance 0.0)])
+                    "Side"
+                }
+                button {
+                    model.CoreSampleViewMode |> AVal.map (fun m ->
+                        if m = TopView then Some (Class "btn-active") else None)
+                    Dom.OnClick(fun _ ->
+                        let rot = AVal.force model.CoreSampleRotation
+                        let angleDeg = (rot * Constant.DegreesPerRadian + 360.0) % 360.0
+                        env.Emit [SetCoreSampleViewMode TopView; ScanPinMsg (SetCutPlaneAngle angleDeg)])
+                    "Top"
+                }
+            }
+
             renderControl {
                 RenderControl.Samples 1
                 Class "pin-mini-view"
 
-                OrbitController.getAttributes (Env.map PinViewCameraMessage env)
-
                 let! size = RenderControl.ViewportSize
 
-                RenderControl.OnRendered(fun _ ->
-                    env.Emit [PinViewCameraMessage OrbitMessage.Rendered]
+                let lastPos = cval V2i.Zero
+                let dragging = cval false
+
+                let clickDist (py : int) =
+                    let pinOpt = AVal.force selectedPin
+                    let extFwd, extBack = match pinOpt with Some pin -> pin.Prism.ExtentForward, pin.Prism.ExtentBackward | None -> 5.0, 5.0
+                    let halfH = (extFwd + extBack) / 2.0
+                    let centerZ = (extBack - extFwd) / 2.0
+                    let sz = AVal.force size
+                    let ndcY = 1.0 - 2.0 * float py / float sz.Y
+                    -(centerZ - ndcY * halfH)
+
+                let clickAngle (px : int) (py : int) =
+                    let sz = AVal.force size
+                    let dx = float px - float sz.X / 2.0
+                    let dy = float sz.Y / 2.0 - float py
+                    (atan2 dx dy * Constant.DegreesPerRadian + 360.0) % 360.0
+
+                Dom.OnPointerDown((fun e ->
+                    if e.Button = Button.Left then
+                        transact (fun () ->
+                            lastPos.Value <- e.OffsetPosition
+                            dragging.Value <- true)
+                        let mode = AVal.force model.CoreSampleViewMode
+                        match mode with
+                        | SideView -> env.Emit [ScanPinMsg (SetCutPlaneDistance (clickDist e.OffsetPosition.Y))]
+                        | TopView  -> env.Emit [ScanPinMsg (SetCutPlaneAngle (clickAngle e.OffsetPosition.X e.OffsetPosition.Y))]
+                ), pointerCapture = true)
+
+                Dom.OnPointerUp((fun _ ->
+                    transact (fun () -> dragging.Value <- false)
+                ), pointerCapture = true)
+
+                Dom.OnPointerMove(fun e ->
+                    if AVal.force dragging then
+                        let prev = AVal.force lastPos
+                        let delta = e.OffsetPosition - prev
+                        transact (fun () -> lastPos.Value <- e.OffsetPosition)
+                        let mode = AVal.force model.CoreSampleViewMode
+                        match mode with
+                        | SideView ->
+                            let rot = AVal.force model.CoreSampleRotation
+                            env.Emit [SetCoreSampleRotation (rot + float delta.X * -0.01)]
+                            env.Emit [ScanPinMsg (SetCutPlaneDistance (clickDist e.OffsetPosition.Y))]
+                        | TopView ->
+                            env.Emit [ScanPinMsg (SetCutPlaneAngle (clickAngle e.OffsetPosition.X e.OffsetPosition.Y))]
                 )
 
-                let miniView = model.PinViewCamera.view |> AVal.map CameraView.viewTrafo
-                let miniProj =
-                    size |> AVal.map (fun s ->
-                        Frustum.perspective 60.0 0.5 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo)
-
-                Sg.View miniView
-                Sg.Proj miniProj
+                Dom.OnContextMenu(ignore, preventDefault = true)
 
                 let coreTrafo = selectedPin |> AVal.map (fun pinOpt ->
                     match pinOpt with
@@ -391,6 +391,39 @@ module GuiPins =
                     match pinOpt with
                     | Some pin -> match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
                     | None -> 1e10)
+
+                let coreExtents = selectedPin |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin -> pin.Prism.ExtentForward, pin.Prism.ExtentBackward
+                    | None -> 5.0, 5.0)
+
+                let miniView =
+                    (model.CoreSampleViewMode, model.CoreSampleRotation, coreExtents) |||> AVal.map3 (fun mode rot (extFwd, extBack) ->
+                        let dist = 100.0
+                        let centerZ = (extBack - extFwd) / 2.0
+                        match mode with
+                        | SideView ->
+                            let dir = V3d(cos rot, sin rot, 0.0)
+                            let r = Vec.cross V3d.OOI dir |> Vec.normalize
+                            let eye = dir * dist + V3d(0.0, 0.0, centerZ)
+                            CameraView(-V3d.OOI, eye, -dir, -V3d.OOI, r) |> CameraView.viewTrafo
+                        | TopView ->
+                            let eye = V3d(0.0, 0.0, dist)
+                            CameraView(V3d.OOI, eye, -V3d.OOI, V3d.IOO, V3d.OIO) |> CameraView.viewTrafo
+                    )
+
+                let miniProj =
+                    (model.CoreSampleViewMode, coreRadius, coreExtents) |||> AVal.map3 (fun mode r (extFwd, extBack) ->
+                        match mode with
+                        | TopView ->
+                            Frustum.ortho (Box3d(V3d(-r, -r, 0.01), V3d(r, r, 300.0))) |> Frustum.projTrafo
+                        | SideView ->
+                            let halfH = (extFwd + extBack) / 2.0
+                            Frustum.ortho (Box3d(V3d(-r, -halfH, 0.01), V3d(r, halfH, 300.0))) |> Frustum.projTrafo
+                    )
+
+                Sg.View miniView
+                Sg.Proj miniProj
 
                 let meshIndices =
                     model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
@@ -449,6 +482,44 @@ module GuiPins =
                     Sg.Render wireFvc
                 }
 
+                // Cut plane indicator line
+                let cutLineData = (selectedPin, model.CoreSampleRotation) ||> AVal.map2 (fun pinOpt rot ->
+                    match pinOpt with
+                    | Some pin ->
+                        let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                        let t = r * 0.03
+                        match pin.CutPlane with
+                        | CutPlaneMode.AlongAxis angleDeg ->
+                            let a = angleDeg * Constant.RadiansPerDegree
+                            let dx = cos a * r * 1.05
+                            let dy = sin a * r * 1.05
+                            let p0 = V3d(-dx, -dy, 0.0)
+                            let p1 = V3d(dx, dy, 0.0)
+                            [| V3f(p0 + V3d.OOI * t); V3f(p0 - V3d.OOI * t); V3f(p1 + V3d.OOI * t); V3f(p1 - V3d.OOI * t) |],
+                            [| 0;1;2; 1;3;2 |]
+                        | CutPlaneMode.AcrossAxis dist ->
+                            let z = -dist
+                            let rx = -sin rot * r * 1.05
+                            let ry = cos rot * r * 1.05
+                            let vx = cos rot * t
+                            let vy = sin rot * t
+                            [| V3f(rx + vx, ry + vy, z); V3f(rx - vx, ry - vy, z); V3f(-rx + vx, -ry + vy, z); V3f(-rx - vx, -ry - vy, z) |],
+                            [| 0;1;2; 1;3;2 |]
+                    | None -> [||], [||])
+                let cutLinePos = cutLineData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
+                let cutLineIdx = cutLineData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
+                let cutLineFvc = cutLineData |> AVal.map (fun (_, i) -> i.Length)
+                sg {
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.2, 0.1, 0.9)))
+                    Sg.DepthTest (AVal.constant DepthTest.Always)
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(cutLinePos, typeof<V3f>) ])
+                    Sg.Index(BufferView(cutLineIdx, typeof<int>))
+                    Sg.Render cutLineFvc
+                }
+
                 let planeData = selectedPin |> AVal.map (fun pinOpt ->
                     match pinOpt with
                     | Some pin ->
@@ -472,4 +543,5 @@ module GuiPins =
                     Sg.Render planeFvc
                 }
             }
+
         }

@@ -85,6 +85,8 @@ module ScanPinModel =
         PlacingMode     = None
     }
 
+type CoreSampleViewMode = SideView | TopView
+
 module ScanPinSerialize =
     open System.Text.Json
 

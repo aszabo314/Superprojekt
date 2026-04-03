@@ -24,6 +24,12 @@ type SphereRequest  = { Name: string; Index: int; Center: float[]; Radius: float
 [<CLIMutable>]
 type BoxRequest     = { Name: string; Index: int; Min: float[]; Max: float[] }
 
+[<CLIMutable>]
+type PlaneIntersectionRequest = { Name: string; Index: int; PlanePoint: float[]; PlaneNormal: float[]; AxisU: float[]; AxisV: float[]; Thickness: float; MaxExtentU: float; MaxExtentV: float }
+
+[<CLIMutable>]
+type GridEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Radius: float; Resolution: int; ExtentForward: float; ExtentBackward: float }
+
 let inline private toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
 let inline private fromV3d (v : V3d)   = [| v.X; v.Y; v.Z |]
 
@@ -205,6 +211,64 @@ let boxHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
+// POST /api/query/plane-intersection
+let planeIntersectionHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<PlaneIntersectionRequest>()
+            let dataset, name = splitName req.Name
+            let lm = MeshCache.get dataset name req.Index
+            let c = lm.parsed.centroid
+            let planePoint = toV3d req.PlanePoint - c
+            let planeNormal = toV3d req.PlaneNormal
+            let axisU = toV3d req.AxisU
+            let axisV = toV3d req.AxisV
+            let segments = MeshCache.planeIntersection lm planePoint planeNormal axisU axisV req.Thickness req.MaxExtentU req.MaxExtentV
+            log.LogDebug("plane-intersection {Name}: {Count} segments", req.Name, segments.Length)
+            return! json {| segments = segments |} next ctx
+        with ex ->
+            log.LogError(ex, "plane-intersection failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+// POST /api/query/grid-eval
+let gridEvalHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<GridEvalRequest>()
+            let anchor = toV3d req.Anchor
+            let axis = toV3d req.Axis
+            let result = MeshCache.evaluateGrid req.Dataset anchor axis req.Radius req.Resolution req.ExtentForward req.ExtentBackward
+            log.LogInformation("grid-eval {Dataset}: res={Resolution}, {CellCount} cells, {DatasetCount} datasets", req.Dataset, result.Resolution, result.Cells.Length, result.DatasetStats.Length)
+            // Binary response for efficiency
+            use ms = new MemoryStream()
+            use bw = new BinaryWriter(ms, Text.Encoding.Default, leaveOpen = true)
+            bw.Write(result.Resolution)
+            bw.Write(result.Cells.Length)
+            bw.Write(result.DatasetStats.Length)
+            for (gu, gv, s) in result.Cells do
+                bw.Write(gu); bw.Write(gv)
+                bw.Write(s.Average); bw.Write(s.Q1); bw.Write(s.Q3)
+                bw.Write(s.Min); bw.Write(s.Max); bw.Write(s.Variance)
+            for ds in result.DatasetStats do
+                let nameBytes = Text.Encoding.UTF8.GetBytes(ds.MeshName)
+                bw.Write(nameBytes.Length)
+                bw.Write(nameBytes)
+                bw.Write(ds.ZMin); bw.Write(ds.ZQ1); bw.Write(ds.ZMedian)
+                bw.Write(ds.ZQ3); bw.Write(ds.ZMax); bw.Write(ds.ZVariance)
+            bw.Flush()
+            ctx.Response.ContentType <- "application/octet-stream"
+            let buf = ms.ToArray()
+            ctx.Response.ContentLength <- Nullable<int64>(int64 buf.Length)
+            do! ctx.Response.Body.WriteAsync(buf, 0, buf.Length)
+            return! next ctx
+        with ex ->
+            log.LogError(ex, "grid-eval failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
 let webApp : HttpHandler =
     choose [
         route  "/api/datasets"                                  >=> datasetsHandler
@@ -217,4 +281,6 @@ let webApp : HttpHandler =
         route  "/api/query/closest"                             >=> closestHandler
         route  "/api/query/sphere"                              >=> sphereHandler
         route  "/api/query/box"                                 >=> boxHandler
+        route  "/api/query/plane-intersection"                  >=> planeIntersectionHandler
+        route  "/api/query/grid-eval"                           >=> gridEvalHandler
     ]

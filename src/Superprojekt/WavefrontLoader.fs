@@ -151,6 +151,18 @@ module MeshData =
         }
 
 
+module ApiConfig =
+    open Aardworx.WebAssembly
+    let apiBase =
+        lazy (
+            let href = Window.Location.Href
+            let uri = System.Uri(href)
+            let mutable path = uri.AbsolutePath
+            if path.Contains('.') then path <- path.Substring(0, path.LastIndexOf('/') + 1)
+            path <- path.TrimEnd('/')
+            uri.GetLeftPart(System.UriPartial.Authority) + path + "/api"
+        )
+
 module Query =
 
     open System.Net.Http
@@ -219,3 +231,17 @@ module Query =
     let boxTriangles (serverUrl : string) (name : string) (index : int) (min : V3d) (max : V3d) =
         let json = sprintf """{"name":"%s","index":%d,"min":%s,"max":%s}""" name index (v3 min) (v3 max)
         postBinaryIndices serverUrl "/query/box" json
+
+    /// POST /query/plane-intersection — returns 2D line segments
+    let planeIntersection (serverUrl : string) (name : string) (index : int) (planePoint : V3d) (planeNormal : V3d) (axisU : V3d) (axisV : V3d) (thickness : float) (maxExtentU : float) (maxExtentV : float) =
+        async {
+            let json = sprintf """{"name":"%s","index":%d,"planePoint":%s,"planeNormal":%s,"axisU":%s,"axisV":%s,"thickness":%.17g,"maxExtentU":%.17g,"maxExtentV":%.17g}"""
+                        name index (v3 planePoint) (v3 planeNormal) (v3 axisU) (v3 axisV) thickness maxExtentU maxExtentV
+            let! r = post serverUrl "/query/plane-intersection" json
+            let segments =
+                r.GetProperty("segments").EnumerateArray() |> Seq.map (fun seg ->
+                    let a = seg.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                    V2d(a.[0], a.[1]), V2d(a.[2], a.[3])
+                ) |> Seq.toList
+            return segments
+        }

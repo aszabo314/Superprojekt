@@ -77,9 +77,9 @@ A ScanPin is a 3D annotation: a selection prism (32-gon cylinder) extruded along
 
 **Diagram** (in GuiPins.fs): `pinDiagram` computes screen position via `proj.Forward * view.Forward * V4d(pt, 1.0)` (column-vector convention: clip = proj * view * pos). Hidden when behind camera (W < 0.1) or off-screen (|ndc| > 1.5). SVG rendered by JS reading `data-diagram` JSON attribute, with MutationObserver for reactive updates.
 
-**Core sample 3D view** (in GuiPins.fs): A secondary `renderControl` embedded in `pinDiagram`, stacked below the SVG profile. Shows the selected pin's region as a vertical "core sample" — the prism axis is rotated to Z and centered at the origin via `coreSampleTrafo`. Meshes are rendered with `BlitShader.coreClip` (cylindrical discard: fragments with XY distance > footprint radius are discarded). The prism wireframe and cut plane quad are pre-transformed into core sample space. Has its own orbit camera (`PinViewCamera` in Model) initialized to match the main camera orientation, centered at the origin. `PinViewCameraMessage` routes orbit messages through the Elm update loop.
+**Core sample 3D view** (in GuiPins.fs): A secondary `renderControl` embedded in `pinDiagram`, stacked below the SVG profile. Shows the selected pin's region as a vertical "core sample" — the prism axis is rotated to Z and centered at the origin via `coreSampleTrafo`. Meshes are rendered with `BlitShader.coreClip` (cylindrical discard: fragments with XY distance > footprint radius are discarded). The prism wireframe and cut plane quad are pre-transformed into core sample space. Uses an orthographic projection (`Frustum.ortho`) with constrained side-view camera: horizontal drag rotates around Z axis (`CoreSampleRotation`), vertical drag pans along Z (`CoreSamplePanZ`), scroll zooms (`CoreSampleZoom`). Camera state stored as three floats on Model; custom pointer handlers in GuiPins.fs (no OrbitController). View matrix built manually via `CameraView(sky, eye, forward, up, right)`. Side/Top view mode toggle (`CoreSampleViewMode`) — TopView not yet wired up.
 
-**Open TODOs:** See `scanpin-v1-spec.md` — key gaps: dummy cut results (no real mesh intersection), no arcball gizmo, no deserialization.
+**Open TODOs:** See `scanpin-v2-spec.md` — key gaps: dummy cut results (no real mesh intersection), no arcball gizmo, no deserialization, top view mode, summary meshes, boxplot ranking.
 
 ## Off-screen render pipeline
 
@@ -124,8 +124,12 @@ GhostSilhouette               // show semi-transparent ghost of clipped/hidden g
 ClipActive                    // whether workspace clipping is enabled
 ClipBox                       // active clip range (Box3d in world space)
 ClipBounds                    // world-space union of all dataset bboxes; Box3d.Invalid until loaded
+GhostOpacity                  // ghost silhouette opacity (0.01–1.0, default 0.1)
 ScanPins                      // ScanPinModel: pins, active placement, selected pin, placing mode
-PinViewCamera                 // OrbitState for the core sample mini 3D view (independent orbit)
+CoreSampleViewMode            // SideView | TopView toggle for the core sample inspector
+CoreSampleRotation            // radians, angle around Z axis in core sample space
+CoreSamplePanZ                // vertical pan offset along Z axis
+CoreSampleZoom                // ortho half-height scale (zoom level)
 ```
 
 ## Server architecture

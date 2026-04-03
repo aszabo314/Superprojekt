@@ -1,5 +1,5 @@
-//ddb65680-82a3-ed08-742d-22151dfb4afd
-//b1f74141-83b7-c164-ea8a-1a4357ddffe0
+//f587303b-0e12-7821-07a9-0ab26cec729e
+//fd7ba4ee-41ec-e56b-034a-71d9c440de53
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -38,7 +38,11 @@ type AdaptiveModel(value : Model) =
     let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
     let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
-    let _PinViewCamera_ = AdaptiveOrbitState(value.PinViewCamera)
+    let _PinAxisVertical_ = FSharp.Data.Adaptive.cval(value.PinAxisVertical)
+    let _CoreSampleViewMode_ = FSharp.Data.Adaptive.cval(value.CoreSampleViewMode)
+    let _CoreSampleRotation_ = FSharp.Data.Adaptive.cval(value.CoreSampleRotation)
+    let _CoreSamplePanZ_ = FSharp.Data.Adaptive.cval(value.CoreSamplePanZ)
+    let _CoreSampleZoom_ = FSharp.Data.Adaptive.cval(value.CoreSampleZoom)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -73,7 +77,11 @@ type AdaptiveModel(value : Model) =
             _ClipBox_.Value <- value.ClipBox
             _ClipBounds_.Value <- value.ClipBounds
             _ScanPins_.Update(value.ScanPins)
-            _PinViewCamera_.Update(value.PinViewCamera)
+            _PinAxisVertical_.Value <- value.PinAxisVertical
+            _CoreSampleViewMode_.Value <- value.CoreSampleViewMode
+            _CoreSampleRotation_.Value <- value.CoreSampleRotation
+            _CoreSamplePanZ_.Value <- value.CoreSamplePanZ
+            _CoreSampleZoom_.Value <- value.CoreSampleZoom
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -101,5 +109,9 @@ type AdaptiveModel(value : Model) =
     member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ScanPins = _ScanPins_
-    member __.PinViewCamera = _PinViewCamera_
+    member __.PinAxisVertical = _PinAxisVertical_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.CoreSampleViewMode = _CoreSampleViewMode_ :> FSharp.Data.Adaptive.aval<CoreSampleViewMode>
+    member __.CoreSampleRotation = _CoreSampleRotation_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.CoreSamplePanZ = _CoreSamplePanZ_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.CoreSampleZoom = _CoreSampleZoom_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
 

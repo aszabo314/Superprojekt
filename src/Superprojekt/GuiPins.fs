@@ -228,10 +228,15 @@ module GuiPins =
                         | None -> "{\"paths\":[],\"legend\":[]}"
                     Some (Attribute("data-diagram", json)))
                 OnBoot [
-                    "var el = __THIS__;"
+                    "var last = '';"
                     "function render() {"
+                    "  var el = document.getElementById('pin-diagram-root');"
+                    "  if(!el) return;"
+                    "  var raw = el.getAttribute('data-diagram') || '{}';"
+                    "  if(raw === last) return;"
+                    "  last = raw;"
                     "  el.innerHTML = '';"
-                    "  try { var data = JSON.parse(el.getAttribute('data-diagram') || '{}'); } catch(e) { return; }"
+                    "  try { var data = JSON.parse(raw); } catch(e) { return; }"
                     "  if(!data.paths || data.paths.length===0) return;"
                     sprintf "  var ns = 'http://www.w3.org/2000/svg';"
                     sprintf "  var svg = document.createElementNS(ns, 'svg');"
@@ -296,11 +301,7 @@ module GuiPins =
                     "    svg.appendChild(p);"
                     "  });"
                     "}"
-                    "render();"
-                    "var obs = new MutationObserver(function(m) {"
-                    "  for(var i=0;i<m.length;i++) if(m[i].attributeName==='data-diagram') { render(); break; }"
-                    "});"
-                    "obs.observe(el, {attributes:true});"
+                    "setInterval(render, 200);"
                 ]
             }
 
@@ -326,221 +327,215 @@ module GuiPins =
                 }
             }
 
-            renderControl {
-                RenderControl.Samples 1
-                Class "pin-mini-view"
+            div {
+                Class "pin-mini-wrapper"
 
-                let! size = RenderControl.ViewportSize
+                renderControl {
+                    RenderControl.Samples 1
+                    Class "pin-mini-view"
 
-                let lastPos = cval V2i.Zero
-                let dragging = cval false
+                    let! size = RenderControl.ViewportSize
 
-                let clickDist (py : int) =
-                    let pinOpt = AVal.force selectedPin
-                    let extFwd, extBack = match pinOpt with Some pin -> pin.Prism.ExtentForward, pin.Prism.ExtentBackward | None -> 5.0, 5.0
-                    let halfH = (extFwd + extBack) / 2.0
-                    let centerZ = (extBack - extFwd) / 2.0
-                    let sz = AVal.force size
-                    let ndcY = 1.0 - 2.0 * float py / float sz.Y
-                    -(centerZ - ndcY * halfH)
+                    let lastPos = cval V2i.Zero
+                    let dragging = cval false
 
-                let clickAngle (px : int) (py : int) =
-                    let sz = AVal.force size
-                    let dx = float px - float sz.X / 2.0
-                    let dy = float sz.Y / 2.0 - float py
-                    (atan2 dx dy * Constant.DegreesPerRadian + 360.0) % 360.0
-
-                Dom.OnPointerDown((fun e ->
-                    if e.Button = Button.Left then
-                        transact (fun () ->
-                            lastPos.Value <- e.OffsetPosition
-                            dragging.Value <- true)
-                        let mode = AVal.force model.CoreSampleViewMode
-                        match mode with
-                        | SideView -> env.Emit [ScanPinMsg (SetCutPlaneDistance (clickDist e.OffsetPosition.Y))]
-                        | TopView  -> env.Emit [ScanPinMsg (SetCutPlaneAngle (clickAngle e.OffsetPosition.X e.OffsetPosition.Y))]
-                ), pointerCapture = true)
-
-                Dom.OnPointerUp((fun _ ->
-                    transact (fun () -> dragging.Value <- false)
-                ), pointerCapture = true)
-
-                Dom.OnPointerMove(fun e ->
-                    if AVal.force dragging then
-                        let prev = AVal.force lastPos
-                        let delta = e.OffsetPosition - prev
-                        transact (fun () -> lastPos.Value <- e.OffsetPosition)
-                        let mode = AVal.force model.CoreSampleViewMode
-                        match mode with
-                        | SideView ->
-                            let rot = AVal.force model.CoreSampleRotation
-                            env.Emit [SetCoreSampleRotation (rot + float delta.X * -0.01)]
-                            env.Emit [ScanPinMsg (SetCutPlaneDistance (clickDist e.OffsetPosition.Y))]
-                        | TopView ->
-                            env.Emit [ScanPinMsg (SetCutPlaneAngle (clickAngle e.OffsetPosition.X e.OffsetPosition.Y))]
-                )
-
-                Dom.OnContextMenu(ignore, preventDefault = true)
-
-                let coreTrafo = selectedPin |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin -> coreSampleTrafo pin.Prism
-                    | None -> Trafo3d.Identity)
-
-                let coreRadius = selectedPin |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin -> match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                    | None -> 1e10)
-
-                let coreExtents = selectedPin |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin -> pin.Prism.ExtentForward, pin.Prism.ExtentBackward
-                    | None -> 5.0, 5.0)
-
-                let miniView =
-                    (model.CoreSampleViewMode, model.CoreSampleRotation, coreExtents) |||> AVal.map3 (fun mode rot (extFwd, extBack) ->
-                        let dist = 100.0
+                    let clickDist (py : int) =
+                        let pinOpt = AVal.force selectedPin
+                        let extFwd, extBack = match pinOpt with Some pin -> pin.Prism.ExtentForward, pin.Prism.ExtentBackward | None -> 5.0, 5.0
+                        let halfH = (extFwd + extBack) / 2.0
                         let centerZ = (extBack - extFwd) / 2.0
-                        match mode with
-                        | SideView ->
-                            let dir = V3d(cos rot, sin rot, 0.0)
-                            let r = Vec.cross V3d.OOI dir |> Vec.normalize
-                            let eye = dir * dist + V3d(0.0, 0.0, centerZ)
-                            CameraView(-V3d.OOI, eye, -dir, -V3d.OOI, r) |> CameraView.viewTrafo
-                        | TopView ->
-                            let eye = V3d(0.0, 0.0, dist)
-                            CameraView(V3d.OOI, eye, -V3d.OOI, V3d.IOO, V3d.OIO) |> CameraView.viewTrafo
+                        let sz = AVal.force size
+                        let ndcY = 1.0 - 2.0 * float py / float sz.Y
+                        -(centerZ - ndcY * halfH)
+
+                    let clickAngle (px : int) (py : int) =
+                        let sz = AVal.force size
+                        let dx = float px - float sz.X / 2.0
+                        let dy = float sz.Y / 2.0 - float py
+                        (atan2 dx dy * Constant.DegreesPerRadian + 360.0) % 360.0
+
+                    Dom.OnPointerDown((fun e ->
+                        if e.Button = Button.Left then
+                            transact (fun () ->
+                                lastPos.Value <- e.OffsetPosition
+                                dragging.Value <- true)
+                            let mode = AVal.force model.CoreSampleViewMode
+                            match mode with
+                            | SideView -> env.Emit [ScanPinMsg (SetCutPlaneDistance (clickDist e.OffsetPosition.Y))]
+                            | TopView  -> env.Emit [ScanPinMsg (SetCutPlaneAngle (clickAngle e.OffsetPosition.X e.OffsetPosition.Y))]
+                    ), pointerCapture = true)
+
+                    Dom.OnPointerUp((fun _ ->
+                        transact (fun () -> dragging.Value <- false)
+                    ), pointerCapture = true)
+
+                    Dom.OnPointerMove(fun e ->
+                        if AVal.force dragging then
+                            let prev = AVal.force lastPos
+                            let delta = e.OffsetPosition - prev
+                            transact (fun () -> lastPos.Value <- e.OffsetPosition)
+                            let mode = AVal.force model.CoreSampleViewMode
+                            match mode with
+                            | SideView ->
+                                let rot = AVal.force model.CoreSampleRotation
+                                env.Emit [SetCoreSampleRotation (rot + float delta.X * -0.01)]
+                                env.Emit [ScanPinMsg (SetCutPlaneDistance (clickDist e.OffsetPosition.Y))]
+                            | TopView ->
+                                env.Emit [ScanPinMsg (SetCutPlaneAngle (clickAngle e.OffsetPosition.X e.OffsetPosition.Y))]
                     )
 
-                let miniProj =
-                    (model.CoreSampleViewMode, coreRadius, coreExtents) |||> AVal.map3 (fun mode r (extFwd, extBack) ->
-                        match mode with
-                        | TopView ->
-                            Frustum.ortho (Box3d(V3d(-r, -r, 0.01), V3d(r, r, 300.0))) |> Frustum.projTrafo
-                        | SideView ->
-                            let halfH = (extFwd + extBack) / 2.0
-                            Frustum.ortho (Box3d(V3d(-r, -halfH, 0.01), V3d(r, halfH, 300.0))) |> Frustum.projTrafo
-                    )
+                    Dom.OnContextMenu(ignore, preventDefault = true)
 
-                Sg.View miniView
-                Sg.Proj miniProj
+                    let coreTrafo = selectedPin |> AVal.map (fun pinOpt ->
+                        match pinOpt with
+                        | Some pin -> coreSampleTrafo pin.Prism
+                        | None -> Trafo3d.Identity)
 
-                let meshIndices =
-                    model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
-                        names |> Seq.mapi (fun i a -> a, i) |> Map.ofSeq)
+                    let coreRadius = selectedPin |> AVal.map (fun pinOpt ->
+                        match pinOpt with
+                        | Some pin -> match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                        | None -> 1e10)
 
-                model.MeshNames |> AList.toASet |> ASet.map (fun name ->
-                    let loaded = MeshView.loadMeshAsync ignore name
-                    let dataset = name.Split('/', 2).[0]
-                    let scale = model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
-                    let meshTrafo =
-                        (model.CommonCentroid, loaded.centroid, scale) |||> AVal.map3 (fun common mesh s ->
-                            Trafo3d.Translation(mesh - common) * Trafo3d.Scale(s))
-                    let trafo = (coreTrafo, meshTrafo) ||> AVal.map2 (fun core mt -> mt*core)
-                    let meshIdx = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
-                    sg {
-                        Sg.Trafo trafo
-                        Sg.Shader {
-                            DefaultSurfaces.trafo
-                            DefaultSurfaces.diffuseTexture
-                            BlitShader.coreClip
+                    let coreExtents = selectedPin |> AVal.map (fun pinOpt ->
+                        match pinOpt with
+                        | Some pin -> pin.Prism.ExtentForward, pin.Prism.ExtentBackward
+                        | None -> 5.0, 5.0)
+
+                    let miniView =
+                        (model.CoreSampleViewMode, model.CoreSampleRotation, coreExtents) |||> AVal.map3 (fun mode rot (extFwd, extBack) ->
+                            let dist = 100.0
+                            let centerZ = (extBack - extFwd) / 2.0
+                            match mode with
+                            | SideView ->
+                                let dir = V3d(cos rot, sin rot, 0.0)
+                                let r = Vec.cross V3d.OOI dir |> Vec.normalize
+                                let eye = dir * dist + V3d(0.0, 0.0, centerZ)
+                                CameraView(-V3d.OOI, eye, -dir, -V3d.OOI, r) |> CameraView.viewTrafo
+                            | TopView ->
+                                let eye = V3d(0.0, 0.0, dist)
+                                CameraView(V3d.OOI, eye, -V3d.OOI, V3d.IOO, V3d.OIO) |> CameraView.viewTrafo
+                        )
+
+                    let miniProj =
+                        (model.CoreSampleViewMode, coreRadius, coreExtents) |||> AVal.map3 (fun mode r (extFwd, extBack) ->
+                            match mode with
+                            | TopView ->
+                                Frustum.ortho (Box3d(V3d(-r, -r, 0.01), V3d(r, r, 300.0))) |> Frustum.projTrafo
+                            | SideView ->
+                                let halfH = (extFwd + extBack) / 2.0
+                                Frustum.ortho (Box3d(V3d(-r, -halfH, 0.01), V3d(r, halfH, 300.0))) |> Frustum.projTrafo
+                        )
+
+                    Sg.View miniView
+                    Sg.Proj miniProj
+
+                    let meshIndices =
+                        model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
+                            names |> Seq.mapi (fun i a -> a, i) |> Map.ofSeq)
+
+                    model.MeshNames |> AList.toASet |> ASet.map (fun name ->
+                        let loaded = MeshView.loadMeshAsync ignore name
+                        let dataset = name.Split('/', 2).[0]
+                        let scale = model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
+                        let meshTrafo =
+                            (model.CommonCentroid, loaded.centroid, scale) |||> AVal.map3 (fun common mesh s ->
+                                Trafo3d.Translation(mesh - common) * Trafo3d.Scale(s))
+                        let trafo = (coreTrafo, meshTrafo) ||> AVal.map2 (fun core mt -> mt*core)
+                        let meshIdx = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
+                        sg {
+                            Sg.Trafo trafo
+                            Sg.Shader {
+                                DefaultSurfaces.trafo
+                                DefaultSurfaces.diffuseTexture
+                                BlitShader.coreClip
+                            }
+                            Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                            Sg.Uniform("CoreRadius", coreRadius)
+                            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                            Sg.NoEvents
+                            Sg.VertexAttributes(
+                                HashMap.ofList [
+                                    string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
+                                    string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc, typeof<V2f>)
+                                ])
+                            Sg.Active(loaded.fvc |> AVal.map (fun c -> c > 3))
+                            Sg.Index(BufferView(loaded.idx, typeof<int>))
+                            Sg.Render loaded.fvc
                         }
-                        Sg.Uniform("DiffuseColorTexture", loaded.tex)
-                        Sg.Uniform("CoreRadius", coreRadius)
+                    )
+
+                    let wireData = selectedPin |> AVal.map (fun pinOpt ->
+                        match pinOpt with
+                        | Some pin ->
+                            let pos, idx = Revolver.buildPrismWireframe pin.Prism 0.05
+                            let t = coreSampleTrafo pin.Prism
+                            let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
+                            pos, idx
+                        | None -> [||], [||])
+                    let wirePos = wireData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
+                    let wireIdx = wireData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
+                    let wireFvc = wireData |> AVal.map (fun (_, i) -> i.Length)
+                    sg {
+                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                        Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.85, 0.0, 0.7)))
                         Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                         Sg.NoEvents
                         Sg.VertexAttributes(
-                            HashMap.ofList [
-                                string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
-                                string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc, typeof<V2f>)
-                            ])
-                        Sg.Active(loaded.fvc |> AVal.map (fun c -> c > 3))
-                        Sg.Index(BufferView(loaded.idx, typeof<int>))
-                        Sg.Render loaded.fvc
+                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(wirePos, typeof<V3f>) ])
+                        Sg.Index(BufferView(wireIdx, typeof<int>))
+                        Sg.Render wireFvc
                     }
-                )
 
-                let wireData = selectedPin |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin ->
-                        let pos, idx = Revolver.buildPrismWireframe pin.Prism 0.05
-                        let t = coreSampleTrafo pin.Prism
-                        let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
-                        pos, idx
-                    | None -> [||], [||])
-                let wirePos = wireData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
-                let wireIdx = wireData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
-                let wireFvc = wireData |> AVal.map (fun (_, i) -> i.Length)
-                sg {
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.85, 0.0, 0.7)))
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.NoEvents
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(wirePos, typeof<V3f>) ])
-                    Sg.Index(BufferView(wireIdx, typeof<int>))
-                    Sg.Render wireFvc
+                    let planeData = selectedPin |> AVal.map (fun pinOpt ->
+                        match pinOpt with
+                        | Some pin ->
+                            let pos, idx = Revolver.buildCutPlaneQuad pin.Prism pin.CutPlane
+                            let t = coreSampleTrafo pin.Prism
+                            let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
+                            pos, idx
+                        | None -> [||], [||])
+                    let planePos = planeData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
+                    let planeIdx = planeData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
+                    let planeFvc = planeData |> AVal.map (fun (_, i) -> i.Length)
+                    sg {
+                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                        Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.9, 0.3, 0.25)))
+                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                        Sg.BlendMode BlendMode.Blend
+                        Sg.NoEvents
+                        Sg.VertexAttributes(
+                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(planePos, typeof<V3f>) ])
+                        Sg.Index(BufferView(planeIdx, typeof<int>))
+                        Sg.Render planeFvc
+                    }
                 }
 
-                // Cut plane indicator line
-                let cutLineData = (selectedPin, model.CoreSampleRotation) ||> AVal.map2 (fun pinOpt rot ->
-                    match pinOpt with
-                    | Some pin ->
-                        let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                        let t = r * 0.03
-                        match pin.CutPlane with
-                        | CutPlaneMode.AlongAxis angleDeg ->
-                            let a = angleDeg * Constant.RadiansPerDegree
-                            let dx = cos a * r * 1.05
-                            let dy = sin a * r * 1.05
-                            let p0 = V3d(-dx, -dy, 0.0)
-                            let p1 = V3d(dx, dy, 0.0)
-                            [| V3f(p0 + V3d.OOI * t); V3f(p0 - V3d.OOI * t); V3f(p1 + V3d.OOI * t); V3f(p1 - V3d.OOI * t) |],
-                            [| 0;1;2; 1;3;2 |]
-                        | CutPlaneMode.AcrossAxis dist ->
-                            let z = -dist
-                            let rx = -sin rot * r * 1.05
-                            let ry = cos rot * r * 1.05
-                            let vx = cos rot * t
-                            let vy = sin rot * t
-                            [| V3f(rx + vx, ry + vy, z); V3f(rx - vx, ry - vy, z); V3f(-rx + vx, -ry + vy, z); V3f(-rx - vx, -ry - vy, z) |],
-                            [| 0;1;2; 1;3;2 |]
-                    | None -> [||], [||])
-                let cutLinePos = cutLineData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
-                let cutLineIdx = cutLineData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
-                let cutLineFvc = cutLineData |> AVal.map (fun (_, i) -> i.Length)
-                sg {
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.2, 0.1, 0.9)))
-                    Sg.DepthTest (AVal.constant DepthTest.Always)
-                    Sg.NoEvents
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(cutLinePos, typeof<V3f>) ])
-                    Sg.Index(BufferView(cutLineIdx, typeof<int>))
-                    Sg.Render cutLineFvc
-                }
-
-                let planeData = selectedPin |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin ->
-                        let pos, idx = Revolver.buildCutPlaneQuad pin.Prism pin.CutPlane
-                        let t = coreSampleTrafo pin.Prism
-                        let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
-                        pos, idx
-                    | None -> [||], [||])
-                let planePos = planeData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
-                let planeIdx = planeData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
-                let planeFvc = planeData |> AVal.map (fun (_, i) -> i.Length)
-                sg {
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.9, 0.3, 0.25)))
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode BlendMode.Blend
-                    Sg.NoEvents
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(planePos, typeof<V3f>) ])
-                    Sg.Index(BufferView(planeIdx, typeof<int>))
-                    Sg.Render planeFvc
+                // Cut plane indicator overlay
+                div {
+                    Class "pin-cut-indicator"
+                    (selectedPin, model.CoreSampleViewMode) ||> AVal.map2 (fun pinOpt mode ->
+                        match pinOpt with
+                        | None -> Some (Attribute("data-ind", "display:none"))
+                        | Some pin ->
+                            let extFwd = pin.Prism.ExtentForward
+                            let extBack = pin.Prism.ExtentBackward
+                            let halfH = (extFwd + extBack) / 2.0
+                            let centerZ = (extBack - extFwd) / 2.0
+                            match pin.CutPlane, mode with
+                            | CutPlaneMode.AcrossAxis dist, SideView ->
+                                let ndcY = (dist + centerZ) / halfH
+                                let pct = (1.0 - ndcY) / 2.0 * 100.0
+                                Some (Attribute("data-ind", sprintf "top:%.2f%%" pct))
+                            | CutPlaneMode.AlongAxis angleDeg, TopView ->
+                                Some (Attribute("data-ind", sprintf "top:calc(50%% - 1px);transform-origin:center;transform:rotate(%.1fdeg)" (90.0 - angleDeg)))
+                            | _ -> Some (Attribute("data-ind", "display:none"))
+                    )
+                    OnBoot [
+                        "var el = __THIS__;"
+                        "function apply() { el.style.cssText = el.getAttribute('data-ind') || 'display:none'; }"
+                        "apply();"
+                        "new MutationObserver(function() { apply(); }).observe(el, {attributes:true, attributeFilter:['data-ind']});"
+                    ]
                 }
             }
 

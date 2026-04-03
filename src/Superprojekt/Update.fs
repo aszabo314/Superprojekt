@@ -128,23 +128,23 @@ module ScanPinUpdate =
             | None -> sp
 
         | SetCutPlaneAngle deg ->
-            match sp.ActivePlacement with
+            let targetId = sp.ActivePlacement |> Option.orElse sp.SelectedPin
+            match targetId with
             | Some id ->
                 match HashMap.tryFind id sp.Pins with
-                | Some pin when pin.Phase = PinPhase.Placement ->
-                    let mode = CutPlaneMode.AlongAxis deg
-                    let pin = { pin with CutPlane = mode }
+                | Some pin ->
+                    let pin = { pin with CutPlane = CutPlaneMode.AlongAxis deg }
                     { sp with Pins = HashMap.add id pin sp.Pins }
                 | _ -> sp
             | None -> sp
 
         | SetCutPlaneDistance dist ->
-            match sp.ActivePlacement with
+            let targetId = sp.ActivePlacement |> Option.orElse sp.SelectedPin
+            match targetId with
             | Some id ->
                 match HashMap.tryFind id sp.Pins with
-                | Some pin when pin.Phase = PinPhase.Placement ->
-                    let mode = CutPlaneMode.AcrossAxis dist
-                    let pin = { pin with CutPlane = mode }
+                | Some pin ->
+                    let pin = { pin with CutPlane = CutPlaneMode.AcrossAxis dist }
                     { sp with Pins = HashMap.add id pin sp.Pins }
                 | _ -> sp
             | None -> sp
@@ -308,7 +308,8 @@ module Update =
                 | SetAnchor _ | SetFootprintRadius _ | SetCutPlaneMode _ | SetCutPlaneAngle _ | SetCutPlaneDistance _ | SetFootprintScale _ -> true
                 | _ -> false
             if needsCutUpdate then
-                match sp'.ActivePlacement with
+                let targetId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
+                match targetId with
                 | Some id ->
                     match HashMap.tryFind id sp'.Pins with
                     | Some pin ->

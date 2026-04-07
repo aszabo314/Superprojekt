@@ -1,5 +1,5 @@
-//f587303b-0e12-7821-07a9-0ab26cec729e
-//fd7ba4ee-41ec-e56b-034a-71d9c440de53
+//34d56b55-5f42-2e5d-eebc-adfde137f79d
+//e83c07ce-8841-ba09-5451-56d9da11d5b5
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -43,6 +43,8 @@ type AdaptiveModel(value : Model) =
     let _CoreSampleRotation_ = FSharp.Data.Adaptive.cval(value.CoreSampleRotation)
     let _CoreSamplePanZ_ = FSharp.Data.Adaptive.cval(value.CoreSamplePanZ)
     let _CoreSampleZoom_ = FSharp.Data.Adaptive.cval(value.CoreSampleZoom)
+    let _DepthShadeOn_ = FSharp.Data.Adaptive.cval(value.DepthShadeOn)
+    let _IsolinesOn_ = FSharp.Data.Adaptive.cval(value.IsolinesOn)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -82,6 +84,8 @@ type AdaptiveModel(value : Model) =
             _CoreSampleRotation_.Value <- value.CoreSampleRotation
             _CoreSamplePanZ_.Value <- value.CoreSamplePanZ
             _CoreSampleZoom_.Value <- value.CoreSampleZoom
+            _DepthShadeOn_.Value <- value.DepthShadeOn
+            _IsolinesOn_.Value <- value.IsolinesOn
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -114,4 +118,6 @@ type AdaptiveModel(value : Model) =
     member __.CoreSampleRotation = _CoreSampleRotation_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.CoreSamplePanZ = _CoreSamplePanZ_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.CoreSampleZoom = _CoreSampleZoom_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.DepthShadeOn = _DepthShadeOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.IsolinesOn = _IsolinesOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

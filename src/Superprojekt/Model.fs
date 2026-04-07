@@ -46,6 +46,8 @@ type Model =
         CoreSampleRotation    : float
         CoreSamplePanZ        : float
         CoreSampleZoom        : float
+        DepthShadeOn          : bool
+        IsolinesOn            : bool
     }
 
 module Model =
@@ -84,4 +86,6 @@ module Model =
             CoreSampleRotation    = 0.0
             CoreSamplePanZ        = 0.0
             CoreSampleZoom        = 4.0
+            DepthShadeOn          = true
+            IsolinesOn            = true
         }

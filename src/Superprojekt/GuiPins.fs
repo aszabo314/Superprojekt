@@ -133,7 +133,10 @@ module GuiPins =
             }
 
             h3 { "Pins" }
-            sp.Pins |> AMap.toASet |> ASet.sortBy (fun (_, p) -> p.Id) |> AList.map (fun (id, pin) ->
+            let pinIdList = sp.Pins |> AMap.toASet |> ASet.map fst |> ASet.sortBy id
+            let guiPinsVal = sp.Pins |> AMap.toAVal
+            pinIdList |> AList.map (fun id ->
+                let pinVal = guiPinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = sp.SelectedPin |> AVal.map (fun sel -> sel = Some id)
                 div {
                     Style [Padding "4px 0"; BorderBottom "1px solid #e2e8f0"]
@@ -145,9 +148,13 @@ module GuiPins =
                             if sel = Some id then env.Emit [ScanPinMsg (SelectPin None)]
                             else env.Emit [ScanPinMsg (SelectPin (Some id))])
                         Style [Css.Cursor "pointer"; FontFamily "monospace"; FontSize "11px"]
-                        let p = pin.Prism.AnchorPoint
-                        let phase = if pin.Phase = PinPhase.Placement then " [placing]" else ""
-                        sprintf "(%.1f, %.1f, %.1f)%s" p.X p.Y p.Z phase
+                        pinVal |> AVal.map (fun pinOpt ->
+                            match pinOpt with
+                            | Some pin ->
+                                let p = pin.Prism.AnchorPoint
+                                let phase = if pin.Phase = PinPhase.Placement then " [placing]" else ""
+                                sprintf "(%.1f, %.1f, %.1f)%s" p.X p.Y p.Z phase
+                            | None -> "(removed)")
                     }
                     div {
                         Class "btn-row"
@@ -197,16 +204,16 @@ module GuiPins =
 
         div {
             Class "pin-diagram"
-            selectedPin |> AVal.map (fun p ->
-                if p.IsNone then Some (Style [Display "none"]) else None)
-            screenPos |> AVal.map (fun pos ->
-                match pos with
-                | Some p ->
+            (selectedPin, screenPos) ||> AVal.map2 (fun p pos ->
+                match p, pos with
+                | None, _ | _, None ->
+                    Some (Style [Css.Visibility "hidden"; Left "-9999px"; Top "-9999px"])
+                | _, Some p ->
                     Some (Style [
+                        Css.Visibility "visible"
                         Left (sprintf "%.0fpx" (p.X + 20.0))
                         Top (sprintf "%.0fpx" (p.Y - 120.0))
-                    ])
-                | None -> None)
+                    ]))
 
             h3 { "Profile" }
 
@@ -407,18 +414,23 @@ module GuiPins =
                                 CameraView(V3d.OOI, eye, -V3d.OOI, V3d.IOO, V3d.OIO) |> CameraView.viewTrafo
                         )
 
+                    let camDist = 100.0
+
                     let miniProj =
                         (model.CoreSampleViewMode, coreRadius, coreExtents) |||> AVal.map3 (fun mode r (extFwd, extBack) ->
+                            let halfH = (extFwd + extBack) / 2.0
                             match mode with
                             | TopView ->
-                                Frustum.ortho (Box3d(V3d(-r, -r, 0.01), V3d(r, r, 300.0))) |> Frustum.projTrafo
+                                Frustum.ortho (Box3d(V3d(-r, -r, camDist - halfH - 0.5), V3d(r, r, camDist + halfH + 0.5))) |> Frustum.projTrafo
                             | SideView ->
-                                let halfH = (extFwd + extBack) / 2.0
-                                Frustum.ortho (Box3d(V3d(-r, -halfH, 0.01), V3d(r, halfH, 300.0))) |> Frustum.projTrafo
+                                Frustum.ortho (Box3d(V3d(-r, -halfH, camDist - r - 0.5), V3d(r, halfH, camDist + r + 0.5))) |> Frustum.projTrafo
                         )
 
                     Sg.View miniView
                     Sg.Proj miniProj
+
+                    let depthOn = model.DepthShadeOn |> AVal.map (fun b -> if b then 1 else 0)
+                    let isoOn   = model.IsolinesOn   |> AVal.map (fun b -> if b then 1 else 0)
 
                     let meshIndices =
                         model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
@@ -439,9 +451,14 @@ module GuiPins =
                                 DefaultSurfaces.trafo
                                 DefaultSurfaces.diffuseTexture
                                 BlitShader.coreClip
+                                Shader.depthShade
+                                Shader.isolines
                             }
                             Sg.Uniform("DiffuseColorTexture", loaded.tex)
                             Sg.Uniform("CoreRadius", coreRadius)
+                            Sg.Uniform("DepthShadeOn", depthOn)
+                            Sg.Uniform("IsolinesOn", isoOn)
+                            Sg.Uniform("IsolineSpacing", AVal.constant 1.0)
                             Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                             Sg.NoEvents
                             Sg.VertexAttributes(
@@ -454,6 +471,63 @@ module GuiPins =
                             Sg.Render loaded.fvc
                         }
                     )
+
+                    // Summary meshes (average, Q1, Q3) from grid-eval
+                    let summaryMeshes =
+                        selectedPin |> AVal.map (fun pinOpt ->
+                            match pinOpt with
+                            | Some pin ->
+                                match pin.GridEval with
+                                | Some ge ->
+                                    let t = coreSampleTrafo pin.Prism
+                                    let buildMesh (heights : float[]) =
+                                        let pos, idx = PinGeometry.buildHeightfieldMesh ge.GridOrigin ge.CellSize ge.Resolution heights
+                                        let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
+                                        pos, idx
+                                    let avg = buildMesh (ge.Cells |> Array.map (fun c -> c.Average))
+                                    let q1  = buildMesh (ge.Cells |> Array.map (fun c -> c.Q1))
+                                    let q3  = buildMesh (ge.Cells |> Array.map (fun c -> c.Q3))
+                                    Some (avg, q1, q3)
+                                | None -> None
+                            | None -> None)
+
+                    let summaryEntries = [
+                        (fun (avg, _, _) -> avg), C4f(0.65f, 0.65f, 0.65f, 1.0f)
+                        (fun (_, _, q3) -> q3),   C4f(0.95f, 0.55f, 0.15f, 0.45f)
+                        (fun (_, q1, _) -> q1),   C4f(0.2f, 0.45f, 0.9f, 0.45f)
+                    ]
+                    for (selector, color) in summaryEntries do
+                        let meshData = summaryMeshes |> AVal.map (fun opt ->
+                            match opt with
+                            | Some data -> selector data
+                            | None -> [||], [||])
+                        let sPos = meshData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
+                        let sIdx = meshData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
+                        let sFvc = meshData |> AVal.map (fun (_, i) -> i.Length)
+                        let active = summaryMeshes |> AVal.map Option.isSome
+                        sg {
+                            Sg.Active active
+                            Sg.Shader {
+                                DefaultSurfaces.trafo
+                                DefaultSurfaces.constantColor color
+                                BlitShader.coreClip
+                                Shader.depthShade
+                                Shader.isolines
+                            }
+                            Sg.Uniform("CoreRadius", coreRadius)
+                            Sg.Uniform("DepthShadeOn", depthOn)
+                            Sg.Uniform("IsolinesOn", isoOn)
+                            Sg.Uniform("IsolineSpacing", AVal.constant 1.0)
+                            Sg.BlendMode (AVal.constant BlendMode.Blend)
+                            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                            Sg.NoEvents
+                            Sg.VertexAttributes(
+                                HashMap.ofList [
+                                    string DefaultSemantic.Positions, BufferView(sPos, typeof<V3f>)
+                                ])
+                            Sg.Index(BufferView(sIdx, typeof<int>))
+                            Sg.Render sFvc
+                        }
 
                     let wireData = selectedPin |> AVal.map (fun pinOpt ->
                         match pinOpt with
@@ -480,9 +554,21 @@ module GuiPins =
                     let planeData = selectedPin |> AVal.map (fun pinOpt ->
                         match pinOpt with
                         | Some pin ->
-                            let pos, idx = Revolver.buildCutPlaneQuad pin.Prism pin.CutPlane
+                            let quad, _ = PinGeometry.buildCutPlaneQuad pin.Prism pin.CutPlane
                             let t = coreSampleTrafo pin.Prism
-                            let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
+                            let quad = quad |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
+                            let n =
+                                let v0 = V3d quad.[0]
+                                let v1 = V3d quad.[1]
+                                let v2 = V3d quad.[2]
+                                Vec.cross (v1 - v0) (v2 - v0) |> Vec.normalize
+                            let thick = 0.15
+                            let top = quad |> Array.map (fun p -> V3f(V3d p + n * thick))
+                            let bot = quad |> Array.map (fun p -> V3f(V3d p - n * thick))
+                            let pos = Array.append top bot
+                            let idx = [| 0;1;2; 0;2;3; 4;6;5; 4;7;6
+                                         0;4;5; 0;5;1; 2;6;7; 2;7;3
+                                         0;3;7; 0;7;4; 1;5;6; 1;6;2 |]
                             pos, idx
                         | None -> [||], [||])
                     let planePos = planeData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
@@ -490,9 +576,9 @@ module GuiPins =
                     let planeFvc = planeData |> AVal.map (fun (_, i) -> i.Length)
                     sg {
                         Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                        Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.9, 0.3, 0.25)))
+                        Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.9, 0.3, 0.45)))
                         Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                        Sg.BlendMode BlendMode.Blend
+                        Sg.BlendMode (AVal.constant BlendMode.Blend)
                         Sg.NoEvents
                         Sg.VertexAttributes(
                             HashMap.ofList [ string DefaultSemantic.Positions, BufferView(planePos, typeof<V3f>) ])
@@ -527,6 +613,28 @@ module GuiPins =
                         "apply();"
                         "new MutationObserver(function() { apply(); }).observe(el, {attributes:true, attributeFilter:['data-ind']});"
                     ]
+                }
+            }
+
+            div {
+                Class "effect-toggles"
+                label {
+                    input {
+                        Attribute("type", "checkbox")
+                        model.DepthShadeOn |> AVal.map (fun v ->
+                            if v then Some (Attribute("checked", "checked")) else None)
+                        Dom.OnChange(fun _ -> env.Emit [ToggleDepthShade])
+                    }
+                    "Depth"
+                }
+                label {
+                    input {
+                        Attribute("type", "checkbox")
+                        model.IsolinesOn |> AVal.map (fun v ->
+                            if v then Some (Attribute("checked", "checked")) else None)
+                        Dom.OnChange(fun _ -> env.Emit [ToggleIsolines])
+                    }
+                    "Isolines"
                 }
             }
 

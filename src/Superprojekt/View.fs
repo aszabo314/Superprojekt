@@ -66,7 +66,9 @@ module View =
                 RenderControl.OnRendered(fun _ ->
                     if initial then
                         initial <- false
-                    transact (fun () -> viewportSize.Value <- AVal.force size)
+                    let s = AVal.force size
+                    if viewportSize.Value <> s then
+                        transact (fun () -> viewportSize.Value <- s)
                     env.Emit [CameraMessage OrbitMessage.Rendered]
                 )
                 
@@ -91,17 +93,19 @@ module View =
                         |> Option.defaultValue 1.0
                     let cc = AVal.force model.CommonCentroid
                     let worldPos = e.WorldPosition / scale + cc
-                    transact (fun () -> hoverCoord.Value <- Some worldPos)
-                    let inPlacement = (AVal.force model.ScanPins.PlacingMode).IsSome || (AVal.force model.ScanPins.ActivePlacement).IsSome
+                    let inPlacement = (AVal.force model.ScanPins.PlacingMode).IsSome
                     if inPlacement then
                         let camFwd = (AVal.force view).Forward.GetViewDirectionLH() |> Vec.normalize
                         env.Emit [ScanPinMsg (SetAnchor(worldPos, e.WorldPosition, V3d camFwd))]
                         false
                     elif e.Ctrl && e.Button = Button.Left then
+                        transact (fun () -> hoverCoord.Value <- Some worldPos)
                         env.Emit [ClearFilteredMesh]
                         ServerActions.triggerFilter env model e.Position
                         false
-                    else true
+                    else
+                        transact (fun () -> hoverCoord.Value <- Some worldPos)
+                        true
                 )
 
                 Sg.OnLongPress(fun e ->

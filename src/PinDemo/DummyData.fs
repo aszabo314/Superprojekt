@@ -13,32 +13,15 @@ type GridSampledSurface = {
     Heights     : float[]   // row-major, length = Resolution * Resolution; NaN = no data
 }
 
-/// Per-dataset distribution stats over a core sample.
-type DatasetCoreSampleStats = {
-    MeshName  : string
-    ZMin      : float
-    ZQ1       : float
-    ZMedian   : float
-    ZQ3       : float
-    ZMax      : float
-    ZVariance : float
-}
+type DatasetCoreSampleStats = Superprojekt.DatasetCoreSampleStats
 
-/// Per-cell aggregated statistics across all datasets.
-type CellSummary = {
-    Average  : float
-    Q1       : float
-    Q3       : float
-    Min      : float
-    Max      : float
-    Variance : float
-}
+type CellSummary = Superprojekt.GridCellStats
 
 type SummaryGrid = {
     Resolution : int
     CellSize   : float
     GridOrigin : V2d
-    Cells      : CellSummary[]   // row-major, NaN-aware
+    Cells      : CellSummary[]
 }
 
 type DummyDataset = {
@@ -228,4 +211,5 @@ module DummyData =
           CutPlane            = CutPlaneMode.AlongAxis 0.0
           CreationCameraState = { Center = V3d.Zero; Radius = 30.0; Phi = 0.6; Theta = 0.8 }
           CutResults          = cutResults
-          DatasetColors       = datasetColors }
+          DatasetColors       = datasetColors
+          GridEval            = None }

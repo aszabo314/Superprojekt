@@ -32,12 +32,15 @@ type Message =
     | SetActiveDataset   of string
     | SetDatasetScale    of string * float
     | CutResultsLoaded        of ScanPinId * Map<string, CutResult>
+    | GridEvalLoaded          of ScanPinId * GridEvalData
     | ScanPinMsg              of ScanPinMessage
     | SetCoreSampleRotation   of float
     | SetCoreSamplePanZ       of float
     | SetCoreSampleZoom       of float
     | SetCoreSampleViewMode   of CoreSampleViewMode
     | TogglePinAxisVertical
+    | ToggleDepthShade
+    | ToggleIsolines
 
 and ScanPinMessage =
     | StartPlacement of FootprintMode
@@ -75,23 +78,25 @@ module ScanPinUpdate =
         | StartPlacement mode ->
             let sp =
                 match sp.ActivePlacement with
-                | Some id -> { sp with Pins = HashMap.remove id sp.Pins; ActivePlacement = None }
+                | Some id ->
+                    let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
+                    { sp with Pins = HashMap.remove id sp.Pins; ActivePlacement = None; SelectedPin = selected }
                 | None -> sp
             { sp with PlacingMode = Some mode }
 
         | CancelPlacement ->
             let sp =
                 match sp.ActivePlacement with
-                | Some id -> { sp with Pins = HashMap.remove id sp.Pins; ActivePlacement = None }
+                | Some id ->
+                    let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
+                    { sp with Pins = HashMap.remove id sp.Pins; ActivePlacement = None; SelectedPin = selected }
                 | None -> sp
             { sp with PlacingMode = None }
 
         | SetAnchor(_worldPos, renderPos, camFwd) ->
-            let sp =
-                match sp.ActivePlacement with
-                | Some oldId -> { sp with Pins = HashMap.remove oldId sp.Pins }
-                | None -> sp
-            let id = ScanPinId.create()
+            if sp.PlacingMode.IsNone then sp
+            else
+            let id = match sp.ActivePlacement with Some id -> id | None -> ScanPinId.create()
             let axis = if model.PinAxisVertical then V3d.OOI else -camFwd |> Vec.normalize
             let prism = makeDefaultPrism renderPos axis 1.0
             let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
@@ -100,8 +105,9 @@ module ScanPinUpdate =
                   CutPlane = CutPlaneMode.AlongAxis 0.0
                   CreationCameraState = cam
                   CutResults = Map.empty
-                  DatasetColors = assignColors model.MeshNames }
-            { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id; PlacingMode = None }
+                  DatasetColors = assignColors model.MeshNames
+                  GridEval = None }
+            { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id }
 
         | SetFootprintRadius radius ->
             match sp.ActivePlacement with
@@ -183,6 +189,9 @@ module ScanPinUpdate =
         | FocusPin _ -> sp
 
 module Update =
+    let private cutDebounce = ref (new System.Threading.CancellationTokenSource())
+    let private gridDebounce = ref (new System.Threading.CancellationTokenSource())
+
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
         | CameraMessage msg ->
@@ -285,11 +294,22 @@ module Update =
             { model with CoreSampleViewMode = mode }
         | TogglePinAxisVertical ->
             { model with PinAxisVertical = not model.PinAxisVertical }
+        | ToggleDepthShade ->
+            { model with DepthShadeOn = not model.DepthShadeOn }
+        | ToggleIsolines ->
+            { model with IsolinesOn = not model.IsolinesOn }
         | CutResultsLoaded(pinId, results) ->
             let sp = model.ScanPins
             match HashMap.tryFind pinId sp.Pins with
             | Some pin ->
                 let pin = { pin with CutResults = results }
+                { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
+            | None -> model
+        | GridEvalLoaded(pinId, data) ->
+            let sp = model.ScanPins
+            match HashMap.tryFind pinId sp.Pins with
+            | Some pin ->
+                let pin = { pin with GridEval = Some data }
                 { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
             | None -> model
         | ScanPinMsg msg ->
@@ -333,8 +353,12 @@ module Update =
                             | CutPlaneMode.AcrossAxis dist ->
                                 prism.AnchorPoint / scale + axis * dist / scale + cc, axis, right, fwd, radius / scale, radius / scale
                         let pinId = id
+                        let cts = new System.Threading.CancellationTokenSource()
+                        cutDebounce.Value.Cancel()
+                        cutDebounce.Value <- cts
                         task {
                             try
+                                do! System.Threading.Tasks.Task.Delay(300, cts.Token)
                                 let results = System.Collections.Generic.Dictionary<string, CutResult>()
                                 for name in names do
                                     let! segments =
@@ -345,8 +369,45 @@ module Update =
                                         results.[name] <- { MeshName = name; Polylines = polylines }
                                 if results.Count > 0 then
                                     env.Emit [CutResultsLoaded(pinId, results |> Seq.map (fun kv -> kv.Key, kv.Value) |> Map.ofSeq)]
-                            with e ->
+                            with
+                            | :? System.Threading.Tasks.TaskCanceledException -> ()
+                            | e ->
                                 env.Emit [LogDebug (sprintf "computePlaneCuts ERROR: %s" (string e))]
+                        } |> ignore
+                    | None -> ()
+                | None -> ()
+            let needsGridEval =
+                match msg with
+                | SetAnchor _ | SetFootprintRadius _ | SetFootprintScale _ -> true
+                | _ -> false
+            if needsGridEval then
+                let targetId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
+                match targetId with
+                | Some id ->
+                    match HashMap.tryFind id sp'.Pins with
+                    | Some pin ->
+                        let names = model.MeshNames
+                        let prism = pin.Prism
+                        let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                        let dataset = match IndexList.tryFirst names with Some n -> n.Split('/', 2).[0] | None -> ""
+                        let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
+                        let anchor = prism.AnchorPoint / scale + model.CommonCentroid
+                        let axis = prism.AxisDirection |> Vec.normalize
+                        let pinId = id
+                        let cts = new System.Threading.CancellationTokenSource()
+                        gridDebounce.Value.Cancel()
+                        gridDebounce.Value <- cts
+                        task {
+                            try
+                                do! System.Threading.Tasks.Task.Delay(500, cts.Token)
+                                let! result =
+                                    Query.gridEval ApiConfig.apiBase.Value dataset anchor axis (radius / scale) 16 (prism.ExtentForward / scale) (prism.ExtentBackward / scale)
+                                    |> Async.StartAsTask
+                                env.Emit [GridEvalLoaded(pinId, result)]
+                            with
+                            | :? System.Threading.Tasks.TaskCanceledException -> ()
+                            | e ->
+                                env.Emit [LogDebug (sprintf "gridEval ERROR: %s" (string e))]
                         } |> ignore
                     | None -> ()
                 | None -> ()

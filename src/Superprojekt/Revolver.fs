@@ -160,20 +160,31 @@ module Revolver =
 
         let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)
 
+        let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
+        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+
         let pinDots =
             let notFullscreen = AVal.map not fullscreenActive
             let selectedId = model.ScanPins.SelectedPin
-            model.ScanPins.Pins |> AMap.toASet |> ASet.map (fun (id, pin) ->
+            pinIdSet |> ASet.map (fun id ->
+                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let color =
-                    selectedId |> AVal.map (fun sel ->
-                        if sel = Some id then V4d(1.0, 0.9, 0.0, 1.0)
-                        elif pin.Phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 1.0)
-                        else V4d(1.0, 0.3, 0.3, 1.0))
+                    (selectedId, pinVal) ||> AVal.map2 (fun sel pinOpt ->
+                        match pinOpt with
+                        | Some pin ->
+                            if sel = Some id then V4d(1.0, 0.9, 0.0, 1.0)
+                            elif pin.Phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 1.0)
+                            else V4d(1.0, 0.3, 0.3, 1.0)
+                        | None -> V4d(0.0, 0.0, 0.0, 0.0))
+                let trafo = pinVal |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin -> Trafo3d.Scale(0.5) * Trafo3d.Translation(pin.Prism.AnchorPoint)
+                    | None -> Trafo3d.Scale(0.0))
                 sg {
                     Sg.Active notFullscreen
                     Sg.View view
                     Sg.Proj proj
-                    Sg.Trafo (AVal.constant (Trafo3d.Scale(0.5) * Trafo3d.Translation(pin.Prism.AnchorPoint)))
+                    Sg.Trafo trafo
                     Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
                     Sg.Uniform("FlatColor", color)
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
@@ -196,32 +207,43 @@ module Revolver =
         let pinPrisms =
             let notFullscreen = AVal.map not fullscreenActive
             let selectedId = model.ScanPins.SelectedPin
-            model.ScanPins.Pins |> AMap.toASet |> ASet.collect (fun (id, pin) ->
+            pinIdSet |> ASet.collect (fun id ->
+                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
                 let wireColor =
-                    selectedId |> AVal.map (fun sel ->
-                        if sel = Some id then V4d(1.0, 0.85, 0.0, 0.7)
-                        elif pin.Phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 0.5)
-                        else V4d(0.6, 0.6, 0.6, 0.35))
-                let wirePos, wireIdx = buildPrismWireframe pin.Prism 0.05
-                let planePos, planeIdx = buildCutPlaneQuad pin.Prism pin.CutPlane
-                let prismSg =
-                    if wireIdx.Length = 0 then None
-                    else Some (
-                        sg {
-                            Sg.Active notFullscreen
-                            Sg.View view
-                            Sg.Proj proj
-                            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                            Sg.Uniform("FlatColor", wireColor)
-                            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                            Sg.NoEvents
-                            Sg.VertexAttributes(
-                                HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer wirePos :> IBuffer), typeof<V3f>) ])
-                            Sg.Index(BufferView(AVal.constant (ArrayBuffer wireIdx :> IBuffer), typeof<int>))
-                            Sg.Render (AVal.constant wireIdx.Length)
-                        })
-                let planeSg =
+                    (selectedId, pinVal) ||> AVal.map2 (fun sel pinOpt ->
+                        match pinOpt with
+                        | Some pin ->
+                            if sel = Some id then V4d(1.0, 0.85, 0.0, 0.7)
+                            elif pin.Phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 0.5)
+                            else V4d(0.6, 0.6, 0.6, 0.35)
+                        | None -> V4d(0.0, 0.0, 0.0, 0.0))
+                let wireData = pinVal |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin -> buildPrismWireframe pin.Prism 0.05
+                    | None -> [||], [||])
+                let planeData = pinVal |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin -> buildCutPlaneQuad pin.Prism pin.CutPlane
+                    | None -> [||], [||])
+                let wirePos = wireData |> AVal.map fst
+                let wireIdx = wireData |> AVal.map snd
+                let planePos = planeData |> AVal.map fst
+                let planeIdx = planeData |> AVal.map snd
+                ASet.ofList [
+                    sg {
+                        Sg.Active notFullscreen
+                        Sg.View view
+                        Sg.Proj proj
+                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                        Sg.Uniform("FlatColor", wireColor)
+                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                        Sg.NoEvents
+                        Sg.VertexAttributes(
+                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(wirePos |> AVal.map (fun p -> ArrayBuffer p :> IBuffer), typeof<V3f>) ])
+                        Sg.Index(BufferView(wireIdx |> AVal.map (fun i -> ArrayBuffer i :> IBuffer), typeof<int>))
+                        Sg.Render(wireIdx |> AVal.map Array.length)
+                    }
                     sg {
                         Sg.Active (AVal.map2 (&&) notFullscreen isSelected)
                         Sg.View view
@@ -231,13 +253,11 @@ module Revolver =
                         Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                         Sg.NoEvents
                         Sg.VertexAttributes(
-                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer planePos :> IBuffer), typeof<V3f>) ])
-                        Sg.Index(BufferView(AVal.constant (ArrayBuffer planeIdx :> IBuffer), typeof<int>))
-                        Sg.Render (AVal.constant planeIdx.Length)
+                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(planePos |> AVal.map (fun p -> ArrayBuffer p :> IBuffer), typeof<V3f>) ])
+                        Sg.Index(BufferView(planeIdx |> AVal.map (fun i -> ArrayBuffer i :> IBuffer), typeof<int>))
+                        Sg.Render(planeIdx |> AVal.map Array.length)
                     }
-                match prismSg with
-                | Some w -> ASet.ofList [w; planeSg]
-                | None   -> ASet.single planeSg
+                ]
             )
 
         ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms])

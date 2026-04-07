@@ -8,6 +8,9 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="paket.references" />
+    <Compile Include="..\Superprojekt\GridEvalTypes.fs">
+      <Link>Linked\GridEvalTypes.fs</Link>
+    </Compile>
     <Compile Include="..\Superprojekt\ScanPinModel.fs">
       <Link>Linked\ScanPinModel.fs</Link>
     </Compile>

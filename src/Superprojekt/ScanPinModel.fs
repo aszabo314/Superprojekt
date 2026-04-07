@@ -31,6 +31,7 @@ type CutResult = {
     Polylines : V2d list list
 }
 
+
 [<RequireQualifiedAccess>]
 type PinPhase =
     | Placement
@@ -51,6 +52,7 @@ type ScanPin = {
     CreationCameraState  : CameraSnapshot
     CutResults           : Map<string, CutResult>
     DatasetColors        : Map<string, C4b>
+    GridEval             : GridEvalData option
 }
 
 [<RequireQualifiedAccess>]

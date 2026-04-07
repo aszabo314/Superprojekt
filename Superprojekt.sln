@@ -9,6 +9,8 @@ Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Superprojekt", "src\Superpr
 EndProject
 Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "Superserver", "src\Superserver\Superserver.fsproj", "{9A9E3DA5-2A7F-4D54-8731-5C1B8A8B1C20}"
 EndProject
+Project("{F2A71F9B-5D33-465A-A702-920D77279786}") = "PinDemo", "src\PinDemo\PinDemo.fsproj", "{45DA3760-0C36-4BDB-9704-6E554D56F05F}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,9 +28,14 @@ Global
 		{9A9E3DA5-2A7F-4D54-8731-5C1B8A8B1C20}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{9A9E3DA5-2A7F-4D54-8731-5C1B8A8B1C20}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{9A9E3DA5-2A7F-4D54-8731-5C1B8A8B1C20}.Release|Any CPU.Build.0 = Release|Any CPU
+		{45DA3760-0C36-4BDB-9704-6E554D56F05F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{45DA3760-0C36-4BDB-9704-6E554D56F05F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{45DA3760-0C36-4BDB-9704-6E554D56F05F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{45DA3760-0C36-4BDB-9704-6E554D56F05F}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{9EE2921F-9BBB-4101-A86E-10BA303761C6} = {F6078D1E-89CD-4C6D-B59C-A4CF264EACAA}
 		{9A9E3DA5-2A7F-4D54-8731-5C1B8A8B1C20} = {F6078D1E-89CD-4C6D-B59C-A4CF264EACAA}
+		{45DA3760-0C36-4BDB-9704-6E554D56F05F} = {F6078D1E-89CD-4C6D-B59C-A4CF264EACAA}
 	EndGlobalSection
 EndGlobal

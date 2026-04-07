@@ -1,0 +1,17 @@
+FSharp.Core
+FSharp.Data.Adaptive
+Adaptify.Core
+Aardvark.Base
+Aardvark.Base.FSharp
+Aardvark.Rendering
+Aardvark.SceneGraph
+Aardvark.Application
+Aardvark.Application.Slim
+Aardvark.Application.Slim.GL
+Aardvark.Dom
+Aardvark.Dom.Elm
+Aardvark.Dom.Remote
+Aardvark.Dom.Giraffe
+Aardvark.Dom.Utilities
+Aardvark.Build
+Giraffe

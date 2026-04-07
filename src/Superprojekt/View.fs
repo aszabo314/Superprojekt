@@ -73,7 +73,7 @@ module View =
                 let view = model.Camera.view |> AVal.map CameraView.viewTrafo
                 let proj =
                     size |> AVal.map (fun s ->
-                        Frustum.perspective 90.0 0.5 1000.0 (float s.X / float s.Y) |> Frustum.projTrafo
+                        Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo
                     )
 
                 Sg.View view

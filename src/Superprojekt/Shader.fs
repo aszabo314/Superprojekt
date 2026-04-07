@@ -196,9 +196,38 @@ module Shader =
 
     type UniformScope with
         member x.FlatColor : V4d = x?FlatColor
+        member x.DepthShadeOn : int = x?DepthShadeOn
+        member x.IsolinesOn : int = x?IsolinesOn
+        member x.IsolineSpacing : float = x?IsolineSpacing
 
     let flatColor (_v : Effects.Vertex) =
         fragment { return uniform.FlatColor }
+
+    let depthShade (v : Effects.Vertex) =
+        fragment {
+            let mutable c = v.c
+            if uniform.DepthShadeOn <> 0 then
+                let clip = uniform.ModelViewProjTrafo * v.wp
+                let ndcZ = clip.Z / clip.W
+                let t = clamp 0.0 1.0 ((ndcZ + 1.0) * 0.5)
+                let shade = 0.05 + (1.0 - t) * 0.95
+                c <- V4d(c.X * shade, c.Y * shade, c.Z * shade, c.W)
+            return c
+        }
+
+    let isolines (v : Effects.Vertex) =
+        fragment {
+            let mutable c = v.c
+            if uniform.IsolinesOn <> 0 then
+                let p = v.wp.XYZ / v.wp.W
+                let spacing = uniform.IsolineSpacing
+                let phase = p.Z / spacing
+                let f = phase - floor phase
+                let dist = (min f (1.0 - f)) * spacing
+                if dist < 0.06 then
+                    c <- V4d(1.0, 1.0, 1.0, c.W)
+            return c
+        }
 
     let nothing (v : Effects.Vertex) =
         fragment {

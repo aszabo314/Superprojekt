@@ -14,6 +14,8 @@ nuget Aardvark.Dom.Utilities    ~> 1.0.23
 nuget Aardvark.Dom.Elm          ~> 1.0.23
 nuget Aardvark.Dom.Remote       ~> 1.0.23
 nuget Aardvark.Dom.Giraffe      ~> 1.0.23
+nuget Aardvark.Application.Slim     ~> 5.5.17
+nuget Aardvark.Application.Slim.GL  ~> 5.5.17
 
 nuget Aardworx.WebAssembly      ~> 1.1.14
 nuget Aardworx.Rendering.WebGL  ~> 1.1.14

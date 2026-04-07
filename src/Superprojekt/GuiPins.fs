@@ -7,16 +7,7 @@ open Aardvark.Dom
 
 module GuiPins =
 
-    let private coreSampleTrafo (prism : SelectionPrism) =
-        let axis = -(prism.AxisDirection |> Vec.normalize)
-        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-        let right = Vec.cross axis up |> Vec.normalize
-        let fwd = Vec.cross right axis |> Vec.normalize
-        let rotFwd = M44d(right.X, right.Y, right.Z, 0.0,
-                          fwd.X,   fwd.Y,   fwd.Z,   0.0,
-                          axis.X,  axis.Y,  axis.Z,  0.0,
-                          0.0,     0.0,     0.0,     1.0)
-        Trafo3d.Translation(-prism.AnchorPoint) * Trafo3d(rotFwd, rotFwd.Transposed)
+    let private coreSampleTrafo = PinGeometry.coreSampleTrafo
 
     let shortName (name : string) =
         let mesh =
@@ -191,7 +182,7 @@ module GuiPins =
                 | Some pin ->
                     let pt = pin.Prism.AnchorPoint
                     let aspect = float sz.X / max 1.0 (float sz.Y)
-                    let proj = Frustum.perspective 90.0 0.5 1000.0 aspect |> Frustum.projTrafo
+                    let proj = Frustum.perspective 90.0 1.0 5000.0 aspect |> Frustum.projTrafo
                     let m = proj.Forward * vt.Forward
                     let h = m * V4d(pt, 1.0)
                     if h.W < 0.1 then None

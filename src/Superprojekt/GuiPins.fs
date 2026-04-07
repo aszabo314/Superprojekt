@@ -175,19 +175,24 @@ module GuiPins =
         }
 
     let pinDiagram (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =
+        let allPinsVal = model.ScanPins.Pins |> AMap.toAVal
         let selectedPin =
-            (model.ScanPins.SelectedPin, model.ScanPins.Pins |> AMap.toAVal) ||> AVal.map2 (fun sel pins ->
+            (model.ScanPins.SelectedPin, allPinsVal) ||> AVal.map2 (fun sel pins ->
                 sel |> Option.bind (fun id -> HashMap.tryFind id pins))
+
+        let selectedPrism    = selectedPin |> AVal.map (Option.map (fun p -> p.Prism))
+        let selectedCutPlane = selectedPin |> AVal.map (Option.map (fun p -> p.CutPlane))
+        let selectedGridEval = selectedPin |> AVal.map (Option.bind (fun p -> p.GridEval))
 
         let svgW, svgH = 280.0, 180.0
         let pad = 30.0
 
         let screenPos =
-            (selectedPin, viewTrafo, vpSize) |||> AVal.map3 (fun pinOpt (vt : Trafo3d) sz ->
-                match pinOpt with
+            (selectedPrism, viewTrafo, vpSize) |||> AVal.map3 (fun prismOpt (vt : Trafo3d) sz ->
+                match prismOpt with
                 | None -> None
-                | Some pin ->
-                    let pt = pin.Prism.AnchorPoint
+                | Some prism ->
+                    let pt = prism.AnchorPoint
                     let aspect = float sz.X / max 1.0 (float sz.Y)
                     let proj = Frustum.perspective 90.0 1.0 5000.0 aspect |> Frustum.projTrafo
                     let m = proj.Forward * vt.Forward
@@ -204,7 +209,7 @@ module GuiPins =
 
         div {
             Class "pin-diagram"
-            (selectedPin, screenPos) ||> AVal.map2 (fun p pos ->
+            (selectedPrism, screenPos) ||> AVal.map2 (fun p pos ->
                 match p, pos with
                 | None, _ | _, None ->
                     Some (Style [Css.Visibility "hidden"; Left "-9999px"; Top "-9999px"])
@@ -338,8 +343,8 @@ module GuiPins =
                     let dragging = cval false
 
                     let clickDist (py : int) =
-                        let pinOpt = AVal.force selectedPin
-                        let extFwd, extBack = match pinOpt with Some pin -> pin.Prism.ExtentForward, pin.Prism.ExtentBackward | None -> 5.0, 5.0
+                        let prismOpt = AVal.force selectedPrism
+                        let extFwd, extBack = match prismOpt with Some prism -> prism.ExtentForward, prism.ExtentBackward | None -> 5.0, 5.0
                         let halfH = (extFwd + extBack) / 2.0
                         let centerZ = (extBack - extFwd) / 2.0
                         let sz = AVal.force size
@@ -384,19 +389,19 @@ module GuiPins =
 
                     Dom.OnContextMenu(ignore, preventDefault = true)
 
-                    let coreTrafo = selectedPin |> AVal.map (fun pinOpt ->
-                        match pinOpt with
-                        | Some pin -> coreSampleTrafo pin.Prism
+                    let coreTrafo = selectedPrism |> AVal.map (fun prismOpt ->
+                        match prismOpt with
+                        | Some prism -> coreSampleTrafo prism
                         | None -> Trafo3d.Identity)
 
-                    let coreRadius = selectedPin |> AVal.map (fun pinOpt ->
-                        match pinOpt with
-                        | Some pin -> match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                    let coreRadius = selectedPrism |> AVal.map (fun prismOpt ->
+                        match prismOpt with
+                        | Some prism -> match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
                         | None -> 1e10)
 
-                    let coreExtents = selectedPin |> AVal.map (fun pinOpt ->
-                        match pinOpt with
-                        | Some pin -> pin.Prism.ExtentForward, pin.Prism.ExtentBackward
+                    let coreExtents = selectedPrism |> AVal.map (fun prismOpt ->
+                        match prismOpt with
+                        | Some prism -> prism.ExtentForward, prism.ExtentBackward
                         | None -> 5.0, 5.0)
 
                     let miniView =
@@ -474,22 +479,19 @@ module GuiPins =
 
                     // Summary meshes (average, Q1, Q3) from grid-eval
                     let summaryMeshes =
-                        selectedPin |> AVal.map (fun pinOpt ->
-                            match pinOpt with
-                            | Some pin ->
-                                match pin.GridEval with
-                                | Some ge ->
-                                    let t = coreSampleTrafo pin.Prism
-                                    let buildMesh (heights : float[]) =
-                                        let pos, idx = PinGeometry.buildHeightfieldMesh ge.GridOrigin ge.CellSize ge.Resolution heights
-                                        let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
-                                        pos, idx
-                                    let avg = buildMesh (ge.Cells |> Array.map (fun c -> c.Average))
-                                    let q1  = buildMesh (ge.Cells |> Array.map (fun c -> c.Q1))
-                                    let q3  = buildMesh (ge.Cells |> Array.map (fun c -> c.Q3))
-                                    Some (avg, q1, q3)
-                                | None -> None
-                            | None -> None)
+                        (selectedPrism, selectedGridEval) ||> AVal.map2 (fun prismOpt geOpt ->
+                            match prismOpt, geOpt with
+                            | Some prism, Some ge ->
+                                let t = coreSampleTrafo prism
+                                let buildMesh (heights : float[]) =
+                                    let pos, idx = PinGeometry.buildHeightfieldMesh ge.GridOrigin ge.CellSize ge.Resolution heights
+                                    let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
+                                    pos, idx
+                                let avg = buildMesh (ge.Cells |> Array.map (fun c -> c.Average))
+                                let q1  = buildMesh (ge.Cells |> Array.map (fun c -> c.Q1))
+                                let q3  = buildMesh (ge.Cells |> Array.map (fun c -> c.Q3))
+                                Some (avg, q1, q3)
+                            | _ -> None)
 
                     let summaryEntries = [
                         (fun (avg, _, _) -> avg), C4f(0.65f, 0.65f, 0.65f, 1.0f)
@@ -529,11 +531,11 @@ module GuiPins =
                             Sg.Render sFvc
                         }
 
-                    let wireData = selectedPin |> AVal.map (fun pinOpt ->
-                        match pinOpt with
-                        | Some pin ->
-                            let pos, idx = Revolver.buildPrismWireframe pin.Prism 0.05
-                            let t = coreSampleTrafo pin.Prism
+                    let wireData = selectedPrism |> AVal.map (fun prismOpt ->
+                        match prismOpt with
+                        | Some prism ->
+                            let pos, idx = Revolver.buildPrismWireframe prism 0.05
+                            let t = coreSampleTrafo prism
                             let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
                             pos, idx
                         | None -> [||], [||])
@@ -551,11 +553,11 @@ module GuiPins =
                         Sg.Render wireFvc
                     }
 
-                    let planeData = selectedPin |> AVal.map (fun pinOpt ->
-                        match pinOpt with
-                        | Some pin ->
-                            let quad, _ = PinGeometry.buildCutPlaneQuad pin.Prism pin.CutPlane
-                            let t = coreSampleTrafo pin.Prism
+                    let planeData = (selectedPrism, selectedCutPlane) ||> AVal.map2 (fun prismOpt cpOpt ->
+                        match prismOpt, cpOpt with
+                        | Some prism, Some cutPlane ->
+                            let quad, _ = PinGeometry.buildCutPlaneQuad prism cutPlane
+                            let t = coreSampleTrafo prism
                             let quad = quad |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
                             let n =
                                 let v0 = V3d quad.[0]
@@ -570,7 +572,7 @@ module GuiPins =
                                          0;4;5; 0;5;1; 2;6;7; 2;7;3
                                          0;3;7; 0;7;4; 1;5;6; 1;6;2 |]
                             pos, idx
-                        | None -> [||], [||])
+                        | _ -> [||], [||])
                     let planePos = planeData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
                     let planeIdx = planeData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
                     let planeFvc = planeData |> AVal.map (fun (_, i) -> i.Length)
@@ -590,15 +592,14 @@ module GuiPins =
                 // Cut plane indicator overlay
                 div {
                     Class "pin-cut-indicator"
-                    (selectedPin, model.CoreSampleViewMode) ||> AVal.map2 (fun pinOpt mode ->
-                        match pinOpt with
-                        | None -> Some (Attribute("data-ind", "display:none"))
-                        | Some pin ->
-                            let extFwd = pin.Prism.ExtentForward
-                            let extBack = pin.Prism.ExtentBackward
+                    (selectedPrism, selectedCutPlane, model.CoreSampleViewMode) |||> AVal.map3 (fun prismOpt cpOpt mode ->
+                        match prismOpt, cpOpt with
+                        | Some prism, Some cutPlane ->
+                            let extFwd = prism.ExtentForward
+                            let extBack = prism.ExtentBackward
                             let halfH = (extFwd + extBack) / 2.0
                             let centerZ = (extBack - extFwd) / 2.0
-                            match pin.CutPlane, mode with
+                            match cutPlane, mode with
                             | CutPlaneMode.AcrossAxis dist, SideView ->
                                 let ndcY = (dist + centerZ) / halfH
                                 let pct = (1.0 - ndcY) / 2.0 * 100.0
@@ -606,6 +607,7 @@ module GuiPins =
                             | CutPlaneMode.AlongAxis angleDeg, TopView ->
                                 Some (Attribute("data-ind", sprintf "top:calc(50%% - 1px);transform-origin:center;transform:rotate(%.1fdeg)" (90.0 - angleDeg)))
                             | _ -> Some (Attribute("data-ind", "display:none"))
+                        | _ -> Some (Attribute("data-ind", "display:none"))
                     )
                     OnBoot [
                         "var el = __THIS__;"

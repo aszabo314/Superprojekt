@@ -308,6 +308,110 @@ module GuiPins =
                 ]
             }
 
+            h3 { "Stratigraphy" }
+            div {
+                Class "strat-wrapper"
+                StratigraphyView.render selectedPin
+            }
+            div {
+                Class "btn-row"
+                Style [MarginTop "4px"]
+                button {
+                    selectedPin |> AVal.map (fun po ->
+                        match po with
+                        | Some p when p.StratigraphyDisplay = Undistorted -> Some (Class "btn-active")
+                        | _ -> None)
+                    Dom.OnClick(fun _ ->
+                        match AVal.force selectedPin with
+                        | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Undistorted))]
+                        | None -> ())
+                    "Undistorted"
+                }
+                button {
+                    selectedPin |> AVal.map (fun po ->
+                        match po with
+                        | Some p when p.StratigraphyDisplay = Normalized -> Some (Class "btn-active")
+                        | _ -> None)
+                    Dom.OnClick(fun _ ->
+                        match AVal.force selectedPin with
+                        | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Normalized))]
+                        | None -> ())
+                    "Normalized"
+                }
+            }
+
+            div {
+                Class "btn-row"
+                Style [MarginTop "4px"]
+                button {
+                    selectedPin |> AVal.map (fun po ->
+                        match po with
+                        | Some p when p.GhostClip = GhostClipOn -> Some (Class "btn-active")
+                        | _ -> None)
+                    Dom.OnClick(fun _ ->
+                        match AVal.force selectedPin with
+                        | Some p ->
+                            let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn
+                            env.Emit [ScanPinMsg (SetGhostClip(p.Id, next))]
+                        | None -> ())
+                    "Ghost Clip Cylinder"
+                }
+                button {
+                    selectedPin |> AVal.map (fun po ->
+                        match po with
+                        | Some p when p.ExtractedLines.ShowCutPlaneLines -> Some (Class "btn-active")
+                        | _ -> None)
+                    Dom.OnClick(fun _ ->
+                        match AVal.force selectedPin with
+                        | Some p -> env.Emit [ScanPinMsg (SetShowCutPlaneLines(p.Id, not p.ExtractedLines.ShowCutPlaneLines))]
+                        | None -> ())
+                    "Cut Lines"
+                }
+                button {
+                    selectedPin |> AVal.map (fun po ->
+                        match po with
+                        | Some p when p.ExtractedLines.ShowCylinderEdgeLines -> Some (Class "btn-active")
+                        | _ -> None)
+                    Dom.OnClick(fun _ ->
+                        match AVal.force selectedPin with
+                        | Some p -> env.Emit [ScanPinMsg (SetShowCylinderEdgeLines(p.Id, not p.ExtractedLines.ShowCylinderEdgeLines))]
+                        | None -> ())
+                    "Edge Lines"
+                }
+            }
+
+            div {
+                Class "btn-row"
+                Style [MarginTop "4px"]
+                button {
+                    selectedPin |> AVal.map (fun po ->
+                        match po with
+                        | Some p when p.Explosion.Enabled -> Some (Class "btn-active")
+                        | _ -> None)
+                    Dom.OnClick(fun _ ->
+                        match AVal.force selectedPin with
+                        | Some p -> env.Emit [ScanPinMsg (SetExplosionEnabled(p.Id, not p.Explosion.Enabled))]
+                        | None -> ())
+                    "Explode"
+                }
+                input {
+                    Attribute("type", "range")
+                    Attribute("min", "0"); Attribute("max", "3"); Attribute("step", "0.05")
+                    Style [Width "100%"]
+                    selectedPin |> AVal.map (fun po ->
+                        match po with
+                        | Some p -> Some (Attribute("value", sprintf "%.2f" p.Explosion.ExpansionFactor))
+                        | None -> None)
+                    Dom.OnInput(fun e ->
+                        match AVal.force selectedPin with
+                        | Some p ->
+                            match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+                            | true, v -> env.Emit [ScanPinMsg (SetExplosionFactor(p.Id, v))]
+                            | _ -> ()
+                        | None -> ())
+                }
+            }
+
             h3 { "Core Sample" }
 
             div {

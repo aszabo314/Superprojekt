@@ -24,6 +24,7 @@
     <Compile Include="OrbitController.fs" />
     <Compile Include="ScanPinModel.fs" />
     <Compile Include="ScanPinModel.g.fs" />
+    <Compile Include="Stratigraphy.fs" />
     <Compile Include="PinGeometry.fs" />
     <Compile Include="Model.fs" />
     <Compile Include="Model.g.fs" />
@@ -32,6 +33,7 @@
     <Compile Include="MeshView.fs" />
     <Compile Include="ServerActions.fs" />
     <Compile Include="Revolver.fs" />
+    <Compile Include="StratigraphyView.fs" />
     <Compile Include="GuiPins.fs" />
     <Compile Include="Gui.fs" />
     <Compile Include="View.fs" />

@@ -80,6 +80,13 @@ module BlitShader =
         member x.MeshIndex            : int   = x?MeshIndex
         member x.CoreRadius           : float = x?CoreRadius
         member x.GhostOpacity         : float = x?GhostOpacity
+        member x.CylClipActive        : int   = x?CylClipActive
+        member x.CylAnchor            : V3d   = x?CylAnchor
+        member x.CylAxis              : V3d   = x?CylAxis
+        member x.CylRadius            : float = x?CylRadius
+        member x.CylExtFwd            : float = x?CylExtFwd
+        member x.CylExtBack           : float = x?CylExtBack
+        member x.ExplosionOffset      : V3d   = x?ExplosionOffset
     
     let colorMap =
         [|
@@ -89,13 +96,43 @@ module BlitShader =
             V4d(1.0,  0.35, 0.0,  1.0)   // orange
             V4d(0.0,  1.0,  0.45, 1.0)   // spring green
         |]
+    let explode (v : Effects.Vertex) =
+        vertex {
+            let p = v.wp.XYZ / v.wp.W
+            let rel = p - uniform.CylAnchor
+            let axisProj = Vec.dot rel uniform.CylAxis
+            let radial = rel - uniform.CylAxis * axisProj
+            let inside =
+                Vec.length radial <= uniform.CylRadius &&
+                axisProj >= -uniform.CylExtBack &&
+                axisProj <= uniform.CylExtFwd
+            let mutable wp = v.wp
+            if inside then
+                wp <- V4d(p + uniform.ExplosionOffset, 1.0)
+            return {
+                v with
+                    wp = wp
+                    pos = uniform.ViewProjTrafo * wp
+            }
+        }
+
     let clippy (v : Effects.Vertex) =
         fragment {
             let p = v.wp.XYZ / v.wp.W
-            let insideClip =
+            let mutable insideClip =
                 p.X >= uniform.ClipMin.X && p.X <= uniform.ClipMax.X &&
                 p.Y >= uniform.ClipMin.Y && p.Y <= uniform.ClipMax.Y &&
                 p.Z >= uniform.ClipMin.Z && p.Z <= uniform.ClipMax.Z
+            if uniform.CylClipActive <> 0 then
+                let rel = p - uniform.CylAnchor
+                let axisProj = Vec.dot rel uniform.CylAxis
+                let radial = rel - uniform.CylAxis * axisProj
+                let radialDist = Vec.length radial
+                let insideCyl =
+                    radialDist <= uniform.CylRadius &&
+                    axisProj >= -uniform.CylExtBack &&
+                    axisProj <= uniform.CylExtFwd
+                insideClip <- insideClip && insideCyl
             let mutable color = v.c
             if not uniform.IsGhost then
                 if not insideClip then
@@ -232,6 +269,9 @@ module Shader =
 
     let flatColor (_v : Effects.Vertex) =
         fragment { return uniform.FlatColor }
+
+    let vertexColor (v : Effects.Vertex) =
+        fragment { return v.c }
 
     let depthShade (v : Effects.Vertex) =
         fragment {

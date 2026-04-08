@@ -344,6 +344,23 @@ body.loaded {
     accent-color: #1a56db;
 }
 
+/* ── Stratigraphy diagram ─────────────────────────────────────────── */
+
+.strat-wrapper {
+    width: 280px;
+    height: 200px;
+    border: 1px solid #c5cdd8;
+    border-radius: 4px;
+    background: #fafbfc;
+    overflow: hidden;
+}
+
+.strat-view {
+    width: 280px;
+    height: 200px;
+    display: block;
+}
+
 /* ── Dataset ranking section ──────────────────────────────────────── */
 
 .rank-section {

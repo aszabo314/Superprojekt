@@ -33,6 +33,7 @@ type Message =
     | SetDatasetScale    of string * float
     | CutResultsLoaded        of ScanPinId * Map<string, CutResult>
     | GridEvalLoaded          of ScanPinId * GridEvalData
+    | StratigraphyComputed    of ScanPinId * StratigraphyData
     | ScanPinMsg              of ScanPinMessage
     | SetCoreSampleRotation   of float
     | SetCoreSamplePanZ       of float
@@ -57,6 +58,15 @@ and ScanPinMessage =
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
     | FocusPin of ScanPinId
+    // V3 messages
+    | SetStratigraphyDisplay  of ScanPinId * StratigraphyDisplayMode
+    | SetGhostClip            of ScanPinId * GhostClipMode
+    | SetShowCutPlaneLines    of ScanPinId * bool
+    | SetShowCylinderEdgeLines of ScanPinId * bool
+    | SetExplosionEnabled     of ScanPinId * bool
+    | SetExplosionFactor      of ScanPinId * float
+    | HoverBetweenSpace       of ScanPinId * angle:float * zLower:float * zUpper:float * lower:string * upper:string
+    | ClearBetweenSpaceHover  of ScanPinId
 
 module ScanPinUpdate =
 
@@ -107,7 +117,13 @@ module ScanPinUpdate =
                   CreationCameraState = cam
                   CutResults = Map.empty
                   DatasetColors = assignColors model.MeshNames
-                  GridEval = None }
+                  GridEval = None
+                  Stratigraphy = None
+                  StratigraphyDisplay = Undistorted
+                  GhostClip = GhostClipOff
+                  ExtractedLines = ExtractedLinesMode.initial
+                  Explosion = ExplosionState.initial
+                  BetweenSpaceHover = None }
             { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id }
 
         | SetFootprintRadius radius ->
@@ -189,9 +205,61 @@ module ScanPinUpdate =
 
         | FocusPin _ -> sp
 
+        | SetStratigraphyDisplay(id, mode) ->
+            match HashMap.tryFind id sp.Pins with
+            | Some pin -> { sp with Pins = HashMap.add id { pin with StratigraphyDisplay = mode } sp.Pins }
+            | None -> sp
+
+        | SetGhostClip(id, mode) ->
+            match HashMap.tryFind id sp.Pins with
+            | Some pin -> { sp with Pins = HashMap.add id { pin with GhostClip = mode } sp.Pins }
+            | None -> sp
+
+        | SetShowCutPlaneLines(id, on) ->
+            match HashMap.tryFind id sp.Pins with
+            | Some pin ->
+                let el = { pin.ExtractedLines with ShowCutPlaneLines = on }
+                { sp with Pins = HashMap.add id { pin with ExtractedLines = el } sp.Pins }
+            | None -> sp
+
+        | SetShowCylinderEdgeLines(id, on) ->
+            match HashMap.tryFind id sp.Pins with
+            | Some pin ->
+                let el = { pin.ExtractedLines with ShowCylinderEdgeLines = on }
+                { sp with Pins = HashMap.add id { pin with ExtractedLines = el } sp.Pins }
+            | None -> sp
+
+        | SetExplosionEnabled(id, on) ->
+            match HashMap.tryFind id sp.Pins with
+            | Some pin ->
+                let ex = { pin.Explosion with Enabled = on }
+                { sp with Pins = HashMap.add id { pin with Explosion = ex } sp.Pins }
+            | None -> sp
+
+        | SetExplosionFactor(id, f) ->
+            match HashMap.tryFind id sp.Pins with
+            | Some pin ->
+                let ex = { pin.Explosion with ExpansionFactor = max 0.0 f }
+                { sp with Pins = HashMap.add id { pin with Explosion = ex } sp.Pins }
+            | None -> sp
+
+        | HoverBetweenSpace(id, angle, zLo, zHi, lower, upper) ->
+            match HashMap.tryFind id sp.Pins with
+            | Some pin ->
+                let hl = { LowerDataset = lower; UpperDataset = upper
+                           Angle = angle; ZLower = zLo; ZUpper = zHi; Active = true }
+                { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = Some hl } sp.Pins }
+            | None -> sp
+
+        | ClearBetweenSpaceHover id ->
+            match HashMap.tryFind id sp.Pins with
+            | Some pin -> { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = None } sp.Pins }
+            | None -> sp
+
 module Update =
     let private cutDebounce = ref (new System.Threading.CancellationTokenSource())
     let private gridDebounce = ref (new System.Threading.CancellationTokenSource())
+    let private stratDebounce = ref (new System.Threading.CancellationTokenSource())
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
@@ -315,6 +383,13 @@ module Update =
                 let pin = { pin with GridEval = Some data }
                 { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
             | None -> model
+        | StratigraphyComputed(pinId, data) ->
+            let sp = model.ScanPins
+            match HashMap.tryFind pinId sp.Pins with
+            | Some pin ->
+                let pin = { pin with Stratigraphy = Some data }
+                { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
+            | None -> model
         | ScanPinMsg msg ->
             let sp = model.ScanPins
             let sp' = ScanPinUpdate.update model msg sp
@@ -376,6 +451,34 @@ module Update =
                             | :? System.Threading.Tasks.TaskCanceledException -> ()
                             | e ->
                                 env.Emit [LogDebug (sprintf "computePlaneCuts ERROR: %s" (string e))]
+                        } |> ignore
+                    | None -> ()
+                | None -> ()
+            let needsStrat =
+                match msg with
+                | SetAnchor _ | SetFootprintRadius _ | SetFootprintScale _ -> true
+                | _ -> false
+            if needsStrat then
+                let targetId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
+                match targetId with
+                | Some id ->
+                    match HashMap.tryFind id sp'.Pins with
+                    | Some pin ->
+                        let prism = pin.Prism
+                        let datasets = model.MeshNames |> IndexList.toArray
+                        let pinId = id
+                        let cts = new System.Threading.CancellationTokenSource()
+                        stratDebounce.Value.Cancel()
+                        stratDebounce.Value <- cts
+                        task {
+                            try
+                                do! System.Threading.Tasks.Task.Delay(400, cts.Token)
+                                let! data = Stratigraphy.compute prism datasets 360 |> Async.StartAsTask
+                                if not cts.Token.IsCancellationRequested then
+                                    env.Emit [StratigraphyComputed(pinId, data)]
+                            with
+                            | :? System.Threading.Tasks.TaskCanceledException -> ()
+                            | e -> env.Emit [LogDebug (sprintf "stratigraphy ERROR: %s" (string e))]
                         } |> ignore
                     | None -> ()
                 | None -> ()

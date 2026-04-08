@@ -44,6 +44,74 @@ type CameraSnapshot = {
     Theta  : float
 }
 
+/// V3: a single z-aligned ray query result for one mesh at one (angle, axisPosition) sample point.
+type RayMeshIntersection = {
+    DatasetId : string
+    /// Z-values where the ray intersects this mesh's surface.
+    /// Multiple values possible for non-heightfield meshes (folds, overhangs).
+    ZValues : float list
+}
+
+/// V3: a single column in the stratigraphy diagram (one angular position on the cylinder).
+type StratigraphyColumn = {
+    /// Angle around the cylinder axis (radians, 0 to 2π).
+    Angle : float
+    /// All intersection events in this column, sorted by z ascending.
+    Events : (float * string) list
+}
+
+/// V3: full stratigraphy data for one ScanPin.
+/// STUB(server): computed by casting z-aligned rays at a grid of (angle, axisPosition)
+/// points on the cylinder surface.
+type StratigraphyData = {
+    AngularResolution : int
+    AxisMin : float
+    AxisMax : float
+    Columns : StratigraphyColumn[]
+    /// Per-column min/max z across all datasets (for normalization).
+    ColumnMinZ : float[]
+    ColumnMaxZ : float[]
+}
+
+/// V3: display mode for the stratigraphy diagram.
+type StratigraphyDisplayMode =
+    | Undistorted
+    | Normalized
+
+/// V3: state for the explosion view inside the ScanPin cylinder.
+type ExplosionState = {
+    /// 0 = no explosion. Each mesh i is displaced by (i * ExpansionFactor * spacing).
+    ExpansionFactor : float
+    Enabled : bool
+}
+
+module ExplosionState =
+    let initial = { ExpansionFactor = 0.0; Enabled = false }
+
+/// V3: state for the between-space hover highlighting.
+type BetweenSpaceHighlight = {
+    LowerDataset : string
+    UpperDataset : string
+    Angle  : float
+    ZLower : float
+    ZUpper : float
+    Active : bool
+}
+
+/// V3: ghost clipping cylinder toggle for a pin.
+type GhostClipMode =
+    | GhostClipOff
+    | GhostClipOn
+
+/// V3: extracted-line toggles for a pin.
+type ExtractedLinesMode = {
+    ShowCutPlaneLines     : bool
+    ShowCylinderEdgeLines : bool
+}
+
+module ExtractedLinesMode =
+    let initial = { ShowCutPlaneLines = true; ShowCylinderEdgeLines = true }
+
 type ScanPin = {
     Id                   : ScanPinId
     Phase                : PinPhase
@@ -53,6 +121,14 @@ type ScanPin = {
     CutResults           : Map<string, CutResult>
     DatasetColors        : Map<string, C4b>
     GridEval             : GridEvalData option
+
+    // ── V3 fields ──────────────────────────────────────────────
+    Stratigraphy         : StratigraphyData option
+    StratigraphyDisplay  : StratigraphyDisplayMode
+    GhostClip            : GhostClipMode
+    ExtractedLines       : ExtractedLinesMode
+    Explosion            : ExplosionState
+    BetweenSpaceHover    : BetweenSpaceHighlight option
 }
 
 [<RequireQualifiedAccess>]

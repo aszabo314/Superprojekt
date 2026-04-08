@@ -54,6 +54,93 @@ module PinGeometry =
                 addEdge topVerts.[i] botVerts.[i]
             positions.ToArray(), indices.ToArray()
 
+    /// Build a thin square-section tube (8 verts, 8 quads = 16 tris) from a to b.
+    let buildLineTube (a : V3d) (b : V3d) (radius : float) =
+        let dir = b - a
+        let len = dir.Length
+        if len < 1e-10 then [||], [||]
+        else
+            let axis = dir / len
+            let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
+            let r = Vec.cross axis up |> Vec.normalize
+            let f = Vec.cross r axis |> Vec.normalize
+            let positions =
+                [| V3f(a + r * radius + f * radius); V3f(a - r * radius + f * radius)
+                   V3f(a - r * radius - f * radius); V3f(a + r * radius - f * radius)
+                   V3f(b + r * radius + f * radius); V3f(b - r * radius + f * radius)
+                   V3f(b - r * radius - f * radius); V3f(b + r * radius - f * radius) |]
+            let indices =
+                [| 0;1;5; 0;5;4
+                   1;2;6; 1;6;5
+                   2;3;7; 2;7;6
+                   3;0;4; 3;4;7
+                   0;3;2; 0;2;1
+                   4;5;6; 4;6;7 |]
+            positions, indices
+
+    /// Append a colored polyline as triangle-quad ribbons into the supplied buffers.
+    /// `axisRef` is used to choose a stable perpendicular direction; pass the prism axis
+    /// for cylinder-wall curves and the cut-plane normal for in-plane lines.
+    let appendPolylineRibbon
+            (positions : ResizeArray<V3f>) (colors : ResizeArray<V4f>) (indices : ResizeArray<int>)
+            (pts : V3d[]) (color : V4f) (axisRef : V3d) (thickness : float) =
+        for i in 0 .. pts.Length - 2 do
+            let a = pts.[i]
+            let b = pts.[i + 1]
+            let dir = b - a
+            if dir.Length > 1e-10 then
+                let perp =
+                    let c = Vec.cross dir axisRef
+                    if c.Length < 1e-10 then
+                        let alt = if abs axisRef.X > 0.9 then V3d.OIO else V3d.IOO
+                        Vec.cross dir alt |> Vec.normalize
+                    else c |> Vec.normalize
+                let off = perp * (thickness * 0.5)
+                let i0 = positions.Count
+                positions.Add(V3f(a + off)); colors.Add(color)
+                positions.Add(V3f(a - off)); colors.Add(color)
+                positions.Add(V3f(b + off)); colors.Add(color)
+                positions.Add(V3f(b - off)); colors.Add(color)
+                indices.Add(i0); indices.Add(i0 + 1); indices.Add(i0 + 2)
+                indices.Add(i0 + 1); indices.Add(i0 + 3); indices.Add(i0 + 2)
+
+    /// Build a flat disc (triangle fan) centered at `center`, perpendicular to `axis`.
+    /// Returns positions and indices.
+    let buildDisc (center : V3d) (axis : V3d) (radius : float) (segments : int) =
+        let dir = axis |> Vec.normalize
+        let up = if abs dir.Z > 0.9 then V3d.OIO else V3d.OOI
+        let r = Vec.cross dir up |> Vec.normalize
+        let f = Vec.cross r dir |> Vec.normalize
+        let positions = Array.zeroCreate<V3f> (segments + 1)
+        positions.[0] <- V3f center
+        for i in 0 .. segments - 1 do
+            let a = float i / float segments * Constant.PiTimesTwo
+            positions.[i + 1] <- V3f(center + r * (cos a * radius) + f * (sin a * radius))
+        let indices = Array.zeroCreate<int> (segments * 3)
+        for i in 0 .. segments - 1 do
+            let a = i + 1
+            let b = if i = segments - 1 then 1 else i + 2
+            indices.[i * 3] <- 0
+            indices.[i * 3 + 1] <- a
+            indices.[i * 3 + 2] <- b
+        positions, indices
+
+    /// Build a small oriented box (handle) centered at `center`, axis-aligned to `axis`.
+    let buildHandleBox (center : V3d) (axis : V3d) (size : float) =
+        let dir = axis |> Vec.normalize
+        let up = if abs dir.Z > 0.9 then V3d.OIO else V3d.OOI
+        let r = Vec.cross dir up |> Vec.normalize
+        let f = Vec.cross r dir |> Vec.normalize
+        let mk dx dy dz = V3f(center + r * (dx * size) + f * (dy * size) + dir * (dz * size))
+        let positions =
+            [| mk -1.0 -1.0 -1.0; mk 1.0 -1.0 -1.0; mk 1.0 1.0 -1.0; mk -1.0 1.0 -1.0
+               mk -1.0 -1.0 1.0;  mk 1.0 -1.0 1.0;  mk 1.0 1.0 1.0;  mk -1.0 1.0 1.0 |]
+        let indices =
+            [| 0;1;2; 0;2;3;  5;4;7; 5;7;6
+               4;0;3; 4;3;7;  1;5;6; 1;6;2
+               0;4;5; 0;5;1;  3;2;6; 3;6;7 |]
+        positions, indices
+
     /// Build a triangle mesh from a regular height grid. NaN cells are skipped.
     /// Returns positions, per-vertex normals (upward-biased when ambiguous), and indices.
     let buildHeightfieldMesh (gridOrigin : V2d) (cellSize : float) (resolution : int) (heights : float[]) =

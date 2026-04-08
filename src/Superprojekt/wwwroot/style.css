@@ -344,6 +344,95 @@ body.loaded {
     accent-color: #1a56db;
 }
 
+/* ── Dataset ranking section ──────────────────────────────────────── */
+
+.rank-section {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid #e2e8f0;
+}
+
+.rank-controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    font-size: 11px;
+    color: #475569;
+    margin-bottom: 6px;
+}
+
+.rank-controls label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+}
+
+.rank-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    max-height: 180px;
+    overflow-y: auto;
+}
+
+.rank-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px;
+    background: #f8fafc;
+    border-radius: 3px;
+    font-size: 11px;
+}
+
+.rank-row.hidden { opacity: 0.35; }
+.rank-row.out-of-topk { background: #eef2f6; opacity: 0.55; }
+
+.rank-badge {
+    flex: 0 0 22px;
+    font-family: monospace;
+    color: #1a56db;
+    font-weight: 600;
+}
+
+.rank-row.out-of-topk .rank-badge { color: #94a3b8; }
+.rank-row.hidden .rank-badge { color: #cbd5e1; }
+
+.rank-name {
+    font-family: monospace;
+    color: #0f172a;
+    flex: 1 1 auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.rank-variance {
+    flex: 0 0 56px;
+    font-family: monospace;
+    color: #475569;
+    text-align: right;
+}
+
+.rank-buttons {
+    display: flex;
+    gap: 2px;
+    flex: 0 0 auto;
+}
+
+.rank-buttons button {
+    padding: 1px 5px;
+    font-size: 10px;
+    background: #e2e8f0;
+    color: #334155;
+    border: none;
+    border-radius: 2px;
+    cursor: pointer;
+}
+
+.rank-buttons button:hover { background: #cbd5e1; }
+
 /* ── Mobile adjustments ───────────────────────────────────────────── */
 
 @media (max-width: 600px) {

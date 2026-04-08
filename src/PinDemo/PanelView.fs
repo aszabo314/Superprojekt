@@ -117,42 +117,15 @@ module PanelView =
             }
         }
 
-    let private boxplotSvg (s : DatasetCoreSampleStats) (w : float) (h : float) =
-        // The shared y-range for boxplots: union over all datasets.
-        let stats = PanelState.datasets |> Array.map (fun d -> d.Stats)
-        let yMin = stats |> Array.map (fun s -> s.ZMin) |> Array.min
-        let yMax = stats |> Array.map (fun s -> s.ZMax) |> Array.max
-        let r = if yMax - yMin < 1e-9 then 1.0 else yMax - yMin
-        let toX v = (v - yMin) / r * w
-        let cy = h / 2.0
-        let bx1 = toX s.ZQ1
-        let bx2 = toX s.ZQ3
-        let med = toX s.ZMedian
-        let bw = max 1.0 (bx2 - bx1)
-        sprintf
-            "<svg width='%.0f' height='%.0f' viewBox='0 0 %.0f %.0f' xmlns='http://www.w3.org/2000/svg' style='display:block;width:%.0fpx;height:%.0fpx'>\
-             <line x1='%.1f' y1='%.1f' x2='%.1f' y2='%.1f' stroke='#64748b' stroke-width='1'/>\
-             <rect x='%.1f' y='%.1f' width='%.1f' height='%.1f' fill='#cbd5e1' stroke='#475569' stroke-width='1'/>\
-             <line x1='%.1f' y1='%.1f' x2='%.1f' y2='%.1f' stroke='#0f172a' stroke-width='2'/>\
-             </svg>"
-            w h w h w h
-            (toX s.ZMin) cy (toX s.ZMax) cy
-            bx1 (cy - 6.0) bw 12.0
-            med (cy - 7.0) med (cy + 7.0)
-
     let private datasetByName =
         PanelState.datasets
         |> Array.map (fun d -> d.MeshName, d)
         |> Map.ofArray
 
-    let private sanitizeId (s : string) =
-        s |> String.map (fun c -> if System.Char.IsLetterOrDigit c then c else '_')
-
     let private rankingRow (d : DummyDataset) =
         let isHidden = PanelState.datasetHidden |> ASet.contains d.MeshName
         let rank     = PanelState.rankOf d.MeshName
         let inK      = PanelState.inTopK d.MeshName
-        let boxId    = sprintf "rank-box-%s" (sanitizeId d.MeshName)
         div {
             (isHidden, inK) ||> AVal.map2 (fun h k ->
                 let cls =
@@ -176,13 +149,8 @@ module PanelView =
                 shortName d.MeshName
             }
             div {
-                Class "rank-box"
-                Attribute("id", boxId)
-                Attribute("data-svg", boxplotSvg d.Stats 120.0 16.0)
-                OnBoot [
-                    sprintf "var el = document.getElementById('%s');" boxId
-                    "if(el) el.innerHTML = el.getAttribute('data-svg') || '';"
-                ]
+                Class "rank-variance"
+                sprintf "σ=%.1f" (sqrt d.Stats.ZVariance)
             }
             div {
                 Class "rank-buttons"

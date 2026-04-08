@@ -630,6 +630,106 @@ module GuiPins =
                 }
             }
 
+            // Dataset ranking section (merged from PinDemo prototype).
+            // Sources stats from the selected pin's GridEval; ordering is global UI state.
+            div {
+                Class "rank-section"
+                h3 { "Datasets" }
+                div {
+                    Class "rank-controls"
+                    label {
+                        "Top K "
+                        input {
+                            Attribute("type", "number")
+                            Attribute("min", "1")
+                            Style [Width "48px"]
+                            RankingState.topK |> AVal.map (fun k -> Some (Attribute("value", string k)))
+                            Dom.OnInput(fun e ->
+                                match System.Int32.TryParse(e.Value) with
+                                | true, k when k >= 1 -> transact (fun () -> RankingState.topK.Value <- k)
+                                | _ -> ())
+                        }
+                    }
+                    label {
+                        input {
+                            Attribute("type", "checkbox")
+                            RankingState.rankFadeOn |> AVal.map (fun on ->
+                                if on then Some (Attribute("checked", "checked")) else None)
+                            Dom.OnChange(fun _ ->
+                                transact (fun () -> RankingState.rankFadeOn.Value <- not RankingState.rankFadeOn.Value))
+                        }
+                        "Rank fade"
+                    }
+                }
+                div {
+                    Class "rank-list"
+                    selectedGridEval |> AVal.map (fun geOpt ->
+                        let names =
+                            match geOpt with
+                            | Some ge -> ge.DatasetStats |> Array.map (fun s -> s.MeshName) |> Array.toList
+                            | None -> []
+                        RankingState.ensureDatasets names
+                        Some (Attribute("data-names", System.String.Join("|", names))))
+                    RankingState.datasetOrder
+                    |> AVal.map IndexList.ofList
+                    |> AList.ofAVal
+                    |> AList.map (fun name ->
+                        let statsOpt =
+                            selectedGridEval |> AVal.map (fun geOpt ->
+                                match geOpt with
+                                | Some ge -> ge.DatasetStats |> Array.tryFind (fun s -> s.MeshName = name)
+                                | None -> None)
+                        let isHidden = RankingState.datasetHidden |> ASet.contains name
+                        let rank = RankingState.rankOf name
+                        let inK = RankingState.inTopK name
+                        div {
+                            (isHidden, inK) ||> AVal.map2 (fun h k ->
+                                let cls =
+                                    if h then "rank-row hidden"
+                                    elif not k then "rank-row out-of-topk"
+                                    else "rank-row"
+                                Some (Class cls))
+                            div {
+                                Class "rank-badge"
+                                rank |> AVal.map (fun r ->
+                                    match r with
+                                    | Some i -> sprintf "#%d" (i + 1)
+                                    | None -> "—")
+                            }
+                            div {
+                                Class "rank-name"
+                                shortName name
+                            }
+                            div {
+                                Class "rank-variance"
+                                statsOpt |> AVal.map (fun so ->
+                                    match so with
+                                    | Some s -> sprintf "σ=%.1f" (sqrt s.ZVariance)
+                                    | None -> "—")
+                            }
+                            div {
+                                Class "rank-buttons"
+                                button {
+                                    Class "rank-move"
+                                    Dom.OnClick(fun _ -> RankingState.move name -1)
+                                    "▲"
+                                }
+                                button {
+                                    Class "rank-move"
+                                    Dom.OnClick(fun _ -> RankingState.move name 1)
+                                    "▼"
+                                }
+                                button {
+                                    Class "rank-toggle"
+                                    Dom.OnClick(fun _ -> RankingState.toggleHidden name)
+                                    isHidden |> AVal.map (fun h -> if h then "Show" else "Hide")
+                                }
+                            }
+                        }
+                    )
+                }
+            }
+
             div {
                 Class "effect-toggles"
                 label {

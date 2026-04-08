@@ -201,13 +201,13 @@ input[type="range"] {
     text-overflow: ellipsis;
 }
 
-.rank-box {
-    flex: 0 0 120px;
-    height: 16px;
-    display: flex;
-    align-items: center;
+.rank-variance {
+    flex: 0 0 60px;
+    font-family: monospace;
+    font-size: 11px;
+    color: #475569;
+    text-align: right;
 }
-.rank-box svg { display: block; width: 120px; height: 16px; }
 
 .rank-toggle {
     padding: 2px 8px;

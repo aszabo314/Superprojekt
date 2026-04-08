@@ -11,6 +11,7 @@ type LoadedMesh =
         centroid : aval<V3d>
         pos  : aval<IBuffer>
         tc   : aval<IBuffer>
+        nrm  : aval<IBuffer>
         idx  : aval<IBuffer>
         tex  : aval<ITexture>
         fvc  : aval<int>
@@ -33,6 +34,7 @@ module MeshView =
                     centroid = ccc
                     pos  = cval (ArrayBuffer [| V3f.Zero; V3f.Zero; V3f.Zero |] :> IBuffer)
                     tc   = cval (ArrayBuffer [| V2f.Zero; V2f.Zero; V2f.Zero |] :> IBuffer)
+                    nrm  = cval (ArrayBuffer [| V3f.OOI; V3f.OOI; V3f.OOI |] :> IBuffer)
                     idx  = cval (ArrayBuffer [| 0; 1; 2 |] :> IBuffer)
                     tex  = cval<ITexture> (AVal.force DefaultTextures.checkerboard)
                     fvc  = cval 3
@@ -47,6 +49,7 @@ module MeshView =
                         ccc.Value <- mesh.centroid
                         (m.pos :?> cval<IBuffer>).Value <- ArrayBuffer mesh.positions
                         (m.tc  :?> cval<IBuffer>).Value <- ArrayBuffer mesh.uvs
+                        (m.nrm :?> cval<IBuffer>).Value <- ArrayBuffer mesh.normals
                         (m.idx :?> cval<IBuffer>).Value <- ArrayBuffer mesh.indices
                         (m.fvc :?> cval<int>).Value     <- mesh.indices.Length
                     )
@@ -67,7 +70,8 @@ module MeshView =
         (active : aval<bool>)
         (commonCentroid : aval<V3d>)
         (meshScale : aval<float>)
-        (ghostOpacity : aval<float>) =
+        (ghostOpacity : aval<float>)
+        (colorMode : aval<bool>) =
         let scaledFilter =
             (meshScale, filter) ||> AVal.map2 (fun scale (f : Box3d) ->
                 Box3d(f.Min * scale, f.Max * scale)
@@ -93,6 +97,7 @@ module MeshView =
             Sg.Shader {
                 DefaultSurfaces.trafo
                 DefaultSurfaces.diffuseTexture
+                Shader.headlight
                 BlitShader.clippy
             }
             Sg.Uniform("DiffuseColorTexture", loaded.tex)
@@ -101,12 +106,14 @@ module MeshView =
             Sg.Uniform("IsGhost", isGhost)
             Sg.Uniform("MeshIndex", meshIndex)
             Sg.Uniform("GhostOpacity", ghostOpacity)
+            Sg.Uniform("ColorMode", colorMode |> AVal.map (fun b -> if b then 1 else 0))
             Sg.BlendMode BlendMode.Blend
             Sg.DepthTest depthTestMode
             Sg.VertexAttributes(
                 HashMap.ofList [
                     string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
                     string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
+                    string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
                 ]
             )
             Sg.Active(loaded.fvc |> AVal.map (fun c -> c > 3))
@@ -167,7 +174,7 @@ module MeshView =
                             Sg.View view
                             Sg.Proj proj
                             Sg.Uniform("ViewportSize", info.ViewportSize)
-                            renderMesh loaded filter (AVal.constant false) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity
+                            renderMesh loaded filter (AVal.constant false) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode
                         }
                     let solidTask = info.Runtime.CompileRender(signature, solidSg.GetRenderObjects(TraversalState.empty info.Runtime))
 
@@ -176,7 +183,7 @@ module MeshView =
                             Sg.View view
                             Sg.Proj proj
                             Sg.Uniform("ViewportSize", info.ViewportSize)
-                            renderMesh loaded filter (AVal.constant true) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity
+                            renderMesh loaded filter (AVal.constant true) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode
                         }
                     let ghostTask = info.Runtime.CompileRender(signature, ghostSg.GetRenderObjects(TraversalState.empty info.Runtime))
                     AList.ofList [

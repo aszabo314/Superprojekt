@@ -25,7 +25,6 @@
     </Compile>
     <Compile Include="DummyData.fs" />
     <Compile Include="PanelState.fs" />
-    <Compile Include="HeightfieldMesh.fs" />
     <Compile Include="SvgDiagram.fs" />
     <Compile Include="CoreSampleView.fs" />
     <Compile Include="PanelView.fs" />

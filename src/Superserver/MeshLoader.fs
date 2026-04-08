@@ -10,6 +10,7 @@ type ParsedMesh =
         centroid  : V3d
         positions : V3f[]   // centroid-relative
         uvs       : V2f[]
+        normals   : V3f[]   // per-vertex, normalized, +Z biased when ambiguous
         indices   : int[]   // flat triangle list  (triangleCount × 3)
         bbox      : Box3d   // AABB of positions (centroid-relative)
     }
@@ -120,6 +121,25 @@ let parseMesh (dataset : string) (name : string) (index : int) : ParsedMesh =
                         outIdx.Add idx
 
     let posArr = outPos.ToArray()
+    let idxArr = outIdx.ToArray()
+    let normals =
+        let acc = Array.create posArr.Length V3d.Zero
+        let triCount = idxArr.Length / 3
+        for t in 0 .. triCount - 1 do
+            let i0 = idxArr.[t * 3]
+            let i1 = idxArr.[t * 3 + 1]
+            let i2 = idxArr.[t * 3 + 2]
+            let p0 = V3d posArr.[i0]
+            let p1 = V3d posArr.[i1]
+            let p2 = V3d posArr.[i2]
+            let n = Vec.cross (p1 - p0) (p2 - p0)
+            acc.[i0] <- acc.[i0] + n
+            acc.[i1] <- acc.[i1] + n
+            acc.[i2] <- acc.[i2] + n
+        acc |> Array.map (fun n ->
+            let l = n.Length
+            if l < 1e-20 then V3f.OOI
+            else V3f (n / l))
     let bbox =
         if posArr.Length = 0 then Box3d.Invalid
         else
@@ -134,7 +154,8 @@ let parseMesh (dataset : string) (name : string) (index : int) : ParsedMesh =
     { centroid  = centroid
       positions = posArr
       uvs       = outUv.ToArray()
-      indices   = outIdx.ToArray()
+      normals   = normals
+      indices   = idxArr
       bbox      = bbox }
 
 let atlasPath (dataset : string) (name : string) (index : int) =

@@ -1,5 +1,5 @@
-//34d56b55-5f42-2e5d-eebc-adfde137f79d
-//e83c07ce-8841-ba09-5451-56d9da11d5b5
+//31aa732d-e9c5-e939-ddd6-6fdc63349582
+//76192b89-fbbd-7625-4498-b68574607f68
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -45,6 +45,7 @@ type AdaptiveModel(value : Model) =
     let _CoreSampleZoom_ = FSharp.Data.Adaptive.cval(value.CoreSampleZoom)
     let _DepthShadeOn_ = FSharp.Data.Adaptive.cval(value.DepthShadeOn)
     let _IsolinesOn_ = FSharp.Data.Adaptive.cval(value.IsolinesOn)
+    let _ColorMode_ = FSharp.Data.Adaptive.cval(value.ColorMode)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -86,6 +87,7 @@ type AdaptiveModel(value : Model) =
             _CoreSampleZoom_.Value <- value.CoreSampleZoom
             _DepthShadeOn_.Value <- value.DepthShadeOn
             _IsolinesOn_.Value <- value.IsolinesOn
+            _ColorMode_.Value <- value.ColorMode
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -120,4 +122,5 @@ type AdaptiveModel(value : Model) =
     member __.CoreSampleZoom = _CoreSampleZoom_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.DepthShadeOn = _DepthShadeOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.IsolinesOn = _IsolinesOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ColorMode = _ColorMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

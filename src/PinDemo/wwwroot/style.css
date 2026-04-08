@@ -146,7 +146,43 @@ input[type="range"] {
     background: #f8fafc;
 }
 
-.rank-row.hidden { opacity: 0.4; }
+.rank-row.hidden { opacity: 0.35; }
+.rank-row.out-of-topk { background: #eef2f6; opacity: 0.55; }
+
+.rank-badge {
+    flex: 0 0 24px;
+    font-family: monospace;
+    font-size: 10px;
+    color: #475569;
+    text-align: right;
+}
+.rank-row.out-of-topk .rank-badge { color: #94a3b8; }
+.rank-row.hidden .rank-badge { color: #cbd5e1; }
+
+.rank-buttons {
+    display: flex;
+    gap: 2px;
+    flex: 0 0 auto;
+}
+
+.rank-move {
+    padding: 2px 5px;
+    font-size: 10px;
+    line-height: 1;
+    background: #e2e8f0;
+    color: #334155;
+}
+.rank-move:hover { background: #cbd5e1; }
+
+.rank-controls {
+    display: flex;
+    gap: 12px;
+    align-items: center;
+    margin: 6px 0 4px 0;
+    font-size: 11px;
+    color: #475569;
+}
+.rank-controls label { display: flex; align-items: center; gap: 4px; }
 
 .rank-color {
     width: 10px;
@@ -166,10 +202,12 @@ input[type="range"] {
 }
 
 .rank-box {
-    flex: 1 1 auto;
+    flex: 0 0 120px;
+    height: 16px;
     display: flex;
     align-items: center;
 }
+.rank-box svg { display: block; width: 120px; height: 16px; }
 
 .rank-toggle {
     padding: 2px 8px;

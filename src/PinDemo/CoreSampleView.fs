@@ -22,25 +22,24 @@ module CoreSampleView =
     let private dataZMin = PanelState.datasets |> Array.map (fun d -> d.Stats.ZMin) |> Array.min
     let private dataZMax = PanelState.datasets |> Array.map (fun d -> d.Stats.ZMax) |> Array.max
 
-    /// Build static (positions, indices, color) tuples for the dataset heightfield meshes,
-    /// pre-transformed into core-sample space.
+    let private transformNormals (nrm : V3f[]) =
+        let m = coreTrafo.Forward
+        nrm |> Array.map (fun n -> V3f(m.TransformDir(V3d n) |> Vec.normalize))
+
     let private meshGeometry =
         PanelState.datasets
-        |> Array.map (fun d ->
-            let g = HeightfieldMesh.build d.Grid
-            let pos = g.IndexedAttributes.[DefaultSemantic.Positions] :?> V3f[]
-            let idx = g.IndexArray :?> int[]
-            let pos =
-                pos |> Array.map (fun p -> V3f(coreTrafo.Forward.TransformPos(V3d p)))
+        |> Array.mapi (fun i d ->
+            let pos, nrm, idx = PinGeometry.buildHeightfieldMesh d.Grid.GridOrigin d.Grid.CellSize d.Grid.Resolution d.Grid.Heights
+            let pos = pos |> Array.map (fun p -> V3f(coreTrafo.Forward.TransformPos(V3d p)))
+            let nrm = transformNormals nrm
             let color = d.Color.ToC4f().ToV4f()
-            d.MeshName, pos, idx, color)
+            d.MeshName, i, pos, nrm, idx, color)
 
     let private buildSummaryMesh (grid : GridSampledSurface) =
-        let g = HeightfieldMesh.build grid
-        let pos = g.IndexedAttributes.[DefaultSemantic.Positions] :?> V3f[]
-        let idx = g.IndexArray :?> int[]
+        let pos, nrm, idx = PinGeometry.buildHeightfieldMesh grid.GridOrigin grid.CellSize grid.Resolution grid.Heights
         let pos = pos |> Array.map (fun p -> V3f(coreTrafo.Forward.TransformPos(V3d p)))
-        pos, idx
+        let nrm = transformNormals nrm
+        pos, nrm, idx
 
     let private avgMesh = buildSummaryMesh DummyData.averageGrid
     let private q1Mesh  = buildSummaryMesh DummyData.q1Grid
@@ -153,34 +152,46 @@ module CoreSampleView =
             Sg.Proj projT
 
             let depthOn = PanelState.depthShadeOn |> AVal.map (fun b -> if b then 1 else 0)
-            let isoOn   = PanelState.isolinesOn   |> AVal.map (fun b -> if b then 1 else 0)
+            let isoOn =
+                (PanelState.isolinesOn, PanelState.coreViewMode) ||> AVal.map2 (fun on mode ->
+                    if on && mode <> SideView then 1 else 0)
+            let wireVisible =
+                PanelState.coreViewMode |> AVal.map (fun m -> m <> SideView)
 
             let isFiltered =
                 PanelState.aggregationMode |> AVal.map (fun m -> m = Difference)
 
             // Per-dataset heightfield meshes (cylindrically clipped) — only in Difference mode
-            for (name, pos, idx, color) in meshGeometry do
+            for (name, meshIdx, pos, nrm, idx, color) in meshGeometry do
+                let inK = PanelState.inTopK name
                 let visible =
-                    (isFiltered, PanelState.datasetHidden |> ASet.contains name)
-                    ||> AVal.map2 (fun filt hidden -> filt && not hidden)
+                    (isFiltered, inK) ||> AVal.map2 (fun filt k -> filt && k)
+                let opacity = PanelState.opacityOf name
                 sg {
                     Sg.Active visible
                     Sg.Shader {
                         DefaultSurfaces.trafo
                         DefaultSurfaces.constantColor (C4f color)
+                        Shader.headlight
                         BlitShader.coreClip
                         Shader.depthShade
                         Shader.isolines
+                        Shader.applyOpacity
                     }
                     Sg.Uniform("CoreRadius", AVal.constant coreRadius)
+                    Sg.Uniform("MeshIndex", AVal.constant meshIdx)
+                    Sg.Uniform("ColorMode", PanelState.colorMode |> AVal.map (fun b -> if b then 1 else 0))
                     Sg.Uniform("DepthShadeOn", depthOn)
                     Sg.Uniform("IsolinesOn", isoOn)
                     Sg.Uniform("IsolineSpacing", AVal.constant 1.0)
+                    Sg.Uniform("Opacity", opacity)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                     Sg.NoEvents
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer pos :> IBuffer), typeof<V3f>)
+                            string DefaultSemantic.Normals,   BufferView(AVal.constant (ArrayBuffer nrm :> IBuffer), typeof<V3f>)
                         ])
                     Sg.Index(BufferView(AVal.constant (ArrayBuffer idx :> IBuffer), typeof<int>))
                     Sg.Render (AVal.constant idx.Length)
@@ -194,7 +205,7 @@ module CoreSampleView =
                 q3Mesh,   C4f(0.95f, 0.55f, 0.15f, 0.45f),   PanelState.aggregationMode |> AVal.map (fun m -> m = Q3 || m = Average)
                 q1Mesh,   C4f(0.2f, 0.45f, 0.9f, 0.45f),     PanelState.aggregationMode |> AVal.map (fun m -> m = Q1 || m = Average)
             ]
-            for ((pos, idx), color, active) in summaryMeshes do
+            for ((pos, nrm, idx), color, active) in summaryMeshes do
                 sg {
                     Sg.Active active
                     Sg.Shader {
@@ -205,6 +216,7 @@ module CoreSampleView =
                         Shader.isolines
                     }
                     Sg.Uniform("CoreRadius", AVal.constant coreRadius)
+                    Sg.Uniform("MeshIndex", AVal.constant 0)
                     Sg.Uniform("DepthShadeOn", depthOn)
                     Sg.Uniform("IsolinesOn", isoOn)
                     Sg.Uniform("IsolineSpacing", AVal.constant 1.0)
@@ -214,14 +226,16 @@ module CoreSampleView =
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer pos :> IBuffer), typeof<V3f>)
+                            string DefaultSemantic.Normals,   BufferView(AVal.constant (ArrayBuffer nrm :> IBuffer), typeof<V3f>)
                         ])
                     Sg.Index(BufferView(AVal.constant (ArrayBuffer idx :> IBuffer), typeof<int>))
                     Sg.Render (AVal.constant idx.Length)
                 }
 
-            // Prism wireframe (static)
+            // Prism wireframe (hidden in side view to keep core sample clean)
             let wirePos, wireIdx = wireGeometry
             sg {
+                Sg.Active wireVisible
                 Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
                 Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.85, 0.0, 1.0)))
                 Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)

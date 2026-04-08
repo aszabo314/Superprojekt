@@ -10,6 +10,7 @@ type MeshData =
         centroid  : V3d
         positions : V3f[]
         uvs       : V2f[]
+        normals   : V3f[]
         indices   : int[]
         atlasUrl  : string
     }
@@ -23,6 +24,7 @@ module MeshData =
     //   centroid X/Y/Z  3 × float64
     //   positions       vertexCount × 3 × float32   (centroid-relative)
     //   uvs             vertexCount × 2 × float32
+    //   normals         vertexCount × 3 × float32
     //   indices         indexCount × int32
 
     let decode (atlasUrl : string) (data : byte[]) : MeshData =
@@ -62,10 +64,14 @@ module MeshData =
         System.Span<V2f>(NativePtr.toVoidPtr ptr, vertexCount).CopyTo(uvs)
         ptr <- NativePtr.add ptr (vertexCount * sizeof<V2f>)
 
+        let normals = Array.zeroCreate<V3f> vertexCount
+        System.Span<V3f>(NativePtr.toVoidPtr ptr, vertexCount).CopyTo(normals)
+        ptr <- NativePtr.add ptr (vertexCount * sizeof<V3f>)
+
         let indices = Array.zeroCreate<int> indexCount
         System.Span<int>(NativePtr.toVoidPtr ptr, indexCount).CopyTo(indices)
 
-        { centroid = centroid; positions = positions; uvs = uvs; indices = indices; atlasUrl = atlasUrl }
+        { centroid = centroid; positions = positions; uvs = uvs; normals = normals; indices = indices; atlasUrl = atlasUrl }
 
     let fetchDatasets (serverUrl : string) : Async<string[]> =
         async {
@@ -109,6 +115,8 @@ module MeshData =
         let remap = System.Collections.Generic.Dictionary<int, int>()
         let positions = System.Collections.Generic.List<V3f>()
         let uvs       = System.Collections.Generic.List<V2f>()
+        let normals   = System.Collections.Generic.List<V3f>()
+        let hasNormals = mesh.normals.Length = mesh.positions.Length
         let newIndices = Array.zeroCreate mesh.indices.Length
         for i = 0 to mesh.indices.Length - 1 do
             let oldIdx = mesh.indices.[i]
@@ -118,8 +126,9 @@ module MeshData =
                 remap.[oldIdx] <- newIdx
                 positions.Add(mesh.positions.[oldIdx])
                 uvs.Add(mesh.uvs.[oldIdx])
+                if hasNormals then normals.Add(mesh.normals.[oldIdx])
             newIndices.[i] <- newIdx
-        { mesh with positions = positions.ToArray(); uvs = uvs.ToArray(); indices = newIndices }
+        { mesh with positions = positions.ToArray(); uvs = uvs.ToArray(); normals = normals.ToArray(); indices = newIndices }
 
     let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d)[]> =
         async {

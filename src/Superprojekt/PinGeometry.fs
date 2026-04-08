@@ -55,6 +55,7 @@ module PinGeometry =
             positions.ToArray(), indices.ToArray()
 
     /// Build a triangle mesh from a regular height grid. NaN cells are skipped.
+    /// Returns positions, per-vertex normals (upward-biased when ambiguous), and indices.
     let buildHeightfieldMesh (gridOrigin : V2d) (cellSize : float) (resolution : int) (heights : float[]) =
         let n = resolution
         let positions = System.Collections.Generic.List<V3f>()
@@ -81,7 +82,28 @@ module PinGeometry =
                     indices.Add a; indices.Add b; indices.Add c
                 if a >= 0 && c >= 0 && d >= 0 then
                     indices.Add a; indices.Add c; indices.Add d
-        positions.ToArray(), indices.ToArray()
+        let posArr = positions.ToArray()
+        let idxArr = indices.ToArray()
+        let acc = Array.create posArr.Length V3d.Zero
+        let triCount = idxArr.Length / 3
+        for t in 0 .. triCount - 1 do
+            let i0 = idxArr.[t * 3]
+            let i1 = idxArr.[t * 3 + 1]
+            let i2 = idxArr.[t * 3 + 2]
+            let p0 = V3d posArr.[i0]
+            let p1 = V3d posArr.[i1]
+            let p2 = V3d posArr.[i2]
+            let nrm = Vec.cross (p1 - p0) (p2 - p0)
+            let nrm = if nrm.Z < 0.0 then -nrm else nrm
+            acc.[i0] <- acc.[i0] + nrm
+            acc.[i1] <- acc.[i1] + nrm
+            acc.[i2] <- acc.[i2] + nrm
+        let normals =
+            acc |> Array.map (fun n ->
+                let l = n.Length
+                if l < 1e-20 then V3f.OOI
+                else V3f (n / l))
+        posArr, normals, idxArr
 
     /// Quad describing the cut plane (along/across the prism axis).
     let buildCutPlaneQuad (prism : SelectionPrism) (cutPlane : CutPlaneMode) =

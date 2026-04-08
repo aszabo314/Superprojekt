@@ -96,7 +96,7 @@ let meshHandler (dataset : string, name : string, index : int) : HttpHandler =
         try
             let lm   = MeshCache.get dataset name index
             let pm   = lm.parsed
-            let size = 4 + 4 + 4 + 24 + pm.positions.Length * 12 + pm.uvs.Length * 8 + pm.indices.Length * 4
+            let size = 4 + 4 + 4 + 24 + pm.positions.Length * 12 + pm.uvs.Length * 8 + pm.normals.Length * 12 + pm.indices.Length * 4
             use ms = new MemoryStream(size)
             use bw = new BinaryWriter(ms, Text.Encoding.Default, leaveOpen = true)
             bw.Write("MESH"B)
@@ -105,6 +105,7 @@ let meshHandler (dataset : string, name : string, index : int) : HttpHandler =
             bw.Write(pm.centroid.X); bw.Write(pm.centroid.Y); bw.Write(pm.centroid.Z)
             for p  in pm.positions do bw.Write(p.X);  bw.Write(p.Y);  bw.Write(p.Z)
             for uv in pm.uvs       do bw.Write(uv.X); bw.Write(uv.Y)
+            for n  in pm.normals   do bw.Write(n.X);  bw.Write(n.Y);  bw.Write(n.Z)
             for i  in pm.indices   do bw.Write(i)
             ctx.Response.ContentType <- "application/octet-stream"
             ctx.Response.ContentLength <- Nullable<int64>(int64 size)

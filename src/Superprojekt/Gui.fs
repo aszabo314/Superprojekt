@@ -168,6 +168,19 @@ module Gui =
                         }
                     }
 
+                    div {
+                        label {
+                            input {
+                                Attribute("type", "checkbox")
+                                model.ColorMode |> AVal.map (fun on ->
+                                    if on then Some (Attribute("checked", "checked")) else None
+                                )
+                                Dom.OnClick(fun _ -> env.Emit [ToggleColorMode])
+                            }
+                            " Color (false-color shading)"
+                        }
+                    }
+
                     button { "Clear Filter"; Dom.OnClick(fun _ -> env.Emit [ClearFilteredMesh]) }
 
                     ul {

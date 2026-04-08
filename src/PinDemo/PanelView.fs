@@ -88,6 +88,14 @@ module PanelView =
                     }
                     "Isolines"
                 }
+                label {
+                    input {
+                        Attribute("type", "checkbox")
+                        Dom.OnChange(fun _ ->
+                            transact (fun () -> PanelState.colorMode.Value <- not PanelState.colorMode.Value))
+                    }
+                    "Color"
+                }
             }
             div {
                 Style [MarginTop "8px"; FontSize "12px"; Color "#475569"]
@@ -120,22 +128,45 @@ module PanelView =
         let bx1 = toX s.ZQ1
         let bx2 = toX s.ZQ3
         let med = toX s.ZMedian
+        let bw = max 1.0 (bx2 - bx1)
         sprintf
-            "<svg width='%.0f' height='%.0f' viewBox='0 0 %.0f %.0f' xmlns='http://www.w3.org/2000/svg'>\
+            "<svg width='%.0f' height='%.0f' viewBox='0 0 %.0f %.0f' xmlns='http://www.w3.org/2000/svg' style='display:block;width:%.0fpx;height:%.0fpx'>\
              <line x1='%.1f' y1='%.1f' x2='%.1f' y2='%.1f' stroke='#64748b' stroke-width='1'/>\
              <rect x='%.1f' y='%.1f' width='%.1f' height='%.1f' fill='#cbd5e1' stroke='#475569' stroke-width='1'/>\
              <line x1='%.1f' y1='%.1f' x2='%.1f' y2='%.1f' stroke='#0f172a' stroke-width='2'/>\
              </svg>"
-            w h w h
+            w h w h w h
             (toX s.ZMin) cy (toX s.ZMax) cy
-            bx1 (cy - 6.0) (bx2 - bx1) 12.0
+            bx1 (cy - 6.0) bw 12.0
             med (cy - 7.0) med (cy + 7.0)
+
+    let private datasetByName =
+        PanelState.datasets
+        |> Array.map (fun d -> d.MeshName, d)
+        |> Map.ofArray
+
+    let private sanitizeId (s : string) =
+        s |> String.map (fun c -> if System.Char.IsLetterOrDigit c then c else '_')
 
     let private rankingRow (d : DummyDataset) =
         let isHidden = PanelState.datasetHidden |> ASet.contains d.MeshName
+        let rank     = PanelState.rankOf d.MeshName
+        let inK      = PanelState.inTopK d.MeshName
+        let boxId    = sprintf "rank-box-%s" (sanitizeId d.MeshName)
         div {
-            isHidden |> AVal.map (fun h ->
-                Some (Class (if h then "rank-row hidden" else "rank-row")))
+            (isHidden, inK) ||> AVal.map2 (fun h k ->
+                let cls =
+                    if h then "rank-row hidden"
+                    elif not k then "rank-row out-of-topk"
+                    else "rank-row"
+                Some (Class cls))
+            div {
+                Class "rank-badge"
+                rank |> AVal.map (fun r ->
+                    match r with
+                    | Some i -> sprintf "#%d" (i + 1)
+                    | None -> "—")
+            }
             div {
                 Class "rank-color"
                 Style [Background (c4bToHex d.Color)]
@@ -146,40 +177,93 @@ module PanelView =
             }
             div {
                 Class "rank-box"
+                Attribute("id", boxId)
                 Attribute("data-svg", boxplotSvg d.Stats 120.0 16.0)
                 OnBoot [
-                    "var el = __THIS__;"
-                    "el.innerHTML = el.getAttribute('data-svg') || '';"
+                    sprintf "var el = document.getElementById('%s');" boxId
+                    "if(el) el.innerHTML = el.getAttribute('data-svg') || '';"
                 ]
             }
-            button {
-                Class "rank-toggle"
-                Dom.OnClick(fun _ ->
-                    let h = AVal.force isHidden
-                    transact (fun () ->
-                        if h then PanelState.datasetHidden.Remove d.MeshName |> ignore
-                        else PanelState.datasetHidden.Add d.MeshName |> ignore))
-                isHidden |> AVal.map (fun h -> if h then "Show" else "Hide")
+            div {
+                Class "rank-buttons"
+                button {
+                    Class "rank-move"
+                    Dom.OnClick(fun _ -> PanelState.moveDataset d.MeshName -1)
+                    "▲"
+                }
+                button {
+                    Class "rank-move"
+                    Dom.OnClick(fun _ -> PanelState.moveDataset d.MeshName 1)
+                    "▼"
+                }
+                button {
+                    Class "rank-toggle"
+                    Dom.OnClick(fun _ ->
+                        let h = AVal.force isHidden
+                        transact (fun () ->
+                            if h then PanelState.datasetHidden.Remove d.MeshName |> ignore
+                            else PanelState.datasetHidden.Add d.MeshName |> ignore))
+                    isHidden |> AVal.map (fun h -> if h then "Show" else "Hide")
+                }
             }
         }
 
     let private visibleCount () =
-        let total = PanelState.datasets.Length
-        let hiddenCount =
-            PanelState.datasetHidden
-            |> ASet.count
-        hiddenCount |> AVal.map (fun h ->
-            sprintf "Showing %d of %d datasets" (total - h) total)
+        (PanelState.datasetOrder, PanelState.datasetHidden :> aset<_> |> ASet.toAVal, PanelState.topK)
+        |||> AVal.map3 (fun order hidden k ->
+            let total = order.Length
+            let visible =
+                order
+                |> List.filter (fun n -> not (HashSet.contains n hidden))
+                |> List.truncate k
+                |> List.length
+            sprintf "Rendering top %d of %d datasets" visible total)
+
+    let private topKControls () =
+        div {
+            Class "rank-controls"
+            label {
+                "Top K "
+                input {
+                    Attribute("type", "number")
+                    Attribute("min", "1")
+                    Attribute("max", string PanelState.datasets.Length)
+                    Attribute("step", "1")
+                    Style [Width "48px"]
+                    PanelState.topK |> AVal.map (fun k -> Some (Attribute("value", string k)))
+                    Dom.OnInput(fun e ->
+                        match System.Int32.TryParse(e.Value) with
+                        | true, k when k >= 1 -> transact (fun () -> PanelState.topK.Value <- k)
+                        | _ -> ())
+                }
+            }
+            label {
+                input {
+                    Attribute("type", "checkbox")
+                    PanelState.rankFadeOn |> AVal.map (fun on ->
+                        if on then Some (Attribute("checked", "checked")) else None)
+                    Dom.OnChange(fun _ ->
+                        transact (fun () -> PanelState.rankFadeOn.Value <- not PanelState.rankFadeOn.Value))
+                }
+                "Rank fade"
+            }
+        }
 
     let private rankingSection () =
         div {
             Class "panel-section"
             h3 { "Datasets" }
             aggregationButtons ()
+            topKControls ()
             div {
                 Class "rank-list"
-                for d in PanelState.datasets do
-                    rankingRow d
+                PanelState.datasetOrder
+                |> AVal.map IndexList.ofList
+                |> AList.ofAVal
+                |> AList.map (fun name ->
+                    match Map.tryFind name datasetByName with
+                    | Some d -> rankingRow d
+                    | None -> div { Class "rank-row missing" })
             }
             div {
                 Class "rank-footer"

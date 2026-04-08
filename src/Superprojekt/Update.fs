@@ -41,6 +41,7 @@ type Message =
     | TogglePinAxisVertical
     | ToggleDepthShade
     | ToggleIsolines
+    | ToggleColorMode
 
 and ScanPinMessage =
     | StartPlacement of FootprintMode
@@ -298,6 +299,8 @@ module Update =
             { model with DepthShadeOn = not model.DepthShadeOn }
         | ToggleIsolines ->
             { model with IsolinesOn = not model.IsolinesOn }
+        | ToggleColorMode ->
+            { model with ColorMode = not model.ColorMode }
         | CutResultsLoaded(pinId, results) ->
             let sp = model.ScanPins
             match HashMap.tryFind pinId sp.Pins with

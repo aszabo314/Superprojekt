@@ -48,6 +48,7 @@ type Model =
         CoreSampleZoom        : float
         DepthShadeOn          : bool
         IsolinesOn            : bool
+        ColorMode             : bool
     }
 
 module Model =
@@ -88,4 +89,5 @@ module Model =
             CoreSampleZoom        = 4.0
             DepthShadeOn          = true
             IsolinesOn            = true
+            ColorMode             = false
         }

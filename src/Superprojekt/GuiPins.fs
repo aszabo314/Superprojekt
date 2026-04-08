@@ -435,7 +435,11 @@ module GuiPins =
                     Sg.Proj miniProj
 
                     let depthOn = model.DepthShadeOn |> AVal.map (fun b -> if b then 1 else 0)
-                    let isoOn   = model.IsolinesOn   |> AVal.map (fun b -> if b then 1 else 0)
+                    let isoOn =
+                        (model.IsolinesOn, model.CoreSampleViewMode) ||> AVal.map2 (fun on mode ->
+                            if on && mode <> SideView then 1 else 0)
+                    let wireVisible =
+                        model.CoreSampleViewMode |> AVal.map (fun m -> m <> SideView)
 
                     let meshIndices =
                         model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
@@ -455,12 +459,15 @@ module GuiPins =
                             Sg.Shader {
                                 DefaultSurfaces.trafo
                                 DefaultSurfaces.diffuseTexture
+                                Shader.headlight
                                 BlitShader.coreClip
                                 Shader.depthShade
                                 Shader.isolines
                             }
                             Sg.Uniform("DiffuseColorTexture", loaded.tex)
                             Sg.Uniform("CoreRadius", coreRadius)
+                            Sg.Uniform("MeshIndex", meshIdx)
+                            Sg.Uniform("ColorMode", model.ColorMode |> AVal.map (fun b -> if b then 1 else 0))
                             Sg.Uniform("DepthShadeOn", depthOn)
                             Sg.Uniform("IsolinesOn", isoOn)
                             Sg.Uniform("IsolineSpacing", AVal.constant 1.0)
@@ -470,6 +477,7 @@ module GuiPins =
                                 HashMap.ofList [
                                     string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
                                     string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc, typeof<V2f>)
+                                    string DefaultSemantic.Normals,   BufferView(loaded.nrm, typeof<V3f>)
                                 ])
                             Sg.Active(loaded.fvc |> AVal.map (fun c -> c > 3))
                             Sg.Index(BufferView(loaded.idx, typeof<int>))
@@ -484,9 +492,10 @@ module GuiPins =
                             | Some prism, Some ge ->
                                 let t = coreSampleTrafo prism
                                 let buildMesh (heights : float[]) =
-                                    let pos, idx = PinGeometry.buildHeightfieldMesh ge.GridOrigin ge.CellSize ge.Resolution heights
+                                    let pos, nrm, idx = PinGeometry.buildHeightfieldMesh ge.GridOrigin ge.CellSize ge.Resolution heights
                                     let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
-                                    pos, idx
+                                    let nrm = nrm |> Array.map (fun n -> V3f(t.Forward.TransformDir(V3d n) |> Vec.normalize))
+                                    pos, nrm, idx
                                 let avg = buildMesh (ge.Cells |> Array.map (fun c -> c.Average))
                                 let q1  = buildMesh (ge.Cells |> Array.map (fun c -> c.Q1))
                                 let q3  = buildMesh (ge.Cells |> Array.map (fun c -> c.Q3))
@@ -502,10 +511,11 @@ module GuiPins =
                         let meshData = summaryMeshes |> AVal.map (fun opt ->
                             match opt with
                             | Some data -> selector data
-                            | None -> [||], [||])
-                        let sPos = meshData |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
-                        let sIdx = meshData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
-                        let sFvc = meshData |> AVal.map (fun (_, i) -> i.Length)
+                            | None -> [||], [||], [||])
+                        let sPos = meshData |> AVal.map (fun (p, _, _) -> ArrayBuffer p :> IBuffer)
+                        let sNrm = meshData |> AVal.map (fun (_, n, _) -> ArrayBuffer n :> IBuffer)
+                        let sIdx = meshData |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
+                        let sFvc = meshData |> AVal.map (fun (_, _, i) -> i.Length)
                         let active = summaryMeshes |> AVal.map Option.isSome
                         sg {
                             Sg.Active active
@@ -526,6 +536,7 @@ module GuiPins =
                             Sg.VertexAttributes(
                                 HashMap.ofList [
                                     string DefaultSemantic.Positions, BufferView(sPos, typeof<V3f>)
+                                    string DefaultSemantic.Normals,   BufferView(sNrm, typeof<V3f>)
                                 ])
                             Sg.Index(BufferView(sIdx, typeof<int>))
                             Sg.Render sFvc
@@ -543,6 +554,7 @@ module GuiPins =
                     let wireIdx = wireData |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
                     let wireFvc = wireData |> AVal.map (fun (_, i) -> i.Length)
                     sg {
+                        Sg.Active wireVisible
                         Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
                         Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.85, 0.0, 0.7)))
                         Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
@@ -637,6 +649,15 @@ module GuiPins =
                         Dom.OnChange(fun _ -> env.Emit [ToggleIsolines])
                     }
                     "Isolines"
+                }
+                label {
+                    input {
+                        Attribute("type", "checkbox")
+                        model.ColorMode |> AVal.map (fun v ->
+                            if v then Some (Attribute("checked", "checked")) else None)
+                        Dom.OnChange(fun _ -> env.Emit [ToggleColorMode])
+                    }
+                    "Color"
                 }
             }
 

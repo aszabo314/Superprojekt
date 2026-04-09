@@ -43,6 +43,14 @@ type Message =
     | ToggleDepthShade
     | ToggleIsolines
     | ToggleColorMode
+    | CardMsg of CardMessage
+
+and CardMessage =
+    | BringToFront of CardId
+    | FinishDrag of CardId * finalPos:V2d
+    | RedockCard of CardId
+    | CreateCardsForPin of ScanPinId * anchor:V3d
+    | RemoveCardsForPin of ScanPinId
 
 and ScanPinMessage =
     | StartPlacement of FootprintMode
@@ -67,6 +75,58 @@ and ScanPinMessage =
     | SetExplosionFactor      of ScanPinId * float
     | HoverBetweenSpace       of ScanPinId * angle:float * zLower:float * zUpper:float * lower:string * upper:string
     | ClearBetweenSpaceHover  of ScanPinId
+
+module CardUpdate =
+
+    let private cardContentPinId (c : CardContent) =
+        match c with
+        | StratigraphyDiagram id | PinControls id | DatasetRanking id -> id
+
+    let update (msg : CardMessage) (cs : CardSystemModel) =
+        match msg with
+        | CreateCardsForPin(pinId, anchor) ->
+            let hasCards =
+                cs.Cards |> HashMap.exists (fun _ c -> cardContentPinId c.Content = pinId)
+            if hasCards then
+                let cards = cs.Cards |> HashMap.map (fun _ c ->
+                    if cardContentPinId c.Content = pinId then { c with Visible = true; Anchor = match c.Anchor with AnchorToWorldPoint _ -> AnchorToWorldPoint anchor | a -> a }
+                    else { c with Visible = false })
+                { cs with Cards = cards }
+            else
+                let hideOthers = cs.Cards |> HashMap.map (fun _ c -> { c with Visible = false })
+                let stratId = CardId.create()
+                let ctrlId = CardId.create()
+                let rankId = CardId.create()
+                let z = cs.NextZOrder
+                let strat = { Id = stratId; Anchor = AnchorToWorldPoint anchor; Attachment = CardAttached; Size = V2d(310, 385); Content = StratigraphyDiagram pinId; Visible = true; ZOrder = z }
+                let ctrl  = { Id = ctrlId;  Anchor = AnchorToCard(stratId, EdgeBottom); Attachment = CardAttached; Size = V2d(310, 130); Content = PinControls pinId; Visible = true; ZOrder = z + 1 }
+                let rank  = { Id = rankId;  Anchor = AnchorToCard(stratId, EdgeRight);  Attachment = CardAttached; Size = V2d(220, 340); Content = DatasetRanking pinId; Visible = true; ZOrder = z + 2 }
+                let cards = hideOthers |> HashMap.add stratId strat |> HashMap.add ctrlId ctrl |> HashMap.add rankId rank
+                { cs with Cards = cards; NextZOrder = z + 3 }
+
+        | RemoveCardsForPin pinId ->
+            let cards = cs.Cards |> HashMap.map (fun _ c ->
+                if cardContentPinId c.Content = pinId then { c with Visible = false } else c)
+            { cs with Cards = cards }
+
+        | FinishDrag(id, finalPos) ->
+            match HashMap.tryFind id cs.Cards with
+            | Some card ->
+                { cs with Cards = HashMap.add id { card with Attachment = CardDetached finalPos } cs.Cards }
+            | None -> cs
+
+        | RedockCard id ->
+            match HashMap.tryFind id cs.Cards with
+            | Some card ->
+                { cs with Cards = HashMap.add id { card with Attachment = CardAttached } cs.Cards }
+            | None -> cs
+
+        | BringToFront id ->
+            match HashMap.tryFind id cs.Cards with
+            | Some card ->
+                let z = cs.NextZOrder
+                { cs with Cards = HashMap.add id { card with ZOrder = z } cs.Cards; NextZOrder = z + 1 }
+            | None -> cs
 
 module ScanPinUpdate =
 
@@ -369,6 +429,8 @@ module Update =
             { model with IsolinesOn = not model.IsolinesOn }
         | ToggleColorMode ->
             { model with ColorMode = not model.ColorMode }
+        | CardMsg msg ->
+            { model with CardSystem = CardUpdate.update msg model.CardSystem }
         | CutResultsLoaded(pinId, results) ->
             let sp = model.ScanPins
             match HashMap.tryFind pinId sp.Pins with
@@ -520,13 +582,39 @@ module Update =
                     | None -> ()
                 | None -> ()
             let model = { model with ScanPins = sp' }
-            if sp'.SelectedPin <> sp.SelectedPin then
-                match sp'.SelectedPin with
+            let selChanged = sp'.SelectedPin <> sp.SelectedPin || sp'.ActivePlacement <> sp.ActivePlacement
+            if selChanged then
+                let effectiveId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
+                match effectiveId with
                 | Some id ->
                     match HashMap.tryFind id sp'.Pins with
                     | Some pin ->
+                        let cs = CardUpdate.update (CreateCardsForPin(id, pin.Prism.AnchorPoint)) model.CardSystem
                         let h = max pin.Prism.ExtentForward pin.Prism.ExtentBackward
-                        { model with CoreSampleRotation = 0.0; CoreSamplePanZ = 0.0; CoreSampleZoom = h }
+                        { model with CoreSampleRotation = 0.0; CoreSamplePanZ = 0.0; CoreSampleZoom = h; CardSystem = cs }
+                    | None ->
+                        let cs = CardUpdate.update (RemoveCardsForPin id) model.CardSystem
+                        { model with CardSystem = cs }
+                | None ->
+                    let cs = model.CardSystem
+                    let cards = cs.Cards |> HashMap.map (fun _ c -> { c with Visible = false })
+                    { model with CardSystem = { cs with Cards = cards } }
+            else
+                // Sync card anchor when active pin's prism moves
+                let effectiveId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
+                match effectiveId with
+                | Some id ->
+                    match HashMap.tryFind id sp'.Pins with
+                    | Some pin ->
+                        let anchor = pin.Prism.AnchorPoint
+                        let cs = model.CardSystem
+                        let cards = cs.Cards |> HashMap.map (fun _ c ->
+                            match c.Content with
+                            | StratigraphyDiagram pid | PinControls pid | DatasetRanking pid when pid = id ->
+                                match c.Anchor with
+                                | AnchorToWorldPoint _ -> { c with Anchor = AnchorToWorldPoint anchor }
+                                | _ -> c
+                            | _ -> c)
+                        { model with CardSystem = { cs with Cards = cards } }
                     | None -> model
                 | None -> model
-            else model

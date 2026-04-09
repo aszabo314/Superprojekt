@@ -1,5 +1,5 @@
-//31aa732d-e9c5-e939-ddd6-6fdc63349582
-//76192b89-fbbd-7625-4498-b68574607f68
+//27bb1c41-9b06-f8ef-9fd6-d4ec8f28a36d
+//8917b16d-8005-0c6b-ff66-9575c48c838e
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -46,6 +46,7 @@ type AdaptiveModel(value : Model) =
     let _DepthShadeOn_ = FSharp.Data.Adaptive.cval(value.DepthShadeOn)
     let _IsolinesOn_ = FSharp.Data.Adaptive.cval(value.IsolinesOn)
     let _ColorMode_ = FSharp.Data.Adaptive.cval(value.ColorMode)
+    let _CardSystem_ = AdaptiveCardSystemModel(value.CardSystem)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -88,6 +89,7 @@ type AdaptiveModel(value : Model) =
             _DepthShadeOn_.Value <- value.DepthShadeOn
             _IsolinesOn_.Value <- value.IsolinesOn
             _ColorMode_.Value <- value.ColorMode
+            _CardSystem_.Update(value.CardSystem)
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -123,4 +125,5 @@ type AdaptiveModel(value : Model) =
     member __.DepthShadeOn = _DepthShadeOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.IsolinesOn = _IsolinesOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ColorMode = _ColorMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.CardSystem = _CardSystem_
 

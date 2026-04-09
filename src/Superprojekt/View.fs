@@ -157,7 +157,7 @@ module View =
 
             Gui.burgerButton env
             Gui.hudTabs env model
-            GuiPins.pinDiagram env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
+            Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
             Gui.fullscreenInfo model
             Gui.debugLogToggle logVisible
             Gui.debugLog (logVisible :> aval<bool>) model

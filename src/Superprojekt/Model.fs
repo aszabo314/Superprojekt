@@ -49,6 +49,7 @@ type Model =
         DepthShadeOn          : bool
         IsolinesOn            : bool
         ColorMode             : bool
+        CardSystem            : CardSystemModel
     }
 
 module Model =
@@ -90,4 +91,5 @@ module Model =
             DepthShadeOn          = true
             IsolinesOn            = true
             ColorMode             = false
+            CardSystem            = CardSystemModel.initial
         }

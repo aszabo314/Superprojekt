@@ -180,8 +180,10 @@ module GuiPins =
     let pinDiagram (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =
         let allPinsVal = model.ScanPins.Pins |> AMap.toAVal
         let selectedPin =
-            (model.ScanPins.SelectedPin, allPinsVal) ||> AVal.map2 (fun sel pins ->
-                sel |> Option.bind (fun id -> HashMap.tryFind id pins))
+            (model.ScanPins.SelectedPin, model.ScanPins.ActivePlacement, allPinsVal)
+            |||> AVal.map3 (fun sel act pins ->
+                let id = act |> Option.orElse sel
+                id |> Option.bind (fun id -> HashMap.tryFind id pins))
 
         let selectedPrism    = selectedPin |> AVal.map (Option.map (fun p -> p.Prism))
         let selectedCutPlane = selectedPin |> AVal.map (Option.map (fun p -> p.CutPlane))

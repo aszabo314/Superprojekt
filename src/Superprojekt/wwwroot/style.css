@@ -450,6 +450,178 @@ body.loaded {
 
 .rank-buttons button:hover { background: #cbd5e1; }
 
+/* ── Card system ─────────────────────────────────────────────────── */
+
+.card-overlay {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 900;
+}
+
+.card {
+    position: fixed;
+    background: rgba(15, 23, 42, 0.88);
+    border: 1px solid rgba(148, 163, 184, 0.25);
+    border-radius: 6px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.28), 0 2px 8px rgba(0,0,0,0.18);
+    pointer-events: auto;
+    font-family: 'Segoe UI', 'Inter', system-ui, sans-serif;
+    font-size: 12px;
+    color: #e2e8f0;
+    overflow: hidden;
+}
+
+.card-titlebar {
+    display: flex;
+    align-items: center;
+    height: 26px;
+    padding: 0;
+    background: rgba(30, 41, 59, 0.95);
+    user-select: none;
+    font-size: 11px;
+    font-weight: 600;
+    color: #94a3b8;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    border-bottom: 1px solid rgba(71, 85, 105, 0.3);
+}
+
+.card-drag-handle {
+    flex: 1;
+    padding: 0 8px;
+    cursor: grab;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.card-drag-handle:active { cursor: grabbing; }
+
+.card-btn-dock,
+.card-btn-close {
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 14px;
+    cursor: pointer;
+    padding: 0 6px;
+    line-height: 26px;
+    height: 26px;
+    flex-shrink: 0;
+}
+.card-btn-dock:hover,
+.card-btn-close:hover { color: #e2e8f0; }
+
+.card-body {
+    padding: 8px;
+    overflow-y: auto;
+}
+
+.card-btn-row {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+}
+
+.card-btn-row button {
+    padding: 3px 8px;
+    font-size: 11px;
+    background: rgba(51, 65, 85, 0.7);
+    color: #cbd5e1;
+    border: 1px solid rgba(71, 85, 105, 0.5);
+    border-radius: 3px;
+    cursor: pointer;
+}
+.card-btn-row button:hover { background: rgba(71, 85, 105, 0.8); color: #f1f5f9; }
+.card-btn-row button.btn-active {
+    background: rgba(26, 86, 219, 0.7);
+    color: #f1f5f9;
+    border-color: rgba(59, 130, 246, 0.5);
+}
+
+.card-toggles {
+    display: flex;
+    gap: 10px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: #94a3b8;
+}
+.card-toggles label {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+}
+.card-toggles input[type="checkbox"] { accent-color: #3b82f6; }
+
+#card-diagram-root {
+    width: 280px;
+    height: 140px;
+    min-height: 140px;
+}
+
+.card-strat-content .strat-wrapper {
+    width: 280px;
+    height: 160px;
+    border: 1px solid rgba(71, 85, 105, 0.4);
+    border-radius: 3px;
+    background: #0f172a;
+    overflow: hidden;
+}
+
+.card-strat-content .strat-view {
+    width: 280px;
+    height: 160px;
+    display: block;
+}
+
+.card-controls-content,
+.card-ranking-content {
+    min-height: 40px;
+}
+
+/* Card-scoped rank-list overrides for dark theme */
+.card-ranking-content .rank-list { max-height: 260px; }
+.card-ranking-content .rank-row { background: rgba(30, 41, 59, 0.6); }
+.card-ranking-content .rank-row.out-of-topk { background: rgba(30, 41, 59, 0.3); }
+.card-ranking-content .rank-badge { color: #60a5fa; }
+.card-ranking-content .rank-name { color: #e2e8f0; }
+.card-ranking-content .rank-variance { color: #94a3b8; }
+.card-ranking-content .rank-controls { color: #94a3b8; }
+.card-ranking-content .rank-buttons button {
+    background: rgba(51, 65, 85, 0.7);
+    color: #cbd5e1;
+    border: none;
+}
+.card-ranking-content .rank-buttons button:hover { background: rgba(71, 85, 105, 0.8); }
+
+.card-drag-capture {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 9999;
+    cursor: grabbing;
+}
+
+#card-leader-lines {
+    position: fixed;
+    left: 0;
+    top: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    z-index: 899;
+}
+
 /* ── Mobile adjustments ───────────────────────────────────────────── */
 
 @media (max-width: 600px) {

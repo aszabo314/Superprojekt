@@ -165,6 +165,52 @@ module ScanPinModel =
 
 type CoreSampleViewMode = SideView | TopView
 
+// ── Card system ──────────────────────────────────────────────
+
+[<RequireQualifiedAccess>]
+type CardId = CardId of Guid with
+    static member create () = CardId (Guid.NewGuid())
+
+type CardEdge = EdgeTop | EdgeBottom | EdgeLeft | EdgeRight
+
+type CardAnchor =
+    | AnchorToWorldPoint of V3d
+    | AnchorToCard of parentId:CardId * edge:CardEdge
+
+type CardAttachment =
+    | CardAttached
+    | CardDetached of screenPos:V2d
+    | CardDragging of cardPos:V2d * grabOffset:V2d
+
+type CardContent =
+    | StratigraphyDiagram of ScanPinId
+    | PinControls of ScanPinId
+    | DatasetRanking of ScanPinId
+
+type Card = {
+    Id         : CardId
+    Anchor     : CardAnchor
+    Attachment : CardAttachment
+    Size       : V2d
+    Content    : CardContent
+    Visible    : bool
+    ZOrder     : int
+}
+
+[<ModelType>]
+type CardSystemModel = {
+    Cards       : HashMap<CardId, Card>
+    DraggedCard : CardId option
+    NextZOrder  : int
+}
+
+module CardSystemModel =
+    let initial = {
+        Cards       = HashMap.empty
+        DraggedCard = None
+        NextZOrder  = 1
+    }
+
 module ScanPinSerialize =
     open System.Text.Json
 

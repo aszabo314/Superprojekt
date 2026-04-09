@@ -34,6 +34,7 @@
     <Compile Include="ServerActions.fs" />
     <Compile Include="Revolver.fs" />
     <Compile Include="StratigraphyView.fs" />
+    <Compile Include="Cards.fs" />
     <Compile Include="GuiPins.fs" />
     <Compile Include="Gui.fs" />
     <Compile Include="View.fs" />

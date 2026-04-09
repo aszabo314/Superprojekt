@@ -30,6 +30,9 @@ type PlaneIntersectionRequest = { Name: string; Index: int; PlanePoint: float[];
 [<CLIMutable>]
 type GridEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Radius: float; Resolution: int; ExtentForward: float; ExtentBackward: float }
 
+[<CLIMutable>]
+type CylinderEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Radius: float; AngularResolution: int; ExtentForward: float; ExtentBackward: float }
+
 let inline private toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
 let inline private fromV3d (v : V3d)   = [| v.X; v.Y; v.Z |]
 
@@ -270,6 +273,37 @@ let gridEvalHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
+// POST /api/query/cylinder-eval
+let cylinderEvalHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<CylinderEvalRequest>()
+            let anchor = toV3d req.Anchor
+            let axis = toV3d req.Axis
+            let result = MeshCache.cylinderEval req.Dataset anchor axis req.Radius req.AngularResolution req.ExtentForward req.ExtentBackward
+            log.LogInformation("cylinder-eval {Dataset}: res={AngularResolution}, {HitCount} hits", req.Dataset, req.AngularResolution, result.Hits.Length)
+            use ms = new MemoryStream()
+            use bw = new BinaryWriter(ms, Text.Encoding.Default, leaveOpen = true)
+            bw.Write(result.AngularResolution)
+            bw.Write(result.Hits.Length)
+            for h in result.Hits do
+                bw.Write(h.Angle)
+                let nameBytes = Text.Encoding.UTF8.GetBytes(h.MeshName)
+                bw.Write(nameBytes.Length)
+                bw.Write(nameBytes)
+                bw.Write(h.Height)
+            bw.Flush()
+            ctx.Response.ContentType <- "application/octet-stream"
+            let buf = ms.ToArray()
+            ctx.Response.ContentLength <- Nullable<int64>(int64 buf.Length)
+            do! ctx.Response.Body.WriteAsync(buf, 0, buf.Length)
+            return! next ctx
+        with ex ->
+            log.LogError(ex, "cylinder-eval failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
 let webApp : HttpHandler =
     choose [
         route  "/api/datasets"                                  >=> datasetsHandler
@@ -284,4 +318,5 @@ let webApp : HttpHandler =
         route  "/api/query/box"                                 >=> boxHandler
         route  "/api/query/plane-intersection"                  >=> planeIntersectionHandler
         route  "/api/query/grid-eval"                           >=> gridEvalHandler
+        route  "/api/query/cylinder-eval"                       >=> cylinderEvalHandler
     ]

@@ -110,10 +110,121 @@ module StratigraphyView =
                 let c = datasetColors |> Map.tryFind name |> Option.defaultValue (C4b(60uy,60uy,60uy)) |> toV4f
                 addQuad x0 x1 (y - stripeHalf) (y + stripeHalf) c
 
+        // Connecting lines: link same-dataset events across adjacent columns.
+        let addLineSegment (x0 : float) (y0 : float) (x1 : float) (y1 : float) (half : float) (col : V4f) =
+            let baseIdx = positions.Count
+            positions.Add(V3f(float32 x0, float32 (y0 - half), 0.0f))
+            positions.Add(V3f(float32 x0, float32 (y0 + half), 0.0f))
+            positions.Add(V3f(float32 x1, float32 (y1 + half), 0.0f))
+            positions.Add(V3f(float32 x1, float32 (y1 - half), 0.0f))
+            for _ in 1 .. 4 do colors.Add(col)
+            indices.Add(baseIdx); indices.Add(baseIdx + 1); indices.Add(baseIdx + 2)
+            indices.Add(baseIdx); indices.Add(baseIdx + 2); indices.Add(baseIdx + 3)
+
+        let datasets =
+            data.Columns
+            |> Array.collect (fun c -> c.Events |> List.filter (fun (_, n) -> not (Set.contains n hidden)) |> List.map snd |> List.toArray)
+            |> Array.distinct
+        for ds in datasets do
+            let color = datasetColors |> Map.tryFind ds |> Option.defaultValue (C4b(60uy,60uy,60uy)) |> toV4f
+            let perColumn =
+                data.Columns |> Array.map (fun col ->
+                    col.Events
+                    |> List.filter (fun (_, n) -> n = ds && not (Set.contains n hidden))
+                    |> List.map fst |> List.sort)
+            let maxLanes = perColumn |> Array.map List.length |> Array.fold max 0
+            for lane in 0 .. maxLanes - 1 do
+                for ci in 0 .. nCols - 1 do
+                    let ni = (ci + 1) % nCols
+                    let zsA = perColumn.[ci]
+                    let zsB = perColumn.[ni]
+                    if lane < zsA.Length && lane < zsB.Length then
+                        let yA = toY ci zsA.[lane]
+                        let yB = toY ni zsB.[lane]
+                        let xA = float ci * dx + dx * 0.5
+                        let xB = if ni > ci then float ni * dx + dx * 0.5 else 1.0
+                        addLineSegment xA yA xB yB stripeHalf color
+
         positions.ToArray(), colors.ToArray(), indices.ToArray()
 
+    /// Build a horizontal cut-plane indicator line across the diagram.
+    /// In Normalized mode, the line is a polyline that follows the per-column normalization.
+    let private buildIndicator
+        (data : StratigraphyData)
+        (display : StratigraphyDisplayMode)
+        (dist : float)
+        : V3f[] * V4f[] * int[] =
+
+        let nCols = data.Columns.Length
+        if nCols = 0 then [||], [||], [||]
+        else
+        let globalRange =
+            let r = data.AxisMax - data.AxisMin
+            if r < 1e-9 then 1.0 else r
+        let normRange (i : int) =
+            let lo = data.ColumnMinZ.[i]
+            let hi = data.ColumnMaxZ.[i]
+            let r = hi - lo
+            let minR = globalRange * 0.01
+            if r < minR then
+                let pad = (minR - r) * 0.5
+                lo - pad, hi + pad
+            else lo, hi
+        let toY i z =
+            match display with
+            | Undistorted -> (z - data.AxisMin) / globalRange
+            | Normalized ->
+                let lo, hi = normRange i
+                let r = hi - lo
+                if r < 1e-9 then 0.5 else (z - lo) / r
+
+        let dx = 1.0 / float nCols
+        let half = 0.003
+        let color = V4f(0.9f, 0.2f, 0.2f, 0.85f)
+        let positions = ResizeArray<V3f>()
+        let colors = ResizeArray<V4f>()
+        let indices = ResizeArray<int>()
+        for i in 0 .. nCols - 1 do
+            let y = toY i dist |> clamp 0.0 1.0
+            let x0 = float i * dx
+            let x1 = x0 + dx
+            let baseIdx = positions.Count
+            positions.Add(V3f(float32 x0, float32 (y - half), 0.01f))
+            positions.Add(V3f(float32 x1, float32 (y - half), 0.01f))
+            positions.Add(V3f(float32 x1, float32 (y + half), 0.01f))
+            positions.Add(V3f(float32 x0, float32 (y + half), 0.01f))
+            for _ in 1 .. 4 do colors.Add(color)
+            indices.Add(baseIdx); indices.Add(baseIdx + 1); indices.Add(baseIdx + 2)
+            indices.Add(baseIdx); indices.Add(baseIdx + 2); indices.Add(baseIdx + 3)
+        positions.ToArray(), colors.ToArray(), indices.ToArray()
+
+    /// Convert a diagram (x [0..1], y [0..1]) coordinate back to a z value (cut plane distance).
+    let private yToZ (data : StratigraphyData) (display : StratigraphyDisplayMode) (x : float) (y : float) : float =
+        let globalRange =
+            let r = data.AxisMax - data.AxisMin
+            if r < 1e-9 then 1.0 else r
+        match display with
+        | Undistorted ->
+            data.AxisMin + y * globalRange
+        | Normalized ->
+            let nCols = data.Columns.Length
+            if nCols = 0 then data.AxisMin + y * globalRange
+            else
+            let normRange (i : int) =
+                let lo = data.ColumnMinZ.[i]
+                let hi = data.ColumnMaxZ.[i]
+                let r = hi - lo
+                let minR = globalRange * 0.01
+                if r < minR then
+                    let pad = (minR - r) * 0.5
+                    lo - pad, hi + pad
+                else lo, hi
+            let ci = int (x * float nCols) |> clamp 0 (nCols - 1)
+            let lo, hi = normRange ci
+            lo + y * (hi - lo)
+
     /// Render the stratigraphy diagram for the currently selected pin.
-    let render (selectedPin : aval<ScanPin option>) =
+    let render (env : Env<Message>) (isPlacing : aval<bool>) (selectedPin : aval<ScanPin option>) =
         let geometry =
             (selectedPin, RankingState.datasetHidden :> aset<_> |> ASet.toAVal)
             ||> AVal.map2 (fun pinOpt hiddenSet ->
@@ -126,10 +237,25 @@ module StratigraphyView =
                     | None -> [||], [||], [||]
                 | None -> [||], [||], [||])
 
+        let indicatorGeo =
+            selectedPin |> AVal.map (fun pinOpt ->
+                match pinOpt with
+                | Some pin ->
+                    match pin.Stratigraphy, pin.CutPlane with
+                    | Some data, CutPlaneMode.AcrossAxis dist ->
+                        buildIndicator data pin.StratigraphyDisplay dist
+                    | _ -> [||], [||], [||]
+                | None -> [||], [||], [||])
+
         let posBuffer = geometry |> AVal.map (fun (p, _, _) -> ArrayBuffer p :> IBuffer)
         let colBuffer = geometry |> AVal.map (fun (_, c, _) -> ArrayBuffer c :> IBuffer)
         let idxBuffer = geometry |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
         let drawCount = geometry |> AVal.map (fun (_, _, i) -> i.Length)
+
+        let indPos = indicatorGeo |> AVal.map (fun (p, _, _) -> ArrayBuffer p :> IBuffer)
+        let indCol = indicatorGeo |> AVal.map (fun (_, c, _) -> ArrayBuffer c :> IBuffer)
+        let indIdx = indicatorGeo |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
+        let indCnt = indicatorGeo |> AVal.map (fun (_, _, i) -> i.Length)
 
         renderControl {
             RenderControl.Samples 1
@@ -138,7 +264,41 @@ module StratigraphyView =
             Sg.View (AVal.constant Trafo3d.Identity)
             Sg.Proj (AVal.constant (Frustum.ortho (Box3d(V3d(0.0, 0.0, -1.0), V3d(1.0, 1.0, 1.0))) |> Frustum.projTrafo))
 
-            Sg.NoEvents
+            let! size = RenderControl.ViewportSize
+
+            let dragging = cval false
+
+            let clickToZ (px : int) (py : int) =
+                let sz = AVal.force size
+                let x = float px / float sz.X |> clamp 0.0 1.0
+                let y = 1.0 - float py / float sz.Y |> clamp 0.0 1.0
+                match AVal.force selectedPin with
+                | Some pin ->
+                    match pin.Stratigraphy with
+                    | Some data -> yToZ data pin.StratigraphyDisplay x y
+                    | None -> 0.0
+                | None -> 0.0
+
+            let emitDist (px : int) (py : int) =
+                if AVal.force isPlacing then
+                    let z = clickToZ px py
+                    env.Emit [ScanPinMsg (SetCutPlaneDistance z)]
+
+            Dom.OnPointerDown((fun e ->
+                if e.Button = Button.Left then
+                    transact (fun () -> dragging.Value <- true)
+                    emitDist e.OffsetPosition.X e.OffsetPosition.Y
+            ), pointerCapture = true)
+
+            Dom.OnPointerUp((fun _ ->
+                transact (fun () -> dragging.Value <- false)
+            ), pointerCapture = true)
+
+            Dom.OnPointerMove(fun e ->
+                if AVal.force dragging then
+                    emitDist e.OffsetPosition.X e.OffsetPosition.Y)
+
+            Dom.OnContextMenu(ignore, preventDefault = true)
 
             sg {
                 Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
@@ -151,5 +311,18 @@ module StratigraphyView =
                     ])
                 Sg.Index(BufferView(idxBuffer, typeof<int>))
                 Sg.Render drawCount
+            }
+            sg {
+                Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode BlendMode.Blend
+                Sg.NoEvents
+                Sg.VertexAttributes(
+                    HashMap.ofList [
+                        string DefaultSemantic.Positions, BufferView(indPos, typeof<V3f>)
+                        string DefaultSemantic.Colors,    BufferView(indCol, typeof<V4f>)
+                    ])
+                Sg.Index(BufferView(indIdx, typeof<int>))
+                Sg.Render indCnt
             }
         }

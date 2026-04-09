@@ -312,3 +312,29 @@ module Query =
             let cs = radius * 2.0 / float res
             return { Resolution = res; GridOrigin = origin; CellSize = cs; Cells = cells; DatasetStats = datasetStats }
         }
+
+    /// POST /query/cylinder-eval — returns per-angle hit lists: (angleIndex, (height, meshName) list) []
+    let cylinderEval (serverUrl : string) (dataset : string) (anchor : V3d) (axis : V3d) (radius : float) (angularRes : int) (extFwd : float) (extBack : float) =
+        async {
+            let json = sprintf """{"dataset":"%s","anchor":%s,"axis":%s,"radius":%.17g,"angularResolution":%d,"extentForward":%.17g,"extentBackward":%.17g}"""
+                        dataset (v3 anchor) (v3 axis) radius angularRes extFwd extBack
+            let! buf = postBinary serverUrl "/query/cylinder-eval" json
+            let mutable off = 0
+            let readInt () =
+                let v = System.BitConverter.ToInt32(buf, off)
+                off <- off + 4; v
+            let readFloat () =
+                let v = System.BitConverter.ToDouble(buf, off)
+                off <- off + 8; v
+            let res = readInt ()
+            let hitCount = readInt ()
+            let perAngle = Array.init res (fun _ -> ResizeArray<float * string>())
+            for _ in 0 .. hitCount - 1 do
+                let ai = readInt ()
+                let nameLen = readInt ()
+                let name = Encoding.UTF8.GetString(buf, off, nameLen)
+                off <- off + nameLen
+                let h = readFloat ()
+                perAngle.[ai].Add(h, dataset + "/" + name)
+            return res, perAngle
+        }

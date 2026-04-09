@@ -1,87 +1,48 @@
 namespace Superprojekt
 
-open System
 open Aardvark.Base
 
-/// V3 stratigraphy computation. Casts z-aligned rays at a grid of (angle, axisPosition)
-/// points on the cylinder surface and records intersection events per dataset.
-///
-/// STUB(server): the real implementation queries the server for ray-mesh intersections
-/// against each loaded mesh. For now `compute` synthesizes plausible-looking data so the
-/// renderer can be developed and tested in isolation.
 module Stratigraphy =
 
-    /// Synthesize a stratigraphy that visually resembles real data:
-    /// - `datasetCount` layered surfaces, monotonically rising in z with sinusoidal undulation
-    ///   plus per-dataset phase + amplitude
-    /// - some "missing" patches (gaps) so between-spaces have varying width
-    /// - one or two folds (multiple intersections per ray) on a couple of datasets
-    let private mockColumn (datasets : string[]) (angle : float) (axisMin : float) (axisMax : float) =
-        let range = axisMax - axisMin
-        let layerSpacing = range / float (datasets.Length + 1)
-        let events =
-            datasets
-            |> Array.mapi (fun i name ->
-                let basis = axisMin + layerSpacing * float (i + 1)
-                let amp   = layerSpacing * 0.35
-                let phase = float i * 0.7
-                let z = basis + amp * sin (angle * 2.0 + phase) + 0.15 * amp * cos (angle * 5.0 + float i)
-                // Drop a few samples to simulate gaps in coverage.
-                let drop = (i + int (angle * 4.0 / Math.PI)) % 17 = 0
-                if drop then []
-                else
-                    // Datasets 1 and 4 produce a fold near angle ≈ π for variety.
-                    if (i = 1 || i = 4) && abs (angle - Math.PI) < 0.5 then
-                        let z2 = z + amp * 0.4
-                        [ (z, name); (z2, name) ]
-                    else [ (z, name) ])
-            |> List.ofArray
-            |> List.concat
-            |> List.sortBy fst
-        events
-
-    /// STUB(server): mock implementation. Returns synthetic data without contacting the server.
-    /// Replace with real ray-mesh queries once the server endpoint exists.
-    let compute (prism : SelectionPrism) (datasets : string[]) (angularRes : int) : Async<StratigraphyData> =
+    let compute (serverUrl : string) (dataset : string) (prism : SelectionPrism) (commonCentroid : V3d) (scale : float) (angularRes : int) : Async<StratigraphyData> =
         async {
-            // Simulate a small delay so the UI can show a "computing" state.
-            do! Async.Sleep 50
-            let axisMin = -prism.ExtentBackward
-            let axisMax =  prism.ExtentForward
+            let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+            let anchor = prism.AnchorPoint / scale + commonCentroid
+            let axis = prism.AxisDirection |> Vec.normalize
+            let! (res, perAngle) = Query.cylinderEval serverUrl dataset anchor axis (radius / scale) angularRes (prism.ExtentForward / scale) (prism.ExtentBackward / scale)
             let columns =
-                Array.init angularRes (fun i ->
-                    let angle = float i / float angularRes * Constant.PiTimesTwo
-                    let events = mockColumn datasets angle axisMin axisMax
+                Array.init res (fun i ->
+                    let angle = float i / float res * System.Math.PI * 2.0
+                    let events = perAngle.[i] |> Seq.toList |> List.map (fun (h, name) -> (h * scale, name)) |> List.sortBy fst
                     { Angle = angle; Events = events })
+            // Derive axis bounds from actual data so the diagram always fits
+            let mutable globalMin = infinity
+            let mutable globalMax = -infinity
+            for c in columns do
+                for (z, _) in c.Events do
+                    if z < globalMin then globalMin <- z
+                    if z > globalMax then globalMax <- z
+            let axisMin, axisMax =
+                if System.Double.IsInfinity globalMin then -prism.ExtentBackward, prism.ExtentForward
+                else
+                    let range = max (globalMax - globalMin) 0.1
+                    let pad = range * 0.02
+                    let mid = (globalMin + globalMax) * 0.5
+                    mid - range * 0.5 - pad, mid + range * 0.5 + pad
             let columnMinZ =
                 columns |> Array.map (fun c ->
-                    match c.Events with
-                    | [] -> axisMin
-                    | _  -> c.Events |> List.map fst |> List.min)
+                    match c.Events with [] -> axisMin | _ -> c.Events |> List.map fst |> List.min)
             let columnMaxZ =
                 columns |> Array.map (fun c ->
-                    match c.Events with
-                    | [] -> axisMax
-                    | _  -> c.Events |> List.map fst |> List.max)
-            return {
-                AngularResolution = angularRes
-                AxisMin = axisMin
-                AxisMax = axisMax
-                Columns = columns
-                ColumnMinZ = columnMinZ
-                ColumnMaxZ = columnMaxZ
-            }
+                    match c.Events with [] -> axisMax | _ -> c.Events |> List.map fst |> List.max)
+            return { AngularResolution = res; AxisMin = axisMin; AxisMax = axisMax; Columns = columns; ColumnMinZ = columnMinZ; ColumnMaxZ = columnMaxZ }
         }
 
     /// Phase 3.12: per-mesh world-space offset for the explosion view.
-    /// Datasets are sorted ascending by mean intersection z (from `pin.Stratigraphy`),
-    /// then displaced along the prism axis by `(centered_rank * factor * baseSpacing)`,
-    /// where `baseSpacing = (extentForward + extentBackward) / N`. The displacement is
-    /// centered so that the middle dataset stays approximately in place.
-    let explosionOffsets (pin : ScanPin) (meshNames : string[]) : Map<string, Aardvark.Base.V3d> =
+    let explosionOffsets (pin : ScanPin) (meshNames : string[]) : Map<string, V3d> =
         if not pin.Explosion.Enabled || pin.Explosion.ExpansionFactor <= 0.0 then Map.empty
         else
-            let axis = pin.Prism.AxisDirection |> Aardvark.Base.Vec.normalize
+            let axis = pin.Prism.AxisDirection |> Vec.normalize
             let ordered =
                 match pin.Stratigraphy with
                 | Some data when data.Columns.Length > 0 ->

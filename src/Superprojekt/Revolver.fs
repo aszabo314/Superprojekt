@@ -114,10 +114,20 @@ module Revolver =
                 ) 0
             )
 
+        let effectiveGhostSilhouette =
+            let cylClipActive =
+                (model.ScanPins.SelectedPin, model.ScanPins.ActivePlacement, model.ScanPins.Pins |> AMap.toAVal)
+                |||> AVal.map3 (fun sel act pins ->
+                    let id = act |> Option.orElse sel
+                    match id |> Option.bind (fun id -> HashMap.tryFind id pins) with
+                    | Some pin -> pin.GhostClip = GhostClipOn
+                    | _ -> false)
+            (model.GhostSilhouette, cylClipActive) ||> AVal.map2 (fun g c -> g || c)
+
         let composite =
             sg {
                 Sg.Active (AVal.map not fullscreenActive)
-                MeshView.composeMeshTextures cnt colors depths model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth clipMin clipMax model.GhostSilhouette meshVisibilityMask
+                MeshView.composeMeshTextures cnt colors depths model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth clipMin clipMax effectiveGhostSilhouette meshVisibilityMask
             }
 
         let fullscreenNodes =

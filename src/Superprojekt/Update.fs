@@ -464,8 +464,10 @@ module Update =
                 | Some id ->
                     match HashMap.tryFind id sp'.Pins with
                     | Some pin ->
+                        let names = model.MeshNames
                         let prism = pin.Prism
-                        let datasets = model.MeshNames |> IndexList.toArray
+                        let dataset = match IndexList.tryFirst names with Some n -> n.Split('/', 2).[0] | None -> ""
+                        let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
                         let pinId = id
                         let cts = new System.Threading.CancellationTokenSource()
                         stratDebounce.Value.Cancel()
@@ -473,7 +475,7 @@ module Update =
                         task {
                             try
                                 do! System.Threading.Tasks.Task.Delay(400, cts.Token)
-                                let! data = Stratigraphy.compute prism datasets 360 |> Async.StartAsTask
+                                let! data = Stratigraphy.compute ApiConfig.apiBase.Value dataset prism model.CommonCentroid scale 360 |> Async.StartAsTask
                                 if not cts.Token.IsCancellationRequested then
                                     env.Emit [StratigraphyComputed(pinId, data)]
                             with

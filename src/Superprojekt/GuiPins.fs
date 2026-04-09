@@ -133,8 +133,11 @@ module GuiPins =
             }
 
             h3 { "Pins" }
-            let pinIdList = sp.Pins |> AMap.toASet |> ASet.map fst |> ASet.sortBy id
             let guiPinsVal = sp.Pins |> AMap.toAVal
+            let pinIdList =
+                guiPinsVal
+                |> AVal.map (fun pins -> pins |> HashMap.toSeq |> Seq.map fst |> Seq.sort |> IndexList.ofSeq)
+                |> AList.ofAVal
             pinIdList |> AList.map (fun id ->
                 let pinVal = guiPinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = sp.SelectedPin |> AVal.map (fun sel -> sel = Some id)
@@ -311,7 +314,8 @@ module GuiPins =
             h3 { "Stratigraphy" }
             div {
                 Class "strat-wrapper"
-                StratigraphyView.render selectedPin
+                let isPlacing = (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
+                StratigraphyView.render env isPlacing selectedPin
             }
             div {
                 Class "btn-row"

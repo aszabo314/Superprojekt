@@ -318,17 +318,7 @@ module PinGeometry =
             for _ in 1..4 do colors.Add(tickColor)
             indices.Add(i0); indices.Add(i0+1); indices.Add(i0+2)
             indices.Add(i0+1); indices.Add(i0+3); indices.Add(i0+2)
-            if isMajor then
-                let dotR = tickLen * 0.15
-                let dotCenter = b + perpDir * dotR * 2.0
-                let d0 = positions.Count
-                positions.Add(V3f(dotCenter + side * 2.0 + perpDir * dotR))
-                positions.Add(V3f(dotCenter - side * 2.0 + perpDir * dotR))
-                positions.Add(V3f(dotCenter - side * 2.0 - perpDir * dotR))
-                positions.Add(V3f(dotCenter + side * 2.0 - perpDir * dotR))
-                for _ in 1..4 do colors.Add(tickColor)
-                indices.Add(d0); indices.Add(d0+1); indices.Add(d0+2)
-                indices.Add(d0); indices.Add(d0+2); indices.Add(d0+3)
+            ()
 
         // Ticks along edge 0→1 (inward = toward edge 3→2)
         let perpIn1 = edgeV |> Vec.normalize
@@ -347,6 +337,52 @@ module PinGeometry =
                 addTick pt perpIn2 (i % 5 = 0)
 
         positions.ToArray(), colors.ToArray(), indices.ToArray()
+
+    /// Returns label data for major ticks on the cut plane: (position, text, perpDir, edgeDir) list.
+    /// perpDir points inward from the edge (text offset direction), edgeDir runs along the edge (text orientation).
+    let cutPlaneTickLabels (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
+        let axis = prism.AxisDirection |> Vec.normalize
+        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
+        let right = Vec.cross axis up |> Vec.normalize
+        let fwd = Vec.cross right axis |> Vec.normalize
+        let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+        let corners, edgeU, edgeV, extentU, extentV =
+            match cutPlane with
+            | CutPlaneMode.AlongAxis angleDeg ->
+                let a = angleDeg * Constant.RadiansPerDegree
+                let planeDir = right * cos a + fwd * sin a
+                let hw = r * 1.2
+                let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
+                let center = prism.AnchorPoint + axis * (prism.ExtentForward - prism.ExtentBackward) * 0.5
+                let c0 = center - planeDir * hw - axis * hh
+                let c1 = center + planeDir * hw - axis * hh
+                let c3 = center - planeDir * hw + axis * hh
+                [| c0; c1; c1; c3 |], planeDir, axis, hw * 2.0, hh * 2.0
+            | CutPlaneMode.AcrossAxis dist ->
+                let center = prism.AnchorPoint + axis * dist
+                let hw = r * 1.2
+                let c0 = center - right * hw - fwd * hw
+                let c1 = center + right * hw - fwd * hw
+                let c3 = center - right * hw + fwd * hw
+                [| c0; c1; c1; c3 |], right, fwd, hw * 2.0, hw * 2.0
+        let tickScale =
+            let ext = max extentU extentV
+            if ext > 10.0 then 2.0
+            elif ext > 5.0 then 1.0
+            elif ext > 2.0 then 0.5
+            elif ext > 0.5 then 0.1
+            else 0.05
+        let perpIn = edgeV |> Vec.normalize
+        let nTicks = int (extentU / tickScale)
+        let tickLen = min extentU extentV * 0.05
+        [ for i in 0 .. nTicks do
+            if i % 5 = 0 && i > 0 then
+                let t = float i * tickScale / extentU
+                if t <= 1.0 then
+                    let pt = corners.[0] + (corners.[1] - corners.[0]) * t
+                    let labelPos = pt + perpIn * tickLen * 2.5
+                    let value = float i * tickScale
+                    yield (labelPos, sprintf "%.2g" value, perpIn, edgeU |> Vec.normalize) ]
 
     /// Solid cylinder hull surface (for picking). Returns positions and indices.
     let buildCylinderHull (prism : SelectionPrism) (segments : int) =

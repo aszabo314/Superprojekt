@@ -280,60 +280,63 @@ module SceneGraph =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
-                let wireColor =
-                    (selectedId, pinVal) ||> AVal.map2 (fun sel pinOpt ->
-                        match pinOpt with
-                        | Some pin ->
-                            if sel = Some id then V4d(1.0, 0.85, 0.0, 0.7)
-                            elif pin.Phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 0.5)
-                            else V4d(0.6, 0.6, 0.6, 0.35)
-                        | None -> V4d(0.0, 0.0, 0.0, 0.0))
-                let wireData = pinVal |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin -> buildPrismWireframe pin.Prism 0.05
-                    | None -> [||], [||])
                 let planeData = pinVal |> AVal.map (fun pinOpt ->
                     match pinOpt with
                     | Some pin -> PinGeometry.buildCutPlaneRefined pin.Prism pin.CutPlane
                     | None -> [||], [||], [||])
-                let wirePos = wireData |> AVal.map fst
-                let wireIdx = wireData |> AVal.map snd
                 let planePos = planeData |> AVal.map (fun (p,_,_) -> p)
                 let planeCol = planeData |> AVal.map (fun (_,c,_) -> c)
                 let planeIdx = planeData |> AVal.map (fun (_,_,i) -> i)
-                ASet.ofList [
-                    sg {
-                        Sg.Active notFullscreen
-                        Sg.View view
-                        Sg.Proj proj
-                        Sg.Pass RenderPass.passOne
-                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                        Sg.Uniform("FlatColor", wireColor)
-                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                        Sg.NoEvents
-                        Sg.VertexAttributes(
-                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(wirePos |> AVal.map (fun p -> ArrayBuffer p :> IBuffer), typeof<V3f>) ])
-                        Sg.Index(BufferView(wireIdx |> AVal.map (fun i -> ArrayBuffer i :> IBuffer), typeof<int>))
-                        Sg.Render(wireIdx |> AVal.map Array.length)
-                    }
-                    sg {
-                        Sg.Active (AVal.map2 (&&) notFullscreen isSelected)
-                        Sg.View view
-                        Sg.Proj proj
-                        Sg.Pass RenderPass.passOne
-                        Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
-                        Sg.BlendMode BlendMode.Blend
-                        Sg.DepthTest (AVal.constant DepthTest.None)
-                        Sg.NoEvents
-                        Sg.VertexAttributes(
-                            HashMap.ofList [
-                                string DefaultSemantic.Positions, BufferView(planePos |> AVal.map (fun p -> ArrayBuffer p :> IBuffer), typeof<V3f>)
-                                string DefaultSemantic.Colors,    BufferView(planeCol |> AVal.map (fun c -> ArrayBuffer c :> IBuffer), typeof<V4f>)
-                            ])
-                        Sg.Index(BufferView(planeIdx |> AVal.map (fun i -> ArrayBuffer i :> IBuffer), typeof<int>))
-                        Sg.Render(planeIdx |> AVal.map Array.length)
-                    }
-                ]
+                let tickLabels = pinVal |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin -> PinGeometry.cutPlaneTickLabels pin.Prism pin.CutPlane
+                    | None -> [])
+                let isActiveAndSelected = AVal.map2 (&&) notFullscreen isSelected
+                let labelNodes =
+                    tickLabels
+                    |> AVal.map (fun labels ->
+                        labels |> List.map (fun (pos, text, perpDir, edgeDir) ->
+                            let planeNormal = Vec.cross edgeDir perpDir |> Vec.normalize
+                            let labelSize = 0.06
+                            let trafo =
+                                let x = edgeDir
+                                let y = perpDir
+                                let z = planeNormal
+                                let m = M44d.FromCols(V4d(x, 0.0), V4d(y, 0.0), V4d(z, 0.0), V4d(pos, 1.0))
+                                Trafo3d(m, m.Inverse) * Trafo3d.Scale(labelSize)
+                            (text, trafo)) |> IndexList.ofList)
+                    |> AList.ofAVal
+                    |> AList.map (fun (text, trafo) ->
+                        sg {
+                            Sg.Active isActiveAndSelected
+                            Sg.View view
+                            Sg.Proj proj
+                            Sg.Pass RenderPass.passTwo
+                            Sg.Trafo (AVal.constant trafo)
+                            Sg.Text(text, color = AVal.constant (C4b(180uy, 180uy, 180uy)), align = TextAlignment.Center)
+                        })
+                    |> AList.toASet
+                ASet.union
+                    (ASet.ofList [
+                        sg {
+                            Sg.Active isActiveAndSelected
+                            Sg.View view
+                            Sg.Proj proj
+                            Sg.Pass RenderPass.passOne
+                            Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
+                            Sg.BlendMode BlendMode.Blend
+                            Sg.DepthTest (AVal.constant DepthTest.None)
+                            Sg.NoEvents
+                            Sg.VertexAttributes(
+                                HashMap.ofList [
+                                    string DefaultSemantic.Positions, BufferView(planePos |> AVal.map (fun p -> ArrayBuffer p :> IBuffer), typeof<V3f>)
+                                    string DefaultSemantic.Colors,    BufferView(planeCol |> AVal.map (fun c -> ArrayBuffer c :> IBuffer), typeof<V4f>)
+                                ])
+                            Sg.Index(BufferView(planeIdx |> AVal.map (fun i -> ArrayBuffer i :> IBuffer), typeof<int>))
+                            Sg.Render(planeIdx |> AVal.map Array.length)
+                        }
+                    ])
+                    labelNodes
             )
 
         let extractedLines =
@@ -499,7 +502,11 @@ module SceneGraph =
             let hullPos = hullGeometry |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
             let hullIdx = hullGeometry |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
             let hullCnt = hullGeometry |> AVal.map (fun (_,i,_) -> i.Length)
-            let hullActive = (notFullscreen, hullGeometry) ||> AVal.map2 (fun nf (_,_,act) -> nf && act)
+            let hullActive =
+                (notFullscreen, hullGeometry) ||> AVal.map2 (fun nf (_,_,act) ->
+                    let result = nf && act
+                    printfn "[HULL] hullActive=%b (notFullscreen=%b, hasGeometry=%b)" result nf act
+                    result)
 
             let indicatorGeometry =
                 editedPin |> AVal.map (fun pinOpt ->
@@ -585,28 +592,67 @@ module SceneGraph =
                 | Some hit -> emitFromHit hit
                 | None -> ()
 
+            let pickCylinder =
+                editedPin |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin ->
+                        let axis = pin.Prism.AxisDirection |> Vec.normalize
+                        let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                        let p0 = pin.Prism.AnchorPoint - axis * pin.Prism.ExtentBackward
+                        let p1 = pin.Prism.AnchorPoint + axis * pin.Prism.ExtentForward
+                        let cyl = Cylinder3d(p0, p1, r)
+                        printfn "[HULL] pickCylinder updated: p0=%A p1=%A r=%.3f axis=%A anchor=%A extB=%.3f extF=%.3f" p0 p1 r axis pin.Prism.AnchorPoint pin.Prism.ExtentBackward pin.Prism.ExtentForward
+                        cyl
+                    | None ->
+                        printfn "[HULL] pickCylinder: no edited pin"
+                        Cylinder3d(V3d.Zero, V3d.OOI, 0.001))
+
+            // Dummy single-triangle for the pick node (degenerate, invisible)
+            let dummyPos = AVal.constant (ArrayBuffer [| V3f.Zero; V3f.OOI * 0.001f; V3f.IOO * 0.001f |] :> IBuffer)
+            let dummyIdx = AVal.constant (ArrayBuffer [| 0; 1; 2 |] :> IBuffer)
+
             ASet.ofList [
-                // Transparent hull surface (pickable, invisible)
+                // Pick node: Intersectable cylinder + event handlers + tiny dummy geometry
+                sg {
+                    Sg.Active hullActive
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.Intersectable (pickCylinder |> AVal.map Intersectable.cylinder)
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.0, 0.0, 0.0, 0.0)))
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.OnPointerDown(true, fun e ->
+                        printfn "[HULL] OnPointerDown! worldPos=%A button=%A" e.WorldPosition e.Button
+                        match AVal.force editedPin with
+                        | Some _ ->
+                            transact (fun () -> hullDragging.Value <- true)
+                            updateFromPointerRay e
+                            false
+                        | None ->
+                            printfn "[HULL] OnPointerDown: no edited pin"
+                            true)
+                    Sg.OnPointerMove(fun e ->
+                        if AVal.force hullDragging then updateFromPointerRay e)
+                    Sg.OnPointerUp(true, fun _ ->
+                        printfn "[HULL] OnPointerUp"
+                        if AVal.force hullDragging then
+                            transact (fun () -> hullDragging.Value <- false))
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(dummyPos, typeof<V3f>) ])
+                    Sg.Index(BufferView(dummyIdx, typeof<int>))
+                    Sg.Render (AVal.constant 3)
+                }
+                // Visual hull: transparent white, no picking
                 sg {
                     Sg.Active hullActive
                     Sg.View view
                     Sg.Proj proj
                     Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 1.0, 1.0, 0.02)))
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 1.0, 1.0, 0.1)))
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.OnPointerDown(true, fun e ->
-                        match AVal.force editedPin with
-                        | Some _ ->
-                            transact (fun () -> hullDragging.Value <- true)
-                            emitFromHit e.WorldPosition
-                            false
-                        | None -> true)
-                    Sg.OnPointerMove(fun e ->
-                        if AVal.force hullDragging then updateFromPointerRay e)
-                    Sg.OnPointerUp(true, fun _ ->
-                        if AVal.force hullDragging then
-                            transact (fun () -> hullDragging.Value <- false))
+                    Sg.Pass RenderPass.passOne
+                    Sg.NoEvents
                     Sg.VertexAttributes(
                         HashMap.ofList [ string DefaultSemantic.Positions, BufferView(hullPos, typeof<V3f>) ])
                     Sg.Index(BufferView(hullIdx, typeof<int>))
@@ -620,7 +666,7 @@ module SceneGraph =
                     Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
                     Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 1.0, 1.0, 0.9)))
                     Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.NoEvents
+                    Sg.Pass RenderPass.passOne
                     Sg.VertexAttributes(
                         HashMap.ofList [ string DefaultSemantic.Positions, BufferView(indPos, typeof<V3f>) ])
                     Sg.Index(BufferView(indIdx, typeof<int>))

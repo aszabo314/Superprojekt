@@ -32,7 +32,7 @@
     <Compile Include="Update.fs" />
     <Compile Include="MeshView.fs" />
     <Compile Include="ServerActions.fs" />
-    <Compile Include="Revolver.fs" />
+    <Compile Include="SceneGraph.fs" />
     <Compile Include="StratigraphyView.fs" />
     <Compile Include="Cards.fs" />
     <Compile Include="GuiPins.fs" />

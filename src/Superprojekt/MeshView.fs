@@ -18,6 +18,13 @@ type LoadedMesh =
         mesh : MeshData option ref
     }
 
+module RenderPass =
+    let passMinusOne = RenderPass.main
+    let passZero = RenderPass.after "zero" RenderPassOrder.Arbitrary passMinusOne
+    let passOne = RenderPass.after "one" RenderPassOrder.Arbitrary passZero
+    let passTwo = RenderPass.after "two" RenderPassOrder.Arbitrary passOne
+    let passThree = RenderPass.after "three" RenderPassOrder.Arbitrary passTwo
+    
 module MeshView =
 
     let apiBase = ApiConfig.apiBase

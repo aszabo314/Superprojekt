@@ -6,7 +6,7 @@ open Aardworx.WebAssembly
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-module Revolver =
+module SceneGraph =
 
     let private boxPos =
         [|  V3f(-0.5f, -0.5f, -0.5f); V3f( 0.5f, -0.5f, -0.5f); V3f( 0.5f,  0.5f, -0.5f); V3f(-0.5f,  0.5f, -0.5f)
@@ -28,17 +28,77 @@ module Revolver =
             Sg.Render (AVal.constant boxIdx.Length)
         }
 
-    // Axis indicator at render-space origin (= common centroid).
-    // +Y = North (green, dominant), +X = East (red), +Z = Up (blue). Sizes in render-space units.
+    // Coordinate cross at render-space origin with thin axis lines, 0.25 tick marks, and distance labels.
     let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
-        let box color trafo =
+        let thickness = 0.04
+        let axisLength = 3.0
+        let tickSpacing = 0.25
+        let tickLen = 0.12
+        let labelSize = 0.15
+
+        let toC4b (c : V4d) = C4b(byte(c.X*255.0), byte(c.Y*255.0), byte(c.Z*255.0))
+        let darken (c : V4d) = toC4b (V4d(c.X * 0.55, c.Y * 0.55, c.Z * 0.55, 1.0))
+
+        // Text in XY plane by default. Rotate so it stands upright (Z-up) and faces outward per axis.
+        let textTrafoX = Trafo3d.RotationX(Constant.PiHalf)   // XY -> XZ plane, readable from +Y
+        let textTrafoY = Trafo3d.RotationX(Constant.PiHalf) * Trafo3d.RotationZ(Constant.PiHalf) // YZ plane, readable from +X
+        let textTrafoZ = Trafo3d.RotationX(Constant.PiHalf)   // XZ plane, upright
+
+        let axisLine color (dir : V3d) =
+            let half = dir * axisLength * 0.5
+            let trafo =
+                let s = V3d(thickness, thickness, thickness) + dir * (axisLength - thickness)
+                Trafo3d.Scale(s) * Trafo3d.Translation(half)
             sg { Sg.Active active; Sg.View view; Sg.Proj proj; axisBox color trafo }
+
+        let ticksAndLabels color (dir : V3d) (perpA : V3d) (textRot : Trafo3d) =
+            let n = int (axisLength / tickSpacing)
+            let textColor = darken color
+            [ for i in 1 .. n do
+                let dist = float i * tickSpacing
+                let center = dir * dist
+                let tickTrafo =
+                    let s = perpA * tickLen + dir * thickness + (V3d.III - abs perpA - abs dir) * thickness
+                    Trafo3d.Scale(abs s) * Trafo3d.Translation(center)
+                yield sg { Sg.Active active; Sg.View view; Sg.Proj proj; axisBox color tickTrafo }
+                if i % 4 = 0 then
+                    let labelPos = center + perpA * (tickLen * 0.5 + labelSize * 1.2)
+                    let trafo = Trafo3d.Scale(labelSize) * textRot * Trafo3d.Translation(labelPos)
+                    yield sg {
+                        Sg.Active active; Sg.View view; Sg.Proj proj
+                        Sg.Trafo (AVal.constant trafo)
+                        Sg.Text(sprintf "%.0f" dist, color = AVal.constant textColor, align = TextAlignment.Center)
+                    }
+            ]
+
+        let xColor = V4d(0.82, 0.15, 0.1, 1.0)
+        let yColor = V4d(0.1, 0.72, 0.1, 1.0)
+        let zColor = V4d(0.15, 0.35, 0.9, 1.0)
+
         ASet.ofList [
-            box (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 1.5)
-            box (V4d(0.1,  0.72, 0.1,  1.0)) (Trafo3d.Scale(1.0, 5.0, 1.0) * Trafo3d.Translation(0.0, 2.5, 0.0))  // N shaft
-            box (V4d(0.1,  0.72, 0.1,  1.0)) (Trafo3d.Scale(2.2, 2.0, 2.2) * Trafo3d.Translation(0.0, 6.0, 0.0))  // N tip
-            box (V4d(0.82, 0.15, 0.1,  1.0)) (Trafo3d.Scale(3.0, 0.75, 0.75) * Trafo3d.Translation(1.5, 0.0, 0.0)) // E
-            box (V4d(0.15, 0.35, 0.9,  1.0)) (Trafo3d.Scale(0.75, 0.75, 3.0) * Trafo3d.Translation(0.0, 0.0, 1.5)) // U
+            // Origin dot
+            sg { Sg.Active active; Sg.View view; Sg.Proj proj; axisBox (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 0.08) }
+            // Axis lines
+            axisLine xColor V3d.IOO
+            axisLine yColor V3d.OIO
+            axisLine zColor V3d.OOI
+            // Axis labels at tips
+            yield! [
+                let tipOffset = axisLength + labelSize * 1.5
+                sg { Sg.Active active; Sg.View view; Sg.Proj proj
+                     Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoX * Trafo3d.Translation(V3d.IOO * tipOffset)))
+                     Sg.Text("X", color = AVal.constant (darken xColor), align = TextAlignment.Center) }
+                sg { Sg.Active active; Sg.View view; Sg.Proj proj
+                     Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoY * Trafo3d.Translation(V3d.OIO * tipOffset)))
+                     Sg.Text("Y", color = AVal.constant (darken yColor), align = TextAlignment.Center) }
+                sg { Sg.Active active; Sg.View view; Sg.Proj proj
+                     Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoZ * Trafo3d.Translation(V3d.OOI * tipOffset)))
+                     Sg.Text("Z", color = AVal.constant (darken zColor), align = TextAlignment.Center) }
+            ]
+            // Ticks + distance labels
+            yield! ticksAndLabels xColor V3d.IOO V3d.OOI textTrafoX
+            yield! ticksAndLabels yColor V3d.OIO V3d.IOO textTrafoY
+            yield! ticksAndLabels zColor V3d.OOI V3d.IOO textTrafoZ
         ]
 
     let buildPrismWireframe = PinGeometry.buildPrismWireframe
@@ -246,6 +306,7 @@ module Revolver =
                         Sg.Active notFullscreen
                         Sg.View view
                         Sg.Proj proj
+                        Sg.Pass RenderPass.passOne
                         Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
                         Sg.Uniform("FlatColor", wireColor)
                         Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
@@ -259,6 +320,7 @@ module Revolver =
                         Sg.Active (AVal.map2 (&&) notFullscreen isSelected)
                         Sg.View view
                         Sg.Proj proj
+                        Sg.Pass RenderPass.passOne
                         Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
                         Sg.BlendMode BlendMode.Blend
                         Sg.DepthTest (AVal.constant DepthTest.None)
@@ -274,9 +336,6 @@ module Revolver =
                 ]
             )
 
-        // V3 Phase 2.11: extracted lines (cut-plane intersection lines and
-        // cylinder edge curves), per-pin toggleable, vertex-colored ribbons drawn
-        // without depth test so they sit on top of the geometry.
         let extractedLines =
             let notFullscreen = AVal.map not fullscreenActive
             let toV4f (c : C4b) =
@@ -533,7 +592,8 @@ module Revolver =
                     Sg.View view
                     Sg.Proj proj
                     Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.0, 0.0, 0.0, 0.0)))
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 1.0, 1.0, 0.02)))
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.OnPointerDown(true, fun e ->
                         match AVal.force editedPin with

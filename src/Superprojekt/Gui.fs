@@ -342,7 +342,6 @@ module Gui =
 
                     button { "Reset to bounds"; Dom.OnClick(fun _ -> env.Emit [ResetClip]) }
                 }
-
                 GuiPins.pinsTabPanel env model
             }
         }

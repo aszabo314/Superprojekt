@@ -655,7 +655,7 @@ module GuiPins =
                     let wireData = selectedPrism |> AVal.map (fun prismOpt ->
                         match prismOpt with
                         | Some prism ->
-                            let pos, idx = Revolver.buildPrismWireframe prism 0.05
+                            let pos, idx = SceneGraph.buildPrismWireframe prism 0.05
                             let t = coreSampleTrafo prism
                             let pos = pos |> Array.map (fun p -> V3f(t.Forward.TransformPos(V3d p)))
                             pos, idx

@@ -8,7 +8,6 @@ open Aardvark.Dom
 open Adaptify
 open Superprojekt
 
-
 module View =
 
     let view (env : Env<Message>) (model : AdaptiveModel) =
@@ -81,11 +80,13 @@ module View =
                 Sg.View view
                 Sg.Proj proj
 
+                Sg.Pass RenderPass.passZero
+                
                 Sg.OnDoubleTap(fun e ->
                     env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
                     false
                 )
-
+                
                 Sg.OnTap(fun e ->
                     let scale =
                         AVal.force model.ActiveDataset
@@ -138,7 +139,7 @@ module View =
                 )
                 
 
-                Revolver.build env info view proj revolverBase revolverActive fullscreenActive model
+                SceneGraph.build env info view proj revolverBase revolverActive fullscreenActive model
             }
 
             Dom.OnKeyDown(fun e ->

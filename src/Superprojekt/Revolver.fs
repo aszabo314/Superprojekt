@@ -234,12 +234,13 @@ module Revolver =
                     | None -> [||], [||])
                 let planeData = pinVal |> AVal.map (fun pinOpt ->
                     match pinOpt with
-                    | Some pin -> buildCutPlaneQuad pin.Prism pin.CutPlane
-                    | None -> [||], [||])
+                    | Some pin -> PinGeometry.buildCutPlaneRefined pin.Prism pin.CutPlane
+                    | None -> [||], [||], [||])
                 let wirePos = wireData |> AVal.map fst
                 let wireIdx = wireData |> AVal.map snd
-                let planePos = planeData |> AVal.map fst
-                let planeIdx = planeData |> AVal.map snd
+                let planePos = planeData |> AVal.map (fun (p,_,_) -> p)
+                let planeCol = planeData |> AVal.map (fun (_,c,_) -> c)
+                let planeIdx = planeData |> AVal.map (fun (_,_,i) -> i)
                 ASet.ofList [
                     sg {
                         Sg.Active notFullscreen
@@ -258,12 +259,15 @@ module Revolver =
                         Sg.Active (AVal.map2 (&&) notFullscreen isSelected)
                         Sg.View view
                         Sg.Proj proj
-                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                        Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.9, 0.3, 0.25)))
-                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                        Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
+                        Sg.BlendMode BlendMode.Blend
+                        Sg.DepthTest (AVal.constant DepthTest.None)
                         Sg.NoEvents
                         Sg.VertexAttributes(
-                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(planePos |> AVal.map (fun p -> ArrayBuffer p :> IBuffer), typeof<V3f>) ])
+                            HashMap.ofList [
+                                string DefaultSemantic.Positions, BufferView(planePos |> AVal.map (fun p -> ArrayBuffer p :> IBuffer), typeof<V3f>)
+                                string DefaultSemantic.Colors,    BufferView(planeCol |> AVal.map (fun c -> ArrayBuffer c :> IBuffer), typeof<V4f>)
+                            ])
                         Sg.Index(BufferView(planeIdx |> AVal.map (fun i -> ArrayBuffer i :> IBuffer), typeof<int>))
                         Sg.Render(planeIdx |> AVal.map Array.length)
                     }
@@ -412,12 +416,9 @@ module Revolver =
                     }
                 ])
 
-        // V3 Phase 2.8/2.9: in-scene cut-plane controls.
-        // 2.8: AcrossAxis rail+handle along the prism axis, dragged to set distance.
-        // 2.9: AlongAxis translucent cap discs on each end, clicked to set angle.
-        // Both visible only for the currently edited / selected pin and only for
-        // the matching CutPlaneMode. Rendered without depth test.
-        let cutPlaneSlider =
+        // Hull picking: click/drag on the cylinder hull to set cut plane.
+        // Replaces the old rail+handle slider (AcrossAxis) and cap-disc picker (AlongAxis).
+        let hullPicking =
             let notFullscreen = AVal.map not fullscreenActive
             let selectedId = model.ScanPins.SelectedPin
             let activeId = model.ScanPins.ActivePlacement
@@ -426,76 +427,42 @@ module Revolver =
                     let id = act |> Option.orElse sel
                     id |> Option.bind (fun id -> HashMap.tryFind id pins))
 
-            let dragInfo : cval<option<V3d * V3d * float * float>> = cval None
-            // For AlongAxis cap drag: stores the cap plane (point on plane + axis normal).
-            let discDrag : cval<option<V3d * V3d>> = cval None
+            let hullDragging : cval<bool> = cval false
 
-            let geometry =
+            let hullGeometry =
                 editedPin |> AVal.map (fun pinOpt ->
                     match pinOpt with
                     | Some pin ->
+                        let p, i = PinGeometry.buildCylinderHull pin.Prism 64
+                        p, i, true
+                    | None -> [||], [||], false)
+
+            let hullPos = hullGeometry |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
+            let hullIdx = hullGeometry |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
+            let hullCnt = hullGeometry |> AVal.map (fun (_,i,_) -> i.Length)
+            let hullActive = (notFullscreen, hullGeometry) ||> AVal.map2 (fun nf (_,_,act) -> nf && act)
+
+            let indicatorGeometry =
+                editedPin |> AVal.map (fun pinOpt ->
+                    match pinOpt with
+                    | Some pin ->
+                        let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                        let thick = max 0.03 (r * 0.04)
                         match pin.CutPlane with
                         | CutPlaneMode.AcrossAxis dist ->
-                            let axis = pin.Prism.AxisDirection |> Vec.normalize
-                            let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                            let railThick = max 0.04 (r * 0.06)
-                            let handleSize = max 0.18 (r * 0.22)
-                            let a0 = pin.Prism.AnchorPoint - axis * pin.Prism.ExtentBackward
-                            let a1 = pin.Prism.AnchorPoint + axis * pin.Prism.ExtentForward
-                            let railP, railI = PinGeometry.buildLineTube a0 a1 railThick
-                            let handleC = pin.Prism.AnchorPoint + axis * dist
-                            let handleP, handleI = PinGeometry.buildHandleBox handleC axis handleSize
-                            railP, railI, handleP, handleI, true
-                        | _ -> [||], [||], [||], [||], false
-                    | None -> [||], [||], [||], [||], false)
-
-            let railPos = geometry |> AVal.map (fun (p,_,_,_,_) -> ArrayBuffer p :> IBuffer)
-            let railIdx = geometry |> AVal.map (fun (_,i,_,_,_) -> ArrayBuffer i :> IBuffer)
-            let railCnt = geometry |> AVal.map (fun (_,i,_,_,_) -> i.Length)
-            let handlePos = geometry |> AVal.map (fun (_,_,p,_,_) -> ArrayBuffer p :> IBuffer)
-            let handleIdx = geometry |> AVal.map (fun (_,_,_,i,_) -> ArrayBuffer i :> IBuffer)
-            let handleCnt = geometry |> AVal.map (fun (_,_,_,i,_) -> i.Length)
-            let acrossActive = (notFullscreen, geometry) ||> AVal.map2 (fun nf (_,_,_,_,act) -> nf && act)
-
-            let alongGeometry =
-                editedPin |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin ->
-                        match pin.CutPlane with
+                            let p, i = PinGeometry.buildHullRing pin.Prism dist thick 64
+                            p, i, true
                         | CutPlaneMode.AlongAxis angleDeg ->
-                            let axis = pin.Prism.AxisDirection |> Vec.normalize
-                            let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                            let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-                            let right = Vec.cross axis up |> Vec.normalize
-                            let fwd = Vec.cross right axis |> Vec.normalize
-                            let topC = pin.Prism.AnchorPoint + axis * pin.Prism.ExtentForward
-                            let botC = pin.Prism.AnchorPoint - axis * pin.Prism.ExtentBackward
-                            let topP, topI = PinGeometry.buildDisc topC axis r 64
-                            let botP, botI = PinGeometry.buildDisc botC axis r 64
-                            let a = angleDeg * Constant.RadiansPerDegree
-                            let dirR = right * cos a + fwd * sin a
-                            let lineThick = max 0.04 (r * 0.05)
-                            let topLineP, topLineI = PinGeometry.buildLineTube (topC - dirR * r) (topC + dirR * r) lineThick
-                            let botLineP, botLineI = PinGeometry.buildLineTube (botC - dirR * r) (botC + dirR * r) lineThick
-                            topP, topI, botP, botI, topLineP, topLineI, botLineP, botLineI, true
-                        | _ -> [||], [||], [||], [||], [||], [||], [||], [||], false
-                    | None -> [||], [||], [||], [||], [||], [||], [||], [||], false)
+                            let p, i = PinGeometry.buildHullLine pin.Prism angleDeg thick
+                            p, i, true
+                    | None -> [||], [||], false)
 
-            let topDiscPos = alongGeometry |> AVal.map (fun (p,_,_,_,_,_,_,_,_) -> ArrayBuffer p :> IBuffer)
-            let topDiscIdx = alongGeometry |> AVal.map (fun (_,i,_,_,_,_,_,_,_) -> ArrayBuffer i :> IBuffer)
-            let topDiscCnt = alongGeometry |> AVal.map (fun (_,i,_,_,_,_,_,_,_) -> i.Length)
-            let botDiscPos = alongGeometry |> AVal.map (fun (_,_,p,_,_,_,_,_,_) -> ArrayBuffer p :> IBuffer)
-            let botDiscIdx = alongGeometry |> AVal.map (fun (_,_,_,i,_,_,_,_,_) -> ArrayBuffer i :> IBuffer)
-            let botDiscCnt = alongGeometry |> AVal.map (fun (_,_,_,i,_,_,_,_,_) -> i.Length)
-            let topLinePos = alongGeometry |> AVal.map (fun (_,_,_,_,p,_,_,_,_) -> ArrayBuffer p :> IBuffer)
-            let topLineIdx = alongGeometry |> AVal.map (fun (_,_,_,_,_,i,_,_,_) -> ArrayBuffer i :> IBuffer)
-            let topLineCnt = alongGeometry |> AVal.map (fun (_,_,_,_,_,i,_,_,_) -> i.Length)
-            let botLinePos = alongGeometry |> AVal.map (fun (_,_,_,_,_,_,p,_,_) -> ArrayBuffer p :> IBuffer)
-            let botLineIdx = alongGeometry |> AVal.map (fun (_,_,_,_,_,_,_,i,_) -> ArrayBuffer i :> IBuffer)
-            let botLineCnt = alongGeometry |> AVal.map (fun (_,_,_,_,_,_,_,i,_) -> i.Length)
-            let alongActive = (notFullscreen, alongGeometry) ||> AVal.map2 (fun nf (_,_,_,_,_,_,_,_,act) -> nf && act)
+            let indPos = indicatorGeometry |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
+            let indIdx = indicatorGeometry |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
+            let indCnt = indicatorGeometry |> AVal.map (fun (_,i,_) -> i.Length)
+            let indActive = (notFullscreen, indicatorGeometry) ||> AVal.map2 (fun nf (_,_,act) -> nf && act)
 
-            let emitAngleFromHit (hit : V3d) =
+            let emitFromHit (hit : V3d) =
                 match AVal.force editedPin with
                 | Some pin ->
                     let axis = pin.Prism.AxisDirection |> Vec.normalize
@@ -503,10 +470,16 @@ module Revolver =
                     let right = Vec.cross axis up |> Vec.normalize
                     let fwd = Vec.cross right axis |> Vec.normalize
                     let v = hit - pin.Prism.AnchorPoint
-                    let lx = Vec.dot v right
-                    let ly = Vec.dot v fwd
-                    let ang = atan2 ly lx * Constant.DegreesPerRadian
-                    env.Emit [ScanPinMsg (SetCutPlaneAngle ang)]
+                    match pin.CutPlane with
+                    | CutPlaneMode.AcrossAxis _ ->
+                        let dist = Vec.dot v axis
+                        let clamped = clamp (-pin.Prism.ExtentBackward) pin.Prism.ExtentForward dist
+                        env.Emit [ScanPinMsg (SetCutPlaneDistance clamped)]
+                    | CutPlaneMode.AlongAxis _ ->
+                        let lx = Vec.dot v right
+                        let ly = Vec.dot v fwd
+                        let ang = atan2 ly lx * Constant.DegreesPerRadian
+                        env.Emit [ScanPinMsg (SetCutPlaneAngle ang)]
                 | None -> ()
 
             let pickRayOf (e : ScenePointerEvent) =
@@ -518,164 +491,81 @@ module Revolver =
                 let p1 = vp.Backward.TransformPosProj(V3d(ndc, 1.0))
                 Ray3d(p0, (p1 - p0) |> Vec.normalize)
 
-            let intersectPlane (ray : Ray3d) (planePt : V3d) (planeN : V3d) =
-                let denom = Vec.dot ray.Direction planeN
-                if abs denom < 1e-10 then None
-                else
-                    let t = Vec.dot (planePt - ray.Origin) planeN / denom
-                    if t < 0.0 then None
-                    else Some (ray.Origin + ray.Direction * t)
+            let intersectCylinder (ray : Ray3d) =
+                match AVal.force editedPin with
+                | Some pin ->
+                    let axis = pin.Prism.AxisDirection |> Vec.normalize
+                    let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                    let anchor = pin.Prism.AnchorPoint
+                    let oc = ray.Origin - anchor
+                    let d_perp = ray.Direction - axis * (Vec.dot ray.Direction axis)
+                    let oc_perp = oc - axis * (Vec.dot oc axis)
+                    let a = Vec.dot d_perp d_perp
+                    let b = 2.0 * Vec.dot oc_perp d_perp
+                    let c = Vec.dot oc_perp oc_perp - r * r
+                    let disc = b * b - 4.0 * a * c
+                    if disc < 0.0 || a < 1e-12 then None
+                    else
+                        let sqrtD = sqrt disc
+                        let t1 = (-b - sqrtD) / (2.0 * a)
+                        let t2 = (-b + sqrtD) / (2.0 * a)
+                        let tryT t =
+                            if t < 0.0 then None
+                            else
+                                let hit = ray.Origin + ray.Direction * t
+                                let axDist = Vec.dot (hit - anchor) axis
+                                if axDist >= -pin.Prism.ExtentBackward && axDist <= pin.Prism.ExtentForward then Some hit
+                                else None
+                        match tryT t1 with
+                        | Some h -> Some h
+                        | None -> tryT t2
+                | None -> None
 
-            let updateAngleFromPointer (e : ScenePointerEvent) =
-                match AVal.force discDrag with
-                | Some (planePt, planeN) ->
-                    match intersectPlane (pickRayOf e) planePt planeN with
-                    | Some hit -> emitAngleFromHit hit
-                    | None -> ()
-                | None -> ()
-
-            let updateFromPointer (e : ScenePointerEvent) =
-                match AVal.force dragInfo with
-                | Some (anchor, axis, extBack, extFwd) ->
-                    let ray = pickRayOf e
-                    let railRay = Ray3d(anchor, axis)
-                    let closest = ray.GetClosestPointOn(railRay)
-                    let t = railRay.GetTOfProjectedPoint(closest)
-                    let dist = clamp -extBack extFwd t
-                    env.Emit [ScanPinMsg (SetCutPlaneDistance dist)]
+            let updateFromPointerRay (e : ScenePointerEvent) =
+                match intersectCylinder (pickRayOf e) with
+                | Some hit -> emitFromHit hit
                 | None -> ()
 
             ASet.ofList [
+                // Transparent hull surface (pickable, invisible)
                 sg {
-                    Sg.Active acrossActive
+                    Sg.Active hullActive
                     Sg.View view
                     Sg.Proj proj
                     Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.1, 0.34, 0.86, 1.0)))
-                    Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.NoEvents
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(railPos, typeof<V3f>) ])
-                    Sg.Index(BufferView(railIdx, typeof<int>))
-                    Sg.Render railCnt
-                }
-                sg {
-                    Sg.Active acrossActive
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 1.0, 1.0, 1.0)))
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.0, 0.0, 0.0, 0.0)))
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.OnPointerDown(true, fun e ->
                         match AVal.force editedPin with
-                        | Some pin ->
-                            match pin.CutPlane with
-                            | CutPlaneMode.AcrossAxis _ ->
-                                let axis = pin.Prism.AxisDirection |> Vec.normalize
-                                transact (fun () ->
-                                    dragInfo.Value <- Some (pin.Prism.AnchorPoint, axis, pin.Prism.ExtentBackward, pin.Prism.ExtentForward))
-                                updateFromPointer e
-                                false
-                            | _ -> true
+                        | Some _ ->
+                            transact (fun () -> hullDragging.Value <- true)
+                            emitFromHit e.WorldPosition
+                            false
                         | None -> true)
                     Sg.OnPointerMove(fun e ->
-                        if (AVal.force dragInfo).IsSome then updateFromPointer e)
+                        if AVal.force hullDragging then updateFromPointerRay e)
                     Sg.OnPointerUp(true, fun _ ->
-                        if (AVal.force dragInfo).IsSome then
-                            transact (fun () -> dragInfo.Value <- None))
+                        if AVal.force hullDragging then
+                            transact (fun () -> hullDragging.Value <- false))
                     Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(handlePos, typeof<V3f>) ])
-                    Sg.Index(BufferView(handleIdx, typeof<int>))
-                    Sg.Render handleCnt
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(hullPos, typeof<V3f>) ])
+                    Sg.Index(BufferView(hullIdx, typeof<int>))
+                    Sg.Render hullCnt
                 }
-                // AlongAxis: top cap disc (pickable).
+                // Cut plane indicator (ring or line on hull)
                 sg {
-                    Sg.Active alongActive
+                    Sg.Active indActive
                     Sg.View view
                     Sg.Proj proj
                     Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.1, 0.34, 0.86, 0.18)))
-                    Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.OnPointerDown(true, fun e ->
-                        match AVal.force editedPin with
-                        | Some pin ->
-                            match pin.CutPlane with
-                            | CutPlaneMode.AlongAxis _ ->
-                                let axis = pin.Prism.AxisDirection |> Vec.normalize
-                                let topC = pin.Prism.AnchorPoint + axis * pin.Prism.ExtentForward
-                                transact (fun () -> discDrag.Value <- Some (topC, axis))
-                                emitAngleFromHit e.WorldPosition
-                                false
-                            | _ -> true
-                        | None -> true)
-                    Sg.OnPointerMove(fun e ->
-                        if (AVal.force discDrag).IsSome then updateAngleFromPointer e)
-                    Sg.OnPointerUp(true, fun _ ->
-                        if (AVal.force discDrag).IsSome then
-                            transact (fun () -> discDrag.Value <- None))
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(topDiscPos, typeof<V3f>) ])
-                    Sg.Index(BufferView(topDiscIdx, typeof<int>))
-                    Sg.Render topDiscCnt
-                }
-                // AlongAxis: bottom cap disc (pickable).
-                sg {
-                    Sg.Active alongActive
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.1, 0.34, 0.86, 0.18)))
-                    Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.OnPointerDown(true, fun e ->
-                        match AVal.force editedPin with
-                        | Some pin ->
-                            match pin.CutPlane with
-                            | CutPlaneMode.AlongAxis _ ->
-                                let axis = pin.Prism.AxisDirection |> Vec.normalize
-                                let botC = pin.Prism.AnchorPoint - axis * pin.Prism.ExtentBackward
-                                transact (fun () -> discDrag.Value <- Some (botC, axis))
-                                emitAngleFromHit e.WorldPosition
-                                false
-                            | _ -> true
-                        | None -> true)
-                    Sg.OnPointerMove(fun e ->
-                        if (AVal.force discDrag).IsSome then updateAngleFromPointer e)
-                    Sg.OnPointerUp(true, fun _ ->
-                        if (AVal.force discDrag).IsSome then
-                            transact (fun () -> discDrag.Value <- None))
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(botDiscPos, typeof<V3f>) ])
-                    Sg.Index(BufferView(botDiscIdx, typeof<int>))
-                    Sg.Render botDiscCnt
-                }
-                // AlongAxis: top diameter line (current angle).
-                sg {
-                    Sg.Active alongActive
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 1.0, 1.0, 1.0)))
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 1.0, 1.0, 0.9)))
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.NoEvents
                     Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(topLinePos, typeof<V3f>) ])
-                    Sg.Index(BufferView(topLineIdx, typeof<int>))
-                    Sg.Render topLineCnt
-                }
-                // AlongAxis: bottom diameter line (current angle).
-                sg {
-                    Sg.Active alongActive
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 1.0, 1.0, 1.0)))
-                    Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.NoEvents
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(botLinePos, typeof<V3f>) ])
-                    Sg.Index(BufferView(botLineIdx, typeof<int>))
-                    Sg.Render botLineCnt
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(indPos, typeof<V3f>) ])
+                    Sg.Index(BufferView(indIdx, typeof<int>))
+                    Sg.Render indCnt
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; extractedLines; cutPlaneSlider])
+        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; extractedLines; hullPicking])

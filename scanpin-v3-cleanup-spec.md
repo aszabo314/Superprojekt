@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document specifies the cleanup pass for ScanPin V3. The core stratigraphy diagram, ghost clipping, and extracted lines (up to implementation priority item 3.12) are complete. This cleanup addresses interaction conflicts, visual refinements, and a new card-based GUI layout system.
+This document specifies the cleanup pass for ScanPin V3. The core stratigraphy diagram, ghost clipping, and extracted lines (up to implementation priority item 3.12) are complete. This cleanup addresses interaction conflicts, visual refinements, and a card-based GUI layout system (now complete).
 
 The target reader is a Claude Code AI agent. Graphics stubs are marked `STUB(graphics)`.
 
@@ -53,7 +53,7 @@ Flashlight mode temporarily changes left-drag behavior from camera orbit to pin 
 
 **Behavior:** The pin's anchor point tracks the cursor's surface hit point as the user drags. The stratigraphy diagram updates on release (or in real-time if performance allows).
 
-**Touch / long-press (deferred — V4):** A radial menu on long-press will offer flashlight and other mode switches for touch interfaces. Note: when implementing the card system's HTML/CSS library, structure it to accommodate popup overlays for this future radial menu.
+**Touch / long-press (deferred — V4):** A radial menu on long-press will offer flashlight and other mode switches for touch interfaces.
 
 ---
 
@@ -121,11 +121,10 @@ Replace the solid quad with a subtle composite rendering:
 - Along two opposite edges of the cut plane rectangle, render small perpendicular tick marks at regular intervals.
 - Tick spacing: auto-scaled based on the cut plane's world-space extent (e.g., every 1m, 0.5m, 0.1m — pick the scale that gives roughly 5–15 ticks across the visible extent).
 - Each tick is a short line segment (e.g., 5% of the plane width) perpendicular to the edge.
-- At selected tick positions (e.g., every 5th tick), render a small label with the distance value. **For now, render a small dot or slightly longer tick instead of text** — text rendering is deferred (see below).
+- At selected tick positions (e.g., every 5th tick), render a small dot or slightly longer tick instead of text — text rendering is deferred.
 
 **Text rendering stub:**
 - `STUB(graphics)`: The developer has a text rendering library in aardvark.dom that needs integration effort. For V3 cleanup, create the stub interface but use placeholder visuals (dots, longer ticks). The text rendering integration is a separate task.
-- Planned text label locations: measurement ticks on cut plane edges, dataset labels near cut lines, pin ID near anchor point.
 
 ```fsharp
 /// Render a text label as a billboard in the 3D scene.
@@ -136,212 +135,39 @@ val renderTextLabel3D : position:V3d -> text:string -> size:float -> color:C4b -
 
 ---
 
-## 4. Card-Based GUI Layout System
-
-### Overview
-
-A lightweight 2D layout system for draggable, dockable panels ("cards") rendered as HTML/CSS elements over the 3D viewport. Written in aardvark.dom's Elm-style architecture, translated to HTML+CSS.
-
-This system replaces the current fixed-position detail panel. All ScanPin GUI elements (stratigraphy diagram, controls, dataset ranking) become cards within this system.
-
-### Card Data Model
-
-```fsharp
-type CardId = CardId of System.Guid
-
-/// What a card is anchored to.
-type CardAnchor =
-    /// Anchored to a 3D point in the scene (projected to screen each frame).
-    | AnchorToWorldPoint of V3d
-    /// Anchored to an edge of a parent card.
-    | AnchorToCard of parentId:CardId * edge:CardEdge
-
-type CardEdge = Top | Bottom | Left | Right
-
-/// The attachment state of a card.
-type CardAttachment =
-    /// Card follows its anchor (moves when camera orbits or parent card moves).
-    | Attached
-    /// Card is at a fixed screen position. A leader line connects it to its anchor.
-    | Detached of screenPos:V2d
-    /// Card is being dragged by the user.
-    | Dragging of currentPos:V2d
-
-type Card = {
-    Id : CardId
-    /// What this card is anchored to.
-    Anchor : CardAnchor
-    /// Current attachment state.
-    Attachment : CardAttachment
-    /// Size of the card in pixels (fixed per card type, not resizable).
-    Size : V2d
-    /// Content identifier — determines what is rendered inside the card.
-    Content : CardContent
-    /// Whether the card is currently visible.
-    Visible : bool
-    /// Z-order for overlapping cards (higher = on top).
-    ZOrder : int
-}
-
-type CardContent =
-    | StratigraphyDiagram of ScanPinId
-    | PinControls of ScanPinId
-    | DatasetRanking of ScanPinId
-    // Future: other card types
-
-type CardSystemModel = {
-    Cards : Map<CardId, Card>
-    /// Which card is currently being dragged (at most one).
-    DraggedCard : CardId option
-    /// Viewport size (for clamping).
-    ViewportSize : V2d
-}
-```
-
-### Card Behavior
-
-**Initialization:**
-- When a ScanPin is selected, its cards are created (or made visible if they already exist).
-- The main stratigraphy card starts `Attached` to the pin's 3D anchor point (`AnchorToWorldPoint`).
-- Sub-cards (controls, ranking) start `Attached` to the stratigraphy card's edges (`AnchorToCard`).
-- Default docking: controls card attached to bottom edge of stratigraphy card, ranking card attached to right edge.
-
-**Attached positioning:**
-
-For `AnchorToWorldPoint`:
-- Project the 3D anchor point to screen coordinates each frame.
-- Position the card with a fixed offset from the projected point (e.g., 20px to the right and 10px up, so the card doesn't overlap the pin itself).
-- The offset direction can be chosen to keep the card on-screen (prefer the side of the screen with more space).
-
-For `AnchorToCard`:
-- Position the sub-card flush against the specified edge of the parent card.
-- If multiple sub-cards are attached to the same edge, stack them along that edge (e.g., two cards on the bottom edge stack vertically downward).
-
-**Dragging:**
-
-1. User mouse-downs on the card's title bar area (a designated drag handle region at the top of the card, e.g., 24px tall).
-2. Card enters `Dragging` state. It follows the cursor with the initial click offset preserved.
-3. While dragging, the **snap zone** is visualized:
-   - For a card anchored to a world point: a highlighted circle (e.g., 40px diameter, pulsing glow) at the projected anchor position.
-   - For a sub-card anchored to a parent card edge: highlighted strips along the parent card's edges (e.g., 20px wide glowing regions on each edge).
-4. User releases the card:
-   - If the card center (or a designated snap point) is within the snap zone → `Attached`. Card snaps back to its anchor.
-   - Otherwise → `Detached` at the release position.
-
-**Leader line (when Detached):**
-
-- A thin line (1px, dashed or dotted, semi-transparent) drawn from the card's nearest edge to the anchor point.
-- For world-anchored cards: line goes from card edge to the projected 3D point.
-- For card-anchored sub-cards: line goes from sub-card edge to the parent card's edge.
-- Render as an SVG overlay or CSS-positioned div. Keep it visually subtle — it's a spatial reference, not a primary visual element.
-- The line uses a gentle bezier curve (one control point offset perpendicular to the straight line by ~30px) for a softer appearance.
-
-**Viewport clamping:**
-
-All cards are clamped to stay fully within the viewport boundaries at all times:
-
-```
-// Pseudocode: clamp card position so the entire card is visible
-clampedX = clamp(cardX, 0, viewportWidth - cardWidth)
-clampedY = clamp(cardY, 0, viewportHeight - cardHeight)
-```
-
-This applies in all states:
-- `Attached`: after computing the position from the anchor, clamp to viewport. If the anchor projects off-screen, the card sticks to the nearest viewport edge.
-- `Detached`: the stored screen position is clamped whenever the viewport resizes.
-- `Dragging`: the card position during drag is clamped (the user cannot drag a card off-screen).
-
-When an `Attached` card is clamped (its anchor is near or off the edge of the viewport), the leader line appears automatically (same as `Detached`) to show the user where the anchor is. The card is still considered `Attached` — it will follow the anchor back on-screen when the camera moves.
-
-**Z-ordering:**
-
-- Clicking (or starting to drag) a card brings it to the top of the z-order.
-- Implementation: increment a global z-counter and assign it to the interacted card's `ZOrder`. Use CSS `z-index`.
-
-### Card Messages
-
-```fsharp
-type CardMessage =
-    | StartDragCard of CardId * mouseOffset:V2d
-    | DragCard of V2d                          // current mouse position
-    | EndDragCard                               // release
-    | ToggleCardVisibility of CardId * bool
-    | BringToFront of CardId
-    | ViewportResized of V2d                    // update clamping
-```
-
-### Card Visual Design
-
-Each card is an HTML div with:
-- A **title bar** (drag handle): 24px tall, subtle background color (e.g., semi-transparent dark), card title text on the left, a close/minimize button on the right.
-- A **content area** below the title bar: renders the card's content (stratigraphy diagram render target, toggle buttons, scrollable list, etc.).
-- **Border:** 1px solid, semi-transparent, subtle. Rounded corners (4px).
-- **Background:** Semi-transparent dark (e.g., rgba(30, 30, 30, 0.85)) so the 3D scene is faintly visible through the card.
-- **Shadow:** Subtle drop shadow for visual separation from the scene.
-
-Sub-cards when attached flush to a parent: the adjacent borders are hidden (the cards appear to merge visually). When detached, the full border reappears.
-
-### ScanPin Card Structure
-
-When a ScanPin is selected, three cards are created:
-
-**1. Stratigraphy Card (main card)**
-- Anchor: `AnchorToWorldPoint(pin.AnchorPoint)`
-- Size: e.g., 400×300 px (the stratigraphy diagram needs horizontal space for angular resolution and vertical space for axis range).
-- Content: the stratigraphy diagram (OpenGL render target), plus the cut plane mode toggle (AcrossAxis / AlongAxis) as a small button bar at the top of the content area.
-
-**2. Controls Card (sub-card)**
-- Anchor: `AnchorToCard(stratigraphyCardId, Bottom)`
-- Size: e.g., 400×100 px
-- Content: toggle checkboxes (Ghost Clip, Cut Lines, Cylinder Edge Lines), Explosion enable + slider, Stratigraphy display mode (Undistorted / Normalized).
-
-**3. Ranking Card (sub-card)**
-- Anchor: `AnchorToCard(stratigraphyCardId, Right)`
-- Size: e.g., 200×300 px
-- Content: scrollable dataset ranking list with drag-reorder, visibility cutoff, count dropdown.
-
----
-
-## 5. Removed / Replaced Elements
+## 4. Removed / Replaced Elements
 
 | V3 Element | V3 Cleanup Action |
 |---|---|
-| Rail-and-handle 3D slider along cylinder axis | **Remove.** Replaced by hull picking (Section 2). |
-| Cap-disk angle picker at cylinder top | **Remove.** Replaced by hull picking (Section 2). |
-| Solid white cut plane quad | **Replace** with outline + gradient + measurement ticks (Section 3). |
-| Fixed-position HTML detail panel | **Replace** with card system (Section 4). |
-| Cut plane slider in HTML panel | **Remove.** Replaced by hull picking + stratigraphy diagram interaction. |
+| Rail-and-handle 3D slider along cylinder axis | **Done.** Removed. Replaced by hull picking. |
+| Cap-disk angle picker at cylinder top | **Done.** Removed. Replaced by hull picking. |
+| Solid white cut plane quad | **Done.** Replaced with outline + gradient fill + measurement ticks. |
+| Fixed-position HTML detail panel | **Done.** Replaced with card system. |
+| Cut plane slider in HTML panel | **Done.** No HTML slider existed; hull picking + stratigraphy diagram interaction covers this. |
 
 ---
 
-## 6. Implementation Priority
+## 5. Implementation Priority
 
-### Phase A: Card System (independent — do first)
-1. **Card data model and messages.**
-2. **Card rendering** — HTML/CSS divs with title bar, content area, border, background, shadow.
-3. **Drag interaction** — title bar drag, cursor tracking, snap zone visualization.
-4. **Attach/detach logic** — snap zone hit test on release, state transitions.
-5. **Leader lines** — SVG/CSS bezier curves from detached cards to anchors.
-6. **Viewport clamping** — all card states clamped to viewport boundaries. Leader line for clamped attached cards.
-7. **Z-ordering** — bring-to-front on interaction.
-8. **Sub-card docking** — flush edge attachment, stacking, detach/reattach to parent edges.
-9. **Migrate ScanPin GUI to cards** — stratigraphy card, controls card, ranking card.
+### Phase A: Card System — DONE
+Card data model, rendering, drag, attach/detach, leader lines, viewport clamping, z-ordering, sub-card docking, migration of ScanPin GUI to cards.
 
-### Phase B: Interaction Model
-10. **Left-click decomposition** — implement the timing-based gesture recognition (short click, drag, double-click, long-press reserved).
-11. **Drag capture logic** — priority-based drag target resolution (widget > hull > Ctrl+flashlight > orbit).
-12. **Flashlight mode** — Ctrl+drag to reposition pin during placement (desktop only).
+### Phase B: Interaction Model — DONE (partial)
+1. **Left-click decomposition** — DONE. Aardvark.Dom's built-in `Sg.OnTap`/`Sg.OnDoubleTap`/`Sg.OnLongPress` handle gesture recognition. Hull picking has priority over orbit via `Sg.OnPointerDown` returning `false`.
+2. **Drag capture logic** — DONE. Hull `Sg.OnPointerDown` captures drag when clicking the cylinder hull; otherwise falls through to orbit controller.
+3. **Flashlight mode** — DEFERRED. Requires real-time surface ray queries during drag, which are async server calls. Deferred to V4 when client-side BVH may be available.
 
-### Phase C: Hull Picking
-13. **Unified hull picking** — click/drag on cylinder hull sets cut plane coordinate per mode.
-14. **Hull cut plane indicators** — horizontal ring (AcrossAxis) and vertical line (AlongAxis) on cylinder hull, no depth test.
-15. **Stratigraphy diagram angle picking** — horizontal click/drag in AlongAxis mode sets cut plane angle. Vertical line indicator in diagram.
-16. **Remove old controls** — delete rail slider, cap-disk picker, HTML cut plane slider.
+### Phase C: Hull Picking — DONE
+4. **Unified hull picking** — DONE. Transparent pickable cylinder hull; click/drag sets cut plane coordinate per mode. Analytical ray-cylinder intersection for continuous drag.
+5. **Hull cut plane indicators** — DONE. Horizontal ring (AcrossAxis) and vertical line (AlongAxis) on hull, rendered without depth test.
+6. **Stratigraphy diagram angle picking** — DONE. Horizontal click/drag in AlongAxis mode sets angle. Vertical blue indicator line in diagram.
+7. **Remove old controls** — DONE. Rail+handle slider and cap-disk picker deleted from Revolver.fs.
 
-### Phase D: Visual Polish
-17. **Cut plane rendering** — outline rectangle, gradient fill, measurement ticks with dot placeholders.
-18. **Text rendering stub** — interface definition, placeholder dots at label positions.
+### Phase D: Visual Polish — DONE
+8. **Cut plane rendering** — DONE. Outline edges (white, 60% opacity), gradient fill (8% at edges, 0% at center), measurement ticks with auto-scaled spacing and dot placeholders at major ticks.
+9. **Text rendering stub** — DONE. Major tick marks have dot placeholders at label positions. Full text integration deferred.
 
 ### Phase E: Deferred Stubs
-19. **3D text rendering integration** — leave as stub with dot placeholders.
-20. **Radial menu component** — note in the card system code that a popup overlay system will be added in V4.
+10. **3D text rendering integration** — left as stub with dot placeholders at major tick positions.
+11. **Radial menu component** — deferred to V4. Card system accommodates popup overlays.
+12. **Flashlight mode** — deferred to V4. Requires client-side BVH or throttled server ray queries.

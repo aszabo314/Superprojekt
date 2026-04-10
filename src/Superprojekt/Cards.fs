@@ -117,7 +117,7 @@ module Cards =
             Class "card-strat-content"
 
             div {
-                Attribute("id", "card-diagram-root")
+                Class "card-diagram-root"
                 selectedPin |> AVal.map (fun pinOpt ->
                     let json =
                         match pinOpt with
@@ -125,11 +125,10 @@ module Cards =
                         | None -> "{\"paths\":[],\"legend\":[]}"
                     Some (Attribute("data-diagram", json)))
                 OnBoot [
+                    "var el = __THIS__;"
                     "var last = '';"
                     "var hadPaths = false;"
                     "function render() {"
-                    "  var el = document.getElementById('card-diagram-root');"
-                    "  if(!el) return;"
                     "  var raw = el.getAttribute('data-diagram') || '{}';"
                     "  if(raw === last) return;"
                     "  try { var data = JSON.parse(raw); } catch(e) { var data = {}; }"
@@ -209,7 +208,8 @@ module Cards =
                     "    svg.appendChild(p);"
                     "  });"
                     "}"
-                    "setInterval(render, 200);"
+                    "render();"
+                    "new MutationObserver(function(){render();}).observe(el, {attributes:true,attributeFilter:['data-diagram']});"
                 ]
             }
 
@@ -707,27 +707,12 @@ module Cards =
                         isCollapsed |> AVal.map (fun c ->
                             if c then Some (Style [Display "none"]) else None)
 
-                        div {
-                            cardVal |> AVal.map (fun cOpt ->
-                                match cOpt with
-                                | Some { Content = StratigraphyDiagram _ } -> None
-                                | _ -> Some (Style [Display "none"]))
-                            stratigraphyContent env model selectedPin
-                        }
-                        div {
-                            cardVal |> AVal.map (fun cOpt ->
-                                match cOpt with
-                                | Some { Content = PinControls _ } -> None
-                                | _ -> Some (Style [Display "none"]))
-                            controlsContent env model selectedPin
-                        }
-                        div {
-                            cardVal |> AVal.map (fun cOpt ->
-                                match cOpt with
-                                | Some { Content = DatasetRanking _ } -> None
-                                | _ -> Some (Style [Display "none"]))
-                            rankingContent env model selectedPin
-                        }
+                        let contentType = AVal.force cardVal |> Option.map (fun c -> c.Content)
+                        match contentType with
+                        | Some (StratigraphyDiagram _) -> stratigraphyContent env model selectedPin
+                        | Some (PinControls _) -> controlsContent env model selectedPin
+                        | Some (DatasetRanking _) -> rankingContent env model selectedPin
+                        | None -> ()
                     }
                 }
             )

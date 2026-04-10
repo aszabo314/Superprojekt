@@ -198,6 +198,21 @@ module StratigraphyView =
             indices.Add(baseIdx); indices.Add(baseIdx + 2); indices.Add(baseIdx + 3)
         positions.ToArray(), colors.ToArray(), indices.ToArray()
 
+    /// Build a vertical angle indicator line for AlongAxis mode.
+    let private buildAngleIndicator (data : StratigraphyData) (angleDeg : float) : V3f[] * V4f[] * int[] =
+        let nCols = data.Columns.Length
+        if nCols = 0 then [||], [||], [||]
+        else
+        let angNorm = ((angleDeg % 360.0) + 360.0) % 360.0
+        let x = angNorm / 360.0 |> clamp 0.0 1.0
+        let half = 0.004
+        let color = V4f(0.2f, 0.6f, 0.9f, 0.85f)
+        let positions = [| V3f(float32 (x - half), 0.0f, 0.01f); V3f(float32 (x + half), 0.0f, 0.01f)
+                           V3f(float32 (x + half), 1.0f, 0.01f); V3f(float32 (x - half), 1.0f, 0.01f) |]
+        let colors = [| color; color; color; color |]
+        let indices = [| 0;1;2; 0;2;3 |]
+        positions, colors, indices
+
     /// Convert a diagram (x [0..1], y [0..1]) coordinate back to a z value (cut plane distance).
     let private yToZ (data : StratigraphyData) (display : StratigraphyDisplayMode) (x : float) (y : float) : float =
         let globalRange =
@@ -244,6 +259,8 @@ module StratigraphyView =
                     match pin.Stratigraphy, pin.CutPlane with
                     | Some data, CutPlaneMode.AcrossAxis dist ->
                         buildIndicator data pin.StratigraphyDisplay dist
+                    | Some data, CutPlaneMode.AlongAxis angleDeg ->
+                        buildAngleIndicator data angleDeg
                     | _ -> [||], [||], [||]
                 | None -> [||], [||], [||])
 
@@ -268,26 +285,29 @@ module StratigraphyView =
 
             let dragging = cval false
 
-            let clickToZ (px : int) (py : int) =
-                let sz = AVal.force size
-                let x = float px / float sz.X |> clamp 0.0 1.0
-                let y = 1.0 - float py / float sz.Y |> clamp 0.0 1.0
-                match AVal.force selectedPin with
-                | Some pin ->
-                    match pin.Stratigraphy with
-                    | Some data -> yToZ data pin.StratigraphyDisplay x y
-                    | None -> 0.0
-                | None -> 0.0
-
-            let emitDist (px : int) (py : int) =
+            let emitCutFromPointer (px : int) (py : int) =
                 if AVal.force isPlacing then
-                    let z = clickToZ px py
-                    env.Emit [ScanPinMsg (SetCutPlaneDistance z)]
+                    let sz = AVal.force size
+                    let x = float px / float sz.X |> clamp 0.0 1.0
+                    let y = 1.0 - float py / float sz.Y |> clamp 0.0 1.0
+                    match AVal.force selectedPin with
+                    | Some pin ->
+                        match pin.CutPlane with
+                        | CutPlaneMode.AcrossAxis _ ->
+                            match pin.Stratigraphy with
+                            | Some data ->
+                                let z = yToZ data pin.StratigraphyDisplay x y
+                                env.Emit [ScanPinMsg (SetCutPlaneDistance z)]
+                            | None -> ()
+                        | CutPlaneMode.AlongAxis _ ->
+                            let angle = x * 360.0
+                            env.Emit [ScanPinMsg (SetCutPlaneAngle angle)]
+                    | None -> ()
 
             Dom.OnPointerDown((fun e ->
                 if e.Button = Button.Left then
                     transact (fun () -> dragging.Value <- true)
-                    emitDist e.OffsetPosition.X e.OffsetPosition.Y
+                    emitCutFromPointer e.OffsetPosition.X e.OffsetPosition.Y
             ), pointerCapture = true)
 
             Dom.OnPointerUp((fun _ ->
@@ -296,7 +316,7 @@ module StratigraphyView =
 
             Dom.OnPointerMove(fun e ->
                 if AVal.force dragging then
-                    emitDist e.OffsetPosition.X e.OffsetPosition.Y)
+                    emitCutFromPointer e.OffsetPosition.X e.OffsetPosition.Y)
 
             Dom.OnContextMenu(ignore, preventDefault = true)
 

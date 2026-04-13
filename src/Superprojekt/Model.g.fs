@@ -1,5 +1,5 @@
-//27bb1c41-9b06-f8ef-9fd6-d4ec8f28a36d
-//8917b16d-8005-0c6b-ff66-9575c48c838e
+//1ae50266-c4fd-3265-ba45-3d39012bb4f0
+//509e5021-b0c4-185b-d36e-d4304a22ff4f
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -39,10 +39,6 @@ type AdaptiveModel(value : Model) =
     let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _PinAxisVertical_ = FSharp.Data.Adaptive.cval(value.PinAxisVertical)
-    let _CoreSampleViewMode_ = FSharp.Data.Adaptive.cval(value.CoreSampleViewMode)
-    let _CoreSampleRotation_ = FSharp.Data.Adaptive.cval(value.CoreSampleRotation)
-    let _CoreSamplePanZ_ = FSharp.Data.Adaptive.cval(value.CoreSamplePanZ)
-    let _CoreSampleZoom_ = FSharp.Data.Adaptive.cval(value.CoreSampleZoom)
     let _DepthShadeOn_ = FSharp.Data.Adaptive.cval(value.DepthShadeOn)
     let _IsolinesOn_ = FSharp.Data.Adaptive.cval(value.IsolinesOn)
     let _ColorMode_ = FSharp.Data.Adaptive.cval(value.ColorMode)
@@ -82,10 +78,6 @@ type AdaptiveModel(value : Model) =
             _ClipBounds_.Value <- value.ClipBounds
             _ScanPins_.Update(value.ScanPins)
             _PinAxisVertical_.Value <- value.PinAxisVertical
-            _CoreSampleViewMode_.Value <- value.CoreSampleViewMode
-            _CoreSampleRotation_.Value <- value.CoreSampleRotation
-            _CoreSamplePanZ_.Value <- value.CoreSamplePanZ
-            _CoreSampleZoom_.Value <- value.CoreSampleZoom
             _DepthShadeOn_.Value <- value.DepthShadeOn
             _IsolinesOn_.Value <- value.IsolinesOn
             _ColorMode_.Value <- value.ColorMode
@@ -118,10 +110,6 @@ type AdaptiveModel(value : Model) =
     member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ScanPins = _ScanPins_
     member __.PinAxisVertical = _PinAxisVertical_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.CoreSampleViewMode = _CoreSampleViewMode_ :> FSharp.Data.Adaptive.aval<CoreSampleViewMode>
-    member __.CoreSampleRotation = _CoreSampleRotation_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.CoreSamplePanZ = _CoreSamplePanZ_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.CoreSampleZoom = _CoreSampleZoom_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.DepthShadeOn = _DepthShadeOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.IsolinesOn = _IsolinesOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ColorMode = _ColorMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>

@@ -35,10 +35,6 @@ type Message =
     | GridEvalLoaded          of ScanPinId * GridEvalData
     | StratigraphyComputed    of ScanPinId * StratigraphyData
     | ScanPinMsg              of ScanPinMessage
-    | SetCoreSampleRotation   of float
-    | SetCoreSamplePanZ       of float
-    | SetCoreSampleZoom       of float
-    | SetCoreSampleViewMode   of CoreSampleViewMode
     | TogglePinAxisVertical
     | ToggleDepthShade
     | ToggleIsolines
@@ -80,7 +76,7 @@ module CardUpdate =
 
     let private cardContentPinId (c : CardContent) =
         match c with
-        | StratigraphyDiagram id | PinControls id | DatasetRanking id -> id
+        | StratigraphyDiagram id | PinControls id -> id
 
     let update (msg : CardMessage) (cs : CardSystemModel) =
         match msg with
@@ -96,13 +92,11 @@ module CardUpdate =
                 let hideOthers = cs.Cards |> HashMap.map (fun _ c -> { c with Visible = false })
                 let stratId = CardId.create()
                 let ctrlId = CardId.create()
-                let rankId = CardId.create()
                 let z = cs.NextZOrder
                 let strat = { Id = stratId; Anchor = AnchorToWorldPoint anchor; Attachment = CardAttached; Size = V2d(310, 385); Content = StratigraphyDiagram pinId; Visible = true; ZOrder = z }
-                let ctrl  = { Id = ctrlId;  Anchor = AnchorToCard(stratId, EdgeBottom); Attachment = CardAttached; Size = V2d(310, 130); Content = PinControls pinId; Visible = true; ZOrder = z + 1 }
-                let rank  = { Id = rankId;  Anchor = AnchorToCard(stratId, EdgeRight);  Attachment = CardAttached; Size = V2d(220, 340); Content = DatasetRanking pinId; Visible = true; ZOrder = z + 2 }
-                let cards = hideOthers |> HashMap.add stratId strat |> HashMap.add ctrlId ctrl |> HashMap.add rankId rank
-                { cs with Cards = cards; NextZOrder = z + 3 }
+                let ctrl  = { Id = ctrlId;  Anchor = AnchorToCard(stratId, EdgeBottom); Attachment = CardAttached; Size = V2d(310, 160); Content = PinControls pinId; Visible = true; ZOrder = z + 1 }
+                let cards = hideOthers |> HashMap.add stratId strat |> HashMap.add ctrlId ctrl
+                { cs with Cards = cards; NextZOrder = z + 2 }
 
         | RemoveCardsForPin pinId ->
             let cards = cs.Cards |> HashMap.map (fun _ c ->
@@ -413,14 +407,6 @@ module Update =
             { model with ActiveDataset = Some dataset }
         | SetDatasetScale(dataset, scale) ->
             { model with DatasetScales = Map.add dataset scale model.DatasetScales }
-        | SetCoreSampleRotation angle ->
-            { model with CoreSampleRotation = angle % Constant.PiTimesTwo }
-        | SetCoreSamplePanZ offset ->
-            { model with CoreSamplePanZ = offset }
-        | SetCoreSampleZoom scale ->
-            { model with CoreSampleZoom = max 0.1 scale }
-        | SetCoreSampleViewMode mode ->
-            { model with CoreSampleViewMode = mode }
         | TogglePinAxisVertical ->
             { model with PinAxisVertical = not model.PinAxisVertical }
         | ToggleDepthShade ->
@@ -590,8 +576,7 @@ module Update =
                     match HashMap.tryFind id sp'.Pins with
                     | Some pin ->
                         let cs = CardUpdate.update (CreateCardsForPin(id, pin.Prism.AnchorPoint)) model.CardSystem
-                        let h = max pin.Prism.ExtentForward pin.Prism.ExtentBackward
-                        { model with CoreSampleRotation = 0.0; CoreSamplePanZ = 0.0; CoreSampleZoom = h; CardSystem = cs }
+                        { model with CardSystem = cs }
                     | None ->
                         let cs = CardUpdate.update (RemoveCardsForPin id) model.CardSystem
                         { model with CardSystem = cs }
@@ -610,7 +595,7 @@ module Update =
                         let cs = model.CardSystem
                         let cards = cs.Cards |> HashMap.map (fun _ c ->
                             match c.Content with
-                            | StratigraphyDiagram pid | PinControls pid | DatasetRanking pid when pid = id ->
+                            | StratigraphyDiagram pid | PinControls pid when pid = id ->
                                 match c.Anchor with
                                 | AnchorToWorldPoint _ -> { c with Anchor = AnchorToWorldPoint anchor }
                                 | _ -> c

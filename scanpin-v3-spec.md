@@ -19,6 +19,7 @@ All core phases complete:
 - **Phase 2** (3D slider → hull picking, ghost clipping, extracted lines) — done
 - **Phase 3.12** (explosion view) — done
 - **V3 Cleanup** (card GUI, interaction model, hull picking, cut plane polish, 3D text labels) — done
+- **Phase 4.15** (remove V2 sub-viewport code + GUI) — done
 
 Remaining items below.
 
@@ -50,26 +51,6 @@ Driven by `pin.BetweenSpaceHover`:
 - Prototype quality; edge artifacts acceptable.
 
 ---
-
-## Phase 4 — Polish
-
-### 4.15 Remove V2 sub-viewport code + GUI
-
-Files to gut:
-
-- `GuiPins.fs` — the entire core-sample `renderControl` block (the second
-  `renderControl { }` inside `pinDiagram`), the side/top view buttons.
-- `Model.fs` — `CoreSampleViewMode`, `CoreSampleRotation`, `CoreSamplePanZ`,
-  `CoreSampleZoom` fields.
-- `Update.fs` — corresponding messages: `SetCoreSampleRotation`,
-  `SetCoreSamplePanZ`, `SetCoreSampleZoom`, `SetCoreSampleViewMode`.
-- CSS: `.pin-mini-wrapper`, `.pin-mini-view`.
-
-### 4.16 Serialization
-
-Extend `ScanPinSerialize.serializePin` to write the new fields:
-`stratigraphyDisplay`, `ghostClip`, `extractedLines`, `explosion`. (No
-deserialization yet — none exists for V1/V2 either.)
 
 ---
 

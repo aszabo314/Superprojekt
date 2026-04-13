@@ -149,24 +149,24 @@ module Cards =
                     sprintf "  svg.setAttribute('width', '%.0f');" svgW
                     sprintf "  svg.setAttribute('height', '%.0f');" svgH
                     sprintf "  svg.setAttribute('viewBox', '0 0 %.0f %.0f');" svgW svgH
-                    "  svg.style.background = '#1e293b';"
+                    "  svg.style.background = '#fafbfc';"
                     "  svg.style.borderRadius = '3px';"
                     "  svg.style.display = 'block';"
                     "  el.appendChild(svg);"
                     sprintf "  var ax = document.createElementNS(ns, 'line');"
                     sprintf "  ax.setAttribute('x1','%.0f'); ax.setAttribute('y1','%.0f');" pad (svgH - pad)
                     sprintf "  ax.setAttribute('x2','%.0f'); ax.setAttribute('y2','%.0f');" (svgW - pad) (svgH - pad)
-                    "  ax.setAttribute('stroke','#475569'); ax.setAttribute('stroke-width','1');"
+                    "  ax.setAttribute('stroke','#94a3b8'); ax.setAttribute('stroke-width','1');"
                     "  svg.appendChild(ax);"
                     sprintf "  var ay = document.createElementNS(ns, 'line');"
                     sprintf "  ay.setAttribute('x1','%.0f'); ay.setAttribute('y1','%.0f');" pad pad
                     sprintf "  ay.setAttribute('x2','%.0f'); ay.setAttribute('y2','%.0f');" pad (svgH - pad)
-                    "  ay.setAttribute('stroke','#475569'); ay.setAttribute('stroke-width','1');"
+                    "  ay.setAttribute('stroke','#94a3b8'); ay.setAttribute('stroke-width','1');"
                     "  svg.appendChild(ay);"
                     "  if(!hasPaths) {"
                     "    var msg = document.createElementNS(ns, 'text');"
                     sprintf "    msg.setAttribute('x','%.0f'); msg.setAttribute('y','%.0f');" (svgW * 0.5) (svgH * 0.5)
-                    "    msg.setAttribute('text-anchor','middle'); msg.setAttribute('fill','#475569');"
+                    "    msg.setAttribute('text-anchor','middle'); msg.setAttribute('fill','#94a3b8');"
                     "    msg.setAttribute('font-size','11'); msg.setAttribute('font-family','system-ui,sans-serif');"
                     "    msg.textContent = 'Awaiting cut data\u2026';"
                     "    svg.appendChild(msg);"
@@ -176,7 +176,7 @@ module Cards =
                     "  function addText(x,y,txt,anchor) {"
                     "    var t = document.createElementNS(ns, 'text');"
                     "    t.setAttribute('x',x); t.setAttribute('y',y);"
-                    "    t.setAttribute('font-size','9'); t.setAttribute('fill','#94a3b8');"
+                    "    t.setAttribute('font-size','9'); t.setAttribute('fill','#64748b');"
                     "    t.setAttribute('font-family','system-ui,sans-serif');"
                     "    if(anchor) t.setAttribute('text-anchor',anchor);"
                     "    t.textContent = txt; svg.appendChild(t);"
@@ -189,7 +189,7 @@ module Cards =
                     "  }"
                     "  var tip = document.createElementNS(ns, 'text');"
                     "  tip.setAttribute('x','5'); tip.setAttribute('y','12');"
-                    "  tip.setAttribute('font-size','10'); tip.setAttribute('fill','#e2e8f0');"
+                    "  tip.setAttribute('font-size','10'); tip.setAttribute('fill','#0f172a');"
                     "  tip.setAttribute('font-family','system-ui,sans-serif');"
                     "  tip.setAttribute('font-weight','600');"
                     "  tip.style.pointerEvents = 'none';"
@@ -226,8 +226,13 @@ module Cards =
                 let isPlacing = (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
                 StratigraphyView.render env isPlacing selectedPin
             }
+        }
+
+    let private controlsContent (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
+        div {
+            Class "card-controls-content"
             div {
-                Class "card-btn-row mt-4"
+                Class "card-btn-row"
                 button {
                     selectedPin |> AVal.map (fun po ->
                         match po with
@@ -251,11 +256,6 @@ module Cards =
                     "Normalized"
                 }
             }
-        }
-
-    let private controlsContent (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
-        div {
-            Class "card-controls-content"
             div {
                 Class "card-btn-row"
                 button {
@@ -350,111 +350,12 @@ module Cards =
             }
         }
 
-    let private rankingContent (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
-        let selectedGridEval = selectedPin |> AVal.map (Option.bind (fun p -> p.GridEval))
-        div {
-            Class "card-ranking-content"
-            div {
-                Class "rank-controls"
-                label {
-                    "Top K "
-                    input {
-                        Attribute("type", "number")
-                        Attribute("min", "1")
-                        Class "input-xs"
-                        RankingState.topK |> AVal.map (fun k -> Some (Attribute("value", string k)))
-                        Dom.OnInput(fun e ->
-                            match System.Int32.TryParse(e.Value) with
-                            | true, k when k >= 1 -> transact (fun () -> RankingState.topK.Value <- k)
-                            | _ -> ())
-                    }
-                }
-                label {
-                    input {
-                        Attribute("type", "checkbox")
-                        checkedIf RankingState.rankFadeOn
-                        Dom.OnChange(fun _ ->
-                            transact (fun () -> RankingState.rankFadeOn.Value <- not RankingState.rankFadeOn.Value))
-                    }
-                    "Rank fade"
-                }
-            }
-            div {
-                Class "rank-list"
-                selectedGridEval |> AVal.map (fun geOpt ->
-                    let names =
-                        match geOpt with
-                        | Some ge -> ge.DatasetStats |> Array.map (fun s -> s.MeshName) |> Array.toList
-                        | None -> []
-                    RankingState.ensureDatasets names
-                    Some (Attribute("data-names", System.String.Join("|", names))))
-                RankingState.datasetOrder
-                |> AVal.map IndexList.ofList
-                |> AList.ofAVal
-                |> AList.map (fun name ->
-                    let statsOpt =
-                        selectedGridEval |> AVal.map (fun geOpt ->
-                            match geOpt with
-                            | Some ge -> ge.DatasetStats |> Array.tryFind (fun s -> s.MeshName = name)
-                            | None -> None)
-                    let isHidden = RankingState.datasetHidden |> ASet.contains name
-                    let rank = RankingState.rankOf name
-                    let inK = RankingState.inTopK name
-                    div {
-                        (isHidden, inK) ||> AVal.map2 (fun h k ->
-                            let cls =
-                                if h then "rank-row hidden"
-                                elif not k then "rank-row out-of-topk"
-                                else "rank-row"
-                            Some (Class cls))
-                        div {
-                            Class "rank-badge"
-                            rank |> AVal.map (fun r ->
-                                match r with
-                                | Some i -> sprintf "#%d" (i + 1)
-                                | None -> "\u2014")
-                        }
-                        div {
-                            Class "rank-name"
-                            shortName name
-                        }
-                        div {
-                            Class "rank-variance"
-                            statsOpt |> AVal.map (fun so ->
-                                match so with
-                                | Some s -> sprintf "\u03c3=%.1f" (sqrt s.ZVariance)
-                                | None -> "\u2014")
-                        }
-                        div {
-                            Class "rank-buttons"
-                            button {
-                                Class "rank-move"
-                                Dom.OnClick(fun _ -> RankingState.move name -1)
-                                "\u25b2"
-                            }
-                            button {
-                                Class "rank-move"
-                                Dom.OnClick(fun _ -> RankingState.move name 1)
-                                "\u25bc"
-                            }
-                            button {
-                                Class "rank-toggle"
-                                Dom.OnClick(fun _ -> RankingState.toggleHidden name)
-                                isHidden |> AVal.map (fun h -> if h then "Show" else "Hide")
-                            }
-                        }
-                    }
-                )
-            }
-        }
-
     // ── Card title by content type ──────────────────────────────────
 
     let private cardTitle (content : CardContent) =
         match content with
         | StratigraphyDiagram _ -> "Stratigraphy"
         | PinControls _ -> "Controls"
-        | DatasetRanking _ -> "Datasets"
 
     // ── Main card system renderer ───────────────────────────────────
 
@@ -709,7 +610,6 @@ module Cards =
                         match contentType with
                         | Some (StratigraphyDiagram _) -> stratigraphyContent env model selectedPin
                         | Some (PinControls _) -> controlsContent env model selectedPin
-                        | Some (DatasetRanking _) -> rankingContent env model selectedPin
                         | None -> ()
                     }
                 }

@@ -42,10 +42,6 @@ type Model =
 
         ScanPins              : ScanPinModel
         PinAxisVertical       : bool
-        CoreSampleViewMode    : CoreSampleViewMode
-        CoreSampleRotation    : float
-        CoreSamplePanZ        : float
-        CoreSampleZoom        : float
         DepthShadeOn          : bool
         IsolinesOn            : bool
         ColorMode             : bool
@@ -84,10 +80,6 @@ module Model =
 
             ScanPins              = ScanPinModel.initial
             PinAxisVertical       = false
-            CoreSampleViewMode    = SideView
-            CoreSampleRotation    = 0.0
-            CoreSamplePanZ        = 0.0
-            CoreSampleZoom        = 4.0
             DepthShadeOn          = true
             IsolinesOn            = true
             ColorMode             = false

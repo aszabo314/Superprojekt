@@ -602,10 +602,23 @@ module SceneGraph =
                         let p1 = pin.Prism.AnchorPoint + axis * pin.Prism.ExtentForward
                         let cyl = Cylinder3d(p0, p1, r)
                         printfn "[HULL] pickCylinder updated: p0=%A p1=%A r=%.3f axis=%A anchor=%A extB=%.3f extF=%.3f" p0 p1 r axis pin.Prism.AnchorPoint pin.Prism.ExtentBackward pin.Prism.ExtentForward
-                        cyl
+                        
+                        let b = Intersectable.cylinder cyl
+                        
+                        { new IIntersectable with
+                            member this.Intersects(ray, tmin, tmax, t, pt, n) =
+                                let res = b.Intersects(ray, tmin, tmax, &t, &pt, &n)
+                                printfn "[HULL] Intersect called: ray=%A tmin=%.3f tmax=%.3f result=%b hitT=%.3f" ray tmin tmax res t
+                                res
+                            member this.BoundingBox =
+                                Box3d.Infinite
+                            
+                        }
+                        
+                        //cyl
                     | None ->
                         printfn "[HULL] pickCylinder: no edited pin"
-                        Cylinder3d(V3d.Zero, V3d.OOI, 0.001))
+                        Intersectable.cylinder ( Cylinder3d(V3d.Zero, V3d.OOI, 0.001)))
 
             // Dummy single-triangle for the pick node (degenerate, invisible)
             let dummyPos = AVal.constant (ArrayBuffer [| V3f.Zero; V3f.OOI * 0.001f; V3f.IOO * 0.001f |] :> IBuffer)
@@ -617,8 +630,7 @@ module SceneGraph =
                     Sg.Active hullActive
                     Sg.View view
                     Sg.Proj proj
-                    Sg.Intersectable (pickCylinder |> AVal.map Intersectable.cylinder)
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Intersectable (pickCylinder) //|> AVal.map Intersectable.cylinder)
                     Sg.Uniform("FlatColor", AVal.constant (V4d(0.0, 0.0, 0.0, 0.0)))
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.OnPointerDown(true, fun e ->
@@ -639,6 +651,7 @@ module SceneGraph =
                             transact (fun () -> hullDragging.Value <- false))
                     Sg.VertexAttributes(
                         HashMap.ofList [ string DefaultSemantic.Positions, BufferView(dummyPos, typeof<V3f>) ])
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
                     Sg.Index(BufferView(dummyIdx, typeof<int>))
                     Sg.Render (AVal.constant 3)
                 }

@@ -17,7 +17,7 @@ module View =
         let cursorPosition = cval None
         let shiftHeld      = cval false
         let spaceHeld      = cval false
-        let logVisible     = cval true
+        let logVisible     = cval false
         let hoverCoord     = cval<V3d option> None
         let viewportSize   = cval (V2i(1, 1))
 
@@ -81,6 +81,20 @@ module View =
                 Sg.Proj proj
 
                 Sg.Pass RenderPass.passZero
+                
+                sg {
+                    Sg.Intersectable (Intersectable.sphere (Sphere3d(V3d.OOI*3.0, 1.0)))
+                    Sg.OnClick(fun e ->
+                        env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
+                        false
+                    )
+                    Sg.Shader {
+                        DefaultSurfaces.trafo
+                        DefaultSurfaces.constantColor C4f.AliceBlue
+                    }
+                    Primitives.Sphere Sphere3d.Unit
+                    
+                }
                 
                 Sg.OnDoubleTap(fun e ->
                     env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]

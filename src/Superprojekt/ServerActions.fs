@@ -6,17 +6,6 @@ open Aardvark.Dom
 
 module ServerActions =
 
-    let init (env : Env<Message>) =
-        env.Emit [LogDebug "fetching datasets..."]
-        task {
-            try
-                let! datasets = MeshData.fetchDatasets MeshView.apiBase.Value
-                env.Emit [LogDebug (sprintf "datasets: %A" datasets)]
-                env.Emit [DatasetsLoaded datasets]
-            with e ->
-                env.Emit [LogDebug (sprintf "datasets fetch failed: %A" e)]
-        } |> ignore
-
     let loadDataset (env : Env<Message>) (dataset : string) =
         env.Emit [LogDebug (sprintf "loading dataset %s..." dataset)]
         task {
@@ -32,6 +21,21 @@ module ServerActions =
                 env.Emit [ClipBoundsLoaded bboxes]
             with e ->
                 env.Emit [LogDebug (sprintf "%s bboxes failed: %A" dataset e)]
+        } |> ignore
+
+    let init (env : Env<Message>) =
+        env.Emit [LogDebug "fetching datasets..."]
+        task {
+            try
+                let! datasets = MeshData.fetchDatasets MeshView.apiBase.Value
+                env.Emit [LogDebug (sprintf "datasets: %A" datasets)]
+                env.Emit [DatasetsLoaded datasets]
+                let autoLoad = "Hessigheim"
+                if datasets |> Array.exists (fun d -> d = autoLoad) then
+                    env.Emit [SetActiveDataset autoLoad]
+                    loadDataset env autoLoad
+            with e ->
+                env.Emit [LogDebug (sprintf "datasets fetch failed: %A" e)]
         } |> ignore
 
     let triggerFilter (env : Env<Message>) (model : AdaptiveModel) (renderPos : V3d) =

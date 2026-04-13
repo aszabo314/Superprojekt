@@ -294,47 +294,42 @@ module PinGeometry =
         addEdgeTube corners.[2] corners.[3]
         addEdgeTube corners.[3] corners.[0]
 
-        // Measurement ticks along two opposite edges
-        let tickScale =
-            let ext = max extentU extentV
-            if ext > 10.0 then 2.0
-            elif ext > 5.0 then 1.0
-            elif ext > 2.0 then 0.5
-            elif ext > 0.5 then 0.1
-            else 0.05
-        let tickLen = min extentU extentV * 0.05
-        let tickColor = V4f(1.0f, 1.0f, 1.0f, 0.4f)
-        let addTick (origin : V3d) (perpDir : V3d) (isMajor : bool) =
-            let len = if isMajor then tickLen * 1.8 else tickLen
-            let i0 = positions.Count
-            let thick = lineThick * 0.5
-            let a = origin
-            let b = origin + perpDir * len
-            let side = Vec.cross (b - a) axis
-            let side = if side.Length < 1e-10 then Vec.cross (b - a) right else side
-            let side = side |> Vec.normalize |> (*) (thick * 0.5)
-            positions.Add(V3f(a + side)); positions.Add(V3f(a - side))
-            positions.Add(V3f(b + side)); positions.Add(V3f(b - side))
-            for _ in 1..4 do colors.Add(tickColor)
-            indices.Add(i0); indices.Add(i0+1); indices.Add(i0+2)
-            indices.Add(i0+1); indices.Add(i0+3); indices.Add(i0+2)
-            ()
+        // Grid lines spanning the full plane. ~4 ticks per metre.
+        let tickScale = 0.25
+        let gridColor = V4f(1.0f, 1.0f, 1.0f, 0.15f)
+        let majorGridColor = V4f(1.0f, 1.0f, 1.0f, 0.3f)
+        let gridThick = lineThick * 0.4
+        let addGridLine (a : V3d) (b : V3d) (isMajor : bool) =
+            let dir = (b - a)
+            if dir.Length > 1e-10 then
+                let d = dir |> Vec.normalize
+                let perp1 = Vec.cross d axis
+                let perp = if perp1.Length < 1e-10 then Vec.cross d right |> Vec.normalize else perp1 |> Vec.normalize
+                let off = perp * gridThick * 0.5
+                let i0 = positions.Count
+                positions.Add(V3f(a + off)); positions.Add(V3f(a - off))
+                positions.Add(V3f(b + off)); positions.Add(V3f(b - off))
+                let c = if isMajor then majorGridColor else gridColor
+                for _ in 1..4 do colors.Add(c)
+                indices.Add(i0); indices.Add(i0+1); indices.Add(i0+2)
+                indices.Add(i0+1); indices.Add(i0+3); indices.Add(i0+2)
 
-        // Ticks along edge 0→1 (inward = toward edge 3→2)
-        let perpIn1 = edgeV |> Vec.normalize
-        let nTicks1 = int (extentU / tickScale)
-        for i in 0 .. nTicks1 do
+        // U-direction grid lines (parallel to edge 0→3, spaced along 0→1)
+        let nTicksU = int (extentU / tickScale)
+        for i in 0 .. nTicksU do
             let t = float i * tickScale / extentU
             if t <= 1.0 then
-                let pt = corners.[0] + (corners.[1] - corners.[0]) * t
-                addTick pt perpIn1 (i % 5 = 0)
-        // Ticks along edge 3→2 (inward = toward edge 0→1)
-        let perpIn2 = -perpIn1
-        for i in 0 .. nTicks1 do
-            let t = float i * tickScale / extentU
+                let a = corners.[0] + (corners.[1] - corners.[0]) * t
+                let b = corners.[3] + (corners.[2] - corners.[3]) * t
+                addGridLine a b (i % 4 = 0)
+        // V-direction grid lines (parallel to edge 0→1, spaced along 0→3)
+        let nTicksV = int (extentV / tickScale)
+        for i in 0 .. nTicksV do
+            let t = float i * tickScale / extentV
             if t <= 1.0 then
-                let pt = corners.[3] + (corners.[2] - corners.[3]) * t
-                addTick pt perpIn2 (i % 5 = 0)
+                let a = corners.[0] + (corners.[3] - corners.[0]) * t
+                let b = corners.[1] + (corners.[2] - corners.[1]) * t
+                addGridLine a b (i % 4 = 0)
 
         positions.ToArray(), colors.ToArray(), indices.ToArray()
 
@@ -384,32 +379,37 @@ module PinGeometry =
                     let value = float i * tickScale
                     yield (labelPos, sprintf "%.2g" value, perpIn, edgeU |> Vec.normalize) ]
 
-    /// Tick label structure: list of (unitT, text) pairs that only depend on prism geometry.
-    /// unitT is in [0,1] along the edge. Rebuilds only when prism (radius/extents) changes.
+    /// Label edge: U = along edge 0→1 (bottom), V = along edge 0→3 (left).
+    type TickEdge = EdgeU | EdgeV
+
+    /// Tick label structure: list of (edge, unitT, text) tuples that only depend on prism geometry.
+    /// Labels at every 1m along both U and V edges, showing local coordinate (distance from anchor).
     let tickLabelStructure (prism : SelectionPrism) =
         let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
         let hw = r * 1.2
         let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
         let extentU = hw * 2.0
         let extentV = hh * 2.0
-        let tickScale =
-            let ext = max extentU extentV
-            if ext > 10.0 then 2.0
-            elif ext > 5.0 then 1.0
-            elif ext > 2.0 then 0.5
-            elif ext > 0.5 then 0.1
-            else 0.05
-        let nTicks = int (extentU / tickScale)
-        [ for i in 0 .. nTicks do
-            if i % 5 = 0 && i > 0 then
+        let tickScale = 1.0
+        let fmt (v : float) = if abs v < 0.005 then "0" else sprintf "%.2f" v
+        let uLabels =
+            let nTicks = int (extentU / tickScale)
+            [ for i in 0 .. nTicks do
                 let t = float i * tickScale / extentU
                 if t <= 1.0 then
-                    yield (t, sprintf "%.2g" (float i * tickScale)) ]
+                    let localU = float i * tickScale - hw
+                    yield (EdgeU, t, fmt localU) ]
+        let vLabels =
+            let nTicks = int (extentV / tickScale)
+            [ for i in 0 .. nTicks do
+                let t = float i * tickScale / extentV
+                if t <= 1.0 then
+                    let localV = float i * tickScale - hh
+                    yield (EdgeV, t, fmt localV) ]
+        uLabels @ vLabels
 
-    /// Trafo that places a single tick label at unitT along the cut plane edge.
-    /// The label lives in its own coordinate frame (X=edgeDir, Y=perpIn, Z=planeNormal)
-    /// at the correct world position, scaled by labelSize.
-    let tickLabelWorldTrafo (prism : SelectionPrism) (cutPlane : CutPlaneMode) (unitT : float) =
+    /// Trafo that places a single tick label at unitT along the given edge.
+    let tickLabelWorldTrafo (prism : SelectionPrism) (cutPlane : CutPlaneMode) (edge : TickEdge) (unitT : float) =
         let axis = prism.AxisDirection |> Vec.normalize
         let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
         let right = Vec.cross axis up |> Vec.normalize
@@ -417,7 +417,7 @@ module PinGeometry =
         let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
         let hw = r * 1.2
         let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
-        let corner0, edgeDir, corner1, edgeV, extentU, extentV =
+        let corners =
             match cutPlane with
             | CutPlaneMode.AlongAxis angleDeg ->
                 let a = angleDeg * Constant.RadiansPerDegree
@@ -425,19 +425,53 @@ module PinGeometry =
                 let center = prism.AnchorPoint + axis * (prism.ExtentForward - prism.ExtentBackward) * 0.5
                 let c0 = center - planeDir * hw - axis * hh
                 let c1 = center + planeDir * hw - axis * hh
-                c0, planeDir |> Vec.normalize, c1, axis, hw * 2.0, hh * 2.0
+                let c3 = center - planeDir * hw + axis * hh
+                c0, c1, c3, planeDir |> Vec.normalize, axis |> Vec.normalize
             | CutPlaneMode.AcrossAxis dist ->
                 let center = prism.AnchorPoint + axis * dist
                 let c0 = center - right * hw - fwd * hw
                 let c1 = center + right * hw - fwd * hw
-                c0, right |> Vec.normalize, c1, fwd, hw * 2.0, hw * 2.0
-        let tickLen = min extentU extentV * 0.05
-        let perpIn = edgeV |> Vec.normalize
-        let pt = corner0 + (corner1 - corner0) * unitT
-        let labelPos = pt + perpIn * tickLen * 2.5
-        let planeNormal = Vec.cross edgeDir perpIn |> Vec.normalize
-        let labelSize = 0.06
-        let m = M44d.FromCols(V4d(edgeDir, 0.0), V4d(perpIn, 0.0), V4d(planeNormal, 0.0), V4d(labelPos, 1.0))
+                let c3 = center - right * hw + fwd * hw
+                c0, c1, c3, right |> Vec.normalize, fwd |> Vec.normalize
+        let c0, c1, c3, edgeDirU, edgeDirV = corners
+        let labelSize = 0.05
+        let offset = labelSize * 1.5
+        match edge with
+        | EdgeU ->
+            let pt = c0 + (c1 - c0) * unitT - edgeDirV * offset
+            let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
+            let m = M44d.FromCols(V4d(edgeDirU, 0.0), V4d(edgeDirV, 0.0), V4d(planeNormal, 0.0), V4d(pt, 1.0))
+            Trafo3d(m, m.Inverse) * Trafo3d.Scale(labelSize)
+        | EdgeV ->
+            let pt = c0 + (c3 - c0) * unitT - edgeDirU * offset
+            let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
+            let m = M44d.FromCols(V4d(edgeDirU, 0.0), V4d(edgeDirV, 0.0), V4d(planeNormal, 0.0), V4d(pt, 1.0))
+            Trafo3d(m, m.Inverse) * Trafo3d.Scale(labelSize)
+
+    /// Trafo for the centroid label, placed near corner0 of the cut plane.
+    let centroidLabelTrafo (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
+        let axis = prism.AxisDirection |> Vec.normalize
+        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
+        let right = Vec.cross axis up |> Vec.normalize
+        let fwd = Vec.cross right axis |> Vec.normalize
+        let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+        let hw = r * 1.2
+        let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
+        let corner0, edgeDirU, edgeDirV =
+            match cutPlane with
+            | CutPlaneMode.AlongAxis angleDeg ->
+                let a = angleDeg * Constant.RadiansPerDegree
+                let planeDir = right * cos a + fwd * sin a
+                let center = prism.AnchorPoint + axis * (prism.ExtentForward - prism.ExtentBackward) * 0.5
+                center - planeDir * hw - axis * hh, planeDir |> Vec.normalize, axis |> Vec.normalize
+            | CutPlaneMode.AcrossAxis dist ->
+                let center = prism.AnchorPoint + axis * dist
+                center - right * hw - fwd * hw, right |> Vec.normalize, fwd |> Vec.normalize
+        let labelSize = 0.04
+        let offset = labelSize * 2.0
+        let pt = corner0 - edgeDirU * offset - edgeDirV * offset
+        let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
+        let m = M44d.FromCols(V4d(edgeDirU, 0.0), V4d(edgeDirV, 0.0), V4d(planeNormal, 0.0), V4d(pt, 1.0))
         Trafo3d(m, m.Inverse) * Trafo3d.Scale(labelSize)
 
     /// Solid cylinder hull surface (for picking). Returns positions and indices.

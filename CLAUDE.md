@@ -22,6 +22,26 @@ The client is thin and must work on desktop and mobile. The server does all heav
 - Light theme, high contrast, print-appropriate — suitable for publication
 - GUI must be understandable to a non-expert at first glance
 
+## Adaptive performance (critical)
+
+In the scene graph, **never depend on an entire record when you only need a subset of its fields**. The Elm-style model replaces entire records on every update, so an `AVal.map` over a full `ScanPin` (or similar) will fire on *any* field change — even fields the computation doesn't use.
+
+**Rule: project individual fields into separate `aval`s early, then build the dependency graph from those.**
+
+```fsharp
+// BAD — rebuilds geometry on every pin change (cut plane drag, selection, etc.)
+let geo = pinVal |> AVal.map (fun po -> ... use po.Prism and po.Stratigraphy ...)
+
+// GOOD — only rebuilds when prism or stratigraphy actually change
+let prismVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
+let stratVal = pinVal |> AVal.map (fun po -> po |> Option.bind (fun p -> p.Stratigraphy))
+let geo = (prismVal, stratVal) ||> AVal.map2 (fun prism strat -> ...)
+```
+
+For scene graph nodes (`Sg.Text`, `sg { ... }`), this matters even more: rebuilding an `AList` of sg nodes destroys and recreates GPU resources (font atlases, draw calls). Instead:
+- **Split structure from placement.** Build static sg node lists from slowly-changing data (e.g. tick count/text from prism geometry). Use adaptive `Sg.Trafo` for fast-changing placement (e.g. cut plane position → trafo update is just a uniform, no sg rebuild).
+- **Push adaptivity down.** A parent `AList.ofAVal` that rebuilds all children is expensive. An `AVal`-driven `Sg.Trafo` on each stable child is cheap.
+
 ## Client architecture
 
 Elm-style: `Model` → `Update.update` → `View.view` → `Boot.run`

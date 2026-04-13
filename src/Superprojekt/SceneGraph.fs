@@ -300,11 +300,11 @@ module SceneGraph =
                 let labelNodes =
                     tickStructure
                     |> AVal.map (fun labels ->
-                        labels |> List.map (fun (unitT, text) ->
+                        labels |> List.map (fun (edge, unitT, text) ->
                             let trafo =
                                 (prismVal, cutPlaneVal) ||> AVal.map2 (fun po co ->
                                     match po, co with
-                                    | Some prism, Some cp -> PinGeometry.tickLabelWorldTrafo prism cp unitT
+                                    | Some prism, Some cp -> PinGeometry.tickLabelWorldTrafo prism cp edge unitT
                                     | _ -> Trafo3d.Identity)
                             (text, trafo)) |> IndexList.ofList)
                     |> AList.ofAVal
@@ -315,9 +315,28 @@ module SceneGraph =
                             Sg.Proj proj
                             Sg.Pass RenderPass.passTwo
                             Sg.Trafo trafo
-                            Sg.Text(text, color = AVal.constant (C4b(180uy, 180uy, 180uy)), align = TextAlignment.Center)
+                            Sg.Text(text, color = AVal.constant (C4b(160uy, 160uy, 160uy)), align = TextAlignment.Center)
                         })
                     |> AList.toASet
+                let centroidTrafo =
+                    (prismVal, cutPlaneVal) ||> AVal.map2 (fun po co ->
+                        match po, co with
+                        | Some prism, Some cp -> PinGeometry.centroidLabelTrafo prism cp
+                        | _ -> Trafo3d.Identity)
+                let centroidText =
+                    model.CommonCentroid |> AVal.map (fun cc ->
+                        sprintf "%.2f, %.2f, %.2f" cc.X cc.Y cc.Z)
+                let centroidNode =
+                    ASet.ofList [
+                        sg {
+                            Sg.Active isActiveAndSelected
+                            Sg.View view
+                            Sg.Proj proj
+                            Sg.Pass RenderPass.passTwo
+                            Sg.Trafo centroidTrafo
+                            Sg.Text(centroidText, color = AVal.constant (C4b(130uy, 140uy, 160uy)), align = TextAlignment.Center)
+                        }
+                    ]
                 ASet.union
                     (ASet.ofList [
                         sg {
@@ -338,7 +357,7 @@ module SceneGraph =
                             Sg.Render(planeIdx |> AVal.map Array.length)
                         }
                     ])
-                    labelNodes
+                    (ASet.unionMany (ASet.ofList [labelNodes; centroidNode]))
             )
 
         let extractedLines =

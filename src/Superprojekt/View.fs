@@ -64,7 +64,6 @@ module View =
                 RenderControl.OnReady (fun e ->
                     eHandler <- Some e
                     ()
-                    
                 )
                 
                 OrbitController.getAttributes (Env.map CameraMessage env)
@@ -90,21 +89,21 @@ module View =
 
                 Sg.Pass RenderPass.passZero
                 
-                sg {
-                    Sg.OnClick(fun e ->
-                        env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
-                        false
-                    )
-                    Sg.Shader {
-                        DefaultSurfaces.trafo
-                        DefaultSurfaces.constantColor C4f.AliceBlue
-                    }
-                    sg {
-                        Sg.Intersectable (Intersectable.sphere (Sphere3d(V3d.OOI*3.0, 1.0)))
-                        Primitives.Sphere Sphere3d.Unit
-                    }
-                    
-                }
+                // sg {
+                //     Sg.OnClick(fun e ->
+                //         env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
+                //         false
+                //     )
+                //     Sg.Shader {
+                //         DefaultSurfaces.trafo
+                //         DefaultSurfaces.constantColor C4f.AliceBlue
+                //     }
+                //     sg {
+                //         Sg.Intersectable (Intersectable.sphere (Sphere3d(V3d.OOI*3.0, 1.0)))
+                //         Primitives.Sphere Sphere3d.Unit
+                //     }
+                //     
+                // }
                 
                 Sg.OnDoubleTap(fun e ->
                     env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]

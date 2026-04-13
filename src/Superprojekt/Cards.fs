@@ -261,6 +261,39 @@ module Cards =
                 button {
                     selectedPin |> AVal.map (fun po ->
                         match po with
+                        | Some p -> match p.CutPlane with CutPlaneMode.AlongAxis _ -> Some (Class "btn-active") | _ -> None
+                        | _ -> None)
+                    Dom.OnClick(fun _ ->
+                        match AVal.force selectedPin with
+                        | Some p ->
+                            match p.CutPlane with
+                            | CutPlaneMode.AlongAxis _ -> ()
+                            | CutPlaneMode.AcrossAxis _ -> env.Emit [ScanPinMsg (SetCutPlaneMode (CutPlaneMode.AlongAxis 0.0))]
+                        | None -> ())
+                    "Vertical"
+                }
+                button {
+                    selectedPin |> AVal.map (fun po ->
+                        match po with
+                        | Some p -> match p.CutPlane with CutPlaneMode.AcrossAxis _ -> Some (Class "btn-active") | _ -> None
+                        | _ -> None)
+                    Dom.OnClick(fun _ ->
+                        match AVal.force selectedPin with
+                        | Some p ->
+                            match p.CutPlane with
+                            | CutPlaneMode.AcrossAxis _ -> ()
+                            | CutPlaneMode.AlongAxis _ ->
+                                let mid = (p.Prism.ExtentForward - p.Prism.ExtentBackward) * 0.5
+                                env.Emit [ScanPinMsg (SetCutPlaneMode (CutPlaneMode.AcrossAxis mid))]
+                        | None -> ())
+                    "Horizontal"
+                }
+            }
+            div {
+                Class "card-btn-row"
+                button {
+                    selectedPin |> AVal.map (fun po ->
+                        match po with
                         | Some p when p.GhostClip = GhostClipOn -> Some (Class "btn-active")
                         | _ -> None)
                     Dom.OnClick(fun _ ->

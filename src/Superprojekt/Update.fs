@@ -195,10 +195,11 @@ module ScanPinUpdate =
         | CloseFootprint -> sp
 
         | SetCutPlaneMode mode ->
-            match sp.ActivePlacement with
+            let targetId = sp.ActivePlacement |> Option.orElse sp.SelectedPin
+            match targetId with
             | Some id ->
                 match HashMap.tryFind id sp.Pins with
-                | Some pin when pin.Phase = PinPhase.Placement ->
+                | Some pin ->
                     let pin = { pin with CutPlane = mode }
                     { sp with Pins = HashMap.add id pin sp.Pins }
                 | _ -> sp

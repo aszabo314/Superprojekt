@@ -19,10 +19,10 @@ module Cards =
             if si > 0 then date + "_" + mesh.[si + 1 ..] else date
         else mesh
 
-    let private c4bToHex (c : C4b) =
+    let c4bToHex (c : C4b) =
         sprintf "#%02x%02x%02x" c.R c.G c.B
 
-    let private encodeDiagramJson (pin : ScanPin) (svgW : float) (svgH : float) (pad : float) =
+    let encodeDiagramJson (pin : ScanPin) (svgW : float) (svgH : float) (pad : float) =
         let results = pin.CutResults |> Map.toList
         if results.IsEmpty then "{\"paths\":[],\"legend\":[]}"
         else
@@ -51,6 +51,14 @@ module Cards =
                     sprintf "{\"n\":\"%s\",\"c\":\"%s\"}" (shortName name) color)
             sprintf "{\"paths\":[%s],\"legend\":[%s],\"xMin\":%.4g,\"xMax\":%.4g,\"yMin\":%.4g,\"yMax\":%.4g}"
                 (paths |> String.concat ",") (legend |> String.concat ",") xMin xMax yMin yMax
+
+    let parseFloat (s : string) =
+        match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+        | true, v -> Some v
+        | _ -> None
+
+    let checkedIf (v : aval<bool>) =
+        v |> AVal.map (fun on -> if on then Some (Attribute("checked", "checked")) else None)
 
     // ── Helpers to project 3D anchor to screen ──────────────────────
 
@@ -214,14 +222,12 @@ module Cards =
             }
 
             div {
-                Class "strat-wrapper"
-                Style [MarginTop "4px"]
+                Class "strat-wrapper mt-4"
                 let isPlacing = (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
                 StratigraphyView.render env isPlacing selectedPin
             }
             div {
-                Class "card-btn-row"
-                Style [MarginTop "4px"]
+                Class "card-btn-row mt-4"
                 button {
                     selectedPin |> AVal.map (fun po ->
                         match po with
@@ -289,8 +295,7 @@ module Cards =
                 }
             }
             div {
-                Class "card-btn-row"
-                Style [MarginTop "4px"]
+                Class "card-btn-row mt-4"
                 button {
                     selectedPin |> AVal.map (fun po ->
                         match po with
@@ -305,18 +310,15 @@ module Cards =
                 input {
                     Attribute("type", "range")
                     Attribute("min", "0"); Attribute("max", "3"); Attribute("step", "0.05")
-                    Style [Width "100%"]
+                    Class "range-full"
                     selectedPin |> AVal.map (fun po ->
                         match po with
                         | Some p -> Some (Attribute("value", sprintf "%.2f" p.Explosion.ExpansionFactor))
                         | None -> None)
                     Dom.OnInput(fun e ->
-                        match AVal.force selectedPin with
-                        | Some p ->
-                            match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-                            | true, v -> env.Emit [ScanPinMsg (SetExplosionFactor(p.Id, v))]
-                            | _ -> ()
-                        | None -> ())
+                        match AVal.force selectedPin, parseFloat e.Value with
+                        | Some p, Some v -> env.Emit [ScanPinMsg (SetExplosionFactor(p.Id, v))]
+                        | _ -> ())
                 }
             }
             div {
@@ -324,8 +326,7 @@ module Cards =
                 label {
                     input {
                         Attribute("type", "checkbox")
-                        model.DepthShadeOn |> AVal.map (fun v ->
-                            if v then Some (Attribute("checked", "checked")) else None)
+                        checkedIf model.DepthShadeOn
                         Dom.OnChange(fun _ -> env.Emit [ToggleDepthShade])
                     }
                     "Depth"
@@ -333,8 +334,7 @@ module Cards =
                 label {
                     input {
                         Attribute("type", "checkbox")
-                        model.IsolinesOn |> AVal.map (fun v ->
-                            if v then Some (Attribute("checked", "checked")) else None)
+                        checkedIf model.IsolinesOn
                         Dom.OnChange(fun _ -> env.Emit [ToggleIsolines])
                     }
                     "Isolines"
@@ -342,8 +342,7 @@ module Cards =
                 label {
                     input {
                         Attribute("type", "checkbox")
-                        model.ColorMode |> AVal.map (fun v ->
-                            if v then Some (Attribute("checked", "checked")) else None)
+                        checkedIf model.ColorMode
                         Dom.OnChange(fun _ -> env.Emit [ToggleColorMode])
                     }
                     "Color"
@@ -362,7 +361,7 @@ module Cards =
                     input {
                         Attribute("type", "number")
                         Attribute("min", "1")
-                        Style [Width "48px"]
+                        Class "input-xs"
                         RankingState.topK |> AVal.map (fun k -> Some (Attribute("value", string k)))
                         Dom.OnInput(fun e ->
                             match System.Int32.TryParse(e.Value) with
@@ -373,8 +372,7 @@ module Cards =
                 label {
                     input {
                         Attribute("type", "checkbox")
-                        RankingState.rankFadeOn |> AVal.map (fun on ->
-                            if on then Some (Attribute("checked", "checked")) else None)
+                        checkedIf RankingState.rankFadeOn
                         Dom.OnChange(fun _ ->
                             transact (fun () -> RankingState.rankFadeOn.Value <- not RankingState.rankFadeOn.Value))
                     }

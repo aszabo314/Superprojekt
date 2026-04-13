@@ -8,49 +8,8 @@ open Aardvark.Dom
 module GuiPins =
 
     let private coreSampleTrafo = PinGeometry.coreSampleTrafo
-
-    let shortName (name : string) =
-        let mesh =
-            let s = name.IndexOf('/')
-            if s >= 0 then name.[s + 1 ..] else name
-        if mesh.Length > 8 && mesh.[8] = '_' then
-            let date = mesh.[..7]
-            let si = mesh.LastIndexOf("_seg")
-            if si > 0 then date + "_" + mesh.[si + 1 ..] else date
-        else mesh
-
-    let private c4bToHex (c : C4b) =
-        sprintf "#%02x%02x%02x" c.R c.G c.B
-
-    let private encodeDiagramJson (pin : ScanPin) (svgW : float) (svgH : float) (pad : float) =
-        let results = pin.CutResults |> Map.toList
-        if results.IsEmpty then "{\"paths\":[],\"legend\":[]}"
-        else
-            let allPts = results |> List.collect (fun (_, cr) -> cr.Polylines |> List.collect id)
-            let xs = allPts |> List.map (fun (p : V2d) -> p.X)
-            let ys = allPts |> List.map (fun (p : V2d) -> p.Y)
-            let xMin = xs |> List.min
-            let xMax = xs |> List.max
-            let yMin = ys |> List.min
-            let yMax = ys |> List.max
-            let xRange = if xMax - xMin < 1e-9 then 1.0 else xMax - xMin
-            let yRange = if yMax - yMin < 1e-9 then 1.0 else yMax - yMin
-            let toSvgX x = pad + (x - xMin) / xRange * (svgW - 2.0 * pad)
-            let toSvgY y = (svgH - pad) - (y - yMin) / yRange * (svgH - 2.0 * pad)
-            let paths =
-                results |> List.collect (fun (name, cr) ->
-                    let color = pin.DatasetColors |> Map.tryFind name |> Option.defaultValue (C4b(100uy,100uy,100uy)) |> c4bToHex
-                    cr.Polylines |> List.map (fun pts ->
-                        let d = pts |> List.mapi (fun i (p : V2d) ->
-                            let cmd = if i = 0 then "M" else "L"
-                            sprintf "%s%.1f,%.1f" cmd (toSvgX p.X) (toSvgY p.Y)) |> String.concat " "
-                        sprintf "{\"d\":\"%s\",\"c\":\"%s\"}" (d.Replace("\"","\\\"")) color))
-            let legend =
-                results |> List.map (fun (name, _) ->
-                    let color = pin.DatasetColors |> Map.tryFind name |> Option.defaultValue (C4b(100uy,100uy,100uy)) |> c4bToHex
-                    sprintf "{\"n\":\"%s\",\"c\":\"%s\"}" (shortName name) color)
-            sprintf "{\"paths\":[%s],\"legend\":[%s],\"xMin\":%.4g,\"xMax\":%.4g,\"yMin\":%.4g,\"yMax\":%.4g}"
-                (paths |> String.concat ",") (legend |> String.concat ",") xMin xMax yMin yMax
+    let shortName = Cards.shortName
+    let private encodeDiagramJson = Cards.encodeDiagramJson
 
     let pinsTabPanel (env : Env<Message>) (model : AdaptiveModel) =
         let sp = model.ScanPins
@@ -77,11 +36,10 @@ module GuiPins =
                 }
             }
             label {
-                Style [Display "flex"; AlignItems "center"; MarginTop "4px"; FontSize "13px"]
+                Class "axis-label"
                 input {
                     Attribute("type", "checkbox")
-                    model.PinAxisVertical |> AVal.map (fun v ->
-                        if v then Some (Attribute("checked", "checked")) else None)
+                    Cards.checkedIf model.PinAxisVertical
                     Dom.OnChange(fun _ -> env.Emit [TogglePinAxisVertical])
                 }
                 "Place along Z axis"
@@ -103,7 +61,7 @@ module GuiPins =
                     input {
                         Attribute("type", "range")
                         Attribute("min", "0.1"); Attribute("max", "20"); Attribute("step", "0.1")
-                        Style [Width "100%"]
+                        Class "range-full"
                         activePin |> AVal.map (fun p ->
                             match p with
                             | Some pin ->
@@ -112,14 +70,11 @@ module GuiPins =
                                 | _ -> Some (Attribute("value", "1"))
                             | None -> None)
                         Dom.OnInput(fun e ->
-                            match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-                            | true, v -> env.Emit [ScanPinMsg (SetFootprintRadius v)]
-                            | _ -> ())
+                            Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [ScanPinMsg (SetFootprintRadius v)]))
                     }
                 }
                 div {
-                    Class "btn-row"
-                    Style [MarginTop "6px"]
+                    Class "btn-row mt-6"
                     button {
                         Class "btn-active"
                         Dom.OnClick(fun _ -> env.Emit [ScanPinMsg CommitPin])
@@ -142,15 +97,15 @@ module GuiPins =
                 let pinVal = guiPinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = sp.SelectedPin |> AVal.map (fun sel -> sel = Some id)
                 div {
-                    Style [Padding "4px 0"; BorderBottom "1px solid #e2e8f0"]
+                    Class "pin-item"
                     isSelected |> AVal.map (fun s ->
-                        if s then Some (Style [Background "#fff3cd"]) else None)
+                        if s then Some (Class "pin-item-selected") else None)
                     div {
                         Dom.OnClick(fun _ ->
                             let sel = AVal.force sp.SelectedPin
                             if sel = Some id then env.Emit [ScanPinMsg (SelectPin None)]
                             else env.Emit [ScanPinMsg (SelectPin (Some id))])
-                        Style [Css.Cursor "pointer"; FontFamily "monospace"; FontSize "11px"]
+                        Class "pin-item-label"
                         pinVal |> AVal.map (fun pinOpt ->
                             match pinOpt with
                             | Some pin ->
@@ -160,15 +115,14 @@ module GuiPins =
                             | None -> "(removed)")
                     }
                     div {
-                        Class "btn-row"
-                        Style [MarginTop "2px"]
+                        Class "btn-row mt-4"
                         button {
-                            Style [FontSize "11px"; Padding "1px 6px"]
+                            Class "btn-sm"
                             Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (FocusPin id)])
                             "Focus"
                         }
                         button {
-                            Style [FontSize "11px"; Padding "1px 6px"]
+                            Class "btn-sm"
                             Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (DeletePin id)])
                             "Delete"
                         }
@@ -320,8 +274,7 @@ module GuiPins =
                 StratigraphyView.render env isPlacing selectedPin
             }
             div {
-                Class "btn-row"
-                Style [MarginTop "4px"]
+                Class "btn-row mt-4"
                 button {
                     selectedPin |> AVal.map (fun po ->
                         match po with
@@ -347,8 +300,7 @@ module GuiPins =
             }
 
             div {
-                Class "btn-row"
-                Style [MarginTop "4px"]
+                Class "btn-row mt-4"
                 button {
                     selectedPin |> AVal.map (fun po ->
                         match po with
@@ -387,8 +339,7 @@ module GuiPins =
             }
 
             div {
-                Class "btn-row"
-                Style [MarginTop "4px"]
+                Class "btn-row mt-4"
                 button {
                     selectedPin |> AVal.map (fun po ->
                         match po with
@@ -403,18 +354,15 @@ module GuiPins =
                 input {
                     Attribute("type", "range")
                     Attribute("min", "0"); Attribute("max", "3"); Attribute("step", "0.05")
-                    Style [Width "100%"]
+                    Class "range-full"
                     selectedPin |> AVal.map (fun po ->
                         match po with
                         | Some p -> Some (Attribute("value", sprintf "%.2f" p.Explosion.ExpansionFactor))
                         | None -> None)
                     Dom.OnInput(fun e ->
-                        match AVal.force selectedPin with
-                        | Some p ->
-                            match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-                            | true, v -> env.Emit [ScanPinMsg (SetExplosionFactor(p.Id, v))]
-                            | _ -> ()
-                        | None -> ())
+                        match AVal.force selectedPin, Cards.parseFloat e.Value with
+                        | Some p, Some v -> env.Emit [ScanPinMsg (SetExplosionFactor(p.Id, v))]
+                        | _ -> ())
                 }
             }
 
@@ -752,7 +700,7 @@ module GuiPins =
                         input {
                             Attribute("type", "number")
                             Attribute("min", "1")
-                            Style [Width "48px"]
+                            Class "input-xs"
                             RankingState.topK |> AVal.map (fun k -> Some (Attribute("value", string k)))
                             Dom.OnInput(fun e ->
                                 match System.Int32.TryParse(e.Value) with
@@ -763,8 +711,7 @@ module GuiPins =
                     label {
                         input {
                             Attribute("type", "checkbox")
-                            RankingState.rankFadeOn |> AVal.map (fun on ->
-                                if on then Some (Attribute("checked", "checked")) else None)
+                            Cards.checkedIf RankingState.rankFadeOn
                             Dom.OnChange(fun _ ->
                                 transact (fun () -> RankingState.rankFadeOn.Value <- not RankingState.rankFadeOn.Value))
                         }
@@ -845,8 +792,7 @@ module GuiPins =
                 label {
                     input {
                         Attribute("type", "checkbox")
-                        model.DepthShadeOn |> AVal.map (fun v ->
-                            if v then Some (Attribute("checked", "checked")) else None)
+                        Cards.checkedIf model.DepthShadeOn
                         Dom.OnChange(fun _ -> env.Emit [ToggleDepthShade])
                     }
                     "Depth"
@@ -854,8 +800,7 @@ module GuiPins =
                 label {
                     input {
                         Attribute("type", "checkbox")
-                        model.IsolinesOn |> AVal.map (fun v ->
-                            if v then Some (Attribute("checked", "checked")) else None)
+                        Cards.checkedIf model.IsolinesOn
                         Dom.OnChange(fun _ -> env.Emit [ToggleIsolines])
                     }
                     "Isolines"
@@ -863,8 +808,7 @@ module GuiPins =
                 label {
                     input {
                         Attribute("type", "checkbox")
-                        model.ColorMode |> AVal.map (fun v ->
-                            if v then Some (Attribute("checked", "checked")) else None)
+                        Cards.checkedIf model.ColorMode
                         Dom.OnChange(fun _ -> env.Emit [ToggleColorMode])
                     }
                     "Color"

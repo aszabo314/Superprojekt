@@ -98,7 +98,7 @@ module Gui =
                         input {
                             Attribute("type", "number")
                             Attribute("step", "0.1")
-                            Style [Width "80px"]
+                            Class "input-sm"
                             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun ds scales ->
                                 let s = ds |> Option.bind (fun d -> Map.tryFind d scales) |> Option.defaultValue 1.0
                                 Some (Attribute("value", sprintf "%.4g" s))
@@ -107,11 +107,8 @@ module Gui =
                                 if ds.IsNone then Some (Attribute("disabled", "disabled")) else None
                             )
                             Dom.OnInput(fun e ->
-                                match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-                                | true, v ->
-                                    match AVal.force model.ActiveDataset with
-                                    | Some dataset -> env.Emit [SetDatasetScale(dataset, v)]
-                                    | None -> ()
+                                match Cards.parseFloat e.Value, AVal.force model.ActiveDataset with
+                                | Some v, Some dataset -> env.Emit [SetDatasetScale(dataset, v)]
                                 | _ -> ()
                             )
                         }
@@ -126,15 +123,13 @@ module Gui =
                             label {
                                 input {
                                     Attribute("type", "checkbox")
-                                    isVis |> AVal.map (fun v ->
-                                        if v then Some (Attribute("checked", "checked")) else None
-                                    )
+                                    Cards.checkedIf isVis
                                     Dom.OnClick(fun _ ->
                                         let current = AVal.force isVis
                                         env.Emit [SetVisible(name, not current)]
                                     )
                                 }
-                                " " + GuiPins.shortName name
+                                " " + Cards.shortName name
                             }
                         }
                     )
@@ -143,9 +138,7 @@ module Gui =
                         label {
                             input {
                                 Attribute("type", "checkbox")
-                                model.GhostSilhouette |> AVal.map (fun on ->
-                                    if on then Some (Attribute("checked", "checked")) else None
-                                )
+                                Cards.checkedIf model.GhostSilhouette
                                 Dom.OnClick(fun _ -> env.Emit [ToggleGhostSilhouette])
                             }
                             " Ghost silhouette"
@@ -157,13 +150,11 @@ module Gui =
                             input {
                                 Attribute("type", "range")
                                 Attribute("min", "0.01"); Attribute("max", "1.0"); Attribute("step", "0.01")
-                                Style [Width "100%"]
+                                Class "range-full"
                                 model.GhostOpacity |> AVal.map (fun v ->
                                     Some (Attribute("value", sprintf "%.2f" v)))
                                 Dom.OnInput(fun e ->
-                                    match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-                                    | true, v -> env.Emit [SetGhostOpacity v]
-                                    | _ -> ())
+                                    Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [SetGhostOpacity v]))
                             }
                         }
                     }
@@ -172,9 +163,7 @@ module Gui =
                         label {
                             input {
                                 Attribute("type", "checkbox")
-                                model.ColorMode |> AVal.map (fun on ->
-                                    if on then Some (Attribute("checked", "checked")) else None
-                                )
+                                Cards.checkedIf model.ColorMode
                                 Dom.OnClick(fun _ -> env.Emit [ToggleColorMode])
                             }
                             " Color (false-color shading)"
@@ -228,9 +217,7 @@ module Gui =
                         label {
                             input {
                                 Attribute("type", "checkbox")
-                                model.DifferenceRendering |> AVal.map (fun on ->
-                                    if on then Some (Attribute("checked", "checked")) else None
-                                )
+                                Cards.checkedIf model.DifferenceRendering
                                 Dom.OnClick(fun _ -> env.Emit [ToggleDifferenceRendering])
                             }
                             " Show mesh difference"
@@ -242,13 +229,10 @@ module Gui =
                             input {
                                 Attribute("type", "number")
                                 Attribute("step", "any")
-                                Style [Width "80px"]
+                                Class "input-sm"
                                 current |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.4g" v)))
                                 Dom.OnInput(fun e ->
-                                    match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-                                    | true, v -> env.Emit [msg v]
-                                    | _ -> ()
-                                )
+                                    Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [msg v]))
                             }
                         }
                     numInput "Min depth" model.MinDifferenceDepth SetMinDifferenceDepth
@@ -264,7 +248,7 @@ module Gui =
                     model.MeshNames |> AList.map (fun name ->
                         let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                         div {
-                            order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (GuiPins.shortName name))
+                            order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (Cards.shortName name))
                         }
                     )
                 }
@@ -279,9 +263,7 @@ module Gui =
                         label {
                             input {
                                 Attribute("type", "checkbox")
-                                model.ClipActive |> AVal.map (fun on ->
-                                    if on then Some (Attribute("checked", "checked")) else None
-                                )
+                                Cards.checkedIf model.ClipActive
                                 Dom.OnClick(fun _ -> env.Emit [ToggleClip])
                             }
                             " Enable clipping"
@@ -303,12 +285,9 @@ module Gui =
                                     if b.IsInvalid then None else Some (Attribute("max", sprintf "%.6g" (bMax b))))
                                 model.ClipBox |> AVal.map (fun b ->
                                     Some (Attribute("value", sprintf "%.6g" (getValue b))))
-                                Style [Width "100%"]
+                                Class "range-full"
                                 Dom.OnInput(fun e ->
-                                    match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-                                    | true, v -> env.Emit [SetClipBox(setValue (AVal.force model.ClipBox) v)]
-                                    | _ -> ()
-                                )
+                                    Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [SetClipBox(setValue (AVal.force model.ClipBox) v)]))
                             }
                             model.ClipBox |> AVal.map (fun b -> sprintf "%.2f" (getValue b))
                         }
@@ -348,37 +327,26 @@ module Gui =
 
     let fullscreenInfo (model : AdaptiveModel) =
         div {
+            Class "fullscreen-info"
             model.FullscreenOn |> AVal.map (fun on ->
                 if not on then Some (Style [Display "none"]) else None
             )
-            Style [
-                Position "fixed"; Top "10px"; Left "10px"
-                Background "rgba(255,255,255,0.88)"; Padding "6px 10px"
-                BorderRadius "4px"; FontSize "12px"; PointerEvents "none"
-                ZIndex 100; BorderLeft "3px solid #1a56db"
-            ]
             model.ActiveDataset |> AVal.map (fun ds ->
                 match ds with
-                | Some d -> div { Style [FontWeight "bold"; MarginBottom "4px"]; d }
+                | Some d -> div { Class "fullscreen-info-title"; d }
                 | None   -> div { []  }
             )
             model.MeshNames |> AList.map (fun name ->
                 let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                 div {
-                    order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (GuiPins.shortName name))
+                    order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (Cards.shortName name))
                 }
             )
         }
 
     let coordinateDisplay (coord : aval<V3d option>) =
         div {
-            Style [
-                Position "fixed"; Bottom "8px"; Left "50%"
-                StyleProperty("transform", "translateX(-50%)")
-                Background "rgba(255,255,255,0.88)"; Padding "3px 12px"
-                BorderRadius "4px"; FontSize "12px"; FontFamily "monospace"
-                PointerEvents "none"; ZIndex 100
-            ]
+            Class "coord-display"
             coord |> AVal.map (fun c ->
                 match c with
                 | None   -> ""
@@ -388,26 +356,14 @@ module Gui =
 
     let debugLogToggle (visible : cval<bool>) =
         button {
-            Style [
-                Position "fixed"; Bottom "0"; Left "0"
-                Background "rgba(0,0,0,0.7)"; Color "#0f0"
-                Border "none"; FontFamily "monospace"; FontSize "11px"
-                Padding "2px 8px"; Css.Cursor "pointer"; ZIndex 10000
-            ]
+            Class "debug-toggle"
             Dom.OnClick(fun _ -> transact (fun () -> visible.Value <- not visible.Value))
             (visible :> aval<bool>) |> AVal.map (fun v -> if v then "▼ log" else "▲ log")
         }
 
     let debugLog (visible : aval<bool>) (model : AdaptiveModel) =
         div {
+            Class "debug-log"
             visible |> AVal.map (fun v -> if not v then Some (Style [Display "none"]) else None)
-            Style [
-                Position "fixed"; Bottom "0"; Left "30px"; Right "0"
-                MaxHeight "30vh"; OverflowY "auto"
-                Background "rgba(0,0,0,0.8)"; Color "#0f0"
-                FontFamily "monospace"; FontSize "11px"
-                Padding "4px 8px"; PointerEvents "none"
-                ZIndex 9999; StyleProperty("white-space", "pre-wrap")
-            ]
             model.DebugLog |> AList.map (fun line -> div { line })
         }

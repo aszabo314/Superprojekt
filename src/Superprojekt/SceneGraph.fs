@@ -287,23 +287,25 @@ module SceneGraph =
                 let planePos = planeData |> AVal.map (fun (p,_,_) -> p)
                 let planeCol = planeData |> AVal.map (fun (_,c,_) -> c)
                 let planeIdx = planeData |> AVal.map (fun (_,_,i) -> i)
-                let tickLabels = pinVal |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin -> PinGeometry.cutPlaneTickLabels pin.Prism pin.CutPlane
-                    | None -> [])
+                // Split pin into prism-only (for structure) and cutPlane (for placement).
+                // Structure only changes on resize; placement changes on every drag.
+                let prismVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
+                let cutPlaneVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.CutPlane))
+                let tickStructure =
+                    prismVal |> AVal.map (fun po ->
+                        match po with
+                        | Some prism -> PinGeometry.tickLabelStructure prism
+                        | None -> [])
                 let isActiveAndSelected = AVal.map2 (&&) notFullscreen isSelected
                 let labelNodes =
-                    tickLabels
+                    tickStructure
                     |> AVal.map (fun labels ->
-                        labels |> List.map (fun (pos, text, perpDir, edgeDir) ->
-                            let planeNormal = Vec.cross edgeDir perpDir |> Vec.normalize
-                            let labelSize = 0.06
+                        labels |> List.map (fun (unitT, text) ->
                             let trafo =
-                                let x = edgeDir
-                                let y = perpDir
-                                let z = planeNormal
-                                let m = M44d.FromCols(V4d(x, 0.0), V4d(y, 0.0), V4d(z, 0.0), V4d(pos, 1.0))
-                                Trafo3d(m, m.Inverse) * Trafo3d.Scale(labelSize)
+                                (prismVal, cutPlaneVal) ||> AVal.map2 (fun po co ->
+                                    match po, co with
+                                    | Some prism, Some cp -> PinGeometry.tickLabelWorldTrafo prism cp unitT
+                                    | _ -> Trafo3d.Identity)
                             (text, trafo)) |> IndexList.ofList)
                     |> AList.ofAVal
                     |> AList.map (fun (text, trafo) ->
@@ -312,7 +314,7 @@ module SceneGraph =
                             Sg.View view
                             Sg.Proj proj
                             Sg.Pass RenderPass.passTwo
-                            Sg.Trafo (AVal.constant trafo)
+                            Sg.Trafo trafo
                             Sg.Text(text, color = AVal.constant (C4b(180uy, 180uy, 180uy)), align = TextAlignment.Center)
                         })
                     |> AList.toASet
@@ -348,19 +350,33 @@ module SceneGraph =
             let meshNamesVal = model.MeshNames |> AList.toAVal |> AVal.map IndexList.toArray
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
-                let pinAndNames = (pinVal, meshNamesVal) ||> AVal.map2 (fun po n -> po, n)
+
+                // Project individual fields so each geometry only rebuilds when its inputs change.
+                // cutGeo depends on cut results (arrive from server, not on every drag).
+                let cutResultsDep =
+                    pinVal |> AVal.map (fun po ->
+                        po |> Option.bind (fun p ->
+                            if p.ExtractedLines.ShowCutPlaneLines && not (Map.isEmpty p.CutResults)
+                            then Some (p.Prism, p.CutPlane, p.CutResults, p.DatasetColors, p.Explosion, p.Stratigraphy)
+                            else None))
+                // edgeDeps: stratigraphy + prism + colors — does NOT depend on cut plane.
+                let edgeDeps =
+                    pinVal |> AVal.map (fun po ->
+                        po |> Option.bind (fun p ->
+                            if p.ExtractedLines.ShowCylinderEdgeLines
+                            then Some (p.Prism, p.Stratigraphy, p.DatasetColors, p.Explosion)
+                            else None))
 
                 let cutGeo =
-                    pinAndNames |> AVal.map (fun (pinOpt, names) ->
-                        match pinOpt with
-                        | Some pin when pin.ExtractedLines.ShowCutPlaneLines && not (Map.isEmpty pin.CutResults) ->
-                            let prism = pin.Prism
+                    (cutResultsDep, meshNamesVal) ||> AVal.map2 (fun depsOpt names ->
+                        match depsOpt with
+                        | Some(prism, cutPlane, cutResults, datasetColors, explosion, strat) ->
                             let axis = prism.AxisDirection |> Vec.normalize
                             let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
                             let right = Vec.cross axis up |> Vec.normalize
                             let fwd = Vec.cross right axis |> Vec.normalize
                             let planePoint, axisU, axisV, planeNormal =
-                                match pin.CutPlane with
+                                match cutPlane with
                                 | CutPlaneMode.AlongAxis angleDeg ->
                                     let a = angleDeg * Constant.RadiansPerDegree
                                     let dir = right * cos a + fwd * sin a
@@ -368,14 +384,14 @@ module SceneGraph =
                                     prism.AnchorPoint, dir, axis, normal
                                 | CutPlaneMode.AcrossAxis dist ->
                                     prism.AnchorPoint + axis * dist, right, fwd, axis
-                            let explosion = Stratigraphy.explosionOffsets pin names
+                            let explosionOffsets = Stratigraphy.explosionOffsetsFromFields explosion prism strat names
                             let positions = ResizeArray<V3f>()
                             let colors = ResizeArray<V4f>()
                             let indices = ResizeArray<int>()
                             let thickness = 0.06
-                            for KeyValue(name, cr) in pin.CutResults do
-                                let color = pin.DatasetColors |> Map.tryFind name |> Option.defaultValue (C4b(120uy,120uy,120uy)) |> toV4f
-                                let off = Map.tryFind name explosion |> Option.defaultValue V3d.Zero
+                            for KeyValue(name, cr) in cutResults do
+                                let color = datasetColors |> Map.tryFind name |> Option.defaultValue (C4b(120uy,120uy,120uy)) |> toV4f
+                                let off = Map.tryFind name explosionOffsets |> Option.defaultValue V3d.Zero
                                 for poly in cr.Polylines do
                                     let pts3d =
                                         poly |> List.map (fun (p : V2d) -> planePoint + axisU * p.X + axisV * p.Y + off) |> Array.ofList
@@ -384,58 +400,53 @@ module SceneGraph =
                         | _ -> [||], [||], [||])
 
                 let edgeGeo =
-                    pinAndNames |> AVal.map (fun (pinOpt, names) ->
-                        match pinOpt with
-                        | Some pin when pin.ExtractedLines.ShowCylinderEdgeLines ->
-                            match pin.Stratigraphy with
-                            | Some data when data.Columns.Length >= 2 ->
-                                let prism = pin.Prism
-                                let axis = prism.AxisDirection |> Vec.normalize
-                                let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-                                let right = Vec.cross axis up |> Vec.normalize
-                                let fwd = Vec.cross right axis |> Vec.normalize
-                                let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                                let explosion = Stratigraphy.explosionOffsets pin names
-                                let toPoint (angle : float) (z : float) (off : V3d) =
-                                    prism.AnchorPoint + (right * cos angle + fwd * sin angle) * radius + axis * z + off
-                                let datasets =
-                                    data.Columns
-                                    |> Array.collect (fun c -> c.Events |> List.map snd |> List.toArray)
-                                    |> Array.distinct
-                                let positions = ResizeArray<V3f>()
-                                let colors = ResizeArray<V4f>()
-                                let indices = ResizeArray<int>()
-                                let thickness = 0.05
-                                for ds in datasets do
-                                    let color = pin.DatasetColors |> Map.tryFind ds |> Option.defaultValue (C4b(120uy,120uy,120uy)) |> toV4f
-                                    let off = Map.tryFind ds explosion |> Option.defaultValue V3d.Zero
-                                    let perColumn =
-                                        data.Columns |> Array.map (fun col ->
-                                            col.Events
-                                            |> List.filter (fun (_, n) -> n = ds)
-                                            |> List.map fst
-                                            |> List.sort)
-                                    let maxLanes = perColumn |> Array.map List.length |> Array.fold max 0
-                                    for lane in 0 .. maxLanes - 1 do
-                                        let mutable accum = ResizeArray<V3d>()
-                                        let flush () =
-                                            if accum.Count >= 2 then
-                                                PinGeometry.appendPolylineRibbon positions colors indices (accum.ToArray()) color axis thickness
-                                            accum <- ResizeArray<V3d>()
-                                        for ci in 0 .. data.Columns.Length - 1 do
-                                            let zs = perColumn.[ci]
-                                            if lane < zs.Length then
-                                                accum.Add(toPoint data.Columns.[ci].Angle zs.[lane] off)
-                                            else
-                                                flush ()
-                                        // Wrap-around: connect back to column 0 if both ends have this lane.
-                                        if accum.Count > 0 then
-                                            let zs0 = perColumn.[0]
-                                            if lane < zs0.Length then
-                                                accum.Add(toPoint data.Columns.[0].Angle zs0.[lane] off)
+                    (edgeDeps, meshNamesVal) ||> AVal.map2 (fun depsOpt names ->
+                        match depsOpt with
+                        | Some(prism, Some data, datasetColors, explosion) when data.Columns.Length >= 2 ->
+                            let axis = prism.AxisDirection |> Vec.normalize
+                            let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
+                            let right = Vec.cross axis up |> Vec.normalize
+                            let fwd = Vec.cross right axis |> Vec.normalize
+                            let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                            let explosionOffsets = Stratigraphy.explosionOffsetsFromFields explosion prism (Some data) names
+                            let toPoint (angle : float) (z : float) (off : V3d) =
+                                prism.AnchorPoint + (right * cos angle + fwd * sin angle) * radius + axis * z + off
+                            let datasets =
+                                data.Columns
+                                |> Array.collect (fun c -> c.Events |> List.map snd |> List.toArray)
+                                |> Array.distinct
+                            let positions = ResizeArray<V3f>()
+                            let colors = ResizeArray<V4f>()
+                            let indices = ResizeArray<int>()
+                            let thickness = 0.05
+                            for ds in datasets do
+                                let color = datasetColors |> Map.tryFind ds |> Option.defaultValue (C4b(120uy,120uy,120uy)) |> toV4f
+                                let off = Map.tryFind ds explosionOffsets |> Option.defaultValue V3d.Zero
+                                let perColumn =
+                                    data.Columns |> Array.map (fun col ->
+                                        col.Events
+                                        |> List.filter (fun (_, n) -> n = ds)
+                                        |> List.map fst
+                                        |> List.sort)
+                                let maxLanes = perColumn |> Array.map List.length |> Array.fold max 0
+                                for lane in 0 .. maxLanes - 1 do
+                                    let mutable accum = ResizeArray<V3d>()
+                                    let flush () =
+                                        if accum.Count >= 2 then
+                                            PinGeometry.appendPolylineRibbon positions colors indices (accum.ToArray()) color axis thickness
+                                        accum <- ResizeArray<V3d>()
+                                    for ci in 0 .. data.Columns.Length - 1 do
+                                        let zs = perColumn.[ci]
+                                        if lane < zs.Length then
+                                            accum.Add(toPoint data.Columns.[ci].Angle zs.[lane] off)
+                                        else
                                             flush ()
-                                positions.ToArray(), colors.ToArray(), indices.ToArray()
-                            | _ -> [||], [||], [||]
+                                    if accum.Count > 0 then
+                                        let zs0 = perColumn.[0]
+                                        if lane < zs0.Length then
+                                            accum.Add(toPoint data.Columns.[0].Angle zs0.[lane] off)
+                                        flush ()
+                            positions.ToArray(), colors.ToArray(), indices.ToArray()
                         | _ -> [||], [||], [||])
 
                 let cutPos = cutGeo |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
@@ -491,11 +502,14 @@ module SceneGraph =
 
             let hullDragging : cval<bool> = cval false
 
+            let editedPrism = editedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
+            let editedCutPlane = editedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.CutPlane))
+
             let hullGeometry =
-                editedPin |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin ->
-                        let p, i = PinGeometry.buildCylinderHull pin.Prism 64
+                editedPrism |> AVal.map (fun prismOpt ->
+                    match prismOpt with
+                    | Some prism ->
+                        let p, i = PinGeometry.buildCylinderHull prism 64
                         p, i, true
                     | None -> [||], [||], false)
 
@@ -506,19 +520,19 @@ module SceneGraph =
                 (notFullscreen, hullGeometry) ||> AVal.map2 (fun nf (_,_,act) -> nf && act)
 
             let indicatorGeometry =
-                editedPin |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin ->
-                        let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                (editedPrism, editedCutPlane) ||> AVal.map2 (fun prismOpt cpOpt ->
+                    match prismOpt, cpOpt with
+                    | Some prism, Some cp ->
+                        let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
                         let thick = max 0.03 (r * 0.04)
-                        match pin.CutPlane with
+                        match cp with
                         | CutPlaneMode.AcrossAxis dist ->
-                            let p, i = PinGeometry.buildHullRing pin.Prism dist thick 64
+                            let p, i = PinGeometry.buildHullRing prism dist thick 64
                             p, i, true
                         | CutPlaneMode.AlongAxis angleDeg ->
-                            let p, i = PinGeometry.buildHullLine pin.Prism angleDeg thick
+                            let p, i = PinGeometry.buildHullLine prism angleDeg thick
                             p, i, true
-                    | None -> [||], [||], false)
+                    | _ -> [||], [||], false)
 
             let indPos = indicatorGeometry |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
             let indIdx = indicatorGeometry |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)

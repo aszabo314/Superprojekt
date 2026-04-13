@@ -39,12 +39,12 @@ module Stratigraphy =
         }
 
     /// Phase 3.12: per-mesh world-space offset for the explosion view.
-    let explosionOffsets (pin : ScanPin) (meshNames : string[]) : Map<string, V3d> =
-        if not pin.Explosion.Enabled || pin.Explosion.ExpansionFactor <= 0.0 then Map.empty
+    let explosionOffsetsFromFields (explosion : ExplosionState) (prism : SelectionPrism) (stratigraphy : StratigraphyData option) (meshNames : string[]) : Map<string, V3d> =
+        if not explosion.Enabled || explosion.ExpansionFactor <= 0.0 then Map.empty
         else
-            let axis = pin.Prism.AxisDirection |> Vec.normalize
+            let axis = prism.AxisDirection |> Vec.normalize
             let ordered =
-                match pin.Stratigraphy with
+                match stratigraphy with
                 | Some data when data.Columns.Length > 0 ->
                     let mutable acc = Map.empty<string, float * int>
                     for col in data.Columns do
@@ -62,10 +62,13 @@ module Stratigraphy =
                     Array.append ranked extras
                 | _ -> meshNames
             let n = max 1 ordered.Length
-            let baseSpacing = (pin.Prism.ExtentForward + pin.Prism.ExtentBackward) / float n
-            let factor = pin.Explosion.ExpansionFactor
+            let baseSpacing = (prism.ExtentForward + prism.ExtentBackward) / float n
+            let factor = explosion.ExpansionFactor
             ordered
             |> Array.mapi (fun i ds ->
                 let centered = float i - float (n - 1) * 0.5
                 ds, axis * (centered * factor * baseSpacing))
             |> Map.ofArray
+
+    let explosionOffsets (pin : ScanPin) (meshNames : string[]) : Map<string, V3d> =
+        explosionOffsetsFromFields pin.Explosion pin.Prism pin.Stratigraphy meshNames

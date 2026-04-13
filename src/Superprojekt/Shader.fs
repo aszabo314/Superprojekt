@@ -183,7 +183,7 @@ module BlitShader =
             let ndc = v.pos.XY / v.pos.W
 
             let mutable maxDepth = -10.0
-            let mutable minDepth = 10.0
+            let mutable minDepth = 1.0
             let mutable color = V4d.Zero
             let mutable index = -1
 
@@ -216,6 +216,9 @@ module BlitShader =
                 let h = (dist - uniform.MinDifferenceDepth) / uniform.MaxDifferenceDepth |> float32 |> Heat.heat |> V4d
                 color <- h * color
 
+            
+            if minDepth >= 0.9999 then discard()
+            
             return { c = color; d = minDepth }
         }
         

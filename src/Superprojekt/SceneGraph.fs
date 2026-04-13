@@ -630,7 +630,6 @@ module SceneGraph =
                     Sg.Active hullActive
                     Sg.View view
                     Sg.Proj proj
-                    Sg.Intersectable (pickCylinder) //|> AVal.map Intersectable.cylinder)
                     Sg.Uniform("FlatColor", AVal.constant (V4d(0.0, 0.0, 0.0, 0.0)))
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.OnPointerDown(true, fun e ->
@@ -649,11 +648,14 @@ module SceneGraph =
                         printfn "[HULL] OnPointerUp"
                         if AVal.force hullDragging then
                             transact (fun () -> hullDragging.Value <- false))
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(dummyPos, typeof<V3f>) ])
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Index(BufferView(dummyIdx, typeof<int>))
-                    Sg.Render (AVal.constant 3)
+                    sg {
+                        Sg.Intersectable (pickCylinder) //|> AVal.map Intersectable.cylinder)
+                        Sg.VertexAttributes(
+                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(dummyPos, typeof<V3f>) ])
+                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                        Sg.Index(BufferView(dummyIdx, typeof<int>))
+                        Sg.Render (AVal.constant 3)
+                    }
                 }
                 // Visual hull: transparent white, no picking
                 sg {

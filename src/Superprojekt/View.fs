@@ -59,6 +59,14 @@ module View =
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
 
+                let mutable eHandler = None
+                
+                RenderControl.OnReady (fun e ->
+                    eHandler <- Some e
+                    ()
+                    
+                )
+                
                 OrbitController.getAttributes (Env.map CameraMessage env)
                 
                 let mutable initial = true
@@ -83,7 +91,6 @@ module View =
                 Sg.Pass RenderPass.passZero
                 
                 sg {
-                    Sg.Intersectable (Intersectable.sphere (Sphere3d(V3d.OOI*3.0, 1.0)))
                     Sg.OnClick(fun e ->
                         env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
                         false
@@ -92,7 +99,10 @@ module View =
                         DefaultSurfaces.trafo
                         DefaultSurfaces.constantColor C4f.AliceBlue
                     }
-                    Primitives.Sphere Sphere3d.Unit
+                    sg {
+                        Sg.Intersectable (Intersectable.sphere (Sphere3d(V3d.OOI*3.0, 1.0)))
+                        Primitives.Sphere Sphere3d.Unit
+                    }
                     
                 }
                 

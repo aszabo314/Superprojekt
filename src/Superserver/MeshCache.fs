@@ -92,9 +92,12 @@ let trianglesInSphere (lm : LoadedMesh) (center : V3f) (radius : float32) =
 // maxExtentU/V clip the output to [-maxExtentU, maxExtentU] × [-maxExtentV, maxExtentV] in 2D.
 let planeIntersection (lm : LoadedMesh) (planePoint : V3d) (planeNormal : V3d) (axisU : V3d) (axisV : V3d) (thickness : float) (maxExtentU : float) (maxExtentV : float) =
     let n = planeNormal |> Vec.normalize
-    let boxHalf = axisU * maxExtentU + axisV * maxExtentV + n * thickness
-    let slabMin = planePoint - V3d(abs boxHalf.X, abs boxHalf.Y, abs boxHalf.Z)
-    let slabMax = planePoint + V3d(abs boxHalf.X, abs boxHalf.Y, abs boxHalf.Z)
+    let hx = abs axisU.X * maxExtentU + abs axisV.X * maxExtentV + abs n.X * thickness
+    let hy = abs axisU.Y * maxExtentU + abs axisV.Y * maxExtentV + abs n.Y * thickness
+    let hz = abs axisU.Z * maxExtentU + abs axisV.Z * maxExtentV + abs n.Z * thickness
+    let boxHalf = V3d(hx, hy, hz)
+    let slabMin = planePoint - boxHalf
+    let slabMax = planePoint + boxHalf
     let bMin = V3f(Fun.Min(slabMin, slabMax))
     let bMax = V3f(Fun.Max(slabMin, slabMax))
     let vertIndices = trianglesInBox lm bMin bMax

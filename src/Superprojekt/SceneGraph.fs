@@ -503,10 +503,7 @@ module SceneGraph =
             let hullIdx = hullGeometry |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
             let hullCnt = hullGeometry |> AVal.map (fun (_,i,_) -> i.Length)
             let hullActive =
-                (notFullscreen, hullGeometry) ||> AVal.map2 (fun nf (_,_,act) ->
-                    let result = nf && act
-                    printfn "[HULL] hullActive=%b (notFullscreen=%b, hasGeometry=%b)" result nf act
-                    result)
+                (notFullscreen, hullGeometry) ||> AVal.map2 (fun nf (_,_,act) -> nf && act)
 
             let indicatorGeometry =
                 editedPin |> AVal.map (fun pinOpt ->
@@ -601,23 +598,8 @@ module SceneGraph =
                         let p0 = pin.Prism.AnchorPoint - axis * pin.Prism.ExtentBackward
                         let p1 = pin.Prism.AnchorPoint + axis * pin.Prism.ExtentForward
                         let cyl = Cylinder3d(p0, p1, r)
-                        printfn "[HULL] pickCylinder updated: p0=%A p1=%A r=%.3f axis=%A anchor=%A extB=%.3f extF=%.3f" p0 p1 r axis pin.Prism.AnchorPoint pin.Prism.ExtentBackward pin.Prism.ExtentForward
-                        
-                        let b = Intersectable.cylinder cyl
-                        
-                        { new IIntersectable with
-                            member this.Intersects(ray, tmin, tmax, t, pt, n) =
-                                let res = b.Intersects(ray, tmin, tmax, &t, &pt, &n)
-                                printfn "[HULL] Intersect called: ray=%A tmin=%.3f tmax=%.3f result=%b hitT=%.3f" ray tmin tmax res t
-                                res
-                            member this.BoundingBox =
-                                Box3d.Infinite
-                            
-                        }
-                        
-                        //cyl
+                        Intersectable.cylinder cyl
                     | None ->
-                        printfn "[HULL] pickCylinder: no edited pin"
                         Intersectable.cylinder ( Cylinder3d(V3d.Zero, V3d.OOI, 0.001)))
 
             // Dummy single-triangle for the pick node (degenerate, invisible)
@@ -633,23 +615,27 @@ module SceneGraph =
                     Sg.Uniform("FlatColor", AVal.constant (V4d(0.0, 0.0, 0.0, 0.0)))
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.OnPointerDown(true, fun e ->
-                        printfn "[HULL] OnPointerDown! worldPos=%A button=%A" e.WorldPosition e.Button
                         match AVal.force editedPin with
                         | Some _ ->
                             transact (fun () -> hullDragging.Value <- true)
                             updateFromPointerRay e
                             false
                         | None ->
-                            printfn "[HULL] OnPointerDown: no edited pin"
                             true)
                     Sg.OnPointerMove(fun e ->
-                        if AVal.force hullDragging then updateFromPointerRay e)
-                    Sg.OnPointerUp(true, fun _ ->
-                        printfn "[HULL] OnPointerUp"
                         if AVal.force hullDragging then
-                            transact (fun () -> hullDragging.Value <- false))
+                            updateFromPointerRay e
+                            false
+                        else true
+                        )
+                    Sg.OnPointerUp(true, fun _ ->
+                        if AVal.force hullDragging then
+                            transact (fun () -> hullDragging.Value <- false)
+                            false
+                        else true
+                        )
                     sg {
-                        Sg.Intersectable (pickCylinder) //|> AVal.map Intersectable.cylinder)
+                        Sg.Intersectable pickCylinder
                         Sg.VertexAttributes(
                             HashMap.ofList [ string DefaultSemantic.Positions, BufferView(dummyPos, typeof<V3f>) ])
                         Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }

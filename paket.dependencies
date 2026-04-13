@@ -9,11 +9,11 @@ nuget Aardvark.Base.FSharp      ~> 5.3.21
 nuget Aardvark.Build            ~> 2.0.7
 
 
-nuget Aardvark.Dom              ~> 1.0.23
-nuget Aardvark.Dom.Utilities    ~> 1.0.23
-nuget Aardvark.Dom.Elm          ~> 1.0.23
-nuget Aardvark.Dom.Remote       ~> 1.0.23
-nuget Aardvark.Dom.Giraffe      ~> 1.0.23
+nuget Aardvark.Dom              ~> 1.0.24
+nuget Aardvark.Dom.Utilities    ~> 1.0.24
+nuget Aardvark.Dom.Elm          ~> 1.0.24
+nuget Aardvark.Dom.Remote       ~> 1.0.24
+nuget Aardvark.Dom.Giraffe      ~> 1.0.24
 nuget Aardvark.Application.Slim     ~> 5.5.17
 nuget Aardvark.Application.Slim.GL  ~> 5.5.17
 

@@ -404,8 +404,8 @@ module PinGeometry =
             let j = (i + 1) % segments
             let t0, t1 = i, j
             let b0, b1 = i + segments, j + segments
-            indices.Add(t0); indices.Add(b0); indices.Add(t1)
-            indices.Add(t1); indices.Add(b0); indices.Add(b1)
+            indices.Add(t0); indices.Add(t1); indices.Add(b0)
+            indices.Add(t1); indices.Add(b1); indices.Add(b0)
         positions, indices.ToArray()
 
     /// Horizontal ring indicator at a given axis-distance on the cylinder hull.
@@ -429,8 +429,8 @@ module PinGeometry =
             let j = (i + 1) % segments
             let t0, t1 = i, j
             let b0, b1 = i + segments, j + segments
-            indices.Add(t0); indices.Add(b0); indices.Add(t1)
-            indices.Add(t1); indices.Add(b0); indices.Add(b1)
+            indices.Add(t0); indices.Add(t1); indices.Add(b0)
+            indices.Add(t1); indices.Add(b1); indices.Add(b0)
         positions, indices.ToArray()
 
     /// Vertical line indicator at a given angle on the cylinder hull.
@@ -444,8 +444,11 @@ module PinGeometry =
         let a = angleDeg * Constant.RadiansPerDegree
         let dir = right * cos a + fwd * sin a
         let perp = Vec.cross dir axis |> Vec.normalize
-        let top = prism.AnchorPoint + axis * prism.ExtentForward + dir * rOuter
-        let bot = prism.AnchorPoint - axis * prism.ExtentBackward + dir * rOuter
+        let top1 = prism.AnchorPoint + axis * prism.ExtentForward + dir * rOuter
+        let bot1 = prism.AnchorPoint - axis * prism.ExtentBackward + dir * rOuter
+        let top2 = prism.AnchorPoint + axis * prism.ExtentForward - dir * rOuter
+        let bot2 = prism.AnchorPoint - axis * prism.ExtentBackward - dir * rOuter
         let halfT = thickness * 0.5
-        [| V3f(top + perp * halfT); V3f(top - perp * halfT); V3f(bot + perp * halfT); V3f(bot - perp * halfT) |],
-        [| 0;1;2; 1;3;2 |]
+        [| V3f(top1 + perp * halfT); V3f(top1 - perp * halfT); V3f(bot1 + perp * halfT); V3f(bot1 - perp * halfT)
+           V3f(top2 + perp * halfT); V3f(top2 - perp * halfT); V3f(bot2 + perp * halfT); V3f(bot2 - perp * halfT) |],
+        [| 0;1;2; 1;3;2; 4;5;6; 5;7;6 |]

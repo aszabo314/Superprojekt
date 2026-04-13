@@ -79,7 +79,7 @@ module Model =
             ClipBounds     = Box3d.Invalid
 
             ScanPins              = ScanPinModel.initial
-            PinAxisVertical       = false
+            PinAxisVertical       = true
             DepthShadeOn          = true
             IsolinesOn            = true
             ColorMode             = false

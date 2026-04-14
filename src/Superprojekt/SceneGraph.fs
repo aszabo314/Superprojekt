@@ -369,13 +369,14 @@ module SceneGraph =
                 let isActiveAndSelected = AVal.map2 (&&) notFullscreen isSelected
                 let prismVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
                 let stratVal = pinVal |> AVal.map (fun po -> po |> Option.bind (fun p -> p.Stratigraphy))
-                let hoverZVal =
+                let hoverVal =
                     pinVal |> AVal.map (fun po ->
-                        po |> Option.bind (fun p -> p.BetweenSpaceHover) |> Option.map (fun h -> h.HoverZ))
+                        po |> Option.bind (fun p -> p.BetweenSpaceHover)
+                           |> Option.map (fun h -> h.ColumnIdx, h.HoverZ))
                 let geo =
-                    (prismVal, stratVal, hoverZVal) |||> AVal.map3 (fun prismO dataO zO ->
-                        match prismO, dataO, zO with
-                        | Some prism, Some data, Some z -> PinGeometry.buildBetweenSpaceBand prism data z
+                    (prismVal, stratVal, hoverVal) |||> AVal.map3 (fun prismO dataO hOpt ->
+                        match prismO, dataO, hOpt with
+                        | Some prism, Some data, Some (col, z) -> PinGeometry.buildBetweenSpaceBand prism data col z
                         | _ -> [||], [||])
                 let positions = geo |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
                 let idx       = geo |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)

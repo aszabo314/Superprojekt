@@ -58,7 +58,7 @@ module PinGeometry =
     /// For each angular column, re-picks the (zLower, zUpper) bracket around `hoverZ`.
     /// Columns with no valid bracket produce a gap in the volume. Emits an outer
     /// sleeve on the cylinder surface plus top/bottom wedges closing into the axis.
-    let buildBetweenSpaceBand (prism : SelectionPrism) (data : StratigraphyData) (hoverZ : float) =
+    let buildBetweenSpaceBand (prism : SelectionPrism) (data : StratigraphyData) (colIdx : int) (hoverZ : float) =
         let axis = prism.AxisDirection |> Vec.normalize
         let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
         let right = Vec.cross axis up |> Vec.normalize
@@ -67,17 +67,19 @@ module PinGeometry =
         let n = data.Columns.Length
         if n = 0 then [||], [||]
         else
+            let band = Stratigraphy.floodContinuousBand data colIdx hoverZ
+            if Map.isEmpty band then [||], [||]
+            else
             let positions = System.Collections.Generic.List<V3f>()
             let indices   = System.Collections.Generic.List<int>()
             let cyl (angle : float) (z : float) : V3f =
                 V3f (prism.AnchorPoint + (right * cos angle + fwd * sin angle) * r + axis * z)
             let ax (z : float) : V3f =
                 V3f (prism.AnchorPoint + axis * z)
-            for i in 0 .. n - 1 do
-                match Stratigraphy.tryBracket data.Columns.[i].Events hoverZ with
-                | Some (zLo, zHi, _, _) ->
-                    let t0 = float i / float n * System.Math.PI * 2.0
-                    let t1 = float (i + 1) / float n * System.Math.PI * 2.0
+            for KeyValue(i, brackets) in band do
+                let t0 = float i / float n * System.Math.PI * 2.0
+                let t1 = float (i + 1) / float n * System.Math.PI * 2.0
+                for (zLo, zHi) in brackets do
                     let pLo0 = cyl t0 zLo
                     let pLo1 = cyl t1 zLo
                     let pHi0 = cyl t0 zHi
@@ -94,7 +96,6 @@ module PinGeometry =
                     let b = positions.Count
                     positions.Add aHi; positions.Add pHi1; positions.Add pHi0
                     indices.Add b; indices.Add (b + 1); indices.Add (b + 2)
-                | None -> ()
             positions.ToArray(), indices.ToArray()
 
     /// Build a thin square-section tube (8 verts, 8 quads = 16 tris) from a to b.

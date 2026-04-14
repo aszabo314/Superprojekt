@@ -204,11 +204,15 @@ module StratigraphyView =
     let private buildHighlight
         (data : StratigraphyData)
         (display : StratigraphyDisplayMode)
+        (colIdx : int)
         (hoverZ : float)
         : V3f[] * V4f[] * int[] =
 
         let nCols = data.Columns.Length
         if nCols = 0 then [||], [||], [||]
+        else
+        let band = Stratigraphy.floodContinuousBand data colIdx hoverZ
+        if Map.isEmpty band then [||], [||], [||]
         else
         let dx = 1.0 / float nCols
         let globalRange =
@@ -236,11 +240,10 @@ module StratigraphyView =
         let colors    = ResizeArray<V4f>()
         let indices   = ResizeArray<int>()
 
-        for i in 0 .. nCols - 1 do
-            match Stratigraphy.tryBracket data.Columns.[i].Events hoverZ with
-            | Some (zLo, zHi, _, _) ->
-                let x0 = float i * dx
-                let x1 = x0 + dx
+        for KeyValue(i, brackets) in band do
+            let x0 = float i * dx
+            let x1 = x0 + dx
+            for (zLo, zHi) in brackets do
                 let y0 = toY i zLo
                 let y1 = toY i zHi
                 let b = positions.Count
@@ -251,7 +254,6 @@ module StratigraphyView =
                 for _ in 1 .. 4 do colors.Add(color)
                 indices.Add(b); indices.Add(b + 1); indices.Add(b + 2)
                 indices.Add(b); indices.Add(b + 2); indices.Add(b + 3)
-            | None -> ()
 
         positions.ToArray(), colors.ToArray(), indices.ToArray()
 
@@ -327,7 +329,7 @@ module StratigraphyView =
                 | Some pin ->
                     match pin.Stratigraphy, pin.BetweenSpaceHover with
                     | Some data, Some h ->
-                        buildHighlight data pin.StratigraphyDisplay h.HoverZ
+                        buildHighlight data pin.StratigraphyDisplay h.ColumnIdx h.HoverZ
                     | _ -> [||], [||], [||]
                 | None -> [||], [||], [||])
 

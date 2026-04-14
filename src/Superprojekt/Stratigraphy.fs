@@ -50,6 +50,58 @@ module Stratigraphy =
             | _ -> None
         go events
 
+    /// Flood-fill the continuous between-space containing the hovered bracket.
+    /// Each column is broken into brackets (pairs of consecutive events); BFS
+    /// over the graph whose nodes are (columnIdx, bracketIdx) and whose edges
+    /// connect nodes in adjacent columns whose z-ranges overlap. Bounding mesh
+    /// identities are ignored — the gap is defined purely by geometric
+    /// continuity of the open z-intervals column-to-column. Returns every
+    /// bracket in the connected region, grouped by column.
+    let floodContinuousBand (data : StratigraphyData) (colIdx : int) (hoverZ : float) : Map<int, (float * float) list> =
+        let n = data.Columns.Length
+        if n = 0 then Map.empty
+        else
+        let hIdx = colIdx |> max 0 |> min (n - 1)
+        let bracketsOf (events : (float * string) list) =
+            let e = List.toArray events
+            if e.Length < 2 then [||]
+            else Array.init (e.Length - 1) (fun k -> fst e.[k], fst e.[k + 1])
+        let columnBrackets = Array.init n (fun i -> bracketsOf data.Columns.[i].Events)
+        let hb = columnBrackets.[hIdx]
+        let mutable hbIdx = -1
+        for k in 0 .. hb.Length - 1 do
+            let (a, b) = hb.[k]
+            if hbIdx < 0 && a <= hoverZ && hoverZ < b then hbIdx <- k
+        if hbIdx < 0 then Map.empty
+        else
+            let visited = System.Collections.Generic.HashSet<int * int>()
+            let queue   = System.Collections.Generic.Queue<int * int>()
+            let perColumn = System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<float * float>>()
+            let enqueue col bi =
+                if visited.Add((col, bi)) then
+                    queue.Enqueue((col, bi))
+                    match perColumn.TryGetValue col with
+                    | true, lst -> lst.Add columnBrackets.[col].[bi]
+                    | _ ->
+                        let lst = System.Collections.Generic.List<float * float>()
+                        lst.Add columnBrackets.[col].[bi]
+                        perColumn.[col] <- lst
+            enqueue hIdx hbIdx
+            while queue.Count > 0 do
+                let (col, bi) = queue.Dequeue()
+                let (lo, hi) = columnBrackets.[col].[bi]
+                for step in [1; -1] do
+                    let ncol = (col + step + n) % n
+                    let nbrs = columnBrackets.[ncol]
+                    let len1 = hi - lo
+                    for nbi in 0 .. nbrs.Length - 1 do
+                        let (a, b) = nbrs.[nbi]
+                        let ov = (min b hi) - (max a lo)
+                        let len2 = b - a
+                        let longer = max len1 len2
+                        if longer > 0.0 && ov > 0.5 * longer then enqueue ncol nbi
+            perColumn |> Seq.map (fun kv -> kv.Key, List.ofSeq kv.Value) |> Map.ofSeq
+
     /// Phase 3.12: per-mesh world-space offset for the explosion view.
     let explosionOffsetsFromFields (explosion : ExplosionState) (prism : SelectionPrism) (stratigraphy : StratigraphyData option) (meshNames : string[]) : Map<string, V3d> =
         if not explosion.Enabled || explosion.ExpansionFactor <= 0.0 then Map.empty

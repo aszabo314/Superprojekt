@@ -408,8 +408,22 @@ module PinGeometry =
                     yield (EdgeV, t, fmt localV) ]
         uLabels @ vLabels
 
-    /// Trafo that places a single tick label at unitT along the given edge.
-    let tickLabelWorldTrafo (prism : SelectionPrism) (cutPlane : CutPlaneMode) (edge : TickEdge) (unitT : float) =
+    /// Helper: build a label trafo from orientation + position + scale.
+    /// Scale is applied in local space first, then rotation+translation places it in world.
+    let private labelTrafo (x : V3d) (y : V3d) (z : V3d) (pos : V3d) (size : float) =
+        Trafo3d(
+            M44d(x.X, y.X, z.X, pos.X,
+                 x.Y, y.Y, z.Y, pos.Y,
+                 x.Z, y.Z, z.Z, pos.Z,
+                 0.0, 0.0, 0.0, 1.0),
+            M44d(x.X, x.Y, x.Z, -Vec.dot x pos,
+                 y.X, y.Y, y.Z, -Vec.dot y pos,
+                 z.X, z.Y, z.Z, -Vec.dot z pos,
+                 0.0, 0.0, 0.0, 1.0)) *
+        Trafo3d.Scale(size)
+
+    /// Compute cut plane frame: corner0, corner1, corner3, edgeDirU, edgeDirV.
+    let private cutPlaneFrame (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
         let axis = prism.AxisDirection |> Vec.normalize
         let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
         let right = Vec.cross axis up |> Vec.normalize
@@ -417,62 +431,42 @@ module PinGeometry =
         let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
         let hw = r * 1.2
         let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
-        let corners =
-            match cutPlane with
-            | CutPlaneMode.AlongAxis angleDeg ->
-                let a = angleDeg * Constant.RadiansPerDegree
-                let planeDir = right * cos a + fwd * sin a
-                let center = prism.AnchorPoint + axis * (prism.ExtentForward - prism.ExtentBackward) * 0.5
-                let c0 = center - planeDir * hw - axis * hh
-                let c1 = center + planeDir * hw - axis * hh
-                let c3 = center - planeDir * hw + axis * hh
-                c0, c1, c3, planeDir |> Vec.normalize, axis |> Vec.normalize
-            | CutPlaneMode.AcrossAxis dist ->
-                let center = prism.AnchorPoint + axis * dist
-                let c0 = center - right * hw - fwd * hw
-                let c1 = center + right * hw - fwd * hw
-                let c3 = center - right * hw + fwd * hw
-                c0, c1, c3, right |> Vec.normalize, fwd |> Vec.normalize
-        let c0, c1, c3, edgeDirU, edgeDirV = corners
+        match cutPlane with
+        | CutPlaneMode.AlongAxis angleDeg ->
+            let a = angleDeg * Constant.RadiansPerDegree
+            let planeDir = right * cos a + fwd * sin a
+            let center = prism.AnchorPoint + axis * (prism.ExtentForward - prism.ExtentBackward) * 0.5
+            let c0 = center - planeDir * hw - axis * hh
+            let c1 = center + planeDir * hw - axis * hh
+            let c3 = center - planeDir * hw + axis * hh
+            c0, c1, c3, planeDir |> Vec.normalize, axis |> Vec.normalize
+        | CutPlaneMode.AcrossAxis dist ->
+            let center = prism.AnchorPoint + axis * dist
+            let c0 = center - right * hw - fwd * hw
+            let c1 = center + right * hw - fwd * hw
+            let c3 = center - right * hw + fwd * hw
+            c0, c1, c3, right |> Vec.normalize, fwd |> Vec.normalize
+
+    /// Trafo that places a single tick label at unitT along the given edge.
+    let tickLabelWorldTrafo (prism : SelectionPrism) (cutPlane : CutPlaneMode) (edge : TickEdge) (unitT : float) =
+        let c0, c1, c3, edgeDirU, edgeDirV = cutPlaneFrame prism cutPlane
+        let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
         let labelSize = 0.05
         let offset = labelSize * 1.5
-        match edge with
-        | EdgeU ->
-            let pt = c0 + (c1 - c0) * unitT - edgeDirV * offset
-            let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
-            let m = M44d.FromCols(V4d(edgeDirU, 0.0), V4d(edgeDirV, 0.0), V4d(planeNormal, 0.0), V4d(pt, 1.0))
-            Trafo3d(m, m.Inverse) * Trafo3d.Scale(labelSize)
-        | EdgeV ->
-            let pt = c0 + (c3 - c0) * unitT - edgeDirU * offset
-            let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
-            let m = M44d.FromCols(V4d(edgeDirU, 0.0), V4d(edgeDirV, 0.0), V4d(planeNormal, 0.0), V4d(pt, 1.0))
-            Trafo3d(m, m.Inverse) * Trafo3d.Scale(labelSize)
+        let pt =
+            match edge with
+            | EdgeU -> c0 + (c1 - c0) * unitT - edgeDirV * offset
+            | EdgeV -> c0 + (c3 - c0) * unitT - edgeDirU * offset
+        labelTrafo edgeDirU edgeDirV planeNormal pt labelSize
 
     /// Trafo for the centroid label, placed near corner0 of the cut plane.
     let centroidLabelTrafo (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
-        let axis = prism.AxisDirection |> Vec.normalize
-        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-        let right = Vec.cross axis up |> Vec.normalize
-        let fwd = Vec.cross right axis |> Vec.normalize
-        let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-        let hw = r * 1.2
-        let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
-        let corner0, edgeDirU, edgeDirV =
-            match cutPlane with
-            | CutPlaneMode.AlongAxis angleDeg ->
-                let a = angleDeg * Constant.RadiansPerDegree
-                let planeDir = right * cos a + fwd * sin a
-                let center = prism.AnchorPoint + axis * (prism.ExtentForward - prism.ExtentBackward) * 0.5
-                center - planeDir * hw - axis * hh, planeDir |> Vec.normalize, axis |> Vec.normalize
-            | CutPlaneMode.AcrossAxis dist ->
-                let center = prism.AnchorPoint + axis * dist
-                center - right * hw - fwd * hw, right |> Vec.normalize, fwd |> Vec.normalize
+        let c0, _, _, edgeDirU, edgeDirV = cutPlaneFrame prism cutPlane
+        let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
         let labelSize = 0.04
         let offset = labelSize * 2.0
-        let pt = corner0 - edgeDirU * offset - edgeDirV * offset
-        let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
-        let m = M44d.FromCols(V4d(edgeDirU, 0.0), V4d(edgeDirV, 0.0), V4d(planeNormal, 0.0), V4d(pt, 1.0))
-        Trafo3d(m, m.Inverse) * Trafo3d.Scale(labelSize)
+        let pt = c0 - edgeDirU * offset - edgeDirV * offset
+        labelTrafo edgeDirU edgeDirV planeNormal pt labelSize
 
     /// Solid cylinder hull surface (for picking). Returns positions and indices.
     let buildCylinderHull (prism : SelectionPrism) (segments : int) =

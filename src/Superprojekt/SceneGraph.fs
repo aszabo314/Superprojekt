@@ -376,21 +376,27 @@ module SceneGraph =
                 let geo =
                     (prismVal, stratVal, hoverVal) |||> AVal.map3 (fun prismO dataO hOpt ->
                         match prismO, dataO, hOpt with
-                        | Some prism, Some data, Some (col, z) -> PinGeometry.buildBetweenSpaceBand prism data col z
-                        | _ -> [||], [||])
-                let positions = geo |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
-                let idx       = geo |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
-                let cnt       = geo |> AVal.map (fun (_, i) -> i.Length)
-                ASet.ofList [
+                        | Some prism, Some data, Some (col, z) -> PinGeometry.buildBetweenSpaceSurfaces prism data col z
+                        | _ -> ([||], [||]), ([||], [||]), ([||], [||]))
+                let upperPos = geo |> AVal.map (fun ((p, _), _, _) -> ArrayBuffer p :> IBuffer)
+                let upperIdx = geo |> AVal.map (fun ((_, i), _, _) -> ArrayBuffer i :> IBuffer)
+                let upperCnt = geo |> AVal.map (fun ((_, i), _, _) -> i.Length)
+                let lowerPos = geo |> AVal.map (fun (_, (p, _), _) -> ArrayBuffer p :> IBuffer)
+                let lowerIdx = geo |> AVal.map (fun (_, (_, i), _) -> ArrayBuffer i :> IBuffer)
+                let lowerCnt = geo |> AVal.map (fun (_, (_, i), _) -> i.Length)
+                let sidePos  = geo |> AVal.map (fun (_, _, (p, _)) -> ArrayBuffer p :> IBuffer)
+                let sideIdx  = geo |> AVal.map (fun (_, _, (_, i)) -> ArrayBuffer i :> IBuffer)
+                let sideCnt  = geo |> AVal.map (fun (_, _, (_, i)) -> i.Length)
+                let makeSurface (color : V4d) (positions : aval<IBuffer>) (idx : aval<IBuffer>) (cnt : aval<int>) =
                     sg {
                         Sg.Active isActiveAndSelected
                         Sg.View view
                         Sg.Proj proj
                         Sg.Pass RenderPass.passTwo
                         Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                        Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.55, 0.1, 0.40)))
+                        Sg.Uniform("FlatColor", AVal.constant color)
                         Sg.BlendMode BlendMode.Blend
-                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                        Sg.DepthTest (AVal.constant DepthTest.None)
                         Sg.NoEvents
                         Sg.VertexAttributes(
                             HashMap.ofList [
@@ -399,6 +405,10 @@ module SceneGraph =
                         Sg.Index(BufferView(idx, typeof<int>))
                         Sg.Render cnt
                     }
+                ASet.ofList [
+                    makeSurface (V4d(1.0, 1.0, 0.9, 0.55)) upperPos upperIdx upperCnt
+                    makeSurface (V4d(1.0, 0.95, 0.7, 0.55)) lowerPos lowerIdx lowerCnt
+                    makeSurface (V4d(1.0, 0.97, 0.8, 0.40)) sidePos  sideIdx  sideCnt
                 ]
             )
 

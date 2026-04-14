@@ -99,6 +99,10 @@ A ScanPin is a 3D annotation: a selection prism (32-gon cylinder) extruded along
 
 **Core sample 3D view** (in GuiPins.fs): A secondary `renderControl` embedded in `pinDiagram`, stacked below the SVG profile. Shows the selected pin's region as a vertical "core sample" — the prism axis is rotated to Z and centered at the origin via `coreSampleTrafo`. Meshes are rendered with `BlitShader.coreClip` (cylindrical discard: fragments with XY distance > footprint radius are discarded). The prism wireframe and cut plane quad are pre-transformed into core sample space. Uses an orthographic projection (`Frustum.ortho`) with constrained side-view camera: horizontal drag rotates around Z axis (`CoreSampleRotation`), vertical drag pans along Z (`CoreSamplePanZ`), scroll zooms (`CoreSampleZoom`). Camera state stored as three floats on Model; custom pointer handlers in GuiPins.fs (no OrbitController). View matrix built manually via `CameraView(sky, eye, forward, up, right)`. Side/Top view mode toggle (`CoreSampleViewMode`) — TopView not yet wired up.
 
+**Stratigraphy** (Stratigraphy.fs, StratigraphyView.fs, SceneGraph.fs): 2D diagram + 3D between-space picking. `Stratigraphy.compute` queries the server's `/query/cylinder-eval` on a metric radial ladder (one ring per 0.25 m from the prism wall inward, floor 0.02 m). Data is stored in `StratigraphyData.Rings : StratigraphyColumn[][]` (outer→inner; `Rings.[0]` aliases the legacy `Columns` field that drives the 2D diagram — axis stats still come from the outer ring only). `floodContinuousBand3D` BFS-floods a continuous gap across `(angleIdx, ringIdx, bracketIdx)` nodes, seeded at the hovered bracket on the outer ring; angular neighbors wrap, radial neighbors clamp. Two brackets connect iff `overlap > 0.5 * max(len1, len2)` — symmetric majority-overlap rule prevents a fat bracket from bridging two disjoint thin ones. `floodContinuousBand` is a thin wrapper that filters to `ringIdx = 0` for the 2D view. Hover state: `BetweenSpaceHover { ColumnIdx; HoverZ; Pinned }` on ScanPin, toggled by Shift+Left in the diagram.
+
+**Between-space 3D volume** (PinGeometry.fs `buildBetweenSpaceSurfaces`, SceneGraph.fs `betweenSpaceBand`): Renders the continuous-gap volume as three translucent surfaces — upper (warm white), lower (cream), and side walls closing the volume boundary. Upper/lower are triangulated over grid quads where all four `(angle, ring)` corners are in the band; side walls are emitted on any grid edge where both endpoints are in the band but at least one adjacent quad is incomplete. All three draw calls use `BlendMode.Blend` and `DepthTest.None` in `passTwo` so the volume is visible through every mesh. Field-projected aVals (`prismVal`, `stratVal`, `hoverVal`) keep the rebuild cost minimal.
+
 **Open TODOs:** See `scanpin-v2-spec.md` — key gaps: dummy cut results (no real mesh intersection), no arcball gizmo, no deserialization, top view mode, summary meshes, boxplot ranking.
 
 ## Off-screen render pipeline
@@ -184,6 +188,12 @@ POST /api/query/ray              → { hit, t, point, triangleId }   Name = "dat
 POST /api/query/closest          → { found, point, distanceSquared, triangleId }
 POST /api/query/sphere           → binary: int32 count | int32[] vertexIndices
 POST /api/query/box              → binary: int32 count | int32[] vertexIndices
+POST /api/query/plane-intersection → { segments: [[u0,v0,u1,v1], ...] }  2D cut polylines
+POST /api/query/grid-eval        → binary grid of per-cell stats within a core sample prism
+POST /api/query/cylinder-eval    → binary: per-ring, per-angle mesh-intersection heights
+                                    Request: { Radii: float[], AngularResolution, ExtentForward, ExtentBackward, ... }
+                                    Response: int32 angularRes | int32 ringCount | int32 hitCount
+                                              then hitCount × (int32 ring, int32 angle, int32 nameLen, utf8 name, float64 height)
 ```
 
 Client mesh names use `"dataset/meshName"` format throughout. Query `Name` field uses the same format; server splits on first `/`.

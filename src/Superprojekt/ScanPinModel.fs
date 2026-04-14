@@ -71,6 +71,11 @@ type StratigraphyData = {
     /// Per-column min/max z across all datasets (for normalization).
     ColumnMinZ : float[]
     ColumnMaxZ : float[]
+    /// Multi-radius sampling grid, outer ring first. Rings.[0] = Columns.
+    /// Length = RingRadii.Length. Each ring has `AngularResolution` columns.
+    Rings : StratigraphyColumn[][]
+    /// World-space radius for each ring (index 0 = prism wall).
+    RingRadii : float[]
 }
 
 /// V3: display mode for the stratigraphy diagram.

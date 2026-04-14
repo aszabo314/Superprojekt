@@ -9,12 +9,26 @@ module Stratigraphy =
             let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
             let anchor = prism.AnchorPoint / scale + commonCentroid
             let axis = prism.AxisDirection |> Vec.normalize
-            let! (res, perAngle) = Query.cylinderEval serverUrl dataset anchor axis (radius / scale) angularRes (prism.ExtentForward / scale) (prism.ExtentBackward / scale)
-            let columns =
+            let worldR = radius / scale
+            let step = 0.25
+            let minInner = 0.02
+            let ringRadii =
+                let rs = ResizeArray<float>()
+                let mutable r = worldR
+                while r >= minInner do
+                    rs.Add r
+                    r <- r - step
+                if rs.Count = 0 then rs.Add (max worldR minInner)
+                rs.ToArray()
+            let! (res, ringCount, perRingAngle) =
+                Query.cylinderEval serverUrl dataset anchor axis ringRadii angularRes (prism.ExtentForward / scale) (prism.ExtentBackward / scale)
+            let buildRing (perAngle : ResizeArray<float * string>[]) =
                 Array.init res (fun i ->
                     let angle = float i / float res * System.Math.PI * 2.0
                     let events = perAngle.[i] |> Seq.toList |> List.map (fun (h, name) -> (h * scale, name)) |> List.sortBy fst
                     { Angle = angle; Events = events })
+            let rings = Array.init ringCount (fun k -> buildRing perRingAngle.[k])
+            let columns = rings.[0]
             // Derive axis bounds from actual data so the diagram always fits
             let mutable globalMin = infinity
             let mutable globalMax = -infinity
@@ -35,7 +49,13 @@ module Stratigraphy =
             let columnMaxZ =
                 columns |> Array.map (fun c ->
                     match c.Events with [] -> axisMax | _ -> c.Events |> List.map fst |> List.max)
-            return { AngularResolution = res; AxisMin = axisMin; AxisMax = axisMax; Columns = columns; ColumnMinZ = columnMinZ; ColumnMaxZ = columnMaxZ }
+            // RingRadii reported in client (scaled) space to match Columns' z units
+            let ringRadiiScaled = ringRadii |> Array.map (fun r -> r * scale)
+            return {
+                AngularResolution = res; AxisMin = axisMin; AxisMax = axisMax
+                Columns = columns; ColumnMinZ = columnMinZ; ColumnMaxZ = columnMaxZ
+                Rings = rings; RingRadii = ringRadiiScaled
+            }
         }
 
     /// Find the between-space bracket containing `z` in a column's sorted events.
@@ -57,50 +77,73 @@ module Stratigraphy =
     /// identities are ignored — the gap is defined purely by geometric
     /// continuity of the open z-intervals column-to-column. Returns every
     /// bracket in the connected region, grouped by column.
-    let floodContinuousBand (data : StratigraphyData) (colIdx : int) (hoverZ : float) : Map<int, (float * float) list> =
-        let n = data.Columns.Length
-        if n = 0 then Map.empty
+    /// 3D flood fill over (angleIdx, ringIdx, bracketIdx) with ±1 angle (wrap) and
+    /// ±1 ring (clamp) neighbors. Seed is the hovered bracket on the outer ring.
+    let floodContinuousBand3D (data : StratigraphyData) (colIdx : int) (hoverZ : float) : Map<int * int, (float * float) list> =
+        let n = data.AngularResolution
+        let rings = data.Rings
+        let ringCount = if isNull (box rings) then 0 else rings.Length
+        if n = 0 || ringCount = 0 then Map.empty
         else
         let hIdx = colIdx |> max 0 |> min (n - 1)
         let bracketsOf (events : (float * string) list) =
             let e = List.toArray events
             if e.Length < 2 then [||]
             else Array.init (e.Length - 1) (fun k -> fst e.[k], fst e.[k + 1])
-        let columnBrackets = Array.init n (fun i -> bracketsOf data.Columns.[i].Events)
-        let hb = columnBrackets.[hIdx]
+        // brackets.[ring].[angle] = (lo, hi)[]
+        let brackets =
+            Array.init ringCount (fun r ->
+                Array.init n (fun a -> bracketsOf rings.[r].[a].Events))
+        let seedRing = 0
+        let hb = brackets.[seedRing].[hIdx]
         let mutable hbIdx = -1
         for k in 0 .. hb.Length - 1 do
             let (a, b) = hb.[k]
             if hbIdx < 0 && a <= hoverZ && hoverZ < b then hbIdx <- k
         if hbIdx < 0 then Map.empty
         else
-            let visited = System.Collections.Generic.HashSet<int * int>()
-            let queue   = System.Collections.Generic.Queue<int * int>()
-            let perColumn = System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<float * float>>()
-            let enqueue col bi =
-                if visited.Add((col, bi)) then
-                    queue.Enqueue((col, bi))
-                    match perColumn.TryGetValue col with
-                    | true, lst -> lst.Add columnBrackets.[col].[bi]
+            let visited = System.Collections.Generic.HashSet<int * int * int>()
+            let queue   = System.Collections.Generic.Queue<int * int * int>()
+            let perCell = System.Collections.Generic.Dictionary<int * int, System.Collections.Generic.List<float * float>>()
+            let enqueue ring ang bi =
+                if visited.Add((ring, ang, bi)) then
+                    queue.Enqueue((ring, ang, bi))
+                    let key = (ang, ring)
+                    match perCell.TryGetValue key with
+                    | true, lst -> lst.Add brackets.[ring].[ang].[bi]
                     | _ ->
                         let lst = System.Collections.Generic.List<float * float>()
-                        lst.Add columnBrackets.[col].[bi]
-                        perColumn.[col] <- lst
-            enqueue hIdx hbIdx
+                        lst.Add brackets.[ring].[ang].[bi]
+                        perCell.[key] <- lst
+            enqueue seedRing hIdx hbIdx
+            let tryConnect ring ang (lo, hi) nRing nAng =
+                let nbrs = brackets.[nRing].[nAng]
+                let len1 = hi - lo
+                for nbi in 0 .. nbrs.Length - 1 do
+                    let (a, b) = nbrs.[nbi]
+                    let ov = (min b hi) - (max a lo)
+                    let len2 = b - a
+                    let longer = max len1 len2
+                    if longer > 0.0 && ov > 0.5 * longer then enqueue nRing nAng nbi
             while queue.Count > 0 do
-                let (col, bi) = queue.Dequeue()
-                let (lo, hi) = columnBrackets.[col].[bi]
+                let (ring, ang, bi) = queue.Dequeue()
+                let bracket = brackets.[ring].[ang].[bi]
+                // angular neighbors (wrap)
                 for step in [1; -1] do
-                    let ncol = (col + step + n) % n
-                    let nbrs = columnBrackets.[ncol]
-                    let len1 = hi - lo
-                    for nbi in 0 .. nbrs.Length - 1 do
-                        let (a, b) = nbrs.[nbi]
-                        let ov = (min b hi) - (max a lo)
-                        let len2 = b - a
-                        let longer = max len1 len2
-                        if longer > 0.0 && ov > 0.5 * longer then enqueue ncol nbi
-            perColumn |> Seq.map (fun kv -> kv.Key, List.ofSeq kv.Value) |> Map.ofSeq
+                    let nAng = (ang + step + n) % n
+                    tryConnect ring ang bracket ring nAng
+                // radial neighbors (clamp)
+                if ring > 0 then tryConnect ring ang bracket (ring - 1) ang
+                if ring < ringCount - 1 then tryConnect ring ang bracket (ring + 1) ang
+            perCell |> Seq.map (fun kv -> kv.Key, List.ofSeq kv.Value) |> Map.ofSeq
+
+    /// 2D view: restrict the 3D flood to the outer ring (seed ring).
+    let floodContinuousBand (data : StratigraphyData) (colIdx : int) (hoverZ : float) : Map<int, (float * float) list> =
+        floodContinuousBand3D data colIdx hoverZ
+        |> Seq.choose (fun kv ->
+            let (ang, ring) = kv.Key
+            if ring = 0 then Some (ang, kv.Value) else None)
+        |> Map.ofSeq
 
     /// Phase 3.12: per-mesh world-space offset for the explosion view.
     let explosionOffsetsFromFields (explosion : ExplosionState) (prism : SelectionPrism) (stratigraphy : StratigraphyData option) (meshNames : string[]) : Map<string, V3d> =

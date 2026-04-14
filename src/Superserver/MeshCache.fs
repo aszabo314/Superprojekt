@@ -212,12 +212,13 @@ let evaluateGrid (dataset : string) (anchor : V3d) (axis : V3d) (radius : float)
 
     { Resolution = resolution; Cells = cells.ToArray(); DatasetStats = dsStats }
 
-// Cast rays on the cylinder surface at regular angular intervals.
-// Returns per-angle, per-mesh intersection heights along the prism axis.
-type CylinderEvalHit = { Angle: int; MeshName: string; Height: float }
-type CylinderEvalResult = { AngularResolution: int; Hits: CylinderEvalHit[] }
+// Cast rays on concentric cylinder surfaces at regular angular intervals.
+// Returns per-ring, per-angle, per-mesh intersection heights along the prism axis.
+// Rings are provided outer-to-inner; index 0 is the prism wall.
+type CylinderEvalHit = { Ring: int; Angle: int; MeshName: string; Height: float }
+type CylinderEvalResult = { AngularResolution: int; RingCount: int; Hits: CylinderEvalHit[] }
 
-let cylinderEval (dataset : string) (anchor : V3d) (axis : V3d) (radius : float) (angularRes : int) (extFwd : float) (extBack : float) : CylinderEvalResult =
+let cylinderEval (dataset : string) (anchor : V3d) (axis : V3d) (radii : float[]) (angularRes : int) (extFwd : float) (extBack : float) : CylinderEvalResult =
     let axis = axis |> Vec.normalize
     let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
     let right = Vec.cross axis up |> Vec.normalize
@@ -233,24 +234,26 @@ let cylinderEval (dataset : string) (anchor : V3d) (axis : V3d) (radius : float)
 
     let eps = 1.0e-4f
     let hits = ResizeArray<CylinderEvalHit>()
-    for ai in 0 .. angularRes - 1 do
-        let angle = float ai / float angularRes * Math.PI * 2.0
-        let dir = right * cos angle + fwd * sin angle
-        let rayOriginWorld = anchor + dir * radius - axis * extBack
-        for name, _partIdx, lm in meshParts do
-            let c = lm.parsed.centroid
-            let baseOrig = V3f(rayOriginWorld - c)
-            let mutable tOffset = 0.0f
-            let mutable keep = true
-            while keep do
-                let orig = baseOrig + rayDir * tOffset
-                let mutable hit = RayHit()
-                if lm.scene.Intersect(orig, rayDir, &hit) && tOffset + hit.T <= rayLen then
-                    let h = float (tOffset + hit.T) - float extBack
-                    hits.Add { Angle = ai; MeshName = name; Height = h }
-                    tOffset <- tOffset + hit.T + eps
-                else
-                    keep <- false
+    for ri in 0 .. radii.Length - 1 do
+        let radius = radii.[ri]
+        for ai in 0 .. angularRes - 1 do
+            let angle = float ai / float angularRes * Math.PI * 2.0
+            let dir = right * cos angle + fwd * sin angle
+            let rayOriginWorld = anchor + dir * radius - axis * extBack
+            for name, _partIdx, lm in meshParts do
+                let c = lm.parsed.centroid
+                let baseOrig = V3f(rayOriginWorld - c)
+                let mutable tOffset = 0.0f
+                let mutable keep = true
+                while keep do
+                    let orig = baseOrig + rayDir * tOffset
+                    let mutable hit = RayHit()
+                    if lm.scene.Intersect(orig, rayDir, &hit) && tOffset + hit.T <= rayLen then
+                        let h = float (tOffset + hit.T) - float extBack
+                        hits.Add { Ring = ri; Angle = ai; MeshName = name; Height = h }
+                        tOffset <- tOffset + hit.T + eps
+                    else
+                        keep <- false
 
-    { AngularResolution = angularRes; Hits = hits.ToArray() }
+    { AngularResolution = angularRes; RingCount = radii.Length; Hits = hits.ToArray() }
 

@@ -539,7 +539,8 @@ module Update =
                         stratDebounce.Value <- cts
                         task {
                             try
-                                do! System.Threading.Tasks.Task.Delay(400, cts.Token)
+                                do! System.Threading.Tasks.Task.Delay(500, cts.Token)
+                                if cts.Token.IsCancellationRequested then () else
                                 let! data = Stratigraphy.compute ApiConfig.apiBase.Value dataset prism model.CommonCentroid scale 360 |> Async.StartAsTask
                                 if not cts.Token.IsCancellationRequested then
                                     env.Emit [StratigraphyComputed(pinId, data)]

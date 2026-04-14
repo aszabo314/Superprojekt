@@ -69,7 +69,8 @@ and ScanPinMessage =
     | SetShowCylinderEdgeLines of ScanPinId * bool
     | SetExplosionEnabled     of ScanPinId * bool
     | SetExplosionFactor      of ScanPinId * float
-    | HoverBetweenSpace       of ScanPinId * angle:float * zLower:float * zUpper:float * lower:string * upper:string
+    | HoverBetweenSpace       of ScanPinId * columnIdx:int * hoverZ:float
+    | PinBetweenSpaceHover    of ScanPinId
     | ClearBetweenSpaceHover  of ScanPinId
 
 module CardUpdate =
@@ -298,17 +299,32 @@ module ScanPinUpdate =
                 { sp with Pins = HashMap.add id { pin with Explosion = ex } sp.Pins }
             | None -> sp
 
-        | HoverBetweenSpace(id, angle, zLo, zHi, lower, upper) ->
+        | HoverBetweenSpace(id, col, z) ->
             match HashMap.tryFind id sp.Pins with
             | Some pin ->
-                let hl = { LowerDataset = lower; UpperDataset = upper
-                           Angle = angle; ZLower = zLo; ZUpper = zHi; Active = true }
-                { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = Some hl } sp.Pins }
+                let pinned = pin.BetweenSpaceHover |> Option.map (fun h -> h.Pinned) |> Option.defaultValue false
+                if pinned then sp
+                else
+                    let h = { ColumnIdx = col; HoverZ = z; Pinned = false }
+                    { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = Some h } sp.Pins }
+            | None -> sp
+
+        | PinBetweenSpaceHover id ->
+            match HashMap.tryFind id sp.Pins with
+            | Some pin ->
+                match pin.BetweenSpaceHover with
+                | Some h ->
+                    let h = { h with Pinned = not h.Pinned }
+                    { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = Some h } sp.Pins }
+                | None -> sp
             | None -> sp
 
         | ClearBetweenSpaceHover id ->
             match HashMap.tryFind id sp.Pins with
-            | Some pin -> { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = None } sp.Pins }
+            | Some pin ->
+                match pin.BetweenSpaceHover with
+                | Some h when h.Pinned -> sp
+                | _ -> { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = None } sp.Pins }
             | None -> sp
 
 module Update =

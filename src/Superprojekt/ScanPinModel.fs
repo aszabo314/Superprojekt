@@ -89,13 +89,12 @@ module ExplosionState =
     let initial = { ExpansionFactor = 0.0; Enabled = false }
 
 /// V3: state for the between-space hover highlighting.
-type BetweenSpaceHighlight = {
-    LowerDataset : string
-    UpperDataset : string
-    Angle  : float
-    ZLower : float
-    ZUpper : float
-    Active : bool
+/// Identifies the band by the cursor's (column, z); per-column brackets are
+/// re-picked from the stratigraphy data at render time.
+type BetweenSpaceHover = {
+    ColumnIdx : int
+    HoverZ    : float
+    Pinned    : bool
 }
 
 /// V3: ghost clipping cylinder toggle for a pin.
@@ -128,7 +127,7 @@ type ScanPin = {
     GhostClip            : GhostClipMode
     ExtractedLines       : ExtractedLinesMode
     Explosion            : ExplosionState
-    BetweenSpaceHover    : BetweenSpaceHighlight option
+    BetweenSpaceHover    : BetweenSpaceHover option
 }
 
 [<RequireQualifiedAccess>]

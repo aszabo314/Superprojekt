@@ -54,6 +54,49 @@ module PinGeometry =
                 addEdge topVerts.[i] botVerts.[i]
             positions.ToArray(), indices.ToArray()
 
+    /// Build the 3D between-space band volume for a hover, from stratigraphy data.
+    /// For each angular column, re-picks the (zLower, zUpper) bracket around `hoverZ`.
+    /// Columns with no valid bracket produce a gap in the volume. Emits an outer
+    /// sleeve on the cylinder surface plus top/bottom wedges closing into the axis.
+    let buildBetweenSpaceBand (prism : SelectionPrism) (data : StratigraphyData) (hoverZ : float) =
+        let axis = prism.AxisDirection |> Vec.normalize
+        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
+        let right = Vec.cross axis up |> Vec.normalize
+        let fwd = Vec.cross right axis |> Vec.normalize
+        let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+        let n = data.Columns.Length
+        if n = 0 then [||], [||]
+        else
+            let positions = System.Collections.Generic.List<V3f>()
+            let indices   = System.Collections.Generic.List<int>()
+            let cyl (angle : float) (z : float) : V3f =
+                V3f (prism.AnchorPoint + (right * cos angle + fwd * sin angle) * r + axis * z)
+            let ax (z : float) : V3f =
+                V3f (prism.AnchorPoint + axis * z)
+            for i in 0 .. n - 1 do
+                match Stratigraphy.tryBracket data.Columns.[i].Events hoverZ with
+                | Some (zLo, zHi, _, _) ->
+                    let t0 = float i / float n * System.Math.PI * 2.0
+                    let t1 = float (i + 1) / float n * System.Math.PI * 2.0
+                    let pLo0 = cyl t0 zLo
+                    let pLo1 = cyl t1 zLo
+                    let pHi0 = cyl t0 zHi
+                    let pHi1 = cyl t1 zHi
+                    let aLo = ax zLo
+                    let aHi = ax zHi
+                    let b = positions.Count
+                    positions.Add pLo0; positions.Add pLo1; positions.Add pHi1; positions.Add pHi0
+                    indices.Add b;       indices.Add (b + 1); indices.Add (b + 2)
+                    indices.Add b;       indices.Add (b + 2); indices.Add (b + 3)
+                    let b = positions.Count
+                    positions.Add aLo; positions.Add pLo0; positions.Add pLo1
+                    indices.Add b; indices.Add (b + 1); indices.Add (b + 2)
+                    let b = positions.Count
+                    positions.Add aHi; positions.Add pHi1; positions.Add pHi0
+                    indices.Add b; indices.Add (b + 1); indices.Add (b + 2)
+                | None -> ()
+            positions.ToArray(), indices.ToArray()
+
     /// Build a thin square-section tube (8 verts, 8 quads = 16 tris) from a to b.
     let buildLineTube (a : V3d) (b : V3d) (radius : float) =
         let dir = b - a

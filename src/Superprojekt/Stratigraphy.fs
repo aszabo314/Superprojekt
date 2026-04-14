@@ -38,6 +38,18 @@ module Stratigraphy =
             return { AngularResolution = res; AxisMin = axisMin; AxisMax = axisMax; Columns = columns; ColumnMinZ = columnMinZ; ColumnMaxZ = columnMaxZ }
         }
 
+    /// Find the between-space bracket containing `z` in a column's sorted events.
+    /// Returns (zLower, zUpper, lowerMesh, upperMesh) or None if z is below the
+    /// first event or above the last.
+    let tryBracket (events : (float * string) list) (z : float) =
+        let rec go (lst : (float * string) list) =
+            match lst with
+            | (z0, n0) :: ((z1, n1) :: _ as rest) ->
+                if z0 <= z && z < z1 then Some (z0, z1, n0, n1)
+                else go rest
+            | _ -> None
+        go events
+
     /// Phase 3.12: per-mesh world-space offset for the explosion view.
     let explosionOffsetsFromFields (explosion : ExplosionState) (prism : SelectionPrism) (stratigraphy : StratigraphyData option) (meshNames : string[]) : Map<string, V3d> =
         if not explosion.Enabled || explosion.ExpansionFactor <= 0.0 then Map.empty

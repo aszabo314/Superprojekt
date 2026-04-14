@@ -225,6 +225,22 @@ module Cards =
                 Class "strat-wrapper mt-4"
                 let isPlacing = (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
                 StratigraphyView.render env isPlacing selectedPin
+                div {
+                    Class "strat-hover-tip"
+                    selectedPin |> AVal.map (fun po ->
+                        match po |> Option.bind (fun p ->
+                            p.Stratigraphy |> Option.bind (fun data ->
+                                p.BetweenSpaceHover |> Option.bind (fun h ->
+                                    if h.ColumnIdx < 0 || h.ColumnIdx >= data.Columns.Length then None
+                                    else
+                                        Stratigraphy.tryBracket data.Columns.[h.ColumnIdx].Events h.HoverZ
+                                        |> Option.map (fun (zLo, zHi, lo, up) -> h, zLo, zHi, lo, up)))) with
+                        | Some (h, zLo, zHi, lo, up) ->
+                            let gap = zHi - zLo
+                            let pinTag = if h.Pinned then " · pinned" else ""
+                            sprintf "Between %s and %s · gap %.2f%s" (shortName lo) (shortName up) gap pinTag
+                        | None -> "")
+                }
             }
         }
 

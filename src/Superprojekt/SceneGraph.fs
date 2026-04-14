@@ -360,6 +360,47 @@ module SceneGraph =
                     (ASet.unionMany (ASet.ofList [labelNodes; centroidNode]))
             )
 
+        let betweenSpaceBand =
+            let notFullscreen = AVal.map not fullscreenActive
+            let selectedId = model.ScanPins.SelectedPin
+            pinIdSet |> ASet.collect (fun id ->
+                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
+                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
+                let isActiveAndSelected = AVal.map2 (&&) notFullscreen isSelected
+                let prismVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
+                let stratVal = pinVal |> AVal.map (fun po -> po |> Option.bind (fun p -> p.Stratigraphy))
+                let hoverZVal =
+                    pinVal |> AVal.map (fun po ->
+                        po |> Option.bind (fun p -> p.BetweenSpaceHover) |> Option.map (fun h -> h.HoverZ))
+                let geo =
+                    (prismVal, stratVal, hoverZVal) |||> AVal.map3 (fun prismO dataO zO ->
+                        match prismO, dataO, zO with
+                        | Some prism, Some data, Some z -> PinGeometry.buildBetweenSpaceBand prism data z
+                        | _ -> [||], [||])
+                let positions = geo |> AVal.map (fun (p, _) -> ArrayBuffer p :> IBuffer)
+                let idx       = geo |> AVal.map (fun (_, i) -> ArrayBuffer i :> IBuffer)
+                let cnt       = geo |> AVal.map (fun (_, i) -> i.Length)
+                ASet.ofList [
+                    sg {
+                        Sg.Active isActiveAndSelected
+                        Sg.View view
+                        Sg.Proj proj
+                        Sg.Pass RenderPass.passTwo
+                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                        Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 0.55, 0.1, 0.40)))
+                        Sg.BlendMode BlendMode.Blend
+                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                        Sg.NoEvents
+                        Sg.VertexAttributes(
+                            HashMap.ofList [
+                                string DefaultSemantic.Positions, BufferView(positions, typeof<V3f>)
+                            ])
+                        Sg.Index(BufferView(idx, typeof<int>))
+                        Sg.Render cnt
+                    }
+                ]
+            )
+
         let extractedLines =
             let notFullscreen = AVal.map not fullscreenActive
             let toV4f (c : C4b) =
@@ -708,4 +749,4 @@ module SceneGraph =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; extractedLines; hullPicking])
+        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; betweenSpaceBand; extractedLines; hullPicking])

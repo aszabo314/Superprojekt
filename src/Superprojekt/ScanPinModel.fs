@@ -71,6 +71,11 @@ type StratigraphyData = {
     /// Per-column min/max z across all datasets (for normalization).
     ColumnMinZ : float[]
     ColumnMaxZ : float[]
+    /// Multi-radius sampling grid, outer ring first. Rings.[0] = Columns.
+    /// Length = RingRadii.Length. Each ring has `AngularResolution` columns.
+    Rings : StratigraphyColumn[][]
+    /// World-space radius for each ring (index 0 = prism wall).
+    RingRadii : float[]
 }
 
 /// V3: display mode for the stratigraphy diagram.
@@ -89,13 +94,12 @@ module ExplosionState =
     let initial = { ExpansionFactor = 0.0; Enabled = false }
 
 /// V3: state for the between-space hover highlighting.
-type BetweenSpaceHighlight = {
-    LowerDataset : string
-    UpperDataset : string
-    Angle  : float
-    ZLower : float
-    ZUpper : float
-    Active : bool
+/// Identifies the band by the cursor's (column, z); per-column brackets are
+/// re-picked from the stratigraphy data at render time.
+type BetweenSpaceHover = {
+    ColumnIdx : int
+    HoverZ    : float
+    Pinned    : bool
 }
 
 /// V3: ghost clipping cylinder toggle for a pin.
@@ -128,7 +132,7 @@ type ScanPin = {
     GhostClip            : GhostClipMode
     ExtractedLines       : ExtractedLinesMode
     Explosion            : ExplosionState
-    BetweenSpaceHover    : BetweenSpaceHighlight option
+    BetweenSpaceHover    : BetweenSpaceHover option
 }
 
 [<RequireQualifiedAccess>]

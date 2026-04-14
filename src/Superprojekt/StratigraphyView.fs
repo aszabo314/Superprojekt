@@ -198,6 +198,65 @@ module StratigraphyView =
             indices.Add(baseIdx); indices.Add(baseIdx + 2); indices.Add(baseIdx + 3)
         positions.ToArray(), colors.ToArray(), indices.ToArray()
 
+    /// Build the warm-overlay highlight strip for a between-space hover.
+    /// For each column, re-pick the bracket around `hoverZ`. Columns with no
+    /// valid bracket at that z produce a gap (nothing drawn).
+    let private buildHighlight
+        (data : StratigraphyData)
+        (display : StratigraphyDisplayMode)
+        (colIdx : int)
+        (hoverZ : float)
+        : V3f[] * V4f[] * int[] =
+
+        let nCols = data.Columns.Length
+        if nCols = 0 then [||], [||], [||]
+        else
+        let band = Stratigraphy.floodContinuousBand data colIdx hoverZ
+        if Map.isEmpty band then [||], [||], [||]
+        else
+        let dx = 1.0 / float nCols
+        let globalRange =
+            let r = data.AxisMax - data.AxisMin
+            if r < 1e-9 then 1.0 else r
+        let normRange (i : int) =
+            let lo = data.ColumnMinZ.[i]
+            let hi = data.ColumnMaxZ.[i]
+            let r = hi - lo
+            let minR = globalRange * 0.01
+            if r < minR then
+                let pad = (minR - r) * 0.5
+                lo - pad, hi + pad
+            else lo, hi
+        let toY i z =
+            match display with
+            | Undistorted -> (z - data.AxisMin) / globalRange
+            | Normalized ->
+                let lo, hi = normRange i
+                let r = hi - lo
+                if r < 1e-9 then 0.5 else (z - lo) / r
+
+        let color = V4f(1.0f, 0.55f, 0.1f, 0.40f)
+        let positions = ResizeArray<V3f>()
+        let colors    = ResizeArray<V4f>()
+        let indices   = ResizeArray<int>()
+
+        for KeyValue(i, brackets) in band do
+            let x0 = float i * dx
+            let x1 = x0 + dx
+            for (zLo, zHi) in brackets do
+                let y0 = toY i zLo
+                let y1 = toY i zHi
+                let b = positions.Count
+                positions.Add(V3f(float32 x0, float32 y0, 0.02f))
+                positions.Add(V3f(float32 x1, float32 y0, 0.02f))
+                positions.Add(V3f(float32 x1, float32 y1, 0.02f))
+                positions.Add(V3f(float32 x0, float32 y1, 0.02f))
+                for _ in 1 .. 4 do colors.Add(color)
+                indices.Add(b); indices.Add(b + 1); indices.Add(b + 2)
+                indices.Add(b); indices.Add(b + 2); indices.Add(b + 3)
+
+        positions.ToArray(), colors.ToArray(), indices.ToArray()
+
     /// Build a vertical angle indicator line for AlongAxis mode.
     let private buildAngleIndicator (data : StratigraphyData) (angleDeg : float) : V3f[] * V4f[] * int[] =
         let nCols = data.Columns.Length
@@ -264,6 +323,16 @@ module StratigraphyView =
                     | _ -> [||], [||], [||]
                 | None -> [||], [||], [||])
 
+        let hoverGeo =
+            selectedPin |> AVal.map (fun pinOpt ->
+                match pinOpt with
+                | Some pin ->
+                    match pin.Stratigraphy, pin.BetweenSpaceHover with
+                    | Some data, Some h ->
+                        buildHighlight data pin.StratigraphyDisplay h.ColumnIdx h.HoverZ
+                    | _ -> [||], [||], [||]
+                | None -> [||], [||], [||])
+
         let posBuffer = geometry |> AVal.map (fun (p, _, _) -> ArrayBuffer p :> IBuffer)
         let colBuffer = geometry |> AVal.map (fun (_, c, _) -> ArrayBuffer c :> IBuffer)
         let idxBuffer = geometry |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
@@ -273,6 +342,11 @@ module StratigraphyView =
         let indCol = indicatorGeo |> AVal.map (fun (_, c, _) -> ArrayBuffer c :> IBuffer)
         let indIdx = indicatorGeo |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
         let indCnt = indicatorGeo |> AVal.map (fun (_, _, i) -> i.Length)
+
+        let hovPos = hoverGeo |> AVal.map (fun (p, _, _) -> ArrayBuffer p :> IBuffer)
+        let hovCol = hoverGeo |> AVal.map (fun (_, c, _) -> ArrayBuffer c :> IBuffer)
+        let hovIdx = hoverGeo |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
+        let hovCnt = hoverGeo |> AVal.map (fun (_, _, i) -> i.Length)
 
         renderControl {
             RenderControl.Samples 1
@@ -304,10 +378,36 @@ module StratigraphyView =
                             env.Emit [ScanPinMsg (SetCutPlaneAngle angle)]
                     | None -> ()
 
+            let emitHoverFromPointer (px : int) (py : int) =
+                match AVal.force selectedPin with
+                | Some pin ->
+                    match pin.Stratigraphy with
+                    | Some data ->
+                        let sz = AVal.force size
+                        let x = float px / float sz.X |> clamp 0.0 1.0
+                        let y = 1.0 - float py / float sz.Y |> clamp 0.0 1.0
+                        let nCols = data.Columns.Length
+                        if nCols = 0 then env.Emit [ScanPinMsg (ClearBetweenSpaceHover pin.Id)]
+                        else
+                        let col = int (x * float nCols) |> clamp 0 (nCols - 1)
+                        let z = yToZ data pin.StratigraphyDisplay x y
+                        match Stratigraphy.tryBracket data.Columns.[col].Events z with
+                        | Some _ -> env.Emit [ScanPinMsg (HoverBetweenSpace(pin.Id, col, z))]
+                        | None -> env.Emit [ScanPinMsg (ClearBetweenSpaceHover pin.Id)]
+                    | None -> ()
+                | None -> ()
+
             Dom.OnPointerDown((fun e ->
                 if e.Button = Button.Left then
-                    transact (fun () -> dragging.Value <- true)
-                    emitCutFromPointer e.OffsetPosition.X e.OffsetPosition.Y
+                    if e.Shift then
+                        match AVal.force selectedPin with
+                        | Some pin ->
+                            emitHoverFromPointer e.OffsetPosition.X e.OffsetPosition.Y
+                            env.Emit [ScanPinMsg (PinBetweenSpaceHover pin.Id)]
+                        | None -> ()
+                    else
+                        transact (fun () -> dragging.Value <- true)
+                        emitCutFromPointer e.OffsetPosition.X e.OffsetPosition.Y
             ), pointerCapture = true)
 
             Dom.OnPointerUp((fun _ ->
@@ -315,8 +415,14 @@ module StratigraphyView =
             ), pointerCapture = true)
 
             Dom.OnPointerMove(fun e ->
+                emitHoverFromPointer e.OffsetPosition.X e.OffsetPosition.Y
                 if AVal.force dragging then
                     emitCutFromPointer e.OffsetPosition.X e.OffsetPosition.Y)
+
+            Dom.OnMouseLeave(fun _ ->
+                match AVal.force selectedPin with
+                | Some pin -> env.Emit [ScanPinMsg (ClearBetweenSpaceHover pin.Id)]
+                | None -> ())
 
             Dom.OnContextMenu(ignore, preventDefault = true)
 
@@ -344,5 +450,18 @@ module StratigraphyView =
                     ])
                 Sg.Index(BufferView(indIdx, typeof<int>))
                 Sg.Render indCnt
+            }
+            sg {
+                Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode BlendMode.Blend
+                Sg.NoEvents
+                Sg.VertexAttributes(
+                    HashMap.ofList [
+                        string DefaultSemantic.Positions, BufferView(hovPos, typeof<V3f>)
+                        string DefaultSemantic.Colors,    BufferView(hovCol, typeof<V4f>)
+                    ])
+                Sg.Index(BufferView(hovIdx, typeof<int>))
+                Sg.Render hovCnt
             }
         }

@@ -313,11 +313,14 @@ module Query =
             return { Resolution = res; GridOrigin = origin; CellSize = cs; Cells = cells; DatasetStats = datasetStats }
         }
 
-    /// POST /query/cylinder-eval — returns per-angle hit lists: (angleIndex, (height, meshName) list) []
-    let cylinderEval (serverUrl : string) (dataset : string) (anchor : V3d) (axis : V3d) (radius : float) (angularRes : int) (extFwd : float) (extBack : float) =
+    /// POST /query/cylinder-eval — returns per-ring, per-angle hit lists:
+    /// result.[ring].[angle] = (height, meshName) ResizeArray. Ring 0 is the outer wall.
+    let cylinderEval (serverUrl : string) (dataset : string) (anchor : V3d) (axis : V3d) (radii : float[]) (angularRes : int) (extFwd : float) (extBack : float) =
         async {
-            let json = sprintf """{"dataset":"%s","anchor":%s,"axis":%s,"radius":%.17g,"angularResolution":%d,"extentForward":%.17g,"extentBackward":%.17g}"""
-                        dataset (v3 anchor) (v3 axis) radius angularRes extFwd extBack
+            let radiiJson =
+                "[" + (radii |> Array.map (sprintf "%.17g") |> String.concat ",") + "]"
+            let json = sprintf """{"dataset":"%s","anchor":%s,"axis":%s,"radii":%s,"angularResolution":%d,"extentForward":%.17g,"extentBackward":%.17g}"""
+                        dataset (v3 anchor) (v3 axis) radiiJson angularRes extFwd extBack
             let! buf = postBinary serverUrl "/query/cylinder-eval" json
             let mutable off = 0
             let readInt () =
@@ -327,14 +330,18 @@ module Query =
                 let v = System.BitConverter.ToDouble(buf, off)
                 off <- off + 8; v
             let res = readInt ()
+            let ringCount = readInt ()
             let hitCount = readInt ()
-            let perAngle = Array.init res (fun _ -> ResizeArray<float * string>())
+            let perRingAngle =
+                Array.init ringCount (fun _ ->
+                    Array.init res (fun _ -> ResizeArray<float * string>()))
             for _ in 0 .. hitCount - 1 do
+                let ri = readInt ()
                 let ai = readInt ()
                 let nameLen = readInt ()
                 let name = Encoding.UTF8.GetString(buf, off, nameLen)
                 off <- off + nameLen
                 let h = readFloat ()
-                perAngle.[ai].Add(h, dataset + "/" + name)
-            return res, perAngle
+                perRingAngle.[ri].[ai].Add(h, dataset + "/" + name)
+            return res, ringCount, perRingAngle
         }

@@ -360,6 +360,58 @@ module SceneGraph =
                     (ASet.unionMany (ASet.ofList [labelNodes; centroidNode]))
             )
 
+        let betweenSpaceBand =
+            let notFullscreen = AVal.map not fullscreenActive
+            let selectedId = model.ScanPins.SelectedPin
+            pinIdSet |> ASet.collect (fun id ->
+                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
+                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
+                let isActiveAndSelected = AVal.map2 (&&) notFullscreen isSelected
+                let prismVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
+                let stratVal = pinVal |> AVal.map (fun po -> po |> Option.bind (fun p -> p.Stratigraphy))
+                let hoverVal =
+                    pinVal |> AVal.map (fun po ->
+                        po |> Option.bind (fun p -> p.BetweenSpaceHover)
+                           |> Option.map (fun h -> h.ColumnIdx, h.HoverZ))
+                let geo =
+                    (prismVal, stratVal, hoverVal) |||> AVal.map3 (fun prismO dataO hOpt ->
+                        match prismO, dataO, hOpt with
+                        | Some prism, Some data, Some (col, z) -> PinGeometry.buildBetweenSpaceSurfaces prism data col z
+                        | _ -> ([||], [||]), ([||], [||]), ([||], [||]))
+                let upperPos = geo |> AVal.map (fun ((p, _), _, _) -> ArrayBuffer p :> IBuffer)
+                let upperIdx = geo |> AVal.map (fun ((_, i), _, _) -> ArrayBuffer i :> IBuffer)
+                let upperCnt = geo |> AVal.map (fun ((_, i), _, _) -> i.Length)
+                let lowerPos = geo |> AVal.map (fun (_, (p, _), _) -> ArrayBuffer p :> IBuffer)
+                let lowerIdx = geo |> AVal.map (fun (_, (_, i), _) -> ArrayBuffer i :> IBuffer)
+                let lowerCnt = geo |> AVal.map (fun (_, (_, i), _) -> i.Length)
+                let sidePos  = geo |> AVal.map (fun (_, _, (p, _)) -> ArrayBuffer p :> IBuffer)
+                let sideIdx  = geo |> AVal.map (fun (_, _, (_, i)) -> ArrayBuffer i :> IBuffer)
+                let sideCnt  = geo |> AVal.map (fun (_, _, (_, i)) -> i.Length)
+                let makeSurface (color : V4d) (positions : aval<IBuffer>) (idx : aval<IBuffer>) (cnt : aval<int>) =
+                    sg {
+                        Sg.Active isActiveAndSelected
+                        Sg.View view
+                        Sg.Proj proj
+                        Sg.Pass RenderPass.passTwo
+                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                        Sg.Uniform("FlatColor", AVal.constant color)
+                        Sg.BlendMode BlendMode.Blend
+                        Sg.DepthTest (AVal.constant DepthTest.None)
+                        Sg.NoEvents
+                        Sg.VertexAttributes(
+                            HashMap.ofList [
+                                string DefaultSemantic.Positions, BufferView(positions, typeof<V3f>)
+                            ])
+                        Sg.Index(BufferView(idx, typeof<int>))
+                        Sg.Render cnt
+                    }
+                ASet.ofList [
+                    makeSurface (V4d(1.0, 1.0, 0.9, 0.55)) upperPos upperIdx upperCnt
+                    makeSurface (V4d(1.0, 0.95, 0.7, 0.55)) lowerPos lowerIdx lowerCnt
+                    makeSurface (V4d(1.0, 0.97, 0.8, 0.40)) sidePos  sideIdx  sideCnt
+                ]
+            )
+
         let extractedLines =
             let notFullscreen = AVal.map not fullscreenActive
             let toV4f (c : C4b) =
@@ -708,4 +760,4 @@ module SceneGraph =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; extractedLines; hullPicking])
+        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; betweenSpaceBand; extractedLines; hullPicking])

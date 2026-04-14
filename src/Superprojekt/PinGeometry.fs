@@ -54,6 +54,98 @@ module PinGeometry =
                 addEdge topVerts.[i] botVerts.[i]
             positions.ToArray(), indices.ToArray()
 
+    /// Build upper and lower mesh surfaces plus side walls for the
+    /// between-space volume on the stratigraphy (angular × radial) grid.
+    /// Quads are emitted only when all four corner nodes have brackets; side
+    /// walls close boundary edges of that surface region.
+    /// Returns ((upperPos, upperIdx), (lowerPos, lowerIdx), (sidePos, sideIdx)).
+    let buildBetweenSpaceSurfaces (prism : SelectionPrism) (data : StratigraphyData) (colIdx : int) (hoverZ : float) =
+        let axis = prism.AxisDirection |> Vec.normalize
+        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
+        let right = Vec.cross axis up |> Vec.normalize
+        let fwd = Vec.cross right axis |> Vec.normalize
+        let n = data.AngularResolution
+        let rings = if isNull (box data.Rings) then [||] else data.Rings
+        let ringCount = rings.Length
+        let radii = data.RingRadii
+        let empty = [||], [||]
+        if n = 0 || ringCount = 0 then empty, empty, empty
+        else
+            let band = Stratigraphy.floodContinuousBand3D data colIdx hoverZ
+            if Map.isEmpty band then empty, empty, empty
+            else
+            let firstBracket (ang : int) (ring : int) =
+                match Map.tryFind (ang, ring) band with
+                | Some (b :: _) -> Some b
+                | _ -> None
+            let pos (ang : int) (ring : int) (z : float) : V3f =
+                let t = float ang / float n * System.Math.PI * 2.0
+                let rr = radii.[ring]
+                V3f (prism.AnchorPoint + (right * cos t + fwd * sin t) * rr + axis * z)
+            let upperPos = System.Collections.Generic.List<V3f>()
+            let upperIdx = System.Collections.Generic.List<int>()
+            let lowerPos = System.Collections.Generic.List<V3f>()
+            let lowerIdx = System.Collections.Generic.List<int>()
+            let sidePos  = System.Collections.Generic.List<V3f>()
+            let sideIdx  = System.Collections.Generic.List<int>()
+            let quadComplete (i : int) (k : int) =
+                if k < 0 || k >= ringCount - 1 then false
+                else
+                    let iN = (i + 1) % n
+                    (firstBracket i k).IsSome &&
+                    (firstBracket iN k).IsSome &&
+                    (firstBracket iN (k+1)).IsSome &&
+                    (firstBracket i (k+1)).IsSome
+            // Upper + lower surface quads
+            for i in 0 .. n - 1 do
+                let iNext = (i + 1) % n
+                for k in 0 .. ringCount - 2 do
+                    match firstBracket i k, firstBracket iNext k, firstBracket iNext (k+1), firstBracket i (k+1) with
+                    | Some (lo00, hi00), Some (lo10, hi10), Some (lo11, hi11), Some (lo01, hi01) ->
+                        let b = upperPos.Count
+                        upperPos.Add (pos i     k     hi00)
+                        upperPos.Add (pos iNext k     hi10)
+                        upperPos.Add (pos iNext (k+1) hi11)
+                        upperPos.Add (pos i     (k+1) hi01)
+                        upperIdx.Add b;       upperIdx.Add (b + 1); upperIdx.Add (b + 2)
+                        upperIdx.Add b;       upperIdx.Add (b + 2); upperIdx.Add (b + 3)
+                        let b = lowerPos.Count
+                        lowerPos.Add (pos i     k     lo00)
+                        lowerPos.Add (pos iNext k     lo10)
+                        lowerPos.Add (pos iNext (k+1) lo11)
+                        lowerPos.Add (pos i     (k+1) lo01)
+                        lowerIdx.Add b;       lowerIdx.Add (b + 1); lowerIdx.Add (b + 2)
+                        lowerIdx.Add b;       lowerIdx.Add (b + 2); lowerIdx.Add (b + 3)
+                    | _ -> ()
+            // Side walls: edges where at least one adjacent quad is incomplete.
+            let emitWall iA kA iB kB =
+                match firstBracket iA kA, firstBracket iB kB with
+                | Some (loA, hiA), Some (loB, hiB) ->
+                    let pA_lo = pos iA kA loA
+                    let pB_lo = pos iB kB loB
+                    let pB_hi = pos iB kB hiB
+                    let pA_hi = pos iA kA hiA
+                    let b = sidePos.Count
+                    sidePos.Add pA_lo; sidePos.Add pB_lo; sidePos.Add pB_hi; sidePos.Add pA_hi
+                    sideIdx.Add b;       sideIdx.Add (b + 1); sideIdx.Add (b + 2)
+                    sideIdx.Add b;       sideIdx.Add (b + 2); sideIdx.Add (b + 3)
+                | _ -> ()
+            // Angular edges: endpoints (i,k)↔((i+1)%n,k); adjacent quads (i,k-1) and (i,k).
+            for i in 0 .. n - 1 do
+                let iNext = (i + 1) % n
+                for k in 0 .. ringCount - 1 do
+                    let boundary = not (quadComplete i (k - 1) && quadComplete i k)
+                    if boundary then emitWall i k iNext k
+            // Radial edges: endpoints (i,k)↔(i,k+1); adjacent quads ((i-1+n)%n,k) and (i,k).
+            for i in 0 .. n - 1 do
+                let iPrev = (i + n - 1) % n
+                for k in 0 .. ringCount - 2 do
+                    let boundary = not (quadComplete iPrev k && quadComplete i k)
+                    if boundary then emitWall i k i (k + 1)
+            (upperPos.ToArray(), upperIdx.ToArray()),
+            (lowerPos.ToArray(), lowerIdx.ToArray()),
+            (sidePos.ToArray(),  sideIdx.ToArray())
+
     /// Build a thin square-section tube (8 verts, 8 quads = 16 tris) from a to b.
     let buildLineTube (a : V3d) (b : V3d) (radius : float) =
         let dir = b - a

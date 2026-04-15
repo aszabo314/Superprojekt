@@ -87,6 +87,11 @@ module BlitShader =
         member x.CylExtFwd            : float = x?CylExtFwd
         member x.CylExtBack           : float = x?CylExtBack
         member x.ExplosionOffset      : V3d   = x?ExplosionOffset
+        member x.ReferenceAxis        : V3d   = x?ReferenceAxis
+        member x.SteepnessThreshold   : float = x?SteepnessThreshold
+        member x.VarianceThreshold    : float = x?VarianceThreshold
+        member x.HighlightColor       : V4d   = x?HighlightColor
+        member x.HighlightAlpha       : float = x?HighlightAlpha
     
     let colorMap =
         [|
@@ -147,7 +152,7 @@ module BlitShader =
                 if insideClip then
                     discard()
                 color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, uniform.GhostOpacity)
-                
+
             return color
         }
 
@@ -167,6 +172,13 @@ module BlitShader =
     let colon =
         sampler2dArray {
             texture uniform?ColorTexture
+            filter Filter.MinMagPoint
+            addressU WrapMode.Wrap
+            addressV WrapMode.Wrap
+        }
+    let exploreSampler =
+        sampler2d {
+            texture uniform?ExploreTexture
             filter Filter.MinMagPoint
             addressU WrapMode.Wrap
             addressV WrapMode.Wrap
@@ -199,6 +211,7 @@ module BlitShader =
                             color <- c
                             index <- i
                             
+            let mutable ghostMinDepth = 1.0
             if uniform.GhostSilhouette then
                 for i in 0 .. uniform.MeshCount - 1 do
                     let di = deputy.SampleLevel(v.tc, 2*i+1, 0.0).X
@@ -206,7 +219,8 @@ module BlitShader =
                     if di < minDepth then
                         color.XYZ <- color.XYZ * (1.0 - c.W) + c.XYZ * c.W
                         color.W <- color.W * (1.0 - c.W) + c.W
-                    
+                        if di < ghostMinDepth then ghostMinDepth <- di
+
             let a = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * minDepth - 1.0, 1.0)
             let b = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * maxDepth - 1.0, 1.0)
             let a = a.XYZ / a.W
@@ -216,12 +230,58 @@ module BlitShader =
                 let h = (dist - uniform.MinDifferenceDepth) / uniform.MaxDifferenceDepth |> float32 |> Heat.heat |> V4d
                 color <- h * color
 
-            
-            if minDepth >= 0.9999 then discard()
-            
-            return { c = color; d = minDepth }
+            let outDepth = min minDepth ghostMinDepth
+            let eCol = exploreSampler.SampleLevel(v.tc, 0.0)
+            if eCol.W > 0.001 then
+                color.XYZ <- color.XYZ * (1.0 - eCol.W) + eCol.XYZ * eCol.W
+                color.W <- color.W * (1.0 - eCol.W) + eCol.W
+            if outDepth >= 0.9999 && color.W < 0.001 then discard()
+
+            return { c = color; d = outDepth }
         }
         
+    [<ReflectedDefinition>]
+    let private reconstructWorld (ndc : V2d) (depth : float) =
+        let clip = V4d(ndc, 2.0 * depth - 1.0, 1.0)
+        let w = uniform.ViewProjTrafoInv * clip
+        w.XYZ / w.W
+
+    let exploreHeatmap (v : Effects.Vertex) =
+        fragment {
+            let ndc = 2.0 * v.tc - V2d.II
+            let vpSize = V2d(float uniform.ViewportSize.X, float uniform.ViewportSize.Y)
+            let dx = V2d(2.0 / vpSize.X, 0.0)
+            let dy = V2d(0.0, 2.0 / vpSize.Y)
+            let tcx = v.tc + V2d(1.0 / vpSize.X, 0.0)
+            let tcy = v.tc + V2d(0.0, 1.0 / vpSize.Y)
+            let mutable count = 0
+            let mutable mean = 0.0
+            let mutable s2 = 0.0
+            for i in 0 .. uniform.MeshCount - 1 do
+                let isVis = (uniform.MeshVisibilityMask >>> i) &&& 1 <> 0
+                if isVis then
+                    let di  = deputy.SampleLevel(v.tc, 2*i, 0.0).X
+                    let dix = deputy.SampleLevel(tcx,  2*i, 0.0).X
+                    let diy = deputy.SampleLevel(tcy,  2*i, 0.0).X
+                    if di < 0.9999 && dix < 0.9999 && diy < 0.9999 then
+                        let p  = reconstructWorld ndc di
+                        let px = reconstructWorld (ndc + dx) dix
+                        let py = reconstructWorld (ndc + dy) diy
+                        let n = Vec.cross (px - p) (py - p) |> Vec.normalize
+                        let alignment = abs (Vec.dot n uniform.ReferenceAxis)
+                        if alignment < uniform.SteepnessThreshold then
+                            count <- count + 1
+                            let delta = di - mean
+                            mean <- mean + delta / float count
+                            let delta2 = di - mean
+                            s2 <- s2 + delta * delta2
+            if count < 2 then discard()
+            let variance = s2 / float count
+            if variance < uniform.VarianceThreshold then discard()
+            let intensity = clamp 0.0 1.0 (variance / (uniform.VarianceThreshold * 4.0))
+            return V4d(uniform.HighlightColor.XYZ, intensity * uniform.HighlightAlpha)
+        }
+
     let readArraySlice (v : Effects.Vertex) =
         fragment {
             let i = uniform.SliceIndex

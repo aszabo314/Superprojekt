@@ -137,18 +137,18 @@ module MeshView =
                 DefaultSemantic.Colors,       TextureFormat.Rgba8
                 DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
             ]
-        
+
         let meshIndices =
             model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
-                names |> Seq.mapi (fun i a -> a, i) |> Map.ofSeq    
+                names |> Seq.mapi (fun i a -> a, i) |> Map.ofSeq
             )
         let texCount = model.MeshNames |> AList.count |> AVal.map (max 1) |> AVal.map ((*)2)
         let colorTex =
             info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Rgba8, 1, 1, texCount)
-        
+
         let depthTex =
             info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Depth24Stencil8, 1, 1, texCount)
-        
+
         let fbos =
             (colorTex, depthTex) ||> AdaptiveResource.bind2 (fun color depth ->
                 texCount |> AVal.map (fun cnt ->
@@ -265,6 +265,7 @@ module MeshView =
         (count : aval<int>)
         (colors : aval<IBackendTexture>)
         (depths : aval<IBackendTexture>)
+        (explore : aval<ITexture>)
         (differenceRendering    : aval<bool>)
         (minDifferenceDepth     : aval<float>)
         (maxDifferenceDepth     : aval<float>)
@@ -279,6 +280,7 @@ module MeshView =
             Sg.Uniform("MeshCount",          count)
             Sg.Uniform("ColorTexture",          colorTex)
             Sg.Uniform("DepthTexture",          depthTex)
+            Sg.Uniform("ExploreTexture",        explore)
             Sg.Uniform("DifferenceRendering",   differenceRendering)
             Sg.Uniform("MinDifferenceDepth",    minDifferenceDepth)
             Sg.Uniform("MaxDifferenceDepth",    maxDifferenceDepth)

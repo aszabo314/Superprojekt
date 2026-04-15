@@ -6,6 +6,29 @@ open Adaptify
 open Aardvark.Dom
 open FSharp.Data.Adaptive
 
+type ReferenceAxisMode =
+    | AlongWorldZ
+    | AlongCameraView
+
+type ExploreMode =
+    {
+        Enabled            : bool
+        SteepnessThreshold : float
+        VarianceThreshold  : float
+        HighlightColor     : C4f
+        HighlightAlpha     : float
+    }
+
+module ExploreMode =
+    let initial =
+        {
+            Enabled            = false
+            SteepnessThreshold = 0.3
+            VarianceThreshold  = 0.01
+            HighlightColor     = C4f(1.0f, 0.6f, 0.1f, 1.0f)
+            HighlightAlpha     = 0.5
+        }
+
 [<ModelType>]
 type Model =
     {
@@ -41,7 +64,8 @@ type Model =
         ClipBounds     : Box3d   // world-space union of all dataset bboxes; Box3d.Invalid until loaded
 
         ScanPins              : ScanPinModel
-        PinAxisVertical       : bool
+        ReferenceAxis         : ReferenceAxisMode
+        Explore               : ExploreMode
         DepthShadeOn          : bool
         IsolinesOn            : bool
         ColorMode             : bool
@@ -79,7 +103,8 @@ module Model =
             ClipBounds     = Box3d.Invalid
 
             ScanPins              = ScanPinModel.initial
-            PinAxisVertical       = true
+            ReferenceAxis         = AlongWorldZ
+            Explore               = ExploreMode.initial
             DepthShadeOn          = true
             IsolinesOn            = true
             ColorMode             = false

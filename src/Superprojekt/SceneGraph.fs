@@ -158,8 +158,8 @@ module SceneGraph =
             env.Emit [ LoadFinished name ]
         
         let cnt, colors, depths, meshIndices = MeshView.buildMeshTextures info loadFinished view proj model
-        let colorArrTex = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
-        let depthArrTex = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
+        let colorArrTex  = colors  |> AdaptiveResource.map (fun t -> t :> ITexture)
+        let depthArrTex  = depths  |> AdaptiveResource.map (fun t -> t :> ITexture)
 
         let sliceOf name =
             meshIndices |> AVal.map (fun m -> 2 * (Map.tryFind name m |> Option.defaultValue 0))
@@ -182,12 +182,72 @@ module SceneGraph =
                     match id |> Option.bind (fun id -> HashMap.tryFind id pins) with
                     | Some pin -> pin.GhostClip = GhostClipOn
                     | _ -> false)
-            (model.GhostSilhouette, cylClipActive) ||> AVal.map2 (fun g c -> g || c)
+            (model.GhostSilhouette, cylClipActive, model.ClipActive)
+            |||> AVal.map3 (fun g c box -> g || c || box)
+
+        let exploreTex : aval<IBackendTexture> =
+            let refAxis =
+                (model.ReferenceAxis, view) ||> AVal.map2 (fun mode v ->
+                    match mode with
+                    | AlongWorldZ -> V3d.OOI
+                    | AlongCameraView ->
+                        v.Backward.TransformDir(V3d(0.0, 0.0, -1.0)) |> Vec.normalize)
+            let exploreEnabled  = model.Explore |> AVal.map (fun e -> e.Enabled)
+            let steepnessThresh = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
+            let varianceThresh  = model.Explore |> AVal.map (fun e -> e.VarianceThreshold)
+            let highlightAlpha  = model.Explore |> AVal.map (fun e -> e.HighlightAlpha)
+            let highlightColor =
+                model.Explore |> AVal.map (fun e ->
+                    let c = e.HighlightColor
+                    V4d(float c.R, float c.G, float c.B, float c.A))
+            let signature =
+                info.Runtime.CreateFramebufferSignature [
+                    DefaultSemantic.Colors, TextureFormat.Rgba8
+                ]
+            let tex = info.Runtime.CreateTexture2D(info.ViewportSize, TextureFormat.Rgba8, 1, 1)
+            let fbo =
+                tex |> AdaptiveResource.bind (fun t ->
+                    AVal.constant (
+                        info.Runtime.CreateFramebuffer(
+                            signature,
+                            [ DefaultSemantic.Colors, t.[TextureAspect.Color, 0, 0] :> IFramebufferOutput ]
+                        )
+                    )
+                )
+            let taskSg =
+                sg {
+                    Sg.Shader { BlitShader.exploreHeatmap }
+                    Sg.Uniform("MeshCount",          cnt)
+                    Sg.Uniform("DepthTexture",       depthArrTex)
+                    Sg.Uniform("ViewportSize",       info.ViewportSize)
+                    Sg.Uniform("MeshVisibilityMask", meshVisibilityMask)
+                    Sg.Uniform("ReferenceAxis",      refAxis)
+                    Sg.Uniform("SteepnessThreshold", steepnessThresh)
+                    Sg.Uniform("VarianceThreshold", varianceThresh)
+                    Sg.Uniform("HighlightColor",    highlightColor)
+                    Sg.Uniform("HighlightAlpha",    highlightAlpha)
+                    Sg.View view
+                    Sg.Proj proj
+                    Primitives.FullscreenQuad
+                }
+            let renderTask = info.Runtime.CompileRender(signature, taskSg.GetRenderObjects(TraversalState.empty info.Runtime))
+            let clearTask = info.Runtime.CompileClear(signature, clear { color C4f.Zero })
+            tex |> AdaptiveResource.bind (fun t ->
+                fbo |> AVal.bind (fun fbo ->
+                    AVal.custom (fun tok ->
+                        clearTask.Run(tok, RenderToken.Empty, fbo)
+                        if exploreEnabled.GetValue(tok) then
+                            renderTask.Run(tok, RenderToken.Empty, fbo)
+                        t :> IBackendTexture
+                    )
+                )
+            )
+        let exploreTexAsITex = exploreTex |> AVal.map (fun t -> t :> ITexture)
 
         let composite =
             sg {
                 Sg.Active (AVal.map not fullscreenActive)
-                MeshView.composeMeshTextures cnt colors depths model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth clipMin clipMax effectiveGhostSilhouette meshVisibilityMask
+                MeshView.composeMeshTextures cnt colors depths exploreTexAsITex model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth clipMin clipMax effectiveGhostSilhouette meshVisibilityMask
             }
 
         let fullscreenNodes =

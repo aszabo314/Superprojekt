@@ -238,6 +238,66 @@ module Gui =
                     numInput "Min depth" model.MinDifferenceDepth SetMinDifferenceDepth
                     numInput "Max depth" model.MaxDifferenceDepth SetMaxDifferenceDepth
 
+                    h3 { "Explore mode" }
+                    p { "Heatmap: steep faces with inter-mesh disagreement" }
+                    let exploreEnabled  = model.Explore |> AVal.map (fun e -> e.Enabled)
+                    let steepnessThresh = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
+                    let varianceThresh  = model.Explore |> AVal.map (fun e -> e.VarianceThreshold)
+                    div {
+                        label {
+                            input {
+                                Attribute("type", "checkbox")
+                                Cards.checkedIf exploreEnabled
+                                Dom.OnClick(fun _ ->
+                                    let cur = AVal.force exploreEnabled
+                                    env.Emit [ExploreMsg (SetExploreEnabled (not cur))])
+                            }
+                            " Enabled"
+                        }
+                    }
+                    div {
+                        "Face steepness filter  "
+                        input {
+                            Attribute("type", "range")
+                            Attribute("min", "0.0"); Attribute("max", "1.0"); Attribute("step", "0.01")
+                            Class "range-full"
+                            steepnessThresh |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.2f" v)))
+                            Dom.OnInput(fun e ->
+                                Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [ExploreMsg (SetSteepnessThreshold v)]))
+                        }
+                        steepnessThresh |> AVal.map (fun v -> sprintf "%.2f" v)
+                    }
+                    div {
+                        "Change sensitivity  "
+                        input {
+                            Attribute("type", "range")
+                            Attribute("min", "0.00001"); Attribute("max", "0.1"); Attribute("step", "0.00001")
+                            Class "range-full"
+                            varianceThresh |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.5f" v)))
+                            Dom.OnInput(fun e ->
+                                Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [ExploreMsg (SetVarianceThreshold v)]))
+                        }
+                        varianceThresh |> AVal.map (fun v -> sprintf "%.5f" v)
+                    }
+
+                    h3 { "Reference axis" }
+                    p { "Defines 'steep' for explore mode and pin placement axis" }
+                    div {
+                        Class "btn-row"
+                        button {
+                            model.ReferenceAxis |> AVal.map (fun m ->
+                                if m = AlongWorldZ then Some (Class "btn-active") else None)
+                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongWorldZ)])
+                            "World Z"
+                        }
+                        button {
+                            model.ReferenceAxis |> AVal.map (fun m ->
+                                if m = AlongCameraView then Some (Class "btn-active") else None)
+                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongCameraView)])
+                            "Camera direction"
+                        }
+                    }
+
                     h3 { "Mesh order" }
                     p { "Determines stacking order of revolver and fullscreen tiles." }
                     div {

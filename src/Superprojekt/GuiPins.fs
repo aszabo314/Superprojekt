@@ -34,15 +34,6 @@ module GuiPins =
                         if on then "Cancel" else "Place pin")
                 }
             }
-            label {
-                Class "axis-label"
-                input {
-                    Attribute("type", "checkbox")
-                    Cards.checkedIf model.PinAxisVertical
-                    Dom.OnChange(fun _ -> env.Emit [TogglePinAxisVertical])
-                }
-                "Place along Z axis"
-            }
             p {
                 sp.PlacingMode |> AVal.map (fun pm ->
                     if pm.IsSome then "Tap on the 3D view to place anchor." else "")

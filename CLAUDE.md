@@ -129,6 +129,8 @@ Output: single color+depth fragment composited into the main framebuffer.
 
 **Core sample shader** (`BlitShader.coreClip`): used by the mini 3D view in GuiPins. Discards fragments where XY distance from origin exceeds `CoreRadius` uniform — a cylindrical clip in core sample space (Z = prism axis, origin = anchor). No box clipping.
 
+**Explore mode heatmap** (`BlitShader.exploreHeatmap`, SceneGraph.fs `exploreTex`): Screen-space post-process that highlights pixels where multiple meshes have steep faces *and* disagree in depth. Renders into a dedicated single-attachment Rgba8 offscreen texture (`CreateTexture2D` + single-color-FBO) so blend state stays isolated — WebGL2 has no per-attachment blending, so the explore pass cannot share an FBO with anything that needs different blend settings. The render task only runs when `model.Explore.Enabled = true`; otherwise the texture is just cleared to transparent. Then `composeMeshTextures` samples the explore texture via `exploreSampler` and alpha-blends it inline at the end of `readArray`, so the final canvas only sees a single draw with one consistent blend state. Algorithm per pixel: reconstruct world-space normals from depth gradients (`ViewProjTrafoInv` on `(ndc, ndc+dx, ndc+dy)`), keep meshes whose `|dot(n, ReferenceAxis)| < SteepnessThreshold`, compute Welford variance of their depths, discard if `< VarianceThreshold`, otherwise output `HighlightColor` modulated by `intensity * HighlightAlpha`. Reference axis comes from `model.ReferenceAxis` (`AlongWorldZ` → `V3d.OOI`; `AlongCameraView` → camera back-Z). Highlight is visible through the `if eCol.W > 0.001` blend in `readArray` even where the underlying scene is empty.
+
 ## Client model fields
 
 ```fsharp
@@ -154,6 +156,8 @@ CoreSampleViewMode            // SideView | TopView toggle for the core sample i
 CoreSampleRotation            // radians, angle around Z axis in core sample space
 CoreSamplePanZ                // vertical pan offset along Z axis
 CoreSampleZoom                // ortho half-height scale (zoom level)
+Explore                       // ExploreMode: Enabled, SteepnessThreshold, VarianceThreshold, HighlightColor, HighlightAlpha
+ReferenceAxis                 // AlongWorldZ | AlongCameraView — global; drives explore heatmap + pin placement
 ```
 
 ## Server architecture

@@ -35,11 +35,17 @@ type Message =
     | GridEvalLoaded          of ScanPinId * GridEvalData
     | StratigraphyComputed    of ScanPinId * StratigraphyData
     | ScanPinMsg              of ScanPinMessage
-    | TogglePinAxisVertical
     | ToggleDepthShade
     | ToggleIsolines
     | ToggleColorMode
     | CardMsg of CardMessage
+    | ExploreMsg of ExploreModeMessage
+
+and ExploreModeMessage =
+    | SetExploreEnabled of bool
+    | SetSteepnessThreshold of float
+    | SetVarianceThreshold of float
+    | SetReferenceAxisMode of ReferenceAxisMode
 
 and CardMessage =
     | BringToFront of CardId
@@ -163,7 +169,10 @@ module ScanPinUpdate =
             if sp.PlacingMode.IsNone then sp
             else
             let id = match sp.ActivePlacement with Some id -> id | None -> ScanPinId.create()
-            let axis = if model.PinAxisVertical then V3d.OOI else -camFwd |> Vec.normalize
+            let axis =
+                match model.ReferenceAxis with
+                | AlongWorldZ -> V3d.OOI
+                | AlongCameraView -> -camFwd |> Vec.normalize
             let prism = makeDefaultPrism renderPos axis 1.0
             let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
             let pin =
@@ -424,8 +433,6 @@ module Update =
             { model with ActiveDataset = Some dataset }
         | SetDatasetScale(dataset, scale) ->
             { model with DatasetScales = Map.add dataset scale model.DatasetScales }
-        | TogglePinAxisVertical ->
-            { model with PinAxisVertical = not model.PinAxisVertical }
         | ToggleDepthShade ->
             { model with DepthShadeOn = not model.DepthShadeOn }
         | ToggleIsolines ->
@@ -434,6 +441,13 @@ module Update =
             { model with ColorMode = not model.ColorMode }
         | CardMsg msg ->
             { model with CardSystem = CardUpdate.update msg model.CardSystem }
+        | ExploreMsg msg ->
+            let e = model.Explore
+            match msg with
+            | SetExploreEnabled v -> { model with Explore = { e with Enabled = v } }
+            | SetSteepnessThreshold v -> { model with Explore = { e with SteepnessThreshold = v } }
+            | SetVarianceThreshold v -> { model with Explore = { e with VarianceThreshold = v } }
+            | SetReferenceAxisMode m -> { model with ReferenceAxis = m }
         | CutResultsLoaded(pinId, results) ->
             let sp = model.ScanPins
             match HashMap.tryFind pinId sp.Pins with

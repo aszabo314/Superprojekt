@@ -1,5 +1,5 @@
-//cad36b25-2b37-6a2c-1a5c-1b94a5aba1c9
-//509e5021-b0c4-185b-d36e-d4304a22ff4f
+//e84e3a07-d091-82b3-838b-b6ffa95088ff
+//8e41c1f5-3f17-2819-0be2-5e11152a0d4f
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -38,7 +38,8 @@ type AdaptiveModel(value : Model) =
     let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
     let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
-    let _PinAxisVertical_ = FSharp.Data.Adaptive.cval(value.PinAxisVertical)
+    let _ReferenceAxis_ = FSharp.Data.Adaptive.cval(value.ReferenceAxis)
+    let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
     let _DepthShadeOn_ = FSharp.Data.Adaptive.cval(value.DepthShadeOn)
     let _IsolinesOn_ = FSharp.Data.Adaptive.cval(value.IsolinesOn)
     let _ColorMode_ = FSharp.Data.Adaptive.cval(value.ColorMode)
@@ -77,7 +78,8 @@ type AdaptiveModel(value : Model) =
             _ClipBox_.Value <- value.ClipBox
             _ClipBounds_.Value <- value.ClipBounds
             _ScanPins_.Update(value.ScanPins)
-            _PinAxisVertical_.Value <- value.PinAxisVertical
+            _ReferenceAxis_.Value <- value.ReferenceAxis
+            _Explore_.Value <- value.Explore
             _DepthShadeOn_.Value <- value.DepthShadeOn
             _IsolinesOn_.Value <- value.IsolinesOn
             _ColorMode_.Value <- value.ColorMode
@@ -109,7 +111,8 @@ type AdaptiveModel(value : Model) =
     member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ScanPins = _ScanPins_
-    member __.PinAxisVertical = _PinAxisVertical_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ReferenceAxis = _ReferenceAxis_ :> FSharp.Data.Adaptive.aval<ReferenceAxisMode>
+    member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>
     member __.DepthShadeOn = _DepthShadeOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.IsolinesOn = _IsolinesOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ColorMode = _ColorMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>

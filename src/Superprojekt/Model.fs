@@ -10,9 +10,15 @@ type ReferenceAxisMode =
     | AlongWorldZ
     | AlongCameraView
 
+type ExploreHighlightMode =
+    | SteepnessOnly
+    | DisagreementOnly
+    | Combined
+
 type ExploreMode =
     {
         Enabled            : bool
+        HighlightMode      : ExploreHighlightMode
         SteepnessThreshold : float
         DisagreementThreshold : float
         HighlightColor     : C4f
@@ -23,10 +29,11 @@ module ExploreMode =
     let initial =
         {
             Enabled            = false
+            HighlightMode      = Combined
             SteepnessThreshold = 0.3
             DisagreementThreshold = 0.05
-            HighlightColor     = C4f(1.0f, 0.6f, 0.1f, 1.0f)
-            HighlightAlpha     = 0.5
+            HighlightColor     = C4f(1.0f, 0.1f, 0.35f, 1.0f)
+            HighlightAlpha     = 0.9
         }
 
 [<ModelType>]

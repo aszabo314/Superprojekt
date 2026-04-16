@@ -193,6 +193,8 @@ module SceneGraph =
                     | AlongCameraView ->
                         v.Backward.TransformDir(V3d(0.0, 0.0, -1.0)) |> Vec.normalize)
             let exploreEnabled  = model.Explore |> AVal.map (fun e -> e.Enabled)
+            let highlightModeInt = model.Explore |> AVal.map (fun e ->
+                match e.HighlightMode with SteepnessOnly -> 0 | DisagreementOnly -> 1 | Combined -> 2)
             let steepnessThresh = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
             let disagreementThresh = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
             let highlightAlpha  = model.Explore |> AVal.map (fun e -> e.HighlightAlpha)
@@ -222,6 +224,7 @@ module SceneGraph =
                     Sg.Uniform("ViewportSize",       info.ViewportSize)
                     Sg.Uniform("MeshVisibilityMask", meshVisibilityMask)
                     Sg.Uniform("ReferenceAxis",      refAxis)
+                    Sg.Uniform("ExploreHighlightMode", highlightModeInt)
                     Sg.Uniform("SteepnessThreshold", steepnessThresh)
                     Sg.Uniform("DisagreementThreshold", disagreementThresh)
                     Sg.Uniform("HighlightColor",    highlightColor)

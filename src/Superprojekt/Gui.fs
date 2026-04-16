@@ -239,8 +239,8 @@ module Gui =
                     numInput "Max depth" model.MaxDifferenceDepth SetMaxDifferenceDepth
 
                     h3 { "Explore mode" }
-                    p { "Heatmap: steep faces with inter-mesh disagreement" }
                     let exploreEnabled  = model.Explore |> AVal.map (fun e -> e.Enabled)
+                    let highlightMode   = model.Explore |> AVal.map (fun e -> e.HighlightMode)
                     let steepnessThresh = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
                     let disagreementThresh = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
                     let disagreementMin = 0.001
@@ -263,7 +263,30 @@ module Gui =
                         }
                     }
                     div {
-                        "Face steepness filter  "
+                        Class "btn-row"
+                        button {
+                            highlightMode |> AVal.map (fun m ->
+                                if m = SteepnessOnly then Some (Class "btn-active") else None)
+                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetHighlightMode SteepnessOnly)])
+                            "Steepness"
+                        }
+                        button {
+                            highlightMode |> AVal.map (fun m ->
+                                if m = DisagreementOnly then Some (Class "btn-active") else None)
+                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetHighlightMode DisagreementOnly)])
+                            "Disagreement"
+                        }
+                        button {
+                            highlightMode |> AVal.map (fun m ->
+                                if m = Combined then Some (Class "btn-active") else None)
+                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetHighlightMode Combined)])
+                            "Combined"
+                        }
+                    }
+                    div {
+                        highlightMode |> AVal.map (fun m ->
+                            if m = DisagreementOnly then Some (Style [Display "none"]) else None)
+                        "Steepness filter  "
                         input {
                             Attribute("type", "range")
                             Attribute("min", "0.0"); Attribute("max", "1.0"); Attribute("step", "0.01")
@@ -275,6 +298,8 @@ module Gui =
                         steepnessThresh |> AVal.map (fun v -> sprintf "%.2f" v)
                     }
                     div {
+                        highlightMode |> AVal.map (fun m ->
+                            if m = SteepnessOnly then Some (Style [Display "none"]) else None)
                         "Min depth disagreement  "
                         input {
                             Attribute("type", "range")

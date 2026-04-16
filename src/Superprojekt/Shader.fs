@@ -92,6 +92,7 @@ module BlitShader =
         member x.DisagreementThreshold : float = x?DisagreementThreshold
         member x.HighlightColor       : V4d   = x?HighlightColor
         member x.HighlightAlpha       : float = x?HighlightAlpha
+        member x.ExploreHighlightMode : int   = x?ExploreHighlightMode
     
     let colorMap =
         [|
@@ -246,6 +247,10 @@ module BlitShader =
         let w = uniform.ViewProjTrafoInv * clip
         w.XYZ / w.W
 
+    // ExploreHighlightMode: 0 = SteepnessOnly, 1 = DisagreementOnly, 2 = Combined
+    // Steepness uses screen-space normals (needs neighbor depth samples).
+    // Disagreement uses axis-projected world depth (center pixel only — view-independent).
+    // Combined: disagreement over ALL meshes, qualified by steepCount >= 1.
     let exploreHeatmap (v : Effects.Vertex) =
         fragment {
             let ndc = 2.0 * v.tc - V2d.II
@@ -254,34 +259,61 @@ module BlitShader =
             let dy = V2d(0.0, 2.0 / vpSize.Y)
             let tcx = v.tc + V2d(1.0 / vpSize.X, 0.0)
             let tcy = v.tc + V2d(0.0, 1.0 / vpSize.Y)
-            let pNear = reconstructWorld ndc 0.0
+            let mode = uniform.ExploreHighlightMode
+            let mutable steepCount = 0
             let mutable count = 0
             let mutable mean = 0.0
             let mutable s2 = 0.0
             for i in 0 .. uniform.MeshCount - 1 do
                 let isVis = (uniform.MeshVisibilityMask >>> i) &&& 1 <> 0
                 if isVis then
-                    let di  = deputy.SampleLevel(v.tc, 2*i, 0.0).X
-                    let dix = deputy.SampleLevel(tcx,  2*i, 0.0).X
-                    let diy = deputy.SampleLevel(tcy,  2*i, 0.0).X
-                    if di < 0.9999 && dix < 0.9999 && diy < 0.9999 then
-                        let p  = reconstructWorld ndc di
-                        let px = reconstructWorld (ndc + dx) dix
-                        let py = reconstructWorld (ndc + dy) diy
-                        let n = Vec.cross (px - p) (py - p) |> Vec.normalize
-                        let alignment = abs (Vec.dot n uniform.ReferenceAxis)
-                        if alignment < uniform.SteepnessThreshold then
-                            let depth = Vec.length (p - pNear)
+                    let di = deputy.SampleLevel(v.tc, 2*i, 0.0).X
+                    if di < 0.9999 then
+                        let p = reconstructWorld ndc di
+                        // Disagreement: accumulate axis-projected depth for all meshes (modes 1, 2)
+                        if mode <> 0 then
+                            let depth = Vec.dot p uniform.ReferenceAxis
                             count <- count + 1
                             let delta = depth - mean
                             mean <- mean + delta / float count
                             let delta2 = depth - mean
                             s2 <- s2 + delta * delta2
-            if count < 2 then discard()
-            let stddev = sqrt (s2 / float count)
-            if stddev < uniform.DisagreementThreshold then discard()
-            let intensity = clamp 0.0 1.0 (stddev / (uniform.DisagreementThreshold * 4.0))
-            return V4d(uniform.HighlightColor.XYZ, intensity * uniform.HighlightAlpha)
+                        // Steepness: reconstruct normal from depth derivatives (modes 0, 2)
+                        if mode <> 1 then
+                            let dix = deputy.SampleLevel(tcx, 2*i, 0.0).X
+                            let diy = deputy.SampleLevel(tcy, 2*i, 0.0).X
+                            if dix < 0.9999 && diy < 0.9999 then
+                                let px = reconstructWorld (ndc + dx) dix
+                                let py = reconstructWorld (ndc + dy) diy
+                                let n = Vec.cross (px - p) (py - p) |> Vec.normalize
+                                let alignment = abs (Vec.dot n uniform.ReferenceAxis)
+                                if alignment < uniform.SteepnessThreshold then
+                                    steepCount <- steepCount + 1
+            // Determine alpha before pattern
+            let mutable alpha = 0.0
+            if mode = 0 then
+                if steepCount < 1 then discard()
+                alpha <- uniform.HighlightAlpha
+            elif mode = 1 then
+                if count < 2 then discard()
+                let stddev = sqrt (s2 / float count)
+                if stddev < uniform.DisagreementThreshold then discard()
+                alpha <- clamp 0.3 1.0 (stddev / (uniform.DisagreementThreshold * 3.0)) * uniform.HighlightAlpha
+            else
+                if steepCount < 1 || count < 2 then discard()
+                let stddev = sqrt (s2 / float count)
+                if stddev < uniform.DisagreementThreshold then discard()
+                alpha <- clamp 0.3 1.0 (stddev / (uniform.DisagreementThreshold * 3.0)) * uniform.HighlightAlpha
+            // Dot grid pattern (screen-space, non-directional)
+            let pixel = v.tc * vpSize
+            let cell = 8.0
+            let cx = (pixel.X % cell) - cell * 0.5
+            let cy = (pixel.Y % cell) - cell * 0.5
+            let dist = sqrt(cx * cx + cy * cy)
+            if dist > cell * 0.38 then discard()
+            let dotFade = clamp 0.0 1.0 (1.0 - dist / (cell * 0.38))
+            let finalAlpha = alpha * (0.5 + 0.5 * dotFade)
+            return V4d(uniform.HighlightColor.XYZ, finalAlpha)
         }
 
     let readArraySlice (v : Effects.Vertex) =

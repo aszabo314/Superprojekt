@@ -43,6 +43,7 @@ type Message =
 
 and ExploreModeMessage =
     | SetExploreEnabled of bool
+    | SetHighlightMode of ExploreHighlightMode
     | SetSteepnessThreshold of float
     | SetDisagreementThreshold of float
     | SetReferenceAxisMode of ReferenceAxisMode
@@ -454,6 +455,7 @@ module Update =
             let e = model.Explore
             match msg with
             | SetExploreEnabled v -> { model with Explore = { e with Enabled = v } }
+            | SetHighlightMode m -> { model with Explore = { e with HighlightMode = m } }
             | SetSteepnessThreshold v -> { model with Explore = { e with SteepnessThreshold = v } }
             | SetDisagreementThreshold v -> { model with Explore = { e with DisagreementThreshold = v } }
             | SetReferenceAxisMode m -> { model with ReferenceAxis = m }

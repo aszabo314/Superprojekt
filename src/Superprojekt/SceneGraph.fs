@@ -434,13 +434,15 @@ module SceneGraph =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
-                let isActiveAndSelected = AVal.map2 (&&) notFullscreen isSelected
+                let bsEnabled = model.ScanPins.BetweenSpaceEnabled
+                let isActiveAndSelected = (notFullscreen, isSelected, bsEnabled) |||> AVal.map3 (fun nf sel bs -> nf && sel && bs)
                 let prismVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
                 let stratVal = pinVal |> AVal.map (fun po -> po |> Option.bind (fun p -> p.Stratigraphy))
                 let hoverVal =
-                    pinVal |> AVal.map (fun po ->
-                        po |> Option.bind (fun p -> p.BetweenSpaceHover)
-                           |> Option.map (fun h -> h.ColumnIdx, h.HoverZ))
+                    (pinVal, bsEnabled) ||> AVal.map2 (fun po enabled ->
+                        if not enabled then None
+                        else po |> Option.bind (fun p -> p.BetweenSpaceHover)
+                                |> Option.map (fun h -> h.ColumnIdx, h.HoverZ))
                 let geo =
                     (prismVal, stratVal, hoverVal) |||> AVal.map3 (fun prismO dataO hOpt ->
                         match prismO, dataO, hOpt with

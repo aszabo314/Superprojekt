@@ -76,6 +76,7 @@ and ScanPinMessage =
     | SetShowCylinderEdgeLines of ScanPinId * bool
     | SetExplosionEnabled     of ScanPinId * bool
     | SetExplosionFactor      of ScanPinId * float
+    | ToggleBetweenSpaceEnabled
     | HoverBetweenSpace       of ScanPinId * columnIdx:int * hoverZ:float
     | PinBetweenSpaceHover    of ScanPinId
     | ClearBetweenSpaceHover  of ScanPinId
@@ -309,7 +310,12 @@ module ScanPinUpdate =
                 { sp with Pins = HashMap.add id { pin with Explosion = ex } sp.Pins }
             | None -> sp
 
+        | ToggleBetweenSpaceEnabled ->
+            { sp with BetweenSpaceEnabled = not sp.BetweenSpaceEnabled }
+
         | HoverBetweenSpace(id, col, z) ->
+            if not sp.BetweenSpaceEnabled then sp
+            else
             match HashMap.tryFind id sp.Pins with
             | Some pin ->
                 let pinned = pin.BetweenSpaceHover |> Option.map (fun h -> h.Pinned) |> Option.defaultValue false

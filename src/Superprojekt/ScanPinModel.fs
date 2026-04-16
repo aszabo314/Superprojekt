@@ -157,6 +157,7 @@ type ScanPinModel = {
     ActivePlacement  : ScanPinId option
     SelectedPin      : ScanPinId option
     PlacingMode      : FootprintMode option
+    BetweenSpaceEnabled : bool
 }
 
 module ScanPinModel =
@@ -165,6 +166,7 @@ module ScanPinModel =
         ActivePlacement = None
         SelectedPin     = None
         PlacingMode     = None
+        BetweenSpaceEnabled = false
     }
 
 // ── Card system ──────────────────────────────────────────────

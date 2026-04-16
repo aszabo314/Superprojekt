@@ -396,6 +396,14 @@ module Cards =
                     }
                     "Color"
                 }
+                label {
+                    input {
+                        Attribute("type", "checkbox")
+                        checkedIf model.ScanPins.BetweenSpaceEnabled
+                        Dom.OnChange(fun _ -> env.Emit [ScanPinMsg ToggleBetweenSpaceEnabled])
+                    }
+                    "Between"
+                }
             }
         }
 

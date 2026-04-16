@@ -156,7 +156,7 @@ CoreSampleViewMode            // SideView | TopView toggle for the core sample i
 CoreSampleRotation            // radians, angle around Z axis in core sample space
 CoreSamplePanZ                // vertical pan offset along Z axis
 CoreSampleZoom                // ortho half-height scale (zoom level)
-Explore                       // ExploreMode: Enabled, SteepnessThreshold, VarianceThreshold, HighlightColor, HighlightAlpha
+Explore                       // ExploreMode: Enabled, SteepnessThreshold, DisagreementThreshold (stddev in meters), HighlightColor, HighlightAlpha
 ReferenceAxis                 // AlongWorldZ | AlongCameraView — global; drives explore heatmap + pin placement
 ```
 

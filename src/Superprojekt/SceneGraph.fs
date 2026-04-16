@@ -194,7 +194,7 @@ module SceneGraph =
                         v.Backward.TransformDir(V3d(0.0, 0.0, -1.0)) |> Vec.normalize)
             let exploreEnabled  = model.Explore |> AVal.map (fun e -> e.Enabled)
             let steepnessThresh = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
-            let varianceThresh  = model.Explore |> AVal.map (fun e -> e.VarianceThreshold)
+            let disagreementThresh = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
             let highlightAlpha  = model.Explore |> AVal.map (fun e -> e.HighlightAlpha)
             let highlightColor =
                 model.Explore |> AVal.map (fun e ->
@@ -223,7 +223,7 @@ module SceneGraph =
                     Sg.Uniform("MeshVisibilityMask", meshVisibilityMask)
                     Sg.Uniform("ReferenceAxis",      refAxis)
                     Sg.Uniform("SteepnessThreshold", steepnessThresh)
-                    Sg.Uniform("VarianceThreshold", varianceThresh)
+                    Sg.Uniform("DisagreementThreshold", disagreementThresh)
                     Sg.Uniform("HighlightColor",    highlightColor)
                     Sg.Uniform("HighlightAlpha",    highlightAlpha)
                     Sg.View view
@@ -232,12 +232,17 @@ module SceneGraph =
                 }
             let renderTask = info.Runtime.CompileRender(signature, taskSg.GetRenderObjects(TraversalState.empty info.Runtime))
             let clearTask = info.Runtime.CompileClear(signature, clear { color C4f.Zero })
+            let mutable lastEnabled = false
             tex |> AdaptiveResource.bind (fun t ->
                 fbo |> AVal.bind (fun fbo ->
                     AVal.custom (fun tok ->
-                        clearTask.Run(tok, RenderToken.Empty, fbo)
-                        if exploreEnabled.GetValue(tok) then
+                        let enabled = exploreEnabled.GetValue(tok)
+                        if enabled then
+                            clearTask.Run(tok, RenderToken.Empty, fbo)
                             renderTask.Run(tok, RenderToken.Empty, fbo)
+                        elif lastEnabled then
+                            clearTask.Run(tok, RenderToken.Empty, fbo)
+                        lastEnabled <- enabled
                         t :> IBackendTexture
                     )
                 )

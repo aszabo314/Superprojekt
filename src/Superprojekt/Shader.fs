@@ -89,7 +89,7 @@ module BlitShader =
         member x.ExplosionOffset      : V3d   = x?ExplosionOffset
         member x.ReferenceAxis        : V3d   = x?ReferenceAxis
         member x.SteepnessThreshold   : float = x?SteepnessThreshold
-        member x.VarianceThreshold    : float = x?VarianceThreshold
+        member x.DisagreementThreshold : float = x?DisagreementThreshold
         member x.HighlightColor       : V4d   = x?HighlightColor
         member x.HighlightAlpha       : float = x?HighlightAlpha
     
@@ -254,6 +254,7 @@ module BlitShader =
             let dy = V2d(0.0, 2.0 / vpSize.Y)
             let tcx = v.tc + V2d(1.0 / vpSize.X, 0.0)
             let tcy = v.tc + V2d(0.0, 1.0 / vpSize.Y)
+            let pNear = reconstructWorld ndc 0.0
             let mutable count = 0
             let mutable mean = 0.0
             let mutable s2 = 0.0
@@ -270,15 +271,16 @@ module BlitShader =
                         let n = Vec.cross (px - p) (py - p) |> Vec.normalize
                         let alignment = abs (Vec.dot n uniform.ReferenceAxis)
                         if alignment < uniform.SteepnessThreshold then
+                            let depth = Vec.length (p - pNear)
                             count <- count + 1
-                            let delta = di - mean
+                            let delta = depth - mean
                             mean <- mean + delta / float count
-                            let delta2 = di - mean
+                            let delta2 = depth - mean
                             s2 <- s2 + delta * delta2
             if count < 2 then discard()
-            let variance = s2 / float count
-            if variance < uniform.VarianceThreshold then discard()
-            let intensity = clamp 0.0 1.0 (variance / (uniform.VarianceThreshold * 4.0))
+            let stddev = sqrt (s2 / float count)
+            if stddev < uniform.DisagreementThreshold then discard()
+            let intensity = clamp 0.0 1.0 (stddev / (uniform.DisagreementThreshold * 4.0))
             return V4d(uniform.HighlightColor.XYZ, intensity * uniform.HighlightAlpha)
         }
 

@@ -242,7 +242,14 @@ module Gui =
                     p { "Heatmap: steep faces with inter-mesh disagreement" }
                     let exploreEnabled  = model.Explore |> AVal.map (fun e -> e.Enabled)
                     let steepnessThresh = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
-                    let varianceThresh  = model.Explore |> AVal.map (fun e -> e.VarianceThreshold)
+                    let disagreementThresh = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
+                    let disagreementMin = 0.001
+                    let disagreementMax = 10.0
+                    let disagreementToSlider (v : float) =
+                        let v = clamp disagreementMin disagreementMax v
+                        (log10 (v / disagreementMin) / log10 (disagreementMax / disagreementMin)) * 1000.0
+                    let sliderToDisagreement (s : float) =
+                        disagreementMin * (disagreementMax / disagreementMin) ** (s / 1000.0)
                     div {
                         label {
                             input {
@@ -268,16 +275,20 @@ module Gui =
                         steepnessThresh |> AVal.map (fun v -> sprintf "%.2f" v)
                     }
                     div {
-                        "Change sensitivity  "
+                        "Min depth disagreement  "
                         input {
                             Attribute("type", "range")
-                            Attribute("min", "0.00001"); Attribute("max", "0.1"); Attribute("step", "0.00001")
+                            Attribute("min", "0"); Attribute("max", "1000"); Attribute("step", "1")
                             Class "range-full"
-                            varianceThresh |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.5f" v)))
+                            disagreementThresh |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.1f" (disagreementToSlider v))))
                             Dom.OnInput(fun e ->
-                                Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [ExploreMsg (SetVarianceThreshold v)]))
+                                Cards.parseFloat e.Value
+                                |> Option.iter (fun s ->
+                                    env.Emit [ExploreMsg (SetDisagreementThreshold (sliderToDisagreement s))]))
                         }
-                        varianceThresh |> AVal.map (fun v -> sprintf "%.5f" v)
+                        disagreementThresh |> AVal.map (fun v ->
+                            if v < 0.1 then sprintf "%.0f mm" (v * 1000.0)
+                            else sprintf "%.2f m" v)
                     }
 
                     h3 { "Reference axis" }

@@ -44,7 +44,7 @@ type Message =
 and ExploreModeMessage =
     | SetExploreEnabled of bool
     | SetSteepnessThreshold of float
-    | SetVarianceThreshold of float
+    | SetDisagreementThreshold of float
     | SetReferenceAxisMode of ReferenceAxisMode
 
 and CardMessage =
@@ -420,7 +420,16 @@ module Update =
                             V3d(max acc.Max.X b.Max.X, max acc.Max.Y b.Max.Y, max acc.Max.Z b.Max.Z)
                         )) Box3d.Invalid
                 let padded = Box3d(union.Min - V3d.III, union.Max + V3d.III)
-                { model with ClipBounds = padded; ClipBox = padded }
+                let scale =
+                    match model.ActiveDataset with
+                    | Some d -> Map.tryFind d model.DatasetScales |> Option.defaultValue 1.0
+                    | None -> 1.0
+                let renderDiag = union.Size.Length * scale
+                let disagreementDefault = clamp 0.001 1.0 (renderDiag * 1e-3)
+                { model with
+                    ClipBounds = padded
+                    ClipBox = padded
+                    Explore = { model.Explore with DisagreementThreshold = disagreementDefault } }
         | ToggleClip ->
             { model with ClipActive = not model.ClipActive }
         | SetClipBox box ->
@@ -446,7 +455,7 @@ module Update =
             match msg with
             | SetExploreEnabled v -> { model with Explore = { e with Enabled = v } }
             | SetSteepnessThreshold v -> { model with Explore = { e with SteepnessThreshold = v } }
-            | SetVarianceThreshold v -> { model with Explore = { e with VarianceThreshold = v } }
+            | SetDisagreementThreshold v -> { model with Explore = { e with DisagreementThreshold = v } }
             | SetReferenceAxisMode m -> { model with ReferenceAxis = m }
         | CutResultsLoaded(pinId, results) ->
             let sp = model.ScanPins

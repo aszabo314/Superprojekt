@@ -14,7 +14,7 @@ type ExploreMode =
     {
         Enabled            : bool
         SteepnessThreshold : float
-        VarianceThreshold  : float
+        DisagreementThreshold : float
         HighlightColor     : C4f
         HighlightAlpha     : float
     }
@@ -24,7 +24,7 @@ module ExploreMode =
         {
             Enabled            = false
             SteepnessThreshold = 0.3
-            VarianceThreshold  = 0.01
+            DisagreementThreshold = 0.05
             HighlightColor     = C4f(1.0f, 0.6f, 0.1f, 1.0f)
             HighlightAlpha     = 0.5
         }

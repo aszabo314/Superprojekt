@@ -59,7 +59,7 @@ module PinGeometry =
     /// Quads are emitted only when all four corner nodes have brackets; side
     /// walls close boundary edges of that surface region.
     /// Returns ((upperPos, upperIdx), (lowerPos, lowerIdx), (sidePos, sideIdx)).
-    let buildBetweenSpaceSurfaces (prism : SelectionPrism) (data : StratigraphyData) (colIdx : int) (hoverZ : float) =
+    let buildBetweenSpaceSurfaces (prism : SelectionPrism) (data : StratigraphyData) (cache : BandCache option) (colIdx : int) (hoverZ : float) =
         let axis = prism.AxisDirection |> Vec.normalize
         let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
         let right = Vec.cross axis up |> Vec.normalize
@@ -71,7 +71,10 @@ module PinGeometry =
         let empty = [||], [||]
         if n = 0 || ringCount = 0 then empty, empty, empty
         else
-            let band = Stratigraphy.floodContinuousBand3D data colIdx hoverZ
+            let band =
+                match cache with
+                | Some c -> Stratigraphy.lookupBand3D c colIdx hoverZ
+                | None -> Stratigraphy.floodContinuousBand3D data colIdx hoverZ
             if Map.isEmpty band then empty, empty, empty
             else
             let firstBracket (ang : int) (ring : int) =

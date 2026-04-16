@@ -99,7 +99,7 @@ module Cards =
             | AnchorToWorldPoint anchor ->
                 match projectToScreen anchor viewTrafo vpSize with
                 | Some screenPt ->
-                    let pos = V2d(screenPt.X + 20.0, screenPt.Y - card.Size.Y * 0.5)
+                    let pos = V2d(screenPt.X + card.Size.X * 0.4, screenPt.Y - card.Size.Y * 0.5 - 40.0)
                     Some (clampToViewport pos card.Size (V2d vpSize))
                 | None -> None
             | AnchorToCard(parentId, edge) ->

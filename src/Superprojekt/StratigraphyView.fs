@@ -179,23 +179,28 @@ module StratigraphyView =
                 if r < 1e-9 then 0.5 else (z - lo) / r
 
         let dx = 1.0 / float nCols
-        let half = 0.003
-        let color = V4f(0.9f, 0.2f, 0.2f, 0.85f)
+        let half = 0.006
+        let outlineHalf = 0.012
+        let lineColor = V4f(1.0f, 1.0f, 1.0f, 0.95f)
+        let outlineColor = V4f(0.0f, 0.0f, 0.0f, 0.6f)
         let positions = ResizeArray<V3f>()
         let colors = ResizeArray<V4f>()
         let indices = ResizeArray<int>()
-        for i in 0 .. nCols - 1 do
-            let y = toY i dist |> clamp 0.0 1.0
-            let x0 = float i * dx
-            let x1 = x0 + dx
-            let baseIdx = positions.Count
-            positions.Add(V3f(float32 x0, float32 (y - half), 0.01f))
-            positions.Add(V3f(float32 x1, float32 (y - half), 0.01f))
-            positions.Add(V3f(float32 x1, float32 (y + half), 0.01f))
-            positions.Add(V3f(float32 x0, float32 (y + half), 0.01f))
-            for _ in 1 .. 4 do colors.Add(color)
-            indices.Add(baseIdx); indices.Add(baseIdx + 1); indices.Add(baseIdx + 2)
-            indices.Add(baseIdx); indices.Add(baseIdx + 2); indices.Add(baseIdx + 3)
+        let addStrip halfW zOff col =
+            for i in 0 .. nCols - 1 do
+                let y = toY i dist |> clamp 0.0 1.0
+                let x0 = float i * dx
+                let x1 = x0 + dx
+                let baseIdx = positions.Count
+                positions.Add(V3f(float32 x0, float32 (y - halfW), float32 zOff))
+                positions.Add(V3f(float32 x1, float32 (y - halfW), float32 zOff))
+                positions.Add(V3f(float32 x1, float32 (y + halfW), float32 zOff))
+                positions.Add(V3f(float32 x0, float32 (y + halfW), float32 zOff))
+                for _ in 1 .. 4 do colors.Add(col)
+                indices.Add(baseIdx); indices.Add(baseIdx + 1); indices.Add(baseIdx + 2)
+                indices.Add(baseIdx); indices.Add(baseIdx + 2); indices.Add(baseIdx + 3)
+        addStrip outlineHalf 0.009 outlineColor
+        addStrip half 0.01 lineColor
         positions.ToArray(), colors.ToArray(), indices.ToArray()
 
     /// Build the warm-overlay highlight strip for a between-space hover.
@@ -203,6 +208,7 @@ module StratigraphyView =
     /// valid bracket at that z produce a gap (nothing drawn).
     let private buildHighlight
         (data : StratigraphyData)
+        (cache : BandCache option)
         (display : StratigraphyDisplayMode)
         (colIdx : int)
         (hoverZ : float)
@@ -211,7 +217,10 @@ module StratigraphyView =
         let nCols = data.Columns.Length
         if nCols = 0 then [||], [||], [||]
         else
-        let band = Stratigraphy.floodContinuousBand data colIdx hoverZ
+        let band =
+            match cache with
+            | Some c -> Stratigraphy.lookupBand2D c colIdx hoverZ
+            | None -> Stratigraphy.floodContinuousBand data colIdx hoverZ
         if Map.isEmpty band then [||], [||], [||]
         else
         let dx = 1.0 / float nCols
@@ -264,12 +273,16 @@ module StratigraphyView =
         else
         let angNorm = ((angleDeg % 360.0) + 360.0) % 360.0
         let x = angNorm / 360.0 |> clamp 0.0 1.0
-        let half = 0.004
-        let color = V4f(0.2f, 0.6f, 0.9f, 0.85f)
-        let positions = [| V3f(float32 (x - half), 0.0f, 0.01f); V3f(float32 (x + half), 0.0f, 0.01f)
+        let half = 0.006
+        let outlineHalf = 0.012
+        let lineColor = V4f(1.0f, 1.0f, 1.0f, 0.95f)
+        let outlineColor = V4f(0.0f, 0.0f, 0.0f, 0.6f)
+        let positions = [| V3f(float32 (x - outlineHalf), 0.0f, 0.009f); V3f(float32 (x + outlineHalf), 0.0f, 0.009f)
+                           V3f(float32 (x + outlineHalf), 1.0f, 0.009f); V3f(float32 (x - outlineHalf), 1.0f, 0.009f)
+                           V3f(float32 (x - half), 0.0f, 0.01f); V3f(float32 (x + half), 0.0f, 0.01f)
                            V3f(float32 (x + half), 1.0f, 0.01f); V3f(float32 (x - half), 1.0f, 0.01f) |]
-        let colors = [| color; color; color; color |]
-        let indices = [| 0;1;2; 0;2;3 |]
+        let colors = [| outlineColor; outlineColor; outlineColor; outlineColor; lineColor; lineColor; lineColor; lineColor |]
+        let indices = [| 0;1;2; 0;2;3; 4;5;6; 4;6;7 |]
         positions, colors, indices
 
     /// Convert a diagram (x [0..1], y [0..1]) coordinate back to a z value (cut plane distance).
@@ -329,7 +342,7 @@ module StratigraphyView =
                 | Some pin ->
                     match pin.Stratigraphy, pin.BetweenSpaceHover with
                     | Some data, Some h ->
-                        buildHighlight data pin.StratigraphyDisplay h.ColumnIdx h.HoverZ
+                        buildHighlight data pin.BandCache pin.StratigraphyDisplay h.ColumnIdx h.HoverZ
                     | _ -> [||], [||], [||]
                 | None -> [||], [||], [||])
 

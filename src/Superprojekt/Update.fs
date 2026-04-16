@@ -35,6 +35,7 @@ type Message =
     | GridEvalLoaded          of ScanPinId * GridEvalData
     | StratigraphyComputed    of ScanPinId * StratigraphyData
     | ScanPinMsg              of ScanPinMessage
+    | JumpToMesh of string
     | ToggleDepthShade
     | ToggleIsolines
     | ToggleColorMode
@@ -65,6 +66,7 @@ and ScanPinMessage =
     | SetCutPlaneAngle of float
     | SetCutPlaneDistance of float
     | SetFootprintScale of float
+    | SetPinLength of float
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
@@ -140,12 +142,19 @@ module ScanPinUpdate =
     let private assignColors (meshNames : IndexList<string>) =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, meshColors.[i % meshColors.Length]) |> Map.ofArray
 
-    let private makeDefaultPrism (anchor : V3d) (axis : V3d) (radius : float) =
+    let private makeDefaultPrism (anchor : V3d) (axis : V3d) (radius : float) (clipBounds : Box3d) =
         let n = 32
         let verts = [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * radius ]
+        let autoLength =
+            if clipBounds.IsInvalid then 10.0
+            else
+                let sz = clipBounds.Size
+                let axn = axis |> Vec.normalize
+                let projected = abs (Vec.dot (V3d sz) axn)
+                max 2.0 (projected * 1.2)
         { AnchorPoint = anchor; AxisDirection = axis
           Footprint = { Vertices = verts }
-          ExtentForward = 5.0; ExtentBackward = 5.0 }
+          ExtentForward = autoLength; ExtentBackward = 1.0 }
 
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
@@ -175,16 +184,18 @@ module ScanPinUpdate =
                 match model.ReferenceAxis with
                 | AlongWorldZ -> V3d.OOI
                 | AlongCameraView -> -camFwd |> Vec.normalize
-            let prism = makeDefaultPrism renderPos axis 1.0
+            let prism = makeDefaultPrism renderPos axis 1.0 model.ClipBounds
             let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
             let pin =
                 { Id = id; Phase = PinPhase.Placement; Prism = prism
                   CutPlane = CutPlaneMode.AlongAxis 0.0
                   CreationCameraState = cam
                   CutResults = Map.empty
+                  CutResultsPlane = CutPlaneMode.AlongAxis 0.0
                   DatasetColors = assignColors model.MeshNames
                   GridEval = None
                   Stratigraphy = None
+                  BandCache = None
                   StratigraphyDisplay = Undistorted
                   GhostClip = GhostClipOff
                   ExtractedLines = ExtractedLinesMode.initial
@@ -198,7 +209,9 @@ module ScanPinUpdate =
                 match HashMap.tryFind id sp.Pins with
                 | Some pin when pin.Phase = PinPhase.Placement ->
                     let r = max 0.1 radius
-                    let prism = makeDefaultPrism pin.Prism.AnchorPoint pin.Prism.AxisDirection r
+                    let n = 32
+                    let verts = [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * r ]
+                    let prism = { pin.Prism with Footprint = { Vertices = verts } }
                     let pin = { pin with Prism = prism }
                     { sp with Pins = HashMap.add id pin sp.Pins }
                 | _ -> sp
@@ -245,10 +258,24 @@ module ScanPinUpdate =
                 match HashMap.tryFind id sp.Pins with
                 | Some pin when pin.Phase = PinPhase.Placement ->
                     let s = max 0.1 scale
-                    let prism = makeDefaultPrism pin.Prism.AnchorPoint pin.Prism.AxisDirection s
+                    let n = 32
+                    let verts = [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * s ]
+                    let prism = { pin.Prism with Footprint = { Vertices = verts } }
                     let pin = { pin with Prism = prism }
                     { sp with Pins = HashMap.add id pin sp.Pins }
                 | _ -> sp
+            | None -> sp
+
+        | SetPinLength length ->
+            let targetId = sp.ActivePlacement |> Option.orElse sp.SelectedPin
+            match targetId with
+            | Some id ->
+                match HashMap.tryFind id sp.Pins with
+                | Some pin ->
+                    let len = max 0.5 length
+                    let prism = { pin.Prism with ExtentForward = len }
+                    { sp with Pins = HashMap.add id { pin with Prism = prism } sp.Pins }
+                | None -> sp
             | None -> sp
 
         | CommitPin ->
@@ -449,6 +476,17 @@ module Update =
             { model with ActiveDataset = Some dataset }
         | SetDatasetScale(dataset, scale) ->
             { model with DatasetScales = Map.add dataset scale model.DatasetScales }
+        | JumpToMesh meshName ->
+            match Map.tryFind meshName model.DatasetCentroids with
+            | Some centroid ->
+                let renderPos = (centroid - model.CommonCentroid) * (model.DatasetScales |> Map.tryFind (meshName.Split('/', 2).[0]) |> Option.defaultValue 1.0)
+                let radius =
+                    if model.ClipBounds.IsInvalid then 50.0
+                    else model.ClipBounds.Size.Length * 0.6
+                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
+                env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
+            | None -> ()
+            model
         | ToggleDepthShade ->
             { model with DepthShadeOn = not model.DepthShadeOn }
         | ToggleIsolines ->
@@ -469,7 +507,7 @@ module Update =
             let sp = model.ScanPins
             match HashMap.tryFind pinId sp.Pins with
             | Some pin ->
-                let pin = { pin with CutResults = results }
+                let pin = { pin with CutResults = results; CutResultsPlane = pin.CutPlane }
                 { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
             | None -> model
         | GridEvalLoaded(pinId, data) ->
@@ -483,7 +521,8 @@ module Update =
             let sp = model.ScanPins
             match HashMap.tryFind pinId sp.Pins with
             | Some pin ->
-                let pin = { pin with Stratigraphy = Some data }
+                let cache = Stratigraphy.buildBandCache data
+                let pin = { pin with Stratigraphy = Some data; BandCache = Some cache }
                 { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
             | None -> model
         | ScanPinMsg msg ->
@@ -496,10 +535,12 @@ module Update =
                     let c = pin.CreationCameraState
                     env.Emit [CameraMessage (OrbitMessage.SetTarget(true, c.Center, c.Radius, c.Phi, c.Theta))]
                 | None -> ()
+            | SetAnchor(_, renderPos, _) ->
+                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
             | _ -> ()
             let needsCutUpdate =
                 match msg with
-                | SetAnchor _ | SetFootprintRadius _ | SetCutPlaneMode _ | SetCutPlaneAngle _ | SetCutPlaneDistance _ | SetFootprintScale _ -> true
+                | SetAnchor _ | SetFootprintRadius _ | SetCutPlaneMode _ | SetCutPlaneAngle _ | SetCutPlaneDistance _ | SetFootprintScale _ | SetPinLength _ -> true
                 | _ -> false
             if needsCutUpdate then
                 let targetId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
@@ -552,7 +593,7 @@ module Update =
                 | None -> ()
             let needsStrat =
                 match msg with
-                | SetAnchor _ | SetFootprintRadius _ | SetFootprintScale _ -> true
+                | SetAnchor _ | SetFootprintRadius _ | SetFootprintScale _ | SetPinLength _ -> true
                 | _ -> false
             if needsStrat then
                 let targetId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin

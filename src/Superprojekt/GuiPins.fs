@@ -64,6 +64,20 @@ module GuiPins =
                     }
                 }
                 div {
+                    "Length  "
+                    input {
+                        Attribute("type", "range")
+                        Attribute("min", "0.5"); Attribute("max", "100"); Attribute("step", "0.5")
+                        Class "range-full"
+                        activePin |> AVal.map (fun p ->
+                            match p with
+                            | Some pin -> Some (Attribute("value", sprintf "%.1f" pin.Prism.ExtentForward))
+                            | None -> None)
+                        Dom.OnInput(fun e ->
+                            Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [ScanPinMsg (SetPinLength v)]))
+                    }
+                }
+                div {
                     Class "btn-row mt-6"
                     button {
                         Class "btn-active"

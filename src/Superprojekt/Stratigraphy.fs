@@ -145,6 +145,129 @@ module Stratigraphy =
             if ring = 0 then Some (ang, kv.Value) else None)
         |> Map.ofSeq
 
+    let buildBandCache (data : StratigraphyData) : BandCache =
+        let n = data.AngularResolution
+        let rings = data.Rings
+        let ringCount = if isNull (box rings) then 0 else rings.Length
+        let bracketsOf (events : (float * string) list) =
+            let e = List.toArray events
+            if e.Length < 2 then [||]
+            else Array.init (e.Length - 1) (fun k -> fst e.[k], fst e.[k + 1])
+        let brackets =
+            Array.init ringCount (fun r ->
+                Array.init n (fun a -> bracketsOf rings.[r].[a].Events))
+        // Union-find
+        let parent = System.Collections.Generic.Dictionary<int * int * int, int * int * int>()
+        let rec find x =
+            match parent.TryGetValue x with
+            | true, p when p <> x ->
+                let r = find p
+                parent.[x] <- r
+                r
+            | _ -> x
+        let union a b =
+            let ra = find a
+            let rb = find b
+            if ra <> rb then parent.[ra] <- rb
+        // Initialize all bracket nodes
+        for r in 0 .. ringCount - 1 do
+            for a in 0 .. n - 1 do
+                for bi in 0 .. brackets.[r].[a].Length - 1 do
+                    parent.[(r, a, bi)] <- (r, a, bi)
+        // Connect neighbors using same overlap criterion as floodContinuousBand3D
+        for r in 0 .. ringCount - 1 do
+            for a in 0 .. n - 1 do
+                for bi in 0 .. brackets.[r].[a].Length - 1 do
+                    let (lo, hi) = brackets.[r].[a].[bi]
+                    let len1 = hi - lo
+                    let tryConnectTo nR nA =
+                        let nbrs = brackets.[nR].[nA]
+                        for nbi in 0 .. nbrs.Length - 1 do
+                            let (a2, b2) = nbrs.[nbi]
+                            let ov = (min b2 hi) - (max a2 lo)
+                            let len2 = b2 - a2
+                            let longer = max len1 len2
+                            if longer > 0.0 && ov > 0.5 * longer then
+                                union (r, a, bi) (nR, nA, nbi)
+                    // angular neighbors (wrap)
+                    let nAng = (a + 1) % n
+                    tryConnectTo r nAng
+                    // radial neighbors
+                    if r < ringCount - 1 then tryConnectTo (r + 1) a
+        // Group brackets by component
+        let compBrackets = System.Collections.Generic.Dictionary<int * int * int, System.Collections.Generic.List<int * int * int>>()
+        for r in 0 .. ringCount - 1 do
+            for a in 0 .. n - 1 do
+                for bi in 0 .. brackets.[r].[a].Length - 1 do
+                    let root = find (r, a, bi)
+                    match compBrackets.TryGetValue root with
+                    | true, lst -> lst.Add((r, a, bi))
+                    | _ ->
+                        let lst = System.Collections.Generic.List<int * int * int>()
+                        lst.Add((r, a, bi))
+                        compBrackets.[root] <- lst
+        // Assign sequential component IDs
+        let compIds = compBrackets.Keys |> Seq.mapi (fun i k -> k, i) |> dict
+        let labels =
+            Array.init ringCount (fun r ->
+                Array.init n (fun a ->
+                    Array.init brackets.[r].[a].Length (fun bi ->
+                        compIds.[find (r, a, bi)])))
+        // Build result maps per component
+        let numComponents = compIds.Count
+        let comp3D = Array.init numComponents (fun _ -> System.Collections.Generic.Dictionary<int * int, System.Collections.Generic.List<float * float>>())
+        let comp2D = Array.init numComponents (fun _ -> System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<float * float>>())
+        for kv in compBrackets do
+            let cid = compIds.[kv.Key]
+            for (r, a, bi) in kv.Value do
+                let br = brackets.[r].[a].[bi]
+                let key3 = (a, r)
+                match comp3D.[cid].TryGetValue key3 with
+                | true, lst -> lst.Add br
+                | _ ->
+                    let lst = System.Collections.Generic.List<float * float>()
+                    lst.Add br
+                    comp3D.[cid].[key3] <- lst
+                if r = 0 then
+                    match comp2D.[cid].TryGetValue a with
+                    | true, lst -> lst.Add br
+                    | _ ->
+                        let lst = System.Collections.Generic.List<float * float>()
+                        lst.Add br
+                        comp2D.[cid].[a] <- lst
+        {
+            Brackets = brackets
+            Labels = labels
+            Components3D = comp3D |> Array.map (fun d -> d |> Seq.map (fun kv -> kv.Key, List.ofSeq kv.Value) |> Map.ofSeq)
+            Components2D = comp2D |> Array.map (fun d -> d |> Seq.map (fun kv -> kv.Key, List.ofSeq kv.Value) |> Map.ofSeq)
+        }
+
+    let lookupBand2D (cache : BandCache) (colIdx : int) (hoverZ : float) : Map<int, (float * float) list> =
+        let n = if cache.Brackets.Length > 0 then cache.Brackets.[0].Length else 0
+        if n = 0 then Map.empty
+        else
+        let a = colIdx |> max 0 |> min (n - 1)
+        let brs = cache.Brackets.[0].[a]
+        let mutable found = -1
+        for k in 0 .. brs.Length - 1 do
+            let (lo, hi) = brs.[k]
+            if found < 0 && lo <= hoverZ && hoverZ < hi then found <- k
+        if found < 0 then Map.empty
+        else cache.Components2D.[cache.Labels.[0].[a].[found]]
+
+    let lookupBand3D (cache : BandCache) (colIdx : int) (hoverZ : float) : Map<int * int, (float * float) list> =
+        let n = if cache.Brackets.Length > 0 then cache.Brackets.[0].Length else 0
+        if n = 0 then Map.empty
+        else
+        let a = colIdx |> max 0 |> min (n - 1)
+        let brs = cache.Brackets.[0].[a]
+        let mutable found = -1
+        for k in 0 .. brs.Length - 1 do
+            let (lo, hi) = brs.[k]
+            if found < 0 && lo <= hoverZ && hoverZ < hi then found <- k
+        if found < 0 then Map.empty
+        else cache.Components3D.[cache.Labels.[0].[a].[found]]
+
     /// Phase 3.12: per-mesh world-space offset for the explosion view.
     let explosionOffsetsFromFields (explosion : ExplosionState) (prism : SelectionPrism) (stratigraphy : StratigraphyData option) (meshNames : string[]) : Map<string, V3d> =
         if not explosion.Enabled || explosion.ExpansionFactor <= 0.0 then Map.empty

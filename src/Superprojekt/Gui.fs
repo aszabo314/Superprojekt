@@ -120,6 +120,7 @@ module Gui =
                             model.MeshVisible
                             |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
                         div {
+                            Class "mesh-row"
                             label {
                                 input {
                                     Attribute("type", "checkbox")
@@ -130,6 +131,12 @@ module Gui =
                                     )
                                 }
                                 " " + Cards.shortName name
+                            }
+                            button {
+                                Class "btn-jump"
+                                Attribute("title", "Focus camera on this mesh")
+                                Dom.OnClick(fun _ -> env.Emit [JumpToMesh name])
+                                "\u2316"
                             }
                         }
                     )

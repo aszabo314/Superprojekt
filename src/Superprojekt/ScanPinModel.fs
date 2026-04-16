@@ -78,6 +78,14 @@ type StratigraphyData = {
     RingRadii : float[]
 }
 
+/// Pre-computed cache for O(1) between-space hover lookups.
+type BandCache = {
+    Brackets : (float * float)[][][] // [ring][angle][bracketIdx]
+    Labels : int[][][]
+    Components3D : Map<int * int, (float * float) list>[]
+    Components2D : Map<int, (float * float) list>[]
+}
+
 /// V3: display mode for the stratigraphy diagram.
 type StratigraphyDisplayMode =
     | Undistorted
@@ -123,11 +131,13 @@ type ScanPin = {
     CutPlane             : CutPlaneMode
     CreationCameraState  : CameraSnapshot
     CutResults           : Map<string, CutResult>
+    CutResultsPlane      : CutPlaneMode
     DatasetColors        : Map<string, C4b>
     GridEval             : GridEvalData option
 
     // ── V3 fields ──────────────────────────────────────────────
     Stratigraphy         : StratigraphyData option
+    BandCache            : BandCache option
     StratigraphyDisplay  : StratigraphyDisplayMode
     GhostClip            : GhostClipMode
     ExtractedLines       : ExtractedLinesMode

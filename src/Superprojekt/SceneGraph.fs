@@ -348,17 +348,18 @@ module SceneGraph =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
-                let planeData = pinVal |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin -> PinGeometry.buildCutPlaneRefined pin.Prism pin.CutPlane
-                    | None -> [||], [||], [||])
-                let planePos = planeData |> AVal.map (fun (p,_,_) -> p)
-                let planeCol = planeData |> AVal.map (fun (_,c,_) -> c)
-                let planeIdx = planeData |> AVal.map (fun (_,_,i) -> i)
                 // Split pin into prism-only (for structure) and cutPlane (for placement).
                 // Structure only changes on resize; placement changes on every drag.
                 let prismVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
                 let cutPlaneVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.CutPlane))
+                let planeData =
+                    (prismVal, cutPlaneVal) ||> AVal.map2 (fun po co ->
+                        match po, co with
+                        | Some prism, Some cp -> PinGeometry.buildCutPlaneRefined prism cp
+                        | _ -> [||], [||], [||])
+                let planePos = planeData |> AVal.map (fun (p,_,_) -> p)
+                let planeCol = planeData |> AVal.map (fun (_,c,_) -> c)
+                let planeIdx = planeData |> AVal.map (fun (_,_,i) -> i)
                 let tickStructure =
                     prismVal |> AVal.map (fun po ->
                         match po with
@@ -438,15 +439,17 @@ module SceneGraph =
                 let isActiveAndSelected = (notFullscreen, isSelected, bsEnabled) |||> AVal.map3 (fun nf sel bs -> nf && sel && bs)
                 let prismVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
                 let stratVal = pinVal |> AVal.map (fun po -> po |> Option.bind (fun p -> p.Stratigraphy))
+                let cacheVal = pinVal |> AVal.map (fun po -> po |> Option.bind (fun p -> p.BandCache))
                 let hoverVal =
                     (pinVal, bsEnabled) ||> AVal.map2 (fun po enabled ->
                         if not enabled then None
                         else po |> Option.bind (fun p -> p.BetweenSpaceHover)
                                 |> Option.map (fun h -> h.ColumnIdx, h.HoverZ))
+                let prismCacheVal = (prismVal, cacheVal) ||> AVal.map2 (fun a b -> a, b)
                 let geo =
-                    (prismVal, stratVal, hoverVal) |||> AVal.map3 (fun prismO dataO hOpt ->
+                    (prismCacheVal, stratVal, hoverVal) |||> AVal.map3 (fun (prismO, cacheO) dataO hOpt ->
                         match prismO, dataO, hOpt with
-                        | Some prism, Some data, Some (col, z) -> PinGeometry.buildBetweenSpaceSurfaces prism data col z
+                        | Some prism, Some data, Some (col, z) -> PinGeometry.buildBetweenSpaceSurfaces prism data cacheO col z
                         | _ -> ([||], [||]), ([||], [||]), ([||], [||]))
                 let upperPos = geo |> AVal.map (fun ((p, _), _, _) -> ArrayBuffer p :> IBuffer)
                 let upperIdx = geo |> AVal.map (fun ((_, i), _, _) -> ArrayBuffer i :> IBuffer)
@@ -498,7 +501,7 @@ module SceneGraph =
                     pinVal |> AVal.map (fun po ->
                         po |> Option.bind (fun p ->
                             if p.ExtractedLines.ShowCutPlaneLines && not (Map.isEmpty p.CutResults)
-                            then Some (p.Prism, p.CutPlane, p.CutResults, p.DatasetColors, p.Explosion, p.Stratigraphy)
+                            then Some (p.Prism, p.CutResultsPlane, p.CutResults, p.DatasetColors, p.Explosion, p.Stratigraphy)
                             else None))
                 // edgeDeps: stratigraphy + prism + colors — does NOT depend on cut plane.
                 let edgeDeps =

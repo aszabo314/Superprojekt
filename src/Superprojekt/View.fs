@@ -88,23 +88,7 @@ module View =
                 Sg.Proj proj
 
                 Sg.Pass RenderPass.passZero
-                
-                // sg {
-                //     Sg.OnClick(fun e ->
-                //         env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
-                //         false
-                //     )
-                //     Sg.Shader {
-                //         DefaultSurfaces.trafo
-                //         DefaultSurfaces.constantColor C4f.AliceBlue
-                //     }
-                //     sg {
-                //         Sg.Intersectable (Intersectable.sphere (Sphere3d(V3d.OOI*3.0, 1.0)))
-                //         Primitives.Sphere Sphere3d.Unit
-                //     }
-                //     
-                // }
-                
+
                 Sg.OnDoubleTap(fun e ->
                     env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
                     false
@@ -187,9 +171,7 @@ module View =
 
                 let emitHitMessage (pin : ScanPin) (hit : V3d) =
                     let axis = pin.Prism.AxisDirection |> Vec.normalize
-                    let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-                    let right = Vec.cross axis up |> Vec.normalize
-                    let fwd = Vec.cross right axis |> Vec.normalize
+                    let right, fwd = PinGeometry.axisFrame axis
                     let v = hit - pin.Prism.AnchorPoint
                     match pin.CutPlane with
                     | CutPlaneMode.AcrossAxis _ ->

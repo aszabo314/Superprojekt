@@ -34,6 +34,16 @@ let datasets () =
         Directory.GetDirectories(dataRoot.Value) |> Array.map Path.GetFileName |> Array.sort
     else [||]
 
+let defaultDataset () =
+    let all = datasets ()
+    let marker = Path.Combine(dataRoot.Value, "default.txt")
+    let fromFile =
+        if File.Exists marker then
+            let name = (File.ReadAllText marker).Trim()
+            if all |> Array.contains name then Some name else None
+        else None
+    fromFile |> Option.defaultWith (fun () -> if all.Length > 0 then all.[0] else "")
+
 let meshNames (dataset : string) =
     let folder = Path.Combine(dataRoot.Value, dataset)
     if Directory.Exists folder then

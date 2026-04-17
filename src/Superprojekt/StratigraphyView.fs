@@ -6,11 +6,7 @@ open Aardvark.SceneGraph
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-/// V3 Phase 1.6: stratigraphy diagram renderer.
-/// Renders an unwrapped-cylinder stratigraphy as a quad mesh inside an embedded
-/// `renderControl`. Each angular column becomes a vertical strip of quads:
-/// alternating neutral fills for the between-spaces, and colored stripes at each
-/// mesh contact.
+/// Stratigraphy diagram renderer: unwrapped-cylinder strip of quads per angular column.
 module StratigraphyView =
 
     /// Vertical pixel half-thickness of a contact stripe relative to the unit-height plot.

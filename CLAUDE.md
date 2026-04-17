@@ -124,6 +124,7 @@ Each mesh has **two texture slices** in a packed `Texture2DArray`: slice `2i` (s
 
 **Per-mesh off-screen pass** (`MeshView.renderMesh`, shader `BlitShader.clippy`):
 - Applies per-dataset scale via `Trafo3d.Translation(delta) * Trafo3d.Scale(scale)` where `DatasetScales` provides scale (default 1.0; SETSM_glacier = 0.01). Clip bounds are scaled to match.
+- Cylinder clip for the active pin's `GhostClip = On` state is packed into a single `CylClip : M44d` uniform (the Aardvark.Dom shader pipeline supports vectors or matrices only). Layout: row 0 = `(active, radius, extFwd, extBack)`, row 1 = anchor xyz, row 2 = axis xyz (normalized), row 3 unused. Shader reads `M00`–`M22`.
 - **Solid slice** (`IsGhost=false`): discards fragments outside `[ClipMin, ClipMax]` (only when `ClipActive`); highlights boundary in a per-mesh color from `colorMap`; respects `active` (mesh visibility drives the clip range — hidden mesh gets infinite clip so it still renders, making its depth available)
 - **Ghost slice** (`IsGhost=true`): discards fragments *inside* the clip box (opposite of solid); renders a tinted semi-transparent color for the clipped-away / hidden region
 
@@ -186,6 +187,7 @@ Program.fs       ← ASP.NET startup
 **Data layout on disk:**
 ```
 data/
+  default.txt             ← optional; contents = name of default dataset (auto-loaded by client)
   <dataset>/
     <mesh>/
       *.obj                 ← one file per mesh part (sorted = index order)
@@ -196,6 +198,7 @@ data/
 **API endpoints:**
 ```
 GET  /api/datasets                              → string[]
+GET  /api/datasets/default                      → string (from data/default.txt, fallback = first alphabetically)
 GET  /api/datasets/{dataset}/centroids          → { meshName: [x,y,z] }
 GET  /api/datasets/{dataset}/bboxes             → { meshName: { min:[x,y,z], max:[x,y,z] } }
 GET  /api/datasets/{dataset}/mesh/{name}        → count of OBJ files

@@ -23,8 +23,7 @@ module RenderPass =
     let passZero = RenderPass.after "zero" RenderPassOrder.Arbitrary passMinusOne
     let passOne = RenderPass.after "one" RenderPassOrder.Arbitrary passZero
     let passTwo = RenderPass.after "two" RenderPassOrder.Arbitrary passOne
-    let passThree = RenderPass.after "three" RenderPassOrder.Arbitrary passTwo
-    
+
 module MeshView =
 
     let apiBase = ApiConfig.apiBase
@@ -165,22 +164,20 @@ module MeshView =
             |||> AVal.map3 (fun sel act pins ->
                 let id = act |> Option.orElse sel
                 id |> Option.bind (fun id -> HashMap.tryFind id pins))
+        let ghostClipVal = activePin |> AVal.map (Option.map (fun p -> p.GhostClip))
+        let prismVal = activePin |> AVal.map (Option.map (fun p -> p.Prism))
         let cylClip =
-            activePin |> AVal.map (fun pinOpt ->
-                match pinOpt with
-                | Some pin when pin.GhostClip = GhostClipOn ->
-                    let axis = pin.Prism.AxisDirection |> Vec.normalize
-                    let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                    let active = 1
-                    active, pin.Prism.AnchorPoint, axis, r, pin.Prism.ExtentForward, pin.Prism.ExtentBackward
-                | _ ->
-                    0, V3d.Zero, V3d.OOI, 1.0, 1.0, 1.0)
-        let cylActive  = cylClip |> AVal.map (fun (a,_,_,_,_,_) -> a)
-        let cylAnchor  = cylClip |> AVal.map (fun (_,b,_,_,_,_) -> b)
-        let cylAxis    = cylClip |> AVal.map (fun (_,_,c,_,_,_) -> c)
-        let cylRadius  = cylClip |> AVal.map (fun (_,_,_,d,_,_) -> d)
-        let cylExtFwd  = cylClip |> AVal.map (fun (_,_,_,_,e,_) -> e)
-        let cylExtBack = cylClip |> AVal.map (fun (_,_,_,_,_,f) -> f)
+            (ghostClipVal, prismVal) ||> AVal.map2 (fun gc prismOpt ->
+                match gc, prismOpt with
+                | Some GhostClipOn, Some prism ->
+                    let axis = Vec.normalize prism.AxisDirection
+                    let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                    M44d(
+                        1.0, r, prism.ExtentForward, prism.ExtentBackward,
+                        prism.AnchorPoint.X, prism.AnchorPoint.Y, prism.AnchorPoint.Z, 0.0,
+                        axis.X, axis.Y, axis.Z, 0.0,
+                        0.0, 0.0, 0.0, 0.0)
+                | _ -> M44d.Zero)
         let tasks =
             let filter =
                 (model.ClipActive, model.ClipBox, model.CommonCentroid) |||> AVal.map3 (fun active box cc ->
@@ -189,46 +186,25 @@ module MeshView =
             let scaleFor (name : string) =
                 let dataset = name.Split('/', 2).[0]
                 model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
+            let makeTask (loaded : LoadedMesh) (meshIndex : int) (isActive : aval<bool>) (scale : aval<float>) (isGhost : bool) =
+                let body =
+                    sg {
+                        Sg.View view
+                        Sg.Proj proj
+                        Sg.Uniform("ViewportSize", info.ViewportSize)
+                        Sg.Uniform("CylClip", cylClip)
+                        renderMesh loaded filter (AVal.constant isGhost) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode
+                    }
+                info.Runtime.CompileRender(signature, body.GetRenderObjects(TraversalState.empty info.Runtime))
             meshIndices |> AList.bind (fun meshIndices ->
                 model.MeshNames |> AList.collect (fun name ->
                     let loaded = loadMeshAsync (fun () -> loadFinished name) name
                     let meshIndex = meshIndices.[name]
-                    let textureIndexSolid = 2*meshIndex
-                    let textureIndexGhost = textureIndexSolid+1
                     let isActive = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
                     let scale = scaleFor name
-                    let solidSg =
-                        sg {
-                            Sg.View view
-                            Sg.Proj proj
-                            Sg.Uniform("ViewportSize", info.ViewportSize)
-                            Sg.Uniform("CylClipActive", cylActive)
-                            Sg.Uniform("CylAnchor", cylAnchor)
-                            Sg.Uniform("CylAxis", cylAxis)
-                            Sg.Uniform("CylRadius", cylRadius)
-                            Sg.Uniform("CylExtFwd", cylExtFwd)
-                            Sg.Uniform("CylExtBack", cylExtBack)
-                            renderMesh loaded filter (AVal.constant false) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode
-                        }
-                    let solidTask = info.Runtime.CompileRender(signature, solidSg.GetRenderObjects(TraversalState.empty info.Runtime))
-
-                    let ghostSg =
-                        sg {
-                            Sg.View view
-                            Sg.Proj proj
-                            Sg.Uniform("ViewportSize", info.ViewportSize)
-                            Sg.Uniform("CylClipActive", cylActive)
-                            Sg.Uniform("CylAnchor", cylAnchor)
-                            Sg.Uniform("CylAxis", cylAxis)
-                            Sg.Uniform("CylRadius", cylRadius)
-                            Sg.Uniform("CylExtFwd", cylExtFwd)
-                            Sg.Uniform("CylExtBack", cylExtBack)
-                            renderMesh loaded filter (AVal.constant true) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode
-                        }
-                    let ghostTask = info.Runtime.CompileRender(signature, ghostSg.GetRenderObjects(TraversalState.empty info.Runtime))
                     AList.ofList [
-                        (textureIndexSolid, solidTask)
-                        (textureIndexGhost, ghostTask)
+                        (2 * meshIndex,     makeTask loaded meshIndex isActive scale false)
+                        (2 * meshIndex + 1, makeTask loaded meshIndex isActive scale true)
                     ]
                 )
             )

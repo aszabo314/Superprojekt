@@ -81,6 +81,14 @@ module MeshData =
             return doc.RootElement.EnumerateArray() |> Seq.map (fun e -> e.GetString()) |> Seq.toArray
         }
 
+    let fetchDefaultDataset (serverUrl : string) : Async<string> =
+        async {
+            use client = new System.Net.Http.HttpClient()
+            let! json = client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets/default") |> Async.AwaitTask
+            let doc = System.Text.Json.JsonDocument.Parse(json)
+            return doc.RootElement.GetString()
+        }
+
     let fetchCentroids (serverUrl : string) (dataset : string) : Async<(string * V3d)[]> =
         async {
             use client = new System.Net.Http.HttpClient()
@@ -289,55 +297,6 @@ module Query =
             let! resp = client.PostAsync(serverUrl.TrimEnd('/') + path, content) |> Async.AwaitTask
             resp.EnsureSuccessStatusCode() |> ignore
             return! resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
-        }
-
-    /// POST /query/grid-eval — returns GridEvalData
-    let gridEval (serverUrl : string) (dataset : string) (anchor : V3d) (axis : V3d) (radius : float) (resolution : int) (extFwd : float) (extBack : float) =
-        async {
-            let json = sprintf """{"dataset":"%s","anchor":%s,"axis":%s,"radius":%.17g,"resolution":%d,"extentForward":%.17g,"extentBackward":%.17g}"""
-                        dataset (v3 anchor) (v3 axis) radius resolution extFwd extBack
-            let! buf = postBinary serverUrl "/query/grid-eval" json
-            let mutable off = 0
-            let readInt () =
-                let v = System.BitConverter.ToInt32(buf, off)
-                off <- off + 4; v
-            let readFloat () =
-                let v = System.BitConverter.ToDouble(buf, off)
-                off <- off + 8; v
-            let res = readInt ()
-            let cellCount = readInt ()
-            let dsCount = readInt ()
-            let cells = Array.init (res * res) (fun _ -> { Average = nan; Q1 = nan; Q3 = nan; Min = nan; Max = nan; Variance = nan })
-            let mutable gridOrigin = V2d.Zero
-            let mutable cellSize = 1.0
-            for ci in 0 .. cellCount - 1 do
-                let gu = readInt ()
-                let gv = readInt ()
-                let avg = readFloat ()
-                let q1 = readFloat ()
-                let q3 = readFloat ()
-                let mn = readFloat ()
-                let mx = readFloat ()
-                let var = readFloat ()
-                if ci = 0 then
-                    cellSize <- radius * 2.0 / float res
-                    gridOrigin <- V2d(-radius + float gu * cellSize, -radius + float gv * cellSize) - V2d(float gu * cellSize, float gv * cellSize)
-                cells.[gv * res + gu] <- { Average = avg; Q1 = q1; Q3 = q3; Min = mn; Max = mx; Variance = var }
-            let datasetStats = Array.zeroCreate<DatasetCoreSampleStats> dsCount
-            for di in 0 .. dsCount - 1 do
-                let nameLen = readInt ()
-                let name = Encoding.UTF8.GetString(buf, off, nameLen)
-                off <- off + nameLen
-                let zMin = readFloat ()
-                let zQ1 = readFloat ()
-                let zMed = readFloat ()
-                let zQ3 = readFloat ()
-                let zMax = readFloat ()
-                let zVar = readFloat ()
-                datasetStats.[di] <- { MeshName = name; ZMin = zMin; ZQ1 = zQ1; ZMedian = zMed; ZQ3 = zQ3; ZMax = zMax; ZVariance = zVar }
-            let origin = V2d(-radius, -radius)
-            let cs = radius * 2.0 / float res
-            return { Resolution = res; GridOrigin = origin; CellSize = cs; Cells = cells; DatasetStats = datasetStats }
         }
 
     /// POST /query/cylinder-eval — returns per-ring, per-angle hit lists:

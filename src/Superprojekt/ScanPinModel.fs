@@ -31,7 +31,6 @@ type CutResult = {
     Polylines : V2d list list
 }
 
-
 [<RequireQualifiedAccess>]
 type PinPhase =
     | Placement
@@ -44,68 +43,49 @@ type CameraSnapshot = {
     Theta  : float
 }
 
-/// V3: a single z-aligned ray query result for one mesh at one (angle, axisPosition) sample point.
 type RayMeshIntersection = {
     DatasetId : string
-    /// Z-values where the ray intersects this mesh's surface.
-    /// Multiple values possible for non-heightfield meshes (folds, overhangs).
     ZValues : float list
 }
 
-/// V3: a single column in the stratigraphy diagram (one angular position on the cylinder).
 type StratigraphyColumn = {
-    /// Angle around the cylinder axis (radians, 0 to 2π).
     Angle : float
-    /// All intersection events in this column, sorted by z ascending.
     Events : (float * string) list
 }
 
-/// V3: full stratigraphy data for one ScanPin.
-/// STUB(server): computed by casting z-aligned rays at a grid of (angle, axisPosition)
-/// points on the cylinder surface.
 type StratigraphyData = {
     AngularResolution : int
     AxisMin : float
     AxisMax : float
     Columns : StratigraphyColumn[]
-    /// Per-column min/max z across all datasets (for normalization).
     ColumnMinZ : float[]
     ColumnMaxZ : float[]
-    /// Multi-radius sampling grid, outer ring first. Rings.[0] = Columns.
-    /// Length = RingRadii.Length. Each ring has `AngularResolution` columns.
     Rings : StratigraphyColumn[][]
-    /// World-space radius for each ring (index 0 = prism wall).
     RingRadii : float[]
 }
 
 /// Pre-computed cache for O(1) between-space hover lookups.
 type BandCache = {
-    Brackets : (float * float)[][][] // [ring][angle][bracketIdx]
+    Brackets : (float * float)[][][]
     Labels : int[][][]
     Components3D : Map<int * int, (float * float) list>[]
     Components2D : Map<int, (float * float) list>[]
 }
 
-/// V3: display mode for the stratigraphy diagram.
 type StratigraphyDisplayMode =
     | Undistorted
     | Normalized
 
-/// V3: state for the between-space hover highlighting.
-/// Identifies the band by the cursor's (column, z); per-column brackets are
-/// re-picked from the stratigraphy data at render time.
 type BetweenSpaceHover = {
     ColumnIdx : int
     HoverZ    : float
     Pinned    : bool
 }
 
-/// V3: ghost clipping cylinder toggle for a pin.
 type GhostClipMode =
     | GhostClipOff
     | GhostClipOn
 
-/// V3: extracted-line toggles for a pin.
 type ExtractedLinesMode = {
     ShowCutPlaneLines     : bool
     ShowCylinderEdgeLines : bool
@@ -123,9 +103,6 @@ type ScanPin = {
     CutResults           : Map<string, CutResult>
     CutResultsPlane      : CutPlaneMode
     DatasetColors        : Map<string, C4b>
-    GridEval             : GridEvalData option
-
-    // ── V3 fields ──────────────────────────────────────────────
     Stratigraphy         : StratigraphyData option
     BandCache            : BandCache option
     StratigraphyDisplay  : StratigraphyDisplayMode
@@ -137,18 +114,6 @@ type ScanPin = {
 [<RequireQualifiedAccess>]
 type FootprintMode =
     | Circle
-    | Polygon
-
-type PlacementState =
-    | PlacementIdle
-    | DefiningFootprint of
-        anchorPoint : V3d *
-        anchorRenderPos : V3d *
-        axisDirection : V3d *
-        currentRadius : float *
-        footprintMode : FootprintMode
-    | DefiningCutPlane of prism : SelectionPrism
-    | Adjusting of pinId : ScanPinId
 
 [<ModelType>]
 type ScanPinModel = {
@@ -167,8 +132,6 @@ module ScanPinModel =
         PlacingMode     = None
         BetweenSpaceEnabled = false
     }
-
-// ── Card system ──────────────────────────────────────────────
 
 [<RequireQualifiedAccess>]
 type CardId = CardId of Guid with
@@ -215,4 +178,3 @@ module CardSystemModel =
 
 module PinCylinderDrag =
     let isActive : cval<bool> = cval false
-

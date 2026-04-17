@@ -80,12 +80,7 @@ module BlitShader =
         member x.MeshIndex            : int   = x?MeshIndex
         member x.CoreRadius           : float = x?CoreRadius
         member x.GhostOpacity         : float = x?GhostOpacity
-        member x.CylClipActive        : int   = x?CylClipActive
-        member x.CylAnchor            : V3d   = x?CylAnchor
-        member x.CylAxis              : V3d   = x?CylAxis
-        member x.CylRadius            : float = x?CylRadius
-        member x.CylExtFwd            : float = x?CylExtFwd
-        member x.CylExtBack           : float = x?CylExtBack
+        member x.CylClip              : M44d  = x?CylClip
         member x.ReferenceAxis        : V3d   = x?ReferenceAxis
         member x.SteepnessThreshold   : float = x?SteepnessThreshold
         member x.DisagreementThreshold : float = x?DisagreementThreshold
@@ -108,15 +103,18 @@ module BlitShader =
                 p.X >= uniform.ClipMin.X && p.X <= uniform.ClipMax.X &&
                 p.Y >= uniform.ClipMin.Y && p.Y <= uniform.ClipMax.Y &&
                 p.Z >= uniform.ClipMin.Z && p.Z <= uniform.ClipMax.Z
-            if uniform.CylClipActive <> 0 then
-                let rel = p - uniform.CylAnchor
-                let axisProj = Vec.dot rel uniform.CylAxis
-                let radial = rel - uniform.CylAxis * axisProj
+            let cyl = uniform.CylClip
+            if cyl.M00 <> 0.0 then
+                let anchor = V3d(cyl.M10, cyl.M11, cyl.M12)
+                let axis = V3d(cyl.M20, cyl.M21, cyl.M22)
+                let rel = p - anchor
+                let axisProj = Vec.dot rel axis
+                let radial = rel - axis * axisProj
                 let radialDist = Vec.length radial
                 let insideCyl =
-                    radialDist <= uniform.CylRadius &&
-                    axisProj >= -uniform.CylExtBack &&
-                    axisProj <= uniform.CylExtFwd
+                    radialDist <= cyl.M01 &&
+                    axisProj >= -cyl.M03 &&
+                    axisProj <= cyl.M02
                 insideClip <- insideClip && insideCyl
             let mutable color = v.c
             if not uniform.IsGhost then

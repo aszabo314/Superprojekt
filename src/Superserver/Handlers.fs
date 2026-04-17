@@ -51,6 +51,12 @@ let datasetsHandler : HttpHandler =
         return! json datasets next ctx
     }
 
+// GET /api/datasets/default
+let defaultDatasetHandler : HttpHandler =
+    fun next ctx -> task {
+        return! json (MeshLoader.defaultDataset ()) next ctx
+    }
+
 // GET /api/datasets/{dataset}/centroids
 let centroidsHandler (dataset : string) : HttpHandler =
     fun next ctx -> task {
@@ -340,6 +346,7 @@ let cylinderEvalHandler : HttpHandler =
 let webApp : HttpHandler =
     choose [
         route  "/api/datasets"                                  >=> datasetsHandler
+        route  "/api/datasets/default"                          >=> defaultDatasetHandler
         routef "/api/datasets/%s/centroids"                     centroidsHandler
         routef "/api/datasets/%s/bboxes"                        bboxesHandler
         routef "/api/datasets/%s/mesh/%s/%i/atlas"              (fun (d,n,i) -> atlasHandler(d,n,i))

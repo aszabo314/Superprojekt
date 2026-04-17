@@ -16,7 +16,6 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="paket.references" />
-    <Compile Include="GridEvalTypes.fs" />
     <Compile Include="RankingState.fs" />
     <Compile Include="WavefrontLoader.fs" />
     <Compile Include="CameraModel.fs" />

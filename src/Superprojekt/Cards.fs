@@ -60,7 +60,7 @@ module Cards =
     let checkedIf (v : aval<bool>) =
         v |> AVal.map (fun on -> if on then Some (Attribute("checked", "checked")) else None)
 
-    // ── Helpers to project 3D anchor to screen ──────────────────────
+
 
     let private projectToScreen (anchor : V3d) (viewTrafo : Trafo3d) (vpSize : V2i) =
         let aspect = float vpSize.X / max 1.0 (float vpSize.Y)
@@ -81,7 +81,7 @@ module Cards =
         let y = max 0.0 (min pos.Y (vp.Y - size.Y))
         V2d(x, y)
 
-    // ── Compute card positions ──────────────────────────────────────
+
 
     let private computeCardPos
         (card : Card)
@@ -116,7 +116,7 @@ module Cards =
                     Some (clampToViewport pos card.Size (V2d vpSize))
                 | _ -> None
 
-    // ── Content renderers ───────────────────────────────────────────
+
 
     let private stratigraphyContent (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
         let svgW, svgH = 280.0, 140.0
@@ -364,14 +364,14 @@ module Cards =
             }
         }
 
-    // ── Card title by content type ──────────────────────────────────
+
 
     let private cardTitle (content : CardContent) =
         match content with
         | StratigraphyDiagram _ -> "Stratigraphy"
         | PinControls _ -> "Controls"
 
-    // ── Main card system renderer ───────────────────────────────────
+
 
     let renderCards (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =
         let allPinsVal = model.ScanPins.Pins |> AMap.toAVal
@@ -383,10 +383,10 @@ module Cards =
 
         let cardsSnapshot = model.CardSystem.Cards |> AMap.toAVal
 
-        // ── Local drag state (never touches model during movement) ────
+
         let dragState = cval<(CardId * V2d * V2d) option> None
 
-        // ── Local collapse state ────────────────────────────────────
+
         let collapsedSet = cval (HashSet.empty<CardId>)
 
         let cardPositions =

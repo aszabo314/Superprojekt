@@ -117,7 +117,6 @@ type OrbitState =
 
     } with
 
-        member x.super = 0
         member model.animationRunning =
             let dphi    = model.targetPhi   - model.phi
             let dtheta  = model.targetTheta - model.theta

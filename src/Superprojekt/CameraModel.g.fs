@@ -1,5 +1,5 @@
-//638b45bb-73d1-ea28-c679-36869cbb4f19
-//53a5e21c-9e7a-dae9-26cf-a24491d50b0b
+//394e9583-c3a9-45b3-1508-4a43849ec775
+//0f6b04b6-b207-79be-28a6-b2851f6cfe2e
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -12,7 +12,6 @@ open Adaptify
 open Superprojekt
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveOrbitState(value : OrbitState) =
-    let mutable _super_ = FSharp.Data.Adaptive.cval(value.super)
     let mutable _animationRunning_ = FSharp.Data.Adaptive.cval(value.animationRunning)
     let _sky_ = FSharp.Data.Adaptive.cval(value.sky)
     let _center_ = FSharp.Data.Adaptive.cval(value.center)
@@ -46,7 +45,6 @@ type AdaptiveOrbitState(value : OrbitState) =
         if Microsoft.FSharp.Core.Operators.not((FSharp.Data.Adaptive.ShallowEqualityComparer<OrbitState>.ShallowEquals(value, __value))) then
             __value <- value
             __adaptive.MarkOutdated()
-            _super_.Value <- value.super
             _animationRunning_.Value <- value.animationRunning
             _sky_.Value <- value.sky
             _center_.Value <- value.center
@@ -73,7 +71,6 @@ type AdaptiveOrbitState(value : OrbitState) =
             _speed_.Value <- value.speed
             _pick_.Value <- value.pick
     member __.Current = __adaptive
-    member __.super = _super_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.int>
     member __.animationRunning = _animationRunning_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.sky = _sky_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V3d>
     member __.center = _center_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V3d>

@@ -306,17 +306,18 @@ module SceneGraph =
             let selectedId = model.ScanPins.SelectedPin
             pinIdSet |> ASet.map (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
+                let phaseVal = pinVal |> AVal.map (Option.map (fun p -> p.Phase))
+                let anchorVal = pinVal |> AVal.map (Option.map (fun p -> p.Prism.AnchorPoint))
                 let color =
-                    (selectedId, pinVal) ||> AVal.map2 (fun sel pinOpt ->
-                        match pinOpt with
-                        | Some pin ->
+                    (selectedId, phaseVal) ||> AVal.map2 (fun sel phaseOpt ->
+                        match phaseOpt with
+                        | Some phase ->
                             if sel = Some id then V4d(1.0, 0.9, 0.0, 1.0)
-                            elif pin.Phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 1.0)
+                            elif phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 1.0)
                             else V4d(1.0, 0.3, 0.3, 1.0)
                         | None -> V4d(0.0, 0.0, 0.0, 0.0))
-                let trafo = pinVal |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin -> Trafo3d.Scale(0.5) * Trafo3d.Translation(pin.Prism.AnchorPoint)
+                let trafo = anchorVal |> AVal.map (function
+                    | Some a -> Trafo3d.Scale(0.5) * Trafo3d.Translation(a)
                     | None -> Trafo3d.Scale(0.0))
                 sg {
                     Sg.Active notFullscreen
@@ -518,9 +519,7 @@ module SceneGraph =
                         match depsOpt with
                         | Some(prism, cutPlane, cutResults, datasetColors, strat) ->
                             let axis = prism.AxisDirection |> Vec.normalize
-                            let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-                            let right = Vec.cross axis up |> Vec.normalize
-                            let fwd = Vec.cross right axis |> Vec.normalize
+                            let right, fwd = PinGeometry.axisFrame axis
                             let planePoint, axisU, axisV, planeNormal =
                                 match cutPlane with
                                 | CutPlaneMode.AlongAxis angleDeg ->
@@ -548,9 +547,7 @@ module SceneGraph =
                         match depsOpt with
                         | Some(prism, Some data, datasetColors) when data.Columns.Length >= 2 ->
                             let axis = prism.AxisDirection |> Vec.normalize
-                            let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-                            let right = Vec.cross axis up |> Vec.normalize
-                            let fwd = Vec.cross right axis |> Vec.normalize
+                            let right, fwd = PinGeometry.axisFrame axis
                             let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
                             let toPoint (angle : float) (z : float) =
                                 prism.AnchorPoint + (right * cos angle + fwd * sin angle) * radius + axis * z

@@ -32,7 +32,6 @@ type Message =
     | SetActiveDataset   of string
     | SetDatasetScale    of string * float
     | CutResultsLoaded        of ScanPinId * Map<string, CutResult>
-    | GridEvalLoaded          of ScanPinId * GridEvalData
     | StratigraphyComputed    of ScanPinId * StratigraphyData * BandCache
     | ScanPinMsg              of ScanPinMessage
     | JumpToMesh of string
@@ -69,7 +68,6 @@ and ScanPinMessage =
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
     | FocusPin of ScanPinId
-    // V3 messages
     | SetStratigraphyDisplay  of ScanPinId * StratigraphyDisplayMode
     | SetGhostClip            of ScanPinId * GhostClipMode
     | SetShowCutPlaneLines    of ScanPinId * bool
@@ -138,12 +136,27 @@ module ScanPinUpdate =
     let private assignColors (meshNames : IndexList<string>) =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, meshColors.[i % meshColors.Length]) |> Map.ofArray
 
-    let private makeDefaultPrism (anchor : V3d) (axis : V3d) (radius : float) =
+    let private circleFootprint (radius : float) =
         let n = 32
-        let verts = [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * radius ]
+        [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * radius ]
+
+    let private setRadius (pin : ScanPin) (r : float) =
+        { pin with Prism = { pin.Prism with Footprint = { Vertices = circleFootprint r } } }
+
+    let private makeDefaultPrism (anchor : V3d) (axis : V3d) (radius : float) =
         { AnchorPoint = anchor; AxisDirection = axis
-          Footprint = { Vertices = verts }
+          Footprint = { Vertices = circleFootprint radius }
           ExtentForward = 1.0; ExtentBackward = 3.0 }
+
+    let private updatePin (id : ScanPinId) (f : ScanPin -> ScanPin) (sp : ScanPinModel) =
+        match HashMap.tryFind id sp.Pins with
+        | Some pin -> { sp with Pins = HashMap.add id (f pin) sp.Pins }
+        | None -> sp
+
+    let private updateTarget (f : ScanPin -> ScanPin) (sp : ScanPinModel) =
+        match sp.ActivePlacement |> Option.orElse sp.SelectedPin with
+        | Some id -> updatePin id f sp
+        | None -> sp
 
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
@@ -182,7 +195,6 @@ module ScanPinUpdate =
                   CutResults = Map.empty
                   CutResultsPlane = CutPlaneMode.AlongAxis 0.0
                   DatasetColors = assignColors model.MeshNames
-                  GridEval = None
                   Stratigraphy = None
                   BandCache = None
                   StratigraphyDisplay = Undistorted
@@ -193,88 +205,37 @@ module ScanPinUpdate =
 
         | SetFootprintRadius radius ->
             match sp.ActivePlacement with
-            | Some id ->
-                match HashMap.tryFind id sp.Pins with
-                | Some pin when pin.Phase = PinPhase.Placement ->
-                    let r = max 0.1 radius
-                    let n = 32
-                    let verts = [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * r ]
-                    let prism = { pin.Prism with Footprint = { Vertices = verts } }
-                    let pin = { pin with Prism = prism }
-                    { sp with Pins = HashMap.add id pin sp.Pins }
-                | _ -> sp
+            | Some id -> sp |> updatePin id (fun pin ->
+                if pin.Phase = PinPhase.Placement then setRadius pin (max 0.1 radius) else pin)
             | None -> sp
 
         | CloseFootprint -> sp
 
         | SetCutPlaneMode mode ->
-            let targetId = sp.ActivePlacement |> Option.orElse sp.SelectedPin
-            match targetId with
-            | Some id ->
-                match HashMap.tryFind id sp.Pins with
-                | Some pin ->
-                    let pin = { pin with CutPlane = mode }
-                    { sp with Pins = HashMap.add id pin sp.Pins }
-                | _ -> sp
-            | None -> sp
+            sp |> updateTarget (fun pin -> { pin with CutPlane = mode })
 
         | SetCutPlaneAngle deg ->
-            let targetId = sp.ActivePlacement |> Option.orElse sp.SelectedPin
-            match targetId with
-            | Some id ->
-                match HashMap.tryFind id sp.Pins with
-                | Some pin ->
-                    let pin = { pin with CutPlane = CutPlaneMode.AlongAxis deg }
-                    { sp with Pins = HashMap.add id pin sp.Pins }
-                | _ -> sp
-            | None -> sp
+            sp |> updateTarget (fun pin -> { pin with CutPlane = CutPlaneMode.AlongAxis deg })
 
         | SetCutPlaneDistance dist ->
-            let targetId = sp.ActivePlacement |> Option.orElse sp.SelectedPin
-            match targetId with
-            | Some id ->
-                match HashMap.tryFind id sp.Pins with
-                | Some pin ->
-                    let pin = { pin with CutPlane = CutPlaneMode.AcrossAxis dist }
-                    { sp with Pins = HashMap.add id pin sp.Pins }
-                | _ -> sp
-            | None -> sp
+            sp |> updateTarget (fun pin -> { pin with CutPlane = CutPlaneMode.AcrossAxis dist })
 
         | SetFootprintScale scale ->
             match sp.ActivePlacement with
-            | Some id ->
-                match HashMap.tryFind id sp.Pins with
-                | Some pin when pin.Phase = PinPhase.Placement ->
-                    let s = max 0.1 scale
-                    let n = 32
-                    let verts = [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * s ]
-                    let prism = { pin.Prism with Footprint = { Vertices = verts } }
-                    let pin = { pin with Prism = prism }
-                    { sp with Pins = HashMap.add id pin sp.Pins }
-                | _ -> sp
+            | Some id -> sp |> updatePin id (fun pin ->
+                if pin.Phase = PinPhase.Placement then setRadius pin (max 0.1 scale) else pin)
             | None -> sp
 
         | SetPinLength length ->
-            let targetId = sp.ActivePlacement |> Option.orElse sp.SelectedPin
-            match targetId with
-            | Some id ->
-                match HashMap.tryFind id sp.Pins with
-                | Some pin ->
-                    let len = max 0.5 length
-                    let prism = { pin.Prism with ExtentBackward = len }
-                    { sp with Pins = HashMap.add id { pin with Prism = prism } sp.Pins }
-                | None -> sp
-            | None -> sp
+            sp |> updateTarget (fun pin ->
+                { pin with Prism = { pin.Prism with ExtentBackward = max 0.5 length } })
 
         | CommitPin ->
             match sp.ActivePlacement with
             | Some id ->
-                match HashMap.tryFind id sp.Pins with
-                | Some pin ->
-                    let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
-                    let pin = { pin with Phase = PinPhase.Committed; CreationCameraState = cam }
-                    { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = None; PlacingMode = None }
-                | None -> sp
+                let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
+                let sp = sp |> updatePin id (fun pin -> { pin with Phase = PinPhase.Committed; CreationCameraState = cam })
+                { sp with ActivePlacement = None; PlacingMode = None }
             | None -> sp
 
         | DeletePin id ->
@@ -288,28 +249,16 @@ module ScanPinUpdate =
         | FocusPin _ -> sp
 
         | SetStratigraphyDisplay(id, mode) ->
-            match HashMap.tryFind id sp.Pins with
-            | Some pin -> { sp with Pins = HashMap.add id { pin with StratigraphyDisplay = mode } sp.Pins }
-            | None -> sp
+            sp |> updatePin id (fun pin -> { pin with StratigraphyDisplay = mode })
 
         | SetGhostClip(id, mode) ->
-            match HashMap.tryFind id sp.Pins with
-            | Some pin -> { sp with Pins = HashMap.add id { pin with GhostClip = mode } sp.Pins }
-            | None -> sp
+            sp |> updatePin id (fun pin -> { pin with GhostClip = mode })
 
         | SetShowCutPlaneLines(id, on) ->
-            match HashMap.tryFind id sp.Pins with
-            | Some pin ->
-                let el = { pin.ExtractedLines with ShowCutPlaneLines = on }
-                { sp with Pins = HashMap.add id { pin with ExtractedLines = el } sp.Pins }
-            | None -> sp
+            sp |> updatePin id (fun pin -> { pin with ExtractedLines = { pin.ExtractedLines with ShowCutPlaneLines = on } })
 
         | SetShowCylinderEdgeLines(id, on) ->
-            match HashMap.tryFind id sp.Pins with
-            | Some pin ->
-                let el = { pin.ExtractedLines with ShowCylinderEdgeLines = on }
-                { sp with Pins = HashMap.add id { pin with ExtractedLines = el } sp.Pins }
-            | None -> sp
+            sp |> updatePin id (fun pin -> { pin with ExtractedLines = { pin.ExtractedLines with ShowCylinderEdgeLines = on } })
 
         | ToggleBetweenSpaceEnabled ->
             { sp with BetweenSpaceEnabled = not sp.BetweenSpaceEnabled }
@@ -317,36 +266,25 @@ module ScanPinUpdate =
         | HoverBetweenSpace(id, col, z) ->
             if not sp.BetweenSpaceEnabled then sp
             else
-            match HashMap.tryFind id sp.Pins with
-            | Some pin ->
-                let pinned = pin.BetweenSpaceHover |> Option.map (fun h -> h.Pinned) |> Option.defaultValue false
-                if pinned then sp
-                else
-                    let h = { ColumnIdx = col; HoverZ = z; Pinned = false }
-                    { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = Some h } sp.Pins }
-            | None -> sp
+                sp |> updatePin id (fun pin ->
+                    let pinned = pin.BetweenSpaceHover |> Option.map (fun h -> h.Pinned) |> Option.defaultValue false
+                    if pinned then pin
+                    else { pin with BetweenSpaceHover = Some { ColumnIdx = col; HoverZ = z; Pinned = false } })
 
         | PinBetweenSpaceHover id ->
-            match HashMap.tryFind id sp.Pins with
-            | Some pin ->
+            sp |> updatePin id (fun pin ->
                 match pin.BetweenSpaceHover with
-                | Some h ->
-                    let h = { h with Pinned = not h.Pinned }
-                    { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = Some h } sp.Pins }
-                | None -> sp
-            | None -> sp
+                | Some h -> { pin with BetweenSpaceHover = Some { h with Pinned = not h.Pinned } }
+                | None -> pin)
 
         | ClearBetweenSpaceHover id ->
-            match HashMap.tryFind id sp.Pins with
-            | Some pin ->
+            sp |> updatePin id (fun pin ->
                 match pin.BetweenSpaceHover with
-                | Some h when h.Pinned -> sp
-                | _ -> { sp with Pins = HashMap.add id { pin with BetweenSpaceHover = None } sp.Pins }
-            | None -> sp
+                | Some h when h.Pinned -> pin
+                | _ -> { pin with BetweenSpaceHover = None })
 
 module Update =
     let private cutDebounce = ref (new System.Threading.CancellationTokenSource())
-    let private gridDebounce = ref (new System.Threading.CancellationTokenSource())
     let private stratDebounce = ref (new System.Threading.CancellationTokenSource())
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =
@@ -489,13 +427,6 @@ module Update =
                 let pin = { pin with CutResults = results; CutResultsPlane = pin.CutPlane }
                 { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
             | None -> model
-        | GridEvalLoaded(pinId, data) ->
-            let sp = model.ScanPins
-            match HashMap.tryFind pinId sp.Pins with
-            | Some pin ->
-                let pin = { pin with GridEval = Some data }
-                { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
-            | None -> model
         | StratigraphyComputed(pinId, data, cache) ->
             let sp = model.ScanPins
             match HashMap.tryFind pinId sp.Pins with
@@ -531,9 +462,7 @@ module Update =
                         let prism = pin.Prism
                         let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
                         let axis = prism.AxisDirection |> Vec.normalize
-                        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-                        let right = Vec.cross axis up |> Vec.normalize
-                        let fwd = Vec.cross right axis |> Vec.normalize
+                        let right, fwd = PinGeometry.axisFrame axis
                         let dataset = match IndexList.tryFirst names with Some n -> n.Split('/', 2).[0] | None -> ""
                         let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
                         let planePoint, planeNormal, axisU, axisV, extentU, extentV =
@@ -568,8 +497,7 @@ module Update =
                                     env.Emit [CutResultsLoaded(pinId, results)]
                             with
                             | :? System.Threading.Tasks.TaskCanceledException -> ()
-                            | e ->
-                                env.Emit [LogDebug (sprintf "computePlaneCuts ERROR: %s" (string e))]
+                            | _ -> ()
                         } |> ignore
                     | None -> ()
                 | None -> ()
@@ -602,42 +530,7 @@ module Update =
                                         env.Emit [StratigraphyComputed(pinId, data, cache)]
                             with
                             | :? System.Threading.Tasks.TaskCanceledException -> ()
-                            | e -> env.Emit [LogDebug (sprintf "stratigraphy ERROR: %s" (string e))]
-                        } |> ignore
-                    | None -> ()
-                | None -> ()
-            let needsGridEval =
-                match msg with
-                | SetAnchor _ | SetFootprintRadius _ | SetFootprintScale _ -> true
-                | _ -> false
-            if needsGridEval then
-                let targetId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
-                match targetId with
-                | Some id ->
-                    match HashMap.tryFind id sp'.Pins with
-                    | Some pin ->
-                        let names = model.MeshNames
-                        let prism = pin.Prism
-                        let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                        let dataset = match IndexList.tryFirst names with Some n -> n.Split('/', 2).[0] | None -> ""
-                        let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
-                        let anchor = prism.AnchorPoint / scale + model.CommonCentroid
-                        let axis = prism.AxisDirection |> Vec.normalize
-                        let pinId = id
-                        let cts = new System.Threading.CancellationTokenSource()
-                        gridDebounce.Value.Cancel()
-                        gridDebounce.Value <- cts
-                        task {
-                            try
-                                do! System.Threading.Tasks.Task.Delay(500, cts.Token)
-                                let! result =
-                                    Query.gridEval ApiConfig.apiBase.Value dataset anchor axis (radius / scale) 16 (prism.ExtentForward / scale) (prism.ExtentBackward / scale)
-                                    |> Async.StartAsTask
-                                env.Emit [GridEvalLoaded(pinId, result)]
-                            with
-                            | :? System.Threading.Tasks.TaskCanceledException -> ()
-                            | e ->
-                                env.Emit [LogDebug (sprintf "gridEval ERROR: %s" (string e))]
+                            | _ -> ()
                         } |> ignore
                     | None -> ()
                 | None -> ()

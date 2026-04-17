@@ -73,8 +73,6 @@ type Model =
         ScanPins              : ScanPinModel
         ReferenceAxis         : ReferenceAxisMode
         Explore               : ExploreMode
-        DepthShadeOn          : bool
-        IsolinesOn            : bool
         ColorMode             : bool
         CardSystem            : CardSystemModel
     }
@@ -112,8 +110,6 @@ module Model =
             ScanPins              = ScanPinModel.initial
             ReferenceAxis         = AlongWorldZ
             Explore               = ExploreMode.initial
-            DepthShadeOn          = true
-            IsolinesOn            = true
             ColorMode             = false
             CardSystem            = CardSystemModel.initial
         }

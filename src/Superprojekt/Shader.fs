@@ -86,7 +86,6 @@ module BlitShader =
         member x.CylRadius            : float = x?CylRadius
         member x.CylExtFwd            : float = x?CylExtFwd
         member x.CylExtBack           : float = x?CylExtBack
-        member x.ExplosionOffset      : V3d   = x?ExplosionOffset
         member x.ReferenceAxis        : V3d   = x?ReferenceAxis
         member x.SteepnessThreshold   : float = x?SteepnessThreshold
         member x.DisagreementThreshold : float = x?DisagreementThreshold
@@ -102,26 +101,6 @@ module BlitShader =
             V4d(1.0,  0.35, 0.0,  1.0)   // orange
             V4d(0.0,  1.0,  0.45, 1.0)   // spring green
         |]
-    let explode (v : Effects.Vertex) =
-        vertex {
-            let p = v.wp.XYZ / v.wp.W
-            let rel = p - uniform.CylAnchor
-            let axisProj = Vec.dot rel uniform.CylAxis
-            let radial = rel - uniform.CylAxis * axisProj
-            let inside =
-                Vec.length radial <= uniform.CylRadius &&
-                axisProj >= -uniform.CylExtBack &&
-                axisProj <= uniform.CylExtFwd
-            let mutable wp = v.wp
-            if inside then
-                wp <- V4d(p + uniform.ExplosionOffset, 1.0)
-            return {
-                v with
-                    wp = wp
-                    pos = uniform.ViewProjTrafo * wp
-            }
-        }
-
     let clippy (v : Effects.Vertex) =
         fragment {
             let p = v.wp.XYZ / v.wp.W
@@ -341,9 +320,6 @@ module Shader =
 
     type UniformScope with
         member x.FlatColor : V4d = x?FlatColor
-        member x.DepthShadeOn : int = x?DepthShadeOn
-        member x.IsolinesOn : int = x?IsolinesOn
-        member x.IsolineSpacing : float = x?IsolineSpacing
         member x.ColorMode : int = x?ColorMode
         member x.Opacity : float = x?Opacity
 
@@ -374,32 +350,6 @@ module Shader =
 
     let vertexColor (v : Effects.Vertex) =
         fragment { return v.c }
-
-    let depthShade (v : Effects.Vertex) =
-        fragment {
-            let mutable c = v.c
-            if uniform.DepthShadeOn <> 0 then
-                let clip = uniform.ModelViewProjTrafo * v.wp
-                let ndcZ = clip.Z / clip.W
-                let t = clamp 0.0 1.0 ((ndcZ + 1.0) * 0.5)
-                let shade = 0.05 + (1.0 - t) * 0.95
-                c <- V4d(c.X * shade, c.Y * shade, c.Z * shade, c.W)
-            return c
-        }
-
-    let isolines (v : Effects.Vertex) =
-        fragment {
-            let mutable c = v.c
-            if uniform.IsolinesOn <> 0 then
-                let p = v.wp.XYZ / v.wp.W
-                let spacing = uniform.IsolineSpacing
-                let phase = p.Z / spacing
-                let f = phase - floor phase
-                let dist = (min f (1.0 - f)) * spacing
-                if dist < 0.06 then
-                    c <- V4d(1.0, 1.0, 1.0, c.W)
-            return c
-        }
 
     let nothing (v : Effects.Vertex) =
         fragment {

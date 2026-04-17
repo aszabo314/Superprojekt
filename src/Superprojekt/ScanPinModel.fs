@@ -91,16 +91,6 @@ type StratigraphyDisplayMode =
     | Undistorted
     | Normalized
 
-/// V3: state for the explosion view inside the ScanPin cylinder.
-type ExplosionState = {
-    /// 0 = no explosion. Each mesh i is displaced by (i * ExpansionFactor * spacing).
-    ExpansionFactor : float
-    Enabled : bool
-}
-
-module ExplosionState =
-    let initial = { ExpansionFactor = 0.0; Enabled = false }
-
 /// V3: state for the between-space hover highlighting.
 /// Identifies the band by the cursor's (column, z); per-column brackets are
 /// re-picked from the stratigraphy data at render time.
@@ -141,7 +131,6 @@ type ScanPin = {
     StratigraphyDisplay  : StratigraphyDisplayMode
     GhostClip            : GhostClipMode
     ExtractedLines       : ExtractedLinesMode
-    Explosion            : ExplosionState
     BetweenSpaceHover    : BetweenSpaceHover option
 }
 

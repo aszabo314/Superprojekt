@@ -36,8 +36,6 @@ type Message =
     | StratigraphyComputed    of ScanPinId * StratigraphyData
     | ScanPinMsg              of ScanPinMessage
     | JumpToMesh of string
-    | ToggleDepthShade
-    | ToggleIsolines
     | ToggleColorMode
     | CardMsg of CardMessage
     | ExploreMsg of ExploreModeMessage
@@ -76,8 +74,6 @@ and ScanPinMessage =
     | SetGhostClip            of ScanPinId * GhostClipMode
     | SetShowCutPlaneLines    of ScanPinId * bool
     | SetShowCylinderEdgeLines of ScanPinId * bool
-    | SetExplosionEnabled     of ScanPinId * bool
-    | SetExplosionFactor      of ScanPinId * float
     | ToggleBetweenSpaceEnabled
     | HoverBetweenSpace       of ScanPinId * columnIdx:int * hoverZ:float
     | PinBetweenSpaceHover    of ScanPinId
@@ -154,7 +150,7 @@ module ScanPinUpdate =
                 max 2.0 (projected * 1.2)
         { AnchorPoint = anchor; AxisDirection = axis
           Footprint = { Vertices = verts }
-          ExtentForward = autoLength; ExtentBackward = 1.0 }
+          ExtentForward = 1.0; ExtentBackward = autoLength }
 
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
@@ -199,7 +195,6 @@ module ScanPinUpdate =
                   StratigraphyDisplay = Undistorted
                   GhostClip = GhostClipOff
                   ExtractedLines = ExtractedLinesMode.initial
-                  Explosion = ExplosionState.initial
                   BetweenSpaceHover = None }
             { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id }
 
@@ -273,7 +268,7 @@ module ScanPinUpdate =
                 match HashMap.tryFind id sp.Pins with
                 | Some pin ->
                     let len = max 0.5 length
-                    let prism = { pin.Prism with ExtentForward = len }
+                    let prism = { pin.Prism with ExtentBackward = len }
                     { sp with Pins = HashMap.add id { pin with Prism = prism } sp.Pins }
                 | None -> sp
             | None -> sp
@@ -321,20 +316,6 @@ module ScanPinUpdate =
             | Some pin ->
                 let el = { pin.ExtractedLines with ShowCylinderEdgeLines = on }
                 { sp with Pins = HashMap.add id { pin with ExtractedLines = el } sp.Pins }
-            | None -> sp
-
-        | SetExplosionEnabled(id, on) ->
-            match HashMap.tryFind id sp.Pins with
-            | Some pin ->
-                let ex = { pin.Explosion with Enabled = on }
-                { sp with Pins = HashMap.add id { pin with Explosion = ex } sp.Pins }
-            | None -> sp
-
-        | SetExplosionFactor(id, f) ->
-            match HashMap.tryFind id sp.Pins with
-            | Some pin ->
-                let ex = { pin.Explosion with ExpansionFactor = max 0.0 f }
-                { sp with Pins = HashMap.add id { pin with Explosion = ex } sp.Pins }
             | None -> sp
 
         | ToggleBetweenSpaceEnabled ->
@@ -398,7 +379,9 @@ module Update =
                 FilterCenter     = None
                 ClipBounds       = Box3d.Invalid
                 ClipBox          = Box3d(V3d(-1e10), V3d(1e10))
-                DatasetCentroids = if dataset <> "" then Map.add dataset common model.DatasetCentroids else model.DatasetCentroids }
+                DatasetCentroids =
+                    let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) model.DatasetCentroids
+                    if dataset <> "" then Map.add dataset common perMesh else perMesh }
         | SetVisible(name, v) ->
             { model with MeshVisible = Map.add name v model.MeshVisible }
         | ToggleMenu ->
@@ -487,10 +470,6 @@ module Update =
                 env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
             | None -> ()
             model
-        | ToggleDepthShade ->
-            { model with DepthShadeOn = not model.DepthShadeOn }
-        | ToggleIsolines ->
-            { model with IsolinesOn = not model.IsolinesOn }
         | ToggleColorMode ->
             { model with ColorMode = not model.ColorMode }
         | CardMsg msg ->

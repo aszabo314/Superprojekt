@@ -78,8 +78,7 @@ module MeshView =
         (commonCentroid : aval<V3d>)
         (meshScale : aval<float>)
         (ghostOpacity : aval<float>)
-        (colorMode : aval<bool>)
-        (explosionOffset : aval<V3d>) =
+        (colorMode : aval<bool>) =
         let scaledFilter =
             (meshScale, filter) ||> AVal.map2 (fun scale (f : Box3d) ->
                 Box3d(f.Min * scale, f.Max * scale)
@@ -104,13 +103,11 @@ module MeshView =
             Sg.Trafo trafo
             Sg.Shader {
                 DefaultSurfaces.trafo
-                BlitShader.explode
                 DefaultSurfaces.diffuseTexture
                 Shader.headlight
                 BlitShader.clippy
             }
             Sg.Uniform("DiffuseColorTexture", loaded.tex)
-            Sg.Uniform("ExplosionOffset", explosionOffset)
             Sg.Uniform("ClipMin", clipMin)
             Sg.Uniform("ClipMax", clipMax)
             Sg.Uniform("IsGhost", isGhost)
@@ -171,10 +168,10 @@ module MeshView =
         let cylClip =
             activePin |> AVal.map (fun pinOpt ->
                 match pinOpt with
-                | Some pin when pin.GhostClip = GhostClipOn || pin.Explosion.Enabled ->
+                | Some pin when pin.GhostClip = GhostClipOn ->
                     let axis = pin.Prism.AxisDirection |> Vec.normalize
                     let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                    let active = if pin.GhostClip = GhostClipOn then 1 else 0
+                    let active = 1
                     active, pin.Prism.AnchorPoint, axis, r, pin.Prism.ExtentForward, pin.Prism.ExtentBackward
                 | _ ->
                     0, V3d.Zero, V3d.OOI, 1.0, 1.0, 1.0)
@@ -184,12 +181,6 @@ module MeshView =
         let cylRadius  = cylClip |> AVal.map (fun (_,_,_,d,_,_) -> d)
         let cylExtFwd  = cylClip |> AVal.map (fun (_,_,_,_,e,_) -> e)
         let cylExtBack = cylClip |> AVal.map (fun (_,_,_,_,_,f) -> f)
-        let explosionMap =
-            (activePin, model.MeshNames |> AList.toAVal) ||> AVal.map2 (fun pinOpt names ->
-                match pinOpt with
-                | Some pin -> Stratigraphy.explosionOffsets pin (IndexList.toArray names)
-                | None -> Map.empty)
-
         let tasks =
             let filter =
                 (model.ClipActive, model.ClipBox, model.CommonCentroid) |||> AVal.map3 (fun active box cc ->
@@ -206,7 +197,6 @@ module MeshView =
                     let textureIndexGhost = textureIndexSolid+1
                     let isActive = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
                     let scale = scaleFor name
-                    let explosionOffset = explosionMap |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue V3d.Zero)
                     let solidSg =
                         sg {
                             Sg.View view
@@ -218,7 +208,7 @@ module MeshView =
                             Sg.Uniform("CylRadius", cylRadius)
                             Sg.Uniform("CylExtFwd", cylExtFwd)
                             Sg.Uniform("CylExtBack", cylExtBack)
-                            renderMesh loaded filter (AVal.constant false) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode explosionOffset
+                            renderMesh loaded filter (AVal.constant false) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode
                         }
                     let solidTask = info.Runtime.CompileRender(signature, solidSg.GetRenderObjects(TraversalState.empty info.Runtime))
 
@@ -233,7 +223,7 @@ module MeshView =
                             Sg.Uniform("CylRadius", cylRadius)
                             Sg.Uniform("CylExtFwd", cylExtFwd)
                             Sg.Uniform("CylExtBack", cylExtBack)
-                            renderMesh loaded filter (AVal.constant true) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode explosionOffset
+                            renderMesh loaded filter (AVal.constant true) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode
                         }
                     let ghostTask = info.Runtime.CompileRender(signature, ghostSg.GetRenderObjects(TraversalState.empty info.Runtime))
                     AList.ofList [

@@ -1,5 +1,5 @@
-//17bd699f-67ce-280d-6675-cf4b5f08e002
-//8e41c1f5-3f17-2819-0be2-5e11152a0d4f
+//6a805d07-727a-a0a5-bb82-9d62655a011b
+//7dbbbb6f-9394-55f2-11c1-923b967649f5
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -40,8 +40,6 @@ type AdaptiveModel(value : Model) =
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _ReferenceAxis_ = FSharp.Data.Adaptive.cval(value.ReferenceAxis)
     let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
-    let _DepthShadeOn_ = FSharp.Data.Adaptive.cval(value.DepthShadeOn)
-    let _IsolinesOn_ = FSharp.Data.Adaptive.cval(value.IsolinesOn)
     let _ColorMode_ = FSharp.Data.Adaptive.cval(value.ColorMode)
     let _CardSystem_ = AdaptiveCardSystemModel(value.CardSystem)
     let mutable __value = value
@@ -80,8 +78,6 @@ type AdaptiveModel(value : Model) =
             _ScanPins_.Update(value.ScanPins)
             _ReferenceAxis_.Value <- value.ReferenceAxis
             _Explore_.Value <- value.Explore
-            _DepthShadeOn_.Value <- value.DepthShadeOn
-            _IsolinesOn_.Value <- value.IsolinesOn
             _ColorMode_.Value <- value.ColorMode
             _CardSystem_.Update(value.CardSystem)
     member __.Current = __adaptive
@@ -113,8 +109,6 @@ type AdaptiveModel(value : Model) =
     member __.ScanPins = _ScanPins_
     member __.ReferenceAxis = _ReferenceAxis_ :> FSharp.Data.Adaptive.aval<ReferenceAxisMode>
     member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>
-    member __.DepthShadeOn = _DepthShadeOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.IsolinesOn = _IsolinesOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ColorMode = _ColorMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CardSystem = _CardSystem_
 

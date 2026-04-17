@@ -344,50 +344,7 @@ module Cards =
                 }
             }
             div {
-                Class "card-btn-row mt-4"
-                button {
-                    selectedPin |> AVal.map (fun po ->
-                        match po with
-                        | Some p when p.Explosion.Enabled -> Some (Class "btn-active")
-                        | _ -> None)
-                    Dom.OnClick(fun _ ->
-                        match AVal.force selectedPin with
-                        | Some p -> env.Emit [ScanPinMsg (SetExplosionEnabled(p.Id, not p.Explosion.Enabled))]
-                        | None -> ())
-                    "Explode"
-                }
-                input {
-                    Attribute("type", "range")
-                    Attribute("min", "0"); Attribute("max", "3"); Attribute("step", "0.05")
-                    Class "range-full"
-                    selectedPin |> AVal.map (fun po ->
-                        match po with
-                        | Some p -> Some (Attribute("value", sprintf "%.2f" p.Explosion.ExpansionFactor))
-                        | None -> None)
-                    Dom.OnInput(fun e ->
-                        match AVal.force selectedPin, parseFloat e.Value with
-                        | Some p, Some v -> env.Emit [ScanPinMsg (SetExplosionFactor(p.Id, v))]
-                        | _ -> ())
-                }
-            }
-            div {
                 Class "card-toggles"
-                label {
-                    input {
-                        Attribute("type", "checkbox")
-                        checkedIf model.DepthShadeOn
-                        Dom.OnChange(fun _ -> env.Emit [ToggleDepthShade])
-                    }
-                    "Depth"
-                }
-                label {
-                    input {
-                        Attribute("type", "checkbox")
-                        checkedIf model.IsolinesOn
-                        Dom.OnChange(fun _ -> env.Emit [ToggleIsolines])
-                    }
-                    "Isolines"
-                }
                 label {
                     input {
                         Attribute("type", "checkbox")

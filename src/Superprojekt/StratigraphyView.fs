@@ -45,10 +45,10 @@ module StratigraphyView =
 
         let addQuad (x0 : float) (x1 : float) (y0 : float) (y1 : float) (col : V4f) =
             let baseIdx = positions.Count
-            positions.Add(V3f(float32 x0, float32 y0, 0.0f))
-            positions.Add(V3f(float32 x1, float32 y0, 0.0f))
-            positions.Add(V3f(float32 x1, float32 y1, 0.0f))
-            positions.Add(V3f(float32 x0, float32 y1, 0.0f))
+            positions.Add(V3f(float32 x0, float32 y0, 0.5f))
+            positions.Add(V3f(float32 x1, float32 y0, 0.5f))
+            positions.Add(V3f(float32 x1, float32 y1, 0.5f))
+            positions.Add(V3f(float32 x0, float32 y1, 0.5f))
             for _ in 1 .. 4 do colors.Add(col)
             indices.Add(baseIdx + 0); indices.Add(baseIdx + 1); indices.Add(baseIdx + 2)
             indices.Add(baseIdx + 0); indices.Add(baseIdx + 2); indices.Add(baseIdx + 3)
@@ -113,10 +113,10 @@ module StratigraphyView =
         // Connecting lines: link same-dataset events across adjacent columns.
         let addLineSegment (x0 : float) (y0 : float) (x1 : float) (y1 : float) (half : float) (col : V4f) =
             let baseIdx = positions.Count
-            positions.Add(V3f(float32 x0, float32 (y0 - half), 0.0f))
-            positions.Add(V3f(float32 x0, float32 (y0 + half), 0.0f))
-            positions.Add(V3f(float32 x1, float32 (y1 + half), 0.0f))
-            positions.Add(V3f(float32 x1, float32 (y1 - half), 0.0f))
+            positions.Add(V3f(float32 x0, float32 (y0 - half), 0.4f))
+            positions.Add(V3f(float32 x0, float32 (y0 + half), 0.4f))
+            positions.Add(V3f(float32 x1, float32 (y1 + half), 0.4f))
+            positions.Add(V3f(float32 x1, float32 (y1 - half), 0.4f))
             for _ in 1 .. 4 do colors.Add(col)
             indices.Add(baseIdx); indices.Add(baseIdx + 1); indices.Add(baseIdx + 2)
             indices.Add(baseIdx); indices.Add(baseIdx + 2); indices.Add(baseIdx + 3)
@@ -199,8 +199,8 @@ module StratigraphyView =
                 for _ in 1 .. 4 do colors.Add(col)
                 indices.Add(baseIdx); indices.Add(baseIdx + 1); indices.Add(baseIdx + 2)
                 indices.Add(baseIdx); indices.Add(baseIdx + 2); indices.Add(baseIdx + 3)
-        addStrip outlineHalf 0.009 outlineColor
-        addStrip half 0.01 lineColor
+        addStrip outlineHalf 0.1 outlineColor
+        addStrip half 0.0 lineColor
         positions.ToArray(), colors.ToArray(), indices.ToArray()
 
     /// Build the warm-overlay highlight strip for a between-space hover.
@@ -256,10 +256,10 @@ module StratigraphyView =
                 let y0 = toY i zLo
                 let y1 = toY i zHi
                 let b = positions.Count
-                positions.Add(V3f(float32 x0, float32 y0, 0.02f))
-                positions.Add(V3f(float32 x1, float32 y0, 0.02f))
-                positions.Add(V3f(float32 x1, float32 y1, 0.02f))
-                positions.Add(V3f(float32 x0, float32 y1, 0.02f))
+                positions.Add(V3f(float32 x0, float32 y0, 0.3f))
+                positions.Add(V3f(float32 x1, float32 y0, 0.3f))
+                positions.Add(V3f(float32 x1, float32 y1, 0.3f))
+                positions.Add(V3f(float32 x0, float32 y1, 0.3f))
                 for _ in 1 .. 4 do colors.Add(color)
                 indices.Add(b); indices.Add(b + 1); indices.Add(b + 2)
                 indices.Add(b); indices.Add(b + 2); indices.Add(b + 3)
@@ -277,10 +277,10 @@ module StratigraphyView =
         let outlineHalf = 0.012
         let lineColor = V4f(1.0f, 1.0f, 1.0f, 0.95f)
         let outlineColor = V4f(0.0f, 0.0f, 0.0f, 0.6f)
-        let positions = [| V3f(float32 (x - outlineHalf), 0.0f, 0.009f); V3f(float32 (x + outlineHalf), 0.0f, 0.009f)
-                           V3f(float32 (x + outlineHalf), 1.0f, 0.009f); V3f(float32 (x - outlineHalf), 1.0f, 0.009f)
-                           V3f(float32 (x - half), 0.0f, 0.01f); V3f(float32 (x + half), 0.0f, 0.01f)
-                           V3f(float32 (x + half), 1.0f, 0.01f); V3f(float32 (x - half), 1.0f, 0.01f) |]
+        let positions = [| V3f(float32 (x - outlineHalf), 0.0f, 0.1f); V3f(float32 (x + outlineHalf), 0.0f, 0.1f)
+                           V3f(float32 (x + outlineHalf), 1.0f, 0.1f); V3f(float32 (x - outlineHalf), 1.0f, 0.1f)
+                           V3f(float32 (x - half), 0.0f, 0.0f); V3f(float32 (x + half), 0.0f, 0.0f)
+                           V3f(float32 (x + half), 1.0f, 0.0f); V3f(float32 (x - half), 1.0f, 0.0f) |]
         let colors = [| outlineColor; outlineColor; outlineColor; outlineColor; lineColor; lineColor; lineColor; lineColor |]
         let indices = [| 0;1;2; 0;2;3; 4;5;6; 4;6;7 |]
         positions, colors, indices
@@ -324,17 +324,22 @@ module StratigraphyView =
                     | None -> [||], [||], [||]
                 | None -> [||], [||], [||])
 
-        let indicatorGeo =
+        let indicatorStyle =
             selectedPin |> AVal.map (fun pinOpt ->
                 match pinOpt with
                 | Some pin ->
                     match pin.Stratigraphy, pin.CutPlane with
                     | Some data, CutPlaneMode.AcrossAxis dist ->
-                        buildIndicator data pin.StratigraphyDisplay dist
-                    | Some data, CutPlaneMode.AlongAxis angleDeg ->
-                        buildAngleIndicator data angleDeg
-                    | _ -> [||], [||], [||]
-                | None -> [||], [||], [||])
+                        let globalRange = let r = data.AxisMax - data.AxisMin in if r < 1e-9 then 1.0 else r
+                        let yFrac = (dist - data.AxisMin) / globalRange |> clamp 0.0 1.0
+                        let topPct = (1.0 - yFrac) * 100.0
+                        sprintf "position:absolute;left:0;right:0;top:%.2f%%;height:2px;background:white;box-shadow:0 0 3px rgba(0,0,0,0.7);pointer-events:none;z-index:10" topPct
+                    | Some _data, CutPlaneMode.AlongAxis angleDeg ->
+                        let xFrac = (((angleDeg % 360.0) + 360.0) % 360.0) / 360.0 |> clamp 0.0 1.0
+                        let leftPct = xFrac * 100.0
+                        sprintf "position:absolute;top:0;bottom:0;left:%.2f%%;width:2px;background:white;box-shadow:0 0 3px rgba(0,0,0,0.7);pointer-events:none;z-index:10" leftPct
+                    | _ -> "display:none"
+                | None -> "display:none")
 
         let hoverGeo =
             selectedPin |> AVal.map (fun pinOpt ->
@@ -346,18 +351,18 @@ module StratigraphyView =
                     | _ -> [||], [||], [||]
                 | None -> [||], [||], [||])
 
-        let posBuffer = geometry |> AVal.map (fun (p, _, _) -> ArrayBuffer p :> IBuffer)
-        let colBuffer = geometry |> AVal.map (fun (_, c, _) -> ArrayBuffer c :> IBuffer)
+        let dummyPos = [| V3f.Zero |]
+        let dummyCol = [| V4f.Zero |]
+        let safePos (p : V3f[]) = if p.Length = 0 then dummyPos else p
+        let safeCol (c : V4f[]) = if c.Length = 0 then dummyCol else c
+
+        let posBuffer = geometry |> AVal.map (fun (p, _, _) -> ArrayBuffer (safePos p) :> IBuffer)
+        let colBuffer = geometry |> AVal.map (fun (_, c, _) -> ArrayBuffer (safeCol c) :> IBuffer)
         let idxBuffer = geometry |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
         let drawCount = geometry |> AVal.map (fun (_, _, i) -> i.Length)
 
-        let indPos = indicatorGeo |> AVal.map (fun (p, _, _) -> ArrayBuffer p :> IBuffer)
-        let indCol = indicatorGeo |> AVal.map (fun (_, c, _) -> ArrayBuffer c :> IBuffer)
-        let indIdx = indicatorGeo |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
-        let indCnt = indicatorGeo |> AVal.map (fun (_, _, i) -> i.Length)
-
-        let hovPos = hoverGeo |> AVal.map (fun (p, _, _) -> ArrayBuffer p :> IBuffer)
-        let hovCol = hoverGeo |> AVal.map (fun (_, c, _) -> ArrayBuffer c :> IBuffer)
+        let hovPos = hoverGeo |> AVal.map (fun (p, _, _) -> ArrayBuffer (safePos p) :> IBuffer)
+        let hovCol = hoverGeo |> AVal.map (fun (_, c, _) -> ArrayBuffer (safeCol c) :> IBuffer)
         let hovIdx = hoverGeo |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
         let hovCnt = hoverGeo |> AVal.map (fun (_, _, i) -> i.Length)
 
@@ -440,8 +445,9 @@ module StratigraphyView =
             Dom.OnContextMenu(ignore, preventDefault = true)
 
             sg {
+                Sg.Active (drawCount |> AVal.map (fun c -> c > 0))
                 Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
-                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                 Sg.NoEvents
                 Sg.VertexAttributes(
                     HashMap.ofList [
@@ -452,21 +458,9 @@ module StratigraphyView =
                 Sg.Render drawCount
             }
             sg {
+                Sg.Active (hovCnt |> AVal.map (fun c -> c > 0))
                 Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
-                Sg.DepthTest (AVal.constant DepthTest.None)
-                Sg.BlendMode BlendMode.Blend
-                Sg.NoEvents
-                Sg.VertexAttributes(
-                    HashMap.ofList [
-                        string DefaultSemantic.Positions, BufferView(indPos, typeof<V3f>)
-                        string DefaultSemantic.Colors,    BufferView(indCol, typeof<V4f>)
-                    ])
-                Sg.Index(BufferView(indIdx, typeof<int>))
-                Sg.Render indCnt
-            }
-            sg {
-                Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
-                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                 Sg.BlendMode BlendMode.Blend
                 Sg.NoEvents
                 Sg.VertexAttributes(
@@ -477,4 +471,8 @@ module StratigraphyView =
                 Sg.Index(BufferView(hovIdx, typeof<int>))
                 Sg.Render hovCnt
             }
+        }
+        div {
+            Class "strat-indicator"
+            indicatorStyle |> AVal.map (fun s -> Some (Style s))
         }

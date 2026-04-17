@@ -349,6 +349,10 @@ body.loaded {
     display: none;
 }
 
+.strat-indicator {
+    pointer-events: none;
+}
+
 .strat-view {
     width: 280px;
     height: 200px;
@@ -568,6 +572,7 @@ body.loaded {
     border-radius: 3px;
     background: #fafbfc;
     overflow: hidden;
+    position: relative;
 }
 
 .card-strat-content .strat-view {

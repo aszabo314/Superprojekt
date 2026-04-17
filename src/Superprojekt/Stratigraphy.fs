@@ -268,37 +268,3 @@ module Stratigraphy =
         if found < 0 then Map.empty
         else cache.Components3D.[cache.Labels.[0].[a].[found]]
 
-    /// Phase 3.12: per-mesh world-space offset for the explosion view.
-    let explosionOffsetsFromFields (explosion : ExplosionState) (prism : SelectionPrism) (stratigraphy : StratigraphyData option) (meshNames : string[]) : Map<string, V3d> =
-        if not explosion.Enabled || explosion.ExpansionFactor <= 0.0 then Map.empty
-        else
-            let axis = prism.AxisDirection |> Vec.normalize
-            let ordered =
-                match stratigraphy with
-                | Some data when data.Columns.Length > 0 ->
-                    let mutable acc = Map.empty<string, float * int>
-                    for col in data.Columns do
-                        for (z, name) in col.Events do
-                            match Map.tryFind name acc with
-                            | Some (s, c) -> acc <- Map.add name (s + z, c + 1) acc
-                            | None -> acc <- Map.add name (z, 1) acc
-                    let ranked =
-                        acc |> Map.toArray
-                            |> Array.map (fun (k, (s, c)) -> k, s / float c)
-                            |> Array.sortBy snd
-                            |> Array.map fst
-                    let inSet = Set.ofArray ranked
-                    let extras = meshNames |> Array.filter (fun d -> not (Set.contains d inSet))
-                    Array.append ranked extras
-                | _ -> meshNames
-            let n = max 1 ordered.Length
-            let baseSpacing = (prism.ExtentForward + prism.ExtentBackward) / float n
-            let factor = explosion.ExpansionFactor
-            ordered
-            |> Array.mapi (fun i ds ->
-                let centered = float i - float (n - 1) * 0.5
-                ds, axis * (centered * factor * baseSpacing))
-            |> Map.ofArray
-
-    let explosionOffsets (pin : ScanPin) (meshNames : string[]) : Map<string, V3d> =
-        explosionOffsetsFromFields pin.Explosion pin.Prism pin.Stratigraphy meshNames

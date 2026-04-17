@@ -449,7 +449,7 @@ module StratigraphyView =
                 sg {
                     Sg.Active (drawCount |> AVal.map (fun c -> c > 0))
                     Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.NoEvents
                     Sg.VertexAttributes(
                         HashMap.ofList [
@@ -462,7 +462,7 @@ module StratigraphyView =
                 sg {
                     Sg.Active (hovCnt |> AVal.map (fun c -> c > 0))
                     Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.BlendMode BlendMode.Blend
                     Sg.NoEvents
                     Sg.VertexAttributes(

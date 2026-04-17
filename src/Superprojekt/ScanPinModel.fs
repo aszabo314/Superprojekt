@@ -92,7 +92,7 @@ type ExtractedLinesMode = {
 }
 
 module ExtractedLinesMode =
-    let initial = { ShowCutPlaneLines = true; ShowCylinderEdgeLines = true }
+    let initial = { ShowCutPlaneLines = true; ShowCylinderEdgeLines = false }
 
 type ScanPin = {
     Id                   : ScanPinId
@@ -137,11 +137,8 @@ module ScanPinModel =
 type CardId = CardId of Guid with
     static member create () = CardId (Guid.NewGuid())
 
-type CardEdge = EdgeTop | EdgeBottom | EdgeLeft | EdgeRight
-
 type CardAnchor =
     | AnchorToWorldPoint of V3d
-    | AnchorToCard of parentId:CardId * edge:CardEdge
 
 type CardAttachment =
     | CardAttached
@@ -150,7 +147,6 @@ type CardAttachment =
 
 type CardContent =
     | StratigraphyDiagram of ScanPinId
-    | PinControls of ScanPinId
 
 type Card = {
     Id         : CardId

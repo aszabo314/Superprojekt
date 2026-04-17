@@ -77,7 +77,7 @@ module MeshView =
         (commonCentroid : aval<V3d>)
         (meshScale : aval<float>)
         (ghostOpacity : aval<float>)
-        (colorMode : aval<bool>) =
+        (colorMode : aval<int>) =
         let scaledFilter =
             (meshScale, filter) ||> AVal.map2 (fun scale (f : Box3d) ->
                 Box3d(f.Min * scale, f.Max * scale)
@@ -112,7 +112,7 @@ module MeshView =
             Sg.Uniform("IsGhost", isGhost)
             Sg.Uniform("MeshIndex", meshIndex)
             Sg.Uniform("GhostOpacity", ghostOpacity)
-            Sg.Uniform("ColorMode", colorMode |> AVal.map (fun b -> if b then 1 else 0))
+            Sg.Uniform("ColorMode", colorMode)
             Sg.BlendMode BlendMode.Blend
             Sg.DepthTest depthTestMode
             Sg.VertexAttributes(
@@ -193,7 +193,8 @@ module MeshView =
                         Sg.Proj proj
                         Sg.Uniform("ViewportSize", info.ViewportSize)
                         Sg.Uniform("CylClip", cylClip)
-                        renderMesh loaded filter (AVal.constant isGhost) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity model.ColorMode
+                        let modeInt = model.RenderingMode |> AVal.map (function Textured -> 0 | Shaded -> 1 | WhiteSurface -> 2)
+                        renderMesh loaded filter (AVal.constant isGhost) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity modeInt
                     }
                 info.Runtime.CompileRender(signature, body.GetRenderObjects(TraversalState.empty info.Runtime))
             meshIndices |> AList.bind (fun meshIndices ->

@@ -6,425 +6,520 @@ open Aardvark.Dom
 
 module Gui =
 
-    let burgerButton (env : Env<Message>) =
-        button {
-            Attribute("id", "burger-btn")
-            Class "burger-btn"
-            Dom.OnClick(fun _ -> env.Emit [ToggleMenu])
-            div { Class "burger-line" }
-            div { Class "burger-line" }
-            div { Class "burger-line" }
-        }
+    open Primitives
 
-    let hudTabs (env : Env<Message>) (model : AdaptiveModel) =
+    let private pinColor =
+        [| C4b(228uy,26uy,28uy); C4b(55uy,126uy,184uy); C4b(77uy,175uy,74uy); C4b(152uy,78uy,163uy)
+           C4b(255uy,127uy,0uy); C4b(255uy,255uy,51uy); C4b(166uy,86uy,40uy); C4b(247uy,129uy,191uy); C4b(153uy,153uy,153uy) |]
+
+    let private meshColorFor (meshOrder : HashMap<string,int>) (name : string) =
+        let idx = HashMap.tryFind name meshOrder |> Option.defaultValue 0
+        pinColor.[idx % pinColor.Length]
+
+    let topBar (env : Env<Message>) (model : AdaptiveModel) =
         div {
-            Class "tabs"
-            model.MenuOpen |> AVal.map (fun o ->
-                if o then Some (Class "tabs-open") else None
-            )
+            Class "top-bar"
+
+            button {
+                Class "tb-burger"
+                Attribute("title", "Toggle left panel")
+                Dom.OnClick(fun _ -> env.Emit [ToggleMenu])
+                div { Class "burger-line" }
+                div { Class "burger-line" }
+                div { Class "burger-line" }
+            }
+
+            let datasetOpen = cval false
 
             div {
-                Class "tab-labels"
-                label {
-                    input {
-                        Attribute("type",    "radio")
-                        Attribute("name",    "hud-tabs")
-                        Attribute("id",      "hud-tab1")
-                        Attribute("checked", "checked")
-                    }
-                    "Scene"
+                Class "tb-dataset"
+
+                button {
+                    Class "tb-dataset-btn"
+                    Dom.OnClick(fun _ -> transact (fun () -> datasetOpen.Value <- not datasetOpen.Value))
+                    model.ActiveDataset |> AVal.map (fun a ->
+                        let name = a |> Option.defaultValue "Dataset"
+                        sprintf "%s \u25BE" name)
                 }
-                label {
-                    input {
-                        Attribute("type", "radio")
-                        Attribute("name", "hud-tabs")
-                        Attribute("id",   "hud-tab2")
-                    }
-                    "Overlay"
-                }
-                label {
-                    input {
-                        Attribute("type", "radio")
-                        Attribute("name", "hud-tabs")
-                        Attribute("id",   "hud-tab3")
-                    }
-                    "Clip"
-                }
-                label {
-                    input {
-                        Attribute("type", "radio")
-                        Attribute("name", "hud-tabs")
-                        Attribute("id",   "hud-tab4")
-                    }
-                    "Pins"
+
+                div {
+                    Class "tb-dataset-menu"
+                    (datasetOpen :> aval<_>) |> AVal.map (fun o ->
+                        if o then None else Some (Style [Display "none"]))
+                    model.Datasets |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun dataset ->
+                        let isActive = model.ActiveDataset |> AVal.map (fun a -> a = Some dataset)
+                        button {
+                            Class "tb-dataset-item"
+                            isActive |> AVal.map (fun on -> if on then Some (Class "active") else None)
+                            Dom.OnClick(fun _ ->
+                                transact (fun () -> datasetOpen.Value <- false)
+                                env.Emit [SetActiveDataset dataset]
+                                ServerActions.loadDataset env dataset)
+                            dataset
+                        })
                 }
             }
 
+            let explorePopoverOpen = model.ExplorePopoverOpen
+            let exploreEnabled = model.Explore |> AVal.map (fun e -> e.Enabled)
+
             div {
-                Class "tab-panels"
-
-                div {
-                    Class "tab-panel"
-                    Attribute("id", "hud-panel1")
-
-                    h3 { "Dataset" }
-                    div {
-                        Class "btn-row"
-                        model.Datasets |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun dataset ->
-                            let isActive = model.ActiveDataset |> AVal.map (fun a -> a = Some dataset)
-                            let tooltip =
-                                (model.DatasetCentroids, model.DatasetScales) ||> AVal.map2 (fun centroids scales ->
-                                    let cStr =
-                                        match Map.tryFind dataset centroids with
-                                        | Some v -> sprintf "(%.0f, %.0f, %.0f)" v.X v.Y v.Z
-                                        | None   -> "not loaded"
-                                    let s = Map.tryFind dataset scales |> Option.defaultValue 1.0
-                                    sprintf "centroid: %s\nscale: %.3g" cStr s
-                                )
-                            button {
-                                isActive |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
-                                tooltip |> AVal.map (fun t -> Some (Attribute("title", t)))
-                                Dom.OnClick(fun _ ->
-                                    env.Emit [SetActiveDataset dataset]
-                                    ServerActions.loadDataset env dataset
-                                )
-                                dataset
-                            }
-                        )
-                    }
-
-                    div {
-                        "Scale  "
-                        input {
-                            Attribute("type", "number")
-                            Attribute("step", "0.1")
-                            Class "input-sm"
-                            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun ds scales ->
-                                let s = ds |> Option.bind (fun d -> Map.tryFind d scales) |> Option.defaultValue 1.0
-                                Some (Attribute("value", sprintf "%.4g" s))
-                            )
-                            model.ActiveDataset |> AVal.map (fun ds ->
-                                if ds.IsNone then Some (Attribute("disabled", "disabled")) else None
-                            )
-                            Dom.OnInput(fun e ->
-                                match Cards.parseFloat e.Value, AVal.force model.ActiveDataset with
-                                | Some v, Some dataset -> env.Emit [SetDatasetScale(dataset, v)]
-                                | _ -> ()
-                            )
-                        }
-                    }
-
-                    h3 { "Meshes" }
-                    model.MeshNames |> AList.map (fun name ->
-                        let isVis =
-                            model.MeshVisible
-                            |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-                        div {
-                            Class "mesh-row"
-                            label {
-                                input {
-                                    Attribute("type", "checkbox")
-                                    Cards.checkedIf isVis
-                                    Dom.OnClick(fun _ ->
-                                        let current = AVal.force isVis
-                                        env.Emit [SetVisible(name, not current)]
-                                    )
-                                }
-                                " " + Cards.shortName name
-                            }
-                            button {
-                                Class "btn-jump"
-                                Attribute("title", "Focus camera on this mesh")
-                                Dom.OnClick(fun _ -> env.Emit [JumpToMesh name])
-                                "\u2316"
-                            }
-                        }
-                    )
-
-                    div {
-                        label {
-                            input {
-                                Attribute("type", "checkbox")
-                                Cards.checkedIf model.GhostSilhouette
-                                Dom.OnClick(fun _ -> env.Emit [ToggleGhostSilhouette])
-                            }
-                            " Ghost silhouette"
-                        }
-                        div {
-                            model.GhostSilhouette |> AVal.map (fun on ->
-                                if on then None else Some (Style [Display "none"]))
-                            "Opacity  "
-                            input {
-                                Attribute("type", "range")
-                                Attribute("min", "0.01"); Attribute("max", "1.0"); Attribute("step", "0.01")
-                                Class "range-full"
-                                model.GhostOpacity |> AVal.map (fun v ->
-                                    Some (Attribute("value", sprintf "%.2f" v)))
-                                Dom.OnInput(fun e ->
-                                    Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [SetGhostOpacity v]))
-                            }
-                        }
-                    }
-
-                    div {
-                        label {
-                            input {
-                                Attribute("type", "checkbox")
-                                Cards.checkedIf model.ColorMode
-                                Dom.OnClick(fun _ -> env.Emit [ToggleColorMode])
-                            }
-                            " Color (false-color shading)"
-                        }
-                    }
-
-                    button { "Clear Filter"; Dom.OnClick(fun _ -> env.Emit [ClearFilteredMesh]) }
-
-                    ul {
-                        li { "ctrl+click or long-press to filter" }
-                        li { "double-click to focus camera" }
-                        li { "shift+scroll to cycle mesh order" }
-                    }
+                Class "tb-explore-wrap"
+                button {
+                    Class "tb-btn"
+                    exploreEnabled |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                    Attribute("title", "Toggle explore heatmap")
+                    Dom.OnClick(fun _ ->
+                        let cur = AVal.force exploreEnabled
+                        env.Emit [ExploreMsg (SetExploreEnabled (not cur))]
+                        if not cur then env.Emit [ToggleExplorePopover])
+                    "\u25C9 Explore"
                 }
-
                 div {
-                    Class "tab-panel"
-                    Attribute("id", "hud-panel2")
+                    Class "tb-explore-popover"
+                    (exploreEnabled, explorePopoverOpen) ||> AVal.map2 (fun en op ->
+                        if en && op then None else Some (Style [Display "none"]))
+                    let steep = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
+                    let disag = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
+                    inlineSlider "Steepness" 0.0 1.0 0.01 (sprintf "%.2f") steep (fun v ->
+                        env.Emit [ExploreMsg (SetSteepnessThreshold v)])
+                    inlineLogSlider "Sensitivity" 0.001 10.0 (fun v ->
+                        if v < 0.1 then sprintf "%.0f mm" (v * 1000.0)
+                        else sprintf "%.2f m" v) disag (fun v ->
+                        env.Emit [ExploreMsg (SetDisagreementThreshold v)])
+                }
+                button {
+                    Class "tb-btn-tiny"
+                    exploreEnabled |> AVal.map (fun on -> if on then None else Some (Style [Display "none"]))
+                    Attribute("title", "Explore settings")
+                    Dom.OnClick(fun _ -> env.Emit [ToggleExplorePopover])
+                    "\u2699"
+                }
+            }
 
-                    h3 { "Revolver" }
-                    p { "Magnifier disks per mesh (also: hold Shift)" }
+            let isPlacing =
+                (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
+
+            button {
+                Class "tb-btn"
+                isPlacing |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Place a ScanPin")
+                Dom.OnClick(fun _ ->
+                    let placing = AVal.force isPlacing
+                    if placing then env.Emit [ScanPinMsg CancelPlacement]
+                    else env.Emit [ScanPinMsg (StartPlacement FootprintMode.Circle)])
+                isPlacing |> AVal.map (fun on -> if on then "\u2715 Cancel" else "+ Pin")
+            }
+
+            button {
+                Class "tb-btn"
+                model.RevolverOn |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Toggle revolver overlay")
+                Dom.OnClick(fun _ -> env.Emit [ToggleRevolver])
+                "\u229E Revolver"
+            }
+
+            button {
+                Class "tb-btn tb-btn-icon"
+                Attribute("title", "Reset camera")
+                Dom.OnClick(fun _ -> env.Emit [ResetCamera])
+                "\u27F2"
+            }
+        }
+
+    let revolverBar (env : Env<Message>) (model : AdaptiveModel) =
+        div {
+            Class "rev-bar"
+            model.RevolverOn |> AVal.map (fun on ->
+                if on then None else Some (Style [Display "none"]))
+            button {
+                Class "tb-btn-tiny"
+                Attribute("title", "Previous mesh")
+                Dom.OnClick(fun _ -> env.Emit [CycleMeshOrder -1])
+                "\u25C0"
+            }
+            button {
+                Class "tb-btn-tiny"
+                Attribute("title", "Next mesh")
+                Dom.OnClick(fun _ -> env.Emit [CycleMeshOrder 1])
+                "\u25B6"
+            }
+            let size = model.RevolverSettings |> AVal.map (fun r -> r.CircleRadius)
+            inlineSlider "Size" 20.0 400.0 1.0 (sprintf "%.0f") size (fun v ->
+                env.Emit [SetRevolverRadius v])
+        }
+
+    let private meshRow (env : Env<Message>) (model : AdaptiveModel) (name : string) =
+        let isVis = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+        let isSolo = model.MeshSolo |> AVal.map (fun s ->
+            match s with Solo(n, _) -> n = name | _ -> false)
+        let colorVal = model.MeshOrder |> AMap.toAVal |> AVal.map (fun o -> meshColorFor o name)
+        div {
+            Class "mesh-row"
+            span {
+                Class "mesh-swatch"
+                colorVal |> AVal.map (fun c ->
+                    Some (Style [Css.Background (sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B))]))
+            }
+            span {
+                Class "mesh-name"
+                Cards.shortName name
+            }
+            button {
+                Class "mb"
+                isVis |> AVal.map (fun v -> if v then Some (Class "mb-on") else None)
+                Attribute("title", "Visible")
+                Dom.OnClick(fun _ ->
+                    let cur = AVal.force isVis
+                    env.Emit [SetVisible(name, not cur)])
+                isVis |> AVal.map (fun v -> if v then "\u25CF" else "\u25CB")
+            }
+            button {
+                Class "mb"
+                isSolo |> AVal.map (fun s -> if s then Some (Class "mb-on") else None)
+                Attribute("title", "Solo (isolate)")
+                Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name])
+                "\u25D0"
+            }
+            button {
+                Class "mb"
+                Attribute("title", "Focus camera on this mesh")
+                Dom.OnClick(fun _ -> env.Emit [JumpToMesh name])
+                "\u2316"
+            }
+        }
+
+    let private meshSection (env : Env<Message>) (model : AdaptiveModel) =
+        div {
+            Class "lp-section"
+            div {
+                Class "lp-section-head"
+                span { Class "lp-section-title"; "Meshes" }
+                div {
+                    Class "lp-section-actions"
                     button {
-                        model.RevolverOn |> AVal.map (fun on ->
-                            if on then Some (Class "btn-active") else None
-                        )
-                        Dom.OnClick(fun _ -> env.Emit [ToggleRevolver])
-                        model.RevolverOn |> AVal.map (fun on ->
-                            if on then "Revolver: ON" else "Revolver: OFF"
-                        )
+                        Class "mb"; Attribute("title", "Show all")
+                        Dom.OnClick(fun _ -> env.Emit [ShowAllMeshes])
+                        "All"
                     }
-                    p {
-                        model.RevolverOn |> AVal.map (fun on ->
-                            if on then "Tap on the 3D view to reposition the magnifier." else ""
-                        )
-                    }
-
-                    h3 { "Fullscreen overlay" }
-                    p { "Show each mesh in a tile (also: hold Space)" }
                     button {
-                        model.FullscreenOn |> AVal.map (fun on ->
-                            if on then Some (Class "btn-active") else None
-                        )
-                        Dom.OnClick(fun _ -> env.Emit [ToggleFullscreen])
-                        model.FullscreenOn |> AVal.map (fun on ->
-                            if on then "Fullscreen: ON" else "Fullscreen: OFF"
-                        )
+                        Class "mb"; Attribute("title", "Hide all")
+                        Dom.OnClick(fun _ -> env.Emit [HideAllMeshes])
+                        "None"
                     }
+                }
+            }
+            div {
+                Class "mesh-list"
+                model.MeshNames |> AList.map (fun name -> meshRow env model name)
+            }
+            div {
+                Class "lp-sub"
+                span { Class "lp-sublabel"; "Rendering" }
+                let rm = model.RenderingMode
+                compactButtonBar [
+                    "Textured", (rm |> AVal.map (fun m -> m = Textured)), (fun () -> env.Emit [SetRenderingMode Textured])
+                    "Shaded",   (rm |> AVal.map (fun m -> m = Shaded)),   (fun () -> env.Emit [SetRenderingMode Shaded])
+                    "White",    (rm |> AVal.map (fun m -> m = WhiteSurface)), (fun () -> env.Emit [SetRenderingMode WhiteSurface])
+                ]
+            }
+            compactToggle "Ghost silhouette" model.GhostSilhouette (fun () ->
+                env.Emit [ToggleGhostSilhouette])
+        }
 
-                    h3 { "Difference rendering" }
-                    div {
-                        label {
-                            input {
-                                Attribute("type", "checkbox")
-                                Cards.checkedIf model.DifferenceRendering
-                                Dom.OnClick(fun _ -> env.Emit [ToggleDifferenceRendering])
-                            }
-                            " Show mesh difference"
-                        }
-                    }
-                    let numInput (label : string) (current : aval<float>) (msg : float -> Message) =
-                        div {
-                            label + "  "
-                            input {
-                                Attribute("type", "number")
-                                Attribute("step", "any")
-                                Class "input-sm"
-                                current |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.4g" v)))
-                                Dom.OnInput(fun e ->
-                                    Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [msg v]))
-                            }
-                        }
-                    numInput "Min depth" model.MinDifferenceDepth SetMinDifferenceDepth
-                    numInput "Max depth" model.MaxDifferenceDepth SetMaxDifferenceDepth
+    let private placementPanel (env : Env<Message>) (model : AdaptiveModel) =
+        let sp = model.ScanPins
+        let activePin =
+            (sp.ActivePlacement, sp.Pins |> AMap.toAVal) ||> AVal.map2 (fun id pins ->
+                id |> Option.bind (fun i -> HashMap.tryFind i pins))
+        div {
+            Class "lp-placement"
+            div { Class "lp-section-title"; "Placing Pin" }
+            p {
+                Class "lp-hint"
+                sp.PlacingMode |> AVal.map (fun pm ->
+                    if pm.IsSome then "Tap on a mesh to anchor the pin." else "")
+            }
 
-                    h3 { "Explore mode" }
-                    let exploreEnabled  = model.Explore |> AVal.map (fun e -> e.Enabled)
-                    let highlightMode   = model.Explore |> AVal.map (fun e -> e.HighlightMode)
-                    let steepnessThresh = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
-                    let disagreementThresh = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
-                    let disagreementMin = 0.001
-                    let disagreementMax = 10.0
-                    let disagreementToSlider (v : float) =
-                        let v = clamp disagreementMin disagreementMax v
-                        (log10 (v / disagreementMin) / log10 (disagreementMax / disagreementMin)) * 1000.0
-                    let sliderToDisagreement (s : float) =
-                        disagreementMin * (disagreementMax / disagreementMin) ** (s / 1000.0)
-                    div {
-                        label {
-                            input {
-                                Attribute("type", "checkbox")
-                                Cards.checkedIf exploreEnabled
-                                Dom.OnClick(fun _ ->
-                                    let cur = AVal.force exploreEnabled
-                                    env.Emit [ExploreMsg (SetExploreEnabled (not cur))])
-                            }
-                            " Enabled"
-                        }
-                    }
-                    div {
-                        Class "btn-row"
-                        button {
-                            highlightMode |> AVal.map (fun m ->
-                                if m = SteepnessOnly then Some (Class "btn-active") else None)
-                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetHighlightMode SteepnessOnly)])
-                            "Steepness"
-                        }
-                        button {
-                            highlightMode |> AVal.map (fun m ->
-                                if m = DisagreementOnly then Some (Class "btn-active") else None)
-                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetHighlightMode DisagreementOnly)])
-                            "Disagreement"
-                        }
-                        button {
-                            highlightMode |> AVal.map (fun m ->
-                                if m = Combined then Some (Class "btn-active") else None)
-                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetHighlightMode Combined)])
-                            "Combined"
-                        }
-                    }
-                    div {
-                        highlightMode |> AVal.map (fun m ->
-                            if m = DisagreementOnly then Some (Style [Display "none"]) else None)
-                        "Steepness filter  "
-                        input {
-                            Attribute("type", "range")
-                            Attribute("min", "0.0"); Attribute("max", "1.0"); Attribute("step", "0.01")
-                            Class "range-full"
-                            steepnessThresh |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.2f" v)))
-                            Dom.OnInput(fun e ->
-                                Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [ExploreMsg (SetSteepnessThreshold v)]))
-                        }
-                        steepnessThresh |> AVal.map (fun v -> sprintf "%.2f" v)
-                    }
-                    div {
-                        highlightMode |> AVal.map (fun m ->
-                            if m = SteepnessOnly then Some (Style [Display "none"]) else None)
-                        "Min depth disagreement  "
-                        input {
-                            Attribute("type", "range")
-                            Attribute("min", "0"); Attribute("max", "1000"); Attribute("step", "1")
-                            Class "range-full"
-                            disagreementThresh |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.1f" (disagreementToSlider v))))
-                            Dom.OnInput(fun e ->
-                                Cards.parseFloat e.Value
-                                |> Option.iter (fun s ->
-                                    env.Emit [ExploreMsg (SetDisagreementThreshold (sliderToDisagreement s))]))
-                        }
-                        disagreementThresh |> AVal.map (fun v ->
-                            if v < 0.1 then sprintf "%.0f mm" (v * 1000.0)
-                            else sprintf "%.2f m" v)
-                    }
+            let radius = activePin |> AVal.map (fun p ->
+                match p with
+                | Some pin ->
+                    match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                | None -> 1.0)
+            inlineSlider "Radius" 0.1 50.0 0.1 (sprintf "%.1fm") radius (fun v ->
+                env.Emit [ScanPinMsg (SetFootprintRadius v)])
 
-                    h3 { "Reference axis" }
-                    p { "Defines 'steep' for explore mode and pin placement axis" }
-                    div {
-                        Class "btn-row"
-                        button {
-                            model.ReferenceAxis |> AVal.map (fun m ->
-                                if m = AlongWorldZ then Some (Class "btn-active") else None)
-                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongWorldZ)])
-                            "World Z"
-                        }
-                        button {
-                            model.ReferenceAxis |> AVal.map (fun m ->
-                                if m = AlongCameraView then Some (Class "btn-active") else None)
-                            Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongCameraView)])
-                            "Camera direction"
-                        }
-                    }
+            let length = activePin |> AVal.map (fun p ->
+                match p with
+                | Some pin -> pin.Prism.ExtentBackward
+                | None -> 3.0)
+            inlineSlider "Length" 0.5 100.0 0.5 (sprintf "%.1fm") length (fun v ->
+                env.Emit [ScanPinMsg (SetPinLength v)])
 
-                    h3 { "Mesh order" }
-                    p { "Determines stacking order of revolver and fullscreen tiles." }
+            div {
+                Class "lp-sub"
+                span { Class "lp-sublabel"; "Cut Plane" }
+                let mode = activePin |> AVal.map (fun p ->
+                    match p with
+                    | Some pin ->
+                        match pin.CutPlane with
+                        | CutPlaneMode.AlongAxis _ -> 0
+                        | CutPlaneMode.AcrossAxis _ -> 1
+                    | None -> 0)
+                compactButtonBar [
+                    "Vertical",   (mode |> AVal.map (fun m -> m = 0)),
+                        (fun () ->
+                            match AVal.force activePin with
+                            | Some p ->
+                                match p.CutPlane with
+                                | CutPlaneMode.AlongAxis _ -> ()
+                                | _ -> env.Emit [ScanPinMsg (SetCutPlaneMode (CutPlaneMode.AlongAxis 0.0))]
+                            | None -> ())
+                    "Horizontal", (mode |> AVal.map (fun m -> m = 1)),
+                        (fun () ->
+                            match AVal.force activePin with
+                            | Some p ->
+                                match p.CutPlane with
+                                | CutPlaneMode.AcrossAxis _ -> ()
+                                | _ ->
+                                    let mid = (p.Prism.ExtentForward - p.Prism.ExtentBackward) * 0.5
+                                    env.Emit [ScanPinMsg (SetCutPlaneMode (CutPlaneMode.AcrossAxis mid))]
+                            | None -> ())
+                ]
+            }
+
+            let ghost = activePin |> AVal.map (fun p ->
+                match p with
+                | Some pin -> pin.GhostClip = GhostClipOn
+                | None -> false)
+            compactToggle "Ghost clip" ghost (fun () ->
+                match AVal.force activePin with
+                | Some p ->
+                    let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn
+                    env.Emit [ScanPinMsg (SetGhostClip(p.Id, next))]
+                | None -> ())
+
+            div {
+                Class "lp-commit-row"
+                button {
+                    Class "lp-commit"
+                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg CommitPin])
+                    "\u2713 Commit"
+                }
+                button {
+                    Class "lp-discard"
+                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg CancelPlacement])
+                    "\u2715 Discard"
+                }
+            }
+        }
+
+    let private pinSection (env : Env<Message>) (model : AdaptiveModel) =
+        let sp = model.ScanPins
+        let pinsVal = sp.Pins |> AMap.toAVal
+        let pinIdList =
+            pinsVal |> AVal.map (fun pins ->
+                pins |> HashMap.toSeq |> Seq.map fst |> Seq.sort |> IndexList.ofSeq)
+            |> AList.ofAVal
+        div {
+            Class "lp-section"
+            div { Class "lp-section-head"; span { Class "lp-section-title"; "Pins" } }
+            div {
+                Class "pin-list"
+                pinIdList |> AList.map (fun id ->
+                    let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
+                    let isSelected = sp.SelectedPin |> AVal.map (fun s -> s = Some id)
                     div {
-                        Class "btn-row"
-                        button { "◀ Prev"; Dom.OnClick(fun _ -> env.Emit [CycleMeshOrder -1]) }
-                        button { "Next ▶"; Dom.OnClick(fun _ -> env.Emit [CycleMeshOrder  1]) }
-                    }
-                    model.MeshNames |> AList.map (fun name ->
-                        let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-                        div {
-                            order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (Cards.shortName name))
+                        Class "pin-row"
+                        isSelected |> AVal.map (fun s -> if s then Some (Class "pin-row-selected") else None)
+                        span {
+                            Class "pin-status"
+                            pinVal |> AVal.map (fun po ->
+                                match po with
+                                | Some p when p.Phase = PinPhase.Placement -> "\u25CB"
+                                | Some _ -> "\u25CF"
+                                | None -> "")
                         }
-                    )
+                        span {
+                            Class "pin-label"
+                            Dom.OnClick(fun _ ->
+                                let sel = AVal.force sp.SelectedPin
+                                if sel = Some id then env.Emit [ScanPinMsg (SelectPin None)]
+                                else env.Emit [ScanPinMsg (SelectPin (Some id))])
+                            pinVal |> AVal.map (fun po ->
+                                match po with
+                                | Some p ->
+                                    let a = p.Prism.AnchorPoint
+                                    sprintf "(%.1f, %.1f, %.1f)" a.X a.Y a.Z
+                                | None -> "(removed)")
+                        }
+                        button {
+                            Class "mb"; Attribute("title", "Focus")
+                            Dom.OnClick(fun _ ->
+                                env.Emit [ScanPinMsg (SelectPin (Some id)); ScanPinMsg (FocusPin id)])
+                            "\u2316"
+                        }
+                        button {
+                            Class "mb"; Attribute("title", "Edit")
+                            pinVal |> AVal.map (fun po ->
+                                match po with
+                                | Some p when p.Phase = PinPhase.Committed -> None
+                                | _ -> Some (Style [Display "none"]))
+                            Dom.OnClick(fun _ -> env.Emit [EditPin id])
+                            "\u270E"
+                        }
+                        button {
+                            Class "mb"; Attribute("title", "Delete")
+                            Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (DeletePin id)])
+                            "\u2715"
+                        }
+                    })
+            }
+        }
+
+    let private visTechSection (env : Env<Message>) (model : AdaptiveModel) =
+        collapsibleSection "Visualization" false (
+            div {
+                Class "lp-vis-body"
+                div {
+                    Class "lp-diff-row"
+                    compactToggle "Difference" model.DifferenceRendering (fun () ->
+                        env.Emit [ToggleDifferenceRendering])
+                    inlineRangeSlider
+                        ""
+                        0.0 20.0 0.1
+                        (fun lo hi -> sprintf "%.1f\u2013%.1fm" lo hi)
+                        model.MinDifferenceDepth model.MaxDifferenceDepth
+                        (fun lo hi ->
+                            env.Emit [SetMinDifferenceDepth lo; SetMaxDifferenceDepth hi])
+                }
+
+                collapsibleSection "Clipping Box" false (
+                    div {
+                        Class "lp-clip-body"
+                        compactToggle "Enabled" model.ClipActive (fun () ->
+                            env.Emit [ToggleClip])
+
+                        let bounds = model.ClipBounds
+                        let box = model.ClipBox
+                        let axisSlider (label : string) (getLo : Box3d -> float) (getHi : Box3d -> float)
+                                       (setLo : Box3d -> float -> Box3d) (setHi : Box3d -> float -> Box3d) =
+                            let lo = box |> AVal.map getLo
+                            let hi = box |> AVal.map getHi
+                            let b = AVal.force bounds
+                            let bLo = if b.IsInvalid then -100.0 else getLo b
+                            let bHi = if b.IsInvalid then 100.0 else getHi b
+                            let step = max 0.01 ((bHi - bLo) / 100.0)
+                            inlineRangeSlider label bLo bHi step
+                                (fun a b -> sprintf "%.1f\u2013%.1f" a b) lo hi (fun a b ->
+                                let cur = AVal.force box
+                                let cur = setLo cur a
+                                let cur = setHi cur b
+                                env.Emit [SetClipBox cur])
+
+                        axisSlider "X"
+                            (fun b -> b.Min.X) (fun b -> b.Max.X)
+                            (fun b v -> Box3d(V3d(v, b.Min.Y, b.Min.Z), b.Max))
+                            (fun b v -> Box3d(b.Min, V3d(v, b.Max.Y, b.Max.Z)))
+                        axisSlider "Y"
+                            (fun b -> b.Min.Y) (fun b -> b.Max.Y)
+                            (fun b v -> Box3d(V3d(b.Min.X, v, b.Min.Z), b.Max))
+                            (fun b v -> Box3d(b.Min, V3d(b.Max.X, v, b.Max.Z)))
+                        axisSlider "Z"
+                            (fun b -> b.Min.Z) (fun b -> b.Max.Z)
+                            (fun b v -> Box3d(V3d(b.Min.X, b.Min.Y, v), b.Max))
+                            (fun b v -> Box3d(b.Min, V3d(b.Max.X, b.Max.Y, v)))
+                    })
+            })
+
+    let leftPanel (env : Env<Message>) (model : AdaptiveModel) =
+        let placing = (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
+        div {
+            Class "left-panel"
+            model.MenuOpen |> AVal.map (fun o -> if o then Some (Class "open") else None)
+
+            placing |> AVal.map (fun p ->
+                if p then
+                    placementPanel env model
+                else
+                    div {
+                        Class "lp-normal"
+                        meshSection env model
+                        pinSection env model
+                        visTechSection env model
+                    })
+        }
+
+    let bottomBar (env : Env<Message>) (model : AdaptiveModel) =
+        div {
+            Class "bottom-bar"
+            div {
+                Class "bb-spacer"
+            }
+            button {
+                Class "bb-debug-toggle"
+                model.BottomBarExpanded |> AVal.map (fun e -> if e then Some (Class "active") else None)
+                Dom.OnClick(fun _ -> env.Emit [ToggleBottomBar])
+                model.BottomBarExpanded |> AVal.map (fun e -> if e then "\u25BE Debug" else "\u25B8 Debug")
+            }
+            div {
+                Class "bb-debug-panel"
+                model.BottomBarExpanded |> AVal.map (fun e -> if e then None else Some (Style [Display "none"]))
+
+                div {
+                    Class "bb-debug-row"
+                    span { Class "lp-sublabel"; "Reference axis" }
+                    compactButtonBar [
+                        "World Z",
+                            (model.ReferenceAxis |> AVal.map (fun m -> m = AlongWorldZ)),
+                            (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongWorldZ)])
+                        "Camera",
+                            (model.ReferenceAxis |> AVal.map (fun m -> m = AlongCameraView)),
+                            (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongCameraView)])
+                    ]
                 }
 
                 div {
-                    Class "tab-panel"
-                    Attribute("id", "hud-panel3")
-
-                    h3 { "Workspace Clip" }
-
-                    div {
-                        label {
-                            input {
-                                Attribute("type", "checkbox")
-                                Cards.checkedIf model.ClipActive
-                                Dom.OnClick(fun _ -> env.Emit [ToggleClip])
-                            }
-                            " Enable clipping"
-                        }
-                    }
-
-                    let slider (getValue : Box3d -> float)
-                               (setValue : Box3d -> float -> Box3d)
-                               (bMin : Box3d -> float) (bMax : Box3d -> float) =
-                        div {
-                            input {
-                                Attribute("type", "range")
-                                Attribute("step", "any")
-                                model.ClipBounds |> AVal.map (fun b ->
-                                    if b.IsInvalid then Some (Attribute("disabled", "disabled")) else None)
-                                model.ClipBounds |> AVal.map (fun b ->
-                                    if b.IsInvalid then None else Some (Attribute("min", sprintf "%.6g" (bMin b))))
-                                model.ClipBounds |> AVal.map (fun b ->
-                                    if b.IsInvalid then None else Some (Attribute("max", sprintf "%.6g" (bMax b))))
-                                model.ClipBox |> AVal.map (fun b ->
-                                    Some (Attribute("value", sprintf "%.6g" (getValue b))))
-                                Class "range-full"
-                                Dom.OnInput(fun e ->
-                                    Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [SetClipBox(setValue (AVal.force model.ClipBox) v)]))
-                            }
-                            model.ClipBox |> AVal.map (fun b -> sprintf "%.2f" (getValue b))
-                        }
-
-                    p { "X min" }
-                    slider (fun b -> b.Min.X)
-                           (fun box v -> Box3d(V3d(min v box.Max.X, box.Min.Y, box.Min.Z), box.Max))
-                           (fun b -> b.Min.X) (fun b -> b.Max.X)
-                    p { "X max" }
-                    slider (fun b -> b.Max.X)
-                           (fun box v -> Box3d(box.Min, V3d(max v box.Min.X, box.Max.Y, box.Max.Z)))
-                           (fun b -> b.Min.X) (fun b -> b.Max.X)
-
-                    p { "Y min" }
-                    slider (fun b -> b.Min.Y)
-                           (fun box v -> Box3d(V3d(box.Min.X, min v box.Max.Y, box.Min.Z), box.Max))
-                           (fun b -> b.Min.Y) (fun b -> b.Max.Y)
-                    p { "Y max" }
-                    slider (fun b -> b.Max.Y)
-                           (fun box v -> Box3d(box.Min, V3d(box.Max.X, max v box.Min.Y, box.Max.Z)))
-                           (fun b -> b.Min.Y) (fun b -> b.Max.Y)
-
-                    p { "Z min" }
-                    slider (fun b -> b.Min.Z)
-                           (fun box v -> Box3d(V3d(box.Min.X, box.Min.Y, min v box.Max.Z), box.Max))
-                           (fun b -> b.Min.Z) (fun b -> b.Max.Z)
-                    p { "Z max" }
-                    slider (fun b -> b.Max.Z)
-                           (fun box v -> Box3d(box.Min, V3d(box.Max.X, box.Max.Y, max v box.Min.Z)))
-                           (fun b -> b.Min.Z) (fun b -> b.Max.Z)
-
-                    button { "Reset to bounds"; Dom.OnClick(fun _ -> env.Emit [ResetClip]) }
+                    Class "bb-debug-row"
+                    inlineSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v ->
+                        env.Emit [CameraMessage (OrbitMessage.SetSpeed v)])
                 }
-                GuiPins.pinsTabPanel env model
+
+                div {
+                    Class "bb-debug-row"
+                    span { Class "lp-sublabel"; "Dataset" }
+                    span {
+                        Class "bb-debug-val"
+                        (model.ActiveDataset, model.ClipBounds, model.CommonCentroid)
+                        |||> AVal.map3 (fun ds bb cc ->
+                            let name = ds |> Option.defaultValue "(none)"
+                            if bb.IsInvalid then sprintf "%s — (bounds pending)" name
+                            else
+                                sprintf "%s   bounds %.1f–%.1f × %.1f–%.1f × %.1f–%.1f   centroid (%.1f,%.1f,%.1f)"
+                                    name bb.Min.X bb.Max.X bb.Min.Y bb.Max.Y bb.Min.Z bb.Max.Z
+                                    cc.X cc.Y cc.Z)
+                    }
+                }
+
+                div {
+                    Class "bb-mesh-info"
+                    model.MeshNames |> AList.map (fun name ->
+                        let centroid = model.DatasetCentroids |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue V3d.Zero)
+                        div {
+                            Class "bb-mesh-row"
+                            span { Class "bb-mesh-name"; Cards.shortName name }
+                            span {
+                                Class "bb-mesh-coord"
+                                centroid |> AVal.map (fun c ->
+                                    sprintf "centroid (%.1f, %.1f, %.1f)" c.X c.Y c.Z)
+                            }
+                        })
+                }
+
+                div {
+                    Class "bb-debug-log"
+                    model.DebugLog |> AList.map (fun line -> div { Class "bb-log-line"; line })
+                }
             }
         }
 
@@ -432,19 +527,16 @@ module Gui =
         div {
             Class "fullscreen-info"
             model.FullscreenOn |> AVal.map (fun on ->
-                if not on then Some (Style [Display "none"]) else None
-            )
+                if not on then Some (Style [Display "none"]) else None)
             model.ActiveDataset |> AVal.map (fun ds ->
                 match ds with
                 | Some d -> div { Class "fullscreen-info-title"; d }
-                | None   -> div { []  }
-            )
+                | None   -> div { []  })
             model.MeshNames |> AList.map (fun name ->
                 let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                 div {
                     order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (Cards.shortName name))
-                }
-            )
+                })
         }
 
     let coordinateDisplay (coord : aval<V3d option>) =
@@ -453,20 +545,5 @@ module Gui =
             coord |> AVal.map (fun c ->
                 match c with
                 | None   -> ""
-                | Some p -> sprintf "X: %.2f   Y: %.2f   Z: %.2f" p.X p.Y p.Z
-            )
-        }
-
-    let debugLogToggle (visible : cval<bool>) =
-        button {
-            Class "debug-toggle"
-            Dom.OnClick(fun _ -> transact (fun () -> visible.Value <- not visible.Value))
-            (visible :> aval<bool>) |> AVal.map (fun v -> if v then "▼ log" else "▲ log")
-        }
-
-    let debugLog (visible : aval<bool>) (model : AdaptiveModel) =
-        div {
-            Class "debug-log"
-            visible |> AVal.map (fun v -> if not v then Some (Style [Display "none"]) else None)
-            model.DebugLog |> AList.map (fun line -> div { line })
+                | Some p -> sprintf "X: %.2f   Y: %.2f   Z: %.2f" p.X p.Y p.Z)
         }

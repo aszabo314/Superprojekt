@@ -104,6 +104,7 @@ module BlitShader =
                 p.Y >= uniform.ClipMin.Y && p.Y <= uniform.ClipMax.Y &&
                 p.Z >= uniform.ClipMin.Z && p.Z <= uniform.ClipMax.Z
             let cyl = uniform.CylClip
+            let mutable cylBDist = 1.0e9
             if cyl.M00 <> 0.0 then
                 let anchor = V3d(cyl.M10, cyl.M11, cyl.M12)
                 let axis = V3d(cyl.M20, cyl.M21, cyl.M22)
@@ -116,14 +117,17 @@ module BlitShader =
                     axisProj >= -cyl.M03 &&
                     axisProj <= cyl.M02
                 insideClip <- insideClip && insideCyl
+                cylBDist <- min (abs (cyl.M01 - radialDist))
+                                (min (abs (cyl.M02 - axisProj)) (abs (-cyl.M03 - axisProj)))
             let mutable color = v.c
             if not uniform.IsGhost then
                 if not insideClip then
                     discard()
-                let bdist =
+                let boxBDist =
                         min (min (abs (uniform.ClipMin.X - p.X)) (abs (uniform.ClipMax.X - p.X)))
                             (min (min (abs (uniform.ClipMin.Y - p.Y)) (abs (uniform.ClipMax.Y - p.Y)))
                                  (min (abs (uniform.ClipMin.Z - p.Z)) (abs (uniform.ClipMax.Z - p.Z))))
+                let bdist = min boxBDist cylBDist
                 if bdist < 1.0 then
                     color <- lerp colorMap.[uniform.MeshIndex%5] color bdist
             else
@@ -306,8 +310,8 @@ module BlitShader =
             let r2 = Vec.lengthSquared ndc
             if r2 > 1.0 then discard()
             let r = sqrt r2
-            if r > 0.96 then
-                return V4d(0.15, 0.15, 0.15, 1.0)
+            if r > 0.93 then
+                return uniform?BorderColor
             else
             return colon.SampleLevel(uniform.TextureOffset + uniform.TextureScale * v.tc, uniform.SliceIndex, 0.0)
         }
@@ -334,12 +338,17 @@ module Shader =
     let headlight (v : Effects.Vertex) =
         fragment {
             let mutable c = v.c
-            if uniform.ColorMode <> 0 then
+            if uniform.ColorMode = 1 then
                 let n = v.n |> Vec.normalize
                 let toCam = uniform.CameraLocation - v.wp.XYZ |> Vec.normalize
                 let ndl = max 0.15 (abs (Vec.dot n toCam))
                 let baseC = falseColorMap.[uniform.MeshIndex % 6]
                 c <- V4d(baseC.XYZ * ndl, c.W)
+            elif uniform.ColorMode = 2 then
+                let n = v.n |> Vec.normalize
+                let toCam = uniform.CameraLocation - v.wp.XYZ |> Vec.normalize
+                let ndl = max 0.25 (abs (Vec.dot n toCam))
+                c <- V4d(ndl, ndl, ndl, c.W)
             return c
         }
 

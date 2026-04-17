@@ -82,6 +82,8 @@ type OrbitMessage =
 
     | UpdateCenter of V3d
 
+    | SetSpeed of float
+
     | Nothing
 
 
@@ -210,6 +212,8 @@ module OrbitController =
             OrbitState.withView { model with center = c; centerAnimation = None }
 
         | OrbitMessage.Nothing -> model
+
+        | SetSpeed v -> { model with speed = v }
 
         | UpdateCenter pt ->
             let pos       = model.view.Location

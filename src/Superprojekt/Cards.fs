@@ -7,8 +7,6 @@ open Aardvark.Dom
 
 module Cards =
 
-    let private coreSampleTrafo = PinGeometry.coreSampleTrafo
-
     let shortName (name : string) =
         let mesh =
             let s = name.IndexOf('/')
@@ -21,6 +19,14 @@ module Cards =
 
     let c4bToHex (c : C4b) =
         sprintf "#%02x%02x%02x" c.R c.G c.B
+
+    let parseFloat (s : string) =
+        match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+        | true, v -> Some v
+        | _ -> None
+
+    let checkedIf (v : aval<bool>) =
+        v |> AVal.map (fun on -> if on then Some (Attribute("checked", "checked")) else None)
 
     let encodeDiagramJson (pin : ScanPin) (svgW : float) (svgH : float) (pad : float) =
         let results = pin.CutResults |> Map.toList
@@ -52,16 +58,6 @@ module Cards =
             sprintf "{\"paths\":[%s],\"legend\":[%s],\"xMin\":%.4g,\"xMax\":%.4g,\"yMin\":%.4g,\"yMax\":%.4g}"
                 (paths |> String.concat ",") (legend |> String.concat ",") xMin xMax yMin yMax
 
-    let parseFloat (s : string) =
-        match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-        | true, v -> Some v
-        | _ -> None
-
-    let checkedIf (v : aval<bool>) =
-        v |> AVal.map (fun on -> if on then Some (Attribute("checked", "checked")) else None)
-
-
-
     let private projectToScreen (anchor : V3d) (viewTrafo : Trafo3d) (vpSize : V2i) =
         let aspect = float vpSize.X / max 1.0 (float vpSize.Y)
         let proj = Frustum.perspective 90.0 1.0 5000.0 aspect |> Frustum.projTrafo
@@ -81,16 +77,11 @@ module Cards =
         let y = max 0.0 (min pos.Y (vp.Y - size.Y))
         V2d(x, y)
 
-
-
     let private computeCardPos
         (card : Card)
-        (allCards : HashMap<CardId, Card>)
         (viewTrafo : Trafo3d)
         (vpSize : V2i)
-        (cardPositions : System.Collections.Generic.Dictionary<CardId, V2d>)
         : V2d option =
-
         match card.Attachment with
         | CardDragging(pos, _) -> Some pos
         | CardDetached pos -> Some pos
@@ -102,127 +93,75 @@ module Cards =
                     let pos = V2d(screenPt.X + card.Size.X * 0.4, screenPt.Y - card.Size.Y * 0.5 - 40.0)
                     Some (clampToViewport pos card.Size (V2d vpSize))
                 | None -> None
-            | AnchorToCard(parentId, edge) ->
-                match cardPositions.TryGetValue(parentId) with
-                | true, parentPos ->
-                    let parent = allCards |> HashMap.tryFind parentId
-                    let parentSize = parent |> Option.map (fun p -> p.Size) |> Option.defaultValue (V2d(310, 400))
-                    let pos =
-                        match edge with
-                        | EdgeBottom -> V2d(parentPos.X, parentPos.Y + parentSize.Y)
-                        | EdgeTop    -> V2d(parentPos.X, parentPos.Y - card.Size.Y)
-                        | EdgeRight  -> V2d(parentPos.X + parentSize.X, parentPos.Y)
-                        | EdgeLeft   -> V2d(parentPos.X - card.Size.X, parentPos.Y)
-                    Some (clampToViewport pos card.Size (V2d vpSize))
-                | _ -> None
 
-
-
-    let private stratigraphyContent (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
-        let svgW, svgH = 280.0, 140.0
-        let pad = 30.0
+    let private diagramSvg (selectedPin : aval<ScanPin option>) =
+        let svgW, svgH = 280.0, 130.0
+        let pad = 28.0
         div {
-            Class "card-strat-content"
+            Class "card-cut-diagram"
+            selectedPin |> AVal.map (fun po ->
+                let json =
+                    match po with
+                    | Some pin -> encodeDiagramJson pin svgW svgH pad
+                    | None -> "{\"paths\":[],\"legend\":[]}"
+                Some (Attribute("data-diagram", json)))
+            OnBoot [
+                "var el = __THIS__;"
+                "var last = '';"
+                "function render() {"
+                "  var raw = el.getAttribute('data-diagram') || '{}';"
+                "  if(raw === last) return;"
+                "  last = raw;"
+                "  try { var data = JSON.parse(raw); } catch(e) { var data = {}; }"
+                "  el.innerHTML = '';"
+                sprintf "  var ns = 'http://www.w3.org/2000/svg';"
+                sprintf "  var svg = document.createElementNS(ns, 'svg');"
+                sprintf "  svg.setAttribute('width', '%.0f');" svgW
+                sprintf "  svg.setAttribute('height', '%.0f');" svgH
+                sprintf "  svg.setAttribute('viewBox', '0 0 %.0f %.0f');" svgW svgH
+                "  svg.style.background = '#fafbfc'; svg.style.display = 'block';"
+                "  el.appendChild(svg);"
+                sprintf "  var ax = document.createElementNS(ns, 'line');"
+                sprintf "  ax.setAttribute('x1','%.0f'); ax.setAttribute('y1','%.0f');" pad (svgH - pad)
+                sprintf "  ax.setAttribute('x2','%.0f'); ax.setAttribute('y2','%.0f');" (svgW - pad) (svgH - pad)
+                "  ax.setAttribute('stroke','#cbd5e1'); ax.setAttribute('stroke-width','1');"
+                "  svg.appendChild(ax);"
+                sprintf "  var ay = document.createElementNS(ns, 'line');"
+                sprintf "  ay.setAttribute('x1','%.0f'); ay.setAttribute('y1','%.0f');" pad pad
+                sprintf "  ay.setAttribute('x2','%.0f'); ay.setAttribute('y2','%.0f');" pad (svgH - pad)
+                "  ay.setAttribute('stroke','#cbd5e1'); ay.setAttribute('stroke-width','1');"
+                "  svg.appendChild(ay);"
+                "  if(!data.paths || data.paths.length === 0) {"
+                "    var msg = document.createElementNS(ns, 'text');"
+                sprintf "    msg.setAttribute('x','%.0f'); msg.setAttribute('y','%.0f');" (svgW * 0.5) (svgH * 0.5)
+                "    msg.setAttribute('text-anchor','middle'); msg.setAttribute('fill','#94a3b8');"
+                "    msg.setAttribute('font-size','10');"
+                "    msg.textContent = 'Awaiting cut\u2026';"
+                "    svg.appendChild(msg);"
+                "    return;"
+                "  }"
+                "  data.paths.forEach(function(item) {"
+                "    var p = document.createElementNS(ns, 'path');"
+                "    p.setAttribute('d', item.d);"
+                "    p.setAttribute('stroke', item.c);"
+                "    p.setAttribute('stroke-width', '2');"
+                "    p.setAttribute('fill', 'none');"
+                "    svg.appendChild(p);"
+                "  });"
+                "}"
+                "render();"
+                "new MutationObserver(function(){render();}).observe(el, {attributes:true,attributeFilter:['data-diagram']});"
+            ]
+        }
+
+    let private pinCardBody (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
+        div {
+            Class "pin-card-body"
+
+            diagramSvg selectedPin
 
             div {
-                Class "card-diagram-root"
-                selectedPin |> AVal.map (fun pinOpt ->
-                    let json =
-                        match pinOpt with
-                        | Some pin -> encodeDiagramJson pin svgW svgH pad
-                        | None -> "{\"paths\":[],\"legend\":[]}"
-                    Some (Attribute("data-diagram", json)))
-                OnBoot [
-                    "var el = __THIS__;"
-                    "var last = '';"
-                    "var hadPaths = false;"
-                    "function render() {"
-                    "  var raw = el.getAttribute('data-diagram') || '{}';"
-                    "  if(raw === last) return;"
-                    "  try { var data = JSON.parse(raw); } catch(e) { var data = {}; }"
-                    "  var hasPaths = data.paths && data.paths.length > 0;"
-                    "  if(!hasPaths && hadPaths) return;"
-                    "  last = raw;"
-                    "  el.innerHTML = '';"
-                    sprintf "  var ns = 'http://www.w3.org/2000/svg';"
-                    sprintf "  var svg = document.createElementNS(ns, 'svg');"
-                    sprintf "  svg.setAttribute('width', '%.0f');" svgW
-                    sprintf "  svg.setAttribute('height', '%.0f');" svgH
-                    sprintf "  svg.setAttribute('viewBox', '0 0 %.0f %.0f');" svgW svgH
-                    "  svg.style.background = '#fafbfc';"
-                    "  svg.style.borderRadius = '3px';"
-                    "  svg.style.display = 'block';"
-                    "  el.appendChild(svg);"
-                    sprintf "  var ax = document.createElementNS(ns, 'line');"
-                    sprintf "  ax.setAttribute('x1','%.0f'); ax.setAttribute('y1','%.0f');" pad (svgH - pad)
-                    sprintf "  ax.setAttribute('x2','%.0f'); ax.setAttribute('y2','%.0f');" (svgW - pad) (svgH - pad)
-                    "  ax.setAttribute('stroke','#94a3b8'); ax.setAttribute('stroke-width','1');"
-                    "  svg.appendChild(ax);"
-                    sprintf "  var ay = document.createElementNS(ns, 'line');"
-                    sprintf "  ay.setAttribute('x1','%.0f'); ay.setAttribute('y1','%.0f');" pad pad
-                    sprintf "  ay.setAttribute('x2','%.0f'); ay.setAttribute('y2','%.0f');" pad (svgH - pad)
-                    "  ay.setAttribute('stroke','#94a3b8'); ay.setAttribute('stroke-width','1');"
-                    "  svg.appendChild(ay);"
-                    "  if(!hasPaths) {"
-                    "    var msg = document.createElementNS(ns, 'text');"
-                    sprintf "    msg.setAttribute('x','%.0f'); msg.setAttribute('y','%.0f');" (svgW * 0.5) (svgH * 0.5)
-                    "    msg.setAttribute('text-anchor','middle'); msg.setAttribute('fill','#94a3b8');"
-                    "    msg.setAttribute('font-size','11'); msg.setAttribute('font-family','system-ui,sans-serif');"
-                    "    msg.textContent = 'Awaiting cut data\u2026';"
-                    "    svg.appendChild(msg);"
-                    "    return;"
-                    "  }"
-                    "  hadPaths = true;"
-                    "  function addText(x,y,txt,anchor) {"
-                    "    var t = document.createElementNS(ns, 'text');"
-                    "    t.setAttribute('x',x); t.setAttribute('y',y);"
-                    "    t.setAttribute('font-size','9'); t.setAttribute('fill','#64748b');"
-                    "    t.setAttribute('font-family','system-ui,sans-serif');"
-                    "    if(anchor) t.setAttribute('text-anchor',anchor);"
-                    "    t.textContent = txt; svg.appendChild(t);"
-                    "  }"
-                    "  if(data.xMin!==undefined) {"
-                    sprintf "    addText(%.0f, %.0f, data.xMin.toFixed(1), 'start');" pad (svgH - pad + 12.0)
-                    sprintf "    addText(%.0f, %.0f, data.xMax.toFixed(1), 'end');" (svgW - pad) (svgH - pad + 12.0)
-                    sprintf "    addText(%.0f, %.0f, data.yMax.toFixed(1), 'end');" (pad - 4.0) (pad + 3.0)
-                    sprintf "    addText(%.0f, %.0f, data.yMin.toFixed(1), 'end');" (pad - 4.0) (svgH - pad + 3.0)
-                    "  }"
-                    "  var tip = document.createElementNS(ns, 'text');"
-                    "  tip.setAttribute('x','5'); tip.setAttribute('y','12');"
-                    "  tip.setAttribute('font-size','10'); tip.setAttribute('fill','#0f172a');"
-                    "  tip.setAttribute('font-family','system-ui,sans-serif');"
-                    "  tip.setAttribute('font-weight','600');"
-                    "  tip.style.pointerEvents = 'none';"
-                    "  svg.appendChild(tip);"
-                    "  var allPaths = [];"
-                    "  data.paths.forEach(function(item,idx) {"
-                    "    var p = document.createElementNS(ns, 'path');"
-                    "    p.setAttribute('d', item.d);"
-                    "    p.setAttribute('stroke', item.c);"
-                    "    p.setAttribute('stroke-width', '2');"
-                    "    p.setAttribute('fill', 'none');"
-                    "    p.style.cursor = 'pointer';"
-                    "    p.setAttribute('stroke-opacity', '0.85');"
-                    "    allPaths.push(p);"
-                    "    var leg = data.legend && data.legend[idx] ? data.legend[idx] : null;"
-                    "    p.addEventListener('mouseenter', function() {"
-                    "      allPaths.forEach(function(q) { q.setAttribute('stroke-opacity', q===p?'1':'0.2'); q.setAttribute('stroke-width', q===p?'3':'1.5'); });"
-                    "      if(leg) tip.textContent = leg.n;"
-                    "    });"
-                    "    p.addEventListener('mouseleave', function() {"
-                    "      allPaths.forEach(function(q) { q.setAttribute('stroke-opacity','0.85'); q.setAttribute('stroke-width','2'); });"
-                    "      tip.textContent = '';"
-                    "    });"
-                    "    svg.appendChild(p);"
-                    "  });"
-                    "}"
-                    "render();"
-                    "new MutationObserver(function(){render();}).observe(el, {attributes:true,attributeFilter:['data-diagram']});"
-                ]
-            }
-
-            div {
-                Class "strat-wrapper mt-4"
+                Class "pin-card-strat"
                 let isPlacing = (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
                 StratigraphyView.render env isPlacing selectedPin
                 div {
@@ -238,140 +177,34 @@ module Cards =
                         | Some (h, zLo, zHi, lo, up) ->
                             let gap = zHi - zLo
                             let pinTag = if h.Pinned then " · pinned" else ""
-                            sprintf "Between %s and %s · gap %.2f%s" (shortName lo) (shortName up) gap pinTag
+                            sprintf "%s \u2194 %s · %.2fm%s" (shortName lo) (shortName up) gap pinTag
                         | None -> "")
                 }
             }
-        }
 
-    let private controlsContent (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
-        div {
-            Class "card-controls-content"
             div {
-                Class "card-btn-row"
-                button {
-                    selectedPin |> AVal.map (fun po ->
-                        match po with
-                        | Some p when p.StratigraphyDisplay = Undistorted -> Some (Class "btn-active")
-                        | _ -> None)
-                    Dom.OnClick(fun _ ->
+                Class "pin-card-inline-controls"
+
+                let normalized = selectedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.StratigraphyDisplay = Normalized) |> Option.defaultValue false)
+                Primitives.compactButtonBar [
+                    "Flat",
+                    (normalized |> AVal.map not),
+                    (fun () ->
                         match AVal.force selectedPin with
                         | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Undistorted))]
                         | None -> ())
-                    "Undistorted"
-                }
-                button {
-                    selectedPin |> AVal.map (fun po ->
-                        match po with
-                        | Some p when p.StratigraphyDisplay = Normalized -> Some (Class "btn-active")
-                        | _ -> None)
-                    Dom.OnClick(fun _ ->
+                    "Normalized",
+                    normalized,
+                    (fun () ->
                         match AVal.force selectedPin with
                         | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Normalized))]
                         | None -> ())
-                    "Normalized"
-                }
-            }
-            div {
-                Class "card-btn-row"
-                button {
-                    selectedPin |> AVal.map (fun po ->
-                        match po with
-                        | Some p -> match p.CutPlane with CutPlaneMode.AlongAxis _ -> Some (Class "btn-active") | _ -> None
-                        | _ -> None)
-                    Dom.OnClick(fun _ ->
-                        match AVal.force selectedPin with
-                        | Some p ->
-                            match p.CutPlane with
-                            | CutPlaneMode.AlongAxis _ -> ()
-                            | CutPlaneMode.AcrossAxis _ -> env.Emit [ScanPinMsg (SetCutPlaneMode (CutPlaneMode.AlongAxis 0.0))]
-                        | None -> ())
-                    "Vertical"
-                }
-                button {
-                    selectedPin |> AVal.map (fun po ->
-                        match po with
-                        | Some p -> match p.CutPlane with CutPlaneMode.AcrossAxis _ -> Some (Class "btn-active") | _ -> None
-                        | _ -> None)
-                    Dom.OnClick(fun _ ->
-                        match AVal.force selectedPin with
-                        | Some p ->
-                            match p.CutPlane with
-                            | CutPlaneMode.AcrossAxis _ -> ()
-                            | CutPlaneMode.AlongAxis _ ->
-                                let mid = (p.Prism.ExtentForward - p.Prism.ExtentBackward) * 0.5
-                                env.Emit [ScanPinMsg (SetCutPlaneMode (CutPlaneMode.AcrossAxis mid))]
-                        | None -> ())
-                    "Horizontal"
-                }
-            }
-            div {
-                Class "card-btn-row"
-                button {
-                    selectedPin |> AVal.map (fun po ->
-                        match po with
-                        | Some p when p.GhostClip = GhostClipOn -> Some (Class "btn-active")
-                        | _ -> None)
-                    Dom.OnClick(fun _ ->
-                        match AVal.force selectedPin with
-                        | Some p ->
-                            let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn
-                            env.Emit [ScanPinMsg (SetGhostClip(p.Id, next))]
-                        | None -> ())
-                    "Ghost Clip"
-                }
-                button {
-                    selectedPin |> AVal.map (fun po ->
-                        match po with
-                        | Some p when p.ExtractedLines.ShowCutPlaneLines -> Some (Class "btn-active")
-                        | _ -> None)
-                    Dom.OnClick(fun _ ->
-                        match AVal.force selectedPin with
-                        | Some p -> env.Emit [ScanPinMsg (SetShowCutPlaneLines(p.Id, not p.ExtractedLines.ShowCutPlaneLines))]
-                        | None -> ())
-                    "Cut Lines"
-                }
-                button {
-                    selectedPin |> AVal.map (fun po ->
-                        match po with
-                        | Some p when p.ExtractedLines.ShowCylinderEdgeLines -> Some (Class "btn-active")
-                        | _ -> None)
-                    Dom.OnClick(fun _ ->
-                        match AVal.force selectedPin with
-                        | Some p -> env.Emit [ScanPinMsg (SetShowCylinderEdgeLines(p.Id, not p.ExtractedLines.ShowCylinderEdgeLines))]
-                        | None -> ())
-                    "Edge Lines"
-                }
-            }
-            div {
-                Class "card-toggles"
-                label {
-                    input {
-                        Attribute("type", "checkbox")
-                        checkedIf model.ColorMode
-                        Dom.OnChange(fun _ -> env.Emit [ToggleColorMode])
-                    }
-                    "Color"
-                }
-                label {
-                    input {
-                        Attribute("type", "checkbox")
-                        checkedIf model.ScanPins.BetweenSpaceEnabled
-                        Dom.OnChange(fun _ -> env.Emit [ScanPinMsg ToggleBetweenSpaceEnabled])
-                    }
-                    "Between"
-                }
+                ]
+
+                Primitives.compactToggle "Between-space" model.ScanPins.BetweenSpaceEnabled (fun () ->
+                    env.Emit [ScanPinMsg ToggleBetweenSpaceEnabled])
             }
         }
-
-
-
-    let private cardTitle (content : CardContent) =
-        match content with
-        | StratigraphyDiagram _ -> "Stratigraphy"
-        | PinControls _ -> "Controls"
-
-
 
     let renderCards (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =
         let allPinsVal = model.ScanPins.Pins |> AMap.toAVal
@@ -383,9 +216,7 @@ module Cards =
 
         let cardsSnapshot = model.CardSystem.Cards |> AMap.toAVal
 
-
         let dragState = cval<(CardId * V2d * V2d) option> None
-
 
         let collapsedSet = cval (HashSet.empty<CardId>)
 
@@ -393,43 +224,21 @@ module Cards =
             (cardsSnapshot, viewTrafo, vpSize)
             |||> AVal.map3 (fun cards vt sz ->
                 let dict = System.Collections.Generic.Dictionary<CardId, V2d>()
-                let cardMap = cards
-                // First pass: world-anchored cards
-                for (id, card) in HashMap.toSeq cardMap do
+                for (id, card) in HashMap.toSeq cards do
                     if card.Visible then
-                        match card.Anchor with
-                        | AnchorToWorldPoint _ ->
-                            match computeCardPos card cardMap vt sz dict with
-                            | Some pos -> dict.[id] <- pos
-                            | None -> ()
-                        | _ -> ()
-                // Second pass: card-anchored sub-cards
-                for (id, card) in HashMap.toSeq cardMap do
-                    if card.Visible && not (dict.ContainsKey id) then
-                        match computeCardPos card cardMap vt sz dict with
+                        match computeCardPos card vt sz with
                         | Some pos -> dict.[id] <- pos
                         | None -> ()
                 dict)
 
-        // Drag-aware positions: dragged card uses local pos, sub-cards follow via delta
         let effectivePositions =
-            (cardPositions, cardsSnapshot, dragState :> aval<_>)
-            |||> AVal.map3 (fun baseDict cards drag ->
+            (cardPositions, dragState :> aval<_>)
+            ||> AVal.map2 (fun baseDict drag ->
                 match drag with
                 | None -> baseDict
                 | Some (dragId, dragPos, _) ->
                     let dict = System.Collections.Generic.Dictionary<CardId, V2d>(baseDict)
-                    let baseParentPos = match baseDict.TryGetValue(dragId) with true, p -> p | _ -> dragPos
-                    let delta = dragPos - baseParentPos
                     dict.[dragId] <- dragPos
-                    for (id, card) in HashMap.toSeq cards do
-                        if id <> dragId && card.Visible then
-                            match card.Anchor with
-                            | AnchorToCard(pid, _) when pid = dragId ->
-                                match baseDict.TryGetValue(id) with
-                                | true, cp -> dict.[id] <- cp + delta
-                                | _ -> ()
-                            | _ -> ()
                     dict)
 
         let anchorScreenPositions =
@@ -448,7 +257,6 @@ module Cards =
         div {
             Class "card-overlay"
 
-            // Leader lines SVG — rendered via OnBoot + MutationObserver
             div {
                 Attribute("id", "card-leader-lines")
                 (cardPositions, anchorScreenPositions, cardsSnapshot) |||> AVal.map3 (fun posDict ancDict cards ->
@@ -468,21 +276,7 @@ module Cards =
                                     let cpy = ay - 30.0
                                     sb.AppendFormat("{0},{1},{2},{3},{4},{5}|", ax, ay, cpx, cpy, cx, cy) |> ignore
                                 | _ -> ()
-                            | CardAttached ->
-                                // Show leader line if card is clamped (far from anchor)
-                                match posDict.TryGetValue(id), ancDict.TryGetValue(id) with
-                                | (true, cardPos), (true, ancPos) ->
-                                    let dist = (V2d(cardPos.X + card.Size.X * 0.5, cardPos.Y) - ancPos).Length
-                                    if dist > 80.0 then
-                                        let cx = cardPos.X + card.Size.X * 0.5
-                                        let cy = cardPos.Y
-                                        let ax = ancPos.X
-                                        let ay = ancPos.Y
-                                        let dx = cx - ax
-                                        let cpx = ax + dx * 0.5
-                                        let cpy = ay - 30.0
-                                        sb.AppendFormat("{0},{1},{2},{3},{4},{5}|", ax, ay, cpx, cpy, cx, cy) |> ignore
-                                | _ -> ()
+                            | CardAttached -> ()
                     Some (Attribute("data-leaders", sb.ToString())))
                 OnBoot [
                     "var el = __THIS__;"
@@ -498,7 +292,7 @@ module Cards =
                     "    var v = seg.split(',').map(Number);"
                     "    var p = document.createElementNS(ns, 'path');"
                     "    p.setAttribute('d', 'M'+v[0]+','+v[1]+' Q'+v[2]+','+v[3]+' '+v[4]+','+v[5]);"
-                    "    p.setAttribute('stroke', 'rgba(100,116,139,0.4)');"
+                    "    p.setAttribute('stroke', 'rgba(100,116,139,0.45)');"
                     "    p.setAttribute('stroke-width', '1');"
                     "    p.setAttribute('stroke-dasharray', '4,3');"
                     "    p.setAttribute('fill', 'none');"
@@ -511,21 +305,16 @@ module Cards =
                 ]
             }
 
-            // Render each card (sorted by ZOrder so later = on top in DOM)
             cardsSnapshot
             |> AVal.map (fun cards ->
                 cards |> HashMap.toSeq
+                |> Seq.filter (fun (_, c) -> match c.Content with StratigraphyDiagram _ -> true | _ -> false)
                 |> Seq.sortBy (fun (_, c) -> c.ZOrder)
                 |> Seq.map fst
                 |> IndexList.ofSeq)
             |> AList.ofAVal
             |> AList.map (fun cardId ->
                 let cardVal = cardsSnapshot |> AVal.map (fun cards -> HashMap.tryFind cardId cards)
-                let posVal = cardPositions |> AVal.map (fun dict ->
-                    match dict.TryGetValue(cardId) with
-                    | true, pos -> Some pos
-                    | _ -> None)
-
                 let effectivePos = effectivePositions |> AVal.map (fun dict ->
                     match dict.TryGetValue(cardId) with
                     | true, pos -> Some pos
@@ -535,7 +324,7 @@ module Cards =
                     (collapsedSet :> aval<_>) |> AVal.map (fun s -> HashSet.contains cardId s)
 
                 div {
-                    Class "card"
+                    Class "card pin-card"
                     (cardVal, effectivePos) ||> AVal.map2 (fun cOpt pOpt ->
                         match cOpt, pOpt with
                         | Some card, Some pos when card.Visible ->
@@ -548,7 +337,6 @@ module Cards =
                         | _ ->
                             Some (Style [Display "none"]))
 
-                    // Title bar: drag region + buttons side by side
                     div {
                         Class "card-titlebar"
 
@@ -557,12 +345,6 @@ module Cards =
                             | Some c -> match c.Attachment with CardDetached _ -> true | _ -> false
                             | None -> false)
 
-                        let isSubCard = cardVal |> AVal.map (fun cOpt ->
-                            match cOpt with
-                            | Some c -> match c.Anchor with AnchorToCard _ -> true | _ -> false
-                            | None -> false)
-
-                        // Drag handle (takes remaining space via flex:1)
                         div {
                             Class "card-drag-handle"
                             Dom.OnPointerDown((fun e ->
@@ -588,43 +370,44 @@ module Cards =
                                 | _ -> ()
                             ), pointerCapture = true)
 
-                            cardVal |> AVal.map (fun cOpt ->
-                                match cOpt with
-                                | Some card -> cardTitle card.Content
-                                | None -> "")
+                            selectedPin |> AVal.map (fun po ->
+                                match po with
+                                | Some pin ->
+                                    let p = pin.Prism.AnchorPoint
+                                    sprintf "Pin  (%.1f, %.1f, %.1f)" p.X p.Y p.Z
+                                | None -> "Pin")
                         }
 
-                        // Re-dock chevron (only when detached)
                         button {
-                            Class "card-btn-dock"
+                            Class "card-btn-reattach"
+                            Attribute("title", "Reattach to pin")
                             isDetached |> AVal.map (fun d -> if d then None else Some (Style [Display "none"]))
                             Dom.OnClick(fun _ -> env.Emit [CardMsg (RedockCard cardId)])
-                            "\u25c2"
+                            "\U0001F4CC"
                         }
-                        // Collapse X (sub-cards only)
                         button {
-                            Class "card-btn-close"
-                            isSubCard |> AVal.map (fun sub -> if sub then None else Some (Style [Display "none"]))
+                            Class "card-btn-collapse"
+                            Attribute("title", "Collapse")
                             Dom.OnClick(fun _ ->
                                 transact (fun () ->
                                     let s = collapsedSet.Value
                                     if HashSet.contains cardId s then collapsedSet.Value <- HashSet.remove cardId s
                                     else collapsedSet.Value <- HashSet.add cardId s))
-                            isCollapsed |> AVal.map (fun c -> if c then "+" else "\u00d7")
+                            isCollapsed |> AVal.map (fun c -> if c then "+" else "\u2013")
+                        }
+                        button {
+                            Class "card-btn-close"
+                            Attribute("title", "Deselect pin")
+                            Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPin None)])
+                            "\u00d7"
                         }
                     }
 
-                    // Content area (hidden when collapsed)
                     div {
                         Class "card-body"
                         isCollapsed |> AVal.map (fun c ->
                             if c then Some (Style [Display "none"]) else None)
-
-                        let contentType = AVal.force cardVal |> Option.map (fun c -> c.Content)
-                        match contentType with
-                        | Some (StratigraphyDiagram _) -> stratigraphyContent env model selectedPin
-                        | Some (PinControls _) -> controlsContent env model selectedPin
-                        | None -> ()
+                        pinCardBody env model selectedPin
                     }
                 }
             )

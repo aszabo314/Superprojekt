@@ -38,6 +38,15 @@ type Message =
     | ToggleColorMode
     | CardMsg of CardMessage
     | ExploreMsg of ExploreModeMessage
+    | SetRenderingMode of RenderingMode
+    | ToggleMeshSolo of string
+    | ShowAllMeshes
+    | HideAllMeshes
+    | ResetCamera
+    | ToggleExplorePopover
+    | ToggleBottomBar
+    | SetRevolverRadius of float
+    | EditPin of ScanPinId
 
 and ExploreModeMessage =
     | SetExploreEnabled of bool
@@ -81,27 +90,28 @@ module CardUpdate =
 
     let private cardContentPinId (c : CardContent) =
         match c with
-        | StratigraphyDiagram id | PinControls id -> id
+        | StratigraphyDiagram id -> id
 
     let update (msg : CardMessage) (cs : CardSystemModel) =
         match msg with
         | CreateCardsForPin(pinId, anchor) ->
-            let hasCards =
-                cs.Cards |> HashMap.exists (fun _ c -> cardContentPinId c.Content = pinId)
-            if hasCards then
+            let hasCard =
+                cs.Cards |> HashMap.exists (fun _ c ->
+                    match c.Content with StratigraphyDiagram id when id = pinId -> true | _ -> false)
+            if hasCard then
                 let cards = cs.Cards |> HashMap.map (fun _ c ->
-                    if cardContentPinId c.Content = pinId then { c with Visible = true; Anchor = match c.Anchor with AnchorToWorldPoint _ -> AnchorToWorldPoint anchor | a -> a }
-                    else { c with Visible = false })
+                    match c.Content with
+                    | StratigraphyDiagram id when id = pinId ->
+                        { c with Visible = true; Anchor = AnchorToWorldPoint anchor }
+                    | _ -> { c with Visible = false })
                 { cs with Cards = cards }
             else
                 let hideOthers = cs.Cards |> HashMap.map (fun _ c -> { c with Visible = false })
                 let stratId = CardId.create()
-                let ctrlId = CardId.create()
                 let z = cs.NextZOrder
-                let strat = { Id = stratId; Anchor = AnchorToWorldPoint anchor; Attachment = CardAttached; Size = V2d(310, 385); Content = StratigraphyDiagram pinId; Visible = true; ZOrder = z }
-                let ctrl  = { Id = ctrlId;  Anchor = AnchorToCard(stratId, EdgeBottom); Attachment = CardAttached; Size = V2d(310, 160); Content = PinControls pinId; Visible = true; ZOrder = z + 1 }
-                let cards = hideOthers |> HashMap.add stratId strat |> HashMap.add ctrlId ctrl
-                { cs with Cards = cards; NextZOrder = z + 2 }
+                let strat = { Id = stratId; Anchor = AnchorToWorldPoint anchor; Attachment = CardAttached; Size = V2d(310, 430); Content = StratigraphyDiagram pinId; Visible = true; ZOrder = z }
+                let cards = hideOthers |> HashMap.add stratId strat
+                { cs with Cards = cards; NextZOrder = z + 1 }
 
         | RemoveCardsForPin pinId ->
             let cards = cs.Cards |> HashMap.map (fun _ c ->
@@ -394,7 +404,17 @@ module Update =
         | DatasetsLoaded datasets ->
             { model with Datasets = datasets |> Array.toList }
         | SetActiveDataset dataset ->
-            { model with ActiveDataset = Some dataset }
+            if model.ActiveDataset = Some dataset then model
+            else
+                { model with
+                    ActiveDataset = Some dataset
+                    ScanPins = ScanPinModel.initial
+                    Filtered = HashMap.empty
+                    FilterCenter = None
+                    MeshSolo = NoSolo
+                    Explore = { model.Explore with Enabled = false }
+                    ExplorePopoverOpen = false
+                    CardSystem = { model.CardSystem with Cards = model.CardSystem.Cards |> HashMap.map (fun _ c -> { c with Visible = false }) } }
         | SetDatasetScale(dataset, scale) ->
             { model with DatasetScales = Map.add dataset scale model.DatasetScales }
         | JumpToMesh meshName ->
@@ -410,6 +430,48 @@ module Update =
             model
         | ToggleColorMode ->
             { model with ColorMode = not model.ColorMode }
+        | SetRenderingMode m ->
+            { model with RenderingMode = m; ColorMode = (m = Shaded) }
+        | ToggleMeshSolo name ->
+            match model.MeshSolo with
+            | Solo(soloName, restore) when soloName = name ->
+                { model with MeshVisible = restore; MeshSolo = NoSolo }
+            | Solo(_, restore) ->
+                let vis = restore |> Map.map (fun k _ -> k = name)
+                { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
+            | NoSolo ->
+                let restore = model.MeshVisible
+                let vis =
+                    model.MeshNames |> IndexList.toSeq
+                    |> Seq.map (fun n -> n, n = name) |> Map.ofSeq
+                { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
+        | ShowAllMeshes ->
+            let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, true) |> Map.ofSeq
+            { model with MeshVisible = vis; MeshSolo = NoSolo }
+        | HideAllMeshes ->
+            let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, false) |> Map.ofSeq
+            { model with MeshVisible = vis; MeshSolo = NoSolo }
+        | ResetCamera ->
+            let center, radius =
+                if model.ClipBounds.IsInvalid then V3d.Zero, 50.0
+                else V3d.Zero, max 1.0 (model.ClipBounds.Size.Length * 0.6)
+            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, center))]
+            env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
+            model
+        | ToggleExplorePopover ->
+            { model with ExplorePopoverOpen = not model.ExplorePopoverOpen }
+        | ToggleBottomBar ->
+            { model with BottomBarExpanded = not model.BottomBarExpanded }
+        | SetRevolverRadius r ->
+            { model with RevolverSettings = { model.RevolverSettings with CircleRadius = max 20.0 (min 400.0 r) } }
+        | EditPin id ->
+            let sp = model.ScanPins
+            match HashMap.tryFind id sp.Pins with
+            | Some pin ->
+                let pin = { pin with Phase = PinPhase.Placement }
+                let sp = { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id; PlacingMode = None }
+                { model with ScanPins = sp }
+            | None -> model
         | CardMsg msg ->
             { model with CardSystem = CardUpdate.update msg model.CardSystem }
         | ExploreMsg msg ->
@@ -534,6 +596,18 @@ module Update =
                         } |> ignore
                     | None -> ()
                 | None -> ()
+            let sp' =
+                let selChanged = sp'.SelectedPin <> sp.SelectedPin
+                if not selChanged then sp'
+                else
+                    let pins =
+                        sp'.Pins |> HashMap.map (fun _ pin ->
+                            if pin.Phase = PinPhase.Committed then
+                                let want =
+                                    if sp'.SelectedPin = Some pin.Id then GhostClipOn else GhostClipOff
+                                if pin.GhostClip = want then pin else { pin with GhostClip = want }
+                            else pin)
+                    { sp' with Pins = pins }
             let model = { model with ScanPins = sp' }
             let selChanged = sp'.SelectedPin <> sp.SelectedPin || sp'.ActivePlacement <> sp.ActivePlacement
             if selChanged then
@@ -562,10 +636,8 @@ module Update =
                         let cs = model.CardSystem
                         let cards = cs.Cards |> HashMap.map (fun _ c ->
                             match c.Content with
-                            | StratigraphyDiagram pid | PinControls pid when pid = id ->
-                                match c.Anchor with
-                                | AnchorToWorldPoint _ -> { c with Anchor = AnchorToWorldPoint anchor }
-                                | _ -> c
+                            | StratigraphyDiagram pid when pid = id ->
+                                { c with Anchor = AnchorToWorldPoint anchor }
                             | _ -> c)
                         { model with CardSystem = { cs with Cards = cards } }
                     | None -> model

@@ -8,6 +8,13 @@ open Aardvark.Dom
 
 module SceneGraph =
 
+    let private meshPalette =
+        [| V4d(0.894, 0.102, 0.110, 1.0); V4d(0.216, 0.494, 0.722, 1.0)
+           V4d(0.302, 0.686, 0.290, 1.0); V4d(0.596, 0.306, 0.639, 1.0)
+           V4d(1.000, 0.498, 0.000, 1.0); V4d(1.000, 1.000, 0.200, 1.0)
+           V4d(0.651, 0.337, 0.157, 1.0); V4d(0.969, 0.506, 0.749, 1.0)
+           V4d(0.600, 0.600, 0.600, 1.0) |]
+
     let private boxPos =
         [|  V3f(-0.5f, -0.5f, -0.5f); V3f( 0.5f, -0.5f, -0.5f); V3f( 0.5f,  0.5f, -0.5f); V3f(-0.5f,  0.5f, -0.5f)
             V3f(-0.5f, -0.5f,  0.5f); V3f( 0.5f, -0.5f,  0.5f); V3f( 0.5f,  0.5f,  0.5f); V3f(-0.5f,  0.5f,  0.5f) |]
@@ -110,32 +117,34 @@ module SceneGraph =
             (colorArrTex       : aval<ITexture>)
             (viewportSize      : aval<V2i>)
             (sliceIndex        : aval<int>)
-            (renderPositionNdc : aval<option<V2d>>) =
-        let pixelSize = 200
+            (renderPositionNdc : aval<option<V2d>>)
+            (pixelSize         : aval<float>)
+            (borderColor       : aval<V4d>) =
         sg {
             Sg.Active revolverActive
             Sg.NoEvents
             let t =
-                (renderPositionNdc, viewportSize) ||> AVal.map2 (fun ndc size ->
+                (renderPositionNdc, viewportSize, pixelSize) |||> AVal.map3 (fun ndc size ps ->
                     match ndc with
                     | Some ndc ->
-                        let scale = float pixelSize / V2d size
+                        let scale = ps / V2d size
                         Trafo3d.Scale(scale.X, scale.Y, 1.0) * Trafo3d.Translation(ndc.X, ndc.Y, 0.0)
                     | None ->
                         Trafo3d.Scale(0.0)
                 )
             let textureOffset =
-                (revolverBase, viewportSize) ||> AVal.map2 (fun ndc size ->
+                (revolverBase, viewportSize, pixelSize) |||> AVal.map3 (fun ndc size ps ->
                     match ndc with
                     | Some ndc ->
                         let tc = (ndc + V2d.II) * 0.5
-                        tc - 0.5 * V2d(pixelSize, pixelSize) / V2d size
+                        tc - 0.5 * V2d(ps, ps) / V2d size
                     | None -> V2d.Zero
                 )
-            let textureScale = viewportSize |> AVal.map (fun s -> V2d pixelSize / V2d s)
+            let textureScale = (viewportSize, pixelSize) ||> AVal.map2 (fun s ps -> V2d(ps, ps) / V2d s)
             Sg.Uniform("TextureOffset", textureOffset)
             Sg.Uniform("TextureScale",  textureScale)
             Sg.Uniform("SliceIndex",    sliceIndex)
+            Sg.Uniform("BorderColor",   borderColor)
             Sg.View Trafo3d.Identity
             Sg.Proj Trafo3d.Identity
             Sg.Uniform("ColorTexture",  colorArrTex)
@@ -284,16 +293,22 @@ module SceneGraph =
                 }
             ) |> AList.toASet
 
+        let diskRadius = model.RevolverSettings |> AVal.map (fun r -> r.CircleRadius)
         let diskNodes =
             model.MeshNames |> AList.map (fun name ->
                 let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                 let renderPos =
-                    (revolverBase, order, info.ViewportSize) |||> AVal.map3 (fun p o size ->
+                    AVal.custom (fun t ->
+                        let p = revolverBase.GetValue(t)
+                        let o = order.GetValue(t)
+                        let size = info.ViewportSize.GetValue(t)
+                        let ps = diskRadius.GetValue(t)
                         match p with
-                        | Some p -> Some (p + 2.0 * float o * (V2d(0.0, 200.0) / V2d size))
+                        | Some p -> Some (p + 2.0 * float o * (V2d(0.0, ps) / V2d size))
                         | None   -> None
                     )
-                disk revolverActive revolverBase colorArrTex info.ViewportSize (sliceOf name) renderPos
+                let borderCol = order |> AVal.map (fun o -> meshPalette.[o % meshPalette.Length])
+                disk revolverActive revolverBase colorArrTex info.ViewportSize (sliceOf name) renderPos diskRadius borderCol
             ) |> AList.toASet
 
         let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)

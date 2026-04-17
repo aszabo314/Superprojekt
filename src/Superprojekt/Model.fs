@@ -15,6 +15,24 @@ type ExploreHighlightMode =
     | DisagreementOnly
     | Combined
 
+type RenderingMode =
+    | Textured
+    | Shaded
+    | WhiteSurface
+
+type MeshSoloState =
+    | NoSolo
+    | Solo of name:string * restore:Map<string,bool>
+
+type RevolverSettings =
+    {
+        CircleRadius    : float
+        MeshOrderOffset : int
+    }
+
+module RevolverSettings =
+    let initial = { CircleRadius = 100.0; MeshOrderOffset = 0 }
+
 type ExploreMode =
     {
         Enabled            : bool
@@ -75,6 +93,12 @@ type Model =
         Explore               : ExploreMode
         ColorMode             : bool
         CardSystem            : CardSystemModel
+
+        RenderingMode       : RenderingMode
+        MeshSolo            : MeshSoloState
+        RevolverSettings    : RevolverSettings
+        ExplorePopoverOpen  : bool
+        BottomBarExpanded   : bool
     }
 
 module Model =
@@ -112,4 +136,10 @@ module Model =
             Explore               = ExploreMode.initial
             ColorMode             = false
             CardSystem            = CardSystemModel.initial
+
+            RenderingMode       = Textured
+            MeshSolo            = NoSolo
+            RevolverSettings    = RevolverSettings.initial
+            ExplorePopoverOpen  = false
+            BottomBarExpanded   = false
         }

@@ -1,5 +1,5 @@
-//6a805d07-727a-a0a5-bb82-9d62655a011b
-//7dbbbb6f-9394-55f2-11c1-923b967649f5
+//3e48f56a-c3a7-3fee-772a-361c42dff20c
+//af726993-3277-7144-bd50-21be34f89db9
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -42,6 +42,11 @@ type AdaptiveModel(value : Model) =
     let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
     let _ColorMode_ = FSharp.Data.Adaptive.cval(value.ColorMode)
     let _CardSystem_ = AdaptiveCardSystemModel(value.CardSystem)
+    let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
+    let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
+    let _RevolverSettings_ = FSharp.Data.Adaptive.cval(value.RevolverSettings)
+    let _ExplorePopoverOpen_ = FSharp.Data.Adaptive.cval(value.ExplorePopoverOpen)
+    let _BottomBarExpanded_ = FSharp.Data.Adaptive.cval(value.BottomBarExpanded)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -80,6 +85,11 @@ type AdaptiveModel(value : Model) =
             _Explore_.Value <- value.Explore
             _ColorMode_.Value <- value.ColorMode
             _CardSystem_.Update(value.CardSystem)
+            _RenderingMode_.Value <- value.RenderingMode
+            _MeshSolo_.Value <- value.MeshSolo
+            _RevolverSettings_.Value <- value.RevolverSettings
+            _ExplorePopoverOpen_.Value <- value.ExplorePopoverOpen
+            _BottomBarExpanded_.Value <- value.BottomBarExpanded
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -111,4 +121,9 @@ type AdaptiveModel(value : Model) =
     member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>
     member __.ColorMode = _ColorMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CardSystem = _CardSystem_
+    member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
+    member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
+    member __.RevolverSettings = _RevolverSettings_ :> FSharp.Data.Adaptive.aval<RevolverSettings>
+    member __.ExplorePopoverOpen = _ExplorePopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.BottomBarExpanded = _BottomBarExpanded_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

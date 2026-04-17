@@ -17,7 +17,6 @@ module View =
         let cursorPosition = cval None
         let shiftHeld      = cval false
         let spaceHeld      = cval false
-        let logVisible     = cval false
         let hoverCoord     = cval<V3d option> None
         let viewportSize   = cval (V2i(1, 1))
 
@@ -37,13 +36,6 @@ module View =
                 "document.body.classList.add('loaded');"
             ]
 
-            Dom.OnMouseWheel((fun e ->
-                if e.Shift || spaceHeld |> AVal.force then
-                    env.Emit [ CycleMeshOrder (sign e.DeltaY) ]
-                    false
-                else
-                    true
-            ), true)
 
             renderControl {
                 RenderControl.Samples 1
@@ -102,7 +94,12 @@ module View =
                     let cc = AVal.force model.CommonCentroid
                     let worldPos = e.WorldPosition / scale + cc
                     let inPlacement = (AVal.force model.ScanPins.PlacingMode).IsSome
-                    if inPlacement then
+                    let activePlacement = (AVal.force model.ScanPins.ActivePlacement).IsSome
+                    if inPlacement && not activePlacement then
+                        let camFwd = (AVal.force view).Forward.GetViewDirectionLH() |> Vec.normalize
+                        env.Emit [ScanPinMsg (SetAnchor(worldPos, e.WorldPosition, V3d camFwd))]
+                        false
+                    elif activePlacement && e.Ctrl && e.Button = Button.Left then
                         let camFwd = (AVal.force view).Forward.GetViewDirectionLH() |> Vec.normalize
                         env.Emit [ScanPinMsg (SetAnchor(worldPos, e.WorldPosition, V3d camFwd))]
                         false
@@ -242,12 +239,12 @@ module View =
                 | _ -> ()
             )
 
-            Gui.burgerButton env
-            Gui.hudTabs env model
+            Gui.topBar env model
+            Gui.revolverBar env model
+            Gui.leftPanel env model
+            Gui.bottomBar env model
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
             Gui.fullscreenInfo model
-            Gui.debugLogToggle logVisible
-            Gui.debugLog (logVisible :> aval<bool>) model
             Gui.coordinateDisplay (hoverCoord :> aval<V3d option>)
         }
 

@@ -366,113 +366,116 @@ module StratigraphyView =
         let hovIdx = hoverGeo |> AVal.map (fun (_, _, i) -> ArrayBuffer i :> IBuffer)
         let hovCnt = hoverGeo |> AVal.map (fun (_, _, i) -> i.Length)
 
-        renderControl {
-            RenderControl.Samples 1
-            Class "strat-view"
+        div {
+            Class "strat-view-container"
+            renderControl {
+                RenderControl.Samples 1
+                Class "strat-view"
 
-            Sg.View (AVal.constant Trafo3d.Identity)
-            Sg.Proj (AVal.constant (Frustum.ortho (Box3d(V3d(0.0, 0.0, -1.0), V3d(1.0, 1.0, 1.0))) |> Frustum.projTrafo))
+                Sg.View (AVal.constant Trafo3d.Identity)
+                Sg.Proj (AVal.constant (Frustum.ortho (Box3d(V3d(0.0, 0.0, -1.0), V3d(1.0, 1.0, 1.0))) |> Frustum.projTrafo))
 
-            let! size = RenderControl.ViewportSize
+                let! size = RenderControl.ViewportSize
 
-            let dragging = cval false
+                let dragging = cval false
 
-            let emitCutFromPointer (px : int) (py : int) =
-                if AVal.force isPlacing then
-                    let sz = AVal.force size
-                    let x = float px / float sz.X |> clamp 0.0 1.0
-                    let y = 1.0 - float py / float sz.Y |> clamp 0.0 1.0
-                    match AVal.force selectedPin with
-                    | Some pin ->
-                        match pin.CutPlane with
-                        | CutPlaneMode.AcrossAxis _ ->
-                            match pin.Stratigraphy with
-                            | Some data ->
-                                let z = yToZ data pin.StratigraphyDisplay x y
-                                env.Emit [ScanPinMsg (SetCutPlaneDistance z)]
-                            | None -> ()
-                        | CutPlaneMode.AlongAxis _ ->
-                            let angle = x * 360.0
-                            env.Emit [ScanPinMsg (SetCutPlaneAngle angle)]
-                    | None -> ()
-
-            let emitHoverFromPointer (px : int) (py : int) =
-                match AVal.force selectedPin with
-                | Some pin ->
-                    match pin.Stratigraphy with
-                    | Some data ->
+                let emitCutFromPointer (px : int) (py : int) =
+                    if AVal.force isPlacing then
                         let sz = AVal.force size
                         let x = float px / float sz.X |> clamp 0.0 1.0
                         let y = 1.0 - float py / float sz.Y |> clamp 0.0 1.0
-                        let nCols = data.Columns.Length
-                        if nCols = 0 then env.Emit [ScanPinMsg (ClearBetweenSpaceHover pin.Id)]
-                        else
-                        let col = int (x * float nCols) |> clamp 0 (nCols - 1)
-                        let z = yToZ data pin.StratigraphyDisplay x y
-                        match Stratigraphy.tryBracket data.Columns.[col].Events z with
-                        | Some _ -> env.Emit [ScanPinMsg (HoverBetweenSpace(pin.Id, col, z))]
-                        | None -> env.Emit [ScanPinMsg (ClearBetweenSpaceHover pin.Id)]
-                    | None -> ()
-                | None -> ()
-
-            Dom.OnPointerDown((fun e ->
-                if e.Button = Button.Left then
-                    if e.Shift then
                         match AVal.force selectedPin with
                         | Some pin ->
-                            emitHoverFromPointer e.OffsetPosition.X e.OffsetPosition.Y
-                            env.Emit [ScanPinMsg (PinBetweenSpaceHover pin.Id)]
+                            match pin.CutPlane with
+                            | CutPlaneMode.AcrossAxis _ ->
+                                match pin.Stratigraphy with
+                                | Some data ->
+                                    let z = yToZ data pin.StratigraphyDisplay x y
+                                    env.Emit [ScanPinMsg (SetCutPlaneDistance z)]
+                                | None -> ()
+                            | CutPlaneMode.AlongAxis _ ->
+                                let angle = x * 360.0
+                                env.Emit [ScanPinMsg (SetCutPlaneAngle angle)]
                         | None -> ()
-                    else
-                        transact (fun () -> dragging.Value <- true)
-                        emitCutFromPointer e.OffsetPosition.X e.OffsetPosition.Y
-            ), pointerCapture = true)
 
-            Dom.OnPointerUp((fun _ ->
-                transact (fun () -> dragging.Value <- false)
-            ), pointerCapture = true)
+                let emitHoverFromPointer (px : int) (py : int) =
+                    match AVal.force selectedPin with
+                    | Some pin ->
+                        match pin.Stratigraphy with
+                        | Some data ->
+                            let sz = AVal.force size
+                            let x = float px / float sz.X |> clamp 0.0 1.0
+                            let y = 1.0 - float py / float sz.Y |> clamp 0.0 1.0
+                            let nCols = data.Columns.Length
+                            if nCols = 0 then env.Emit [ScanPinMsg (ClearBetweenSpaceHover pin.Id)]
+                            else
+                            let col = int (x * float nCols) |> clamp 0 (nCols - 1)
+                            let z = yToZ data pin.StratigraphyDisplay x y
+                            match Stratigraphy.tryBracket data.Columns.[col].Events z with
+                            | Some _ -> env.Emit [ScanPinMsg (HoverBetweenSpace(pin.Id, col, z))]
+                            | None -> env.Emit [ScanPinMsg (ClearBetweenSpaceHover pin.Id)]
+                        | None -> ()
+                    | None -> ()
 
-            Dom.OnPointerMove(fun e ->
-                emitHoverFromPointer e.OffsetPosition.X e.OffsetPosition.Y
-                if AVal.force dragging then
-                    emitCutFromPointer e.OffsetPosition.X e.OffsetPosition.Y)
+                Dom.OnPointerDown((fun e ->
+                    if e.Button = Button.Left then
+                        if e.Shift then
+                            match AVal.force selectedPin with
+                            | Some pin ->
+                                emitHoverFromPointer e.OffsetPosition.X e.OffsetPosition.Y
+                                env.Emit [ScanPinMsg (PinBetweenSpaceHover pin.Id)]
+                            | None -> ()
+                        else
+                            transact (fun () -> dragging.Value <- true)
+                            emitCutFromPointer e.OffsetPosition.X e.OffsetPosition.Y
+                ), pointerCapture = true)
 
-            Dom.OnMouseLeave(fun _ ->
-                match AVal.force selectedPin with
-                | Some pin -> env.Emit [ScanPinMsg (ClearBetweenSpaceHover pin.Id)]
-                | None -> ())
+                Dom.OnPointerUp((fun _ ->
+                    transact (fun () -> dragging.Value <- false)
+                ), pointerCapture = true)
 
-            Dom.OnContextMenu(ignore, preventDefault = true)
+                Dom.OnPointerMove(fun e ->
+                    emitHoverFromPointer e.OffsetPosition.X e.OffsetPosition.Y
+                    if AVal.force dragging then
+                        emitCutFromPointer e.OffsetPosition.X e.OffsetPosition.Y)
 
-            sg {
-                Sg.Active (drawCount |> AVal.map (fun c -> c > 0))
-                Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
-                Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                Sg.NoEvents
-                Sg.VertexAttributes(
-                    HashMap.ofList [
-                        string DefaultSemantic.Positions, BufferView(posBuffer, typeof<V3f>)
-                        string DefaultSemantic.Colors,    BufferView(colBuffer, typeof<V4f>)
-                    ])
-                Sg.Index(BufferView(idxBuffer, typeof<int>))
-                Sg.Render drawCount
+                Dom.OnMouseLeave(fun _ ->
+                    match AVal.force selectedPin with
+                    | Some pin -> env.Emit [ScanPinMsg (ClearBetweenSpaceHover pin.Id)]
+                    | None -> ())
+
+                Dom.OnContextMenu(ignore, preventDefault = true)
+
+                sg {
+                    Sg.Active (drawCount |> AVal.map (fun c -> c > 0))
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions, BufferView(posBuffer, typeof<V3f>)
+                            string DefaultSemantic.Colors,    BufferView(colBuffer, typeof<V4f>)
+                        ])
+                    Sg.Index(BufferView(idxBuffer, typeof<int>))
+                    Sg.Render drawCount
+                }
+                sg {
+                    Sg.Active (hovCnt |> AVal.map (fun c -> c > 0))
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode BlendMode.Blend
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions, BufferView(hovPos, typeof<V3f>)
+                            string DefaultSemantic.Colors,    BufferView(hovCol, typeof<V4f>)
+                        ])
+                    Sg.Index(BufferView(hovIdx, typeof<int>))
+                    Sg.Render hovCnt
+                }
             }
-            sg {
-                Sg.Active (hovCnt |> AVal.map (fun c -> c > 0))
-                Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
-                Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                Sg.BlendMode BlendMode.Blend
-                Sg.NoEvents
-                Sg.VertexAttributes(
-                    HashMap.ofList [
-                        string DefaultSemantic.Positions, BufferView(hovPos, typeof<V3f>)
-                        string DefaultSemantic.Colors,    BufferView(hovCol, typeof<V4f>)
-                    ])
-                Sg.Index(BufferView(hovIdx, typeof<int>))
-                Sg.Render hovCnt
+            div {
+                Class "strat-indicator"
+                indicatorStyle |> AVal.map (fun s -> Some (Style s))
             }
-        }
-        div {
-            Class "strat-indicator"
-            indicatorStyle |> AVal.map (fun s -> Some (Style s))
         }

@@ -138,19 +138,12 @@ module ScanPinUpdate =
     let private assignColors (meshNames : IndexList<string>) =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, meshColors.[i % meshColors.Length]) |> Map.ofArray
 
-    let private makeDefaultPrism (anchor : V3d) (axis : V3d) (radius : float) (clipBounds : Box3d) =
+    let private makeDefaultPrism (anchor : V3d) (axis : V3d) (radius : float) =
         let n = 32
         let verts = [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * radius ]
-        let autoLength =
-            if clipBounds.IsInvalid then 10.0
-            else
-                let sz = clipBounds.Size
-                let axn = axis |> Vec.normalize
-                let projected = abs (Vec.dot (V3d sz) axn)
-                max 2.0 (projected * 1.2)
         { AnchorPoint = anchor; AxisDirection = axis
           Footprint = { Vertices = verts }
-          ExtentForward = 1.0; ExtentBackward = autoLength }
+          ExtentForward = 1.0; ExtentBackward = 3.0 }
 
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
@@ -180,7 +173,7 @@ module ScanPinUpdate =
                 match model.ReferenceAxis with
                 | AlongWorldZ -> V3d.OOI
                 | AlongCameraView -> -camFwd |> Vec.normalize
-            let prism = makeDefaultPrism renderPos axis 1.0 model.ClipBounds
+            let prism = makeDefaultPrism renderPos axis 1.0
             let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
             let pin =
                 { Id = id; Phase = PinPhase.Placement; Prism = prism

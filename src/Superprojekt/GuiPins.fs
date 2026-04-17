@@ -62,6 +62,16 @@ module GuiPins =
                         Dom.OnInput(fun e ->
                             Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [ScanPinMsg (SetFootprintRadius v)]))
                     }
+                    span {
+                        Class "param-readout"
+                        activePin |> AVal.map (fun p ->
+                            match p with
+                            | Some pin ->
+                                match pin.Prism.Footprint.Vertices with
+                                | v :: _ -> sprintf "%.2f m" v.Length
+                                | _ -> "1.00 m"
+                            | None -> "")
+                    }
                 }
                 div {
                     "Length  "
@@ -75,6 +85,13 @@ module GuiPins =
                             | None -> None)
                         Dom.OnInput(fun e ->
                             Cards.parseFloat e.Value |> Option.iter (fun v -> env.Emit [ScanPinMsg (SetPinLength v)]))
+                    }
+                    span {
+                        Class "param-readout"
+                        activePin |> AVal.map (fun p ->
+                            match p with
+                            | Some pin -> sprintf "%.2f m" pin.Prism.ExtentBackward
+                            | None -> "")
                     }
                 }
                 div {

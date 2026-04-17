@@ -620,6 +620,15 @@ body.loaded {
 .input-xs { width: 48px; }
 .range-full { width: 100%; }
 
+.param-readout {
+    display: inline-block;
+    min-width: 54px;
+    margin-left: 6px;
+    font-variant-numeric: tabular-nums;
+    color: #475569;
+    font-size: 11px;
+}
+
 .btn-sm {
     font-size: 11px;
     padding: 1px 6px;

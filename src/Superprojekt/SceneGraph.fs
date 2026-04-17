@@ -646,8 +646,6 @@ module SceneGraph =
                     let id = act |> Option.orElse sel
                     id |> Option.bind (fun id -> HashMap.tryFind id pins))
 
-            let hullDragging : cval<bool> = cval false
-
             let editedPrism = editedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.Prism))
             let editedCutPlane = editedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.CutPlane))
 
@@ -685,127 +683,8 @@ module SceneGraph =
             let indCnt = indicatorGeometry |> AVal.map (fun (_,i,_) -> i.Length)
             let indActive = (notFullscreen, indicatorGeometry) ||> AVal.map2 (fun nf (_,_,act) -> nf && act)
 
-            let emitFromHit (hit : V3d) =
-                match AVal.force editedPin with
-                | Some pin ->
-                    let axis = pin.Prism.AxisDirection |> Vec.normalize
-                    let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-                    let right = Vec.cross axis up |> Vec.normalize
-                    let fwd = Vec.cross right axis |> Vec.normalize
-                    let v = hit - pin.Prism.AnchorPoint
-                    match pin.CutPlane with
-                    | CutPlaneMode.AcrossAxis _ ->
-                        let dist = Vec.dot v axis
-                        let clamped = clamp (-pin.Prism.ExtentBackward) pin.Prism.ExtentForward dist
-                        env.Emit [ScanPinMsg (SetCutPlaneDistance clamped)]
-                    | CutPlaneMode.AlongAxis _ ->
-                        let lx = Vec.dot v right
-                        let ly = Vec.dot v fwd
-                        let ang = atan2 ly lx * Constant.DegreesPerRadian
-                        env.Emit [ScanPinMsg (SetCutPlaneAngle ang)]
-                | None -> ()
-
-            let pickRayOf (e : ScenePointerEvent) =
-                let vp = e.ViewProjTrafo
-                let pixel = e.Pixel
-                let s = e.ViewportSize
-                let ndc = V2d(2.0 * float pixel.X / float s.X - 1.0, 1.0 - 2.0 * float pixel.Y / float s.Y)
-                let p0 = vp.Backward.TransformPosProj(V3d(ndc, -1.0))
-                let p1 = vp.Backward.TransformPosProj(V3d(ndc, 1.0))
-                Ray3d(p0, (p1 - p0) |> Vec.normalize)
-
-            let intersectCylinder (ray : Ray3d) =
-                match AVal.force editedPin with
-                | Some pin ->
-                    let axis = pin.Prism.AxisDirection |> Vec.normalize
-                    let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                    let anchor = pin.Prism.AnchorPoint
-                    let oc = ray.Origin - anchor
-                    let d_perp = ray.Direction - axis * (Vec.dot ray.Direction axis)
-                    let oc_perp = oc - axis * (Vec.dot oc axis)
-                    let a = Vec.dot d_perp d_perp
-                    let b = 2.0 * Vec.dot oc_perp d_perp
-                    let c = Vec.dot oc_perp oc_perp - r * r
-                    let disc = b * b - 4.0 * a * c
-                    if disc < 0.0 || a < 1e-12 then None
-                    else
-                        let sqrtD = sqrt disc
-                        let t1 = (-b - sqrtD) / (2.0 * a)
-                        let t2 = (-b + sqrtD) / (2.0 * a)
-                        let tryT t =
-                            if t < 0.0 then None
-                            else
-                                let hit = ray.Origin + ray.Direction * t
-                                let axDist = Vec.dot (hit - anchor) axis
-                                if axDist >= -pin.Prism.ExtentBackward && axDist <= pin.Prism.ExtentForward then Some hit
-                                else None
-                        match tryT t1 with
-                        | Some h -> Some h
-                        | None -> tryT t2
-                | None -> None
-
-            let updateFromPointerRay (e : ScenePointerEvent) =
-                match intersectCylinder (pickRayOf e) with
-                | Some hit -> emitFromHit hit
-                | None -> ()
-
-            let pickCylinder =
-                editedPin |> AVal.map (fun pinOpt ->
-                    match pinOpt with
-                    | Some pin ->
-                        let axis = pin.Prism.AxisDirection |> Vec.normalize
-                        let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                        let p0 = pin.Prism.AnchorPoint - axis * pin.Prism.ExtentBackward
-                        let p1 = pin.Prism.AnchorPoint + axis * pin.Prism.ExtentForward
-                        let cyl = Cylinder3d(p0, p1, r)
-                        Intersectable.cylinder cyl
-                    | None ->
-                        Intersectable.cylinder ( Cylinder3d(V3d.Zero, V3d.OOI, 0.001)))
-
-            // Dummy single-triangle for the pick node (degenerate, invisible)
-            let dummyPos = AVal.constant (ArrayBuffer [| V3f.Zero; V3f.OOI * 0.001f; V3f.IOO * 0.001f |] :> IBuffer)
-            let dummyIdx = AVal.constant (ArrayBuffer [| 0; 1; 2 |] :> IBuffer)
-
             ASet.ofList [
-                // Pick node: Intersectable cylinder + event handlers + tiny dummy geometry
-                sg {
-                    Sg.Active hullActive
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.0, 0.0, 0.0, 0.0)))
-                    Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.OnPointerDown(true, fun e ->
-                        match AVal.force editedPin with
-                        | Some _ ->
-                            transact (fun () -> hullDragging.Value <- true)
-                            e.Context.SetPointerCapture(e.Target, e.PointerId)
-                            updateFromPointerRay e
-                            false
-                        | None ->
-                            true)
-                    Sg.OnPointerMove(fun e ->
-                        if AVal.force hullDragging then
-                            updateFromPointerRay e
-                            false
-                        else true
-                        )
-                    Sg.OnPointerUp(true, fun e ->
-                        if AVal.force hullDragging then
-                            transact (fun () -> hullDragging.Value <- false)
-                            e.Context.ReleasePointerCapture(e.Target, e.PointerId)
-                            false
-                        else true
-                        )
-                    sg {
-                        Sg.Intersectable pickCylinder
-                        Sg.VertexAttributes(
-                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(dummyPos, typeof<V3f>) ])
-                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                        Sg.Index(BufferView(dummyIdx, typeof<int>))
-                        Sg.Render (AVal.constant 3)
-                    }
-                }
-                // Visual hull: transparent white, no picking
+                // Visual hull: transparent white, no picking (picking handled in View.fs via Dom events)
                 sg {
                     Sg.Active hullActive
                     Sg.View view

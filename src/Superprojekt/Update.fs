@@ -352,7 +352,14 @@ module Update =
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
         | CameraMessage msg ->
-            { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
+            let swallow =
+                if AVal.force PinCylinderDrag.isActive then
+                    match msg with
+                    | OrbitMessage.PointerDown _ | OrbitMessage.PointerMove _ | OrbitMessage.PointerUp _ -> true
+                    | _ -> false
+                else false
+            if swallow then model
+            else { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
         | CentroidsLoaded centroids ->
             let common  = if centroids.Length > 0 then centroids |> Array.averageBy snd else V3d.Zero
             let names   = centroids |> Array.map fst |> IndexList.ofArray

@@ -104,7 +104,9 @@ A ScanPin is a 3D annotation: a selection prism (32-gon cylinder) extruded along
 
 **State:** `PlacingMode : FootprintMode option` (waiting for anchor click) + `ActivePlacement : ScanPinId option` (pin being edited). The `PlacementState` DU in ScanPinModel.fs is dead code (orphaned from original spec).
 
-**3D rendering** (in Revolver.fs): `pinDots` renders clickable spheres at anchor points (tap=select, double-tap=focus camera). `pinPrisms` renders wireframe (thin triangle-quads, no GL_LINES) + translucent cut plane quad per pin.
+**3D rendering** (in SceneGraph.fs): `pinDots` renders clickable spheres at anchor points (tap=select, double-tap=focus camera). `pinPrisms` renders wireframe (thin triangle-quads, no GL_LINES) + translucent cut plane quad per pin.
+
+**Cylinder-drag picking** (in View.fs): The cut plane drag on the visible pin cylinder is **not** wired through `Sg.Intersectable` / `Sg.OnPointerDown`. The off-screen mesh composite writes `gl_FragDepth = minMeshDepth` (`Shader.fs:readArray`), and Aardvark's Sg picker depth-gates Intersectable hits against that — so a cylinder behind a mesh is silently rejected even though the CPU ray-cylinder intersection would succeed. Instead, `View.fs` owns a `Dom.OnPointerDown/Move/Up` trio on the renderControl that does the ray-cylinder test itself, bypassing the depth gate. Shared state: `PinCylinderDrag.isActive : cval<bool>` (ScanPinModel.fs). While that flag is true, `Update.fs` drops orbit `PointerDown/Move/Up` messages so the camera doesn't also drag. The old Sg-level pick node (dummy triangle + `Sg.Intersectable cylinder` + `Sg.OnPointerDown` handlers) was deleted.
 
 **Diagram** (in GuiPins.fs): `pinDiagram` computes screen position via `proj.Forward * view.Forward * V4d(pt, 1.0)` (column-vector convention: clip = proj * view * pos). Hidden when behind camera (W < 0.1) or off-screen (|ndc| > 1.5). SVG rendered by JS reading `data-diagram` JSON attribute, with MutationObserver for reactive updates.
 
@@ -235,6 +237,7 @@ Sphere/box results return **vertex indices** (3 per triangle), not triangle IDs.
 - `Css.Custom` does not exist — use CSS classes in `style.css` for properties not covered by `Css.*`
 - `Sg.OnPointerDown(bool, handler)` — the bool is **capture-vs-bubble phase** for the Sg event bus, **not** pointer capture. For drag operations (pin cylinder, core sample gizmo, etc.) call `e.Context.SetPointerCapture(e.Target, e.PointerId)` inside the down handler and `ReleasePointerCapture(...)` in up — this is the Sg-level capture that reroutes move/up to the captured scope even when the pick ray no longer hits the original object.
 - `Dom.OnPointerDown((...), pointerCapture = true)` — browser-level `element.setPointerCapture` on the DOM node; use this on renderControl canvas drags so events continue to flow when the cursor leaves the canvas or is released over an overlapping GUI element.
+- **Sg picker depth-gates Intersectable hits against `gl_FragDepth`.** A `Sg.Intersectable` whose geometry is occluded by any fragment that wrote a nearer depth (e.g. the off-screen mesh composite quad writing `minMeshDepth`) will **not** fire `Sg.OnPointerDown/Tap` even though the CPU ray hit is valid. Workarounds: (a) render the pick geometry last with `DepthTest.Always` writing its true depth, or (b) bypass the Sg picker entirely and do a `Dom.OnPointerDown` + manual ray-cast on the renderControl (see cylinder-drag picking).
 
 ## CSS / design
 

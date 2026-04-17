@@ -213,3 +213,6 @@ module CardSystemModel =
         NextZOrder  = 1
     }
 
+module PinCylinderDrag =
+    let isActive : cval<bool> = cval false
+

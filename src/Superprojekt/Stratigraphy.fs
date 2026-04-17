@@ -10,16 +10,20 @@ module Stratigraphy =
             let anchor = prism.AnchorPoint / scale + commonCentroid
             let axis = prism.AxisDirection |> Vec.normalize
             let worldR = radius / scale
-            let step = 0.25
             let minInner = 0.02
+            let maxRings = 12
             let ringRadii =
-                let rs = ResizeArray<float>()
-                let mutable r = worldR
-                while r >= minInner do
-                    rs.Add r
-                    r <- r - step
-                if rs.Count = 0 then rs.Add (max worldR minInner)
-                rs.ToArray()
+                if worldR <= minInner then [| worldR |]
+                else
+                    let logOuter = log worldR
+                    let logInner = log minInner
+                    let desired = (worldR - minInner) / 0.25 |> ceil |> int |> max 1
+                    let n = min maxRings desired
+                    if n <= 1 then [| worldR |]
+                    else
+                        Array.init n (fun i ->
+                            let t = float i / float (n - 1)
+                            exp (logOuter + t * (logInner - logOuter)))
             let! (res, ringCount, perRingAngle) =
                 Query.cylinderEval serverUrl dataset anchor axis ringRadii angularRes (prism.ExtentForward / scale) (prism.ExtentBackward / scale)
             let buildRing (perAngle : ResizeArray<float * string>[]) =

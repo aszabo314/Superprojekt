@@ -778,6 +778,7 @@ module SceneGraph =
                         match AVal.force editedPin with
                         | Some _ ->
                             transact (fun () -> hullDragging.Value <- true)
+                            e.Context.SetPointerCapture(e.Target, e.PointerId)
                             updateFromPointerRay e
                             false
                         | None ->
@@ -788,9 +789,10 @@ module SceneGraph =
                             false
                         else true
                         )
-                    Sg.OnPointerUp(true, fun _ ->
+                    Sg.OnPointerUp(true, fun e ->
                         if AVal.force hullDragging then
                             transact (fun () -> hullDragging.Value <- false)
+                            e.Context.ReleasePointerCapture(e.Target, e.PointerId)
                             false
                         else true
                         )

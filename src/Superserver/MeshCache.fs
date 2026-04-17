@@ -233,9 +233,10 @@ let cylinderEval (dataset : string) (anchor : V3d) (axis : V3d) (radii : float[]
             [| for i in 0 .. count - 1 -> name, i, get dataset name i |])
 
     let eps = 1.0e-4f
-    let hits = ResizeArray<CylinderEvalHit>()
-    for ri in 0 .. radii.Length - 1 do
+    let perRing = Array.init radii.Length (fun _ -> ResizeArray<CylinderEvalHit>())
+    System.Threading.Tasks.Parallel.For(0, radii.Length, fun ri ->
         let radius = radii.[ri]
+        let local = perRing.[ri]
         for ai in 0 .. angularRes - 1 do
             let angle = float ai / float angularRes * Math.PI * 2.0
             let dir = right * cos angle + fwd * sin angle
@@ -250,10 +251,18 @@ let cylinderEval (dataset : string) (anchor : V3d) (axis : V3d) (radii : float[]
                     let mutable hit = RayHit()
                     if lm.scene.Intersect(orig, rayDir, &hit) && tOffset + hit.T <= rayLen then
                         let h = float (tOffset + hit.T) - float extBack
-                        hits.Add { Ring = ri; Angle = ai; MeshName = name; Height = h }
+                        local.Add { Ring = ri; Angle = ai; MeshName = name; Height = h }
                         tOffset <- tOffset + hit.T + eps
                     else
-                        keep <- false
+                        keep <- false) |> ignore
+    let hits =
+        let total = perRing |> Array.sumBy (fun b -> b.Count)
+        let arr = Array.zeroCreate<CylinderEvalHit> total
+        let mutable off = 0
+        for b in perRing do
+            b.CopyTo(arr, off)
+            off <- off + b.Count
+        arr
 
-    { AngularResolution = angularRes; RingCount = radii.Length; Hits = hits.ToArray() }
+    { AngularResolution = angularRes; RingCount = radii.Length; Hits = hits }
 

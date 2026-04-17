@@ -28,6 +28,9 @@ type BoxRequest     = { Name: string; Index: int; Min: float[]; Max: float[] }
 type PlaneIntersectionRequest = { Name: string; Index: int; PlanePoint: float[]; PlaneNormal: float[]; AxisU: float[]; AxisV: float[]; Thickness: float; MaxExtentU: float; MaxExtentV: float }
 
 [<CLIMutable>]
+type PlaneIntersectionBatchRequest = { Names: string[]; PlanePoint: float[]; PlaneNormal: float[]; AxisU: float[]; AxisV: float[]; Thickness: float; MaxExtentU: float; MaxExtentV: float }
+
+[<CLIMutable>]
 type GridEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Radius: float; Resolution: int; ExtentForward: float; ExtentBackward: float }
 
 [<CLIMutable>]
@@ -236,6 +239,34 @@ let planeIntersectionHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
+// POST /api/query/plane-intersection-batch
+let planeIntersectionBatchHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<PlaneIntersectionBatchRequest>()
+            let planePoint0 = toV3d req.PlanePoint
+            let planeNormal = toV3d req.PlaneNormal
+            let axisU = toV3d req.AxisU
+            let axisV = toV3d req.AxisV
+            let results = Array.zeroCreate<float[][]> req.Names.Length
+            System.Threading.Tasks.Parallel.For(0, req.Names.Length, fun i ->
+                let dataset, name = splitName req.Names.[i]
+                let lm = MeshCache.get dataset name 0
+                let c = lm.parsed.centroid
+                let segs = MeshCache.planeIntersection lm (planePoint0 - c) planeNormal axisU axisV req.Thickness req.MaxExtentU req.MaxExtentV
+                results.[i] <- segs) |> ignore
+            let payload =
+                Array.init req.Names.Length (fun i ->
+                    {| name = req.Names.[i]; segments = results.[i] |})
+            let total = results |> Array.sumBy (fun s -> s.Length)
+            log.LogInformation("plane-intersection-batch {Count} meshes, {Total} segments", req.Names.Length, total)
+            return! json {| results = payload |} next ctx
+        with ex ->
+            log.LogError(ex, "plane-intersection-batch failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
 // POST /api/query/grid-eval
 let gridEvalHandler : HttpHandler =
     fun next ctx -> task {
@@ -319,6 +350,7 @@ let webApp : HttpHandler =
         route  "/api/query/sphere"                              >=> sphereHandler
         route  "/api/query/box"                                 >=> boxHandler
         route  "/api/query/plane-intersection"                  >=> planeIntersectionHandler
+        route  "/api/query/plane-intersection-batch"            >=> planeIntersectionBatchHandler
         route  "/api/query/grid-eval"                           >=> gridEvalHandler
         route  "/api/query/cylinder-eval"                       >=> cylinderEvalHandler
     ]

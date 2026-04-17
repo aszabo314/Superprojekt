@@ -42,6 +42,17 @@ For scene graph nodes (`Sg.Text`, `sg { ... }`), this matters even more: rebuild
 - **Split structure from placement.** Build static sg node lists from slowly-changing data (e.g. tick count/text from prism geometry). Use adaptive `Sg.Trafo` for fast-changing placement (e.g. cut plane position → trafo update is just a uniform, no sg rebuild).
 - **Push adaptivity down.** A parent `AList.ofAVal` that rebuilds all children is expensive. An `AVal`-driven `Sg.Trafo` on each stable child is cheap.
 
+## Server query performance
+
+Costly spatial queries (`cylinder-eval`, `plane-intersection`) scale with mesh count and ring/angle density. Rules of thumb, learned the hard way:
+
+- **Never issue per-mesh requests in a `for` loop.** For multi-mesh operations, add a batched endpoint and let the server fan out with `Parallel.For`. One HTTP roundtrip with N-way server parallelism beats N sequential roundtrips by an order of magnitude even on localhost (JSON + HTTP overhead dominates). The cut-plane pipeline uses `/api/query/plane-intersection-batch` for this reason.
+- **Parallelize the heavy inner loop server-side** whenever the inputs are independent. `cylinderEval` runs `Parallel.For` across rings with per-thread `ResizeArray` hit buffers merged at the end. Embree `Scene.Intersect` is thread-safe.
+- **Cap density rather than grow it linearly.** `Stratigraphy.compute` uses a **log-spaced, max-12 ring ladder** instead of a constant 0.25 m step — a 10 m prism now queries 12 rings instead of 40 with no visible difference in the between-space flood topology. Angular resolution defaults to 180 (not 360) for the same reason.
+- **Keep heavy post-processing off the Elm update thread.** `buildBandCache` is union-find over the full (ring, angle, bracket) graph — milliseconds for small prisms, seconds for large ones. It runs in the same background `task` that issued `cylinder-eval`, and only the final `StratigraphyComputed(id, data, cache)` message crosses into the update loop.
+- **Debounce user-driven query triggers.** Cut-plane slider drags debounce 300 ms; stratigraphy recomputes debounce 500 ms. Both use a `CancellationTokenSource` ref that the next event cancels, so only the final drag position hits the server.
+- **Mesh caches are warmed at dataset load.** `bboxesHandler` calls `MeshCache.get` for every mesh + part, which parses OBJ + builds Embree scene + BbTree. So the first real query never pays the lazy-load cost.
+
 ## Client architecture
 
 Elm-style: `Model` → `Update.update` → `View.view` → `Boot.run`
@@ -83,7 +94,7 @@ Program.fs
 
 `ScanPinModel` — data types (`ScanPinId`, `SelectionPrism`, `CutPlaneMode`, `ScanPin`, `ScanPinModel`, etc.) + `ScanPinSerialize` module (JSON export only, no import yet).
 
-`Update` — contains `ScanPinUpdate` module (must appear before `Update` module to avoid F# forward-reference errors). `ScanPinUpdate.update` handles all `ScanPinMessage` cases. Currently uses `dummyCutResults` (fake sine waves) instead of real mesh-plane intersection.
+`Update` — contains `ScanPinUpdate` module (must appear before `Update` module to avoid F# forward-reference errors). `ScanPinUpdate.update` handles all `ScanPinMessage` cases. Cut-plane updates fire a debounced (300 ms) batched plane-intersection request against all meshes; stratigraphy updates fire a debounced (500 ms) cylinder-eval and build the `BandCache` inside the background task before emitting `StratigraphyComputed(pinId, data, cache)` so the Elm update handler never does heavy work.
 
 ## ScanPin system
 
@@ -99,7 +110,7 @@ A ScanPin is a 3D annotation: a selection prism (32-gon cylinder) extruded along
 
 **Core sample 3D view** (in GuiPins.fs): A secondary `renderControl` embedded in `pinDiagram`, stacked below the SVG profile. Shows the selected pin's region as a vertical "core sample" — the prism axis is rotated to Z and centered at the origin via `coreSampleTrafo`. Meshes are rendered with `BlitShader.coreClip` (cylindrical discard: fragments with XY distance > footprint radius are discarded). The prism wireframe and cut plane quad are pre-transformed into core sample space. Uses an orthographic projection (`Frustum.ortho`) with constrained side-view camera: horizontal drag rotates around Z axis (`CoreSampleRotation`), vertical drag pans along Z (`CoreSamplePanZ`), scroll zooms (`CoreSampleZoom`). Camera state stored as three floats on Model; custom pointer handlers in GuiPins.fs (no OrbitController). View matrix built manually via `CameraView(sky, eye, forward, up, right)`. Side/Top view mode toggle (`CoreSampleViewMode`) — TopView not yet wired up.
 
-**Stratigraphy** (Stratigraphy.fs, StratigraphyView.fs, SceneGraph.fs): 2D diagram + 3D between-space picking. `Stratigraphy.compute` queries the server's `/query/cylinder-eval` on a metric radial ladder (one ring per 0.25 m from the prism wall inward, floor 0.02 m). Data is stored in `StratigraphyData.Rings : StratigraphyColumn[][]` (outer→inner; `Rings.[0]` aliases the legacy `Columns` field that drives the 2D diagram — axis stats still come from the outer ring only). `floodContinuousBand3D` BFS-floods a continuous gap across `(angleIdx, ringIdx, bracketIdx)` nodes, seeded at the hovered bracket on the outer ring; angular neighbors wrap, radial neighbors clamp. Two brackets connect iff `overlap > 0.5 * max(len1, len2)` — symmetric majority-overlap rule prevents a fat bracket from bridging two disjoint thin ones. `floodContinuousBand` is a thin wrapper that filters to `ringIdx = 0` for the 2D view. Hover state: `BetweenSpaceHover { ColumnIdx; HoverZ; Pinned }` on ScanPin, toggled by Shift+Left in the diagram.
+**Stratigraphy** (Stratigraphy.fs, StratigraphyView.fs, SceneGraph.fs): 2D diagram + 3D between-space picking. `Stratigraphy.compute` queries the server's `/query/cylinder-eval` on a **log-spaced ring ladder capped at 12 rings** between prism wall (`worldR`) and a `minInner = 0.02 m` floor — this keeps cylinder-eval cost roughly constant in prism radius. Default angular resolution is **180** (was 360; visually identical for the 2D diagram, halves server work and payload). Data is stored in `StratigraphyData.Rings : StratigraphyColumn[][]` (outer→inner; `Rings.[0]` aliases the legacy `Columns` field that drives the 2D diagram — axis stats still come from the outer ring only). `floodContinuousBand3D` BFS-floods a continuous gap across `(angleIdx, ringIdx, bracketIdx)` nodes, seeded at the hovered bracket on the outer ring; angular neighbors wrap, radial neighbors clamp. Two brackets connect iff `overlap > 0.5 * max(len1, len2)` — symmetric majority-overlap rule prevents a fat bracket from bridging two disjoint thin ones. `floodContinuousBand` is a thin wrapper that filters to `ringIdx = 0` for the 2D view. Hover state: `BetweenSpaceHover { ColumnIdx; HoverZ; Pinned }` on ScanPin, toggled by Shift+Left in the diagram. `BandCache` (union-find over the full (ring, angle, bracket) graph) is built once per cylinder-eval inside the background task and attached to the `StratigraphyComputed` message.
 
 **Between-space 3D volume** (PinGeometry.fs `buildBetweenSpaceSurfaces`, SceneGraph.fs `betweenSpaceBand`): Renders the continuous-gap volume as three translucent surfaces — upper (warm white), lower (cream), and side walls closing the volume boundary. Upper/lower are triangulated over grid quads where all four `(angle, ring)` corners are in the band; side walls are emitted on any grid edge where both endpoints are in the band but at least one adjacent quad is incomplete. All three draw calls use `BlendMode.Blend` and `DepthTest.None` in `passTwo` so the volume is visible through every mesh. Field-projected aVals (`prismVal`, `stratVal`, `hoverVal`) keep the rebuild cost minimal.
 
@@ -192,12 +203,17 @@ POST /api/query/ray              → { hit, t, point, triangleId }   Name = "dat
 POST /api/query/closest          → { found, point, distanceSquared, triangleId }
 POST /api/query/sphere           → binary: int32 count | int32[] vertexIndices
 POST /api/query/box              → binary: int32 count | int32[] vertexIndices
-POST /api/query/plane-intersection → { segments: [[u0,v0,u1,v1], ...] }  2D cut polylines
+POST /api/query/plane-intersection → { segments: [[u0,v0,u1,v1], ...] }  2D cut polylines (single mesh)
+POST /api/query/plane-intersection-batch → { results: [{ name, segments: [...] }, ...] }
+                                    Request: { Names: string[], PlanePoint, PlaneNormal, AxisU, AxisV, ... }
+                                    Server runs Parallel.For across meshes. **Prefer this for multi-mesh cuts** —
+                                    one roundtrip instead of N sequential calls.
 POST /api/query/grid-eval        → binary grid of per-cell stats within a core sample prism
 POST /api/query/cylinder-eval    → binary: per-ring, per-angle mesh-intersection heights
                                     Request: { Radii: float[], AngularResolution, ExtentForward, ExtentBackward, ... }
                                     Response: int32 angularRes | int32 ringCount | int32 hitCount
                                               then hitCount × (int32 ring, int32 angle, int32 nameLen, utf8 name, float64 height)
+                                    Server uses Parallel.For across rings (Embree Scene.Intersect is thread-safe).
 ```
 
 Client mesh names use `"dataset/meshName"` format throughout. Query `Name` field uses the same format; server splits on first `/`.
@@ -217,6 +233,8 @@ Sphere/box results return **vertex indices** (3 per triangle), not triangle IDs.
 - `AVal.map4` does not exist — combine with `AVal.map2`/`AVal.map3` instead
 - `Dom.Style` for renderControl; `Style` for HTML elements (div, button, etc.)
 - `Css.Custom` does not exist — use CSS classes in `style.css` for properties not covered by `Css.*`
+- `Sg.OnPointerDown(bool, handler)` — the bool is **capture-vs-bubble phase** for the Sg event bus, **not** pointer capture. For drag operations (pin cylinder, core sample gizmo, etc.) call `e.Context.SetPointerCapture(e.Target, e.PointerId)` inside the down handler and `ReleasePointerCapture(...)` in up — this is the Sg-level capture that reroutes move/up to the captured scope even when the pick ray no longer hits the original object.
+- `Dom.OnPointerDown((...), pointerCapture = true)` — browser-level `element.setPointerCapture` on the DOM node; use this on renderControl canvas drags so events continue to flow when the cursor leaves the canvas or is released over an overlapping GUI element.
 
 ## CSS / design
 

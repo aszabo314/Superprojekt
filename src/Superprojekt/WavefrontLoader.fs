@@ -255,6 +255,33 @@ module Query =
             return segments
         }
 
+    /// POST /query/plane-intersection-batch — returns per-mesh 2D line segments
+    let planeIntersectionBatch (serverUrl : string) (names : string[]) (planePoint : V3d) (planeNormal : V3d) (axisU : V3d) (axisV : V3d) (thickness : float) (maxExtentU : float) (maxExtentV : float) =
+        async {
+            let namesJson =
+                let sb = System.Text.StringBuilder()
+                sb.Append('[') |> ignore
+                for i in 0 .. names.Length - 1 do
+                    if i > 0 then sb.Append(',') |> ignore
+                    sb.Append('"').Append(names.[i]).Append('"') |> ignore
+                sb.Append(']') |> ignore
+                sb.ToString()
+            let json = sprintf """{"names":%s,"planePoint":%s,"planeNormal":%s,"axisU":%s,"axisV":%s,"thickness":%.17g,"maxExtentU":%.17g,"maxExtentV":%.17g}"""
+                        namesJson (v3 planePoint) (v3 planeNormal) (v3 axisU) (v3 axisV) thickness maxExtentU maxExtentV
+            let! r = post serverUrl "/query/plane-intersection-batch" json
+            let results =
+                r.GetProperty("results").EnumerateArray() |> Seq.map (fun entry ->
+                    let name = entry.GetProperty("name").GetString()
+                    let segments =
+                        entry.GetProperty("segments").EnumerateArray() |> Seq.map (fun seg ->
+                            let a = seg.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                            V2d(a.[0], a.[1]), V2d(a.[2], a.[3])
+                        ) |> Seq.toList
+                    name, segments
+                ) |> Seq.toList
+            return results
+        }
+
     let private postBinary (serverUrl : string) (path : string) (json : string) : Async<byte[]> =
         async {
             use client = new HttpClient()

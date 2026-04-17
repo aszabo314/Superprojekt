@@ -33,7 +33,7 @@ type Message =
     | SetDatasetScale    of string * float
     | CutResultsLoaded        of ScanPinId * Map<string, CutResult>
     | GridEvalLoaded          of ScanPinId * GridEvalData
-    | StratigraphyComputed    of ScanPinId * StratigraphyData
+    | StratigraphyComputed    of ScanPinId * StratigraphyData * BandCache
     | ScanPinMsg              of ScanPinMessage
     | JumpToMesh of string
     | ToggleColorMode
@@ -489,11 +489,10 @@ module Update =
                 let pin = { pin with GridEval = Some data }
                 { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
             | None -> model
-        | StratigraphyComputed(pinId, data) ->
+        | StratigraphyComputed(pinId, data, cache) ->
             let sp = model.ScanPins
             match HashMap.tryFind pinId sp.Pins with
             | Some pin ->
-                let cache = Stratigraphy.buildBandCache data
                 let pin = { pin with Stratigraphy = Some data; BandCache = Some cache }
                 { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
             | None -> model
@@ -546,16 +545,20 @@ module Update =
                         task {
                             try
                                 do! System.Threading.Tasks.Task.Delay(300, cts.Token)
-                                let results = System.Collections.Generic.Dictionary<string, CutResult>()
-                                for name in names do
-                                    let! segments =
-                                        Query.planeIntersection ApiConfig.apiBase.Value name 0 planePoint planeNormal axisU axisV 0.5 extentU extentV
-                                        |> Async.StartAsTask
-                                    if segments.Length > 0 then
-                                        let polylines = segments |> List.map (fun (a, b) -> [V2d(a.X * scale, a.Y * scale); V2d(b.X * scale, b.Y * scale)])
-                                        results.[name] <- { MeshName = name; Polylines = polylines }
-                                if results.Count > 0 then
-                                    env.Emit [CutResultsLoaded(pinId, results |> Seq.map (fun kv -> kv.Key, kv.Value) |> Map.ofSeq)]
+                                let nameArr = names |> Seq.toArray
+                                let! batch =
+                                    Query.planeIntersectionBatch ApiConfig.apiBase.Value nameArr planePoint planeNormal axisU axisV 0.5 extentU extentV
+                                    |> Async.StartAsTask
+                                let results =
+                                    batch
+                                    |> List.choose (fun (name, segments) ->
+                                        if segments.Length > 0 then
+                                            let polylines = segments |> List.map (fun (a, b) -> [V2d(a.X * scale, a.Y * scale); V2d(b.X * scale, b.Y * scale)])
+                                            Some (name, { MeshName = name; Polylines = polylines })
+                                        else None)
+                                    |> Map.ofList
+                                if not results.IsEmpty then
+                                    env.Emit [CutResultsLoaded(pinId, results)]
                             with
                             | :? System.Threading.Tasks.TaskCanceledException -> ()
                             | e ->
@@ -585,9 +588,11 @@ module Update =
                             try
                                 do! System.Threading.Tasks.Task.Delay(500, cts.Token)
                                 if cts.Token.IsCancellationRequested then () else
-                                let! data = Stratigraphy.compute ApiConfig.apiBase.Value dataset prism model.CommonCentroid scale 360 |> Async.StartAsTask
+                                let! data = Stratigraphy.compute ApiConfig.apiBase.Value dataset prism model.CommonCentroid scale 180 |> Async.StartAsTask
                                 if not cts.Token.IsCancellationRequested then
-                                    env.Emit [StratigraphyComputed(pinId, data)]
+                                    let cache = Stratigraphy.buildBandCache data
+                                    if not cts.Token.IsCancellationRequested then
+                                        env.Emit [StratigraphyComputed(pinId, data, cache)]
                             with
                             | :? System.Threading.Tasks.TaskCanceledException -> ()
                             | e -> env.Emit [LogDebug (sprintf "stratigraphy ERROR: %s" (string e))]

@@ -153,13 +153,13 @@ module View =
                     )
                 )
 
-                Dom.OnPointerDown(fun e ->
+                Dom.OnPointerDown((fun e ->
                     if AVal.force model.RevolverOn && not (AVal.force shiftHeld) then
                         let b = e.ClientRect
                         let tc = (V2d e.ClientPosition - b.Min) / b.Size
                         let ndc = V2d(2.0 * tc.X - 1.0, 1.0 - 2.0 * tc.Y)
                         env.Emit [SetRevolverCenter ndc]
-                )
+                ), pointerCapture = true)
                 
 
                 SceneGraph.build env info view proj revolverBase revolverActive fullscreenActive model

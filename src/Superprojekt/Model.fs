@@ -98,7 +98,7 @@ type Model =
         MeshSolo            : MeshSoloState
         RevolverSettings    : RevolverSettings
         ExplorePopoverOpen  : bool
-        BottomBarExpanded   : bool
+        GearPopoverOpen     : bool
     }
 
 module Model =
@@ -141,5 +141,5 @@ module Model =
             MeshSolo            = NoSolo
             RevolverSettings    = RevolverSettings.initial
             ExplorePopoverOpen  = false
-            BottomBarExpanded   = false
+            GearPopoverOpen     = false
         }

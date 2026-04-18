@@ -104,7 +104,7 @@ module BlitShader =
                 p.Y >= uniform.ClipMin.Y && p.Y <= uniform.ClipMax.Y &&
                 p.Z >= uniform.ClipMin.Z && p.Z <= uniform.ClipMax.Z
             let cyl = uniform.CylClip
-            let mutable cylBDist = 1.0e9
+            let mutable cylEdgeT = 1.0
             if cyl.M00 <> 0.0 then
                 let anchor = V3d(cyl.M10, cyl.M11, cyl.M12)
                 let axis = V3d(cyl.M20, cyl.M21, cyl.M22)
@@ -112,13 +112,19 @@ module BlitShader =
                 let axisProj = Vec.dot rel axis
                 let radial = rel - axis * axisProj
                 let radialDist = Vec.length radial
-                let insideCyl =
+                let mutable insideCyl =
                     radialDist <= cyl.M01 &&
                     axisProj >= -cyl.M03 &&
                     axisProj <= cyl.M02
+                let gradWidth = max 1.0e-4 (cyl.M01 * 0.08)
+                cylEdgeT <- clamp 0.0 1.0 (abs (cyl.M01 - radialDist) / gradWidth)
+                if cyl.M13 > 0.5 then
+                    let cutNormal = V3d(cyl.M30, cyl.M31, cyl.M32)
+                    let cutD = cyl.M23
+                    let signedDist = Vec.dot p cutNormal - cutD
+                    if signedDist > 0.0 then insideCyl <- false
+                    cylEdgeT <- min cylEdgeT (clamp 0.0 1.0 (abs signedDist / gradWidth))
                 insideClip <- insideClip && insideCyl
-                cylBDist <- min (abs (cyl.M01 - radialDist))
-                                (min (abs (cyl.M02 - axisProj)) (abs (-cyl.M03 - axisProj)))
             let mutable color = v.c
             if not uniform.IsGhost then
                 if not insideClip then
@@ -127,9 +133,9 @@ module BlitShader =
                         min (min (abs (uniform.ClipMin.X - p.X)) (abs (uniform.ClipMax.X - p.X)))
                             (min (min (abs (uniform.ClipMin.Y - p.Y)) (abs (uniform.ClipMax.Y - p.Y)))
                                  (min (abs (uniform.ClipMin.Z - p.Z)) (abs (uniform.ClipMax.Z - p.Z))))
-                let bdist = min boxBDist cylBDist
-                if bdist < 1.0 then
-                    color <- lerp colorMap.[uniform.MeshIndex%5] color bdist
+                let edgeT = min (clamp 0.0 1.0 boxBDist) cylEdgeT
+                if edgeT < 1.0 then
+                    color <- lerp colorMap.[uniform.MeshIndex%5] color edgeT
             else
                 if insideClip then
                     discard()
@@ -145,9 +151,10 @@ module BlitShader =
             if r > uniform.CoreRadius then
                 discard()
             let mutable color = v.c
-            let bdist = uniform.CoreRadius - r
-            if bdist < 1.0 then
-                color <- lerp colorMap.[uniform.MeshIndex%5] color bdist
+            let gradWidth = max 1.0e-4 (uniform.CoreRadius * 0.08)
+            let edgeT = clamp 0.0 1.0 ((uniform.CoreRadius - r) / gradWidth)
+            if edgeT < 1.0 then
+                color <- lerp colorMap.[uniform.MeshIndex%5] color edgeT
             return color
         }
 

@@ -125,6 +125,16 @@ module View =
                     false
                 )
 
+                Sg.OnPointerMove(fun e ->
+                    let scale =
+                        AVal.force model.ActiveDataset
+                        |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
+                        |> Option.defaultValue 1.0
+                    let cc = AVal.force model.CommonCentroid
+                    transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
+                    true
+                )
+
                 let pinsVal = model.ScanPins.Pins |> AMap.toAVal
                 let editedPin : aval<ScanPin option> =
                     (model.ScanPins.SelectedPin, model.ScanPins.ActivePlacement, pinsVal)
@@ -239,13 +249,13 @@ module View =
                 | _ -> ()
             )
 
-            Gui.topBar env model
+            Gui.topBar env model (hoverCoord :> aval<V3d option>)
             Gui.revolverBar env model
             Gui.leftPanel env model
-            Gui.bottomBar env model
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
             Gui.fullscreenInfo model
-            Gui.coordinateDisplay (hoverCoord :> aval<V3d option>)
+            Gui.scaleBar model (viewportSize :> aval<V2i>)
+            Gui.orientationIndicator model
         }
 
 

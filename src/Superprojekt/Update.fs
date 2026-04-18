@@ -44,7 +44,7 @@ type Message =
     | HideAllMeshes
     | ResetCamera
     | ToggleExplorePopover
-    | ToggleBottomBar
+    | ToggleGearPopover
     | SetRevolverRadius of float
     | EditPin of ScanPinId
 
@@ -79,6 +79,7 @@ and ScanPinMessage =
     | FocusPin of ScanPinId
     | SetStratigraphyDisplay  of ScanPinId * StratigraphyDisplayMode
     | SetGhostClip            of ScanPinId * GhostClipMode
+    | SetGhostClipCutPlane    of ScanPinId * bool
     | SetShowCutPlaneLines    of ScanPinId * bool
     | SetShowCylinderEdgeLines of ScanPinId * bool
     | ToggleBetweenSpaceEnabled
@@ -209,6 +210,7 @@ module ScanPinUpdate =
                   BandCache = None
                   StratigraphyDisplay = Undistorted
                   GhostClip = GhostClipOff
+                  GhostClipCutPlane = false
                   ExtractedLines = ExtractedLinesMode.initial
                   BetweenSpaceHover = None }
             { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id }
@@ -263,6 +265,9 @@ module ScanPinUpdate =
 
         | SetGhostClip(id, mode) ->
             sp |> updatePin id (fun pin -> { pin with GhostClip = mode })
+
+        | SetGhostClipCutPlane(id, on) ->
+            sp |> updatePin id (fun pin -> { pin with GhostClipCutPlane = on })
 
         | SetShowCutPlaneLines(id, on) ->
             sp |> updatePin id (fun pin -> { pin with ExtractedLines = { pin.ExtractedLines with ShowCutPlaneLines = on } })
@@ -460,8 +465,8 @@ module Update =
             model
         | ToggleExplorePopover ->
             { model with ExplorePopoverOpen = not model.ExplorePopoverOpen }
-        | ToggleBottomBar ->
-            { model with BottomBarExpanded = not model.BottomBarExpanded }
+        | ToggleGearPopover ->
+            { model with GearPopoverOpen = not model.GearPopoverOpen }
         | SetRevolverRadius r ->
             { model with RevolverSettings = { model.RevolverSettings with CircleRadius = max 20.0 (min 400.0 r) } }
         | EditPin id ->
@@ -547,15 +552,15 @@ module Update =
                                 let! batch =
                                     Query.planeIntersectionBatch ApiConfig.apiBase.Value nameArr planePoint planeNormal axisU axisV 0.5 extentU extentV
                                     |> Async.StartAsTask
-                                let results =
-                                    batch
-                                    |> List.choose (fun (name, segments) ->
-                                        if segments.Length > 0 then
-                                            let polylines = segments |> List.map (fun (a, b) -> [V2d(a.X * scale, a.Y * scale); V2d(b.X * scale, b.Y * scale)])
-                                            Some (name, { MeshName = name; Polylines = polylines })
-                                        else None)
-                                    |> Map.ofList
-                                if not results.IsEmpty then
+                                if not cts.IsCancellationRequested then
+                                    let results =
+                                        batch
+                                        |> List.choose (fun (name, segments) ->
+                                            if segments.Length > 0 then
+                                                let polylines = segments |> List.map (fun (a, b) -> [V2d(a.X * scale, a.Y * scale); V2d(b.X * scale, b.Y * scale)])
+                                                Some (name, { MeshName = name; Polylines = polylines })
+                                            else None)
+                                        |> Map.ofList
                                     env.Emit [CutResultsLoaded(pinId, results)]
                             with
                             | :? System.Threading.Tasks.TaskCanceledException -> ()

@@ -1,6 +1,7 @@
 namespace Superprojekt
 
 open Aardvark.Base
+open Aardvark.Rendering
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
@@ -15,7 +16,7 @@ module Gui =
     let private meshColorForIdx (idx : int) =
         pinColor.[idx % pinColor.Length]
 
-    let topBar (env : Env<Message>) (model : AdaptiveModel) =
+    let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) =
         div {
             Class "top-bar"
 
@@ -111,18 +112,91 @@ module Gui =
             }
 
             button {
-                Class "tb-btn"
-                model.RevolverOn |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Toggle revolver overlay")
-                Dom.OnClick(fun _ -> env.Emit [ToggleRevolver])
-                "\u229E Revolver"
-            }
-
-            button {
                 Class "tb-btn tb-btn-icon"
                 Attribute("title", "Reset camera")
                 Dom.OnClick(fun _ -> env.Emit [ResetCamera])
                 "\u27F2"
+            }
+
+            div {
+                Class "tb-right"
+                span {
+                    Class "tb-coord"
+                    hoverCoord |> AVal.map (fun c ->
+                        match c with
+                        | Some p -> sprintf "\u2316 %.1f, %.1f, %.1f" p.X p.Y p.Z
+                        | None   -> "\u2316 \u2014")
+                }
+
+                div {
+                    Class "tb-gear-wrap"
+                    button {
+                        Class "tb-btn-tiny"
+                        model.GearPopoverOpen |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                        Attribute("title", "Debug & settings")
+                        Dom.OnClick(fun _ -> env.Emit [ToggleGearPopover])
+                        "\u2699"
+                    }
+                    div {
+                        Class "tb-gear-popover"
+                        model.GearPopoverOpen |> AVal.map (fun o -> if o then None else Some (Style [Display "none"]))
+
+                        div {
+                            Class "tb-gear-row"
+                            span { Class "lp-sublabel"; "Reference axis" }
+                            compactButtonBar [
+                                "World Z",
+                                    (model.ReferenceAxis |> AVal.map (fun m -> m = AlongWorldZ)),
+                                    (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongWorldZ)])
+                                "Camera",
+                                    (model.ReferenceAxis |> AVal.map (fun m -> m = AlongCameraView)),
+                                    (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongCameraView)])
+                            ]
+                        }
+
+                        div {
+                            Class "tb-gear-row"
+                            inlineSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v ->
+                                env.Emit [CameraMessage (OrbitMessage.SetSpeed v)])
+                        }
+
+                        div {
+                            Class "tb-gear-row"
+                            span { Class "lp-sublabel"; "Dataset" }
+                            span {
+                                Class "tb-gear-val"
+                                (model.ActiveDataset, model.ClipBounds, model.CommonCentroid)
+                                |||> AVal.map3 (fun ds bb cc ->
+                                    let name = ds |> Option.defaultValue "(none)"
+                                    if bb.IsInvalid then sprintf "%s — (bounds pending)" name
+                                    else
+                                        sprintf "%s   bounds %.1f–%.1f × %.1f–%.1f × %.1f–%.1f   centroid (%.1f,%.1f,%.1f)"
+                                            name bb.Min.X bb.Max.X bb.Min.Y bb.Max.Y bb.Min.Z bb.Max.Z
+                                            cc.X cc.Y cc.Z)
+                            }
+                        }
+
+                        div {
+                            Class "tb-gear-mesh-info"
+                            model.MeshNames |> AList.map (fun name ->
+                                let centroid = model.DatasetCentroids |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue V3d.Zero)
+                                div {
+                                    Class "tb-gear-mesh-row"
+                                    span { Class "tb-gear-mesh-name"; Cards.shortName name }
+                                    span {
+                                        Class "tb-gear-mesh-coord"
+                                        centroid |> AVal.map (fun c ->
+                                            sprintf "centroid (%.1f, %.1f, %.1f)" c.X c.Y c.Z)
+                                    }
+                                })
+                        }
+
+                        div {
+                            Class "tb-gear-log"
+                            model.DebugLog |> AList.map (fun line -> div { Class "tb-gear-log-line"; line })
+                        }
+                    }
+                }
             }
         }
 
@@ -206,6 +280,13 @@ module Gui =
                         Class "mb"; Attribute("title", "Hide all")
                         Dom.OnClick(fun _ -> env.Emit [HideAllMeshes])
                         "None"
+                    }
+                    button {
+                        Class "mb"
+                        model.RevolverOn |> AVal.map (fun on -> if on then Some (Class "mb-on") else None)
+                        Attribute("title", "Toggle revolver overlay")
+                        Dom.OnClick(fun _ -> env.Emit [ToggleRevolver])
+                        "\u229E"
                     }
                 }
             }
@@ -293,12 +374,29 @@ module Gui =
                 match p with
                 | Some pin -> pin.GhostClip = GhostClipOn
                 | None -> false)
-            compactToggle "Ghost clip" ghost (fun () ->
-                match AVal.force activePin with
-                | Some p ->
-                    let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn
-                    env.Emit [ScanPinMsg (SetGhostClip(p.Id, next))]
-                | None -> ())
+            let ghostCut = activePin |> AVal.map (fun p ->
+                match p with
+                | Some pin -> pin.GhostClipCutPlane
+                | None -> false)
+            div {
+                Class "lp-ghost-row"
+                compactToggle "Ghost clip" ghost (fun () ->
+                    match AVal.force activePin with
+                    | Some p ->
+                        let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn
+                        env.Emit [ScanPinMsg (SetGhostClip(p.Id, next))]
+                    | None -> ())
+                div {
+                    Class "ct-gated"
+                    ghost |> AVal.map (fun g -> if g then None else Some (Class "ct-disabled"))
+                    Attribute("title", "Clip in front of cut plane")
+                    compactToggle "+ Cut" ghostCut (fun () ->
+                        match AVal.force activePin with
+                        | Some p when p.GhostClip = GhostClipOn ->
+                            env.Emit [ScanPinMsg (SetGhostClipCutPlane(p.Id, not p.GhostClipCutPlane))]
+                        | _ -> ())
+                }
+            }
 
             div {
                 Class "lp-commit-row"
@@ -451,77 +549,130 @@ module Gui =
                     })
         }
 
-    let bottomBar (env : Env<Message>) (model : AdaptiveModel) =
+    let private niceRoundDistance (d : float) =
+        if d <= 0.0 || System.Double.IsNaN d || System.Double.IsInfinity d then 1.0
+        else
+            let steps = [| 0.1; 0.2; 0.5; 1.0; 2.0; 5.0; 10.0; 20.0; 50.0; 100.0; 200.0; 500.0; 1000.0 |]
+            let mag = 10.0 ** floor (log10 d)
+            let norm = d / mag
+            let picked =
+                if norm < 0.15 then 0.1
+                elif norm < 0.35 then 0.2
+                elif norm < 0.75 then 0.5
+                elif norm < 1.5 then 1.0
+                elif norm < 3.5 then 2.0
+                elif norm < 7.5 then 5.0
+                else 10.0
+            let v = picked * mag
+            steps |> Array.minBy (fun s -> abs (log (s / v)))
+
+    let private formatMeters (m : float) =
+        if m >= 1000.0 then sprintf "%g km" (m / 1000.0)
+        elif m >= 1.0 then sprintf "%g m" m
+        else sprintf "%g cm" (m * 100.0)
+
+    let scaleBar (model : AdaptiveModel) (viewportSize : aval<V2i>) =
+        let targetPx = 100.0
+        let barInfo =
+            AVal.custom (fun t ->
+                let radius = model.Camera.radius.GetValue t
+                let vp = viewportSize.GetValue t
+                let ds = model.ActiveDataset.GetValue t
+                let scales = model.DatasetScales.GetValue t
+                let scale =
+                    match ds with
+                    | Some d -> Map.tryFind d scales |> Option.defaultValue 1.0
+                    | None -> 1.0
+                let h = max 1 vp.Y
+                let verticalFov = 90.0 * Constant.RadiansPerDegree
+                let renderPerPixel = 2.0 * tan (verticalFov * 0.5) * radius / float h
+                let realAt100 = targetPx * renderPerPixel / scale
+                let nice = niceRoundDistance realAt100
+                let px = nice * scale / renderPerPixel
+                let px = if System.Double.IsNaN px || System.Double.IsInfinity px then targetPx else max 10.0 (min 400.0 px)
+                sprintf "{\"w\":%f,\"label\":\"%s\"}" px (formatMeters nice))
         div {
-            Class "bottom-bar"
-            div {
-                Class "bb-spacer"
-            }
-            button {
-                Class "bb-debug-toggle"
-                model.BottomBarExpanded |> AVal.map (fun e -> if e then Some (Class "active") else None)
-                Dom.OnClick(fun _ -> env.Emit [ToggleBottomBar])
-                model.BottomBarExpanded |> AVal.map (fun e -> if e then "\u25BE Debug" else "\u25B8 Debug")
-            }
-            div {
-                Class "bb-debug-panel"
-                model.BottomBarExpanded |> AVal.map (fun e -> if e then None else Some (Style [Display "none"]))
+            Class "scale-bar"
+            barInfo |> AVal.map (fun json -> Some (Attribute("data-scale", json)))
+            OnBoot [
+                "var el = __THIS__;"
+                "var last = '';"
+                "function render() {"
+                "  var raw = el.getAttribute('data-scale') || '{}';"
+                "  if(raw === last) return; last = raw;"
+                "  try { var d = JSON.parse(raw); } catch(e) { return; }"
+                "  el.innerHTML = '';"
+                "  var bar = document.createElement('div');"
+                "  bar.className = 'sb-bar';"
+                "  bar.style.width = d.w + 'px';"
+                "  var lc = document.createElement('span'); lc.className = 'sb-cap sb-cap-l';"
+                "  var rc = document.createElement('span'); rc.className = 'sb-cap sb-cap-r';"
+                "  var ln = document.createElement('span'); ln.className = 'sb-line';"
+                "  bar.appendChild(lc); bar.appendChild(ln); bar.appendChild(rc);"
+                "  var lbl = document.createElement('div'); lbl.className = 'sb-label'; lbl.textContent = d.label;"
+                "  el.appendChild(bar); el.appendChild(lbl);"
+                "}"
+                "render();"
+                "new MutationObserver(render).observe(el, {attributes:true,attributeFilter:['data-scale']});"
+            ]
+        }
 
-                div {
-                    Class "bb-debug-row"
-                    span { Class "lp-sublabel"; "Reference axis" }
-                    compactButtonBar [
-                        "World Z",
-                            (model.ReferenceAxis |> AVal.map (fun m -> m = AlongWorldZ)),
-                            (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongWorldZ)])
-                        "Camera",
-                            (model.ReferenceAxis |> AVal.map (fun m -> m = AlongCameraView)),
-                            (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongCameraView)])
-                    ]
-                }
-
-                div {
-                    Class "bb-debug-row"
-                    inlineSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v ->
-                        env.Emit [CameraMessage (OrbitMessage.SetSpeed v)])
-                }
-
-                div {
-                    Class "bb-debug-row"
-                    span { Class "lp-sublabel"; "Dataset" }
-                    span {
-                        Class "bb-debug-val"
-                        (model.ActiveDataset, model.ClipBounds, model.CommonCentroid)
-                        |||> AVal.map3 (fun ds bb cc ->
-                            let name = ds |> Option.defaultValue "(none)"
-                            if bb.IsInvalid then sprintf "%s — (bounds pending)" name
-                            else
-                                sprintf "%s   bounds %.1f–%.1f × %.1f–%.1f × %.1f–%.1f   centroid (%.1f,%.1f,%.1f)"
-                                    name bb.Min.X bb.Max.X bb.Min.Y bb.Max.Y bb.Min.Z bb.Max.Z
-                                    cc.X cc.Y cc.Z)
-                    }
-                }
-
-                div {
-                    Class "bb-mesh-info"
-                    model.MeshNames |> AList.map (fun name ->
-                        let centroid = model.DatasetCentroids |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue V3d.Zero)
-                        div {
-                            Class "bb-mesh-row"
-                            span { Class "bb-mesh-name"; Cards.shortName name }
-                            span {
-                                Class "bb-mesh-coord"
-                                centroid |> AVal.map (fun c ->
-                                    sprintf "centroid (%.1f, %.1f, %.1f)" c.X c.Y c.Z)
-                            }
-                        })
-                }
-
-                div {
-                    Class "bb-debug-log"
-                    model.DebugLog |> AList.map (fun line -> div { Class "bb-log-line"; line })
-                }
-            }
+    let orientationIndicator (model : AdaptiveModel) =
+        let axisJson =
+            model.Camera.view |> AVal.map (fun cv ->
+                let vt = CameraView.viewTrafo cv
+                let tr (v : V3d) = vt.Forward.TransformDir v
+                let x = tr V3d.IOO
+                let y = tr V3d.OIO
+                let z = tr V3d.OOI
+                let fmt (v : V3d) (name : string) (color : string) =
+                    sprintf "{\"x\":%f,\"y\":%f,\"z\":%f,\"n\":\"%s\",\"c\":\"%s\"}" v.X v.Y v.Z name color
+                sprintf "[%s,%s,%s]"
+                    (fmt x "X" "#dc2626")
+                    (fmt y "Y" "#16a34a")
+                    (fmt z "Z" "#2563eb"))
+        div {
+            Class "orient-indicator"
+            axisJson |> AVal.map (fun json -> Some (Attribute("data-axes", json)))
+            OnBoot [
+                "var el = __THIS__;"
+                "var last = '';"
+                "var ns = 'http://www.w3.org/2000/svg';"
+                "var W = 60, H = 60, L = 22, cx = W/2, cy = H/2;"
+                "function render() {"
+                "  var raw = el.getAttribute('data-axes') || '[]';"
+                "  if(raw === last) return; last = raw;"
+                "  try { var arr = JSON.parse(raw); } catch(e) { return; }"
+                "  el.innerHTML = '';"
+                "  var svg = document.createElementNS(ns, 'svg');"
+                "  svg.setAttribute('width', W); svg.setAttribute('height', H);"
+                "  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);"
+                "  arr.sort(function(a,b){return a.z - b.z;});"
+                "  arr.forEach(function(a){"
+                "    var ex = cx + a.x * L, ey = cy - a.y * L;"
+                "    var ln = document.createElementNS(ns, 'line');"
+                "    ln.setAttribute('x1', cx); ln.setAttribute('y1', cy);"
+                "    ln.setAttribute('x2', ex); ln.setAttribute('y2', ey);"
+                "    ln.setAttribute('stroke', a.c); ln.setAttribute('stroke-width','2');"
+                "    ln.setAttribute('stroke-linecap','round');"
+                "    svg.appendChild(ln);"
+                "    if(a.z > -0.2){"
+                "      var tx = document.createElementNS(ns, 'text');"
+                "      tx.setAttribute('x', cx + a.x * (L + 6));"
+                "      tx.setAttribute('y', cy - a.y * (L + 6) + 3);"
+                "      tx.setAttribute('fill', a.c);"
+                "      tx.setAttribute('font-size','9');"
+                "      tx.setAttribute('font-family','monospace');"
+                "      tx.setAttribute('text-anchor','middle');"
+                "      tx.textContent = a.n;"
+                "      svg.appendChild(tx);"
+                "    }"
+                "  });"
+                "  el.appendChild(svg);"
+                "}"
+                "render();"
+                "new MutationObserver(render).observe(el, {attributes:true,attributeFilter:['data-axes']});"
+            ]
         }
 
     let fullscreenInfo (model : AdaptiveModel) =
@@ -540,11 +691,3 @@ module Gui =
                 })
         }
 
-    let coordinateDisplay (coord : aval<V3d option>) =
-        div {
-            Class "coord-display"
-            coord |> AVal.map (fun c ->
-                match c with
-                | None   -> ""
-                | Some p -> sprintf "X: %.2f   Y: %.2f   Z: %.2f" p.X p.Y p.Z)
-        }

@@ -107,6 +107,7 @@ type ScanPin = {
     BandCache            : BandCache option
     StratigraphyDisplay  : StratigraphyDisplayMode
     GhostClip            : GhostClipMode
+    GhostClipCutPlane    : bool
     ExtractedLines       : ExtractedLinesMode
     BetweenSpaceHover    : BetweenSpaceHover option
 }

@@ -46,7 +46,7 @@ type AdaptiveModel(value : Model) =
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _RevolverSettings_ = FSharp.Data.Adaptive.cval(value.RevolverSettings)
     let _ExplorePopoverOpen_ = FSharp.Data.Adaptive.cval(value.ExplorePopoverOpen)
-    let _BottomBarExpanded_ = FSharp.Data.Adaptive.cval(value.BottomBarExpanded)
+    let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -89,7 +89,7 @@ type AdaptiveModel(value : Model) =
             _MeshSolo_.Value <- value.MeshSolo
             _RevolverSettings_.Value <- value.RevolverSettings
             _ExplorePopoverOpen_.Value <- value.ExplorePopoverOpen
-            _BottomBarExpanded_.Value <- value.BottomBarExpanded
+            _GearPopoverOpen_.Value <- value.GearPopoverOpen
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -125,5 +125,5 @@ type AdaptiveModel(value : Model) =
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.RevolverSettings = _RevolverSettings_ :> FSharp.Data.Adaptive.aval<RevolverSettings>
     member __.ExplorePopoverOpen = _ExplorePopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.BottomBarExpanded = _BottomBarExpanded_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

@@ -137,10 +137,9 @@ module View =
 
                 let pinsVal = model.ScanPins.Pins |> AMap.toAVal
                 let editedPin : aval<ScanPin option> =
-                    (model.ScanPins.SelectedPin, model.ScanPins.ActivePlacement, pinsVal)
-                    |||> AVal.map3 (fun sel act pins ->
-                        let id = act |> Option.orElse sel
-                        id |> Option.bind (fun id -> HashMap.tryFind id pins))
+                    (model.ScanPins.ActivePlacement, pinsVal)
+                    ||> AVal.map2 (fun act pins ->
+                        act |> Option.bind (fun id -> HashMap.tryFind id pins))
 
                 let ndcOf (e : Aardvark.Dom.PointerEvent) =
                     let b = e.ClientRect

@@ -115,24 +115,29 @@ module Primitives =
         }
 
     /// Dual-handle range slider rendered as two stacked range inputs.
-    /// `valueMin`/`valueMax` are the adaptive min/max values, `onChange` gets (newMin, newMax).
-    let inlineRangeSlider
+    /// min/max/step are adaptive so the slider updates its range when the underlying bounds change.
+    let inlineRangeSliderA
             (labelText : string)
-            (minV : float) (maxV : float) (stepV : float)
-            (format : float -> float -> string)
+            (minV : aval<float>) (maxV : aval<float>) (stepV : aval<float>)
+            (format : (float -> float -> string) option)
             (valueMin : aval<float>) (valueMax : aval<float>)
             (onChange : float -> float -> unit) =
+        // Both thumbs share the full [minV, maxV] range: narrowing one thumb's
+        // range to the other's current value re-normalizes its position when the
+        // other is dragged. Non-crossing is enforced in the input handlers.
+        let attrStep = stepV |> AVal.map (fun v -> Some (Attribute("step", sprintf "%.6g" v)))
+        let attrMin  = minV  |> AVal.map (fun v -> Some (Attribute("min",  sprintf "%.6g" v)))
+        let attrMax  = maxV  |> AVal.map (fun v -> Some (Attribute("max",  sprintf "%.6g" v)))
         div {
             Class "irs"
             span { Class "irs-label"; labelText }
             div {
                 Class "irs-tracks"
+                div { Class "irs-track-line" }
                 input {
                     Class "irs-range irs-min"
                     Attribute("type", "range")
-                    Attribute("min",  sprintf "%.6g" minV)
-                    Attribute("max",  sprintf "%.6g" maxV)
-                    Attribute("step", sprintf "%.6g" stepV)
+                    attrMin; attrMax; attrStep
                     valueMin |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.6g" v)))
                     Dom.OnInput(fun e ->
                         match parseFloat e.Value with
@@ -144,9 +149,7 @@ module Primitives =
                 input {
                     Class "irs-range irs-max"
                     Attribute("type", "range")
-                    Attribute("min",  sprintf "%.6g" minV)
-                    Attribute("max",  sprintf "%.6g" maxV)
-                    Attribute("step", sprintf "%.6g" stepV)
+                    attrMin; attrMax; attrStep
                     valueMax |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.6g" v)))
                     Dom.OnInput(fun e ->
                         match parseFloat e.Value with
@@ -156,11 +159,24 @@ module Primitives =
                         | None -> ())
                 }
             }
-            span {
-                Class "irs-readout"
-                (valueMin, valueMax) ||> AVal.map2 format
-            }
+            match format with
+            | Some fmt ->
+                span {
+                    Class "irs-readout"
+                    (valueMin, valueMax) ||> AVal.map2 fmt
+                }
+            | None -> ()
         }
+
+    let inlineRangeSlider
+            (labelText : string)
+            (minV : float) (maxV : float) (stepV : float)
+            (format : float -> float -> string)
+            (valueMin : aval<float>) (valueMax : aval<float>)
+            (onChange : float -> float -> unit) =
+        inlineRangeSliderA labelText
+            (AVal.constant minV) (AVal.constant maxV) (AVal.constant stepV)
+            (Some format) valueMin valueMax onChange
 
     /// Tiny icon-only button (e.g. 🎯, 🔍, ✕, ✎) with a title-tooltip.
     let miniButton (icon : string) (tooltip : string) (onClick : unit -> unit) =

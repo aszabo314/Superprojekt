@@ -142,7 +142,7 @@ module OrbitState =
             thetaRange      = thetaRange
             moveSensitivity = 0.5
             zoomSensitivity = 1.0
-            speed           = 0.3
+            speed           = 0.9
             lockedToScene   = true
             isOrtho         = false
             pick            = fun _ -> Log.warn "no pick installed"; None
@@ -184,12 +184,13 @@ module OrbitController =
             let dstLocation =
                 let ct = cos theta
                 V3d(cos phi * ct, sin phi * ct, sin theta) * r + center
+            let animDuration = MicroTime.FromMilliseconds 350.0
             let centerAnim =
                 { kind = AnimationKind.Tanh; startValue = model.center; stopValue = center
-                  startTime = now; stopTime = now + MicroTime.Second }
+                  startTime = now; stopTime = now + animDuration }
             let locationAnim =
                 { kind = AnimationKind.Tanh; startValue = model.view.Location; stopValue = dstLocation
-                  startTime = now; stopTime = now + MicroTime.Second }
+                  startTime = now; stopTime = now + animDuration }
             OrbitState.withView {
                 model with
                     userModifiedAngles = user
@@ -241,11 +242,12 @@ module OrbitController =
 
         | SetTargetCenter(user, kind, tc) ->
             let now = time()
+            let animDuration = MicroTime.FromMilliseconds 350.0
             if model.shift.IsTiny then
                 let newRadius, newCenter = model.radius, model.center
                 let anim =
                     { kind = kind; startValue = newCenter; stopValue = tc
-                      startTime = now; stopTime = now + MicroTime.Second }
+                      startTime = now; stopTime = now + animDuration }
                 OrbitState.withView {
                     model with
                         userModifiedCenter = user
@@ -259,10 +261,10 @@ module OrbitController =
             else
                 let anim =
                     { kind = kind; startValue = model.center; stopValue = tc
-                      startTime = now + MicroTime.Second; stopTime = now + MicroTime.Second + MicroTime.Second }
+                      startTime = now + animDuration; stopTime = now + animDuration + animDuration }
                 let panAnimation =
                     { kind = AnimationKind.Linear; startValue = model.shift; stopValue = V2d.Zero
-                      startTime = now; stopTime = now + MicroTime.Second }
+                      startTime = now; stopTime = now + animDuration }
                 OrbitState.withView {
                     model with
                         centerAnimation = Some anim

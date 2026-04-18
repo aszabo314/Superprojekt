@@ -338,7 +338,9 @@ module Update =
         | SetVisible(name, v) ->
             { model with MeshVisible = Map.add name v model.MeshVisible }
         | ToggleMenu ->
-            { model with MenuOpen = not model.MenuOpen }
+            let sp = model.ScanPins
+            if sp.PlacingMode.IsSome || sp.ActivePlacement.IsSome then model
+            else { model with MenuOpen = not model.MenuOpen }
         | FilteredMeshLoaded(name, selPt, indices) ->
             { model with Filtered = HashMap.add name indices model.Filtered; FilterCenter = Some selPt }
         | LoadFinished name ->
@@ -504,6 +506,15 @@ module Update =
         | ScanPinMsg msg ->
             let sp = model.ScanPins
             let sp' = ScanPinUpdate.update model msg sp
+            let wasPlacing = sp.PlacingMode.IsSome || sp.ActivePlacement.IsSome
+            let isPlacing = sp'.PlacingMode.IsSome || sp'.ActivePlacement.IsSome
+            let model =
+                if not wasPlacing && isPlacing then
+                    { model with SavedMenuOpen = Some model.MenuOpen; MenuOpen = true }
+                elif wasPlacing && not isPlacing then
+                    let restored = model.SavedMenuOpen |> Option.defaultValue model.MenuOpen
+                    { model with MenuOpen = restored; SavedMenuOpen = None }
+                else model
             match msg with
             | FocusPin id ->
                 match HashMap.tryFind id sp.Pins with
@@ -601,18 +612,6 @@ module Update =
                         } |> ignore
                     | None -> ()
                 | None -> ()
-            let sp' =
-                let selChanged = sp'.SelectedPin <> sp.SelectedPin
-                if not selChanged then sp'
-                else
-                    let pins =
-                        sp'.Pins |> HashMap.map (fun _ pin ->
-                            if pin.Phase = PinPhase.Committed then
-                                let want =
-                                    if sp'.SelectedPin = Some pin.Id then GhostClipOn else GhostClipOff
-                                if pin.GhostClip = want then pin else { pin with GhostClip = want }
-                            else pin)
-                    { sp' with Pins = pins }
             let model = { model with ScanPins = sp' }
             let selChanged = sp'.SelectedPin <> sp.SelectedPin || sp'.ActivePlacement <> sp.ActivePlacement
             if selChanged then

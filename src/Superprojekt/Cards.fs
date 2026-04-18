@@ -203,6 +203,28 @@ module Cards =
 
                 Primitives.compactToggle "Between-space" model.ScanPins.BetweenSpaceEnabled (fun () ->
                     env.Emit [ScanPinMsg ToggleBetweenSpaceEnabled])
+
+                let isolate = selectedPin |> AVal.map (fun po ->
+                    match po with Some p -> p.GhostClip = GhostClipOn | None -> false)
+                Primitives.compactToggle "Isolate" isolate (fun () ->
+                    match AVal.force selectedPin with
+                    | Some p ->
+                        let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn
+                        env.Emit [ScanPinMsg (SetGhostClip(p.Id, next))]
+                    | None -> ())
+
+                let ghostCut = selectedPin |> AVal.map (fun po ->
+                    match po with Some p -> p.GhostClipCutPlane | None -> false)
+                div {
+                    Class "ct-gated"
+                    isolate |> AVal.map (fun g -> if g then None else Some (Class "ct-disabled"))
+                    Attribute("title", "Clip in front of cut plane")
+                    Primitives.compactToggle "+ Cut" ghostCut (fun () ->
+                        match AVal.force selectedPin with
+                        | Some p when p.GhostClip = GhostClipOn ->
+                            env.Emit [ScanPinMsg (SetGhostClipCutPlane(p.Id, not p.GhostClipCutPlane))]
+                        | _ -> ())
+                }
             }
         }
 
@@ -241,69 +263,8 @@ module Cards =
                     dict.[dragId] <- dragPos
                     dict)
 
-        let anchorScreenPositions =
-            (cardsSnapshot, viewTrafo, vpSize)
-            |||> AVal.map3 (fun cards vt sz ->
-                let dict = System.Collections.Generic.Dictionary<CardId, V2d>()
-                for (id, card) in HashMap.toSeq cards do
-                    match card.Anchor with
-                    | AnchorToWorldPoint anchor ->
-                        match projectToScreen anchor vt sz with
-                        | Some pos -> dict.[id] <- pos
-                        | None -> ()
-                    | _ -> ()
-                dict)
-
         div {
             Class "card-overlay"
-
-            div {
-                Attribute("id", "card-leader-lines")
-                (cardPositions, anchorScreenPositions, cardsSnapshot) |||> AVal.map3 (fun posDict ancDict cards ->
-                    let sb = System.Text.StringBuilder()
-                    for (id, card) in HashMap.toSeq cards do
-                        if card.Visible then
-                            match card.Attachment with
-                            | CardDetached _ | CardDragging _ ->
-                                match posDict.TryGetValue(id), ancDict.TryGetValue(id) with
-                                | (true, cardPos), (true, ancPos) ->
-                                    let cx = cardPos.X + card.Size.X * 0.5
-                                    let cy = cardPos.Y
-                                    let ax = ancPos.X
-                                    let ay = ancPos.Y
-                                    let dx = cx - ax
-                                    let cpx = ax + dx * 0.5
-                                    let cpy = ay - 30.0
-                                    sb.AppendFormat("{0},{1},{2},{3},{4},{5}|", ax, ay, cpx, cpy, cx, cy) |> ignore
-                                | _ -> ()
-                            | CardAttached -> ()
-                    Some (Attribute("data-leaders", sb.ToString())))
-                OnBoot [
-                    "var el = __THIS__;"
-                    "function render() {"
-                    "  var raw = el.getAttribute('data-leaders') || '';"
-                    "  el.innerHTML = '';"
-                    "  if(!raw) return;"
-                    "  var ns = 'http://www.w3.org/2000/svg';"
-                    "  var svg = document.createElementNS(ns, 'svg');"
-                    "  svg.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;pointer-events:none;z-index:999;';"
-                    "  var segs = raw.split('|').filter(function(s){return s.length>0;});"
-                    "  segs.forEach(function(seg) {"
-                    "    var v = seg.split(',').map(Number);"
-                    "    var p = document.createElementNS(ns, 'path');"
-                    "    p.setAttribute('d', 'M'+v[0]+','+v[1]+' Q'+v[2]+','+v[3]+' '+v[4]+','+v[5]);"
-                    "    p.setAttribute('stroke', 'rgba(100,116,139,0.45)');"
-                    "    p.setAttribute('stroke-width', '1');"
-                    "    p.setAttribute('stroke-dasharray', '4,3');"
-                    "    p.setAttribute('fill', 'none');"
-                    "    svg.appendChild(p);"
-                    "  });"
-                    "  el.appendChild(svg);"
-                    "}"
-                    "render();"
-                    "new MutationObserver(function(){render();}).observe(el, {attributes:true,attributeFilter:['data-leaders']});"
-                ]
-            }
 
             cardsSnapshot
             |> AVal.map (fun cards ->

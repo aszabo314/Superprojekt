@@ -64,6 +64,7 @@ type Model =
         MeshesLoaded   : HashSet<string>
         CommonCentroid : V3d
         MenuOpen       : bool
+        SavedMenuOpen  : bool option
 
         [<CheapEquals>]
         Filtered       : HashMap<string, int[]>
@@ -111,6 +112,7 @@ module Model =
             MeshVisible    = Map.empty
             CommonCentroid = V3d.Zero
             MenuOpen       = false
+            SavedMenuOpen  = None
             Filtered       = HashMap.empty
             FilterCenter   = None
             DebugLog       = IndexList.empty

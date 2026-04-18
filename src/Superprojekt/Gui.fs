@@ -505,12 +505,11 @@ module Gui =
                                        (setLo : Box3d -> float -> Box3d) (setHi : Box3d -> float -> Box3d) =
                             let lo = box |> AVal.map getLo
                             let hi = box |> AVal.map getHi
-                            let b = AVal.force bounds
-                            let bLo = if b.IsInvalid then -100.0 else getLo b
-                            let bHi = if b.IsInvalid then 100.0 else getHi b
-                            let step = max 0.01 ((bHi - bLo) / 100.0)
-                            inlineRangeSlider label bLo bHi step
-                                (fun a b -> sprintf "%.1f\u2013%.1f" a b) lo hi (fun a b ->
+                            let bLo = bounds |> AVal.map (fun b -> if b.IsInvalid then -100.0 else getLo b)
+                            let bHi = bounds |> AVal.map (fun b -> if b.IsInvalid then  100.0 else getHi b)
+                            let step = (bLo, bHi) ||> AVal.map2 (fun lo hi -> max 0.01 ((hi - lo) / 100.0))
+                            inlineRangeSliderA label bLo bHi step
+                                None lo hi (fun a b ->
                                 let cur = AVal.force box
                                 let cur = setLo cur a
                                 let cur = setHi cur b

@@ -376,24 +376,52 @@ module SceneGraph =
                 let planePos = planeData |> AVal.map (fun (p,_,_) -> p)
                 let planeCol = planeData |> AVal.map (fun (_,c,_) -> c)
                 let planeIdx = planeData |> AVal.map (fun (_,_,i) -> i)
-                let tickStructure =
+                let tickCounts =
                     prismVal |> AVal.map (fun po ->
                         match po with
-                        | Some prism -> PinGeometry.tickLabelStructure prism
-                        | None -> [])
+                        | Some prism ->
+                            let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                            let hw = r * 1.2
+                            let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
+                            int (hw * 2.0), int (hh * 2.0)
+                        | None -> 0, 0)
+                let tickSet =
+                    tickCounts |> AVal.map (fun (nU, nV) ->
+                        seq {
+                            for i in 0 .. nU do yield PinGeometry.EdgeU, i
+                            for i in 0 .. nV do yield PinGeometry.EdgeV, i
+                        })
+                    |> ASet.ofAVal
                 let isActiveAndSelected = AVal.map2 (&&) notFullscreen isSelected
                 let labelNodes =
-                    tickStructure
-                    |> AVal.map (fun labels ->
-                        labels |> List.map (fun (edge, unitT, text) ->
-                            let trafo =
-                                (prismVal, cutPlaneVal) ||> AVal.map2 (fun po co ->
-                                    match po, co with
-                                    | Some prism, Some cp -> PinGeometry.tickLabelWorldTrafo prism cp edge unitT
-                                    | _ -> Trafo3d.Identity)
-                            (text, trafo)) |> IndexList.ofList)
-                    |> AList.ofAVal
-                    |> AList.map (fun (text, trafo) ->
+                    tickSet |> ASet.map (fun (edge, i) ->
+                        let tickI = float i
+                        let text =
+                            prismVal |> AVal.map (fun po ->
+                                match po with
+                                | Some prism ->
+                                    let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                                    let hw = r * 1.2
+                                    let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
+                                    let localCoord =
+                                        match edge with
+                                        | PinGeometry.EdgeU -> tickI - hw
+                                        | PinGeometry.EdgeV -> tickI - hh
+                                    if abs localCoord < 0.005 then "0" else sprintf "%.2f" localCoord
+                                | None -> "")
+                        let trafo =
+                            (prismVal, cutPlaneVal) ||> AVal.map2 (fun po co ->
+                                match po, co with
+                                | Some prism, Some cp ->
+                                    let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                                    let extentU = r * 2.4
+                                    let extentV = prism.ExtentForward + prism.ExtentBackward
+                                    let unitT =
+                                        match edge with
+                                        | PinGeometry.EdgeU -> min 1.0 (tickI / max 1e-9 extentU)
+                                        | PinGeometry.EdgeV -> min 1.0 (tickI / max 1e-9 extentV)
+                                    PinGeometry.tickLabelWorldTrafo prism cp edge unitT
+                                | _ -> Trafo3d.Identity)
                         sg {
                             Sg.Active isActiveAndSelected
                             Sg.View view
@@ -402,7 +430,6 @@ module SceneGraph =
                             Sg.Trafo trafo
                             Sg.Text(text, color = AVal.constant (C4b(160uy, 160uy, 160uy)), align = TextAlignment.Center)
                         })
-                    |> AList.toASet
                 let centroidTrafo =
                     (prismVal, cutPlaneVal) ||> AVal.map2 (fun po co ->
                         match po, co with

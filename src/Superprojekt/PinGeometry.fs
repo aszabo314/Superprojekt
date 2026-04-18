@@ -317,32 +317,6 @@ module PinGeometry =
     /// Label edge: U = along edge 0→1 (bottom), V = along edge 0→3 (left).
     type TickEdge = EdgeU | EdgeV
 
-    /// Tick label structure: list of (edge, unitT, text) tuples that only depend on prism geometry.
-    /// Labels at every 1m along both U and V edges, showing local coordinate (distance from anchor).
-    let tickLabelStructure (prism : SelectionPrism) =
-        let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-        let hw = r * 1.2
-        let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
-        let extentU = hw * 2.0
-        let extentV = hh * 2.0
-        let tickScale = 1.0
-        let fmt (v : float) = if abs v < 0.005 then "0" else sprintf "%.2f" v
-        let uLabels =
-            let nTicks = int (extentU / tickScale)
-            [ for i in 0 .. nTicks do
-                let t = float i * tickScale / extentU
-                if t <= 1.0 then
-                    let localU = float i * tickScale - hw
-                    yield (EdgeU, t, fmt localU) ]
-        let vLabels =
-            let nTicks = int (extentV / tickScale)
-            [ for i in 0 .. nTicks do
-                let t = float i * tickScale / extentV
-                if t <= 1.0 then
-                    let localV = float i * tickScale - hh
-                    yield (EdgeV, t, fmt localV) ]
-        uLabels @ vLabels
-
     /// Helper: build a label trafo from orientation + position + scale.
     /// Scale is applied in local space first, then rotation+translation places it in world.
     let private labelTrafo (x : V3d) (y : V3d) (z : V3d) (pos : V3d) (size : float) =

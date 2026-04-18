@@ -33,19 +33,17 @@ module ServerActions =
     let triggerFilter (env : Env<Message>) (model : AdaptiveModel) (renderPos : V3d) =
         let cc       = AVal.force model.CommonCentroid
         let worldPos = renderPos + cc
-        let names    = AList.force model.MeshNames
+        let names    = AList.force model.MeshNames |> IndexList.toArray
         task {
             try
-                for name in names do
-                    let! triIds =
-                        Query.sphereTriangles MeshView.apiBase.Value name 0 worldPos 1.0
-                        |> Async.StartAsTask
+                let! results =
+                    Query.sphereTrianglesBatch MeshView.apiBase.Value names worldPos 1.0
+                    |> Async.StartAsTask
+                for name, triIds in results do
                     if triIds.Length > 0 then
                         let loaded = MeshView.loadMeshAsync ignore name
                         match loaded.mesh.Value with
-                        | Some mesh ->
-                            let filtered = { mesh with indices = triIds }
-                            env.Emit [FilteredMeshLoaded(name, renderPos, filtered.indices)]
+                        | Some _ -> env.Emit [FilteredMeshLoaded(name, renderPos, triIds)]
                         | None -> ()
             with _ -> ()
         } |> ignore

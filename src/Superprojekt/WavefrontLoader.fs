@@ -244,6 +244,42 @@ module Query =
         let json = sprintf """{"name":"%s","index":%d,"center":%s,"radius":%.17g}""" name index (v3 center) radius
         postBinaryIndices serverUrl "/query/sphere" json
 
+    /// POST /query/sphere-batch  — returns per-mesh triangle indices
+    /// Binary: int32 meshCount | for each: int32 nameLen | utf8 name | int32 indexCount | int32[] indices
+    let sphereTrianglesBatch (serverUrl : string) (names : string[]) (center : V3d) (radius : float) : Async<(string * int[])[]> =
+        async {
+            let namesJson =
+                let sb = System.Text.StringBuilder()
+                sb.Append('[') |> ignore
+                for i in 0 .. names.Length - 1 do
+                    if i > 0 then sb.Append(',') |> ignore
+                    sb.Append('"').Append(names.[i]).Append('"') |> ignore
+                sb.Append(']') |> ignore
+                sb.ToString()
+            let json = sprintf """{"names":%s,"center":%s,"radius":%.17g}""" namesJson (v3 center) radius
+            use client = new HttpClient()
+            use content = new StringContent(json, Encoding.UTF8, "application/json")
+            let! resp = client.PostAsync(serverUrl.TrimEnd('/') + "/query/sphere-batch", content) |> Async.AwaitTask
+            resp.EnsureSuccessStatusCode() |> ignore
+            let! buf = resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
+            let mutable o = 0
+            let meshCount = System.BitConverter.ToInt32(buf, o)
+            o <- o + 4
+            let results = Array.zeroCreate<string * int[]> meshCount
+            for i in 0 .. meshCount - 1 do
+                let nameLen = System.BitConverter.ToInt32(buf, o)
+                o <- o + 4
+                let name = Encoding.UTF8.GetString(buf, o, nameLen)
+                o <- o + nameLen
+                let idxCount = System.BitConverter.ToInt32(buf, o)
+                o <- o + 4
+                let idx = Array.zeroCreate<int> idxCount
+                System.Buffer.BlockCopy(buf, o, idx, 0, idxCount * 4)
+                o <- o + idxCount * 4
+                results.[i] <- name, idx
+            return results
+        }
+
     /// POST /query/box  — returns triangle indices (binary: int32 count + int32[])
     let boxTriangles (serverUrl : string) (name : string) (index : int) (min : V3d) (max : V3d) =
         let json = sprintf """{"name":"%s","index":%d,"min":%s,"max":%s}""" name index (v3 min) (v3 max)

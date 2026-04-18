@@ -207,6 +207,9 @@ GET  /api/datasets/{dataset}/mesh/{name}/{i}/atlas → JPEG
 POST /api/query/ray              → { hit, t, point, triangleId }   Name = "dataset/mesh"
 POST /api/query/closest          → { found, point, distanceSquared, triangleId }
 POST /api/query/sphere           → binary: int32 count | int32[] vertexIndices
+POST /api/query/sphere-batch     → binary: int32 meshCount | per-mesh (int32 nameLen | utf8 name | int32 idxCount | int32[] vertexIndices)
+                                    Request: { Names: string[], Center: [x,y,z], Radius }
+                                    Server Parallel.For across meshes. **Prefer this over per-mesh sphere loops.**
 POST /api/query/box              → binary: int32 count | int32[] vertexIndices
 POST /api/query/plane-intersection → { segments: [[u0,v0,u1,v1], ...] }  2D cut polylines (single mesh)
 POST /api/query/plane-intersection-batch → { results: [{ name, segments: [...] }, ...] }

@@ -31,6 +31,9 @@ type PlaneIntersectionRequest = { Name: string; Index: int; PlanePoint: float[];
 type PlaneIntersectionBatchRequest = { Names: string[]; PlanePoint: float[]; PlaneNormal: float[]; AxisU: float[]; AxisV: float[]; Thickness: float; MaxExtentU: float; MaxExtentV: float }
 
 [<CLIMutable>]
+type SphereBatchRequest = { Names: string[]; Center: float[]; Radius: float }
+
+[<CLIMutable>]
 type GridEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Radius: float; Resolution: int; ExtentForward: float; ExtentBackward: float }
 
 [<CLIMutable>]
@@ -273,6 +276,51 @@ let planeIntersectionBatchHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
+// POST /api/query/sphere-batch
+let sphereBatchHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<SphereBatchRequest>()
+            let center0 = toV3d req.Center
+            let radius = float32 req.Radius
+            let results = Array.zeroCreate<int[]> req.Names.Length
+            System.Threading.Tasks.Parallel.For(0, req.Names.Length, fun i ->
+                let dataset, name = splitName req.Names.[i]
+                let lm = MeshCache.get dataset name 0
+                let lc = V3f(center0 - lm.parsed.centroid)
+                results.[i] <- MeshCache.trianglesInSphere lm lc radius) |> ignore
+            ctx.SetContentType "application/octet-stream"
+            let utf8 = System.Text.Encoding.UTF8
+            let nameBytes = req.Names |> Array.map utf8.GetBytes
+            let mutable total = 4
+            for i in 0 .. req.Names.Length - 1 do
+                total <- total + 4 + nameBytes.[i].Length + 4 + results.[i].Length * 4
+            let buf = Array.zeroCreate<byte> total
+            let mutable o = 0
+            BitConverter.TryWriteBytes(buf.AsSpan(o, 4), req.Names.Length) |> ignore
+            o <- o + 4
+            for i in 0 .. req.Names.Length - 1 do
+                let nb = nameBytes.[i]
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 4), nb.Length) |> ignore
+                o <- o + 4
+                Buffer.BlockCopy(nb, 0, buf, o, nb.Length)
+                o <- o + nb.Length
+                let idx = results.[i]
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 4), idx.Length) |> ignore
+                o <- o + 4
+                Buffer.BlockCopy(idx, 0, buf, o, idx.Length * 4)
+                o <- o + idx.Length * 4
+            let totalIdx = results |> Array.sumBy (fun a -> a.Length)
+            log.LogInformation("sphere-batch {Count} meshes, {Total} indices", req.Names.Length, totalIdx)
+            ctx.Response.ContentLength <- Nullable<int64>(int64 buf.Length)
+            do! ctx.Response.Body.WriteAsync(buf, 0, buf.Length)
+            return! next ctx
+        with ex ->
+            log.LogError(ex, "sphere-batch failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
 // POST /api/query/grid-eval
 let gridEvalHandler : HttpHandler =
     fun next ctx -> task {
@@ -355,6 +403,7 @@ let webApp : HttpHandler =
         route  "/api/query/ray"                                 >=> rayHandler
         route  "/api/query/closest"                             >=> closestHandler
         route  "/api/query/sphere"                              >=> sphereHandler
+        route  "/api/query/sphere-batch"                        >=> sphereBatchHandler
         route  "/api/query/box"                                 >=> boxHandler
         route  "/api/query/plane-intersection"                  >=> planeIntersectionHandler
         route  "/api/query/plane-intersection-batch"            >=> planeIntersectionBatchHandler

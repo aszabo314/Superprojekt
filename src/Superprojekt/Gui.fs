@@ -12,8 +12,7 @@ module Gui =
         [| C4b(228uy,26uy,28uy); C4b(55uy,126uy,184uy); C4b(77uy,175uy,74uy); C4b(152uy,78uy,163uy)
            C4b(255uy,127uy,0uy); C4b(255uy,255uy,51uy); C4b(166uy,86uy,40uy); C4b(247uy,129uy,191uy); C4b(153uy,153uy,153uy) |]
 
-    let private meshColorFor (meshOrder : HashMap<string,int>) (name : string) =
-        let idx = HashMap.tryFind name meshOrder |> Option.defaultValue 0
+    let private meshColorForIdx (idx : int) =
         pinColor.[idx % pinColor.Length]
 
     let topBar (env : Env<Message>) (model : AdaptiveModel) =
@@ -153,7 +152,8 @@ module Gui =
         let isVis = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
         let isSolo = model.MeshSolo |> AVal.map (fun s ->
             match s with Solo(n, _) -> n = name | _ -> false)
-        let colorVal = model.MeshOrder |> AMap.toAVal |> AVal.map (fun o -> meshColorFor o name)
+        let colorVal =
+            model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0 >> meshColorForIdx)
         div {
             Class "mesh-row"
             span {
@@ -230,8 +230,9 @@ module Gui =
     let private placementPanel (env : Env<Message>) (model : AdaptiveModel) =
         let sp = model.ScanPins
         let activePin =
-            (sp.ActivePlacement, sp.Pins |> AMap.toAVal) ||> AVal.map2 (fun id pins ->
-                id |> Option.bind (fun i -> HashMap.tryFind i pins))
+            sp.ActivePlacement |> AVal.bind (function
+                | Some i -> sp.Pins |> AMap.tryFind i
+                | None -> AVal.constant None)
         div {
             Class "lp-placement"
             div { Class "lp-section-title"; "Placing Pin" }

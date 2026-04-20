@@ -110,6 +110,7 @@ type ScanPin = {
     GhostClipCutPlane    : bool
     ExtractedLines       : ExtractedLinesMode
     BetweenSpaceHover    : BetweenSpaceHover option
+    CutHover             : V2d option
 }
 
 [<RequireQualifiedAccess>]

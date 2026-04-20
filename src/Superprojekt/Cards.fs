@@ -186,40 +186,49 @@ module Cards =
                 Class "pin-card-inline-controls"
 
                 let normalized = selectedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.StratigraphyDisplay = Normalized) |> Option.defaultValue false)
-                Primitives.compactButtonBar [
-                    "Flat",
-                    (normalized |> AVal.map not),
-                    (fun () ->
-                        match AVal.force selectedPin with
-                        | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Undistorted))]
-                        | None -> ())
-                    "Normalized",
-                    normalized,
-                    (fun () ->
-                        match AVal.force selectedPin with
-                        | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Normalized))]
-                        | None -> ())
-                ]
+                div {
+                    Attribute("title", "Profile: Flat / Normalized")
+                    Primitives.compactButtonBar [
+                        "Flat",
+                        (normalized |> AVal.map not),
+                        (fun () ->
+                            match AVal.force selectedPin with
+                            | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Undistorted))]
+                            | None -> ())
+                        "Norm",
+                        normalized,
+                        (fun () ->
+                            match AVal.force selectedPin with
+                            | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Normalized))]
+                            | None -> ())
+                    ]
+                }
 
-                Primitives.compactToggle "Between-space" model.ScanPins.BetweenSpaceEnabled (fun () ->
-                    env.Emit [ScanPinMsg ToggleBetweenSpaceEnabled])
+                div {
+                    Attribute("title", "Between-space highlighting")
+                    Primitives.compactToggle "Gap" model.ScanPins.BetweenSpaceEnabled (fun () ->
+                        env.Emit [ScanPinMsg ToggleBetweenSpaceEnabled])
+                }
 
                 let isolate = selectedPin |> AVal.map (fun po ->
                     match po with Some p -> p.GhostClip = GhostClipOn | None -> false)
-                Primitives.compactToggle "Isolate" isolate (fun () ->
-                    match AVal.force selectedPin with
-                    | Some p ->
-                        let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn
-                        env.Emit [ScanPinMsg (SetGhostClip(p.Id, next))]
-                    | None -> ())
+                div {
+                    Attribute("title", "Isolate: ghost-clip meshes outside the pin cylinder")
+                    Primitives.compactToggle "Solo" isolate (fun () ->
+                        match AVal.force selectedPin with
+                        | Some p ->
+                            let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn
+                            env.Emit [ScanPinMsg (SetGhostClip(p.Id, next))]
+                        | None -> ())
+                }
 
                 let ghostCut = selectedPin |> AVal.map (fun po ->
                     match po with Some p -> p.GhostClipCutPlane | None -> false)
                 div {
                     Class "ct-gated"
                     isolate |> AVal.map (fun g -> if g then None else Some (Class "ct-disabled"))
-                    Attribute("title", "Clip in front of cut plane")
-                    Primitives.compactToggle "+ Cut" ghostCut (fun () ->
+                    Attribute("title", "Also clip in front of the cut plane")
+                    Primitives.compactToggle "Cut" ghostCut (fun () ->
                         match AVal.force selectedPin with
                         | Some p when p.GhostClip = GhostClipOn ->
                             env.Emit [ScanPinMsg (SetGhostClipCutPlane(p.Id, not p.GhostClipCutPlane))]

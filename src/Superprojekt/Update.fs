@@ -86,6 +86,7 @@ and ScanPinMessage =
     | HoverBetweenSpace       of ScanPinId * columnIdx:int * hoverZ:float
     | PinBetweenSpaceHover    of ScanPinId
     | ClearBetweenSpaceHover  of ScanPinId
+    | SetCutHover             of ScanPinId * V2d option
 
 module CardUpdate =
 
@@ -212,7 +213,8 @@ module ScanPinUpdate =
                   GhostClip = GhostClipOff
                   GhostClipCutPlane = false
                   ExtractedLines = ExtractedLinesMode.initial
-                  BetweenSpaceHover = None }
+                  BetweenSpaceHover = None
+                  CutHover = None }
             { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id }
 
         | SetFootprintRadius radius ->
@@ -297,6 +299,9 @@ module ScanPinUpdate =
                 match pin.BetweenSpaceHover with
                 | Some h when h.Pinned -> pin
                 | _ -> { pin with BetweenSpaceHover = None })
+
+        | SetCutHover(id, uv) ->
+            sp |> updatePin id (fun pin -> { pin with CutHover = uv })
 
 module Update =
     let private cutDebounce = ref (new System.Threading.CancellationTokenSource())

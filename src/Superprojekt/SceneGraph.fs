@@ -191,8 +191,8 @@ module SceneGraph =
                     match id |> Option.bind (fun id -> HashMap.tryFind id pins) with
                     | Some pin -> pin.GhostClip = GhostClipOn
                     | _ -> false)
-            (model.GhostSilhouette, cylClipActive, model.ClipActive)
-            |||> AVal.map3 (fun g c box -> g || c || box)
+            (model.GhostSilhouette, cylClipActive)
+            ||> AVal.map2 (fun g c -> g || c)
 
         let exploreTex : aval<IBackendTexture> =
             let refAxis =

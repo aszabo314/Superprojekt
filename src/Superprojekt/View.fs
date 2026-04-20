@@ -82,7 +82,8 @@ module View =
                 Sg.Pass RenderPass.passZero
 
                 Sg.OnDoubleTap(fun e ->
-                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
+                    if e.Location.Depth < 0.9999 then
+                        env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
                     false
                 )
                 
@@ -95,15 +96,16 @@ module View =
                     let worldPos = e.WorldPosition / scale + cc
                     let inPlacement = (AVal.force model.ScanPins.PlacingMode).IsSome
                     let activePlacement = (AVal.force model.ScanPins.ActivePlacement).IsSome
-                    if inPlacement && not activePlacement then
+                    let hitGeometry = e.Location.Depth < 0.9999
+                    if inPlacement && not activePlacement && hitGeometry then
                         let camFwd = (AVal.force view).Forward.GetViewDirectionLH() |> Vec.normalize
                         env.Emit [ScanPinMsg (SetAnchor(worldPos, e.WorldPosition, V3d camFwd))]
                         false
-                    elif activePlacement && e.Ctrl && e.Button = Button.Left then
+                    elif activePlacement && e.Ctrl && e.Button = Button.Left && hitGeometry then
                         let camFwd = (AVal.force view).Forward.GetViewDirectionLH() |> Vec.normalize
                         env.Emit [ScanPinMsg (SetAnchor(worldPos, e.WorldPosition, V3d camFwd))]
                         false
-                    elif e.Ctrl && e.Button = Button.Left then
+                    elif e.Ctrl && e.Button = Button.Left && hitGeometry then
                         transact (fun () -> hoverCoord.Value <- Some worldPos)
                         env.Emit [ClearFilteredMesh]
                         ServerActions.triggerFilter env model e.Position
@@ -114,14 +116,15 @@ module View =
                 )
 
                 Sg.OnLongPress(fun e ->
-                    let scale =
-                        AVal.force model.ActiveDataset
-                        |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
-                        |> Option.defaultValue 1.0
-                    let cc = AVal.force model.CommonCentroid
-                    transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
-                    env.Emit [ClearFilteredMesh]
-                    ServerActions.triggerFilter env model e.Position
+                    if e.Location.Depth < 0.9999 then
+                        let scale =
+                            AVal.force model.ActiveDataset
+                            |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
+                            |> Option.defaultValue 1.0
+                        let cc = AVal.force model.CommonCentroid
+                        transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
+                        env.Emit [ClearFilteredMesh]
+                        ServerActions.triggerFilter env model e.Position
                     false
                 )
 
@@ -251,6 +254,7 @@ module View =
             Gui.topBar env model (hoverCoord :> aval<V3d option>)
             Gui.revolverBar env model
             Gui.leftPanel env model
+            Gui.placementFlyout env model
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
             Gui.fullscreenInfo model
             Gui.scaleBar model (viewportSize :> aval<V2i>)

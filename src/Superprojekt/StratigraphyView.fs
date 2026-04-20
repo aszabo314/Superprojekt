@@ -474,4 +474,133 @@ module StratigraphyView =
                 Class "strat-indicator"
                 indicatorStyle |> AVal.map (fun s -> Some (Style s))
             }
+
+            // Axis labels + compact legend. Rendered by OnBoot JS that watches data-strat.
+            let fmt (v : float) (step : float) =
+                if step >= 1.0 then sprintf "%g" (round v)
+                elif step >= 0.1 then sprintf "%.1f" v
+                elif step >= 0.01 then sprintf "%.2f" v
+                else sprintf "%.3f" v
+            let niceTicks (lo : float) (hi : float) (targetCount : int) : float[] * float =
+                let range = hi - lo
+                if range <= 1e-12 || targetCount < 1 then [||], 1.0
+                else
+                    let rough = range / float targetCount
+                    let mag = 10.0 ** floor (log10 rough)
+                    let norm = rough / mag
+                    let nice = if norm < 1.5 then 1.0 elif norm < 3.0 then 2.0 elif norm < 7.0 then 5.0 else 10.0
+                    let step = nice * mag
+                    let start = ceil (lo / step) * step
+                    let ticks = ResizeArray<float>()
+                    let mutable v = start
+                    while v <= hi + 0.5 * step do
+                        if v >= lo - 1e-9 && v <= hi + 1e-9 then ticks.Add v
+                        v <- v + step
+                    ticks.ToArray(), step
+            let hex (c : C4b) = sprintf "#%02x%02x%02x" c.R c.G c.B
+            let shortLabel (name : string) =
+                let mesh =
+                    let s = name.IndexOf('/')
+                    if s >= 0 then name.[s + 1 ..] else name
+                if mesh.Length > 8 && mesh.[8] = '_' then
+                    let date = mesh.[..7]
+                    let si = mesh.LastIndexOf("_seg")
+                    if si > 0 then date + "_" + mesh.[si + 1 ..] else date
+                else mesh
+
+            let stratJson =
+                (selectedPin, RankingState.datasetHidden :> aset<_> |> ASet.toAVal)
+                ||> AVal.map2 (fun pinOpt hiddenSet ->
+                    match pinOpt with
+                    | Some pin ->
+                        match pin.Stratigraphy with
+                        | Some data ->
+                            let hidden = hiddenSet |> Seq.toList |> Set.ofList
+                            let nearVert = abs pin.Prism.AxisDirection.Z > 0.9
+                            let xLabels =
+                                if nearVert then
+                                    [| "N", 0.0; "NE", 45.0; "E", 90.0; "SE", 135.0
+                                       "S", 180.0; "SW", 225.0; "W", 270.0; "NW", 315.0 |]
+                                    |> Array.map (fun (lbl, deg) ->
+                                        sprintf "{\"x\":%.4f,\"l\":\"%s\"}" (deg/360.0) lbl)
+                                else
+                                    [| 0.0; 45.0; 90.0; 135.0; 180.0; 225.0; 270.0; 315.0 |]
+                                    |> Array.map (fun deg ->
+                                        sprintf "{\"x\":%.4f,\"l\":\"%g\u00B0\"}" (deg/360.0) deg)
+                            let ticks, step = niceTicks data.AxisMin data.AxisMax 5
+                            let range = let r = data.AxisMax - data.AxisMin in if r < 1e-9 then 1.0 else r
+                            let yLabels =
+                                ticks |> Array.map (fun v ->
+                                    let frac = (v - data.AxisMin) / range
+                                    sprintf "{\"y\":%.4f,\"l\":\"%s\"}" frac (fmt v step))
+                            let datasets =
+                                data.Columns
+                                |> Array.collect (fun c -> c.Events |> List.map snd |> List.toArray)
+                                |> Array.distinct
+                                |> Array.filter (fun n -> not (Set.contains n hidden))
+                            let shown = if datasets.Length > 8 then Array.sub datasets 0 8 else datasets
+                            let extra = datasets.Length - shown.Length
+                            let legend =
+                                shown |> Array.map (fun ds ->
+                                    let col =
+                                        pin.DatasetColors |> Map.tryFind ds
+                                        |> Option.defaultValue (C4b(120uy,120uy,120uy))
+                                        |> hex
+                                    sprintf "{\"n\":\"%s\",\"c\":\"%s\"}" (shortLabel ds) col)
+                            sprintf "{\"xl\":[%s],\"yl\":[%s],\"lg\":[%s],\"extra\":%d}"
+                                (String.concat "," xLabels)
+                                (String.concat "," yLabels)
+                                (String.concat "," legend) extra
+                        | None -> "{\"xl\":[],\"yl\":[],\"lg\":[],\"extra\":0}"
+                    | None -> "{\"xl\":[],\"yl\":[],\"lg\":[],\"extra\":0}")
+
+            div {
+                Class "strat-overlay"
+                stratJson |> AVal.map (fun j -> Some (Attribute("data-strat", j)))
+                OnBoot [
+                    "var el = __THIS__;"
+                    "var last = '';"
+                    "function render() {"
+                    "  var raw = el.getAttribute('data-strat') || '{}';"
+                    "  if(raw === last) return; last = raw;"
+                    "  try { var d = JSON.parse(raw); } catch(e) { var d = {}; }"
+                    "  el.innerHTML = '';"
+                    "  var ax = document.createElement('div'); ax.className = 'strat-axis-x';"
+                    "  (d.xl||[]).forEach(function(t){"
+                    "    var s = document.createElement('span'); s.className='strat-tick-x';"
+                    "    s.style.left = (t.x*100).toFixed(2)+'%'; s.textContent = t.l;"
+                    "    ax.appendChild(s);"
+                    "  });"
+                    "  el.appendChild(ax);"
+                    "  var ay = document.createElement('div'); ay.className = 'strat-axis-y';"
+                    "  (d.yl||[]).forEach(function(t){"
+                    "    var s = document.createElement('span'); s.className='strat-tick-y';"
+                    "    s.style.bottom = (t.y*100).toFixed(2)+'%'; s.textContent = t.l;"
+                    "    ay.appendChild(s);"
+                    "  });"
+                    "  var yu = document.createElement('span'); yu.className='strat-unit-y'; yu.textContent='[m]';"
+                    "  ay.appendChild(yu);"
+                    "  el.appendChild(ay);"
+                    "  if(d.lg && d.lg.length > 0) {"
+                    "    var lg = document.createElement('div'); lg.className='strat-legend';"
+                    "    d.lg.forEach(function(e){"
+                    "      var row = document.createElement('div'); row.className='strat-legend-row';"
+                    "      var sw = document.createElement('span'); sw.className='strat-swatch';"
+                    "      sw.style.background = e.c; row.appendChild(sw);"
+                    "      var nm = document.createElement('span'); nm.className='strat-legend-name';"
+                    "      nm.textContent = e.n; row.appendChild(nm);"
+                    "      lg.appendChild(row);"
+                    "    });"
+                    "    if(d.extra > 0) {"
+                    "      var mr = document.createElement('div'); mr.className='strat-legend-more';"
+                    "      mr.textContent = '+'+d.extra+' more'; lg.appendChild(mr);"
+                    "    }"
+                    "    el.appendChild(lg);"
+                    "  }"
+                    "}"
+                    "render();"
+                    "var obs = new MutationObserver(render);"
+                    "obs.observe(el, {attributes:true, attributeFilter:['data-strat']});"
+                ]
+            }
         }

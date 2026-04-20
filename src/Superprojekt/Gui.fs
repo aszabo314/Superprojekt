@@ -308,14 +308,20 @@ module Gui =
                 env.Emit [ToggleGhostSilhouette])
         }
 
-    let private placementPanel (env : Env<Message>) (model : AdaptiveModel) =
+    let placementFlyout (env : Env<Message>) (model : AdaptiveModel) =
         let sp = model.ScanPins
         let activePin =
             sp.ActivePlacement |> AVal.bind (function
                 | Some i -> sp.Pins |> AMap.tryFind i
                 | None -> AVal.constant None)
+        let placing = (sp.PlacingMode, sp.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
+        let flyoutClass =
+            (placing, model.MenuOpen) ||> AVal.map2 (fun p open_ ->
+                if not p then "placement-flyout hidden"
+                elif open_ then "placement-flyout pf-left-open"
+                else "placement-flyout pf-left-closed")
         div {
-            Class "lp-placement"
+            flyoutClass |> AVal.map (fun c -> Some (Class c))
             div { Class "lp-section-title"; "Placing Pin" }
             p {
                 Class "lp-hint"
@@ -531,21 +537,16 @@ module Gui =
             })
 
     let leftPanel (env : Env<Message>) (model : AdaptiveModel) =
-        let placing = (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
         div {
             Class "left-panel"
             model.MenuOpen |> AVal.map (fun o -> if o then Some (Class "open") else None)
 
-            placing |> AVal.map (fun p ->
-                if p then
-                    placementPanel env model
-                else
-                    div {
-                        Class "lp-normal"
-                        meshSection env model
-                        pinSection env model
-                        visTechSection env model
-                    })
+            div {
+                Class "lp-normal"
+                meshSection env model
+                pinSection env model
+                visTechSection env model
+            }
         }
 
     let private niceRoundDistance (d : float) =

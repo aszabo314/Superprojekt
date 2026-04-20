@@ -674,6 +674,47 @@ module SceneGraph =
                     }
                 ])
 
+        // Cut line hover marker: small sphere at CutLineHover.WorldPos, no depth test.
+        let cutHoverMarker =
+            let notFullscreen = AVal.map not fullscreenActive
+            let selectedId = model.ScanPins.SelectedPin
+            pinIdSet |> ASet.collect (fun id ->
+                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
+                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
+                let hoverVal = pinVal |> AVal.map (fun po -> po |> Option.bind (fun p -> p.CutLineHover))
+                let colorMapVal = pinVal |> AVal.map (fun po -> po |> Option.map (fun p -> p.DatasetColors) |> Option.defaultValue Map.empty)
+                let active =
+                    (notFullscreen, isSelected, hoverVal) |||> AVal.map3 (fun nf sel h -> nf && sel && h.IsSome)
+                let trafo =
+                    hoverVal |> AVal.map (function
+                        | Some h -> Trafo3d.Scale(0.25) * Trafo3d.Translation(h.WorldPos)
+                        | None -> Trafo3d.Scale(0.0))
+                let color =
+                    (hoverVal, colorMapVal) ||> AVal.map2 (fun hOpt colorMap ->
+                        match hOpt with
+                        | Some h ->
+                            let c = colorMap |> Map.tryFind h.MeshName |> Option.defaultValue (C4b(100uy,100uy,100uy))
+                            let f = c.ToC4f()
+                            V4d(float f.R, float f.G, float f.B, 1.0)
+                        | None -> V4d.Zero)
+                ASet.ofList [
+                    sg {
+                        Sg.Active active
+                        Sg.View view
+                        Sg.Proj proj
+                        Sg.Trafo trafo
+                        Sg.Pass RenderPass.passTwo
+                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                        Sg.Uniform("FlatColor", color)
+                        Sg.DepthTest (AVal.constant DepthTest.None)
+                        Sg.NoEvents
+                        Sg.VertexAttributes(
+                            HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer boxPos :> IBuffer), typeof<V3f>) ])
+                        Sg.Index(BufferView(AVal.constant (ArrayBuffer boxIdx :> IBuffer), typeof<int>))
+                        Sg.Render (AVal.constant boxIdx.Length)
+                    }
+                ])
+
         // Hull picking: click/drag on the cylinder hull to set cut plane.
         // Replaces the old rail+handle slider (AcrossAxis) and cap-disc picker (AlongAxis).
         let hullPicking =
@@ -755,4 +796,4 @@ module SceneGraph =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; betweenSpaceBand; extractedLines; hullPicking])
+        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; betweenSpaceBand; extractedLines; cutHoverMarker; hullPicking])

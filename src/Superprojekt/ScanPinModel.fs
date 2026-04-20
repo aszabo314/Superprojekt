@@ -94,6 +94,18 @@ type ExtractedLinesMode = {
 module ExtractedLinesMode =
     let initial = { ShowCutPlaneLines = true; ShowCylinderEdgeLines = false }
 
+type CutAspectMode =
+    | CutAspectFit
+    | CutAspectOneToOne
+
+type CutLineHover = {
+    MeshName    : string
+    DiagramPos  : V2d
+    WorldPos    : V3d
+    CutDistance : float
+    Elevation   : float
+}
+
 type ScanPin = {
     Id                   : ScanPinId
     Phase                : PinPhase
@@ -110,7 +122,8 @@ type ScanPin = {
     GhostClipCutPlane    : bool
     ExtractedLines       : ExtractedLinesMode
     BetweenSpaceHover    : BetweenSpaceHover option
-    CutHover             : V2d option
+    CutAspect            : CutAspectMode
+    CutLineHover         : CutLineHover option
 }
 
 [<RequireQualifiedAccess>]

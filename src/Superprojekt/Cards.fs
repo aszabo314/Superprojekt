@@ -28,9 +28,43 @@ module Cards =
     let checkedIf (v : aval<bool>) =
         v |> AVal.map (fun on -> if on then Some (Attribute("checked", "checked")) else None)
 
+    /// Nice-number tick generator (same ladder as the scale bar).
+    let niceTicks (lo : float) (hi : float) (targetCount : int) : float[] * float =
+        let range = hi - lo
+        if range <= 1e-12 || targetCount < 1 then [||], 1.0
+        else
+            let rough = range / float targetCount
+            let mag = 10.0 ** floor (log10 rough)
+            let norm = rough / mag
+            let nice =
+                if norm < 1.5 then 1.0
+                elif norm < 3.0 then 2.0
+                elif norm < 7.0 then 5.0
+                else 10.0
+            let step = nice * mag
+            let start = ceil (lo / step) * step
+            let ticks = ResizeArray<float>()
+            let mutable v = start
+            while v <= hi + 0.5 * step do
+                if v >= lo - 1e-9 && v <= hi + 1e-9 then ticks.Add v
+                v <- v + step
+            ticks.ToArray(), step
+
+    /// Every Nth tick is "major" (gets a label). Pick N so we label ≤ ~6 ticks.
+    let private majorEvery (count : int) =
+        if count <= 6 then 1
+        elif count <= 12 then 2
+        else 5
+
+    let private fmtTick (v : float) (step : float) =
+        if step >= 1.0 then sprintf "%g" (round v)
+        elif step >= 0.1 then sprintf "%.1f" v
+        elif step >= 0.01 then sprintf "%.2f" v
+        else sprintf "%.3f" v
+
     let encodeDiagramJson (pin : ScanPin) (svgW : float) (svgH : float) (pad : float) =
         let results = pin.CutResults |> Map.toList
-        if results.IsEmpty then "{\"paths\":[],\"legend\":[]}"
+        if results.IsEmpty then "{\"paths\":[]}"
         else
             let allPts = results |> List.collect (fun (_, cr) -> cr.Polylines |> List.collect id)
             let xs = allPts |> List.map (fun (p : V2d) -> p.X)
@@ -41,8 +75,22 @@ module Cards =
             let yMax = ys |> List.max
             let xRange = if xMax - xMin < 1e-9 then 1.0 else xMax - xMin
             let yRange = if yMax - yMin < 1e-9 then 1.0 else yMax - yMin
-            let toSvgX x = pad + (x - xMin) / xRange * (svgW - 2.0 * pad)
-            let toSvgY y = (svgH - pad) - (y - yMin) / yRange * (svgH - 2.0 * pad)
+            let plotW = svgW - 2.0 * pad
+            let plotH = svgH - 2.0 * pad
+            // Aspect handling: compute per-axis scale (px / world unit).
+            let scaleX, scaleY, originX, originY =
+                match pin.CutAspect with
+                | CutAspectOneToOne ->
+                    let s = min (plotW / xRange) (plotH / yRange)
+                    let drawW = s * xRange
+                    let drawH = s * yRange
+                    let ox = pad + (plotW - drawW) * 0.5
+                    let oy = (svgH - pad) - (plotH - drawH) * 0.5
+                    s, s, ox, oy
+                | CutAspectFit ->
+                    plotW / xRange, plotH / yRange, pad, svgH - pad
+            let toSvgX x = originX + (x - xMin) * scaleX
+            let toSvgY y = originY - (y - yMin) * scaleY
             let paths =
                 results |> List.collect (fun (name, cr) ->
                     let color = pin.DatasetColors |> Map.tryFind name |> Option.defaultValue (C4b(100uy,100uy,100uy)) |> c4bToHex
@@ -50,13 +98,36 @@ module Cards =
                         let d = pts |> List.mapi (fun i (p : V2d) ->
                             let cmd = if i = 0 then "M" else "L"
                             sprintf "%s%.1f,%.1f" cmd (toSvgX p.X) (toSvgY p.Y)) |> String.concat " "
-                        sprintf "{\"d\":\"%s\",\"c\":\"%s\"}" (d.Replace("\"","\\\"")) color))
-            let legend =
-                results |> List.map (fun (name, _) ->
-                    let color = pin.DatasetColors |> Map.tryFind name |> Option.defaultValue (C4b(100uy,100uy,100uy)) |> c4bToHex
-                    sprintf "{\"n\":\"%s\",\"c\":\"%s\"}" (shortName name) color)
-            sprintf "{\"paths\":[%s],\"legend\":[%s],\"xMin\":%.4g,\"xMax\":%.4g,\"yMin\":%.4g,\"yMax\":%.4g}"
-                (paths |> String.concat ",") (legend |> String.concat ",") xMin xMax yMin yMax
+                        sprintf "{\"n\":\"%s\",\"d\":\"%s\",\"c\":\"%s\"}" (shortName name) (d.Replace("\"","\\\"")) color))
+            // Axis ticks.
+            let xTicks, xStep = niceTicks xMin xMax 6
+            let yTicks, yStep = niceTicks yMin yMax 4
+            let xMajor = majorEvery xTicks.Length
+            let yMajor = majorEvery yTicks.Length
+            let encodeTick (values : float[]) (major : int) (step : float) (toPx : float -> float) (labelOffset : float -> float -> string) =
+                values |> Array.mapi (fun i v ->
+                    let isMaj = i % major = 0
+                    let lbl = if isMaj then fmtTick v step else ""
+                    sprintf "{\"p\":%.1f,\"m\":%b,\"l\":\"%s\"}" (toPx v) isMaj lbl)
+                |> String.concat ","
+            let xTicksJson = encodeTick xTicks xMajor xStep toSvgX (fun _ _ -> "")
+            let yTicksJson = encodeTick yTicks yMajor yStep toSvgY (fun _ _ -> "")
+            // Hover marker if present and snap target resolves.
+            let hoverJson =
+                match pin.CutLineHover with
+                | Some hv ->
+                    let px = toSvgX hv.DiagramPos.X
+                    let py = toSvgY hv.DiagramPos.Y
+                    let col =
+                        pin.DatasetColors |> Map.tryFind hv.MeshName
+                        |> Option.defaultValue (C4b(100uy,100uy,100uy)) |> c4bToHex
+                    sprintf "{\"x\":%.1f,\"y\":%.1f,\"c\":\"%s\",\"n\":\"%s\",\"u\":%.2f,\"v\":%.2f}"
+                        px py col (shortName hv.MeshName) hv.CutDistance hv.Elevation
+                | None -> "null"
+            // Plot rectangle for JS hit testing.
+            sprintf "{\"paths\":[%s],\"xt\":[%s],\"yt\":[%s],\"xMin\":%.6g,\"xMax\":%.6g,\"yMin\":%.6g,\"yMax\":%.6g,\"ox\":%.2f,\"oy\":%.2f,\"sx\":%.6g,\"sy\":%.6g,\"pw\":%.1f,\"ph\":%.1f,\"pad\":%.1f,\"w\":%.1f,\"h\":%.1f,\"hover\":%s}"
+                (paths |> String.concat ",") xTicksJson yTicksJson
+                xMin xMax yMin yMax originX originY scaleX scaleY plotW plotH pad svgW svgH hoverJson
 
     let private projectToScreen (anchor : V3d) (viewTrafo : Trafo3d) (vpSize : V2i) =
         let aspect = float vpSize.X / max 1.0 (float vpSize.Y)
@@ -94,7 +165,80 @@ module Cards =
                     Some (clampToViewport pos card.Size (V2d vpSize))
                 | None -> None
 
-    let private diagramSvg (selectedPin : aval<ScanPin option>) =
+    let private diagramToWorld (pin : ScanPin) (diag : V2d) : V3d =
+        let axis = pin.Prism.AxisDirection |> Vec.normalize
+        let right, fwd = PinGeometry.axisFrame axis
+        let anchor = pin.Prism.AnchorPoint
+        match pin.CutPlane with
+        | CutPlaneMode.AlongAxis angleDeg ->
+            let a = angleDeg * Constant.RadiansPerDegree
+            let dir = right * cos a + fwd * sin a
+            anchor + dir * diag.X + axis * diag.Y
+        | CutPlaneMode.AcrossAxis dist ->
+            anchor + axis * dist + right * diag.X + fwd * diag.Y
+
+    let private computeCutSnap (pin : ScanPin) (svgW : float) (svgH : float) (pad : float) (mousePx : V2d) : CutLineHover option =
+        let results = pin.CutResults |> Map.toList
+        if results.IsEmpty then None
+        else
+            let allPts = results |> List.collect (fun (_, cr) -> cr.Polylines |> List.collect id)
+            if List.isEmpty allPts then None
+            else
+            let xs = allPts |> List.map (fun (p : V2d) -> p.X)
+            let ys = allPts |> List.map (fun (p : V2d) -> p.Y)
+            let xMin = xs |> List.min
+            let xMax = xs |> List.max
+            let yMin = ys |> List.min
+            let yMax = ys |> List.max
+            let xRange = if xMax - xMin < 1e-9 then 1.0 else xMax - xMin
+            let yRange = if yMax - yMin < 1e-9 then 1.0 else yMax - yMin
+            let plotW = svgW - 2.0 * pad
+            let plotH = svgH - 2.0 * pad
+            let scaleX, scaleY, originX, originY =
+                match pin.CutAspect with
+                | CutAspectOneToOne ->
+                    let s = min (plotW / xRange) (plotH / yRange)
+                    let drawW = s * xRange
+                    let drawH = s * yRange
+                    let ox = pad + (plotW - drawW) * 0.5
+                    let oy = (svgH - pad) - (plotH - drawH) * 0.5
+                    s, s, ox, oy
+                | CutAspectFit ->
+                    plotW / xRange, plotH / yRange, pad, svgH - pad
+            let toPx (p : V2d) = V2d(originX + (p.X - xMin) * scaleX, originY - (p.Y - yMin) * scaleY)
+            let thresholdSq = 100.0
+            let mutable best : (float * string * V2d) option = None
+            for (name, cr) in results do
+                for poly in cr.Polylines do
+                    let arr = poly |> List.toArray
+                    for i in 0 .. arr.Length - 2 do
+                        let a = toPx arr.[i]
+                        let b = toPx arr.[i + 1]
+                        let ab = b - a
+                        let len2 = Vec.dot ab ab
+                        let t =
+                            if len2 < 1e-9 then 0.0
+                            else clamp 0.0 1.0 (Vec.dot (mousePx - a) ab / len2)
+                        let proj = a + ab * t
+                        let d2 = Vec.lengthSquared (mousePx - proj)
+                        if d2 <= thresholdSq then
+                            let diag = arr.[i] + (arr.[i + 1] - arr.[i]) * t
+                            match best with
+                            | None -> best <- Some (d2, name, diag)
+                            | Some (bd, _, _) when d2 < bd -> best <- Some (d2, name, diag)
+                            | _ -> ()
+            match best with
+            | Some (_, name, diag) ->
+                Some {
+                    MeshName = name
+                    DiagramPos = diag
+                    WorldPos = diagramToWorld pin diag
+                    CutDistance = diag.X
+                    Elevation = diag.Y
+                }
+            | None -> None
+
+    let private diagramSvg (env : Env<Message>) (selectedPin : aval<ScanPin option>) =
         let svgW, svgH = 280.0, 130.0
         let pad = 28.0
         div {
@@ -103,43 +247,97 @@ module Cards =
                 let json =
                     match po with
                     | Some pin -> encodeDiagramJson pin svgW svgH pad
-                    | None -> "{\"paths\":[],\"legend\":[]}"
+                    | None -> "{\"paths\":[]}"
                 Some (Attribute("data-diagram", json)))
+
+            Dom.OnPointerMove(fun e ->
+                match AVal.force selectedPin with
+                | Some pin when not pin.CutResults.IsEmpty ->
+                    let mpx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
+                    let hv = computeCutSnap pin svgW svgH pad mpx
+                    if hv <> pin.CutLineHover then
+                        env.Emit [ScanPinMsg (SetCutLineHover(pin.Id, hv))]
+                | _ -> ())
+
+            Dom.OnMouseLeave(fun _ ->
+                match AVal.force selectedPin with
+                | Some pin when pin.CutLineHover.IsSome ->
+                    env.Emit [ScanPinMsg (SetCutLineHover(pin.Id, None))]
+                | _ -> ())
+
             OnBoot [
                 "var el = __THIS__;"
                 "var last = '';"
+                "var ns = 'http://www.w3.org/2000/svg';"
                 "function render() {"
                 "  var raw = el.getAttribute('data-diagram') || '{}';"
                 "  if(raw === last) return;"
                 "  last = raw;"
                 "  try { var data = JSON.parse(raw); } catch(e) { var data = {}; }"
+                sprintf "  var W=%.0f, H=%.0f, pad=%.0f;" svgW svgH pad
                 "  el.innerHTML = '';"
-                sprintf "  var ns = 'http://www.w3.org/2000/svg';"
-                sprintf "  var svg = document.createElementNS(ns, 'svg');"
-                sprintf "  svg.setAttribute('width', '%.0f');" svgW
-                sprintf "  svg.setAttribute('height', '%.0f');" svgH
-                sprintf "  svg.setAttribute('viewBox', '0 0 %.0f %.0f');" svgW svgH
+                "  var svg = document.createElementNS(ns, 'svg');"
+                "  svg.setAttribute('width', W);"
+                "  svg.setAttribute('height', H);"
+                "  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);"
                 "  svg.style.background = '#fafbfc'; svg.style.display = 'block';"
                 "  el.appendChild(svg);"
-                sprintf "  var ax = document.createElementNS(ns, 'line');"
-                sprintf "  ax.setAttribute('x1','%.0f'); ax.setAttribute('y1','%.0f');" pad (svgH - pad)
-                sprintf "  ax.setAttribute('x2','%.0f'); ax.setAttribute('y2','%.0f');" (svgW - pad) (svgH - pad)
-                "  ax.setAttribute('stroke','#cbd5e1'); ax.setAttribute('stroke-width','1');"
-                "  svg.appendChild(ax);"
-                sprintf "  var ay = document.createElementNS(ns, 'line');"
-                sprintf "  ay.setAttribute('x1','%.0f'); ay.setAttribute('y1','%.0f');" pad pad
-                sprintf "  ay.setAttribute('x2','%.0f'); ay.setAttribute('y2','%.0f');" pad (svgH - pad)
-                "  ay.setAttribute('stroke','#cbd5e1'); ay.setAttribute('stroke-width','1');"
-                "  svg.appendChild(ay);"
                 "  if(!data.paths || data.paths.length === 0) {"
                 "    var msg = document.createElementNS(ns, 'text');"
-                sprintf "    msg.setAttribute('x','%.0f'); msg.setAttribute('y','%.0f');" (svgW * 0.5) (svgH * 0.5)
+                "    msg.setAttribute('x', W*0.5); msg.setAttribute('y', H*0.5);"
                 "    msg.setAttribute('text-anchor','middle'); msg.setAttribute('fill','#94a3b8');"
                 "    msg.setAttribute('font-size','10');"
                 "    msg.textContent = 'Awaiting cut\u2026';"
-                "    svg.appendChild(msg);"
-                "    return;"
+                "    svg.appendChild(msg); return;"
                 "  }"
+                "  var ax = document.createElementNS(ns, 'line');"
+                "  ax.setAttribute('x1', pad); ax.setAttribute('y1', H-pad);"
+                "  ax.setAttribute('x2', W-pad); ax.setAttribute('y2', H-pad);"
+                "  ax.setAttribute('stroke','#94a3b8'); ax.setAttribute('stroke-width','1');"
+                "  svg.appendChild(ax);"
+                "  var ay = document.createElementNS(ns, 'line');"
+                "  ay.setAttribute('x1', pad); ay.setAttribute('y1', pad);"
+                "  ay.setAttribute('x2', pad); ay.setAttribute('y2', H-pad);"
+                "  ay.setAttribute('stroke','#94a3b8'); ay.setAttribute('stroke-width','1');"
+                "  svg.appendChild(ay);"
+                "  (data.xt || []).forEach(function(t) {"
+                "    var tk = document.createElementNS(ns, 'line');"
+                "    tk.setAttribute('x1', t.p); tk.setAttribute('y1', H-pad);"
+                "    tk.setAttribute('x2', t.p); tk.setAttribute('y2', H-pad-3);"
+                "    tk.setAttribute('stroke','#64748b'); tk.setAttribute('stroke-width','1');"
+                "    svg.appendChild(tk);"
+                "    if(t.m && t.l) {"
+                "      var lb = document.createElementNS(ns, 'text');"
+                "      lb.setAttribute('x', t.p); lb.setAttribute('y', H-pad+10);"
+                "      lb.setAttribute('text-anchor','middle'); lb.setAttribute('fill','#475569');"
+                "      lb.setAttribute('font-size','9'); lb.setAttribute('font-family','SF Mono, Monaco, monospace');"
+                "      lb.textContent = t.l; svg.appendChild(lb);"
+                "    }"
+                "  });"
+                "  (data.yt || []).forEach(function(t) {"
+                "    var tk = document.createElementNS(ns, 'line');"
+                "    tk.setAttribute('x1', pad); tk.setAttribute('y1', t.p);"
+                "    tk.setAttribute('x2', pad+3); tk.setAttribute('y2', t.p);"
+                "    tk.setAttribute('stroke','#64748b'); tk.setAttribute('stroke-width','1');"
+                "    svg.appendChild(tk);"
+                "    if(t.m && t.l) {"
+                "      var lb = document.createElementNS(ns, 'text');"
+                "      lb.setAttribute('x', pad-4); lb.setAttribute('y', t.p+3);"
+                "      lb.setAttribute('text-anchor','end'); lb.setAttribute('fill','#475569');"
+                "      lb.setAttribute('font-size','9'); lb.setAttribute('font-family','SF Mono, Monaco, monospace');"
+                "      lb.textContent = t.l; svg.appendChild(lb);"
+                "    }"
+                "  });"
+                "  var xu = document.createElementNS(ns, 'text');"
+                "  xu.setAttribute('x', W-pad+2); xu.setAttribute('y', H-pad+10);"
+                "  xu.setAttribute('fill','#64748b'); xu.setAttribute('font-size','9');"
+                "  xu.setAttribute('font-family','SF Mono, Monaco, monospace');"
+                "  xu.textContent='[m]'; svg.appendChild(xu);"
+                "  var yu = document.createElementNS(ns, 'text');"
+                "  yu.setAttribute('x', pad-4); yu.setAttribute('y', pad-4);"
+                "  yu.setAttribute('text-anchor','end'); yu.setAttribute('fill','#64748b');"
+                "  yu.setAttribute('font-size','9'); yu.setAttribute('font-family','SF Mono, Monaco, monospace');"
+                "  yu.textContent='[m]'; svg.appendChild(yu);"
                 "  data.paths.forEach(function(item) {"
                 "    var p = document.createElementNS(ns, 'path');"
                 "    p.setAttribute('d', item.d);"
@@ -148,6 +346,33 @@ module Cards =
                 "    p.setAttribute('fill', 'none');"
                 "    svg.appendChild(p);"
                 "  });"
+                "  if(data.hover) {"
+                "    var h = data.hover;"
+                "    var cr = document.createElementNS(ns, 'line');"
+                "    cr.setAttribute('x1', h.x-8); cr.setAttribute('y1', h.y);"
+                "    cr.setAttribute('x2', h.x+8); cr.setAttribute('y2', h.y);"
+                "    cr.setAttribute('stroke', '#0f172a'); cr.setAttribute('stroke-width','1');"
+                "    svg.appendChild(cr);"
+                "    var cv = document.createElementNS(ns, 'line');"
+                "    cv.setAttribute('x1', h.x); cv.setAttribute('y1', h.y-8);"
+                "    cv.setAttribute('x2', h.x); cv.setAttribute('y2', h.y+8);"
+                "    cv.setAttribute('stroke', '#0f172a'); cv.setAttribute('stroke-width','1');"
+                "    svg.appendChild(cv);"
+                "    var dot = document.createElementNS(ns, 'circle');"
+                "    dot.setAttribute('cx', h.x); dot.setAttribute('cy', h.y);"
+                "    dot.setAttribute('r', 4); dot.setAttribute('fill', h.c);"
+                "    dot.setAttribute('stroke','#ffffff'); dot.setAttribute('stroke-width','1');"
+                "    svg.appendChild(dot);"
+                "    var tipY = (h.y < 20) ? h.y+16 : h.y-8;"
+                "    var tipX = Math.max(pad+2, Math.min(W-pad-2, h.x+10));"
+                "    var anchor = (h.x > W-pad-40) ? 'end' : 'start';"
+                "    var tx = document.createElementNS(ns, 'text');"
+                "    tx.setAttribute('x', tipX); tx.setAttribute('y', tipY);"
+                "    tx.setAttribute('text-anchor', anchor); tx.setAttribute('fill','#0f172a');"
+                "    tx.setAttribute('font-size','9'); tx.setAttribute('font-family','SF Mono, Monaco, monospace');"
+                "    tx.textContent = h.n + ': ' + h.u.toFixed(1) + 'm, ' + h.v.toFixed(1) + 'm';"
+                "    svg.appendChild(tx);"
+                "  }"
                 "}"
                 "render();"
                 "new MutationObserver(function(){render();}).observe(el, {attributes:true,attributeFilter:['data-diagram']});"
@@ -158,7 +383,7 @@ module Cards =
         div {
             Class "pin-card-body"
 
-            diagramSvg selectedPin
+            diagramSvg env selectedPin
 
             div {
                 Class "pin-card-strat"
@@ -184,6 +409,25 @@ module Cards =
 
             div {
                 Class "pin-card-inline-controls"
+
+                let oneToOne = selectedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.CutAspect = CutAspectOneToOne) |> Option.defaultValue false)
+                div {
+                    Attribute("title", "Cut aspect: 1:1 (slopes match 3D) / Fit")
+                    Primitives.compactButtonBar [
+                        "1:1",
+                        oneToOne,
+                        (fun () ->
+                            match AVal.force selectedPin with
+                            | Some p -> env.Emit [ScanPinMsg (SetCutAspect(p.Id, CutAspectOneToOne))]
+                            | None -> ())
+                        "Fit",
+                        (oneToOne |> AVal.map not),
+                        (fun () ->
+                            match AVal.force selectedPin with
+                            | Some p -> env.Emit [ScanPinMsg (SetCutAspect(p.Id, CutAspectFit))]
+                            | None -> ())
+                    ]
+                }
 
                 let normalized = selectedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.StratigraphyDisplay = Normalized) |> Option.defaultValue false)
                 div {

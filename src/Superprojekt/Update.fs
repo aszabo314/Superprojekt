@@ -86,7 +86,8 @@ and ScanPinMessage =
     | HoverBetweenSpace       of ScanPinId * columnIdx:int * hoverZ:float
     | PinBetweenSpaceHover    of ScanPinId
     | ClearBetweenSpaceHover  of ScanPinId
-    | SetCutHover             of ScanPinId * V2d option
+    | SetCutLineHover         of ScanPinId * CutLineHover option
+    | SetCutAspect            of ScanPinId * CutAspectMode
 
 module CardUpdate =
 
@@ -193,7 +194,13 @@ module ScanPinUpdate =
         | SetAnchor(_worldPos, renderPos, camFwd) ->
             if sp.PlacingMode.IsNone then sp
             else
-            let id = match sp.ActivePlacement with Some id -> id | None -> ScanPinId.create()
+            let existingPlacementId =
+                sp.Pins |> HashMap.toSeq
+                |> Seq.tryPick (fun (pid, p) -> if p.Phase = PinPhase.Placement then Some pid else None)
+            let id =
+                match sp.ActivePlacement |> Option.orElse existingPlacementId with
+                | Some id -> id
+                | None -> ScanPinId.create()
             let axis =
                 match model.ReferenceAxis with
                 | AlongWorldZ -> V3d.OOI
@@ -214,7 +221,8 @@ module ScanPinUpdate =
                   GhostClipCutPlane = false
                   ExtractedLines = ExtractedLinesMode.initial
                   BetweenSpaceHover = None
-                  CutHover = None }
+                  CutAspect = CutAspectFit
+                  CutLineHover = None }
             { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id }
 
         | SetFootprintRadius radius ->
@@ -254,8 +262,10 @@ module ScanPinUpdate =
 
         | DeletePin id ->
             let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
-            let active = if sp.ActivePlacement = Some id then None else sp.ActivePlacement
-            { sp with Pins = HashMap.remove id sp.Pins; SelectedPin = selected; ActivePlacement = active }
+            let wasActive = sp.ActivePlacement = Some id
+            let active = if wasActive then None else sp.ActivePlacement
+            let placing = if wasActive then None else sp.PlacingMode
+            { sp with Pins = HashMap.remove id sp.Pins; SelectedPin = selected; ActivePlacement = active; PlacingMode = placing }
 
         | SelectPin id ->
             { sp with SelectedPin = id }
@@ -300,8 +310,11 @@ module ScanPinUpdate =
                 | Some h when h.Pinned -> pin
                 | _ -> { pin with BetweenSpaceHover = None })
 
-        | SetCutHover(id, uv) ->
-            sp |> updatePin id (fun pin -> { pin with CutHover = uv })
+        | SetCutLineHover(id, hv) ->
+            sp |> updatePin id (fun pin -> { pin with CutLineHover = hv })
+
+        | SetCutAspect(id, mode) ->
+            sp |> updatePin id (fun pin -> { pin with CutAspect = mode })
 
 module Update =
     let private cutDebounce = ref (new System.Threading.CancellationTokenSource())

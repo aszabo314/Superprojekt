@@ -90,47 +90,82 @@ let trianglesInSphere (lm : LoadedMesh) (center : V3f) (radius : float32) =
 // Intersect a plane with mesh triangles. Returns 2D line segments projected onto (axisU, axisV) basis.
 // All inputs in centroid-relative coords except axisU/axisV/planeNormal which are directions.
 // maxExtentU/V clip the output to [-maxExtentU, maxExtentU] × [-maxExtentV, maxExtentV] in 2D.
+//
+// For large cut planes, the slab AABB can return tens to hundreds of thousands of triangles and the
+// per-triangle plane test runs serially. We tile the plane into a (nU × nV) grid, run each tile's
+// BVH query + plane test in parallel, and deduplicate by emitting each segment from the tile that
+// contains its 2D midpoint.
 let planeIntersection (lm : LoadedMesh) (planePoint : V3d) (planeNormal : V3d) (axisU : V3d) (axisV : V3d) (thickness : float) (maxExtentU : float) (maxExtentV : float) =
     let n = planeNormal |> Vec.normalize
-    let hx = abs axisU.X * maxExtentU + abs axisV.X * maxExtentV + abs n.X * thickness
-    let hy = abs axisU.Y * maxExtentU + abs axisV.Y * maxExtentV + abs n.Y * thickness
-    let hz = abs axisU.Z * maxExtentU + abs axisV.Z * maxExtentV + abs n.Z * thickness
-    let boxHalf = V3d(hx, hy, hz)
-    let slabMin = planePoint - boxHalf
-    let slabMax = planePoint + boxHalf
-    let bMin = V3f(Fun.Min(slabMin, slabMax))
-    let bMax = V3f(Fun.Max(slabMin, slabMax))
-    let vertIndices = trianglesInBox lm bMin bMax
-    let segments = ResizeArray<float[]>()
-    let triCount = vertIndices.Length / 3
-    for ti in 0 .. triCount - 1 do
-        let i0 = vertIndices.[ti * 3]
-        let i1 = vertIndices.[ti * 3 + 1]
-        let i2 = vertIndices.[ti * 3 + 2]
-        let p0 = V3d lm.parsed.positions.[i0]
-        let p1 = V3d lm.parsed.positions.[i1]
-        let p2 = V3d lm.parsed.positions.[i2]
-        let d0 = Vec.dot (p0 - planePoint) n
-        let d1 = Vec.dot (p1 - planePoint) n
-        let d2 = Vec.dot (p2 - planePoint) n
-        let pts = ResizeArray<V3d>(2)
-        let inline addEdge (pa : V3d) (da : float) (pb : V3d) (db : float) =
-            if (da > 0.0) <> (db > 0.0) then
-                let t = da / (da - db)
-                pts.Add(pa + t * (pb - pa))
-        addEdge p0 d0 p1 d1
-        addEdge p1 d1 p2 d2
-        addEdge p2 d2 p0 d0
-        if pts.Count >= 2 then
-            let a = pts.[0]
-            let b = pts.[1]
-            let u0 = Vec.dot (a - planePoint) axisU
-            let v0 = Vec.dot (a - planePoint) axisV
-            let u1 = Vec.dot (b - planePoint) axisU
-            let v1 = Vec.dot (b - planePoint) axisV
-            if (abs u0 <= maxExtentU || abs u1 <= maxExtentU) && (abs v0 <= maxExtentV || abs v1 <= maxExtentV) then
-                segments.Add [| u0; v0; u1; v1 |]
-    segments.ToArray()
+    // Tile target ~8 m per edge; cap at 8×8. Small cuts fall through to a single-tile pass with no overhead.
+    let tileTarget = 8.0
+    let nU = max 1 (min 8 (int (ceil (maxExtentU * 2.0 / tileTarget))))
+    let nV = max 1 (min 8 (int (ceil (maxExtentV * 2.0 / tileTarget))))
+    let tileHalfU = maxExtentU / float nU
+    let tileHalfV = maxExtentV / float nV
+    let perTile = Array.init (nU * nV) (fun _ -> ResizeArray<float[]>())
+    System.Threading.Tasks.Parallel.For(0, nU * nV, fun ti ->
+        let iu = ti % nU
+        let iv = ti / nU
+        let uC = -maxExtentU + (float iu * 2.0 + 1.0) * tileHalfU
+        let vC = -maxExtentV + (float iv * 2.0 + 1.0) * tileHalfV
+        let uLo = uC - tileHalfU
+        let uHi = uC + tileHalfU
+        let vLo = vC - tileHalfV
+        let vHi = vC + tileHalfV
+        let tilePlanePoint = planePoint + axisU * uC + axisV * vC
+        let hx = abs axisU.X * tileHalfU + abs axisV.X * tileHalfV + abs n.X * thickness
+        let hy = abs axisU.Y * tileHalfU + abs axisV.Y * tileHalfV + abs n.Y * thickness
+        let hz = abs axisU.Z * tileHalfU + abs axisV.Z * tileHalfV + abs n.Z * thickness
+        let boxHalf = V3d(hx, hy, hz)
+        let slabMin = tilePlanePoint - boxHalf
+        let slabMax = tilePlanePoint + boxHalf
+        let bMin = V3f(Fun.Min(slabMin, slabMax))
+        let bMax = V3f(Fun.Max(slabMin, slabMax))
+        let vertIndices = trianglesInBox lm bMin bMax
+        let local = perTile.[ti]
+        let triCount = vertIndices.Length / 3
+        for tix in 0 .. triCount - 1 do
+            let i0 = vertIndices.[tix * 3]
+            let i1 = vertIndices.[tix * 3 + 1]
+            let i2 = vertIndices.[tix * 3 + 2]
+            let p0 = V3d lm.parsed.positions.[i0]
+            let p1 = V3d lm.parsed.positions.[i1]
+            let p2 = V3d lm.parsed.positions.[i2]
+            let d0 = Vec.dot (p0 - planePoint) n
+            let d1 = Vec.dot (p1 - planePoint) n
+            let d2 = Vec.dot (p2 - planePoint) n
+            let pts = ResizeArray<V3d>(2)
+            let inline addEdge (pa : V3d) (da : float) (pb : V3d) (db : float) =
+                if (da > 0.0) <> (db > 0.0) then
+                    let t = da / (da - db)
+                    pts.Add(pa + t * (pb - pa))
+            addEdge p0 d0 p1 d1
+            addEdge p1 d1 p2 d2
+            addEdge p2 d2 p0 d0
+            if pts.Count >= 2 then
+                let a = pts.[0]
+                let b = pts.[1]
+                let u0 = Vec.dot (a - planePoint) axisU
+                let v0 = Vec.dot (a - planePoint) axisV
+                let u1 = Vec.dot (b - planePoint) axisU
+                let v1 = Vec.dot (b - planePoint) axisV
+                if (abs u0 <= maxExtentU || abs u1 <= maxExtentU) && (abs v0 <= maxExtentV || abs v1 <= maxExtentV) then
+                    // Dedup: emit only if the 2D midpoint lies in this tile. Use half-open ranges on
+                    // the high side, closed on the low side; tiles on the outer boundary claim their
+                    // open edge so segments on the exact boundary aren't dropped.
+                    let uM = 0.5 * (u0 + u1)
+                    let vM = 0.5 * (v0 + v1)
+                    let inU = uM >= uLo && (uM < uHi || iu = nU - 1)
+                    let inV = vM >= vLo && (vM < vHi || iv = nV - 1)
+                    if inU && inV then local.Add [| u0; v0; u1; v1 |]) |> ignore
+    let total = perTile |> Array.sumBy (fun b -> b.Count)
+    let out = Array.zeroCreate<float[]> total
+    let mutable off = 0
+    for b in perTile do
+        b.CopyTo(out, off)
+        off <- off + b.Count
+    out
 
 // Statistics helpers
 type GridCellStats = { Average: float; Q1: float; Q3: float; Min: float; Max: float; Variance: float }

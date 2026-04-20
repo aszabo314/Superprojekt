@@ -589,31 +589,22 @@ module Gui =
                 let nice = niceRoundDistance realAt100
                 let px = nice * scale / renderPerPixel
                 let px = if System.Double.IsNaN px || System.Double.IsInfinity px then targetPx else max 10.0 (min 400.0 px)
-                sprintf "{\"w\":%f,\"label\":\"%s\"}" px (formatMeters nice))
+                px, formatMeters nice)
+        let barPx = barInfo |> AVal.map fst
+        let barLabel = barInfo |> AVal.map snd
         div {
             Class "scale-bar"
-            barInfo |> AVal.map (fun json -> Some (Attribute("data-scale", json)))
-            OnBoot [
-                "var el = __THIS__;"
-                "var last = '';"
-                "function render() {"
-                "  var raw = el.getAttribute('data-scale') || '{}';"
-                "  if(raw === last) return; last = raw;"
-                "  try { var d = JSON.parse(raw); } catch(e) { return; }"
-                "  el.innerHTML = '';"
-                "  var bar = document.createElement('div');"
-                "  bar.className = 'sb-bar';"
-                "  bar.style.width = d.w + 'px';"
-                "  var lc = document.createElement('span'); lc.className = 'sb-cap sb-cap-l';"
-                "  var rc = document.createElement('span'); rc.className = 'sb-cap sb-cap-r';"
-                "  var ln = document.createElement('span'); ln.className = 'sb-line';"
-                "  bar.appendChild(lc); bar.appendChild(ln); bar.appendChild(rc);"
-                "  var lbl = document.createElement('div'); lbl.className = 'sb-label'; lbl.textContent = d.label;"
-                "  el.appendChild(bar); el.appendChild(lbl);"
-                "}"
-                "render();"
-                "new MutationObserver(render).observe(el, {attributes:true,attributeFilter:['data-scale']});"
-            ]
+            div {
+                Class "sb-bar"
+                barPx |> AVal.map (fun px -> Some (Style [Width (sprintf "%.0fpx" px)]))
+                span { Class "sb-cap sb-cap-l" }
+                span { Class "sb-line" }
+                span { Class "sb-cap sb-cap-r" }
+            }
+            div {
+                Class "sb-label"
+                barLabel
+            }
         }
 
     let orientationIndicator (model : AdaptiveModel) =

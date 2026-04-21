@@ -131,6 +131,7 @@ module MeshView =
         let signature =
             info.Runtime.CreateFramebufferSignature [
                 DefaultSemantic.Colors,       TextureFormat.Rgba8
+                DefaultSemantic.Normals,      TextureFormat.Rgba16f
                 DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
             ]
 
@@ -142,16 +143,20 @@ module MeshView =
         let colorTex =
             info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Rgba8, 1, 1, texCount)
 
+        let normalTex =
+            info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Rgba16f, 1, 1, texCount)
+
         let depthTex =
             info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Depth24Stencil8, 1, 1, texCount)
 
         let fbos =
-            (colorTex, depthTex) ||> AdaptiveResource.bind2 (fun color depth ->
+            (colorTex, normalTex, depthTex) |||> AdaptiveResource.bind3 (fun color normal depth ->
                 texCount |> AVal.map (fun cnt ->
                     Array.init cnt (fun i ->
                         info.Runtime.CreateFramebuffer(
                             signature, [
                                 DefaultSemantic.Colors, color.[TextureAspect.Color, 0, i] :> IFramebufferOutput
+                                DefaultSemantic.Normals, normal.[TextureAspect.Color, 0, i] :> IFramebufferOutput
                                 DefaultSemantic.DepthStencil, depth.[TextureAspect.DepthStencil, 0, i] :> IFramebufferOutput
                             ]
                         )
@@ -159,8 +164,12 @@ module MeshView =
                 )
             )
         
+        let activePlacementId =
+            model.ScanPins.Placement |> AVal.map (function
+                | AdjustingPin(id, _) -> Some id
+                | _ -> None)
         let activePin =
-            (model.ScanPins.SelectedPin, model.ScanPins.ActivePlacement, model.ScanPins.Pins |> AMap.toAVal)
+            (model.ScanPins.SelectedPin, activePlacementId, model.ScanPins.Pins |> AMap.toAVal)
             |||> AVal.map3 (fun sel act pins ->
                 let id = act |> Option.orElse sel
                 id |> Option.bind (fun id -> HashMap.tryFind id pins))
@@ -240,19 +249,22 @@ module MeshView =
             info.Runtime.CompileClear(signature, clear { color C4f.Zero; depth 1.0; stencil 0 })
 
         let output =
-            (colorTex, depthTex, fbos) |||> AdaptiveResource.bind3 (fun color depth fbos ->
-                AList.toAVal tasks |> AVal.bind (fun tasks ->
-                    AVal.custom (fun t ->
-                        for (i, mainTask) in tasks do
-                            clear.Run(t, RenderToken.Empty, fbos.[i])
-                            mainTask.Run(t, RenderToken.Empty, fbos.[i])
-                        color, depth
+            (colorTex, normalTex, depthTex) |||> AdaptiveResource.bind3 (fun color normal depth ->
+                fbos |> AdaptiveResource.bind (fun fbos ->
+                    AList.toAVal tasks |> AVal.bind (fun tasks ->
+                        AVal.custom (fun t ->
+                            for (i, mainTask) in tasks do
+                                clear.Run(t, RenderToken.Empty, fbos.[i])
+                                mainTask.Run(t, RenderToken.Empty, fbos.[i])
+                            color, normal, depth
+                        )
                     )
                 )
             )
-        let colorTex = AdaptiveResource.map fst output
-        let depthTex = AdaptiveResource.map snd output
-        model.MeshNames |> AList.count, colorTex, depthTex, meshIndices
+        let colorTex  = AdaptiveResource.map (fun (c, _, _) -> c) output
+        let normalTex = AdaptiveResource.map (fun (_, n, _) -> n) output
+        let depthTex  = AdaptiveResource.map (fun (_, _, d) -> d) output
+        model.MeshNames |> AList.count, colorTex, normalTex, depthTex, meshIndices
 
     let composeMeshTextures
         (count : aval<int>)

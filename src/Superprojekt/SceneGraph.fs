@@ -166,8 +166,9 @@ module SceneGraph =
         let loadFinished (name : string) =
             env.Emit [ LoadFinished name ]
         
-        let cnt, colors, depths, meshIndices = MeshView.buildMeshTextures info loadFinished view proj model
+        let cnt, colors, normals, depths, meshIndices = MeshView.buildMeshTextures info loadFinished view proj model
         let colorArrTex  = colors  |> AdaptiveResource.map (fun t -> t :> ITexture)
+        let normalArrTex = normals |> AdaptiveResource.map (fun t -> t :> ITexture)
         let depthArrTex  = depths  |> AdaptiveResource.map (fun t -> t :> ITexture)
 
         let sliceOf name =
@@ -183,9 +184,13 @@ module SceneGraph =
                 ) 0
             )
 
+        let activePlacementId =
+            model.ScanPins.Placement |> AVal.map (function
+                | AdjustingPin(id, _) -> Some id
+                | _ -> None)
         let effectiveGhostSilhouette =
             let cylClipActive =
-                (model.ScanPins.SelectedPin, model.ScanPins.ActivePlacement, model.ScanPins.Pins |> AMap.toAVal)
+                (model.ScanPins.SelectedPin, activePlacementId, model.ScanPins.Pins |> AMap.toAVal)
                 |||> AVal.map3 (fun sel act pins ->
                     let id = act |> Option.orElse sel
                     match id |> Option.bind (fun id -> HashMap.tryFind id pins) with
@@ -720,7 +725,10 @@ module SceneGraph =
         let hullPicking =
             let notFullscreen = AVal.map not fullscreenActive
             let selectedId = model.ScanPins.SelectedPin
-            let activeId = model.ScanPins.ActivePlacement
+            let activeId =
+                model.ScanPins.Placement |> AVal.map (function
+                    | AdjustingPin(id, _) -> Some id
+                    | _ -> None)
             let editedPin =
                 (selectedId, activeId, pinsVal) |||> AVal.map3 (fun sel act pins ->
                     let id = act |> Option.orElse sel
@@ -796,4 +804,93 @@ module SceneGraph =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; betweenSpaceBand; extractedLines; cutHoverMarker; hullPicking])
+        let placementPreview =
+            let previewPrism =
+                (model.ScanPins.Placement, model.ClipBounds) ||> AVal.map2 (fun placement bounds ->
+                    let autoDepth () =
+                        if bounds.IsInvalid then 10.0 else bounds.SizeZ
+                    match placement with
+                    | ProfilePlacement (ProfileWaitingForSecondPoint(p1, Some p2)) ->
+                        let diff = p2 - p1
+                        let len = diff.Length
+                        if len < 1e-3 then None
+                        else
+                            let center = (p1 + p2) * 0.5
+                            let radius = max 0.1 (len * 0.6)
+                            let prism : SelectionPrism = {
+                                AnchorPoint = center
+                                AxisDirection = V3d.OOI
+                                Footprint = { Vertices = [ for k in 0 .. 31 ->
+                                                            let a = float k * 2.0 * System.Math.PI / 32.0
+                                                            V2d(cos a * radius, sin a * radius) ] }
+                                ExtentForward = 1.0
+                                ExtentBackward = autoDepth ()
+                            }
+                            Some (prism, Some (p1, p2))
+                    | PlanPlacement (PlanDragging(center, r)) when r >= 0.05 ->
+                        let prism : SelectionPrism = {
+                            AnchorPoint = center
+                            AxisDirection = V3d.OOI
+                            Footprint = { Vertices = [ for k in 0 .. 31 ->
+                                                        let a = float k * 2.0 * System.Math.PI / 32.0
+                                                        V2d(cos a * r, sin a * r) ] }
+                            ExtentForward = 1.0
+                            ExtentBackward = autoDepth ()
+                        }
+                        Some (prism, None)
+                    | _ -> None)
+            let hullGeom =
+                previewPrism |> AVal.map (fun po ->
+                    match po with
+                    | Some (prism, _) ->
+                        let p, i = PinGeometry.buildCylinderHull prism 64
+                        p, i, true
+                    | None -> [||], [||], false)
+            let hullPos = hullGeom |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
+            let hullIdx = hullGeom |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
+            let hullCnt = hullGeom |> AVal.map (fun (_,i,_) -> i.Length)
+            let hullActive = hullGeom |> AVal.map (fun (_,_,a) -> a)
+            let lineGeom =
+                previewPrism |> AVal.map (fun po ->
+                    match po with
+                    | Some (_, Some (p1, p2)) ->
+                        [| V3f p1; V3f p2 |], [| 0; 1 |], true
+                    | _ -> [||], [||], false)
+            let linePos = lineGeom |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
+            let lineIdx = lineGeom |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
+            let lineCnt = lineGeom |> AVal.map (fun (_,i,_) -> i.Length)
+            let lineActive = lineGeom |> AVal.map (fun (_,_,a) -> a)
+            ASet.ofList [
+                sg {
+                    Sg.Active hullActive
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.1, 0.34, 0.86, 0.18)))
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.Pass RenderPass.passOne
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(hullPos, typeof<V3f>) ])
+                    Sg.Index(BufferView(hullIdx, typeof<int>))
+                    Sg.Render hullCnt
+                }
+                sg {
+                    Sg.Active lineActive
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.1, 0.34, 0.86, 0.95)))
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.Pass RenderPass.passOne
+                    Sg.Mode IndexedGeometryMode.LineList
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(linePos, typeof<V3f>) ])
+                    Sg.Index(BufferView(lineIdx, typeof<int>))
+                    Sg.Render lineCnt
+                }
+            ]
+
+        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinDots; pinPrisms; betweenSpaceBand; extractedLines; cutHoverMarker; hullPicking; placementPreview])

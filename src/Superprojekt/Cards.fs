@@ -389,7 +389,7 @@ module Cards =
 
             div {
                 Class "pin-card-strat"
-                let isPlacing = (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
+                let isPlacing = model.ScanPins.Placement |> AVal.map (function PlacementIdle -> false | _ -> true)
                 StratigraphyView.render env isPlacing selectedPin
                 div {
                     Class "strat-hover-tip"
@@ -485,8 +485,12 @@ module Cards =
 
     let renderCards (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =
         let allPinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let activePlacementId =
+            model.ScanPins.Placement |> AVal.map (function
+                | AdjustingPin(id, _) -> Some id
+                | _ -> None)
         let selectedPin =
-            (model.ScanPins.SelectedPin, model.ScanPins.ActivePlacement, allPinsVal)
+            (model.ScanPins.SelectedPin, activePlacementId, allPinsVal)
             |||> AVal.map3 (fun sel act pins ->
                 let id = act |> Option.orElse sel
                 id |> Option.bind (fun id -> HashMap.tryFind id pins))

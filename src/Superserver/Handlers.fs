@@ -33,6 +33,11 @@ type PlaneIntersectionBatchRequest = { Names: string[]; PlanePoint: float[]; Pla
 [<CLIMutable>]
 type SphereBatchRequest = { Names: string[]; Center: float[]; Radius: float }
 
+// Ray batch: for each ray, return nearest t across all named meshes (or negative if no hit).
+// Origins[i] and Directions[i] are flat float arrays (3*N entries); Names applies to all rays.
+[<CLIMutable>]
+type RayBatchRequest = { Names: string[]; Origins: float[]; Directions: float[] }
+
 [<CLIMutable>]
 type GridEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Radius: float; Resolution: int; ExtentForward: float; ExtentBackward: float }
 
@@ -276,6 +281,136 @@ let planeIntersectionBatchHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
+// POST /api/query/ray-grid
+// Like ray-batch but also returns the world-space hit normal.
+// Binary response: int32 rayCount | per-ray (byte hitFlag | float64 hitX hitY hitZ | float32 nX nY nZ)
+// Float32 for normals is intentional — Embree returns fp32 and we never need more precision than that.
+let rayGridHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<RayBatchRequest>()
+            let rayCount = req.Origins.Length / 3
+            let meshCount = req.Names.Length
+            let meshes = Array.init meshCount (fun i ->
+                let dataset, name = splitName req.Names.[i]
+                MeshCache.get dataset name 0)
+            let hitFlags = Array.zeroCreate<byte> rayCount
+            let hitPts   = Array.zeroCreate<V3d> rayCount
+            let hitNrm   = Array.zeroCreate<V3f> rayCount
+            System.Threading.Tasks.Parallel.For(0, rayCount, fun i ->
+                let worldOrigin = V3d(req.Origins.[i*3], req.Origins.[i*3+1], req.Origins.[i*3+2])
+                let direction   = V3d(req.Directions.[i*3], req.Directions.[i*3+1], req.Directions.[i*3+2])
+                let dirF = V3f direction
+                let mutable bestT = System.Single.MaxValue
+                let mutable bestHit = V3d.Zero
+                let mutable bestNrm = V3f.Zero
+                let mutable gotHit = false
+                for k in 0 .. meshCount - 1 do
+                    let lm = meshes.[k]
+                    let orig = V3f(worldOrigin - lm.parsed.centroid)
+                    let mutable hit = RayHit()
+                    if lm.scene.Intersect(orig, dirF, &hit) then
+                        if hit.T < bestT then
+                            bestT <- hit.T
+                            bestHit <- V3d(orig + dirF * hit.T) + lm.parsed.centroid
+                            bestNrm <- hit.Normal |> Vec.normalize
+                            gotHit <- true
+                if gotHit then
+                    hitFlags.[i] <- 1uy
+                    hitPts.[i] <- bestHit
+                    hitNrm.[i] <- bestNrm) |> ignore
+            ctx.SetContentType "application/octet-stream"
+            let bufLen = 4 + rayCount * (1 + 3 * 8 + 3 * 4)
+            let buf = Array.zeroCreate<byte> bufLen
+            let mutable o = 0
+            BitConverter.TryWriteBytes(buf.AsSpan(o, 4), rayCount) |> ignore
+            o <- o + 4
+            for i in 0 .. rayCount - 1 do
+                buf.[o] <- hitFlags.[i]
+                o <- o + 1
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 8), hitPts.[i].X) |> ignore
+                o <- o + 8
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 8), hitPts.[i].Y) |> ignore
+                o <- o + 8
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 8), hitPts.[i].Z) |> ignore
+                o <- o + 8
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 4), hitNrm.[i].X) |> ignore
+                o <- o + 4
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 4), hitNrm.[i].Y) |> ignore
+                o <- o + 4
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 4), hitNrm.[i].Z) |> ignore
+                o <- o + 4
+            let hitCount = hitFlags |> Array.sumBy (fun b -> int b)
+            log.LogInformation("ray-grid {Rays} rays, {Meshes} meshes, {Hits} hits", rayCount, meshCount, hitCount)
+            ctx.Response.ContentLength <- Nullable<int64>(int64 buf.Length)
+            do! ctx.Response.Body.WriteAsync(buf, 0, buf.Length)
+            return! next ctx
+        with ex ->
+            log.LogError(ex, "ray-grid failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+// POST /api/query/ray-batch
+// Binary response: int32 rayCount | per-ray (byte hitFlag | float64 worldX | float64 worldY | float64 worldZ)
+// When hitFlag = 0, the three floats are unspecified.
+let rayBatchHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<RayBatchRequest>()
+            let rayCount = req.Origins.Length / 3
+            let meshCount = req.Names.Length
+            // Preload meshes to avoid concurrent MeshCache.get contention
+            let meshes = Array.init meshCount (fun i ->
+                let dataset, name = splitName req.Names.[i]
+                MeshCache.get dataset name 0)
+            let hitFlags = Array.zeroCreate<byte> rayCount
+            let hitPts   = Array.zeroCreate<V3d> rayCount
+            System.Threading.Tasks.Parallel.For(0, rayCount, fun i ->
+                let worldOrigin = V3d(req.Origins.[i*3], req.Origins.[i*3+1], req.Origins.[i*3+2])
+                let direction   = V3d(req.Directions.[i*3], req.Directions.[i*3+1], req.Directions.[i*3+2])
+                let dirF = V3f direction
+                let mutable bestT = System.Single.MaxValue
+                let mutable bestHit = V3d.Zero
+                let mutable gotHit = false
+                for k in 0 .. meshCount - 1 do
+                    let lm = meshes.[k]
+                    let orig = V3f(worldOrigin - lm.parsed.centroid)
+                    let mutable hit = RayHit()
+                    if lm.scene.Intersect(orig, dirF, &hit) then
+                        if hit.T < bestT then
+                            bestT <- hit.T
+                            bestHit <- V3d(orig + dirF * hit.T) + lm.parsed.centroid
+                            gotHit <- true
+                if gotHit then
+                    hitFlags.[i] <- 1uy
+                    hitPts.[i] <- bestHit) |> ignore
+            ctx.SetContentType "application/octet-stream"
+            let bufLen = 4 + rayCount * (1 + 3 * 8)
+            let buf = Array.zeroCreate<byte> bufLen
+            let mutable o = 0
+            BitConverter.TryWriteBytes(buf.AsSpan(o, 4), rayCount) |> ignore
+            o <- o + 4
+            for i in 0 .. rayCount - 1 do
+                buf.[o] <- hitFlags.[i]
+                o <- o + 1
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 8), hitPts.[i].X) |> ignore
+                o <- o + 8
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 8), hitPts.[i].Y) |> ignore
+                o <- o + 8
+                BitConverter.TryWriteBytes(buf.AsSpan(o, 8), hitPts.[i].Z) |> ignore
+                o <- o + 8
+            let hitCount = hitFlags |> Array.sumBy (fun b -> int b)
+            log.LogInformation("ray-batch {Rays} rays, {Meshes} meshes, {Hits} hits", rayCount, meshCount, hitCount)
+            ctx.Response.ContentLength <- Nullable<int64>(int64 buf.Length)
+            do! ctx.Response.Body.WriteAsync(buf, 0, buf.Length)
+            return! next ctx
+        with ex ->
+            log.LogError(ex, "ray-batch failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
 // POST /api/query/sphere-batch
 let sphereBatchHandler : HttpHandler =
     fun next ctx -> task {
@@ -401,6 +536,8 @@ let webApp : HttpHandler =
         routef "/api/datasets/%s/mesh/%s/%i"                    (fun (d,n,i) -> meshHandler(d,n,i))
         routef "/api/datasets/%s/mesh/%s"                       (fun (d,n)   -> meshCountHandler(d,n))
         route  "/api/query/ray"                                 >=> rayHandler
+        route  "/api/query/ray-batch"                           >=> rayBatchHandler
+        route  "/api/query/ray-grid"                            >=> rayGridHandler
         route  "/api/query/closest"                             >=> closestHandler
         route  "/api/query/sphere"                              >=> sphereHandler
         route  "/api/query/sphere-batch"                        >=> sphereBatchHandler

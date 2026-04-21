@@ -98,17 +98,55 @@ module Gui =
             }
 
             let isPlacing =
-                (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
+                model.ScanPins.Placement |> AVal.map (function PlacementIdle -> false | _ -> true)
+            let lastMode = model.ScanPins.LastPlacementMode
+            let modeLabel = function ProfileMode -> "Profile" | PlanMode -> "Plan" | AutoMode -> "Auto"
+            let exploreOn = model.Explore |> AVal.map (fun e -> e.Enabled)
 
-            button {
-                Class "tb-btn"
-                isPlacing |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Place a ScanPin")
-                Dom.OnClick(fun _ ->
-                    let placing = AVal.force isPlacing
-                    if placing then env.Emit [ScanPinMsg CancelPlacement]
-                    else env.Emit [ScanPinMsg (StartPlacement FootprintMode.Circle)])
-                isPlacing |> AVal.map (fun on -> if on then "\u2715 Cancel" else "+ Pin")
+            div {
+                Class "tb-split"
+                button {
+                    Class "tb-btn tb-split-main"
+                    isPlacing |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                    Attribute("title", "Place a ScanPin")
+                    Dom.OnClick(fun _ ->
+                        let placing = AVal.force isPlacing
+                        if placing then env.Emit [ScanPinMsg CancelPlacement]
+                        else env.Emit [ScanPinMsg (SelectPlacementMode (AVal.force lastMode))])
+                    (isPlacing, lastMode) ||> AVal.map2 (fun on m ->
+                        if on then "\u2715 Cancel" else "+ " + modeLabel m)
+                }
+                div {
+                    Class "tb-split-menu-wrap"
+                    isPlacing |> AVal.map (fun on -> if on then Some (Style [Display "none"]) else None)
+                    button {
+                        Class "tb-btn tb-split-arrow"
+                        Attribute("title", "Choose placement mode")
+                        "\u25BE"
+                    }
+                    div {
+                        Class "tb-split-menu"
+                        button {
+                            Class "tb-split-item"
+                            Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPlacementMode ProfileMode)])
+                            "Profile — vertical cut"
+                        }
+                        button {
+                            Class "tb-split-item"
+                            Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPlacementMode PlanMode)])
+                            "Plan — horizontal cut"
+                        }
+                        button {
+                            Class "tb-split-item"
+                            exploreOn |> AVal.map (fun on -> if on then None else Some (Class "tb-split-item-disabled"))
+                            Attribute("title", "Enable explore mode first")
+                            Dom.OnClick(fun _ ->
+                                if AVal.force exploreOn then
+                                    env.Emit [ScanPinMsg (SelectPlacementMode AutoMode)])
+                            "Auto — from explore"
+                        }
+                    }
+                }
             }
 
             button {
@@ -310,14 +348,27 @@ module Gui =
 
     let placementFlyout (env : Env<Message>) (model : AdaptiveModel) =
         let sp = model.ScanPins
+        let activePlacementId =
+            sp.Placement |> AVal.map (function
+                | AdjustingPin(id, _) -> Some id
+                | _ -> None)
         let activePin =
-            sp.ActivePlacement |> AVal.bind (function
+            activePlacementId |> AVal.bind (function
                 | Some i -> sp.Pins |> AMap.tryFind i
                 | None -> AVal.constant None)
-        let placing = (sp.PlacingMode, sp.ActivePlacement) ||> AVal.map2 (fun pm ap -> pm.IsSome || ap.IsSome)
+        let adjusting =
+            sp.Placement |> AVal.map (function AdjustingPin _ -> true | _ -> false)
+        let placementHint =
+            sp.Placement |> AVal.map (function
+                | ProfilePlacement ProfileWaitingForFirstPoint -> "Click the first point on a surface."
+                | ProfilePlacement (ProfileWaitingForSecondPoint _) -> "Click the second point to set cut direction."
+                | PlanPlacement PlanWaitingForDrag -> "Click and drag to lasso a circular area."
+                | PlanPlacement (PlanDragging _) -> "Release to place the pin."
+                | AutoPlacement _ -> "Click a hot spot to place the pin."
+                | _ -> "")
         let flyoutClass =
-            (placing, model.MenuOpen) ||> AVal.map2 (fun p open_ ->
-                if not p then "placement-flyout hidden"
+            (adjusting, model.MenuOpen) ||> AVal.map2 (fun adj open_ ->
+                if not adj then "placement-flyout hidden"
                 elif open_ then "placement-flyout pf-left-open"
                 else "placement-flyout pf-left-closed")
         div {
@@ -325,8 +376,7 @@ module Gui =
             div { Class "lp-section-title"; "Placing Pin" }
             p {
                 Class "lp-hint"
-                sp.PlacingMode |> AVal.map (fun pm ->
-                    if pm.IsSome then "Tap on a mesh to anchor the pin." else "")
+                placementHint
             }
 
             let radius = activePin |> AVal.map (fun p ->
@@ -344,8 +394,15 @@ module Gui =
             inlineSlider "Length" 0.5 100.0 0.5 (sprintf "%.1fm") length (fun v ->
                 env.Emit [ScanPinMsg (SetPinLength v)])
 
+            let editingMode =
+                sp.Placement |> AVal.map (function
+                    | AdjustingPin(_, m) -> Some m
+                    | _ -> None)
             div {
                 Class "lp-sub"
+                editingMode |> AVal.map (function
+                    | Some AutoMode | None -> None
+                    | Some _ -> Some (Style [Display "none"]))
                 span { Class "lp-sublabel"; "Cut Plane" }
                 let mode = activePin |> AVal.map (fun p ->
                     match p with
@@ -386,7 +443,7 @@ module Gui =
                 | None -> false)
             div {
                 Class "lp-ghost-row"
-                compactToggle "Ghost clip" ghost (fun () ->
+                compactToggle "Solo" ghost (fun () ->
                     match AVal.force activePin with
                     | Some p ->
                         let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn

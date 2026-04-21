@@ -326,6 +326,98 @@ module Query =
             return results
         }
 
+    /// POST /query/ray-grid — like rayBatch but also returns per-hit world-space normal.
+    /// Binary response: int32 rayCount | per-ray (byte hitFlag | float64 hitX hitY hitZ | float32 nX nY nZ)
+    let rayGrid (serverUrl : string) (names : string[]) (rays : (V3d * V3d)[]) : Async<(V3d * V3d) option[]> =
+        async {
+            let namesJson =
+                let sb = System.Text.StringBuilder()
+                sb.Append('[') |> ignore
+                for i in 0 .. names.Length - 1 do
+                    if i > 0 then sb.Append(',') |> ignore
+                    sb.Append('"').Append(names.[i]).Append('"') |> ignore
+                sb.Append(']') |> ignore
+                sb.ToString()
+            let flatten (pick : V3d * V3d -> V3d) =
+                let parts = ResizeArray<string>()
+                for i in 0 .. rays.Length - 1 do
+                    let v = pick rays.[i]
+                    parts.Add(sprintf "%.17g,%.17g,%.17g" v.X v.Y v.Z)
+                "[" + String.concat "," parts + "]"
+            let originsJson    = flatten fst
+            let directionsJson = flatten snd
+            let json = sprintf """{"names":%s,"origins":%s,"directions":%s}""" namesJson originsJson directionsJson
+            use client = new HttpClient()
+            use content = new StringContent(json, Encoding.UTF8, "application/json")
+            let! resp = client.PostAsync(serverUrl.TrimEnd('/') + "/query/ray-grid", content) |> Async.AwaitTask
+            resp.EnsureSuccessStatusCode() |> ignore
+            let! buf = resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
+            let mutable o = 0
+            let rayCount = System.BitConverter.ToInt32(buf, o)
+            o <- o + 4
+            let results = Array.zeroCreate<(V3d * V3d) option> rayCount
+            for i in 0 .. rayCount - 1 do
+                let flag = buf.[o]
+                o <- o + 1
+                let hx = System.BitConverter.ToDouble(buf, o)
+                o <- o + 8
+                let hy = System.BitConverter.ToDouble(buf, o)
+                o <- o + 8
+                let hz = System.BitConverter.ToDouble(buf, o)
+                o <- o + 8
+                let nx = float (System.BitConverter.ToSingle(buf, o))
+                o <- o + 4
+                let ny = float (System.BitConverter.ToSingle(buf, o))
+                o <- o + 4
+                let nz = float (System.BitConverter.ToSingle(buf, o))
+                o <- o + 4
+                results.[i] <- if flag <> 0uy then Some (V3d(hx, hy, hz), V3d(nx, ny, nz)) else None
+            return results
+        }
+
+    /// POST /query/ray-batch — returns per-ray world-space hit point (None when no hit)
+    /// Binary response: int32 rayCount | per-ray (byte hitFlag | float64 worldX | float64 worldY | float64 worldZ)
+    let rayBatch (serverUrl : string) (names : string[]) (rays : (V3d * V3d)[]) : Async<V3d option[]> =
+        async {
+            let namesJson =
+                let sb = System.Text.StringBuilder()
+                sb.Append('[') |> ignore
+                for i in 0 .. names.Length - 1 do
+                    if i > 0 then sb.Append(',') |> ignore
+                    sb.Append('"').Append(names.[i]).Append('"') |> ignore
+                sb.Append(']') |> ignore
+                sb.ToString()
+            let flatten (pick : V3d * V3d -> V3d) =
+                let parts = ResizeArray<string>()
+                for i in 0 .. rays.Length - 1 do
+                    let v = pick rays.[i]
+                    parts.Add(sprintf "%.17g,%.17g,%.17g" v.X v.Y v.Z)
+                "[" + String.concat "," parts + "]"
+            let originsJson    = flatten fst
+            let directionsJson = flatten snd
+            let json = sprintf """{"names":%s,"origins":%s,"directions":%s}""" namesJson originsJson directionsJson
+            use client = new HttpClient()
+            use content = new StringContent(json, Encoding.UTF8, "application/json")
+            let! resp = client.PostAsync(serverUrl.TrimEnd('/') + "/query/ray-batch", content) |> Async.AwaitTask
+            resp.EnsureSuccessStatusCode() |> ignore
+            let! buf = resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
+            let mutable o = 0
+            let rayCount = System.BitConverter.ToInt32(buf, o)
+            o <- o + 4
+            let results = Array.zeroCreate<V3d option> rayCount
+            for i in 0 .. rayCount - 1 do
+                let flag = buf.[o]
+                o <- o + 1
+                let x = System.BitConverter.ToDouble(buf, o)
+                o <- o + 8
+                let y = System.BitConverter.ToDouble(buf, o)
+                o <- o + 8
+                let z = System.BitConverter.ToDouble(buf, o)
+                o <- o + 8
+                results.[i] <- if flag <> 0uy then Some (V3d(x, y, z)) else None
+            return results
+        }
+
     let private postBinary (serverUrl : string) (path : string) (json : string) : Async<byte[]> =
         async {
             use client = new HttpClient()

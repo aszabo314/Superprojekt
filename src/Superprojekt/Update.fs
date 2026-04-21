@@ -63,11 +63,23 @@ and CardMessage =
     | RemoveCardsForPin of ScanPinId
 
 and ScanPinMessage =
-    | StartPlacement of FootprintMode
+    | SelectPlacementMode of PlacementMode
     | CancelPlacement
-    | SetAnchor of point : V3d * renderPos : V3d * cameraForward : V3d
+    // Profile gesture
+    | ProfileClickFirst of renderPos : V3d
+    | ProfileClickSecond of renderPos : V3d
+    | ProfilePreviewUpdate of previewPos : V3d option
+    // Plan gesture
+    | PlanDragStart of renderPos : V3d
+    | PlanDragUpdate of currentRadius : float
+    | PlanDragEnd
+    | PlanMedianElevationLoaded of ScanPinId * medianZ : float
+    // Auto gesture
+    | AutoHoverUpdate of AutoPreview option
+    | AutoClick of renderPos : V3d * worldRays : (V3d * V3d)[] * refAxisWorld : V3d
+    | AutoDerivationComplete of ScanPinId * axisWorld : V3d * cutPlane : CutPlaneMode * radiusRender : float
+    // Shared adjustment
     | SetFootprintRadius of float
-    | CloseFootprint
     | SetCutPlaneMode of CutPlaneMode
     | SetCutPlaneAngle of float
     | SetCutPlaneDistance of float
@@ -156,10 +168,33 @@ module ScanPinUpdate =
     let private setRadius (pin : ScanPin) (r : float) =
         { pin with Prism = { pin.Prism with Footprint = { Vertices = circleFootprint r } } }
 
-    let private makeDefaultPrism (anchor : V3d) (axis : V3d) (radius : float) =
-        { AnchorPoint = anchor; AxisDirection = axis
-          Footprint = { Vertices = circleFootprint radius }
-          ExtentForward = 1.0; ExtentBackward = 3.0 }
+    let private autoDepth (model : Model) =
+        if model.ClipBounds.IsInvalid then 3.0
+        else
+            let span = model.ClipBounds.Max.Z - model.ClipBounds.Min.Z
+            max 1.0 (span + 2.0)
+
+    let private makePin (model : Model) (id : ScanPinId) (anchor : V3d) (axis : V3d) (radius : float) (cutPlane : CutPlaneMode) (length : float) =
+        let prism =
+            { AnchorPoint = anchor; AxisDirection = axis
+              Footprint = { Vertices = circleFootprint radius }
+              ExtentForward = 1.0; ExtentBackward = length }
+        let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
+        { Id = id; Phase = PinPhase.Placement; Prism = prism
+          CutPlane = cutPlane
+          CreationCameraState = cam
+          CutResults = Map.empty
+          CutResultsPlane = cutPlane
+          DatasetColors = assignColors model.MeshNames
+          Stratigraphy = None
+          BandCache = None
+          StratigraphyDisplay = Undistorted
+          GhostClip = GhostClipOff
+          GhostClipCutPlane = false
+          ExtractedLines = ExtractedLinesMode.initial
+          BetweenSpaceHover = None
+          CutAspect = CutAspectFit
+          CutLineHover = None }
 
     let private updatePin (id : ScanPinId) (f : ScanPin -> ScanPin) (sp : ScanPinModel) =
         match HashMap.tryFind id sp.Pins with
@@ -167,71 +202,143 @@ module ScanPinUpdate =
         | None -> sp
 
     let private updateTarget (f : ScanPin -> ScanPin) (sp : ScanPinModel) =
-        match sp.ActivePlacement |> Option.orElse sp.SelectedPin with
+        match ScanPinModel.activePlacementId sp |> Option.orElse sp.SelectedPin with
         | Some id -> updatePin id f sp
         | None -> sp
 
+    let private discardActivePin (sp : ScanPinModel) =
+        match ScanPinModel.activePlacementId sp with
+        | Some id ->
+            let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
+            { sp with Pins = HashMap.remove id sp.Pins; SelectedPin = selected }
+        | None -> sp
+
+    let private initialStateFor (mode : PlacementMode) =
+        match mode with
+        | ProfileMode -> ProfilePlacement ProfileWaitingForFirstPoint
+        | PlanMode    -> PlanPlacement PlanWaitingForDrag
+        | AutoMode    -> AutoPlacement (AutoHovering None)
+
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
-        | StartPlacement mode ->
-            let sp =
-                match sp.ActivePlacement with
-                | Some id ->
-                    let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
-                    { sp with Pins = HashMap.remove id sp.Pins; ActivePlacement = None; SelectedPin = selected }
-                | None -> sp
-            { sp with PlacingMode = Some mode }
+        | SelectPlacementMode mode ->
+            let sp = discardActivePin sp
+            { sp with Placement = initialStateFor mode; LastPlacementMode = mode }
 
         | CancelPlacement ->
-            let sp =
-                match sp.ActivePlacement with
-                | Some id ->
-                    let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
-                    { sp with Pins = HashMap.remove id sp.Pins; ActivePlacement = None; SelectedPin = selected }
-                | None -> sp
-            { sp with PlacingMode = None }
+            let sp = discardActivePin sp
+            { sp with Placement = PlacementIdle }
 
-        | SetAnchor(_worldPos, renderPos, camFwd) ->
-            if sp.PlacingMode.IsNone then sp
-            else
-            let existingPlacementId =
-                sp.Pins |> HashMap.toSeq
-                |> Seq.tryPick (fun (pid, p) -> if p.Phase = PinPhase.Placement then Some pid else None)
-            let id =
-                match sp.ActivePlacement |> Option.orElse existingPlacementId with
-                | Some id -> id
-                | None -> ScanPinId.create()
-            let axis =
-                match model.ReferenceAxis with
-                | AlongWorldZ -> V3d.OOI
-                | AlongCameraView -> -camFwd |> Vec.normalize
-            let prism = makeDefaultPrism renderPos axis 1.0
-            let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
-            let pin =
-                { Id = id; Phase = PinPhase.Placement; Prism = prism
-                  CutPlane = CutPlaneMode.AlongAxis 0.0
-                  CreationCameraState = cam
-                  CutResults = Map.empty
-                  CutResultsPlane = CutPlaneMode.AlongAxis 0.0
-                  DatasetColors = assignColors model.MeshNames
-                  Stratigraphy = None
-                  BandCache = None
-                  StratigraphyDisplay = Undistorted
-                  GhostClip = GhostClipOff
-                  GhostClipCutPlane = false
-                  ExtractedLines = ExtractedLinesMode.initial
-                  BetweenSpaceHover = None
-                  CutAspect = CutAspectFit
-                  CutLineHover = None }
-            { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id }
+        | ProfileClickFirst p1 ->
+            match sp.Placement with
+            | ProfilePlacement ProfileWaitingForFirstPoint ->
+                { sp with Placement = ProfilePlacement (ProfileWaitingForSecondPoint(p1, None)) }
+            | _ -> sp
+
+        | ProfileClickSecond p2 ->
+            match sp.Placement with
+            | ProfilePlacement (ProfileWaitingForSecondPoint(p1, _)) ->
+                let diff = p2 - p1
+                let len = diff.Length
+                if len < 1e-3 then sp
+                else
+                    let center = (p1 + p2) * 0.5
+                    let axis = V3d.OOI
+                    let radius = max 0.1 (len * 0.6)
+                    // cut direction in XY
+                    let dir = V2d(diff.X, diff.Y)
+                    let angleRad =
+                        if dir.Length < 1e-6 then 0.0 else atan2 dir.Y dir.X
+                    let angleDeg = angleRad * Constant.DegreesPerRadian
+                    let cutPlane = CutPlaneMode.AlongAxis angleDeg
+                    let id = ScanPinId.create()
+                    let pin = makePin model id center axis radius cutPlane (autoDepth model)
+                    { sp with
+                        Pins = HashMap.add id pin sp.Pins
+                        Placement = AdjustingPin(id, ProfileMode)
+                        SelectedPin = Some id }
+            | _ -> sp
+
+        | ProfilePreviewUpdate pos ->
+            match sp.Placement with
+            | ProfilePlacement (ProfileWaitingForSecondPoint(p1, _)) ->
+                { sp with Placement = ProfilePlacement (ProfileWaitingForSecondPoint(p1, pos)) }
+            | _ -> sp
+
+        | PlanDragStart center ->
+            match sp.Placement with
+            | PlanPlacement PlanWaitingForDrag ->
+                { sp with Placement = PlanPlacement (PlanDragging(center, 0.0)) }
+            | _ -> sp
+
+        | PlanDragUpdate r ->
+            match sp.Placement with
+            | PlanPlacement (PlanDragging(c, _)) ->
+                { sp with Placement = PlanPlacement (PlanDragging(c, max 0.0 r)) }
+            | _ -> sp
+
+        | PlanDragEnd ->
+            match sp.Placement with
+            | PlanPlacement (PlanDragging(center, r)) when r >= 0.1 ->
+                let axis = V3d.OOI
+                let cutPlane = CutPlaneMode.AcrossAxis 0.0
+                let id = ScanPinId.create()
+                let pin = makePin model id center axis (max 0.1 r) cutPlane (autoDepth model)
+                { sp with
+                    Pins = HashMap.add id pin sp.Pins
+                    Placement = AdjustingPin(id, PlanMode)
+                    SelectedPin = Some id }
+            | PlanPlacement _ ->
+                // Drag too short — abort back to waiting
+                { sp with Placement = PlanPlacement PlanWaitingForDrag }
+            | _ -> sp
+
+        | PlanMedianElevationLoaded(id, medianZ) ->
+            sp |> updatePin id (fun pin ->
+                if pin.Phase <> PinPhase.Placement then pin
+                else
+                    let dist = medianZ - pin.Prism.AnchorPoint.Z
+                    let clamped = clamp (-pin.Prism.ExtentBackward) pin.Prism.ExtentForward dist
+                    { pin with CutPlane = CutPlaneMode.AcrossAxis clamped
+                               CutResultsPlane = CutPlaneMode.AcrossAxis clamped })
+
+        | AutoHoverUpdate preview ->
+            match sp.Placement with
+            | AutoPlacement (AutoHovering _) ->
+                { sp with Placement = AutoPlacement (AutoHovering preview) }
+            | _ -> sp
+
+        | AutoClick (renderPos, _, _) ->
+            // The server-side ray-grid derivation kicks off in Update.update once the
+            // pin exists. Here we just create a placeholder pin at the click.
+            match sp.Placement with
+            | AutoPlacement _ ->
+                let id = ScanPinId.create()
+                let axis = V3d.OOI
+                let cutPlane = CutPlaneMode.AlongAxis 0.0
+                let pin = makePin model id renderPos axis 1.0 cutPlane (autoDepth model)
+                { sp with
+                    Pins = HashMap.add id pin sp.Pins
+                    Placement = AdjustingPin(id, AutoMode)
+                    SelectedPin = Some id }
+            | _ -> sp
+
+        | AutoDerivationComplete (id, axisWorld, cutPlane, radiusRender) ->
+            sp |> updatePin id (fun pin ->
+                if pin.Phase <> PinPhase.Placement then pin
+                else
+                    let axis = axisWorld |> Vec.normalize
+                    let footprint = { Vertices = circleFootprint (max 0.1 radiusRender) }
+                    { pin with
+                        Prism = { pin.Prism with AxisDirection = axis; Footprint = footprint }
+                        CutPlane = cutPlane
+                        CutResultsPlane = cutPlane })
 
         | SetFootprintRadius radius ->
-            match sp.ActivePlacement with
+            match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
                 if pin.Phase = PinPhase.Placement then setRadius pin (max 0.1 radius) else pin)
             | None -> sp
-
-        | CloseFootprint -> sp
 
         | SetCutPlaneMode mode ->
             sp |> updateTarget (fun pin -> { pin with CutPlane = mode })
@@ -243,7 +350,7 @@ module ScanPinUpdate =
             sp |> updateTarget (fun pin -> { pin with CutPlane = CutPlaneMode.AcrossAxis dist })
 
         | SetFootprintScale scale ->
-            match sp.ActivePlacement with
+            match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
                 if pin.Phase = PinPhase.Placement then setRadius pin (max 0.1 scale) else pin)
             | None -> sp
@@ -253,19 +360,18 @@ module ScanPinUpdate =
                 { pin with Prism = { pin.Prism with ExtentBackward = max 0.5 length } })
 
         | CommitPin ->
-            match sp.ActivePlacement with
+            match ScanPinModel.activePlacementId sp with
             | Some id ->
                 let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
                 let sp = sp |> updatePin id (fun pin -> { pin with Phase = PinPhase.Committed; CreationCameraState = cam })
-                { sp with ActivePlacement = None; PlacingMode = None }
+                { sp with Placement = PlacementIdle }
             | None -> sp
 
         | DeletePin id ->
             let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
-            let wasActive = sp.ActivePlacement = Some id
-            let active = if wasActive then None else sp.ActivePlacement
-            let placing = if wasActive then None else sp.PlacingMode
-            { sp with Pins = HashMap.remove id sp.Pins; SelectedPin = selected; ActivePlacement = active; PlacingMode = placing }
+            let wasActive = ScanPinModel.activePlacementId sp = Some id
+            let placement = if wasActive then PlacementIdle else sp.Placement
+            { sp with Pins = HashMap.remove id sp.Pins; SelectedPin = selected; Placement = placement }
 
         | SelectPin id ->
             { sp with SelectedPin = id }
@@ -357,7 +463,7 @@ module Update =
             { model with MeshVisible = Map.add name v model.MeshVisible }
         | ToggleMenu ->
             let sp = model.ScanPins
-            if sp.PlacingMode.IsSome || sp.ActivePlacement.IsSome then model
+            if ScanPinModel.isPlacing sp then model
             else { model with MenuOpen = not model.MenuOpen }
         | FilteredMeshLoaded(name, selPt, indices) ->
             { model with Filtered = HashMap.add name indices model.Filtered; FilterCenter = Some selPt }
@@ -494,7 +600,11 @@ module Update =
             match HashMap.tryFind id sp.Pins with
             | Some pin ->
                 let pin = { pin with Phase = PinPhase.Placement }
-                let sp = { sp with Pins = HashMap.add id pin sp.Pins; ActivePlacement = Some id; SelectedPin = Some id; PlacingMode = None }
+                let mode =
+                    match pin.CutPlane with
+                    | CutPlaneMode.AcrossAxis _ -> PlanMode
+                    | CutPlaneMode.AlongAxis _ -> ProfileMode
+                let sp = { sp with Pins = HashMap.add id pin sp.Pins; Placement = AdjustingPin(id, mode); SelectedPin = Some id }
                 { model with ScanPins = sp }
             | None -> model
         | CardMsg msg ->
@@ -524,8 +634,8 @@ module Update =
         | ScanPinMsg msg ->
             let sp = model.ScanPins
             let sp' = ScanPinUpdate.update model msg sp
-            let wasPlacing = sp.PlacingMode.IsSome || sp.ActivePlacement.IsSome
-            let isPlacing = sp'.PlacingMode.IsSome || sp'.ActivePlacement.IsSome
+            let wasPlacing = ScanPinModel.isPlacing sp
+            let isPlacing = ScanPinModel.isPlacing sp'
             let model =
                 if not wasPlacing && isPlacing then
                     { model with SavedMenuOpen = Some model.MenuOpen; MenuOpen = true }
@@ -540,15 +650,144 @@ module Update =
                     let c = pin.CreationCameraState
                     env.Emit [CameraMessage (OrbitMessage.SetTarget(true, c.Center, c.Radius, c.Phi, c.Theta))]
                 | None -> ()
-            | SetAnchor(_, renderPos, _) ->
-                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
+            | ProfileClickSecond _ | PlanDragEnd | AutoClick _ ->
+                // Pin just created — re-center camera on it
+                match ScanPinModel.activePlacementId sp' with
+                | Some id ->
+                    match HashMap.tryFind id sp'.Pins with
+                    | Some pin ->
+                        env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, pin.Prism.AnchorPoint))]
+                    | None -> ()
+                | None -> ()
+            | _ -> ()
+            // Plan mode: kick off median-elevation server request on pin creation
+            match msg with
+            | PlanDragEnd ->
+                match ScanPinModel.activePlacementId sp' with
+                | Some id ->
+                    match HashMap.tryFind id sp'.Pins with
+                    | Some pin ->
+                        let names = model.MeshNames |> Seq.toArray
+                        let dataset = if names.Length > 0 then names.[0].Split('/', 2).[0] else ""
+                        let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
+                        let cc = model.CommonCentroid
+                        let center = pin.Prism.AnchorPoint
+                        let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+                        let topZRender    = (model.ClipBounds.Max.Z - cc.Z) * scale + 10.0
+                        let bottomZRender = (model.ClipBounds.Min.Z - cc.Z) * scale - 10.0
+                        let rayCount = 10
+                        let rays =
+                            [| for i in 0 .. rayCount - 1 do
+                                for j in 0 .. rayCount - 1 do
+                                    let fi = (float i + 0.5) / float rayCount
+                                    let fj = (float j + 0.5) / float rayCount
+                                    let u = (fi * 2.0 - 1.0) * r
+                                    let v = (fj * 2.0 - 1.0) * r
+                                    if u * u + v * v <= r * r then
+                                        let origin = V3d(center.X + u, center.Y + v, topZRender)
+                                        let origWorld = origin / scale + cc
+                                        yield origWorld, V3d(0.0, 0.0, -1.0) |]
+                        if rays.Length > 0 then
+                            task {
+                                try
+                                    let! hits =
+                                        Query.rayBatch ApiConfig.apiBase.Value names rays
+                                        |> Async.StartAsTask
+                                    let zs = hits |> Array.choose (Option.map (fun p -> p.Z))
+                                    if zs.Length > 0 then
+                                        let sorted = zs |> Array.sort
+                                        let medianWorld = sorted.[sorted.Length / 2]
+                                        let medianRender = (medianWorld - cc.Z) * scale
+                                        env.Emit [ScanPinMsg (PlanMedianElevationLoaded(id, medianRender))]
+                                with
+                                | ex -> env.Emit [LogDebug (sprintf "plan median failed: %s" ex.Message)]
+                            } |> ignore
+                    | None -> ()
+                | None -> ()
+            | AutoClick (renderPos, worldRays, refAxisWorld) ->
+                match ScanPinModel.activePlacementId sp' with
+                | Some id ->
+                    let names = model.MeshNames |> Seq.toArray
+                    let dataset = if names.Length > 0 then names.[0].Split('/', 2).[0] else ""
+                    let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
+                    let cc = model.CommonCentroid
+                    let clickWorld = renderPos / scale + cc
+                    if names.Length > 0 && worldRays.Length > 0 then
+                        task {
+                            try
+                                let! hits =
+                                    Query.rayGrid ApiConfig.apiBase.Value names worldRays
+                                    |> Async.StartAsTask
+                                let hot =
+                                    hits |> Array.choose (function
+                                        | Some (pt, n) ->
+                                            let nn = n |> Vec.normalize
+                                            // steepness weight: faces whose normal is roughly perpendicular
+                                            // to the reference axis (|dot| near 0) are "steep" relative to it.
+                                            let aligned = abs (Vec.dot nn refAxisWorld)
+                                            let steepW = max 0.0 (1.0 - aligned / 0.9)
+                                            // proximity weight: prefer hits closer to the click in world space.
+                                            let d = (pt - clickWorld).Length
+                                            let prox = exp (-d * d / 25.0)
+                                            let w = steepW * prox
+                                            if w > 1e-3 then Some (pt, nn, w) else None
+                                        | None -> None)
+                                if hot.Length < 3 then
+                                    env.Emit [LogDebug "auto derive: insufficient steep neighborhood — keeping defaults"]
+                                else
+                                    let mutable sum = V3d.Zero
+                                    let mutable wsum = 0.0
+                                    for (_, n, w) in hot do
+                                        // flip normals to hemisphere facing camera (consistent averaging)
+                                        let s = if Vec.dot n refAxisWorld < 0.0 then -1.0 else 1.0
+                                        sum <- sum + n * (s * w)
+                                        wsum <- wsum + w
+                                    let n =
+                                        if wsum < 1e-6 then refAxisWorld
+                                        else (sum / wsum) |> Vec.normalize
+                                    let z = refAxisWorld |> Vec.normalize
+                                    let alignedN = abs (Vec.dot n z)
+                                    let axisWorld, cutPlane =
+                                        if alignedN > 0.95 then
+                                            // N nearly aligned with ref axis → faces are "flat": AcrossAxis cut at click height
+                                            let dist =
+                                                // project (click - anchor) onto axis in render space; anchor = renderPos
+                                                // here; dist starts at 0 (click lies exactly on anchor plane).
+                                                0.0
+                                            z, CutPlaneMode.AcrossAxis dist
+                                        else
+                                            let proj = z - n * Vec.dot z n
+                                            let axis = proj |> Vec.normalize
+                                            // AlongAxis angle rotates the cut-plane normal around `axis`
+                                            // to align with N's projection onto the plane perpendicular to axis.
+                                            let nPerp = n - axis * Vec.dot n axis
+                                            let right, fwd = PinGeometry.axisFrame axis
+                                            let a = atan2 (Vec.dot nPerp fwd) (Vec.dot nPerp right)
+                                            let angDeg = a * Constant.DegreesPerRadian
+                                            axis, CutPlaneMode.AlongAxis angDeg
+                                    // Radius from extent of hot hits in world-space transverse plane
+                                    let axisUnit = axisWorld |> Vec.normalize
+                                    let transverseR =
+                                        hot |> Array.map (fun (pt, _, _) ->
+                                            let v = pt - clickWorld
+                                            (v - axisUnit * Vec.dot v axisUnit).Length)
+                                        |> (fun arr -> if arr.Length = 0 then 1.0 else Array.max arr)
+                                    let radiusWorld = max 0.5 transverseR
+                                    let radiusRender = radiusWorld * scale
+                                    env.Emit [ScanPinMsg (AutoDerivationComplete(id, axisWorld, cutPlane, radiusRender))]
+                            with
+                            | ex -> env.Emit [LogDebug (sprintf "auto derive failed: %s" ex.Message)]
+                        } |> ignore
+                | None -> ()
             | _ -> ()
             let needsCutUpdate =
                 match msg with
-                | SetAnchor _ | SetFootprintRadius _ | SetCutPlaneMode _ | SetCutPlaneAngle _ | SetCutPlaneDistance _ | SetFootprintScale _ | SetPinLength _ -> true
+                | ProfileClickSecond _ | PlanDragEnd | AutoClick _
+                | PlanMedianElevationLoaded _ | AutoDerivationComplete _
+                | SetFootprintRadius _ | SetCutPlaneMode _ | SetCutPlaneAngle _ | SetCutPlaneDistance _ | SetFootprintScale _ | SetPinLength _ -> true
                 | _ -> false
             if needsCutUpdate then
-                let targetId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
+                let targetId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
                 match targetId with
                 | Some id ->
                     match HashMap.tryFind id sp'.Pins with
@@ -603,10 +842,11 @@ module Update =
                 | None -> ()
             let needsStrat =
                 match msg with
-                | SetAnchor _ | SetFootprintRadius _ | SetFootprintScale _ | SetPinLength _ -> true
+                | ProfileClickSecond _ | PlanDragEnd | AutoClick _
+                | SetFootprintRadius _ | SetFootprintScale _ | SetPinLength _ -> true
                 | _ -> false
             if needsStrat then
-                let targetId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
+                let targetId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
                 match targetId with
                 | Some id ->
                     match HashMap.tryFind id sp'.Pins with
@@ -635,9 +875,9 @@ module Update =
                     | None -> ()
                 | None -> ()
             let model = { model with ScanPins = sp' }
-            let selChanged = sp'.SelectedPin <> sp.SelectedPin || sp'.ActivePlacement <> sp.ActivePlacement
+            let selChanged = sp'.SelectedPin <> sp.SelectedPin || ScanPinModel.activePlacementId sp' <> ScanPinModel.activePlacementId sp
             if selChanged then
-                let effectiveId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
+                let effectiveId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
                 match effectiveId with
                 | Some id ->
                     match HashMap.tryFind id sp'.Pins with
@@ -653,7 +893,7 @@ module Update =
                     { model with CardSystem = { cs with Cards = cards } }
             else
                 // Sync card anchor when active pin's prism moves
-                let effectiveId = sp'.ActivePlacement |> Option.orElse sp'.SelectedPin
+                let effectiveId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
                 match effectiveId with
                 | Some id ->
                     match HashMap.tryFind id sp'.Pins with

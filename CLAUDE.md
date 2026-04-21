@@ -100,9 +100,9 @@ Program.fs
 
 A ScanPin is a 3D annotation: a selection prism (32-gon cylinder) extruded along an axis, with a cutting plane that intersects loaded meshes. The cut produces polylines rendered as an SVG elevation profile diagram.
 
-**Placement workflow:** Place pin button → tap on 3D surface → prism created at anchor with camera-forward axis → adjust cut plane (along/across), angle/distance, radius via sliders → commit or discard. Escape cancels.
+**Placement workflow:** Top-bar split-button chooses a mode (Profile / Plan / Auto), then the per-mode gesture derives the prism. **Profile** = two clicks on a surface (first = anchor, second = cut direction; axis vertical, radius ≈ 0.6 · |p2 − p1|, cut plane vertical along xy-direction). **Plan** = click-drag on a surface (center at down, radius tracked by ray-plane intersection at anchor Z; axis vertical; cut plane horizontal at median-elevation from a 10×10 ray batch). **Auto** = single click on an explore hot-spot. `View.fs` builds a 5×5 world-space ray grid (±2 m transverse to camera view) at click time and emits `AutoClick(renderPos, rays, refAxisWorld)`; `Update.fs` creates the pin with placeholder params, then calls `Query.rayGrid` in a background task (server endpoint `/api/query/ray-grid` — returns hit point + world-space normal from Embree). Derivation weights hits by `steepness × proximity`, averages normals to get the dominant face direction N, then sets axis / cut-plane / radius per the Auto section of `scanpin-placement-modes-spec.md`. `AutoDerivationComplete` updates the pin when the task returns. Fewer than 3 hot hits → placeholder defaults persist. After creation, placement transitions to `AdjustingPin(id, mode)`; the flyout's radius/length/cut-plane sliders serve as *fine adjustment* only. Commit / Discard / Escape end placement.
 
-**State:** `PlacingMode : FootprintMode option` (waiting for anchor click) + `ActivePlacement : ScanPinId option` (pin being edited). The `PlacementState` DU in ScanPinModel.fs is dead code (orphaned from original spec).
+**State:** `Placement : PlacementState` single DU on `ScanPinModel` — `PlacementIdle | ProfilePlacement of ProfilePlacementState | PlanPlacement of PlanPlacementState | AutoPlacement of AutoPlacementState | AdjustingPin of ScanPinId * PlacementMode`. Helpers: `ScanPinModel.activePlacementId sp` returns the id of a pin being adjusted, `ScanPinModel.isPlacing sp` is true for anything other than `PlacementIdle`. `LastPlacementMode` persists the last-selected mode so the split-button main click re-enters that mode.
 
 **3D rendering** (in SceneGraph.fs): `pinDots` renders clickable spheres at anchor points (tap=select, double-tap=focus camera). `pinPrisms` renders wireframe (thin triangle-quads, no GL_LINES) + translucent cut plane quad per pin.
 
@@ -216,6 +216,10 @@ POST /api/query/plane-intersection-batch → { results: [{ name, segments: [...]
                                     Request: { Names: string[], PlanePoint, PlaneNormal, AxisU, AxisV, ... }
                                     Server runs Parallel.For across meshes. **Prefer this for multi-mesh cuts** —
                                     one roundtrip instead of N sequential calls.
+POST /api/query/ray-grid         → binary: int32 rayCount | per-ray (byte hitFlag | float64 hitX hitY hitZ | float32 nX nY nZ)
+                                    Request same shape as ray-batch: { Names, Origins, Directions } (flat 3*N arrays).
+                                    Returns closest hit across all named meshes and its world-space normal from Embree.
+                                    Used by Auto-mode placement (`Query.rayGrid`).
 POST /api/query/grid-eval        → binary grid of per-cell stats within a core sample prism
 POST /api/query/cylinder-eval    → binary: per-ring, per-angle mesh-intersection heights
                                     Request: { Radii: float[], AngularResolution, ExtentForward, ExtentBackward, ... }

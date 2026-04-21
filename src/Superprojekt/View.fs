@@ -44,9 +44,9 @@ module View =
                 Dom.Style [
                     Css.Background "rgb(244, 246, 248)"
                 ]
-                (model.ScanPins.PlacingMode, model.ScanPins.ActivePlacement) ||> AVal.map2 (fun pm ap ->
-                    if pm.IsSome || ap.IsSome then Some (Dom.Style [Css.Cursor "crosshair"]) else None
-                )
+                model.ScanPins.Placement |> AVal.map (function
+                    | PlacementIdle -> None
+                    | _ -> Some (Dom.Style [Css.Cursor "crosshair"]))
 
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
@@ -94,25 +94,49 @@ module View =
                         |> Option.defaultValue 1.0
                     let cc = AVal.force model.CommonCentroid
                     let worldPos = e.WorldPosition / scale + cc
-                    let inPlacement = (AVal.force model.ScanPins.PlacingMode).IsSome
-                    let activePlacement = (AVal.force model.ScanPins.ActivePlacement).IsSome
                     let hitGeometry = e.Location.Depth < 0.9999
-                    if inPlacement && not activePlacement && hitGeometry then
-                        let camFwd = (AVal.force view).Forward.GetViewDirectionLH() |> Vec.normalize
-                        env.Emit [ScanPinMsg (SetAnchor(worldPos, e.WorldPosition, V3d camFwd))]
+                    let placement = AVal.force model.ScanPins.Placement
+                    match placement with
+                    | ProfilePlacement ProfileWaitingForFirstPoint when hitGeometry ->
+                        env.Emit [ScanPinMsg (ProfileClickFirst e.WorldPosition)]
                         false
-                    elif activePlacement && e.Ctrl && e.Button = Button.Left && hitGeometry then
-                        let camFwd = (AVal.force view).Forward.GetViewDirectionLH() |> Vec.normalize
-                        env.Emit [ScanPinMsg (SetAnchor(worldPos, e.WorldPosition, V3d camFwd))]
+                    | ProfilePlacement (ProfileWaitingForSecondPoint _) when hitGeometry ->
+                        env.Emit [ScanPinMsg (ProfileClickSecond e.WorldPosition)]
                         false
-                    elif e.Ctrl && e.Button = Button.Left && hitGeometry then
-                        transact (fun () -> hoverCoord.Value <- Some worldPos)
-                        env.Emit [ClearFilteredMesh]
-                        ServerActions.triggerFilter env model e.Position
+                    | AutoPlacement _ when hitGeometry ->
+                        let v = AVal.force view
+                        let fwd = v.Backward.TransformDir(V3d(0.0, 0.0, -1.0)) |> Vec.normalize
+                        let right = v.Backward.TransformDir(V3d(1.0, 0.0, 0.0)) |> Vec.normalize
+                        let up = v.Backward.TransformDir(V3d(0.0, 1.0, 0.0)) |> Vec.normalize
+                        let eyeRender = v.Backward.TransformPos(V3d.Zero)
+                        let distToClick = max 1.0 (e.WorldPosition - eyeRender).Length
+                        let clickWorld = worldPos
+                        let eyeWorld = eyeRender / scale + cc
+                        // World-space neighborhood: ~2 m radius, 5×5 grid
+                        let gridHalf = 2
+                        let step = 0.5
+                        let rays =
+                            [| for i in -gridHalf .. gridHalf do
+                                for j in -gridHalf .. gridHalf do
+                                    let offset = right * (float i * step) + up * (float j * step)
+                                    let target = clickWorld + offset
+                                    let dir = (target - eyeWorld) |> Vec.normalize
+                                    yield eyeWorld, dir |]
+                        let refAxisWorld =
+                            match AVal.force model.ReferenceAxis with
+                            | AlongWorldZ     -> V3d.OOI
+                            | AlongCameraView -> -fwd
+                        env.Emit [ScanPinMsg (AutoClick(e.WorldPosition, rays, refAxisWorld))]
                         false
-                    else
-                        transact (fun () -> hoverCoord.Value <- Some worldPos)
-                        true
+                    | _ ->
+                        if e.Ctrl && e.Button = Button.Left && hitGeometry then
+                            transact (fun () -> hoverCoord.Value <- Some worldPos)
+                            env.Emit [ClearFilteredMesh]
+                            ServerActions.triggerFilter env model e.Position
+                            false
+                        else
+                            transact (fun () -> hoverCoord.Value <- Some worldPos)
+                            true
                 )
 
                 Sg.OnLongPress(fun e ->
@@ -134,13 +158,23 @@ module View =
                         |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
                         |> Option.defaultValue 1.0
                     let cc = AVal.force model.CommonCentroid
+                    let hitGeometry = e.Location.Depth < 0.9999
                     transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
+                    match AVal.force model.ScanPins.Placement with
+                    | ProfilePlacement (ProfileWaitingForSecondPoint _) ->
+                        let preview = if hitGeometry then Some e.WorldPosition else None
+                        env.Emit [ScanPinMsg (ProfilePreviewUpdate preview)]
+                    | _ -> ()
                     true
                 )
 
                 let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+                let activePlacementId =
+                    model.ScanPins.Placement |> AVal.map (function
+                        | AdjustingPin(id, _) -> Some id
+                        | _ -> None)
                 let editedPin : aval<ScanPin option> =
-                    (model.ScanPins.ActivePlacement, pinsVal)
+                    (activePlacementId, pinsVal)
                     ||> AVal.map2 (fun act pins ->
                         act |> Option.bind (fun id -> HashMap.tryFind id pins))
 
@@ -192,6 +226,38 @@ module View =
                         let ly = Vec.dot v fwd
                         let ang = atan2 ly lx * Constant.DegreesPerRadian
                         env.Emit [ScanPinMsg (SetCutPlaneAngle ang)]
+
+                Sg.OnPointerDown(fun e ->
+                    if e.Button = Button.Left && e.Location.Depth < 0.9999 then
+                        match AVal.force model.ScanPins.Placement with
+                        | PlanPlacement PlanWaitingForDrag ->
+                            env.Emit [ScanPinMsg (PlanDragStart e.WorldPosition)]
+                            e.Context.SetPointerCapture(e.Target, e.PointerId)
+                            false
+                        | _ -> true
+                    else true
+                )
+
+                Dom.OnPointerMove(fun e ->
+                    match AVal.force model.ScanPins.Placement with
+                    | PlanPlacement (PlanDragging (center, _)) ->
+                        let ray = pickRay (ndcOf e)
+                        let denom = ray.Direction.Z
+                        if abs denom > 1e-6 then
+                            let t = (center.Z - ray.Origin.Z) / denom
+                            if t > 0.0 then
+                                let hit = ray.Origin + ray.Direction * t
+                                let r = (V2d(hit.X, hit.Y) - V2d(center.X, center.Y)).Length
+                                env.Emit [ScanPinMsg (PlanDragUpdate r)]
+                    | _ -> ()
+                )
+
+                Dom.OnPointerUp((fun _ ->
+                    match AVal.force model.ScanPins.Placement with
+                    | PlanPlacement (PlanDragging _) ->
+                        env.Emit [ScanPinMsg PlanDragEnd]
+                    | _ -> ()
+                ), pointerCapture = true)
 
                 Dom.OnPointerDown((fun e ->
                     match AVal.force editedPin with

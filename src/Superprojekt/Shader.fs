@@ -64,6 +64,12 @@ module BlitShader =
             [<Depth>] d : float
         }
 
+    type ClippyFragment =
+        {
+            [<Color>] c : V4d
+            [<Semantic("Normals")>] n : V4d
+        }
+
     type UniformScope with
         member x.TextureOffset        : V2d   = x?TextureOffset
         member x.TextureScale         : V2d   = x?TextureScale
@@ -99,6 +105,7 @@ module BlitShader =
     let clippy (v : Effects.Vertex) =
         fragment {
             let p = v.wp.XYZ / v.wp.W
+            let worldNormal = v.n |> Vec.normalize
             let mutable insideClip =
                 p.X >= uniform.ClipMin.X && p.X <= uniform.ClipMax.X &&
                 p.Y >= uniform.ClipMin.Y && p.Y <= uniform.ClipMax.Y &&
@@ -141,7 +148,7 @@ module BlitShader =
                     discard()
                 color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, uniform.GhostOpacity)
 
-            return color
+            return { c = color; n = V4d(worldNormal, 1.0) }
         }
 
     let coreClip (v : Effects.Vertex) =

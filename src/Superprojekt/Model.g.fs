@@ -1,5 +1,5 @@
-//3e48f56a-c3a7-3fee-772a-361c42dff20c
-//af726993-3277-7144-bd50-21be34f89db9
+//0b5c41fa-0b68-6edb-36fc-8524a23e087f
+//bcf87372-1d0b-c699-e33d-e76a10fa8fc0
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -19,6 +19,7 @@ type AdaptiveModel(value : Model) =
     let _MeshesLoaded_ = FSharp.Data.Adaptive.cset(value.MeshesLoaded)
     let _CommonCentroid_ = FSharp.Data.Adaptive.cval(value.CommonCentroid)
     let _MenuOpen_ = FSharp.Data.Adaptive.cval(value.MenuOpen)
+    let _SavedMenuOpen_ = FSharp.Data.Adaptive.cval(value.SavedMenuOpen)
     let _Filtered_ = FSharp.Data.Adaptive.cmap(value.Filtered)
     let _FilterCenter_ = FSharp.Data.Adaptive.cval(value.FilterCenter)
     let _DebugLog_ = FSharp.Data.Adaptive.clist(value.DebugLog)
@@ -62,6 +63,7 @@ type AdaptiveModel(value : Model) =
             _MeshesLoaded_.Value <- value.MeshesLoaded
             _CommonCentroid_.Value <- value.CommonCentroid
             _MenuOpen_.Value <- value.MenuOpen
+            _SavedMenuOpen_.Value <- value.SavedMenuOpen
             _Filtered_.Value <- value.Filtered
             _FilterCenter_.Value <- value.FilterCenter
             _DebugLog_.Value <- value.DebugLog
@@ -98,6 +100,7 @@ type AdaptiveModel(value : Model) =
     member __.MeshesLoaded = _MeshesLoaded_ :> FSharp.Data.Adaptive.aset<Microsoft.FSharp.Core.string>
     member __.CommonCentroid = _CommonCentroid_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V3d>
     member __.MenuOpen = _MenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.SavedMenuOpen = _SavedMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.bool>>
     member __.Filtered = _Filtered_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.int)[]>
     member __.FilterCenter = _FilterCenter_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.DebugLog = _DebugLog_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>

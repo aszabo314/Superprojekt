@@ -126,27 +126,64 @@ type ScanPin = {
     CutLineHover         : CutLineHover option
 }
 
-[<RequireQualifiedAccess>]
-type FootprintMode =
-    | Circle
+type PlacementMode =
+    | ProfileMode
+    | PlanMode
+    | AutoMode
+
+type ProfilePlacementState =
+    | ProfileWaitingForFirstPoint
+    | ProfileWaitingForSecondPoint of firstPoint:V3d * previewPos:V3d option
+
+type PlanPlacementState =
+    | PlanWaitingForDrag
+    | PlanDragging of center:V3d * currentRadius:float
+
+type AutoPreview = {
+    Center         : V3d
+    Axis           : V3d
+    Radius         : float
+    CutPlaneMode   : CutPlaneMode
+    DominantNormal : V3d
+}
+
+type AutoPlacementState =
+    | AutoHovering of AutoPreview option
+
+type PlacementState =
+    | PlacementIdle
+    | ProfilePlacement of ProfilePlacementState
+    | PlanPlacement of PlanPlacementState
+    | AutoPlacement of AutoPlacementState
+    | AdjustingPin of ScanPinId * PlacementMode
 
 [<ModelType>]
 type ScanPinModel = {
-    Pins             : HashMap<ScanPinId, ScanPin>
-    ActivePlacement  : ScanPinId option
-    SelectedPin      : ScanPinId option
-    PlacingMode      : FootprintMode option
+    Pins                : HashMap<ScanPinId, ScanPin>
+    SelectedPin         : ScanPinId option
+    Placement           : PlacementState
+    LastPlacementMode   : PlacementMode
     BetweenSpaceEnabled : bool
 }
 
 module ScanPinModel =
     let initial = {
-        Pins            = HashMap.empty
-        ActivePlacement = None
-        SelectedPin     = None
-        PlacingMode     = None
+        Pins                = HashMap.empty
+        SelectedPin         = None
+        Placement           = PlacementIdle
+        LastPlacementMode   = ProfileMode
         BetweenSpaceEnabled = false
     }
+
+    let activePlacementId (sp : ScanPinModel) =
+        match sp.Placement with
+        | AdjustingPin(id, _) -> Some id
+        | _ -> None
+
+    let isPlacing (sp : ScanPinModel) =
+        match sp.Placement with
+        | PlacementIdle -> false
+        | _ -> true
 
 [<RequireQualifiedAccess>]
 type CardId = CardId of Guid with

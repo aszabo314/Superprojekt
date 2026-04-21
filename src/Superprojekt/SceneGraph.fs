@@ -321,6 +321,27 @@ module SceneGraph =
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
 
+        // Pin marker geometry: a thin axis needle (Z from -0.5..0.5) plus a short
+        // perpendicular cross-tick at the anchor so it stays pickable from axial
+        // view. Total model-space footprint is contained in a ±0.5 cube so we
+        // can scale it uniformly with the surrounding pipeline.
+        let pinMarkerPos, pinMarkerIdx =
+            let pos = System.Collections.Generic.List<V3f>()
+            let idx = System.Collections.Generic.List<int>()
+            let addBox (hx : float) (hy : float) (hz : float) =
+                let base0 = pos.Count
+                pos.Add (V3f(-hx, -hy, -hz)); pos.Add (V3f( hx, -hy, -hz))
+                pos.Add (V3f( hx,  hy, -hz)); pos.Add (V3f(-hx,  hy, -hz))
+                pos.Add (V3f(-hx, -hy,  hz)); pos.Add (V3f( hx, -hy,  hz))
+                pos.Add (V3f( hx,  hy,  hz)); pos.Add (V3f(-hx,  hy,  hz))
+                let offs = [| 0;1;2; 0;2;3;  5;4;7; 5;7;6;  4;0;3; 4;3;7
+                              1;5;6; 1;6;2;  0;4;5; 0;5;1;  3;2;6; 3;6;7 |]
+                for o in offs do idx.Add(base0 + o)
+            addBox 0.03 0.03 0.5   // axis needle along Z
+            addBox 0.18 0.025 0.025 // anchor tick, along X
+            addBox 0.025 0.18 0.025 // anchor tick, along Y
+            pos.ToArray(), idx.ToArray()
+
         let pinDots =
             let notFullscreen = AVal.map not fullscreenActive
             let selectedId = model.ScanPins.SelectedPin
@@ -328,6 +349,7 @@ module SceneGraph =
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let phaseVal = pinVal |> AVal.map (Option.map (fun p -> p.Phase))
                 let anchorVal = pinVal |> AVal.map (Option.map (fun p -> p.Prism.AnchorPoint))
+                let axisVal = pinVal |> AVal.map (Option.map (fun p -> p.Prism.AxisDirection))
                 let color =
                     (selectedId, phaseVal) ||> AVal.map2 (fun sel phaseOpt ->
                         match phaseOpt with
@@ -336,9 +358,19 @@ module SceneGraph =
                             elif phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 1.0)
                             else V4d(1.0, 0.3, 0.3, 1.0)
                         | None -> V4d(0.0, 0.0, 0.0, 0.0))
-                let trafo = anchorVal |> AVal.map (function
-                    | Some a -> Trafo3d.Scale(0.5) * Trafo3d.Translation(a)
-                    | None -> Trafo3d.Scale(0.0))
+                let trafo =
+                    (anchorVal, axisVal) ||> AVal.map2 (fun aOpt xOpt ->
+                        match aOpt, xOpt with
+                        | Some a, Some axis ->
+                            let axis = Vec.normalize axis
+                            let right, fwd = PinGeometry.axisFrame axis
+                            let rotM =
+                                M44d(right.X, fwd.X, axis.X, 0.0,
+                                     right.Y, fwd.Y, axis.Y, 0.0,
+                                     right.Z, fwd.Z, axis.Z, 0.0,
+                                     0.0,     0.0,   0.0,    1.0)
+                            Trafo3d(rotM, rotM.Transposed) * Trafo3d.Translation(a)
+                        | _ -> Trafo3d.Scale(0.0))
                 sg {
                     Sg.Active notFullscreen
                     Sg.View view
@@ -356,10 +388,10 @@ module SceneGraph =
                         env.Emit [ScanPinMsg (FocusPin id)]
                         false)
                     Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer boxPos :> IBuffer), typeof<V3f>) ]
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer pinMarkerPos :> IBuffer), typeof<V3f>) ]
                     )
-                    Sg.Index(BufferView(AVal.constant (ArrayBuffer boxIdx :> IBuffer), typeof<int>))
-                    Sg.Render (AVal.constant boxIdx.Length)
+                    Sg.Index(BufferView(AVal.constant (ArrayBuffer pinMarkerIdx :> IBuffer), typeof<int>))
+                    Sg.Render (AVal.constant pinMarkerIdx.Length)
                 }
             )
 

@@ -567,8 +567,11 @@ body.loaded { background: #f4f6f8; }
 
 .card-cut-diagram {
     width: 280px; height: 130px;
-    border: 1px solid #e2e8f0; border-radius: 3px;
+    border: 1px solid #e2e8f0;
+    border-radius: 3px;
     overflow: hidden;
+    flex-shrink: 0;
+    background: #fafbfc;
 }
 
 .pin-card-strat {

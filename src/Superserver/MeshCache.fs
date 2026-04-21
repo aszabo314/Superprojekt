@@ -151,13 +151,13 @@ let planeIntersection (lm : LoadedMesh) (planePoint : V3d) (planeNormal : V3d) (
                 let u1 = Vec.dot (b - planePoint) axisU
                 let v1 = Vec.dot (b - planePoint) axisV
                 if (abs u0 <= maxExtentU || abs u1 <= maxExtentU) && (abs v0 <= maxExtentV || abs v1 <= maxExtentV) then
-                    // Dedup: emit only if the 2D midpoint lies in this tile. Use half-open ranges on
-                    // the high side, closed on the low side; tiles on the outer boundary claim their
-                    // open edge so segments on the exact boundary aren't dropped.
+                    // Dedup: emit only if the 2D midpoint lies in this tile. Outer-edge tiles claim
+                    // their open side unconditionally so segments whose midpoint spills past the
+                    // global [-maxExtent, +maxExtent] aren't dropped.
                     let uM = 0.5 * (u0 + u1)
                     let vM = 0.5 * (v0 + v1)
-                    let inU = uM >= uLo && (uM < uHi || iu = nU - 1)
-                    let inV = vM >= vLo && (vM < vHi || iv = nV - 1)
+                    let inU = (uM >= uLo || iu = 0) && (uM < uHi || iu = nU - 1)
+                    let inV = (vM >= vLo || iv = 0) && (vM < vHi || iv = nV - 1)
                     if inU && inV then local.Add [| u0; v0; u1; v1 |]) |> ignore
     let total = perTile |> Array.sumBy (fun b -> b.Count)
     let out = Array.zeroCreate<float[]> total

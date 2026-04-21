@@ -626,6 +626,7 @@ module Gui =
             Class "orient-indicator"
             axisJson |> AVal.map (fun json -> Some (Attribute("data-axes", json)))
             OnBoot [
+                "(function(){"
                 "var el = __THIS__;"
                 "var last = '';"
                 "var ns = 'http://www.w3.org/2000/svg';"
@@ -663,6 +664,7 @@ module Gui =
                 "}"
                 "render();"
                 "new MutationObserver(render).observe(el, {attributes:true,attributeFilter:['data-axes']});"
+                "})();"
             ]
         }
 

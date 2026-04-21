@@ -266,6 +266,7 @@ module Cards =
                 | _ -> ())
 
             OnBoot [
+                "(function(){"
                 "var el = __THIS__;"
                 "var last = '';"
                 "var ns = 'http://www.w3.org/2000/svg';"
@@ -376,6 +377,7 @@ module Cards =
                 "}"
                 "render();"
                 "new MutationObserver(function(){render();}).observe(el, {attributes:true,attributeFilter:['data-diagram']});"
+                "})();"
             ]
         }
 

@@ -582,6 +582,7 @@ module Update =
                                     Query.planeIntersectionBatch ApiConfig.apiBase.Value nameArr planePoint planeNormal axisU axisV 0.5 extentU extentV
                                     |> Async.StartAsTask
                                 if not cts.IsCancellationRequested then
+                                    let totalSegs = batch |> List.sumBy (fun (_, s) -> s.Length)
                                     let results =
                                         batch
                                         |> List.choose (fun (name, segments) ->
@@ -590,10 +591,13 @@ module Update =
                                                 Some (name, { MeshName = name; Polylines = polylines })
                                             else None)
                                         |> Map.ofList
-                                    env.Emit [CutResultsLoaded(pinId, results)]
+                                    env.Emit [
+                                        LogDebug (sprintf "cut: %d meshes, %d segs (%d non-empty)" nameArr.Length totalSegs results.Count)
+                                        CutResultsLoaded(pinId, results)
+                                    ]
                             with
                             | :? System.Threading.Tasks.TaskCanceledException -> ()
-                            | _ -> ()
+                            | ex -> env.Emit [LogDebug (sprintf "cut failed: %s" ex.Message)]
                         } |> ignore
                     | None -> ()
                 | None -> ()
@@ -626,7 +630,7 @@ module Update =
                                         env.Emit [StratigraphyComputed(pinId, data, cache)]
                             with
                             | :? System.Threading.Tasks.TaskCanceledException -> ()
-                            | _ -> ()
+                            | ex -> env.Emit [LogDebug (sprintf "strat failed: %s" ex.Message)]
                         } |> ignore
                     | None -> ()
                 | None -> ()

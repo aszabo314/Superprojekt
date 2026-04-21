@@ -558,6 +558,7 @@ module StratigraphyView =
                 Class "strat-overlay"
                 stratJson |> AVal.map (fun j -> Some (Attribute("data-strat", j)))
                 OnBoot [
+                    "(function(){"
                     "var el = __THIS__;"
                     "var last = '';"
                     "function render() {"
@@ -601,6 +602,7 @@ module StratigraphyView =
                     "render();"
                     "var obs = new MutationObserver(render);"
                     "obs.observe(el, {attributes:true, attributeFilter:['data-strat']});"
+                    "})();"
                 ]
             }
         }

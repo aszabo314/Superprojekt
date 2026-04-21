@@ -238,8 +238,10 @@ module Cards =
                 }
             | None -> None
 
+    let private hoverDebounce = ref (new System.Threading.CancellationTokenSource())
+
     let private diagramSvg (env : Env<Message>) (selectedPin : aval<ScanPin option>) =
-        let svgW, svgH = 280.0, 130.0
+        let svgW, svgH = 280.0, 180.0
         let pad = 28.0
         div {
             Class "card-cut-diagram"
@@ -251,13 +253,22 @@ module Cards =
                 Some (Attribute("data-diagram", json)))
 
             Dom.OnPointerMove(fun e ->
-                match AVal.force selectedPin with
-                | Some pin when not pin.CutResults.IsEmpty ->
-                    let mpx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
-                    let hv = computeCutSnap pin svgW svgH pad mpx
-                    if hv <> pin.CutLineHover then
-                        env.Emit [ScanPinMsg (SetCutLineHover(pin.Id, hv))]
-                | _ -> ())
+                let mpx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
+                let cts = new System.Threading.CancellationTokenSource()
+                hoverDebounce.Value.Cancel()
+                hoverDebounce.Value <- cts
+                task {
+                    try
+                        do! System.Threading.Tasks.Task.Delay(80, cts.Token)
+                        match AVal.force selectedPin with
+                        | Some pin when not pin.CutResults.IsEmpty ->
+                            let hv = computeCutSnap pin svgW svgH pad mpx
+                            if hv <> pin.CutLineHover then
+                                env.Emit [ScanPinMsg (SetCutLineHover(pin.Id, hv))]
+                        | _ -> ()
+                    with
+                    | :? System.Threading.Tasks.TaskCanceledException -> ()
+                } |> ignore)
 
             Dom.OnMouseLeave(fun _ ->
                 match AVal.force selectedPin with

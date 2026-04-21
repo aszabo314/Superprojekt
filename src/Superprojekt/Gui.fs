@@ -386,7 +386,7 @@ module Gui =
                 | None -> false)
             div {
                 Class "lp-ghost-row"
-                compactToggle "Ghost clip" ghost (fun () ->
+                compactToggle "solo" ghost (fun () ->
                     match AVal.force activePin with
                     | Some p ->
                         let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn

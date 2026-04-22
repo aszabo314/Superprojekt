@@ -97,56 +97,40 @@ module Gui =
                 }
             }
 
-            let isPlacing =
-                model.ScanPins.Placement |> AVal.map (function PlacementIdle -> false | _ -> true)
-            let lastMode = model.ScanPins.LastPlacementMode
-            let modeLabel = function ProfileMode -> "Profile" | PlanMode -> "Plan" | AutoMode -> "Auto"
+            let placingMode =
+                model.ScanPins.Placement |> AVal.map (function
+                    | PlacementIdle -> None
+                    | ProfilePlacement _ -> Some ProfileMode
+                    | PlanPlacement _ -> Some PlanMode
+                    | AutoPlacement _ -> Some AutoMode
+                    | AdjustingPin(_, m) -> Some m)
             let exploreOn = model.Explore |> AVal.map (fun e -> e.Enabled)
 
-            div {
-                Class "tb-split"
+            let modeButton (mode : PlacementMode) (label : string) (tooltip : string) (enabled : aval<bool>) =
                 button {
-                    Class "tb-btn tb-split-main"
-                    isPlacing |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                    Attribute("title", "Place a ScanPin")
+                    (placingMode, enabled) ||> AVal.map2 (fun cur en ->
+                        let baseCls = "tb-seg-btn"
+                        match cur with
+                        | Some m when m = mode -> Class (baseCls + " tb-seg-btn-active")
+                        | _ when not en -> Class (baseCls + " tb-seg-btn-disabled")
+                        | _ -> Class baseCls)
+                    Attribute("title", tooltip)
                     Dom.OnClick(fun _ ->
-                        let placing = AVal.force isPlacing
-                        if placing then env.Emit [ScanPinMsg CancelPlacement]
-                        else env.Emit [ScanPinMsg (SelectPlacementMode (AVal.force lastMode))])
-                    (isPlacing, lastMode) ||> AVal.map2 (fun on m ->
-                        if on then "\u2715 Cancel" else "+ " + modeLabel m)
+                        if not (AVal.force enabled) then ()
+                        else
+                            match AVal.force placingMode with
+                            | Some m when m = mode -> env.Emit [ScanPinMsg CancelPlacement]
+                            | _ -> env.Emit [ScanPinMsg (SelectPlacementMode mode)])
+                    label
                 }
-                div {
-                    Class "tb-split-menu-wrap"
-                    isPlacing |> AVal.map (fun on -> if on then Some (Style [Display "none"]) else None)
-                    button {
-                        Class "tb-btn tb-split-arrow"
-                        Attribute("title", "Choose placement mode")
-                        "\u25BE"
-                    }
-                    div {
-                        Class "tb-split-menu"
-                        button {
-                            Class "tb-split-item"
-                            Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPlacementMode ProfileMode)])
-                            "Profile — vertical cut"
-                        }
-                        button {
-                            Class "tb-split-item"
-                            Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPlacementMode PlanMode)])
-                            "Plan — horizontal cut"
-                        }
-                        button {
-                            Class "tb-split-item"
-                            exploreOn |> AVal.map (fun on -> if on then None else Some (Class "tb-split-item-disabled"))
-                            Attribute("title", "Enable explore mode first")
-                            Dom.OnClick(fun _ ->
-                                if AVal.force exploreOn then
-                                    env.Emit [ScanPinMsg (SelectPlacementMode AutoMode)])
-                            "Auto — from explore"
-                        }
-                    }
-                }
+
+            div {
+                Class "tb-seg-group"
+                Attribute("role", "group")
+                Attribute("title", "ScanPin placement mode")
+                modeButton ProfileMode "Profile" "Vertical cut — two clicks on a surface" (AVal.constant true)
+                modeButton PlanMode    "Plan"    "Horizontal cut — click-drag on a surface" (AVal.constant true)
+                modeButton AutoMode    "Auto"    "From explore hot-spot (enable explore mode first)" exploreOn
             }
 
             button {

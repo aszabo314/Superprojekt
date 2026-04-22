@@ -22,18 +22,19 @@ All three modes produce the same ScanPin data structure. They differ only in how
 
 ## Mode Selection
 
-The top bar [+ Pin] button becomes a split button or small dropdown:
+The top bar shows a segmented group of three side-by-side buttons that share a single bounding box with no gaps between them — visually one control with three mutually-exclusive options:
 
 ```
-[+ Profile ▾]
-  ├── Profile (vertical cut)
-  ├── Plan (horizontal cut)
-  └── Auto (from explore)
+┌─────────┬──────┬──────┐
+│ Profile │ Plan │ Auto │
+└─────────┴──────┴──────┘
 ```
 
-The dropdown remembers the last-used mode. The button label shows the current mode. Clicking the button directly starts placement in the current mode. Clicking the dropdown arrow shows the mode options.
+- Clicking a mode button enters that placement mode (replacing any in-progress placement).
+- While placement is active in a mode, that mode's button is highlighted (active/blue). Clicking the highlighted button cancels placement.
+- Clicking a different mode while placing switches to that mode (the old pin is discarded).
 
-**Auto mode** is only available (not grayed out) when explore mode is active. If explore mode is off, the Auto option is disabled with a tooltip: "Enable explore mode first."
+**Auto mode** is only available (not grayed out) when explore mode is active. If explore mode is off, the Auto button is disabled with a tooltip: "From explore hot-spot (enable explore mode first)."
 
 ---
 
@@ -401,7 +402,7 @@ type PlacementMessage =
 ### Near-term scope (this milestone)
 
 1. **Data model migration** — replace `PlacingMode : FootprintMode option` + `ActivePlacement : ScanPinId option` with the single `PlacementState` DU described above. Cascade through `Update.fs`, `View.fs`, `Gui.fs`, `SceneGraph.fs`, `Cards.fs`. **[done]**
-2. **Split button UI** in the top bar with Profile / Plan / Auto dropdown. Auto is disabled (grayed + tooltip) when explore mode is off. Last-used mode persists in the model. **[done]**
+2. **Segmented mode-selector UI** in the top bar: three side-by-side buttons (Profile / Plan / Auto) sharing one bounding box with no inter-button gaps — visually one control with three exclusive options. The active mode is highlighted; clicking it cancels, clicking another switches. Auto is disabled (grayed + tooltip) when explore mode is off. **[done]**
 3. **Profile mode** (two-point vertical cut) — full gesture, parameter derivation, preview line + ghost cylinder wireframe between clicks, camera orbit center update on creation. **[done]**
 4. **`/api/query/ray-batch` server endpoint** — batched ray-intersection (origin+direction array, names array). Server uses `Parallel.For` across rays. **[done]**
 5. **Plan mode** (lasso-circle horizontal cut) — full gesture, median-elevation computation via the new batch endpoint (10×10 vertical ray grid), preview circle + ghost cylinder during drag. **[done]**

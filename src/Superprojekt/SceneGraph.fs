@@ -196,8 +196,11 @@ module SceneGraph =
                     match id |> Option.bind (fun id -> HashMap.tryFind id pins) with
                     | Some pin -> pin.GhostClip = GhostClipOn
                     | _ -> false)
-            (model.GhostSilhouette, cylClipActive)
-            ||> AVal.map2 (fun g c -> g || c)
+            let placementPreviewActive =
+                (model.ScanPins.Placement, model.ClipBounds)
+                ||> AVal.map2 (fun p b -> (PinGeometry.placementPreviewPrism p b).IsSome)
+            (model.GhostSilhouette, cylClipActive, placementPreviewActive)
+            |||> AVal.map3 (fun g c p -> g || c || p)
 
         let exploreTex : aval<IBackendTexture> =
             let refAxis =
@@ -839,38 +842,12 @@ module SceneGraph =
         let placementPreview =
             let previewPrism =
                 (model.ScanPins.Placement, model.ClipBounds) ||> AVal.map2 (fun placement bounds ->
-                    let autoDepth () =
-                        if bounds.IsInvalid then 10.0 else bounds.SizeZ
-                    match placement with
-                    | ProfilePlacement (ProfileWaitingForSecondPoint(p1, Some p2)) ->
-                        let diff = p2 - p1
-                        let len = diff.Length
-                        if len < 1e-3 then None
-                        else
-                            let center = (p1 + p2) * 0.5
-                            let radius = max 0.1 (len * 0.6)
-                            let prism : SelectionPrism = {
-                                AnchorPoint = center
-                                AxisDirection = V3d.OOI
-                                Footprint = { Vertices = [ for k in 0 .. 31 ->
-                                                            let a = float k * 2.0 * System.Math.PI / 32.0
-                                                            V2d(cos a * radius, sin a * radius) ] }
-                                ExtentForward = 1.0
-                                ExtentBackward = autoDepth ()
-                            }
-                            Some (prism, Some (p1, p2))
-                    | PlanPlacement (PlanDragging(center, r)) when r >= 0.05 ->
-                        let prism : SelectionPrism = {
-                            AnchorPoint = center
-                            AxisDirection = V3d.OOI
-                            Footprint = { Vertices = [ for k in 0 .. 31 ->
-                                                        let a = float k * 2.0 * System.Math.PI / 32.0
-                                                        V2d(cos a * r, sin a * r) ] }
-                            ExtentForward = 1.0
-                            ExtentBackward = autoDepth ()
-                        }
-                        Some (prism, None)
-                    | _ -> None)
+                    let prismOpt = PinGeometry.placementPreviewPrism placement bounds
+                    let lineOpt =
+                        match placement with
+                        | ProfilePlacement (ProfileWaitingForSecondPoint(p1, Some p2)) -> Some (p1, p2)
+                        | _ -> None
+                    prismOpt |> Option.map (fun p -> p, lineOpt))
             let hullGeom =
                 previewPrism |> AVal.map (fun po ->
                     match po with

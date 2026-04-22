@@ -375,6 +375,41 @@ module PinGeometry =
         let pt = c0 - edgeDirU * offset - edgeDirV * offset
         labelTrafo edgeDirU edgeDirV planeNormal pt labelSize
 
+    /// Synthesize the preview SelectionPrism shown during Profile/Plan placement
+    /// gestures (before the pin is committed). Returns None when the gesture has
+    /// not produced enough information yet. `bounds` is the dataset ClipBounds and
+    /// drives ExtentBackward so the cylinder cuts through the full stack.
+    let placementPreviewPrism (placement : PlacementState) (bounds : Box3d) =
+        let autoDepth () = if bounds.IsInvalid then 10.0 else bounds.SizeZ
+        let ring r =
+            { Vertices = [ for k in 0 .. 31 ->
+                            let a = float k * 2.0 * System.Math.PI / 32.0
+                            V2d(cos a * r, sin a * r) ] }
+        match placement with
+        | ProfilePlacement (ProfileWaitingForSecondPoint(p1, Some p2)) ->
+            let diff = p2 - p1
+            let len = diff.Length
+            if len < 1e-3 then None
+            else
+                let center = (p1 + p2) * 0.5
+                let radius = max 0.1 (len * 0.6)
+                Some {
+                    AnchorPoint = center
+                    AxisDirection = V3d.OOI
+                    Footprint = ring radius
+                    ExtentForward = 1.0
+                    ExtentBackward = autoDepth ()
+                }
+        | PlanPlacement (PlanDragging(center, r)) when r >= 0.05 ->
+            Some {
+                AnchorPoint = center
+                AxisDirection = V3d.OOI
+                Footprint = ring r
+                ExtentForward = 1.0
+                ExtentBackward = autoDepth ()
+            }
+        | _ -> None
+
     /// Solid cylinder hull surface (for picking). Returns positions and indices.
     let buildCylinderHull (prism : SelectionPrism) (segments : int) =
         let axis = prism.AxisDirection |> Vec.normalize

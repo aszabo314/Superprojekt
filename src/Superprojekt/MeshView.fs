@@ -173,6 +173,8 @@ module MeshView =
             |||> AVal.map3 (fun sel act pins ->
                 let id = act |> Option.orElse sel
                 id |> Option.bind (fun id -> HashMap.tryFind id pins))
+        let previewPrism =
+            (model.ScanPins.Placement, model.ClipBounds) ||> AVal.map2 PinGeometry.placementPreviewPrism
         let ghostClipVal = activePin |> AVal.map (Option.map (fun p -> p.GhostClip))
         let prismVal = activePin |> AVal.map (Option.map (fun p -> p.Prism))
         let cutPlaneVal = activePin |> AVal.map (Option.map (fun p -> p.CutPlane))
@@ -180,18 +182,24 @@ module MeshView =
         let cameraFwd = view |> AVal.map (fun v -> v.Backward.TransformDir(V3d(0.0, 0.0, -1.0)) |> Vec.normalize)
         let cylClip =
             AVal.custom (fun tok ->
+                let prev = previewPrism.GetValue tok
                 let gc = ghostClipVal.GetValue tok
                 let prismOpt = prismVal.GetValue tok
                 let cutOpt = cutPlaneVal.GetValue tok
                 let ghostCut = ghostCutVal.GetValue tok
                 let camFwd = cameraFwd.GetValue tok
-                match gc, prismOpt with
+                // Preview takes priority — force solo ghost-clip on the cylinder before commit.
+                let effectivePrism, effectiveGhost, effectiveCut =
+                    match prev with
+                    | Some p -> Some p, Some GhostClipOn, None
+                    | None -> prismOpt, gc, cutOpt
+                match effectiveGhost, effectivePrism with
                 | Some GhostClipOn, Some prism ->
                     let axis = Vec.normalize prism.AxisDirection
                     let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
                     let cutActive, cutN, cutD =
-                        if ghostCut then
-                            match cutOpt with
+                        if ghostCut && prev.IsNone then
+                            match effectiveCut with
                             | Some cp ->
                                 let right, fwd = PinGeometry.axisFrame axis
                                 let planePoint, planeNormal =

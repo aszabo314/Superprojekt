@@ -44,12 +44,13 @@ module SceneGraph =
         let textTrafoY = Trafo3d.RotationX(Constant.PiHalf) * Trafo3d.RotationZ(Constant.PiHalf)
         let textTrafoZ = Trafo3d.RotationX(Constant.PiHalf)
 
-        let axisLine color (dir : V3d) =
-            let half = dir * axisLength * 0.5
-            let trafo =
-                let s = V3d(thickness, thickness, thickness) + dir * (axisLength - thickness)
-                Trafo3d.Scale(s) * Trafo3d.Translation(half)
-            sg { Sg.Active active; Sg.View view; Sg.Proj proj; axisBox color trafo }
+        let mainAxes (xC : V4d) (yC : V4d) (zC : V4d) =
+            let segs = AVal.constant [|
+                V3d.Zero, V3d.IOO * axisLength, xC, 2.0
+                V3d.Zero, V3d.OIO * axisLength, yC, 2.0
+                V3d.Zero, V3d.OOI * axisLength, zC, 2.0
+            |]
+            sg { Sg.Active active; Sg.View view; Sg.Proj proj; Lines.render segs }
 
         let ticksAndLabels color (dir : V3d) (perpA : V3d) (textRot : Trafo3d) =
             let n = int (axisLength / tickSpacing)
@@ -77,9 +78,7 @@ module SceneGraph =
 
         ASet.ofList [
             sg { Sg.Active active; Sg.View view; Sg.Proj proj; axisBox (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 0.08) }
-            axisLine xColor V3d.IOO
-            axisLine yColor V3d.OIO
-            axisLine zColor V3d.OOI
+            mainAxes xColor yColor zColor
             yield! [
                 let tipOffset = axisLength + labelSize * 1.5
                 sg { Sg.Active active; Sg.View view; Sg.Proj proj

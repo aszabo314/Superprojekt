@@ -188,109 +188,83 @@ module PinGeometry =
                V3f(center - right * hw + fwd * hw) |],
             [| 0;1;2; 0;2;3 |]
 
-    let buildCutPlaneRefined (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
+    let private cutPlaneCorners (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
         let axis = prism.AxisDirection |> Vec.normalize
         let right, fwd = axisFrame axis
         let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-        let corners, edgeU, edgeV, extentU, extentV =
-            match cutPlane with
-            | CutPlaneMode.AlongAxis angleDeg ->
-                let a = angleDeg * Constant.RadiansPerDegree
-                let planeDir = right * cos a + fwd * sin a
-                let hw = r * 1.2
-                let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
-                let center = prism.AnchorPoint + axis * (prism.ExtentForward - prism.ExtentBackward) * 0.5
-                let c0 = center - planeDir * hw - axis * hh
-                let c1 = center + planeDir * hw - axis * hh
-                let c2 = center + planeDir * hw + axis * hh
-                let c3 = center - planeDir * hw + axis * hh
-                [| c0; c1; c2; c3 |], planeDir, axis, hw * 2.0, hh * 2.0
-            | CutPlaneMode.AcrossAxis dist ->
-                let center = prism.AnchorPoint + axis * dist
-                let hw = r * 1.2
-                let c0 = center - right * hw - fwd * hw
-                let c1 = center + right * hw - fwd * hw
-                let c2 = center + right * hw + fwd * hw
-                let c3 = center - right * hw + fwd * hw
-                [| c0; c1; c2; c3 |], right, fwd, hw * 2.0, hw * 2.0
+        match cutPlane with
+        | CutPlaneMode.AlongAxis angleDeg ->
+            let a = angleDeg * Constant.RadiansPerDegree
+            let planeDir = right * cos a + fwd * sin a
+            let hw = r * 1.2
+            let hh = (prism.ExtentForward + prism.ExtentBackward) * 0.5
+            let center = prism.AnchorPoint + axis * (prism.ExtentForward - prism.ExtentBackward) * 0.5
+            let c0 = center - planeDir * hw - axis * hh
+            let c1 = center + planeDir * hw - axis * hh
+            let c2 = center + planeDir * hw + axis * hh
+            let c3 = center - planeDir * hw + axis * hh
+            [| c0; c1; c2; c3 |], hw * 2.0, hh * 2.0
+        | CutPlaneMode.AcrossAxis dist ->
+            let center = prism.AnchorPoint + axis * dist
+            let hw = r * 1.2
+            let c0 = center - right * hw - fwd * hw
+            let c1 = center + right * hw - fwd * hw
+            let c2 = center + right * hw + fwd * hw
+            let c3 = center - right * hw + fwd * hw
+            [| c0; c1; c2; c3 |], hw * 2.0, hw * 2.0
 
-        let positions = ResizeArray<V3f>()
-        let colors = ResizeArray<V4f>()
-        let indices = ResizeArray<int>()
-
+    /// Translucent gradient quad fill of the cut plane (no edges/grid — those are line segments).
+    let buildCutPlaneFill (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
+        let corners, _, _ = cutPlaneCorners prism cutPlane
         let edgeAlpha = 0.08f
         let mid01 = (corners.[0] + corners.[1]) * 0.5
         let mid12 = (corners.[1] + corners.[2]) * 0.5
         let mid23 = (corners.[2] + corners.[3]) * 0.5
         let mid30 = (corners.[3] + corners.[0]) * 0.5
         let center = (corners.[0] + corners.[1] + corners.[2] + corners.[3]) * 0.25
-        let gradVerts = [| corners.[0]; mid01; corners.[1]; mid30; center; mid12; corners.[3]; mid23; corners.[2] |]
-        let gradAlphas = [| edgeAlpha; edgeAlpha; edgeAlpha; edgeAlpha; 0.0f; edgeAlpha; edgeAlpha; edgeAlpha; edgeAlpha |]
-        let baseIdx = positions.Count
-        for i in 0 .. 8 do
-            positions.Add(V3f gradVerts.[i])
-            colors.Add(V4f(1.0f, 1.0f, 1.0f, gradAlphas.[i]))
-        let addQuad a b c d =
-            indices.Add(baseIdx + a); indices.Add(baseIdx + b); indices.Add(baseIdx + c)
-            indices.Add(baseIdx + a); indices.Add(baseIdx + c); indices.Add(baseIdx + d)
-        addQuad 0 1 4 3
-        addQuad 1 2 5 4
-        addQuad 3 4 7 6
-        addQuad 4 5 8 7
+        let verts = [| corners.[0]; mid01; corners.[1]; mid30; center; mid12; corners.[3]; mid23; corners.[2] |]
+        let alphas = [| edgeAlpha; edgeAlpha; edgeAlpha; edgeAlpha; 0.0f; edgeAlpha; edgeAlpha; edgeAlpha; edgeAlpha |]
+        let positions = verts |> Array.map V3f
+        let colors    = alphas |> Array.map (fun a -> V4f(1.0f, 1.0f, 1.0f, a))
+        let indices = [|
+            0;1;4;  0;4;3
+            1;2;5;  1;5;4
+            3;4;7;  3;7;6
+            4;5;8;  4;8;7
+        |]
+        positions, colors, indices
 
-        let lineThick = max 0.02 (r * 0.025)
-        let addEdgeTube (a : V3d) (b : V3d) =
-            let dir = (b - a) |> Vec.normalize
-            let perp1 = Vec.cross dir axis
-            let perp = if perp1.Length < 1e-10 then Vec.cross dir right |> Vec.normalize else perp1 |> Vec.normalize
-            let off = perp * lineThick * 0.5
-            let i0 = positions.Count
-            positions.Add(V3f(a + off)); positions.Add(V3f(a - off))
-            positions.Add(V3f(b + off)); positions.Add(V3f(b - off))
-            let edgeColor = V4f(1.0f, 1.0f, 1.0f, 0.6f)
-            for _ in 1..4 do colors.Add(edgeColor)
-            indices.Add(i0); indices.Add(i0+1); indices.Add(i0+2)
-            indices.Add(i0+1); indices.Add(i0+3); indices.Add(i0+2)
-        addEdgeTube corners.[0] corners.[1]
-        addEdgeTube corners.[1] corners.[2]
-        addEdgeTube corners.[2] corners.[3]
-        addEdgeTube corners.[3] corners.[0]
-
+    /// Boundary frame + grid lines as `(p0, p1, color, widthPx)` segments for `Lines.render`.
+    let buildCutPlaneEdges (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
+        let corners, extentU, extentV = cutPlaneCorners prism cutPlane
+        let edgeColor  = V4d(1.0, 1.0, 1.0, 0.6)
+        let majorColor = V4d(1.0, 1.0, 1.0, 0.30)
+        let minorColor = V4d(1.0, 1.0, 1.0, 0.15)
+        let edgeWidth  = 1.5
+        let gridWidth  = 1.0
+        let segs = ResizeArray<V3d * V3d * V4d * float>()
+        segs.Add(corners.[0], corners.[1], edgeColor, edgeWidth)
+        segs.Add(corners.[1], corners.[2], edgeColor, edgeWidth)
+        segs.Add(corners.[2], corners.[3], edgeColor, edgeWidth)
+        segs.Add(corners.[3], corners.[0], edgeColor, edgeWidth)
         let tickScale = 0.25
-        let gridColor = V4f(1.0f, 1.0f, 1.0f, 0.15f)
-        let majorGridColor = V4f(1.0f, 1.0f, 1.0f, 0.3f)
-        let gridThick = lineThick * 0.4
-        let addGridLine (a : V3d) (b : V3d) (isMajor : bool) =
-            let dir = (b - a)
-            if dir.Length > 1e-10 then
-                let d = dir |> Vec.normalize
-                let perp1 = Vec.cross d axis
-                let perp = if perp1.Length < 1e-10 then Vec.cross d right |> Vec.normalize else perp1 |> Vec.normalize
-                let off = perp * gridThick * 0.5
-                let i0 = positions.Count
-                positions.Add(V3f(a + off)); positions.Add(V3f(a - off))
-                positions.Add(V3f(b + off)); positions.Add(V3f(b - off))
-                let c = if isMajor then majorGridColor else gridColor
-                for _ in 1..4 do colors.Add(c)
-                indices.Add(i0); indices.Add(i0+1); indices.Add(i0+2)
-                indices.Add(i0+1); indices.Add(i0+3); indices.Add(i0+2)
-
         let nTicksU = int (extentU / tickScale)
         for i in 0 .. nTicksU do
             let t = float i * tickScale / extentU
             if t <= 1.0 then
                 let a = corners.[0] + (corners.[1] - corners.[0]) * t
                 let b = corners.[3] + (corners.[2] - corners.[3]) * t
-                addGridLine a b (i % 4 = 0)
+                let c = if i % 4 = 0 then majorColor else minorColor
+                segs.Add(a, b, c, gridWidth)
         let nTicksV = int (extentV / tickScale)
         for i in 0 .. nTicksV do
             let t = float i * tickScale / extentV
             if t <= 1.0 then
                 let a = corners.[0] + (corners.[3] - corners.[0]) * t
                 let b = corners.[1] + (corners.[2] - corners.[1]) * t
-                addGridLine a b (i % 4 = 0)
-
-        positions.ToArray(), colors.ToArray(), indices.ToArray()
+                let c = if i % 4 = 0 then majorColor else minorColor
+                segs.Add(a, b, c, gridWidth)
+        segs.ToArray()
 
     /// EdgeU = along edge 0→1 (bottom), EdgeV = along edge 0→3 (left).
     type TickEdge = EdgeU | EdgeV

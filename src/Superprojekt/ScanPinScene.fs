@@ -99,14 +99,19 @@ module ScanPinScene =
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
                 let prismVal = pinVal |> AVal.map (Option.map (fun p -> p.Prism))
                 let cutPlaneVal = pinVal |> AVal.map (Option.map (fun p -> p.CutPlane))
-                let planeData =
+                let fillData =
                     (prismVal, cutPlaneVal) ||> AVal.map2 (fun po co ->
                         match po, co with
-                        | Some prism, Some cp -> PinGeometry.buildCutPlaneRefined prism cp
+                        | Some prism, Some cp -> PinGeometry.buildCutPlaneFill prism cp
                         | _ -> [||], [||], [||])
-                let planePos = planeData |> AVal.map (fun (p,_,_) -> p)
-                let planeCol = planeData |> AVal.map (fun (_,c,_) -> c)
-                let planeIdx = planeData |> AVal.map (fun (_,_,i) -> i)
+                let edgeSegs =
+                    (prismVal, cutPlaneVal) ||> AVal.map2 (fun po co ->
+                        match po, co with
+                        | Some prism, Some cp -> PinGeometry.buildCutPlaneEdges prism cp
+                        | _ -> [||])
+                let planePos = fillData |> AVal.map (fun (p,_,_) -> p)
+                let planeCol = fillData |> AVal.map (fun (_,c,_) -> c)
+                let planeIdx = fillData |> AVal.map (fun (_,_,i) -> i)
                 let tickCounts =
                     prismVal |> AVal.map (fun po ->
                         match po with
@@ -198,6 +203,15 @@ module ScanPinScene =
                                 ])
                             Sg.Index(BufferView(planeIdx |> AVal.map (fun i -> ArrayBuffer i :> IBuffer), typeof<int>))
                             Sg.Render(planeIdx |> AVal.map Array.length)
+                        }
+                        sg {
+                            Sg.Active isActiveAndSelected
+                            Sg.View view
+                            Sg.Proj proj
+                            Sg.Pass RenderPass.passOne
+                            Sg.BlendMode BlendMode.Blend
+                            Sg.DepthTest (AVal.constant DepthTest.None)
+                            Lines.render edgeSegs
                         }
                     ])
                     (ASet.unionMany (ASet.ofList [labelNodes; centroidNode]))

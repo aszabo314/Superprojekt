@@ -304,6 +304,7 @@ module ScanPinUpdate =
 
         | AutoHoverUpdate preview ->
             match sp.Placement with
+            | AutoPlacement (AutoHovering current) when current = preview -> sp
             | AutoPlacement (AutoHovering _) ->
                 { sp with Placement = AutoPlacement (AutoHovering preview) }
             | _ -> sp
@@ -718,62 +719,10 @@ module Update =
                                 let! hits =
                                     Query.rayGrid ApiConfig.apiBase.Value names worldRays
                                     |> Async.StartAsTask
-                                let hot =
-                                    hits |> Array.choose (function
-                                        | Some (pt, n) ->
-                                            let nn = n |> Vec.normalize
-                                            // steepness weight: faces whose normal is roughly perpendicular
-                                            // to the reference axis (|dot| near 0) are "steep" relative to it.
-                                            let aligned = abs (Vec.dot nn refAxisWorld)
-                                            let steepW = max 0.0 (1.0 - aligned / 0.9)
-                                            // proximity weight: prefer hits closer to the click in world space.
-                                            let d = (pt - clickWorld).Length
-                                            let prox = exp (-d * d / 25.0)
-                                            let w = steepW * prox
-                                            if w > 1e-3 then Some (pt, nn, w) else None
-                                        | None -> None)
-                                if hot.Length < 3 then
+                                match PinGeometry.deriveAutoPreview hits clickWorld refAxisWorld scale with
+                                | None ->
                                     env.Emit [LogDebug "auto derive: insufficient steep neighborhood — keeping defaults"]
-                                else
-                                    let mutable sum = V3d.Zero
-                                    let mutable wsum = 0.0
-                                    for (_, n, w) in hot do
-                                        // flip normals to hemisphere facing camera (consistent averaging)
-                                        let s = if Vec.dot n refAxisWorld < 0.0 then -1.0 else 1.0
-                                        sum <- sum + n * (s * w)
-                                        wsum <- wsum + w
-                                    let n =
-                                        if wsum < 1e-6 then refAxisWorld
-                                        else (sum / wsum) |> Vec.normalize
-                                    let z = refAxisWorld |> Vec.normalize
-                                    let alignedN = abs (Vec.dot n z)
-                                    let axisWorld, cutPlane =
-                                        if alignedN > 0.95 then
-                                            // N nearly aligned with ref axis → faces are "flat": AcrossAxis cut at click height
-                                            let dist =
-                                                // project (click - anchor) onto axis in render space; anchor = renderPos
-                                                // here; dist starts at 0 (click lies exactly on anchor plane).
-                                                0.0
-                                            z, CutPlaneMode.AcrossAxis dist
-                                        else
-                                            let proj = z - n * Vec.dot z n
-                                            let axis = proj |> Vec.normalize
-                                            // AlongAxis angle rotates the cut-plane normal around `axis`
-                                            // to align with N's projection onto the plane perpendicular to axis.
-                                            let nPerp = n - axis * Vec.dot n axis
-                                            let right, fwd = PinGeometry.axisFrame axis
-                                            let a = atan2 (Vec.dot nPerp fwd) (Vec.dot nPerp right)
-                                            let angDeg = a * Constant.DegreesPerRadian
-                                            axis, CutPlaneMode.AlongAxis angDeg
-                                    // Radius from extent of hot hits in world-space transverse plane
-                                    let axisUnit = axisWorld |> Vec.normalize
-                                    let transverseR =
-                                        hot |> Array.map (fun (pt, _, _) ->
-                                            let v = pt - clickWorld
-                                            (v - axisUnit * Vec.dot v axisUnit).Length)
-                                        |> (fun arr -> if arr.Length = 0 then 1.0 else Array.max arr)
-                                    let radiusWorld = max 0.5 transverseR
-                                    let radiusRender = radiusWorld * scale
+                                | Some (axisWorld, cutPlane, radiusRender, _) ->
                                     env.Emit [ScanPinMsg (AutoDerivationComplete(id, axisWorld, cutPlane, radiusRender))]
                             with
                             | ex -> env.Emit [LogDebug (sprintf "auto derive failed: %s" ex.Message)]

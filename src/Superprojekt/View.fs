@@ -20,6 +20,9 @@ module View =
         let hoverCoord     = cval<V3d option> None
         let viewportSize   = cval (V2i(1, 1))
 
+        let autoHoverDebounce = ref (new System.Threading.CancellationTokenSource())
+        let autoHoverLastWorld : ref<V3d option> = ref None
+
         let revolverActive   = AVal.map2 (||) (shiftHeld :> aval<_>) model.RevolverOn
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
         let revolverBase =
@@ -164,6 +167,68 @@ module View =
                     | ProfilePlacement (ProfileWaitingForSecondPoint _) ->
                         let preview = if hitGeometry then Some e.WorldPosition else None
                         env.Emit [ScanPinMsg (ProfilePreviewUpdate preview)]
+                    | AutoPlacement (AutoHovering current) ->
+                        if not hitGeometry then
+                            if current.IsSome then env.Emit [ScanPinMsg (AutoHoverUpdate None)]
+                            autoHoverDebounce.Value.Cancel()
+                            autoHoverLastWorld.Value <- None
+                        else
+                            let clickRender = e.WorldPosition
+                            let moved =
+                                match !autoHoverLastWorld with
+                                | None -> true
+                                | Some last -> (clickRender - last).Length > 0.3
+                            if moved then
+                                autoHoverLastWorld.Value <- Some clickRender
+                                autoHoverDebounce.Value.Cancel()
+                                let cts = new System.Threading.CancellationTokenSource()
+                                autoHoverDebounce.Value <- cts
+                                let v = AVal.force view
+                                let fwd   = v.Backward.TransformDir(V3d(0.0, 0.0, -1.0)) |> Vec.normalize
+                                let right = v.Backward.TransformDir(V3d(1.0, 0.0,  0.0)) |> Vec.normalize
+                                let up    = v.Backward.TransformDir(V3d(0.0, 1.0,  0.0)) |> Vec.normalize
+                                let eyeRender = v.Backward.TransformPos(V3d.Zero)
+                                let clickWorld  = clickRender / scale + cc
+                                let eyeWorld    = eyeRender / scale + cc
+                                let gridHalf = 2
+                                let step = 0.5
+                                let rays =
+                                    [| for i in -gridHalf .. gridHalf do
+                                        for j in -gridHalf .. gridHalf do
+                                            let offset = right * (float i * step) + up * (float j * step)
+                                            let target = clickWorld + offset
+                                            let dir = (target - eyeWorld) |> Vec.normalize
+                                            yield eyeWorld, dir |]
+                                let refAxisWorld =
+                                    match AVal.force model.ReferenceAxis with
+                                    | AlongWorldZ     -> V3d.OOI
+                                    | AlongCameraView -> -fwd
+                                let names = AList.force model.MeshNames |> IndexList.toArray
+                                if names.Length > 0 then
+                                    task {
+                                        try
+                                            do! System.Threading.Tasks.Task.Delay(120, cts.Token)
+                                            if cts.Token.IsCancellationRequested then () else
+                                            let! hits =
+                                                Query.rayGrid ApiConfig.apiBase.Value names rays
+                                                |> Async.StartAsTask
+                                            if cts.Token.IsCancellationRequested then () else
+                                            let preview =
+                                                match PinGeometry.deriveAutoPreview hits clickWorld refAxisWorld scale with
+                                                | Some (axisWorld, cutPlane, radiusRender, normal) ->
+                                                    Some {
+                                                        Center         = clickRender
+                                                        Axis           = axisWorld
+                                                        Radius         = radiusRender
+                                                        CutPlaneMode   = cutPlane
+                                                        DominantNormal = normal
+                                                    }
+                                                | None -> None
+                                            env.Emit [ScanPinMsg (AutoHoverUpdate preview)]
+                                        with
+                                        | :? System.Threading.Tasks.TaskCanceledException -> ()
+                                        | ex -> env.Emit [LogDebug (sprintf "auto hover failed: %s" ex.Message)]
+                                    } |> ignore
                     | _ -> ()
                     true
                 )

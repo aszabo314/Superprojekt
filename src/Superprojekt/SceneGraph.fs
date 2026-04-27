@@ -842,16 +842,21 @@ module SceneGraph =
         let placementPreview =
             let previewPrism =
                 (model.ScanPins.Placement, model.ClipBounds) ||> AVal.map2 (fun placement bounds ->
-                    let prismOpt = PinGeometry.placementPreviewPrism placement bounds
-                    let lineOpt =
-                        match placement with
-                        | ProfilePlacement (ProfileWaitingForSecondPoint(p1, Some p2)) -> Some (p1, p2)
-                        | _ -> None
-                    prismOpt |> Option.map (fun p -> p, lineOpt))
+                    match placement with
+                    | ProfilePlacement (ProfileWaitingForSecondPoint(p1, Some p2)) ->
+                        PinGeometry.placementPreviewPrism placement bounds
+                        |> Option.map (fun p -> p, Some (p1, p2), None)
+                    | PlanPlacement (PlanDragging _) ->
+                        PinGeometry.placementPreviewPrism placement bounds
+                        |> Option.map (fun p -> p, None, None)
+                    | AutoPlacement (AutoHovering (Some preview)) ->
+                        let prism = PinGeometry.autoPreviewPrism preview bounds
+                        Some (prism, None, Some preview.CutPlaneMode)
+                    | _ -> None)
             let hullGeom =
                 previewPrism |> AVal.map (fun po ->
                     match po with
-                    | Some (prism, _) ->
+                    | Some (prism, _, _) ->
                         let p, i = PinGeometry.buildCylinderHull prism 64
                         p, i, true
                     | None -> [||], [||], false)
@@ -862,13 +867,37 @@ module SceneGraph =
             let lineGeom =
                 previewPrism |> AVal.map (fun po ->
                     match po with
-                    | Some (_, Some (p1, p2)) ->
+                    | Some (_, Some (p1, p2), _) ->
                         [| V3f p1; V3f p2 |], [| 0; 1 |], true
                     | _ -> [||], [||], false)
             let linePos = lineGeom |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
             let lineIdx = lineGeom |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
             let lineCnt = lineGeom |> AVal.map (fun (_,i,_) -> i.Length)
             let lineActive = lineGeom |> AVal.map (fun (_,_,a) -> a)
+            let cutGeom =
+                previewPrism |> AVal.map (fun po ->
+                    match po with
+                    | Some (prism, _, Some cutPlane) ->
+                        let p, i = PinGeometry.buildCutPlaneQuad prism cutPlane
+                        p, i, true
+                    | _ -> [||], [||], false)
+            let cutPos = cutGeom |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
+            let cutIdx = cutGeom |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
+            let cutCnt = cutGeom |> AVal.map (fun (_,i,_) -> i.Length)
+            let cutActive = cutGeom |> AVal.map (fun (_,_,a) -> a)
+            let axisGeom =
+                previewPrism |> AVal.map (fun po ->
+                    match po with
+                    | Some (prism, _, Some _) ->
+                        let axis = prism.AxisDirection |> Vec.normalize
+                        let top = prism.AnchorPoint + axis * prism.ExtentForward
+                        let bot = prism.AnchorPoint - axis * prism.ExtentBackward
+                        [| V3f top; V3f bot |], [| 0; 1 |], true
+                    | _ -> [||], [||], false)
+            let axisPos = axisGeom |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
+            let axisIdx = axisGeom |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
+            let axisCnt = axisGeom |> AVal.map (fun (_,i,_) -> i.Length)
+            let axisActive = axisGeom |> AVal.map (fun (_,_,a) -> a)
             ASet.ofList [
                 sg {
                     Sg.Active hullActive
@@ -899,6 +928,36 @@ module SceneGraph =
                         HashMap.ofList [ string DefaultSemantic.Positions, BufferView(linePos, typeof<V3f>) ])
                     Sg.Index(BufferView(lineIdx, typeof<int>))
                     Sg.Render lineCnt
+                }
+                sg {
+                    Sg.Active cutActive
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.1, 0.34, 0.86, 0.25)))
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.Pass RenderPass.passOne
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(cutPos, typeof<V3f>) ])
+                    Sg.Index(BufferView(cutIdx, typeof<int>))
+                    Sg.Render cutCnt
+                }
+                sg {
+                    Sg.Active axisActive
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.1, 0.34, 0.86, 0.7)))
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.Pass RenderPass.passOne
+                    Sg.Mode IndexedGeometryMode.LineList
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(axisPos, typeof<V3f>) ])
+                    Sg.Index(BufferView(axisIdx, typeof<int>))
+                    Sg.Render axisCnt
                 }
             ]
 

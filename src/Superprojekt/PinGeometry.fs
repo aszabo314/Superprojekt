@@ -455,6 +455,77 @@ module PinGeometry =
             indices.Add(t1); indices.Add(b1); indices.Add(b0)
         positions, indices.ToArray()
 
+    /// Derive Auto-mode placement parameters from a server ray-grid response.
+    /// Same algorithm used by `AutoClick`: weight hits by `steepness × proximity`,
+    /// average normals (flipped to the reference-axis hemisphere), then either
+    /// snap to AcrossAxis when N aligns with the reference, or AlongAxis otherwise.
+    /// Returns None when fewer than 3 hot hits — caller keeps the placeholder defaults.
+    let deriveAutoPreview
+            (hits : (V3d * V3d) option[])
+            (clickWorld : V3d)
+            (refAxisWorld : V3d)
+            (scale : float)
+            : (V3d * CutPlaneMode * float * V3d) option =
+        let hot =
+            hits |> Array.choose (function
+                | Some (pt, n) ->
+                    let nn = n |> Vec.normalize
+                    let aligned = abs (Vec.dot nn refAxisWorld)
+                    let steepW = max 0.0 (1.0 - aligned / 0.9)
+                    let d = (pt - clickWorld).Length
+                    let prox = exp (-d * d / 25.0)
+                    let w = steepW * prox
+                    if w > 1e-3 then Some (pt, nn, w) else None
+                | None -> None)
+        if hot.Length < 3 then None
+        else
+            let mutable sum = V3d.Zero
+            let mutable wsum = 0.0
+            for (_, n, w) in hot do
+                let s = if Vec.dot n refAxisWorld < 0.0 then -1.0 else 1.0
+                sum <- sum + n * (s * w)
+                wsum <- wsum + w
+            let n =
+                if wsum < 1e-6 then refAxisWorld
+                else (sum / wsum) |> Vec.normalize
+            let z = refAxisWorld |> Vec.normalize
+            let alignedN = abs (Vec.dot n z)
+            let axisWorld, cutPlane =
+                if alignedN > 0.95 then
+                    z, CutPlaneMode.AcrossAxis 0.0
+                else
+                    let proj = z - n * Vec.dot z n
+                    let axis = proj |> Vec.normalize
+                    let nPerp = n - axis * Vec.dot n axis
+                    let right, fwd = axisFrame axis
+                    let a = atan2 (Vec.dot nPerp fwd) (Vec.dot nPerp right)
+                    axis, CutPlaneMode.AlongAxis (a * Constant.DegreesPerRadian)
+            let axisUnit = axisWorld |> Vec.normalize
+            let transverseR =
+                hot |> Array.map (fun (pt, _, _) ->
+                    let v = pt - clickWorld
+                    (v - axisUnit * Vec.dot v axisUnit).Length)
+                |> (fun arr -> if arr.Length = 0 then 1.0 else Array.max arr)
+            let radiusWorld = max 0.5 transverseR
+            Some (axisWorld, cutPlane, radiusWorld * scale, n)
+
+    /// Synthesize a SelectionPrism for rendering an AutoPreview ghost.
+    /// `bounds` is the dataset ClipBounds and drives ExtentBackward.
+    let autoPreviewPrism (preview : AutoPreview) (bounds : Box3d) =
+        let depth = if bounds.IsInvalid then 10.0 else bounds.SizeZ
+        let n = 32
+        let footprint =
+            { Vertices = [ for k in 0 .. n - 1 ->
+                            let a = float k * 2.0 * System.Math.PI / float n
+                            V2d(cos a * preview.Radius, sin a * preview.Radius) ] }
+        {
+            AnchorPoint    = preview.Center
+            AxisDirection  = preview.Axis
+            Footprint      = footprint
+            ExtentForward  = 1.0
+            ExtentBackward = depth
+        }
+
     /// Vertical line indicator at a given angle on the cylinder hull.
     let buildHullLine (prism : SelectionPrism) (angleDeg : float) (thickness : float) =
         let axis = prism.AxisDirection |> Vec.normalize

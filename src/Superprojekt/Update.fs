@@ -43,7 +43,7 @@ type Message =
     | ShowAllMeshes
     | HideAllMeshes
     | ResetCamera
-    | ToggleExplorePopover
+    | SetExploreCardPos of V2d
     | ToggleGearPopover
     | SetRevolverRadius of float
     | EditPin of ScanPinId
@@ -154,12 +154,8 @@ module CardUpdate =
 
 module ScanPinUpdate =
 
-    let private meshColors =
-        [| C4b(228uy,26uy,28uy); C4b(55uy,126uy,184uy); C4b(77uy,175uy,74uy); C4b(152uy,78uy,163uy)
-           C4b(255uy,127uy,0uy); C4b(255uy,255uy,51uy); C4b(166uy,86uy,40uy); C4b(247uy,129uy,191uy); C4b(153uy,153uy,153uy) |]
-
     let private assignColors (meshNames : IndexList<string>) =
-        meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, meshColors.[i % meshColors.Length]) |> Map.ofArray
+        meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
 
     let private circleFootprint (radius : float) =
         let n = 32
@@ -545,7 +541,6 @@ module Update =
                     FilterCenter = None
                     MeshSolo = NoSolo
                     Explore = { model.Explore with Enabled = false }
-                    ExplorePopoverOpen = false
                     CardSystem = { model.CardSystem with Cards = model.CardSystem.Cards |> HashMap.map (fun _ c -> { c with Visible = false }) } }
         | SetDatasetScale(dataset, scale) ->
             { model with DatasetScales = Map.add dataset scale model.DatasetScales }
@@ -590,8 +585,8 @@ module Update =
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, center))]
             env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
             model
-        | ToggleExplorePopover ->
-            { model with ExplorePopoverOpen = not model.ExplorePopoverOpen }
+        | SetExploreCardPos pos ->
+            { model with ExploreCardPos = Some pos }
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
         | SetRevolverRadius r ->

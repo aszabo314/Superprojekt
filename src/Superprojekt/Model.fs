@@ -98,7 +98,7 @@ type Model =
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
         RevolverSettings    : RevolverSettings
-        ExplorePopoverOpen  : bool
+        ExploreCardPos      : V2d option
         GearPopoverOpen     : bool
     }
 
@@ -142,6 +142,6 @@ module Model =
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             RevolverSettings    = RevolverSettings.initial
-            ExplorePopoverOpen  = false
+            ExploreCardPos      = None
             GearPopoverOpen     = false
         }

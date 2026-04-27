@@ -386,6 +386,7 @@ module View =
             Gui.revolverBar env model
             Gui.leftPanel env model
             Gui.placementFlyout env model
+            Gui.exploreCard env model
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
             Gui.fullscreenInfo model
             Gui.scaleBar model (viewportSize :> aval<V2i>)

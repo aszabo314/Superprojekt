@@ -33,7 +33,6 @@ module Stratigraphy =
                     { Angle = angle; Events = events })
             let rings = Array.init ringCount (fun k -> buildRing perRingAngle.[k])
             let columns = rings.[0]
-            // Derive axis bounds from actual data so the diagram always fits
             let mutable globalMin = infinity
             let mutable globalMax = -infinity
             for c in columns do
@@ -53,7 +52,6 @@ module Stratigraphy =
             let columnMaxZ =
                 columns |> Array.map (fun c ->
                     match c.Events with [] -> axisMax | _ -> c.Events |> List.map fst |> List.max)
-            // RingRadii reported in client (scaled) space to match Columns' z units
             let ringRadiiScaled = ringRadii |> Array.map (fun r -> r * scale)
             return {
                 AngularResolution = res; AxisMin = axisMin; AxisMax = axisMax
@@ -62,9 +60,7 @@ module Stratigraphy =
             }
         }
 
-    /// Find the between-space bracket containing `z` in a column's sorted events.
-    /// Returns (zLower, zUpper, lowerMesh, upperMesh) or None if z is below the
-    /// first event or above the last.
+    /// Returns (zLower, zUpper, lowerMesh, upperMesh) for the bracket containing `z`, else None.
     let tryBracket (events : (float * string) list) (z : float) =
         let rec go (lst : (float * string) list) =
             match lst with
@@ -74,18 +70,8 @@ module Stratigraphy =
             | _ -> None
         go events
 
-    /// Flood-fill the continuous between-space containing the hovered bracket.
-    /// Each column is broken into brackets (pairs of consecutive events); BFS
-    /// over the graph whose nodes are (columnIdx, bracketIdx) and whose edges
-    /// connect nodes in adjacent columns whose z-ranges overlap. Bounding mesh
-    /// identities are ignored — the gap is defined purely by geometric
-    /// continuity of the open z-intervals column-to-column. Returns every
-    /// bracket in the connected region, grouped by column.
-    /// Build brackets from a sorted event list, collapsing consecutive events closer than `minGap`.
-    /// Collapsing an event pair means treating the tiny bracket between them as non-existent — the
-    /// surrounding events merge into one and the enclosing bracket widens. This cuts the per-column
-    /// bracket count by 10–50× on large cylinders and makes the union-find in `buildBandCache`
-    /// practical in WASM.
+    /// Brackets between consecutive events, collapsing pairs closer than `minGap`. The collapse cuts
+    /// per-column bracket count 10-50x on large cylinders so union-find in `buildBandCache` is practical in WASM.
     let private prunedBrackets (minGap : float) (events : (float * string) list) : (float * float)[] =
         let e = List.toArray events
         if e.Length < 2 then [||]
@@ -102,8 +88,7 @@ module Stratigraphy =
         let range = max 0.0 (data.AxisMax - data.AxisMin)
         max 1e-6 (range * 0.005)
 
-    /// 3D flood fill over (angleIdx, ringIdx, bracketIdx) with ±1 angle (wrap) and
-    /// ±1 ring (clamp) neighbors. Seed is the hovered bracket on the outer ring.
+    /// BFS over (angleIdx, ringIdx, bracketIdx); ±1 angle wraps, ±1 ring clamps; seeded at the outer-ring hover.
     let floodContinuousBand3D (data : StratigraphyData) (colIdx : int) (hoverZ : float) : Map<int * int, (float * float) list> =
         let n = data.AngularResolution
         let rings = data.Rings
@@ -113,7 +98,6 @@ module Stratigraphy =
         let hIdx = colIdx |> max 0 |> min (n - 1)
         let minGap = minGapFor data
         let bracketsOf = prunedBrackets minGap
-        // brackets.[ring].[angle] = (lo, hi)[]
         let brackets =
             Array.init ringCount (fun r ->
                 Array.init n (fun a -> bracketsOf rings.[r].[a].Events))
@@ -151,16 +135,13 @@ module Stratigraphy =
             while queue.Count > 0 do
                 let (ring, ang, bi) = queue.Dequeue()
                 let bracket = brackets.[ring].[ang].[bi]
-                // angular neighbors (wrap)
                 for step in [1; -1] do
                     let nAng = (ang + step + n) % n
                     tryConnect ring ang bracket ring nAng
-                // radial neighbors (clamp)
                 if ring > 0 then tryConnect ring ang bracket (ring - 1) ang
                 if ring < ringCount - 1 then tryConnect ring ang bracket (ring + 1) ang
             perCell |> Seq.map (fun kv -> kv.Key, List.ofSeq kv.Value) |> Map.ofSeq
 
-    /// 2D view: restrict the 3D flood to the outer ring (seed ring).
     let floodContinuousBand (data : StratigraphyData) (colIdx : int) (hoverZ : float) : Map<int, (float * float) list> =
         floodContinuousBand3D data colIdx hoverZ
         |> Seq.choose (fun kv ->
@@ -177,7 +158,6 @@ module Stratigraphy =
         let brackets =
             Array.init ringCount (fun r ->
                 Array.init n (fun a -> bracketsOf rings.[r].[a].Events))
-        // Union-find
         let parent = System.Collections.Generic.Dictionary<int * int * int, int * int * int>()
         let rec find x =
             match parent.TryGetValue x with
@@ -190,12 +170,10 @@ module Stratigraphy =
             let ra = find a
             let rb = find b
             if ra <> rb then parent.[ra] <- rb
-        // Initialize all bracket nodes
         for r in 0 .. ringCount - 1 do
             for a in 0 .. n - 1 do
                 for bi in 0 .. brackets.[r].[a].Length - 1 do
                     parent.[(r, a, bi)] <- (r, a, bi)
-        // Connect neighbors using same overlap criterion as floodContinuousBand3D
         for r in 0 .. ringCount - 1 do
             for a in 0 .. n - 1 do
                 for bi in 0 .. brackets.[r].[a].Length - 1 do
@@ -210,12 +188,9 @@ module Stratigraphy =
                             let longer = max len1 len2
                             if longer > 0.0 && ov > 0.5 * longer then
                                 union (r, a, bi) (nR, nA, nbi)
-                    // angular neighbors (wrap)
                     let nAng = (a + 1) % n
                     tryConnectTo r nAng
-                    // radial neighbors
                     if r < ringCount - 1 then tryConnectTo (r + 1) a
-        // Group brackets by component
         let compBrackets = System.Collections.Generic.Dictionary<int * int * int, System.Collections.Generic.List<int * int * int>>()
         for r in 0 .. ringCount - 1 do
             for a in 0 .. n - 1 do
@@ -227,14 +202,12 @@ module Stratigraphy =
                         let lst = System.Collections.Generic.List<int * int * int>()
                         lst.Add((r, a, bi))
                         compBrackets.[root] <- lst
-        // Assign sequential component IDs
         let compIds = compBrackets.Keys |> Seq.mapi (fun i k -> k, i) |> dict
         let labels =
             Array.init ringCount (fun r ->
                 Array.init n (fun a ->
                     Array.init brackets.[r].[a].Length (fun bi ->
                         compIds.[find (r, a, bi)])))
-        // Build result maps per component
         let numComponents = compIds.Count
         let comp3D = Array.init numComponents (fun _ -> System.Collections.Generic.Dictionary<int * int, System.Collections.Generic.List<float * float>>())
         let comp2D = Array.init numComponents (fun _ -> System.Collections.Generic.Dictionary<int, System.Collections.Generic.List<float * float>>())
@@ -263,29 +236,25 @@ module Stratigraphy =
             Components2D = comp2D |> Array.map (fun d -> d |> Seq.map (fun kv -> kv.Key, List.ofSeq kv.Value) |> Map.ofSeq)
         }
 
-    let lookupBand2D (cache : BandCache) (colIdx : int) (hoverZ : float) : Map<int, (float * float) list> =
+    let private lookupComponentId (cache : BandCache) (colIdx : int) (hoverZ : float) =
         let n = if cache.Brackets.Length > 0 then cache.Brackets.[0].Length else 0
-        if n = 0 then Map.empty
+        if n = 0 then None
         else
-        let a = colIdx |> max 0 |> min (n - 1)
-        let brs = cache.Brackets.[0].[a]
-        let mutable found = -1
-        for k in 0 .. brs.Length - 1 do
-            let (lo, hi) = brs.[k]
-            if found < 0 && lo <= hoverZ && hoverZ < hi then found <- k
-        if found < 0 then Map.empty
-        else cache.Components2D.[cache.Labels.[0].[a].[found]]
+            let a = colIdx |> max 0 |> min (n - 1)
+            let brs = cache.Brackets.[0].[a]
+            let mutable found = -1
+            for k in 0 .. brs.Length - 1 do
+                let (lo, hi) = brs.[k]
+                if found < 0 && lo <= hoverZ && hoverZ < hi then found <- k
+            if found < 0 then None else Some cache.Labels.[0].[a].[found]
+
+    let lookupBand2D (cache : BandCache) (colIdx : int) (hoverZ : float) : Map<int, (float * float) list> =
+        match lookupComponentId cache colIdx hoverZ with
+        | Some cid -> cache.Components2D.[cid]
+        | None -> Map.empty
 
     let lookupBand3D (cache : BandCache) (colIdx : int) (hoverZ : float) : Map<int * int, (float * float) list> =
-        let n = if cache.Brackets.Length > 0 then cache.Brackets.[0].Length else 0
-        if n = 0 then Map.empty
-        else
-        let a = colIdx |> max 0 |> min (n - 1)
-        let brs = cache.Brackets.[0].[a]
-        let mutable found = -1
-        for k in 0 .. brs.Length - 1 do
-            let (lo, hi) = brs.[k]
-            if found < 0 && lo <= hoverZ && hoverZ < hi then found <- k
-        if found < 0 then Map.empty
-        else cache.Components3D.[cache.Labels.[0].[a].[found]]
+        match lookupComponentId cache colIdx hoverZ with
+        | Some cid -> cache.Components3D.[cid]
+        | None -> Map.empty
 

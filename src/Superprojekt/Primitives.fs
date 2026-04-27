@@ -6,6 +6,16 @@ open Aardvark.Dom
 
 module Primitives =
 
+    let meshPalette =
+        [| C4b(228uy,26uy,28uy);  C4b(55uy,126uy,184uy); C4b(77uy,175uy,74uy)
+           C4b(152uy,78uy,163uy); C4b(255uy,127uy,0uy);  C4b(255uy,255uy,51uy)
+           C4b(166uy,86uy,40uy);  C4b(247uy,129uy,191uy);C4b(153uy,153uy,153uy) |]
+
+    let meshPaletteV4d =
+        meshPalette |> Array.map (fun c -> V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 1.0))
+
+    let meshColor (idx : int) = meshPalette.[((idx % meshPalette.Length) + meshPalette.Length) % meshPalette.Length]
+
     let private parseFloat (s : string) =
         match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
         | true, v -> Some v

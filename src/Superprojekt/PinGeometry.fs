@@ -2,20 +2,15 @@ namespace Superprojekt
 
 open Aardvark.Base
 
-/// Pure geometry helpers for ScanPin rendering. Independent of the WASM runtime
-/// so this file can be linked into PinDemo (desktop) as well.
 module PinGeometry =
 
-    /// Orthonormal frame from a (normalized) axis: returns (right, fwd) such that
-    /// (right, fwd, axis) is right-handed. `up` defaults to +Z unless axis is near ±Z.
+    /// Returns (right, fwd) so (right, fwd, axis) is right-handed; up defaults to +Z unless axis is near ±Z.
     let axisFrame (axis : V3d) =
         let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
         let right = Vec.cross axis up |> Vec.normalize
         let fwd = Vec.cross right axis |> Vec.normalize
         right, fwd
 
-    /// Trafo that rotates a prism's axis to +Z and translates the anchor to the origin.
-    /// Used by the core sample inspector.
     let coreSampleTrafo (prism : SelectionPrism) =
         let axis = -(prism.AxisDirection |> Vec.normalize)
         let right, fwd = axisFrame axis
@@ -25,7 +20,6 @@ module PinGeometry =
                           0.0,     0.0,     0.0,     1.0)
         Trafo3d.Translation(-prism.AnchorPoint) * Trafo3d(rotFwd, rotFwd.Transposed)
 
-    /// Triangle-quads forming the wireframe edges of a selection prism.
     let buildPrismWireframe (prism : SelectionPrism) (thickness : float) =
         let axis = prism.AxisDirection |> Vec.normalize
         let right, fwd = axisFrame axis
@@ -58,11 +52,8 @@ module PinGeometry =
                 addEdge topVerts.[i] botVerts.[i]
             positions.ToArray(), indices.ToArray()
 
-    /// Build upper and lower mesh surfaces plus side walls for the
-    /// between-space volume on the stratigraphy (angular × radial) grid.
-    /// Quads are emitted only when all four corner nodes have brackets; side
-    /// walls close boundary edges of that surface region.
-    /// Returns ((upperPos, upperIdx), (lowerPos, lowerIdx), (sidePos, sideIdx)).
+    /// Returns ((upperPos, upperIdx), (lowerPos, lowerIdx), (sidePos, sideIdx)) for the between-space volume.
+    /// Quads are emitted only when all four corner nodes have brackets; side walls close the resulting boundary.
     let buildBetweenSpaceSurfaces (prism : SelectionPrism) (data : StratigraphyData) (cache : BandCache option) (colIdx : int) (hoverZ : float) =
         let axis = prism.AxisDirection |> Vec.normalize
         let right, fwd = axisFrame axis
@@ -101,7 +92,6 @@ module PinGeometry =
                     (firstBracket iN k).IsSome &&
                     (firstBracket iN (k+1)).IsSome &&
                     (firstBracket i (k+1)).IsSome
-            // Upper + lower surface quads
             for i in 0 .. n - 1 do
                 let iNext = (i + 1) % n
                 for k in 0 .. ringCount - 2 do
@@ -122,7 +112,6 @@ module PinGeometry =
                         lowerIdx.Add b;       lowerIdx.Add (b + 1); lowerIdx.Add (b + 2)
                         lowerIdx.Add b;       lowerIdx.Add (b + 2); lowerIdx.Add (b + 3)
                     | _ -> ()
-            // Side walls: edges where at least one adjacent quad is incomplete.
             let emitWall iA kA iB kB =
                 match firstBracket iA kA, firstBracket iB kB with
                 | Some (loA, hiA), Some (loB, hiB) ->
@@ -135,13 +124,11 @@ module PinGeometry =
                     sideIdx.Add b;       sideIdx.Add (b + 1); sideIdx.Add (b + 2)
                     sideIdx.Add b;       sideIdx.Add (b + 2); sideIdx.Add (b + 3)
                 | _ -> ()
-            // Angular edges: endpoints (i,k)↔((i+1)%n,k); adjacent quads (i,k-1) and (i,k).
             for i in 0 .. n - 1 do
                 let iNext = (i + 1) % n
                 for k in 0 .. ringCount - 1 do
                     let boundary = not (quadComplete i (k - 1) && quadComplete i k)
                     if boundary then emitWall i k iNext k
-            // Radial edges: endpoints (i,k)↔(i,k+1); adjacent quads ((i-1+n)%n,k) and (i,k).
             for i in 0 .. n - 1 do
                 let iPrev = (i + n - 1) % n
                 for k in 0 .. ringCount - 2 do
@@ -151,9 +138,8 @@ module PinGeometry =
             (lowerPos.ToArray(), lowerIdx.ToArray()),
             (sidePos.ToArray(),  sideIdx.ToArray())
 
-    /// Append a colored polyline as triangle-quad ribbons into the supplied buffers.
-    /// `axisRef` is used to choose a stable perpendicular direction; pass the prism axis
-    /// for cylinder-wall curves and the cut-plane normal for in-plane lines.
+    /// `axisRef` chooses a stable perpendicular: pass the prism axis for cylinder-wall curves,
+    /// the cut-plane normal for in-plane lines.
     let appendPolylineRibbon
             (positions : ResizeArray<V3f>) (colors : ResizeArray<V4f>) (indices : ResizeArray<int>)
             (pts : V3d[]) (color : V4f) (axisRef : V3d) (thickness : float) =
@@ -177,7 +163,6 @@ module PinGeometry =
                 indices.Add(i0); indices.Add(i0 + 1); indices.Add(i0 + 2)
                 indices.Add(i0 + 1); indices.Add(i0 + 3); indices.Add(i0 + 2)
 
-    /// Quad describing the cut plane (along/across the prism axis).
     let buildCutPlaneQuad (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
         let axis = prism.AxisDirection |> Vec.normalize
         let right, fwd = axisFrame axis
@@ -203,8 +188,6 @@ module PinGeometry =
                V3f(center - right * hw + fwd * hw) |],
             [| 0;1;2; 0;2;3 |]
 
-    /// Cut plane outline edges (4 thin tubes) + gradient fill (9-vertex quad with vertex colors)
-    /// + measurement ticks. Returns (positions, colors, indices).
     let buildCutPlaneRefined (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
         let axis = prism.AxisDirection |> Vec.normalize
         let right, fwd = axisFrame axis
@@ -235,7 +218,6 @@ module PinGeometry =
         let colors = ResizeArray<V4f>()
         let indices = ResizeArray<int>()
 
-        // Gradient fill: 3x3 grid of vertices, edges at 8% opacity, center at 0%
         let edgeAlpha = 0.08f
         let mid01 = (corners.[0] + corners.[1]) * 0.5
         let mid12 = (corners.[1] + corners.[2]) * 0.5
@@ -256,7 +238,6 @@ module PinGeometry =
         addQuad 3 4 7 6
         addQuad 4 5 8 7
 
-        // Outline edges: 4 thin tubes
         let lineThick = max 0.02 (r * 0.025)
         let addEdgeTube (a : V3d) (b : V3d) =
             let dir = (b - a) |> Vec.normalize
@@ -275,7 +256,6 @@ module PinGeometry =
         addEdgeTube corners.[2] corners.[3]
         addEdgeTube corners.[3] corners.[0]
 
-        // Grid lines spanning the full plane. ~4 ticks per metre.
         let tickScale = 0.25
         let gridColor = V4f(1.0f, 1.0f, 1.0f, 0.15f)
         let majorGridColor = V4f(1.0f, 1.0f, 1.0f, 0.3f)
@@ -295,7 +275,6 @@ module PinGeometry =
                 indices.Add(i0); indices.Add(i0+1); indices.Add(i0+2)
                 indices.Add(i0+1); indices.Add(i0+3); indices.Add(i0+2)
 
-        // U-direction grid lines (parallel to edge 0→3, spaced along 0→1)
         let nTicksU = int (extentU / tickScale)
         for i in 0 .. nTicksU do
             let t = float i * tickScale / extentU
@@ -303,7 +282,6 @@ module PinGeometry =
                 let a = corners.[0] + (corners.[1] - corners.[0]) * t
                 let b = corners.[3] + (corners.[2] - corners.[3]) * t
                 addGridLine a b (i % 4 = 0)
-        // V-direction grid lines (parallel to edge 0→1, spaced along 0→3)
         let nTicksV = int (extentV / tickScale)
         for i in 0 .. nTicksV do
             let t = float i * tickScale / extentV
@@ -314,11 +292,9 @@ module PinGeometry =
 
         positions.ToArray(), colors.ToArray(), indices.ToArray()
 
-    /// Label edge: U = along edge 0→1 (bottom), V = along edge 0→3 (left).
+    /// EdgeU = along edge 0→1 (bottom), EdgeV = along edge 0→3 (left).
     type TickEdge = EdgeU | EdgeV
 
-    /// Helper: build a label trafo from orientation + position + scale.
-    /// Scale is applied in local space first, then rotation+translation places it in world.
     let private labelTrafo (x : V3d) (y : V3d) (z : V3d) (pos : V3d) (size : float) =
         Trafo3d(
             M44d(x.X, y.X, z.X, pos.X,
@@ -331,7 +307,6 @@ module PinGeometry =
                  0.0, 0.0, 0.0, 1.0)) *
         Trafo3d.Scale(size)
 
-    /// Compute cut plane frame: corner0, corner1, corner3, edgeDirU, edgeDirV.
     let private cutPlaneFrame (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
         let axis = prism.AxisDirection |> Vec.normalize
         let right, fwd = axisFrame axis
@@ -354,7 +329,6 @@ module PinGeometry =
             let c3 = center - right * hw + fwd * hw
             c0, c1, c3, right |> Vec.normalize, fwd |> Vec.normalize
 
-    /// Trafo that places a single tick label at unitT along the given edge.
     let tickLabelWorldTrafo (prism : SelectionPrism) (cutPlane : CutPlaneMode) (edge : TickEdge) (unitT : float) =
         let c0, c1, c3, edgeDirU, edgeDirV = cutPlaneFrame prism cutPlane
         let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
@@ -366,7 +340,6 @@ module PinGeometry =
             | EdgeV -> c0 + (c3 - c0) * unitT - edgeDirU * offset
         labelTrafo edgeDirU edgeDirV planeNormal pt labelSize
 
-    /// Trafo for the centroid label, placed near corner0 of the cut plane.
     let centroidLabelTrafo (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
         let c0, _, _, edgeDirU, edgeDirV = cutPlaneFrame prism cutPlane
         let planeNormal = Vec.cross edgeDirU edgeDirV |> Vec.normalize
@@ -375,10 +348,8 @@ module PinGeometry =
         let pt = c0 - edgeDirU * offset - edgeDirV * offset
         labelTrafo edgeDirU edgeDirV planeNormal pt labelSize
 
-    /// Synthesize the preview SelectionPrism shown during Profile/Plan placement
-    /// gestures (before the pin is committed). Returns None when the gesture has
-    /// not produced enough information yet. `bounds` is the dataset ClipBounds and
-    /// drives ExtentBackward so the cylinder cuts through the full stack.
+    /// Profile/Plan in-progress preview prism. None when the gesture hasn't produced
+    /// enough info yet. `bounds.SizeZ` drives ExtentBackward so the cylinder spans the stack.
     let placementPreviewPrism (placement : PlacementState) (bounds : Box3d) =
         let autoDepth () = if bounds.IsInvalid then 10.0 else bounds.SizeZ
         let ring r =
@@ -410,7 +381,6 @@ module PinGeometry =
             }
         | _ -> None
 
-    /// Solid cylinder hull surface (for picking). Returns positions and indices.
     let buildCylinderHull (prism : SelectionPrism) (segments : int) =
         let axis = prism.AxisDirection |> Vec.normalize
         let right, fwd = axisFrame axis
@@ -432,7 +402,6 @@ module PinGeometry =
             indices.Add(t1); indices.Add(b1); indices.Add(b0)
         positions, indices.ToArray()
 
-    /// Horizontal ring indicator at a given axis-distance on the cylinder hull.
     let buildHullRing (prism : SelectionPrism) (dist : float) (thickness : float) (segments : int) =
         let axis = prism.AxisDirection |> Vec.normalize
         let right, fwd = axisFrame axis
@@ -455,11 +424,8 @@ module PinGeometry =
             indices.Add(t1); indices.Add(b1); indices.Add(b0)
         positions, indices.ToArray()
 
-    /// Derive Auto-mode placement parameters from a server ray-grid response.
-    /// Same algorithm used by `AutoClick`: weight hits by `steepness × proximity`,
-    /// average normals (flipped to the reference-axis hemisphere), then either
-    /// snap to AcrossAxis when N aligns with the reference, or AlongAxis otherwise.
-    /// Returns None when fewer than 3 hot hits — caller keeps the placeholder defaults.
+    /// Auto-mode parameters from a ray-grid response: weight by steepness × proximity, average normals,
+    /// then AcrossAxis if N aligns with refAxis else AlongAxis. None when fewer than 3 hot hits.
     let deriveAutoPreview
             (hits : (V3d * V3d) option[])
             (clickWorld : V3d)
@@ -509,8 +475,6 @@ module PinGeometry =
             let radiusWorld = max 0.5 transverseR
             Some (axisWorld, cutPlane, radiusWorld * scale, n)
 
-    /// Synthesize a SelectionPrism for rendering an AutoPreview ghost.
-    /// `bounds` is the dataset ClipBounds and drives ExtentBackward.
     let autoPreviewPrism (preview : AutoPreview) (bounds : Box3d) =
         let depth = if bounds.IsInvalid then 10.0 else bounds.SizeZ
         let n = 32
@@ -526,7 +490,6 @@ module PinGeometry =
             ExtentBackward = depth
         }
 
-    /// Vertical line indicator at a given angle on the cylinder hull.
     let buildHullLine (prism : SelectionPrism) (angleDeg : float) (thickness : float) =
         let axis = prism.AxisDirection |> Vec.normalize
         let right, fwd = axisFrame axis

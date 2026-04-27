@@ -178,7 +178,7 @@ module MeshView =
         let ghostClipVal = activePin |> AVal.map (Option.map (fun p -> p.GhostClip))
         let prismVal = activePin |> AVal.map (Option.map (fun p -> p.Prism))
         let cutPlaneVal = activePin |> AVal.map (Option.map (fun p -> p.CutPlane))
-        let ghostCutVal = activePin |> AVal.map (fun po -> po |> Option.map (fun p -> p.GhostClipCutPlane) |> Option.defaultValue false)
+        let ghostCutVal = activePin |> AVal.map (Option.map (fun p -> p.GhostClipCutPlane) >> Option.defaultValue false)
         let cameraFwd = view |> AVal.map (fun v -> v.Backward.TransformDir(V3d(0.0, 0.0, -1.0)) |> Vec.normalize)
         let cylClip =
             AVal.custom (fun tok ->

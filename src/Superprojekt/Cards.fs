@@ -423,7 +423,7 @@ module Cards =
             div {
                 Class "pin-card-inline-controls"
 
-                let oneToOne = selectedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.CutAspect = CutAspectOneToOne) |> Option.defaultValue false)
+                let oneToOne = selectedPin |> AVal.map (Option.map (fun p -> p.CutAspect = CutAspectOneToOne) >> Option.defaultValue false)
                 div {
                     Attribute("title", "Cut aspect: 1:1 (slopes match 3D) / Fit")
                     Primitives.compactButtonBar [
@@ -442,7 +442,7 @@ module Cards =
                     ]
                 }
 
-                let normalized = selectedPin |> AVal.map (fun po -> po |> Option.map (fun p -> p.StratigraphyDisplay = Normalized) |> Option.defaultValue false)
+                let normalized = selectedPin |> AVal.map (Option.map (fun p -> p.StratigraphyDisplay = Normalized) >> Option.defaultValue false)
                 div {
                     Attribute("title", "Profile: Flat / Normalized")
                     Primitives.compactButtonBar [

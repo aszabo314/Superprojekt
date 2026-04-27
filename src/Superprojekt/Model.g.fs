@@ -1,5 +1,5 @@
-//0b5c41fa-0b68-6edb-36fc-8524a23e087f
-//bcf87372-1d0b-c699-e33d-e76a10fa8fc0
+//2cd722f4-1501-4abe-7823-0b89cdff75fa
+//bf2e25e0-ec4d-b875-0d4a-f5d6ca71ccba
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -46,7 +46,7 @@ type AdaptiveModel(value : Model) =
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _RevolverSettings_ = FSharp.Data.Adaptive.cval(value.RevolverSettings)
-    let _ExplorePopoverOpen_ = FSharp.Data.Adaptive.cval(value.ExplorePopoverOpen)
+    let _ExploreCardPos_ = FSharp.Data.Adaptive.cval(value.ExploreCardPos)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
@@ -90,7 +90,7 @@ type AdaptiveModel(value : Model) =
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
             _RevolverSettings_.Value <- value.RevolverSettings
-            _ExplorePopoverOpen_.Value <- value.ExplorePopoverOpen
+            _ExploreCardPos_.Value <- value.ExploreCardPos
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
     member __.Current = __adaptive
     member __.Camera = _Camera_
@@ -127,6 +127,6 @@ type AdaptiveModel(value : Model) =
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.RevolverSettings = _RevolverSettings_ :> FSharp.Data.Adaptive.aval<RevolverSettings>
-    member __.ExplorePopoverOpen = _ExplorePopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ExploreCardPos = _ExploreCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

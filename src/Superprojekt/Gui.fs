@@ -9,13 +9,6 @@ module Gui =
 
     open Primitives
 
-    let private pinColor =
-        [| C4b(228uy,26uy,28uy); C4b(55uy,126uy,184uy); C4b(77uy,175uy,74uy); C4b(152uy,78uy,163uy)
-           C4b(255uy,127uy,0uy); C4b(255uy,255uy,51uy); C4b(166uy,86uy,40uy); C4b(247uy,129uy,191uy); C4b(153uy,153uy,153uy) |]
-
-    let private meshColorForIdx (idx : int) =
-        pinColor.[idx % pinColor.Length]
-
     let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) =
         div {
             Class "top-bar"
@@ -60,41 +53,16 @@ module Gui =
                 }
             }
 
-            let explorePopoverOpen = model.ExplorePopoverOpen
             let exploreEnabled = model.Explore |> AVal.map (fun e -> e.Enabled)
 
-            div {
-                Class "tb-explore-wrap"
-                button {
-                    Class "tb-btn"
-                    exploreEnabled |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                    Attribute("title", "Toggle explore heatmap")
-                    Dom.OnClick(fun _ ->
-                        let cur = AVal.force exploreEnabled
-                        env.Emit [ExploreMsg (SetExploreEnabled (not cur))]
-                        if not cur then env.Emit [ToggleExplorePopover])
-                    "\u25C9 Explore"
-                }
-                div {
-                    Class "tb-explore-popover"
-                    (exploreEnabled, explorePopoverOpen) ||> AVal.map2 (fun en op ->
-                        if en && op then None else Some (Style [Display "none"]))
-                    let steep = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
-                    let disag = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
-                    inlineSlider "Steepness" 0.0 1.0 0.01 (sprintf "%.2f") steep (fun v ->
-                        env.Emit [ExploreMsg (SetSteepnessThreshold v)])
-                    inlineLogSlider "Sensitivity" 0.001 10.0 (fun v ->
-                        if v < 0.1 then sprintf "%.0f mm" (v * 1000.0)
-                        else sprintf "%.2f m" v) disag (fun v ->
-                        env.Emit [ExploreMsg (SetDisagreementThreshold v)])
-                }
-                button {
-                    Class "tb-btn-tiny"
-                    exploreEnabled |> AVal.map (fun on -> if on then None else Some (Style [Display "none"]))
-                    Attribute("title", "Explore settings")
-                    Dom.OnClick(fun _ -> env.Emit [ToggleExplorePopover])
-                    "\u2699"
-                }
+            button {
+                Class "tb-btn"
+                exploreEnabled |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Toggle explore heatmap")
+                Dom.OnClick(fun _ ->
+                    let cur = AVal.force exploreEnabled
+                    env.Emit [ExploreMsg (SetExploreEnabled (not cur))])
+                "\u25C9 Explore"
             }
 
             let placingMode =
@@ -249,7 +217,7 @@ module Gui =
         let isSolo = model.MeshSolo |> AVal.map (fun s ->
             match s with Solo(n, _) -> n = name | _ -> false)
         let colorVal =
-            model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0 >> meshColorForIdx)
+            model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0 >> meshColor)
         div {
             Class "mesh-row"
             span {
@@ -723,5 +691,70 @@ module Gui =
                 div {
                     order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (Cards.shortName name))
                 })
+        }
+
+    let exploreCard (env : Env<Message>) (model : AdaptiveModel) =
+        let dragState : cval<(V2d * V2d) option> = cval None
+        let defaultPos = V2d(200.0, 44.0)
+        let pos =
+            (model.ExploreCardPos, dragState :> aval<_>)
+            ||> AVal.map2 (fun saved drag ->
+                match drag with
+                | Some (p, _) -> p
+                | None -> saved |> Option.defaultValue defaultPos)
+        let visible = model.Explore |> AVal.map (fun e -> e.Enabled)
+        div {
+            Class "card explore-card"
+            (visible, pos) ||> AVal.map2 (fun on p ->
+                if not on then Some (Style [Display "none"])
+                else Some (Style [
+                    Left (sprintf "%.0fpx" p.X)
+                    Top (sprintf "%.0fpx" p.Y)
+                ]))
+
+            div {
+                Class "card-titlebar"
+                div {
+                    Class "card-drag-handle"
+                    Dom.OnPointerDown((fun e ->
+                        if e.Button = Button.Left then
+                            let cardPos = AVal.force pos
+                            let grab = V2d(float e.ClientPosition.X, float e.ClientPosition.Y) - cardPos
+                            transact (fun () -> dragState.Value <- Some (cardPos, grab))
+                    ), pointerCapture = true)
+                    Dom.OnPointerMove(fun e ->
+                        match dragState.GetValue() with
+                        | Some (_, grab) ->
+                            let p = V2d(float e.ClientPosition.X, float e.ClientPosition.Y) - grab
+                            transact (fun () -> dragState.Value <- Some (p, grab))
+                        | None -> ())
+                    Dom.OnPointerUp((fun _ ->
+                        match dragState.GetValue() with
+                        | Some (p, _) ->
+                            transact (fun () -> dragState.Value <- None)
+                            env.Emit [SetExploreCardPos p]
+                        | None -> ()
+                    ), pointerCapture = true)
+                    "Explore"
+                }
+                button {
+                    Class "card-btn-close"
+                    Attribute("title", "Close (disable explore mode)")
+                    Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetExploreEnabled false)])
+                    "×"
+                }
+            }
+
+            div {
+                Class "card-body explore-card-body"
+                let steep = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
+                let disag = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
+                inlineSlider "Steepness" 0.0 1.0 0.01 (sprintf "%.2f") steep (fun v ->
+                    env.Emit [ExploreMsg (SetSteepnessThreshold v)])
+                inlineLogSlider "Sensitivity" 0.001 10.0 (fun v ->
+                    if v < 0.1 then sprintf "%.0f mm" (v * 1000.0)
+                    else sprintf "%.2f m" v) disag (fun v ->
+                    env.Emit [ExploreMsg (SetDisagreementThreshold v)])
+            }
         }
 

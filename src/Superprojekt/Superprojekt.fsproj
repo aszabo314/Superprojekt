@@ -28,12 +28,13 @@
     <Compile Include="Model.fs" />
     <Compile Include="Model.g.fs" />
     <Compile Include="Shader.fs" />
+    <Compile Include="Primitives.fs" />
     <Compile Include="Update.fs" />
     <Compile Include="MeshView.fs" />
     <Compile Include="ServerActions.fs" />
+    <Compile Include="ScanPinScene.fs" />
     <Compile Include="SceneGraph.fs" />
     <Compile Include="StratigraphyView.fs" />
-    <Compile Include="Primitives.fs" />
     <Compile Include="Cards.fs" />
     <Compile Include="Gui.fs" />
     <Compile Include="View.fs" />

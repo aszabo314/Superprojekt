@@ -104,8 +104,6 @@ module MeshData =
                 |> Seq.toArray
         }
 
-    /// Create a sub-mesh by selecting only the given triangle IDs.
-    /// Reuses the original vertex/uv arrays — just replaces the index buffer.
     let filterByTriangles (triangleIds : int[]) (mesh : MeshData) : MeshData =
         let indices = Array.zeroCreate (triangleIds.Length * 3)
         for i = 0 to triangleIds.Length - 1 do
@@ -116,9 +114,6 @@ module MeshData =
             indices.[dst + 2] <- mesh.indices.[src + 2]
         { mesh with indices = indices }
 
-    /// Compact a mesh so it contains only the vertices referenced by its indices.
-    /// Builds a remap from old vertex index → new vertex index using a dictionary
-    /// (never iterates over all original vertices).
     let compact (mesh : MeshData) : MeshData =
         let remap = System.Collections.Generic.Dictionary<int, int>()
         let positions = System.Collections.Generic.List<V3f>()

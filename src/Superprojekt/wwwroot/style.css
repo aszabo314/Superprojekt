@@ -166,15 +166,8 @@ body.loaded { background: #f4f6f8; }
 }
 .tb-seg-btn-disabled:hover { background: #f6f8fb; }
 
-.tb-explore-wrap { position: relative; display: flex; gap: 2px; }
-.tb-explore-popover {
-    position: absolute; left: 0; top: 28px;
-    background: #ffffff; border: 1px solid #c5cdd8;
-    border-radius: 3px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-    padding: 6px 8px; min-width: 240px; z-index: 1001;
-    display: flex; flex-direction: column; gap: 4px;
-}
+.explore-card { z-index: 950; min-width: 240px; }
+.explore-card-body { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; }
 
 /* ── Revolver control bar (below top bar) ─────────────────────────── */
 
@@ -739,7 +732,7 @@ body.loaded { background: #f4f6f8; }
 
 @media (max-width: 600px) {
     .left-panel { width: 85vw; }
-    .tb-explore-popover { min-width: 200px; }
+    .explore-card { min-width: 200px; }
     .tb-gear-popover { width: calc(100vw - 16px); }
     .tb-coord { font-size: 10px; }
 }

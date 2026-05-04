@@ -20,38 +20,6 @@ module PinGeometry =
                           0.0,     0.0,     0.0,     1.0)
         Trafo3d.Translation(-prism.AnchorPoint) * Trafo3d(rotFwd, rotFwd.Transposed)
 
-    let buildPrismWireframe (prism : SelectionPrism) (thickness : float) =
-        let axis = prism.AxisDirection |> Vec.normalize
-        let right, fwd = axisFrame axis
-        let n = prism.Footprint.Vertices.Length
-        if n < 3 then [||], [||]
-        else
-            let to3d (v : V2d) offset = prism.AnchorPoint + right * v.X + fwd * v.Y + axis * offset
-            let topVerts  = prism.Footprint.Vertices |> List.map (fun v -> to3d v prism.ExtentForward)  |> Array.ofList
-            let botVerts  = prism.Footprint.Vertices |> List.map (fun v -> to3d v (-prism.ExtentBackward)) |> Array.ofList
-            let positions = System.Collections.Generic.List<V3f>()
-            let indices   = System.Collections.Generic.List<int>()
-            let addEdge (a : V3d) (b : V3d) =
-                let dir = b - a
-                let perp =
-                    let c = Vec.cross dir axis
-                    if c.Length < 1e-10 then Vec.cross dir right |> Vec.normalize else c |> Vec.normalize
-                let off = perp * thickness * 0.5
-                let i0 = positions.Count
-                positions.Add(V3f(a + off))
-                positions.Add(V3f(a - off))
-                positions.Add(V3f(b + off))
-                positions.Add(V3f(b - off))
-                indices.Add(i0); indices.Add(i0+1); indices.Add(i0+2)
-                indices.Add(i0+1); indices.Add(i0+3); indices.Add(i0+2)
-            for i in 0 .. n - 1 do
-                let j = (i + 1) % n
-                addEdge topVerts.[i] topVerts.[j]
-                addEdge botVerts.[i] botVerts.[j]
-            for i in 0 .. n - 1 do
-                addEdge topVerts.[i] botVerts.[i]
-            positions.ToArray(), indices.ToArray()
-
     /// Returns ((upperPos, upperIdx), (lowerPos, lowerIdx), (sidePos, sideIdx)) for the between-space volume.
     /// Quads are emitted only when all four corner nodes have brackets; side walls close the resulting boundary.
     let buildBetweenSpaceSurfaces (prism : SelectionPrism) (data : StratigraphyData) (cache : BandCache option) (colIdx : int) (hoverZ : float) =
@@ -138,30 +106,14 @@ module PinGeometry =
             (lowerPos.ToArray(), lowerIdx.ToArray()),
             (sidePos.ToArray(),  sideIdx.ToArray())
 
-    /// `axisRef` chooses a stable perpendicular: pass the prism axis for cylinder-wall curves,
-    /// the cut-plane normal for in-plane lines.
-    let appendPolylineRibbon
-            (positions : ResizeArray<V3f>) (colors : ResizeArray<V4f>) (indices : ResizeArray<int>)
-            (pts : V3d[]) (color : V4f) (axisRef : V3d) (thickness : float) =
+    let appendPolylineSegments
+            (segs : ResizeArray<V3d * V3d * V4d * float>)
+            (pts : V3d[]) (color : V4d) (widthPx : float) =
         for i in 0 .. pts.Length - 2 do
             let a = pts.[i]
             let b = pts.[i + 1]
-            let dir = b - a
-            if dir.Length > 1e-10 then
-                let perp =
-                    let c = Vec.cross dir axisRef
-                    if c.Length < 1e-10 then
-                        let alt = if abs axisRef.X > 0.9 then V3d.OIO else V3d.IOO
-                        Vec.cross dir alt |> Vec.normalize
-                    else c |> Vec.normalize
-                let off = perp * (thickness * 0.5)
-                let i0 = positions.Count
-                positions.Add(V3f(a + off)); colors.Add(color)
-                positions.Add(V3f(a - off)); colors.Add(color)
-                positions.Add(V3f(b + off)); colors.Add(color)
-                positions.Add(V3f(b - off)); colors.Add(color)
-                indices.Add(i0); indices.Add(i0 + 1); indices.Add(i0 + 2)
-                indices.Add(i0 + 1); indices.Add(i0 + 3); indices.Add(i0 + 2)
+            if (b - a).LengthSquared > 1e-20 then
+                segs.Add((a, b, color, widthPx))
 
     let buildCutPlaneQuad (prism : SelectionPrism) (cutPlane : CutPlaneMode) =
         let axis = prism.AxisDirection |> Vec.normalize
@@ -325,7 +277,7 @@ module PinGeometry =
     /// Profile/Plan in-progress preview prism. None when the gesture hasn't produced
     /// enough info yet. `bounds.SizeZ` drives ExtentBackward so the cylinder spans the stack.
     let placementPreviewPrism (placement : PlacementState) (bounds : Box3d) =
-        let autoDepth () = if bounds.IsInvalid then 10.0 else bounds.SizeZ
+        let autoDepth () = if bounds.IsInvalid then 10.0 else min 10.0 bounds.SizeZ
         let ring r =
             { Vertices = [ for k in 0 .. 31 ->
                             let a = float k * 2.0 * System.Math.PI / 32.0
@@ -375,6 +327,34 @@ module PinGeometry =
             indices.Add(t0); indices.Add(t1); indices.Add(b0)
             indices.Add(t1); indices.Add(b1); indices.Add(b0)
         positions, indices.ToArray()
+
+    /// Top + bottom ring polylines plus 2 view-dependent silhouette edges, as Lines.render segments.
+    /// `camPos` in world space; if camera lies on the axis, the silhouette term is skipped.
+    let buildCylinderOutline (prism : SelectionPrism) (camPos : V3d) (ringColor : V4d) (silhColor : V4d) =
+        let axis = prism.AxisDirection |> Vec.normalize
+        let right, fwd = axisFrame axis
+        let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
+        let topCenter = prism.AnchorPoint + axis * prism.ExtentForward
+        let botCenter = prism.AnchorPoint - axis * prism.ExtentBackward
+        let n = 64
+        let ringWidth = 1.0
+        let silhWidth = 1.5
+        let segs = ResizeArray<V3d * V3d * V4d * float>(2 * n + 2)
+        for i in 0 .. n - 1 do
+            let a0 = float i       / float n * Constant.PiTimesTwo
+            let a1 = float (i + 1) / float n * Constant.PiTimesTwo
+            let d0 = right * cos a0 + fwd * sin a0
+            let d1 = right * cos a1 + fwd * sin a1
+            segs.Add((topCenter + d0 * r, topCenter + d1 * r, ringColor, ringWidth))
+            segs.Add((botCenter + d0 * r, botCenter + d1 * r, ringColor, ringWidth))
+        let toCam = camPos - prism.AnchorPoint
+        let camProj = toCam - axis * Vec.dot toCam axis
+        if camProj.LengthSquared > 1e-12 then
+            let camDirPerp = camProj |> Vec.normalize
+            let silhDir = Vec.cross axis camDirPerp |> Vec.normalize
+            segs.Add((topCenter + silhDir * r, botCenter + silhDir * r, silhColor, silhWidth))
+            segs.Add((topCenter - silhDir * r, botCenter - silhDir * r, silhColor, silhWidth))
+        segs.ToArray()
 
     let buildHullRing (prism : SelectionPrism) (dist : float) (thickness : float) (segments : int) =
         let axis = prism.AxisDirection |> Vec.normalize
@@ -450,7 +430,7 @@ module PinGeometry =
             Some (axisWorld, cutPlane, radiusWorld * scale, n)
 
     let autoPreviewPrism (preview : AutoPreview) (bounds : Box3d) =
-        let depth = if bounds.IsInvalid then 10.0 else bounds.SizeZ
+        let depth = if bounds.IsInvalid then 10.0 else min 10.0 bounds.SizeZ
         let n = 32
         let footprint =
             { Vertices = [ for k in 0 .. n - 1 ->

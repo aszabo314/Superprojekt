@@ -339,12 +339,17 @@ module Gui =
             inlineSlider "Radius" 0.1 50.0 0.1 (sprintf "%.1fm") radius (fun v ->
                 env.Emit [ScanPinMsg (SetFootprintRadius v)])
 
-            let length = activePin |> AVal.map (fun p ->
+            let extentBelow = activePin |> AVal.map (fun p ->
                 match p with
-                | Some pin -> pin.Prism.ExtentBackward
-                | None -> 3.0)
-            inlineSlider "Length" 0.5 100.0 0.5 (sprintf "%.1fm") length (fun v ->
-                env.Emit [ScanPinMsg (SetPinLength v)])
+                | Some pin -> -pin.Prism.ExtentBackward
+                | None -> -3.0)
+            let extentAbove = activePin |> AVal.map (fun p ->
+                match p with
+                | Some pin -> pin.Prism.ExtentForward
+                | None -> 1.0)
+            let extentFmt lo hi = sprintf "%+.1f / %+.1fm" lo hi
+            inlineRangeSlider "Length" -10.0 10.0 0.5 extentFmt extentBelow extentAbove (fun lo hi ->
+                env.Emit [ScanPinMsg (SetPinExtent (max 0.0 hi, max 0.0 -lo))])
 
             let editingMode =
                 sp.Placement |> AVal.map (function

@@ -84,7 +84,7 @@ and ScanPinMessage =
     | SetCutPlaneAngle of float
     | SetCutPlaneDistance of float
     | SetFootprintScale of float
-    | SetPinLength of float
+    | SetPinExtent of float * float
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
@@ -168,7 +168,7 @@ module ScanPinUpdate =
         if model.ClipBounds.IsInvalid then 3.0
         else
             let span = model.ClipBounds.Max.Z - model.ClipBounds.Min.Z
-            max 1.0 (span + 2.0)
+            min 10.0 (max 1.0 (span + 2.0))
 
     let private makePin (model : Model) (id : ScanPinId) (anchor : V3d) (axis : V3d) (radius : float) (cutPlane : CutPlaneMode) (length : float) =
         let prism =
@@ -352,9 +352,9 @@ module ScanPinUpdate =
                 if pin.Phase = PinPhase.Placement then setRadius pin (max 0.1 scale) else pin)
             | None -> sp
 
-        | SetPinLength length ->
+        | SetPinExtent (forward, backward) ->
             sp |> updateTarget (fun pin ->
-                { pin with Prism = { pin.Prism with ExtentBackward = max 0.5 length } })
+                { pin with Prism = { pin.Prism with ExtentForward = max 0.0 forward; ExtentBackward = max 0.0 backward } })
 
         | CommitPin ->
             match ScanPinModel.activePlacementId sp with
@@ -728,7 +728,7 @@ module Update =
                 match msg with
                 | ProfileClickSecond _ | PlanDragEnd | AutoClick _
                 | PlanMedianElevationLoaded _ | AutoDerivationComplete _
-                | SetFootprintRadius _ | SetCutPlaneMode _ | SetCutPlaneAngle _ | SetCutPlaneDistance _ | SetFootprintScale _ | SetPinLength _ -> true
+                | SetFootprintRadius _ | SetCutPlaneMode _ | SetCutPlaneAngle _ | SetCutPlaneDistance _ | SetFootprintScale _ | SetPinExtent _ -> true
                 | _ -> false
             if needsCutUpdate then
                 let targetId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
@@ -787,7 +787,7 @@ module Update =
             let needsStrat =
                 match msg with
                 | ProfileClickSecond _ | PlanDragEnd | AutoClick _
-                | SetFootprintRadius _ | SetFootprintScale _ | SetPinLength _ -> true
+                | SetFootprintRadius _ | SetFootprintScale _ | SetPinExtent _ -> true
                 | _ -> false
             if needsStrat then
                 let targetId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin

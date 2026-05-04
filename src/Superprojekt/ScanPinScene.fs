@@ -274,11 +274,10 @@ module ScanPinScene =
             )
 
         let extractedLines =
-            let toV4f (c : C4b) =
+            let toV4d (c : C4b) =
                 let f = c.ToC4f()
-                V4f(f.R, f.G, f.B, 1.0f)
+                V4d(float f.R, float f.G, float f.B, 1.0)
 
-            let meshNamesVal = model.MeshNames |> AList.toAVal |> AVal.map IndexList.toArray
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
 
@@ -286,7 +285,7 @@ module ScanPinScene =
                     pinVal |> AVal.map (fun po ->
                         po |> Option.bind (fun p ->
                             if p.ExtractedLines.ShowCutPlaneLines && not (Map.isEmpty p.CutResults)
-                            then Some (p.Prism, p.CutResultsPlane, p.CutResults, p.DatasetColors, p.Stratigraphy)
+                            then Some (p.Prism, p.CutResultsPlane, p.CutResults, p.DatasetColors)
                             else None))
                 let edgeDeps =
                     pinVal |> AVal.map (fun po ->
@@ -295,36 +294,33 @@ module ScanPinScene =
                             then Some (p.Prism, p.Stratigraphy, p.DatasetColors)
                             else None))
 
-                let cutGeo =
-                    (cutResultsDep, meshNamesVal) ||> AVal.map2 (fun depsOpt names ->
+                let cutSegs =
+                    cutResultsDep |> AVal.map (fun depsOpt ->
                         match depsOpt with
-                        | Some(prism, cutPlane, cutResults, datasetColors, strat) ->
+                        | Some(prism, cutPlane, cutResults, datasetColors) ->
                             let axis = prism.AxisDirection |> Vec.normalize
                             let right, fwd = PinGeometry.axisFrame axis
-                            let planePoint, axisU, axisV, planeNormal =
+                            let planePoint, axisU, axisV =
                                 match cutPlane with
                                 | CutPlaneMode.AlongAxis angleDeg ->
                                     let a = angleDeg * Constant.RadiansPerDegree
                                     let dir = right * cos a + fwd * sin a
-                                    let normal = Vec.cross dir axis |> Vec.normalize
-                                    prism.AnchorPoint, dir, axis, normal
+                                    prism.AnchorPoint, dir, axis
                                 | CutPlaneMode.AcrossAxis dist ->
-                                    prism.AnchorPoint + axis * dist, right, fwd, axis
-                            let positions = ResizeArray<V3f>()
-                            let colors = ResizeArray<V4f>()
-                            let indices = ResizeArray<int>()
-                            let thickness = 0.06
+                                    prism.AnchorPoint + axis * dist, right, fwd
+                            let segs = ResizeArray<V3d * V3d * V4d * float>()
+                            let widthPx = 1.5
                             for KeyValue(name, cr) in cutResults do
-                                let color = datasetColors |> Map.tryFind name |> Option.defaultValue (C4b(120uy,120uy,120uy)) |> toV4f
+                                let color = datasetColors |> Map.tryFind name |> Option.defaultValue (C4b(120uy,120uy,120uy)) |> toV4d
                                 for poly in cr.Polylines do
                                     let pts3d =
                                         poly |> List.map (fun (p : V2d) -> planePoint + axisU * p.X + axisV * p.Y) |> Array.ofList
-                                    PinGeometry.appendPolylineRibbon positions colors indices pts3d color planeNormal thickness
-                            positions.ToArray(), colors.ToArray(), indices.ToArray()
-                        | _ -> [||], [||], [||])
+                                    PinGeometry.appendPolylineSegments segs pts3d color widthPx
+                            segs.ToArray()
+                        | _ -> [||])
 
-                let edgeGeo =
-                    (edgeDeps, meshNamesVal) ||> AVal.map2 (fun depsOpt names ->
+                let edgeSegs =
+                    edgeDeps |> AVal.map (fun depsOpt ->
                         match depsOpt with
                         | Some(prism, Some data, datasetColors) when data.Columns.Length >= 2 ->
                             let axis = prism.AxisDirection |> Vec.normalize
@@ -336,12 +332,10 @@ module ScanPinScene =
                                 data.Columns
                                 |> Array.collect (fun c -> c.Events |> List.map snd |> List.toArray)
                                 |> Array.distinct
-                            let positions = ResizeArray<V3f>()
-                            let colors = ResizeArray<V4f>()
-                            let indices = ResizeArray<int>()
-                            let thickness = 0.05
+                            let segs = ResizeArray<V3d * V3d * V4d * float>()
+                            let widthPx = 1.0
                             for ds in datasets do
-                                let color = datasetColors |> Map.tryFind ds |> Option.defaultValue (C4b(120uy,120uy,120uy)) |> toV4f
+                                let color = datasetColors |> Map.tryFind ds |> Option.defaultValue (C4b(120uy,120uy,120uy)) |> toV4d
                                 let perColumn =
                                     data.Columns |> Array.map (fun col ->
                                         col.Events
@@ -353,7 +347,7 @@ module ScanPinScene =
                                     let mutable accum = ResizeArray<V3d>()
                                     let flush () =
                                         if accum.Count >= 2 then
-                                            PinGeometry.appendPolylineRibbon positions colors indices (accum.ToArray()) color axis thickness
+                                            PinGeometry.appendPolylineSegments segs (accum.ToArray()) color widthPx
                                         accum <- ResizeArray<V3d>()
                                     for ci in 0 .. data.Columns.Length - 1 do
                                         let zs = perColumn.[ci]
@@ -366,50 +360,25 @@ module ScanPinScene =
                                         if lane < zs0.Length then
                                             accum.Add(toPoint data.Columns.[0].Angle zs0.[lane])
                                         flush ()
-                            positions.ToArray(), colors.ToArray(), indices.ToArray()
-                        | _ -> [||], [||], [||])
-
-                let dummyP = [| V3f.Zero |]
-                let dummyC = [| V4f.Zero |]
-                let safeP (a : V3f[]) = if a.Length = 0 then dummyP else a
-                let safeC (a : V4f[]) = if a.Length = 0 then dummyC else a
-                let cutPos = cutGeo |> AVal.map (fun (p,_,_) -> ArrayBuffer (safeP p) :> IBuffer)
-                let cutCol = cutGeo |> AVal.map (fun (_,c,_) -> ArrayBuffer (safeC c) :> IBuffer)
-                let cutIdx = cutGeo |> AVal.map (fun (_,_,i) -> ArrayBuffer i :> IBuffer)
-                let cutCnt = cutGeo |> AVal.map (fun (_,_,i) -> i.Length)
-                let edgePos = edgeGeo |> AVal.map (fun (p,_,_) -> ArrayBuffer (safeP p) :> IBuffer)
-                let edgeCol = edgeGeo |> AVal.map (fun (_,c,_) -> ArrayBuffer (safeC c) :> IBuffer)
-                let edgeIdx = edgeGeo |> AVal.map (fun (_,_,i) -> ArrayBuffer i :> IBuffer)
-                let edgeCnt = edgeGeo |> AVal.map (fun (_,_,i) -> i.Length)
+                            segs.ToArray()
+                        | _ -> [||])
 
                 ASet.ofList [
                     sg {
                         Sg.Active notFullscreen
                         Sg.View view
                         Sg.Proj proj
-                        Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
+                        Sg.BlendMode BlendMode.Blend
                         Sg.DepthTest (AVal.constant DepthTest.None)
-                        Sg.NoEvents
-                        Sg.VertexAttributes(
-                            HashMap.ofList [
-                                string DefaultSemantic.Positions, BufferView(cutPos, typeof<V3f>)
-                                string DefaultSemantic.Colors,    BufferView(cutCol, typeof<V4f>) ])
-                        Sg.Index(BufferView(cutIdx, typeof<int>))
-                        Sg.Render cutCnt
+                        Lines.render cutSegs
                     }
                     sg {
                         Sg.Active notFullscreen
                         Sg.View view
                         Sg.Proj proj
-                        Sg.Shader { DefaultSurfaces.trafo; Shader.vertexColor }
+                        Sg.BlendMode BlendMode.Blend
                         Sg.DepthTest (AVal.constant DepthTest.None)
-                        Sg.NoEvents
-                        Sg.VertexAttributes(
-                            HashMap.ofList [
-                                string DefaultSemantic.Positions, BufferView(edgePos, typeof<V3f>)
-                                string DefaultSemantic.Colors,    BufferView(edgeCol, typeof<V4f>) ])
-                        Sg.Index(BufferView(edgeIdx, typeof<int>))
-                        Sg.Render edgeCnt
+                        Lines.render edgeSegs
                     }
                 ])
 
@@ -478,6 +447,15 @@ module ScanPinScene =
             let hullActive =
                 (notFullscreen, hullGeometry) ||> AVal.map2 (fun nf (_,_,act) -> nf && act)
 
+            let camPos = view |> AVal.map (fun v -> v.Backward.TransformPos(V3d.Zero))
+            let outlineSegs =
+                (editedPrism, camPos) ||> AVal.map2 (fun prismOpt cp ->
+                    match prismOpt with
+                    | Some prism ->
+                        PinGeometry.buildCylinderOutline prism cp
+                            (V4d(1.0, 1.0, 1.0, 0.55)) (V4d(1.0, 1.0, 1.0, 0.85))
+                    | None -> [||])
+
             let indicatorGeometry =
                 (editedPrism, editedCutPlane) ||> AVal.map2 (fun prismOpt cpOpt ->
                     match prismOpt, cpOpt with
@@ -513,6 +491,15 @@ module ScanPinScene =
                         HashMap.ofList [ string DefaultSemantic.Positions, BufferView(hullPos, typeof<V3f>) ])
                     Sg.Index(BufferView(hullIdx, typeof<int>))
                     Sg.Render hullCnt
+                }
+                sg {
+                    Sg.Active hullActive
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.BlendMode BlendMode.Blend
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.Pass RenderPass.passOne
+                    Lines.render outlineSegs
                 }
                 sg {
                     Sg.Active indActive
@@ -554,16 +541,12 @@ module ScanPinScene =
             let hullIdx = hullGeom |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
             let hullCnt = hullGeom |> AVal.map (fun (_,i,_) -> i.Length)
             let hullActive = hullGeom |> AVal.map (fun (_,_,a) -> a)
-            let lineGeom =
+            let lineSegs =
                 previewPrism |> AVal.map (fun po ->
                     match po with
                     | Some (_, Some (p1, p2), _) ->
-                        [| V3f p1; V3f p2 |], [| 0; 1 |], true
-                    | _ -> [||], [||], false)
-            let linePos = lineGeom |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
-            let lineIdx = lineGeom |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
-            let lineCnt = lineGeom |> AVal.map (fun (_,i,_) -> i.Length)
-            let lineActive = lineGeom |> AVal.map (fun (_,_,a) -> a)
+                        [| p1, p2, V4d(0.1, 0.34, 0.86, 0.95), 2.0 |]
+                    | _ -> [||])
             let cutGeom =
                 previewPrism |> AVal.map (fun po ->
                     match po with
@@ -575,19 +558,15 @@ module ScanPinScene =
             let cutIdx = cutGeom |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
             let cutCnt = cutGeom |> AVal.map (fun (_,i,_) -> i.Length)
             let cutActive = cutGeom |> AVal.map (fun (_,_,a) -> a)
-            let axisGeom =
+            let axisSegs =
                 previewPrism |> AVal.map (fun po ->
                     match po with
                     | Some (prism, _, Some _) ->
                         let axis = prism.AxisDirection |> Vec.normalize
                         let top = prism.AnchorPoint + axis * prism.ExtentForward
                         let bot = prism.AnchorPoint - axis * prism.ExtentBackward
-                        [| V3f top; V3f bot |], [| 0; 1 |], true
-                    | _ -> [||], [||], false)
-            let axisPos = axisGeom |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
-            let axisIdx = axisGeom |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
-            let axisCnt = axisGeom |> AVal.map (fun (_,i,_) -> i.Length)
-            let axisActive = axisGeom |> AVal.map (fun (_,_,a) -> a)
+                        [| top, bot, V4d(0.1, 0.34, 0.86, 0.7), 1.5 |]
+                    | _ -> [||])
             ASet.ofList [
                 sg {
                     Sg.Active hullActive
@@ -605,19 +584,12 @@ module ScanPinScene =
                     Sg.Render hullCnt
                 }
                 sg {
-                    Sg.Active lineActive
                     Sg.View view
                     Sg.Proj proj
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.1, 0.34, 0.86, 0.95)))
+                    Sg.BlendMode BlendMode.Blend
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.Pass RenderPass.passOne
-                    Sg.Mode IndexedGeometryMode.LineList
-                    Sg.NoEvents
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(linePos, typeof<V3f>) ])
-                    Sg.Index(BufferView(lineIdx, typeof<int>))
-                    Sg.Render lineCnt
+                    Lines.render lineSegs
                 }
                 sg {
                     Sg.Active cutActive
@@ -635,19 +607,12 @@ module ScanPinScene =
                     Sg.Render cutCnt
                 }
                 sg {
-                    Sg.Active axisActive
                     Sg.View view
                     Sg.Proj proj
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(0.1, 0.34, 0.86, 0.7)))
+                    Sg.BlendMode BlendMode.Blend
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.Pass RenderPass.passOne
-                    Sg.Mode IndexedGeometryMode.LineList
-                    Sg.NoEvents
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(axisPos, typeof<V3f>) ])
-                    Sg.Index(BufferView(axisIdx, typeof<int>))
-                    Sg.Render axisCnt
+                    Lines.render axisSegs
                 }
             ]
 

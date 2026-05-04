@@ -31,7 +31,6 @@ module SceneGraph =
         }
 
     let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
-        let thickness = 0.04
         let axisLength = 3.0
         let tickSpacing = 0.25
         let tickLen = 0.12
@@ -44,41 +43,45 @@ module SceneGraph =
         let textTrafoY = Trafo3d.RotationX(Constant.PiHalf) * Trafo3d.RotationZ(Constant.PiHalf)
         let textTrafoZ = Trafo3d.RotationX(Constant.PiHalf)
 
-        let mainAxes (xC : V4d) (yC : V4d) (zC : V4d) =
-            let segs = AVal.constant [|
-                V3d.Zero, V3d.IOO * axisLength, xC, 2.0
-                V3d.Zero, V3d.OIO * axisLength, yC, 2.0
-                V3d.Zero, V3d.OOI * axisLength, zC, 2.0
-            |]
-            sg { Sg.Active active; Sg.View view; Sg.Proj proj; Lines.render segs }
+        let xColor = V4d(0.82, 0.15, 0.1, 1.0)
+        let yColor = V4d(0.1, 0.72, 0.1, 1.0)
+        let zColor = V4d(0.15, 0.35, 0.9, 1.0)
 
-        let ticksAndLabels color (dir : V3d) (perpA : V3d) (textRot : Trafo3d) =
+        let tickSegs (color : V4d) (dir : V3d) (perpA : V3d) =
+            let n = int (axisLength / tickSpacing)
+            let half = perpA * (tickLen * 0.5)
+            [| for i in 1 .. n do
+                let center = dir * (float i * tickSpacing)
+                yield center - half, center + half, color, 1.5 |]
+
+        let allLineSegs =
+            AVal.constant (Array.concat [
+                [| V3d.Zero, V3d.IOO * axisLength, xColor, 2.0
+                   V3d.Zero, V3d.OIO * axisLength, yColor, 2.0
+                   V3d.Zero, V3d.OOI * axisLength, zColor, 2.0 |]
+                tickSegs xColor V3d.IOO V3d.OOI
+                tickSegs yColor V3d.OIO V3d.IOO
+                tickSegs zColor V3d.OOI V3d.IOO
+            ])
+
+        let labelNodes (color : V4d) (dir : V3d) (perpA : V3d) (textRot : Trafo3d) =
             let n = int (axisLength / tickSpacing)
             let textColor = darken color
             [ for i in 1 .. n do
-                let dist = float i * tickSpacing
-                let center = dir * dist
-                let tickTrafo =
-                    let s = perpA * tickLen + dir * thickness + (V3d.III - abs perpA - abs dir) * thickness
-                    Trafo3d.Scale(abs s) * Trafo3d.Translation(center)
-                yield sg { Sg.Active active; Sg.View view; Sg.Proj proj; axisBox color tickTrafo }
                 if i % 4 = 0 then
+                    let dist = float i * tickSpacing
+                    let center = dir * dist
                     let labelPos = center + perpA * (tickLen * 0.5 + labelSize * 1.2)
                     let trafo = Trafo3d.Scale(labelSize) * textRot * Trafo3d.Translation(labelPos)
                     yield sg {
                         Sg.Active active; Sg.View view; Sg.Proj proj
                         Sg.Trafo (AVal.constant trafo)
                         Sg.Text(sprintf "%.0f" dist, color = AVal.constant textColor, align = TextAlignment.Center)
-                    }
-            ]
-
-        let xColor = V4d(0.82, 0.15, 0.1, 1.0)
-        let yColor = V4d(0.1, 0.72, 0.1, 1.0)
-        let zColor = V4d(0.15, 0.35, 0.9, 1.0)
+                    } ]
 
         ASet.ofList [
             sg { Sg.Active active; Sg.View view; Sg.Proj proj; axisBox (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 0.08) }
-            mainAxes xColor yColor zColor
+            sg { Sg.Active active; Sg.View view; Sg.Proj proj; Lines.render allLineSegs }
             yield! [
                 let tipOffset = axisLength + labelSize * 1.5
                 sg { Sg.Active active; Sg.View view; Sg.Proj proj
@@ -91,12 +94,11 @@ module SceneGraph =
                      Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoZ * Trafo3d.Translation(V3d.OOI * tipOffset)))
                      Sg.Text("Z", color = AVal.constant (darken zColor), align = TextAlignment.Center) }
             ]
-            yield! ticksAndLabels xColor V3d.IOO V3d.OOI textTrafoX
-            yield! ticksAndLabels yColor V3d.OIO V3d.IOO textTrafoY
-            yield! ticksAndLabels zColor V3d.OOI V3d.IOO textTrafoZ
+            yield! labelNodes xColor V3d.IOO V3d.OOI textTrafoX
+            yield! labelNodes yColor V3d.OIO V3d.IOO textTrafoY
+            yield! labelNodes zColor V3d.OOI V3d.IOO textTrafoZ
         ]
 
-    let buildPrismWireframe = PinGeometry.buildPrismWireframe
     let buildCutPlaneQuad = PinGeometry.buildCutPlaneQuad
 
     let private disk

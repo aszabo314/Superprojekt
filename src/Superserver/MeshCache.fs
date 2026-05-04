@@ -104,7 +104,8 @@ let planeIntersection (lm : LoadedMesh) (planePoint : V3d) (planeNormal : V3d) (
     let tileHalfU = maxExtentU / float nU
     let tileHalfV = maxExtentV / float nV
     let perTile = Array.init (nU * nV) (fun _ -> ResizeArray<float[]>())
-    System.Threading.Tasks.Parallel.For(0, nU * nV, fun ti ->
+    let tileOpts = System.Threading.Tasks.ParallelOptions(MaxDegreeOfParallelism = 4)
+    System.Threading.Tasks.Parallel.For(0, nU * nV, tileOpts, fun ti ->
         let iu = ti % nU
         let iv = ti / nU
         let uC = -maxExtentU + (float iu * 2.0 + 1.0) * tileHalfU

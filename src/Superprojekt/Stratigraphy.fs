@@ -4,14 +4,30 @@ open Aardvark.Base
 
 module Stratigraphy =
 
-    let compute (serverUrl : string) (dataset : string) (prism : SelectionPrism) (commonCentroid : V3d) (scale : float) (angularRes : int) : Async<StratigraphyData> =
+    let compute (serverUrl : string) (dataset : string) (prism : SelectionPrism) (commonCentroid : V3d) (scale : float) (angularResMax : int) : Async<StratigraphyData> =
         async {
             let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
             let anchor = prism.AnchorPoint / scale + commonCentroid
             let axis = prism.AxisDirection |> Vec.normalize
             let worldR = radius / scale
+            // Cylinder-eval cost = angularRes × ringCount × N_meshes × hits/ray. Both knobs
+            // shrink with radius — past ~20 m world-space the diagram's angular detail is
+            // unreadable anyway, and the inner rings of a log ladder sit on top of each other
+            // relative to the outer scale.
+            let angularRes =
+                let cap =
+                    if   worldR > 200.0 then 30
+                    elif worldR > 50.0  then 45
+                    elif worldR > 20.0  then 60
+                    elif worldR > 5.0   then 120
+                    else                     180
+                min angularResMax cap
             let minInner = 0.02
-            let maxRings = 12
+            let maxRings =
+                if   worldR > 200.0 then 4
+                elif worldR > 50.0  then 6
+                elif worldR > 5.0   then 8
+                else                     12
             let ringRadii =
                 if worldR <= minInner then [| worldR |]
                 else

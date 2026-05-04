@@ -264,7 +264,8 @@ let planeIntersectionBatchHandler : HttpHandler =
             let axisU = toV3d req.AxisU
             let axisV = toV3d req.AxisV
             let results = Array.zeroCreate<float[][]> req.Names.Length
-            System.Threading.Tasks.Parallel.For(0, req.Names.Length, fun i ->
+            let meshOpts = System.Threading.Tasks.ParallelOptions(MaxDegreeOfParallelism = max 1 (Environment.ProcessorCount / 2))
+            System.Threading.Tasks.Parallel.For(0, req.Names.Length, meshOpts, fun i ->
                 let dataset, name = splitName req.Names.[i]
                 let lm = MeshCache.get dataset name 0
                 let c = lm.parsed.centroid

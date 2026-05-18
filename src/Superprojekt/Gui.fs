@@ -280,6 +280,56 @@ module Gui =
             inlineSlider "\u03c3 (sigma)" 0.01 50.0 0.01 (sprintf "%.2fm") sigma (fun v ->
                 env.Emit [ScanPinMsg (SetAnchorSigma v)])
 
+            // V6 \u00a7D.6.4 \u2014 payload-type selector. Switching destroys the
+            // current payload and instantiates the new kind with defaults.
+            let payloadKind =
+                activePin |> AVal.map (function
+                    | Some p -> PayloadType.kind p.Payload
+                    | None -> PointKind)
+            let pinId = activePlacementId
+            div { Class "lp-sublabel"; "Payload" }
+            compactButtonBar [
+                "Point",
+                    payloadKind |> AVal.map ((=) PointKind),
+                    (fun () ->
+                        match AVal.force pinId with
+                        | Some id -> env.Emit [ScanPinMsg (ChangePayloadType(id, PointKind))]
+                        | None -> ())
+                "Line",
+                    payloadKind |> AVal.map ((=) LineKind),
+                    (fun () ->
+                        match AVal.force pinId with
+                        | Some id -> env.Emit [ScanPinMsg (ChangePayloadType(id, LineKind))]
+                        | None -> ())
+                "Patch",
+                    payloadKind |> AVal.map ((=) PatchKind),
+                    (fun () ->
+                        match AVal.force pinId with
+                        | Some id -> env.Emit [ScanPinMsg (ChangePayloadType(id, PatchKind))]
+                        | None -> ())
+            ]
+
+            // \u00a7D.7.1 \u2014 Reliability weight slider, shown only when the
+            // active pin currently has a Point payload.
+            let isPoint = payloadKind |> AVal.map ((=) PointKind)
+            let reliability =
+                activePin |> AVal.map (fun po ->
+                    match po with
+                    | Some p ->
+                        match p.Payload with
+                        | Point pp -> pp.ReliabilityWeight
+                        | _ -> 1.0
+                    | None -> 1.0)
+            div {
+                Class "lp-reliability-row"
+                isPoint |> AVal.map (fun v ->
+                    if v then None else Some (Style [Display "none"]))
+                inlineSlider "Reliability" 0.0 1.0 0.01 (sprintf "%.2f") reliability (fun v ->
+                    match AVal.force pinId with
+                    | Some id -> env.Emit [ScanPinMsg (SetReliabilityWeight(id, v))]
+                    | None -> ())
+            }
+
             div {
                 Class "lp-commit-row"
                 button {

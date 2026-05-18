@@ -23,15 +23,85 @@ type CameraSnapshot = {
 
 /// V6 §D.7.1 — the 0D payload. The sphere alone defines a region of
 /// interest; ReliabilityWeight feeds the registration solver weighting
-/// once Phase 6 lands. Phase 2 always uses ReliabilityWeight = 1.0.
+/// once Phase 6 lands.
 type PointPayload = {
     ReliabilityWeight : float
 }
 
-/// V6 §C.3 — Line / Patch payloads arrive in Phase 4 (§D.7.2 / §D.7.3).
-/// Phase 2 ships only the placeholder Point case.
+/// V6 §D.7.2 — line-on-surface sub-modes. ElevationIsoline carries the
+/// target elevation; CurvatureRidge has no parameters (start direction is
+/// re-derived from local curvature at each step).
+type LineMode =
+    | ElevationIsoline of elevation:float
+    | CurvatureRidge
+
+/// V6 §D.7.2 — polyline on the host mesh surface. Points are world-space;
+/// ScalarVals matches Points length and stores elevation (isoline mode) or
+/// curvature magnitude (ridge mode) for axis labelling in the card plot.
+/// CrossMeshTraces maps mesh name → its traced polyline + scalar values
+/// for cross-mesh comparison.
+type LinePayload = {
+    Mode            : LineMode
+    Points          : V3d[]
+    ScalarVals      : float[]
+    CrossMeshTraces : Map<string, V3d[] * float[]>
+}
+
+/// V6 §D.7.3 — unwrapped 2D patch. ProjectedPoints stores (patch_coord,
+/// world_pos) pairs; CompassNorth is the patch-space direction pointing
+/// to project north. SourceMeshName is "dataset/mesh" (switchable via
+/// the patch card's mesh selector).
+type PatchPayload = {
+    CenterOnMesh    : V3d
+    Radius          : float
+    SourceMeshName  : string
+    ProjectedPoints : (V2d * V3d)[]
+    CompassNorth    : V2d
+}
+
+/// V6 §C.3 — the three payload kinds. Switching destroys the current
+/// payload and instantiates the new one with default parameters.
 type PayloadType =
     | Point of PointPayload
+    | Line  of LinePayload
+    | Patch of PatchPayload
+
+/// Lightweight tag used by the flyout's Payload-type selector and the
+/// `ChangePayloadType` message; carrying the heavy record types in the
+/// message DU bloats the diff in every Adaptify pass.
+type PayloadKind =
+    | PointKind
+    | LineKind
+    | PatchKind
+
+module PayloadType =
+    let kind = function
+        | Point _ -> PointKind
+        | Line  _ -> LineKind
+        | Patch _ -> PatchKind
+
+    /// Defaults per §D.6.4 ("switching destroys the current payload and
+    /// instantiates the new one with default parameters"). The Line/Patch
+    /// defaults are placeholders until Phase 4b/4d wire real geometry.
+    let defaultFor (radius : float) (centre : V3d) (host : string option) (kind : PayloadKind) =
+        match kind with
+        | PointKind ->
+            Point { ReliabilityWeight = 1.0 }
+        | LineKind ->
+            Line {
+                Mode            = ElevationIsoline centre.Z
+                Points          = [||]
+                ScalarVals      = [||]
+                CrossMeshTraces = Map.empty
+            }
+        | PatchKind ->
+            Patch {
+                CenterOnMesh    = centre
+                Radius          = radius
+                SourceMeshName  = host |> Option.defaultValue ""
+                ProjectedPoints = [||]
+                CompassNorth    = V2d.IO
+            }
 
 [<RequireQualifiedAccess>]
 type CorrespondenceLinkId = CorrespondenceLinkId of Guid

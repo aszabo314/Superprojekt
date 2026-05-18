@@ -74,6 +74,11 @@ and ScanPinMessage =
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
     | FocusPin of ScanPinId
+    // V6 §D.7 payloads — the flyout's Payload-type selector switches the
+    // active payload (destroys + reinstantiates per §D.6.4). Reliability
+    // weight on Point payloads is editable from both flyout and card.
+    | ChangePayloadType of ScanPinId * PayloadKind
+    | SetReliabilityWeight of ScanPinId * float
 
 module CardUpdate =
 
@@ -221,6 +226,21 @@ module ScanPinUpdate =
             { sp with SelectedPin = id }
 
         | FocusPin _ -> sp
+
+        | ChangePayloadType(id, kind) ->
+            sp |> updatePin id (fun pin ->
+                if PayloadType.kind pin.Payload = kind then pin
+                else
+                    let payload = PayloadType.defaultFor pin.Radius pin.Centre pin.HostMeshName kind
+                    { pin with Payload = payload })
+
+        | SetReliabilityWeight(id, w) ->
+            sp |> updatePin id (fun pin ->
+                match pin.Payload with
+                | Point _ ->
+                    let w = clamp 0.0 1.0 w
+                    { pin with Payload = Point { ReliabilityWeight = w } }
+                | _ -> pin)
 
 module Update =
 

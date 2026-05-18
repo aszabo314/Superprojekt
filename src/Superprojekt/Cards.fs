@@ -87,17 +87,107 @@ module Cards =
                     Some (clampToViewport pos card.Size (V2d vpSize))
                 | None -> None
 
-    let private pinCardBody (_env : Env<Message>) (_model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
-        // V5's cross-section SVG + cut-plane controls are gone (§B.1).
-        // V6 §D.7 fills the body with payload-specific content per
-        // anchor (point / line-on-surface / unwrapped patch); for now
-        // the card carries only the pin coordinate readout below.
+    // V6 §D.7.1 — Point payload card. Three sections per spec:
+    // (1) numeric readout of (centre, radius, σ); (2) error-provenance
+    // stacked bar (placeholder bars until Phase 7 supplies real data);
+    // (3) editable reliability-weight slider.
+    let private pinCardBody (env : Env<Message>) (_model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
+        let payloadKind =
+            selectedPin |> AVal.map (function
+                | Some p -> Some (PayloadType.kind p.Payload)
+                | None -> None)
+        let isPoint = payloadKind |> AVal.map ((=) (Some PointKind))
+        let isLine  = payloadKind |> AVal.map ((=) (Some LineKind))
+        let isPatch = payloadKind |> AVal.map ((=) (Some PatchKind))
+        let showOnly (v : aval<bool>) =
+            v |> AVal.map (fun on -> if on then None else Some (Style [Display "none"]))
+
+        let centreText = selectedPin |> AVal.map (function
+            | Some p -> sprintf "(%.2f, %.2f, %.2f)" p.Centre.X p.Centre.Y p.Centre.Z
+            | None -> "—")
+        let radiusText = selectedPin |> AVal.map (function
+            | Some p -> sprintf "%.2f m" p.Radius
+            | None -> "—")
+        let sigmaText = selectedPin |> AVal.map (function
+            | Some p -> sprintf "%.2f m" p.Sigma
+            | None -> "—")
+        let reliability = selectedPin |> AVal.map (function
+            | Some p ->
+                match p.Payload with
+                | Point pp -> pp.ReliabilityWeight
+                | _ -> 1.0
+            | None -> 1.0)
+        let onReliabilityChange v =
+            match AVal.force selectedPin with
+            | Some p -> env.Emit [ScanPinMsg (SetReliabilityWeight(p.Id, v))]
+            | None -> ()
+
         div {
-            Class "pin-card-body pin-card-empty"
-            selectedPin |> AVal.map (fun po ->
-                match po with
-                | Some _ -> "Anchor payload coming in Phase 4."
-                | None -> "")
+            Class "pin-card-body"
+
+            // Point payload section.
+            div {
+                Class "pin-card-section pin-card-point"
+                showOnly isPoint
+                div {
+                    Class "pc-readout"
+                    div {
+                        Class "pc-readout-row"
+                        span { Class "pc-key"; "Centre" }
+                        span { Class "pc-val"; centreText }
+                    }
+                    div {
+                        Class "pc-readout-row"
+                        span { Class "pc-key"; "Radius" }
+                        span { Class "pc-val"; radiusText }
+                    }
+                    div {
+                        Class "pc-readout-row"
+                        span { Class "pc-key"; "σ" }
+                        span { Class "pc-val"; sigmaText }
+                    }
+                }
+                // §D.9 error-provenance stacked bar — Phase 7 wires real data.
+                div {
+                    Class "pc-provenance"
+                    div { Class "pc-section-title"; "Error provenance (Phase 7)" }
+                    div {
+                        Class "pc-bar"
+                        div { Class "pc-bar-seg pc-bar-dataset" }
+                        div { Class "pc-bar-seg pc-bar-algorithm" }
+                        div { Class "pc-bar-seg pc-bar-conditioning" }
+                    }
+                    div {
+                        Class "pc-bar-legend"
+                        span { Class "pc-legend-item pc-bar-dataset"; "Dataset" }
+                        span { Class "pc-legend-item pc-bar-algorithm"; "Algorithm" }
+                        span { Class "pc-legend-item pc-bar-conditioning"; "Conditioning" }
+                    }
+                }
+                div {
+                    Class "pc-reliability"
+                    Primitives.inlineSlider
+                        "Reliability"
+                        0.0 1.0 0.01
+                        (sprintf "%.2f")
+                        reliability
+                        onReliabilityChange
+                }
+            }
+
+            // Line payload placeholder — Phase 4b fills this.
+            div {
+                Class "pin-card-section pin-card-line pin-card-empty"
+                showOnly isLine
+                "Line-on-surface payload (Phase 4b)."
+            }
+
+            // Patch payload placeholder — Phase 4d fills this.
+            div {
+                Class "pin-card-section pin-card-patch pin-card-empty"
+                showOnly isPatch
+                "Unwrapped 2D patch payload (Phase 4d)."
+            }
         }
 
     let renderCards (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =

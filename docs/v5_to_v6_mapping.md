@@ -36,6 +36,50 @@ V6 references still **deferred**:
   per-fragment Gaussian alpha rebuild is reserved for a later polish
   pass if visual evaluation flags the approximation.
 
+## Phase 4 status (Payloads, §D.7) — in progress
+
+Phase 4 in the original plan covers Point / Line / Patch payloads plus
+2D-3D linkage (§D.12). To keep each landing testable, Phase 4 is split
+into four sub-phases:
+
+- **4a: Point payload + payload-type selector** — landed.
+  Card body now renders numeric readout (Centre / Radius / σ), an
+  error-provenance stacked bar (placeholder, real data lands in Phase
+  7), and a reliability-weight slider. The Adjustment flyout grows a
+  Payload-type segmented selector (Point / Line / Patch) and a
+  Reliability slider that is only shown when the active pin has a Point
+  payload. `PayloadType` is extended to `Point | Line | Patch` with
+  full record types (`LinePayload`, `PatchPayload`) so later sub-phases
+  fill in geometry without touching the DU shape again.
+- **4b: Line payload — elevation isoline sub-mode** — deferred.
+- **4c: Line payload — curvature ridge sub-mode + cross-mesh tracing**
+  — deferred.
+- **4d: Patch payload + 2D-3D linkage (§D.12)** — deferred.
+
+V6 references active after Phase 4a:
+- `ScanPinModel.fs`: full `PayloadType` DU (`Point | Line | Patch`),
+  `LineMode`, `LinePayload`, `PatchPayload`, `PayloadKind` tag,
+  `PayloadType.kind` / `PayloadType.defaultFor` helpers.
+- `Update.fs`: `ChangePayloadType` and `SetReliabilityWeight` messages;
+  `ScanPinUpdate` handles payload swaps (destroys + reinstantiates with
+  defaults) and Point-only weight edits.
+- `Gui.fs`: payload-type selector + reliability slider in the placement
+  flyout, both gated on the pin's active payload kind.
+- `Cards.fs`: per-payload card body, with Point fully wired and Line /
+  Patch showing "coming in Phase 4b/4d" stubs.
+- `wwwroot/style.css`: `.pc-readout`, `.pc-provenance`, `.pc-bar*`,
+  `.pc-legend-item*`, `.pc-reliability`, `.lp-reliability-row`.
+
+V6 references still **deferred** (rest of Phase 4):
+- Line payload: server endpoints (`/api/query/isoline`,
+  `/api/query/curvature-ridge`), `LinePayload.Points` population, 3D
+  polyline rendering, cross-mesh traces, 2D arc-length plot in the
+  card.
+- Patch payload: server endpoint (`/api/query/patch`), geodesic-BFS
+  rasterisation, compass-rose overlay, bidirectional 2D-3D hover.
+- §D.12 2D-3D linkage: coloured frame (3D rectangle + matching card
+  border), compass rose in both views, bidirectional hover.
+
 ## Phase 3 status (Mesh-wheel + Polygonal lasso, §D.1 + §D.3)
 
 Phase 3 adds the V6 mesh-wheel scroll-cycle interaction and the

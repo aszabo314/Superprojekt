@@ -57,6 +57,25 @@ type RidgeRequest = { Name: string; Seed: float[]; ThresholdRad: float; MaxPoint
 [<CLIMutable>]
 type PatchRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
 
+// V6 §D.8 — point-to-point ICP between two meshes. ReferenceName /
+// MovingName are "dataset/mesh". InitialTransform is the moving mesh's
+// current world-space rigid transform as a flat 16-float column-major
+// M44d. AnchorCentres / AnchorSigmas / AnchorWeights describe the
+// Gaussian falloff weighting used for §D.8 region-restricted mode;
+// pass empty arrays for plain ICP.
+[<CLIMutable>]
+type IcpRequest = {
+    ReferenceName    : string
+    MovingName       : string
+    InitialTransform : float[]
+    SampleStride     : int
+    MaxIterations    : int
+    AnchorCentres    : float[]   // flat 3*N
+    AnchorSigmas     : float[]   // length N
+    AnchorWeights    : float[]   // length N (multiplier per anchor)
+    RegionEps        : float     // weight threshold below which a sample is dropped
+}
+
 let inline private toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
 let inline private fromV3d (v : V3d)   = [| v.X; v.Y; v.Z |]
 
@@ -332,6 +351,73 @@ let patchHandler : HttpHandler =
             return! json {| points = pts; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx
         with ex ->
             log.LogError(ex, "patch failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+// POST /api/query/icp
+// Runs point-to-point ICP between the moving mesh and the reference
+// mesh. Response: { transform : float[16], convergence : float[],
+// residuals : float[] }. `transform` is a row-major M44d (16 floats,
+// translation in the last column) giving the final rigid pose of the
+// moving mesh in world space.
+let icpHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<IcpRequest>()
+            let refDataset, refName = splitName req.ReferenceName
+            let movDataset, movName = splitName req.MovingName
+            let lmRef = MeshCache.get refDataset refName 0
+            let lmMov = MeshCache.get movDataset movName 0
+
+            let initial =
+                if req.InitialTransform <> null && req.InitialTransform.Length = 16 then
+                    let m = req.InitialTransform
+                    M44d(m.[0], m.[1], m.[2], m.[3],
+                         m.[4], m.[5], m.[6], m.[7],
+                         m.[8], m.[9], m.[10], m.[11],
+                         m.[12], m.[13], m.[14], m.[15])
+                else M44d.Identity
+
+            // Build anchor-weight function for region-restricted mode.
+            let weights =
+                let aC = if isNull req.AnchorCentres then [||] else req.AnchorCentres
+                let aS = if isNull req.AnchorSigmas  then [||] else req.AnchorSigmas
+                let aW = if isNull req.AnchorWeights then [||] else req.AnchorWeights
+                let n = aS.Length
+                if n = 0 || aC.Length < n * 3 then None
+                else
+                    let centres = Array.init n (fun i -> V3d(aC.[i * 3], aC.[i * 3 + 1], aC.[i * 3 + 2]))
+                    let f (p : V3d) =
+                        let mutable s = 0.0
+                        for i in 0 .. n - 1 do
+                            let sigma = aS.[i]
+                            if sigma > 1e-6 then
+                                let d2 = (p - centres.[i]).LengthSquared
+                                let w = exp (-d2 / (2.0 * sigma * sigma))
+                                let mult = if i < aW.Length then aW.[i] else 1.0
+                                s <- s + mult * w
+                        min 1.0 s
+                    Some f
+
+            let stride = if req.SampleStride <= 0 then 50 else req.SampleStride
+            let maxIter = if req.MaxIterations <= 0 then 30 else req.MaxIterations
+            let eps = if req.RegionEps <= 0.0 then 0.0 else req.RegionEps
+            let result = MeshCache.runIcp lmRef lmMov initial stride maxIter weights eps
+
+            let m = result.Transform
+            let flat = [|
+                m.M00; m.M01; m.M02; m.M03
+                m.M10; m.M11; m.M12; m.M13
+                m.M20; m.M21; m.M22; m.M23
+                m.M30; m.M31; m.M32; m.M33
+            |]
+            log.LogInformation("icp ref={Ref} mov={Mov}: {Iters} iters, final RMS={Rms:F4}",
+                req.ReferenceName, req.MovingName, result.Convergence.Length,
+                (if result.Convergence.Length > 0 then result.Convergence.[result.Convergence.Length - 1] else 0.0))
+            return! json {| transform = flat; convergence = result.Convergence; residuals = result.Residuals |} next ctx
+        with ex ->
+            log.LogError(ex, "icp failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
@@ -630,6 +716,7 @@ let webApp : HttpHandler =
         route  "/api/query/isoline"                             >=> isolineHandler
         route  "/api/query/curvature-ridge"                     >=> curvatureRidgeHandler
         route  "/api/query/patch"                               >=> patchHandler
+        route  "/api/query/icp"                                 >=> icpHandler
         route  "/api/query/grid-eval"                           >=> gridEvalHandler
         route  "/api/query/cylinder-eval"                       >=> cylinderEvalHandler
     ]

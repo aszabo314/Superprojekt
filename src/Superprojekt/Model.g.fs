@@ -1,5 +1,5 @@
-//4c521751-5ac7-e37d-3070-b53d664161f9
-//1571cc84-3fe2-2f61-e02d-e26b5c697d7b
+//a69a4265-390a-e01d-d8e3-4a464c59fd32
+//200fc8b1-e862-f821-344a-97a6097a2112
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -41,6 +41,8 @@ type AdaptiveModel(value : Model) =
     let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
     let _LassoDrawing_ = FSharp.Data.Adaptive.cval(value.LassoDrawing)
     let _LassoVolume_ = FSharp.Data.Adaptive.cval(value.LassoVolume)
+    let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
+    let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _ReferenceAxis_ = FSharp.Data.Adaptive.cval(value.ReferenceAxis)
     let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
@@ -87,6 +89,8 @@ type AdaptiveModel(value : Model) =
             _ActivePickingLayer_.Value <- value.ActivePickingLayer
             _LassoDrawing_.Value <- value.LassoDrawing
             _LassoVolume_.Value <- value.LassoVolume
+            _MeshTransforms_.Value <- value.MeshTransforms
+            _Registration_.Value <- value.Registration
             _ScanPins_.Update(value.ScanPins)
             _ReferenceAxis_.Value <- value.ReferenceAxis
             _Explore_.Value <- value.Explore
@@ -126,6 +130,8 @@ type AdaptiveModel(value : Model) =
     member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.LassoDrawing = _LassoDrawing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoDraft>>
     member __.LassoVolume = _LassoVolume_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoVolume>>
+    member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
+    member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.ScanPins = _ScanPins_
     member __.ReferenceAxis = _ReferenceAxis_ :> FSharp.Data.Adaptive.aval<ReferenceAxisMode>
     member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>

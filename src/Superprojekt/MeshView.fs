@@ -76,6 +76,7 @@ module MeshView =
         (active : aval<bool>)
         (commonCentroid : aval<V3d>)
         (meshScale : aval<float>)
+        (meshTransform : aval<Trafo3d>)
         (ghostOpacity : aval<float>)
         (colorMode : aval<int>) =
         let scaledFilter =
@@ -94,10 +95,17 @@ module MeshView =
                     if g then V3d.III * -10000.0 else V3d.III * 10000.0))
         let depthTestMode =
             isGhost |> AVal.map (fun g -> if g then DepthTest.Always else DepthTest.LessOrEqual)
+        // V6 §D.8 — the per-mesh registration transform is render-space
+        // rigid (rotation + translation in the scaled/centroid-offset
+        // coordinate system used by the scene graph). Applied LAST so
+        // the dataset-scale + centroid pipeline keeps its existing
+        // semantics; a mesh with identity transform renders exactly as
+        // before.
         let trafo =
-            (commonCentroid, loaded.centroid, meshScale) |||> AVal.map3 (fun common mesh scale ->
-                Trafo3d.Translation(mesh - common) * Trafo3d.Scale(scale)
-            )
+            let base_ =
+                (commonCentroid, loaded.centroid, meshScale) |||> AVal.map3 (fun common mesh scale ->
+                    Trafo3d.Translation(mesh - common) * Trafo3d.Scale(scale))
+            (base_, meshTransform) ||> AVal.map2 (fun b t -> t * b)
         sg {
             Sg.Trafo trafo
             Sg.Shader {
@@ -191,7 +199,7 @@ module MeshView =
             let scaleFor (name : string) =
                 let dataset = name.Split('/', 2).[0]
                 model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
-            let makeTask (loaded : LoadedMesh) (meshIndex : int) (isActive : aval<bool>) (scale : aval<float>) (isGhost : bool) =
+            let makeTask (loaded : LoadedMesh) (meshIndex : int) (isActive : aval<bool>) (scale : aval<float>) (meshT : aval<Trafo3d>) (isGhost : bool) =
                 let body =
                     sg {
                         Sg.View view
@@ -201,7 +209,7 @@ module MeshView =
                         Sg.Uniform("LassoPlaneCount", lassoPlaneCount)
                         Sg.Uniform("LassoPlanes", lassoPlanes)
                         let modeInt = model.RenderingMode |> AVal.map (function Textured -> 0 | Shaded -> 1 | WhiteSurface -> 2)
-                        renderMesh loaded filter (AVal.constant isGhost) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity modeInt
+                        renderMesh loaded filter (AVal.constant isGhost) (AVal.constant meshIndex) isActive model.CommonCentroid scale meshT model.GhostOpacity modeInt
                     }
                 info.Runtime.CompileRender(signature, body.GetRenderObjects(TraversalState.empty info.Runtime))
             meshIndices |> AList.bind (fun meshIndices ->
@@ -210,9 +218,12 @@ module MeshView =
                     let meshIndex = meshIndices.[name]
                     let isActive = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
                     let scale = scaleFor name
+                    let meshT =
+                        model.MeshTransforms |> AVal.map (fun m ->
+                            Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
                     AList.ofList [
-                        (2 * meshIndex,     makeTask loaded meshIndex isActive scale false)
-                        (2 * meshIndex + 1, makeTask loaded meshIndex isActive scale true)
+                        (2 * meshIndex,     makeTask loaded meshIndex isActive scale meshT false)
+                        (2 * meshIndex + 1, makeTask loaded meshIndex isActive scale meshT true)
                     ]
                 )
             )

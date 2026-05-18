@@ -728,3 +728,175 @@ let cylinderEval (dataset : string) (anchor : V3d) (axis : V3d) (radii : float[]
 
     { AngularResolution = angularRes; RingCount = radii.Length; Hits = hits }
 
+
+// V6 §D.8 — point-to-point ICP between two meshes. Uses the
+// small-rotation linearisation (R ≈ I + [ω]×) per iteration so we only
+// solve a 6×6 linear system instead of an SVD; many iterations
+// recover the full rotation. Optional per-correspondence weights enter
+// the normal equations directly (for §D.8 region-restricted mode the
+// caller passes anchor Gaussian weights).
+type IcpResult = {
+    Transform     : M44d         // final rigid transform on the moving mesh, world-space
+    Convergence   : float[]      // per-iteration RMS residual (metres)
+    Residuals     : float[]      // per-correspondence residual at the final iteration
+}
+
+[<AutoOpen>]
+module private IcpMath =
+    let inline skew (v : V3d) =
+        M33d(
+            0.0, -v.Z, v.Y,
+            v.Z, 0.0, -v.X,
+            -v.Y, v.X, 0.0)
+
+    /// Solve a small dense linear system via Gauss elimination with
+    /// partial pivoting. Returns Some x or None when singular.
+    let solveDense (a : float[,]) (b : float[]) : float[] option =
+        let n = Array2D.length1 a
+        let A = Array2D.copy a
+        let B = Array.copy b
+        let mutable singular = false
+        for k in 0 .. n - 1 do
+            if not singular then
+                let mutable piv = k
+                for i in k + 1 .. n - 1 do
+                    if abs A.[i, k] > abs A.[piv, k] then piv <- i
+                if piv <> k then
+                    for j in 0 .. n - 1 do
+                        let tmp = A.[k, j]
+                        A.[k, j] <- A.[piv, j]
+                        A.[piv, j] <- tmp
+                    let tmp = B.[k]
+                    B.[k] <- B.[piv]
+                    B.[piv] <- tmp
+                if abs A.[k, k] < 1e-12 then singular <- true
+                else
+                    for i in k + 1 .. n - 1 do
+                        let factor = A.[i, k] / A.[k, k]
+                        for j in k .. n - 1 do
+                            A.[i, j] <- A.[i, j] - factor * A.[k, j]
+                        B.[i] <- B.[i] - factor * B.[k]
+        if singular then None
+        else
+            let x = Array.zeroCreate<float> n
+            for i in n - 1 .. -1 .. 0 do
+                let mutable s = B.[i]
+                for j in i + 1 .. n - 1 do
+                    s <- s - A.[i, j] * x.[j]
+                x.[i] <- s / A.[i, i]
+            Some x
+
+    /// Rodrigues exponential map: ω (axis-angle) → rotation matrix.
+    let rotFromOmega (omega : V3d) =
+        let theta = omega.Length
+        if theta < 1e-12 then M33d.Identity
+        else
+            let k = omega / theta
+            let K = skew k
+            M33d.Identity + K * sin theta + K * K * (1.0 - cos theta)
+
+    /// Per-iteration ICP step. Returns (R_delta, t_delta, rms).
+    let icpStep (pairs : ResizeArray<struct (V3d * V3d * float)>) =
+        let A = Array2D.zeroCreate<float> 6 6
+        let B = Array.zeroCreate<float> 6
+        let mutable rmsSum = 0.0
+        let mutable wSum = 0.0
+        let J = Array2D.zeroCreate<float> 3 6
+        for i in 0 .. pairs.Count - 1 do
+            let struct (ai, bi, wi) = pairs.[i]
+            let r0 = ai.X - bi.X
+            let r1 = ai.Y - bi.Y
+            let r2 = ai.Z - bi.Z
+            // J = [-[a]× | I_3]; row form:
+            //   [  0,   a.Z, -a.Y, 1, 0, 0 ]
+            //   [-a.Z,  0,    a.X, 0, 1, 0 ]
+            //   [ a.Y, -a.X,  0,   0, 0, 1 ]
+            J.[0, 0] <- 0.0;     J.[0, 1] <- ai.Z;   J.[0, 2] <- -ai.Y; J.[0, 3] <- 1.0; J.[0, 4] <- 0.0; J.[0, 5] <- 0.0
+            J.[1, 0] <- -ai.Z;   J.[1, 1] <- 0.0;    J.[1, 2] <-  ai.X; J.[1, 3] <- 0.0; J.[1, 4] <- 1.0; J.[1, 5] <- 0.0
+            J.[2, 0] <-  ai.Y;   J.[2, 1] <- -ai.X;  J.[2, 2] <-  0.0;  J.[2, 3] <- 0.0; J.[2, 4] <- 0.0; J.[2, 5] <- 1.0
+            for a in 0 .. 5 do
+                for b in 0 .. 5 do
+                    A.[a, b] <- A.[a, b] + wi * (J.[0, a] * J.[0, b] + J.[1, a] * J.[1, b] + J.[2, a] * J.[2, b])
+                B.[a] <- B.[a] - wi * (J.[0, a] * r0 + J.[1, a] * r1 + J.[2, a] * r2)
+            rmsSum <- rmsSum + wi * (r0 * r0 + r1 * r1 + r2 * r2)
+            wSum <- wSum + wi
+        let x =
+            match solveDense A B with
+            | Some xs -> xs
+            | None -> [| 0.0; 0.0; 0.0; 0.0; 0.0; 0.0 |]
+        let omega = V3d(x.[0], x.[1], x.[2])
+        let t = V3d(x.[3], x.[4], x.[5])
+        let R = rotFromOmega omega
+        R, t, sqrt (rmsSum / max 1.0 wSum)
+
+/// Run point-to-point ICP. `initial` is the moving mesh's starting
+/// world-space transform; `anchorWeights`, if Some, gives a per-vertex
+/// Gaussian weight (>= 0) for region-restricted mode — pairs with weight
+/// below `regionEps` are skipped entirely.
+///
+/// `sampleStride` controls how aggressively the moving mesh is
+/// subsampled (every N-th vertex); higher = faster + noisier.
+let runIcp
+        (lmRef : LoadedMesh) (lmMov : LoadedMesh)
+        (initial : M44d) (sampleStride : int) (maxIter : int)
+        (anchorWeights : (V3d -> float) option) (regionEps : float)
+        : IcpResult =
+    let movPos = lmMov.parsed.positions
+    let movCentroid = lmMov.parsed.centroid
+    let refCentroid = lmRef.parsed.centroid
+
+    let stride = max 1 sampleStride
+    let sampleCount = (movPos.Length + stride - 1) / stride
+    let samplesWorld =
+        Array.init sampleCount (fun i ->
+            let idx = min (i * stride) (movPos.Length - 1)
+            V3d movPos.[idx] + movCentroid)
+
+    let mutable currR =
+        M33d(initial.M00, initial.M01, initial.M02,
+             initial.M10, initial.M11, initial.M12,
+             initial.M20, initial.M21, initial.M22)
+    let mutable currTr = V3d(initial.M03, initial.M13, initial.M23)
+
+    let convergence = ResizeArray<float>(maxIter)
+    let mutable finalResiduals : float[] = [||]
+    let mutable converged = false
+    let mutable lastRms = System.Double.MaxValue
+    let mutable iter = 0
+    while iter < maxIter && not converged do
+        let pairs = ResizeArray<struct (V3d * V3d * float)>(samplesWorld.Length)
+        for s in samplesWorld do
+            let aMoved = currR * s + currTr
+            let w =
+                match anchorWeights with
+                | Some f -> f aMoved
+                | None -> 1.0
+            if w > regionEps then
+                let res = lmRef.scene.GetClosestPoint(V3f(aMoved - refCentroid))
+                if res.IsValid then
+                    let bWorld = V3d(res.Point) + refCentroid
+                    pairs.Add(struct (aMoved, bWorld, w))
+        if pairs.Count < 6 then
+            iter <- maxIter
+        else
+            let Rd, td, rms = icpStep pairs
+            convergence.Add rms
+            currR <- Rd * currR
+            currTr <- Rd * currTr + td
+            if iter = maxIter - 1 || abs (lastRms - rms) < 1e-7 then
+                finalResiduals <-
+                    pairs |> Seq.map (fun (struct (a, b, _)) ->
+                        let a' = Rd * a + td
+                        (a' - b).Length)
+                    |> Array.ofSeq
+                if abs (lastRms - rms) < 1e-7 then converged <- true
+            lastRms <- rms
+            iter <- iter + 1
+
+    let finalT =
+        M44d(currR.M00, currR.M01, currR.M02, currTr.X,
+             currR.M10, currR.M11, currR.M12, currTr.Y,
+             currR.M20, currR.M21, currR.M22, currTr.Z,
+             0.0, 0.0, 0.0, 1.0)
+    { Transform = finalT; Convergence = convergence.ToArray(); Residuals = finalResiduals }
+

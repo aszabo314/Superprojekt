@@ -20,6 +20,14 @@ type Message =
     | ToggleGhostSilhouette
     | SetGhostDetail of GhostDetail
     | SetGhostOpacity of float
+    // V6 §D.8 — registration solver
+    | SetRegistrationMode of RegistrationMode
+    | SetReferenceMesh of string option
+    | RunRegistration
+    | RegistrationProgress of int * float          // iter, rms (streamed during solve)
+    | RegistrationComplete of string * Trafo3d * float[] * float[]  // mesh, transform, convergence, residuals
+    | RegistrationFailed of string
+    | ResetMeshTransforms
     | SetMinDifferenceDepth of float
     | SetMaxDifferenceDepth of float
     | ClipBoundsLoaded   of (string * Box3d)[]
@@ -379,6 +387,98 @@ module Update =
             { model with GhostDetail = d }
         | SetGhostOpacity v ->
             { model with GhostOpacity = v }
+
+        | SetRegistrationMode m ->
+            { model with Registration = { model.Registration with Mode = m } }
+        | SetReferenceMesh mesh ->
+            { model with Registration = { model.Registration with ReferenceMesh = mesh } }
+        | ResetMeshTransforms ->
+            { model with
+                MeshTransforms = Map.empty
+                Registration = { model.Registration with LastResiduals = [||]; ConvergenceLog = [||]; Running = false } }
+        | RunRegistration ->
+            let reg = model.Registration
+            match reg.ReferenceMesh with
+            | None -> model
+            | Some refMesh ->
+                let visibleMeshes =
+                    model.MeshNames |> IndexList.toSeq
+                    |> Seq.filter (fun n ->
+                        n <> refMesh
+                        && Map.tryFind n model.MeshVisible |> Option.defaultValue true)
+                    |> Array.ofSeq
+                if visibleMeshes.Length = 0 then model
+                else
+                    let anchors =
+                        match reg.Mode with
+                        | TraditionalIcp -> [||]
+                        | RegionRestrictedIcp
+                        | PointPairPlusRefinement ->
+                            // Convert anchors to world-space centres + sigmas + reliability weight.
+                            let scale =
+                                model.ActiveDataset
+                                |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
+                                |> Option.defaultValue 1.0
+                            let cc = model.CommonCentroid
+                            model.ScanPins.Pins |> HashMap.toSeq
+                            |> Seq.choose (fun (_, pin) ->
+                                if pin.Phase = PinPhase.Committed then
+                                    let centreWorld = pin.Centre / scale + cc
+                                    let sigmaWorld = pin.Sigma / scale
+                                    let w =
+                                        match pin.Payload with
+                                        | Point pp -> pp.ReliabilityWeight
+                                        | _ -> 1.0
+                                    Some (centreWorld, sigmaWorld, w)
+                                else None)
+                            |> Array.ofSeq
+                    let eps =
+                        match reg.Mode with
+                        | TraditionalIcp -> 0.0
+                        | _ -> 0.05  // §D.6.2 default
+                    // Fire ICP for each non-reference mesh against the reference.
+                    for mov in visibleMeshes do
+                        let initial =
+                            Map.tryFind mov model.MeshTransforms
+                            |> Option.map (fun t -> t.Forward)
+                            |> Option.defaultValue M44d.Identity
+                        let movName = mov
+                        task {
+                            try
+                                let! trafo, conv, resi =
+                                    Query.runIcp ApiConfig.apiBase.Value refMesh movName initial 50 30 anchors eps
+                                    |> Async.StartAsTask
+                                env.Emit [RegistrationComplete(movName, trafo, conv, resi)]
+                            with ex ->
+                                env.Emit [RegistrationFailed (sprintf "%s: %s" movName ex.Message)]
+                        } |> ignore
+                    { model with Registration = { reg with Running = true; ConvergenceLog = [||]; LastResiduals = [||] } }
+        | RegistrationProgress _ ->
+            // Streaming hook — wired for future incremental updates. The
+            // current solver returns the full result in one go.
+            model
+        | RegistrationComplete(mesh, trafo, conv, resi) ->
+            // Convert world-space transform to render-space rigid transform.
+            // For our render pipeline (Trafo3d.Translation(mesh - common) *
+            // Trafo3d.Scale(scale) applied to centroid-relative points), the
+            // ICP world-space rigid (R, t) translates to applying the same
+            // R, t to render-space coords too (rotation + translation
+            // commute with the offset translation when applied last).
+            let renderTrafo = trafo
+            let mt = Map.add mesh renderTrafo model.MeshTransforms
+            let iters =
+                conv |> Array.mapi (fun i rms -> { Iter = i; Rms = rms })
+            { model with
+                MeshTransforms = mt
+                Registration = { model.Registration with
+                                    LastResiduals = resi
+                                    ConvergenceLog = iters
+                                    Running = false } }
+        | RegistrationFailed err ->
+            let log = model.DebugLog.InsertAt(0, sprintf "registration failed: %s" err)
+            { model with
+                DebugLog = log
+                Registration = { model.Registration with Running = false } }
         | SetMinDifferenceDepth v ->
             { model with MinDifferenceDepth = v }
         | SetMaxDifferenceDepth v ->

@@ -45,6 +45,8 @@ module View =
         // position the floating active-picking-layer label and the lasso
         // overlay's "next segment" preview.
         let cursorScreen    = cval<V2d option> None
+        // V6 §D.8 — registration solver card open/close state.
+        let registrationOpen = cval false
 
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
 
@@ -266,6 +268,8 @@ module View =
             Gui.leftPanel env model
             Gui.placementFlyout env model
             Gui.exploreCard env model
+            Gui.registrationCard env model registrationOpen
+            Gui.registrationToggleButton registrationOpen
             Gui.meshWheelLabel model (cursorScreen :> aval<_>)
             Gui.lassoOverlay env model (cursorScreen :> aval<_>)
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)

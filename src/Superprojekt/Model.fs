@@ -45,6 +45,33 @@ type MeshSoloState =
     | NoSolo
     | Solo of name:string * restore:Map<string,bool>
 
+/// V6 §D.8 — registration solver. RegistrationMode picks the solve
+/// strategy; LastResiduals + ConvergenceLog feed the residuals
+/// histogram and iteration log on the panel.
+type RegistrationMode =
+    | TraditionalIcp
+    | RegionRestrictedIcp
+    | PointPairPlusRefinement
+
+type RegistrationIteration = { Iter : int; Rms : float }
+
+type RegistrationState = {
+    Mode             : RegistrationMode
+    ReferenceMesh    : string option
+    LastResiduals    : float[]                  // per-correspondence residuals from the most recent solve
+    ConvergenceLog   : RegistrationIteration[]  // (iter, residual-rms) per solve iteration
+    Running          : bool
+}
+
+module RegistrationState =
+    let initial = {
+        Mode           = TraditionalIcp
+        ReferenceMesh  = None
+        LastResiduals  = [||]
+        ConvergenceLog = [||]
+        Running        = false
+    }
+
 /// V6 §D.4 — restructured Explore card state. `Enabled` is the master
 /// toggle that shows/hides the tuning card. Each signal carries its
 /// own enable + threshold + colour; `MixMode` chooses how to composite
@@ -136,6 +163,12 @@ type Model =
         LassoDrawing : LassoDraft option   // in-progress polygon vertices (viewport px)
         LassoVolume  : LassoVolume option
 
+        // V6 §D.8 — per-mesh render-space rigid transform applied on top
+        // of the dataset-scale + centroid-offset pipeline. Map.empty means
+        // every mesh stays at the reference pose.
+        MeshTransforms        : Map<string, Trafo3d>
+        Registration          : RegistrationState
+
         ScanPins              : ScanPinModel
         ReferenceAxis         : ReferenceAxisMode
         Explore               : ExploreMode
@@ -183,6 +216,9 @@ module Model =
 
             LassoDrawing = None
             LassoVolume  = None
+
+            MeshTransforms        = Map.empty
+            Registration          = RegistrationState.initial
 
             ScanPins              = ScanPinModel.initial
             ReferenceAxis         = AlongWorldZ

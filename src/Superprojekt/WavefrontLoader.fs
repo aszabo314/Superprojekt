@@ -336,6 +336,67 @@ module Query =
             return pts
         }
 
+    /// POST /query/icp — runs point-to-point ICP between two meshes,
+    /// optionally weighted by anchor Gaussians (centres + sigmas + per-
+    /// anchor multipliers). Returns the moving mesh's final world-space
+    /// rigid transform as a Trafo3d, plus per-iteration RMS log and
+    /// final per-correspondence residuals.
+    let runIcp
+            (serverUrl : string)
+            (referenceName : string) (movingName : string)
+            (initialTransform : M44d)
+            (sampleStride : int) (maxIterations : int)
+            (anchors : (V3d * float * float)[])  // (centre, sigma, weight)
+            (regionEps : float)
+            : Async<Trafo3d * float[] * float[]> =
+        async {
+            let m = initialTransform
+            let initJson =
+                sprintf "[%s]"
+                    (System.String.Join(",",
+                        [| m.M00; m.M01; m.M02; m.M03
+                           m.M10; m.M11; m.M12; m.M13
+                           m.M20; m.M21; m.M22; m.M23
+                           m.M30; m.M31; m.M32; m.M33 |]
+                        |> Array.map (sprintf "%.17g")))
+            let centresFlat =
+                "[" +
+                System.String.Join(",",
+                    anchors |> Array.collect (fun (c, _, _) -> [| c.X; c.Y; c.Z |])
+                            |> Array.map (sprintf "%.17g")) +
+                "]"
+            let sigmasFlat =
+                "[" +
+                System.String.Join(",",
+                    anchors |> Array.map (fun (_, s, _) -> s) |> Array.map (sprintf "%.17g")) +
+                "]"
+            let weightsFlat =
+                "[" +
+                System.String.Join(",",
+                    anchors |> Array.map (fun (_, _, w) -> w) |> Array.map (sprintf "%.17g")) +
+                "]"
+            let json =
+                sprintf """{"referenceName":"%s","movingName":"%s","initialTransform":%s,"sampleStride":%d,"maxIterations":%d,"anchorCentres":%s,"anchorSigmas":%s,"anchorWeights":%s,"regionEps":%.17g}"""
+                    referenceName movingName initJson sampleStride maxIterations centresFlat sigmasFlat weightsFlat regionEps
+            let! r = post serverUrl "/query/icp" json
+            let tf =
+                r.GetProperty("transform").EnumerateArray()
+                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+            let conv =
+                r.GetProperty("convergence").EnumerateArray()
+                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+            let resi =
+                r.GetProperty("residuals").EnumerateArray()
+                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+            let fwd =
+                M44d(tf.[0],  tf.[1],  tf.[2],  tf.[3],
+                     tf.[4],  tf.[5],  tf.[6],  tf.[7],
+                     tf.[8],  tf.[9],  tf.[10], tf.[11],
+                     tf.[12], tf.[13], tf.[14], tf.[15])
+            let trafo = Trafo3d(fwd, fwd.Inverse)
+            return trafo, conv, resi
+        }
+
     /// POST /query/patch — azimuthal-equidistant unwrap of the mesh disk
     /// around `centre` with radius `radius`. Returns
     /// (patchPoints, worldPoints, refDirWorld, normalWorld).

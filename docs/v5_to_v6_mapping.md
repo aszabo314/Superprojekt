@@ -3,6 +3,52 @@
 Working reference for the V5→V6 migration. Lists where each V5 feature lives
 in the current codebase. Updated as each phase lands.
 
+## Phase 6 status (Registration solver, §D.8)
+
+Phase 6 ships per-mesh registration transforms, a server-side
+point-to-point ICP endpoint, and a floating Registration solver card
+that exposes Traditional and Region-restricted modes end-to-end.
+Point-pair + refinement is **deferred** — the model accepts the
+mode and the button is greyed because the spec requires an
+anchor-correspondence-linking UI that V6 has not yet added.
+
+V6 references active after Phase 6:
+- `Model.fs`: `RegistrationMode`, `RegistrationIteration`,
+  `RegistrationState`; `Model.MeshTransforms : Map<string, Trafo3d>`
+  (per-mesh render-space rigid transform applied on top of the
+  dataset-scale + centroid-offset pipeline); `Model.Registration`.
+- `Update.fs`: `SetRegistrationMode`, `SetReferenceMesh`,
+  `RunRegistration`, `RegistrationComplete`, `RegistrationFailed`,
+  `ResetMeshTransforms` messages plus the handler that fires
+  per-peer `Query.runIcp` tasks and collects results.
+- `MeshView.renderMesh` accepts a `meshTransform : aval<Trafo3d>`
+  parameter and applies it as the outer-most factor in the
+  composition; `buildMeshTextures` projects `model.MeshTransforms`
+  per mesh, defaulting to `Trafo3d.Identity`.
+- `WavefrontLoader.Query.runIcp` wraps the server endpoint and
+  returns `(Trafo3d, conv, residuals)`.
+- `MeshCache.runIcp` (server): point-to-point ICP with the small-
+  rotation Rodrigues approximation per iteration, 6×6 Gauss-elim
+  solve, Embree `GetClosestPoint` for correspondences, optional
+  anchor-Gaussian weighting for region-restricted mode.
+- `Handlers.icpHandler` (server) + `/api/query/icp` route +
+  `IcpRequest` record.
+- `Gui.registrationCard` + `Gui.registrationToggleButton` (the
+  top-right "⚙ Registration" toggle).
+- `wwwroot/style.css`: `.registration-card`, `.lp-mesh-list`,
+  `.lp-mesh-btn`, `.reg-residual-stats`, `.reg-residual-histogram`,
+  `.reg-convergence-log`.
+
+V6 references still **deferred**:
+- Point-pair + refinement solve mode. Requires anchor-to-anchor
+  correspondence linking UI (§D.6.5: "Mark Correspondence" button +
+  "Group as correspondence" multi-select on the Pins tab). Mode is
+  selectable in the flyout but the Run button no-ops on it.
+- Streaming progress updates during a solve. The server returns the
+  full result in one round-trip; the `RegistrationProgress`
+  message is wired but currently unused.
+- All other §D.x — Phases 7–9 per Part F.
+
 ## Phase 5 status (Dual-signal Explore + ghost silhouette enhancement, §D.4 + §D.2)
 
 Phase 5 reshapes the Explore card from a single highlight signal into

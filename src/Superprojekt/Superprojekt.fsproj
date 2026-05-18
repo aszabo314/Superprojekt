@@ -28,6 +28,7 @@
     <Compile Include="Model.g.fs" />
     <Compile Include="Shader.fs" />
     <Compile Include="Primitives.fs" />
+    <Compile Include="Persistence.fs" />
     <Compile Include="Update.fs" />
     <Compile Include="MeshView.fs" />
     <Compile Include="ServerActions.fs" />

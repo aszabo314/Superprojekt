@@ -36,6 +36,9 @@ type Message =
     | ToggleFalloffZoneOnly
     // V6 §D.10 — fusion mesh
     | ToggleFusionMode
+    // V6 §D.13 — persistence (save/load)
+    | SaveWorkspace
+    | LoadWorkspace of string
     | SetMinDifferenceDepth of float
     | SetMaxDifferenceDepth of float
     | ClipBoundsLoaded   of (string * Box3d)[]
@@ -510,6 +513,36 @@ module Update =
             { model with FalloffZoneOnly = not model.FalloffZoneOnly }
         | ToggleFusionMode ->
             { model with FusionMode = not model.FusionMode }
+
+        | SaveWorkspace ->
+            // §D.13 — produce a downloadable .scanpin.json by injecting a
+            // one-shot <script> tag that builds a Blob + anchor element.
+            let json = Persistence.serialize model
+            let escaped =
+                json.Replace("\\", "\\\\").Replace("`", "\\`").Replace("$", "\\$")
+            let stamp = System.DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")
+            let script = Window.Document.CreateElement("script")
+            script.InnerText <-
+                sprintf """
+                var b = new Blob([`%s`], {type:'application/json'});
+                var u = URL.createObjectURL(b);
+                var a = document.createElement('a');
+                a.href = u; a.download = 'workspace-%s.scanpin.json';
+                document.body.appendChild(a); a.click(); document.body.removeChild(a);
+                URL.revokeObjectURL(u);
+                """ escaped stamp
+            Window.Document.Body.AppendChild(script) |> ignore
+            Window.Document.Body.RemoveChild(script) |> ignore
+            model
+
+        | LoadWorkspace json ->
+            match Persistence.deserialize model json with
+            | Result.Ok m ->
+                let log = m.DebugLog.InsertAt(0, "workspace loaded")
+                { m with DebugLog = log }
+            | Result.Error err ->
+                let log = model.DebugLog.InsertAt(0, sprintf "workspace load failed: %s" err)
+                { model with DebugLog = log }
         | SetMinDifferenceDepth v ->
             { model with MinDifferenceDepth = v }
         | SetMaxDifferenceDepth v ->

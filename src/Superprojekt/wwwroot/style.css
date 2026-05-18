@@ -684,6 +684,12 @@ body.loaded { background: #f4f6f8; }
     padding: 4px;
 }
 
+/* V6 §D.13 Persistence row in the gear popover */
+.tb-gear-persist {
+    display: flex; gap: 6px; align-items: center;
+}
+.persistence-bridge { display: none !important; }
+
 /* V6 §D.9 Error provenance */
 .pc-bar { display: flex; height: 8px;
     border: 1px solid #c5cdd8; border-radius: 2px; overflow: hidden; }

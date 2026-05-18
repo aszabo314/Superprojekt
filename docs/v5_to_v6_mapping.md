@@ -3,6 +3,55 @@
 Working reference for the V5→V6 migration. Lists where each V5 feature lives
 in the current codebase. Updated as each phase lands.
 
+## Phase 9 status (Persistence + carve-out for Panorama / Retarget, §D.13)
+
+Phase 9 in the original plan covered Panorama (§D.5), Retarget
+(§D.11), and Persistence (§D.13). For the prototype's "save my
+session" need, persistence is by far the most useful deliverable —
+the other two are deferred to a post-evaluation polish pass and
+explicitly flagged in this document.
+
+V6 references active after Phase 9:
+- `Persistence.fs`: `Persistence.serialize` (Model → JSON) and
+  `Persistence.deserialize` (Model × JSON → Result<Model, string>).
+  Anchors round-trip in world space; mesh transforms / sensor
+  metadata / dataset-error overrides / mesh visibility / dataset
+  scales / clip + lasso state / Explore dual-signal state / global
+  toggles (fullscreen, ghost, fusion, provenance) and the
+  Registration mode + reference all persist.
+- `Update.fs`: `SaveWorkspace` (serialises + injects a `<script>` tag
+  that builds a Blob and triggers an anchor-click download) and
+  `LoadWorkspace of string` (applies the JSON to the current model
+  through `Persistence.deserialize`, with a DebugLog line for
+  success / failure).
+- `Gui.persistenceBridge`: hidden `<input type=file>` + hidden
+  `<input type=text>` pair that bridges the browser's FileReader to
+  F#'s OnInput. JS in the OnBoot wires the file-picker change event
+  to read the file as text, push it into the sink input, and
+  dispatch an `input` event so F# fires `LoadWorkspace`.
+- `Gui.topBar` gear popover gains a **Save / Load** row.
+
+V6 references still **deferred** (explicitly out of scope):
+- §D.5 Panorama split view. Synthetic panorama generation requires
+  a server-side cylindrical-projection render (out of scope for the
+  prototype since no panorama imagery exists yet and the renderer
+  would need to be plumbed). The data shape on `Workspace.Panoramas`
+  is left empty for now; persistence's JSON has no `panoramas`
+  field. A polish pass can add (a) client-side cylindrical render
+  via offscreen WebGL, (b) the slide-in panel with Photo / Render /
+  Blend modes, (c) click-to-place anchor wiring.
+- §D.11 Retarget. The orchestration assumes anchor correspondence
+  linking (deferred from Phase 4) and a re-solve walkthrough that
+  reuses Phase 6's registration loop. Both pieces are present in
+  the codebase already; what's missing is the multi-step UI flow
+  ("Is this a new pass of an existing feature?" → projected anchor
+  validation → final solve). Tractable polish-pass work once
+  correspondence linking lands.
+- All other §D.x deferrals from prior phases (winner-ID buffer for
+  Fusion, per-point Ctrl-click provenance hover, mesh-local
+  curvature texture, principled Jacobian conditioning, etc.) remain
+  pending.
+
 ## Phase 8 status (Fusion mesh, §D.10)
 
 Phase 8 adds a per-pixel composite mode that picks the lowest-total-

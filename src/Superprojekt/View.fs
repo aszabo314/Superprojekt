@@ -270,6 +270,7 @@ module View =
             Gui.exploreCard env model
             Gui.registrationCard env model registrationOpen
             Gui.registrationToggleButton registrationOpen
+            Gui.persistenceBridge env
             Gui.meshWheelLabel model (cursorScreen :> aval<_>)
             Gui.lassoOverlay env model (cursorScreen :> aval<_>)
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)

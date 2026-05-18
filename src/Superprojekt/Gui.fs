@@ -2,6 +2,7 @@ namespace Superprojekt
 
 open Aardvark.Base
 open Aardvark.Rendering
+open Aardworx.WebAssembly
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
@@ -174,6 +175,32 @@ module Gui =
                                 })
                         }
 
+                        // V6 §D.13 — persistence. Save dumps the current
+                        // workspace to a downloadable JSON; Load reads a
+                        // file picker and replaces state. The "ws-load-sink"
+                        // hidden input is the F# side of the JS-to-F#
+                        // bridge for the file content.
+                        div {
+                            Class "tb-gear-row tb-gear-persist"
+                            span { Class "lp-sublabel"; "Workspace" }
+                            button {
+                                Class "mb"
+                                Attribute("title", "Save workspace JSON to a file")
+                                Dom.OnClick(fun _ -> env.Emit [SaveWorkspace])
+                                "💾 Save"
+                            }
+                            button {
+                                Class "mb"
+                                Attribute("title", "Load a previously-saved workspace JSON")
+                                Dom.OnClick(fun _ ->
+                                    let script = Window.Document.CreateElement("script")
+                                    script.InnerText <- "document.getElementById('ws-file-picker').click();"
+                                    Window.Document.Body.AppendChild(script) |> ignore
+                                    Window.Document.Body.RemoveChild(script) |> ignore)
+                                "📂 Load"
+                            }
+                        }
+
                         div {
                             Class "tb-gear-log"
                             model.DebugLog |> AList.map (fun line -> div { Class "tb-gear-log-line"; line })
@@ -181,6 +208,46 @@ module Gui =
                     }
                 }
             }
+        }
+
+    /// V6 §D.13 — DOM bridge for the file-picker → F# message bus. A
+    /// hidden `<input type="file">` (id `ws-file-picker`) plus a hidden
+    /// `<input type="text">` (id `ws-load-sink`) whose OnInput fires
+    /// `LoadWorkspace`. JS in the OnBoot wires the FileReader so that
+    /// reading a file pushes its text into the sink input.
+    let persistenceBridge (env : Env<Message>) =
+        div {
+            Class "persistence-bridge"
+            Style [Display "none"]
+            input {
+                Attribute("type", "file")
+                Attribute("id", "ws-file-picker")
+                Attribute("accept", ".json,.scanpin.json,application/json")
+            }
+            input {
+                Attribute("type", "text")
+                Attribute("id", "ws-load-sink")
+                Dom.OnInput(fun e ->
+                    if not (System.String.IsNullOrEmpty e.Value) then
+                        env.Emit [LoadWorkspace e.Value])
+            }
+            OnBoot [
+                "(function(){"
+                "var fp = document.getElementById('ws-file-picker');"
+                "var sink = document.getElementById('ws-load-sink');"
+                "if (!fp || !sink) return;"
+                "fp.addEventListener('change', function(){"
+                "  var f = fp.files && fp.files[0]; if (!f) return;"
+                "  var r = new FileReader();"
+                "  r.onload = function(){"
+                "    sink.value = r.result;"
+                "    sink.dispatchEvent(new Event('input', {bubbles: true}));"
+                "    fp.value = '';"
+                "  };"
+                "  r.readAsText(f);"
+                "});"
+                "})();"
+            ]
         }
 
     let private meshRow (env : Env<Message>) (model : AdaptiveModel) (name : string) =

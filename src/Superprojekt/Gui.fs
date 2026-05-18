@@ -249,6 +249,24 @@ module Gui =
             }
             compactToggle "Ghost silhouette" model.GhostSilhouette (fun () ->
                 env.Emit [ToggleGhostSilhouette])
+            // V6 §D.2 — ghost detail selector, hidden when silhouette is off.
+            div {
+                Class "lp-sub lp-ghost-detail"
+                model.GhostSilhouette |> AVal.map (fun on ->
+                    if on then None else Some (Style [Display "none"]))
+                let detail = model.GhostDetail
+                compactButtonBar [
+                    "Outline",
+                        detail |> AVal.map (fun d -> d = OutlineOnly),
+                        (fun () -> env.Emit [SetGhostDetail OutlineOnly])
+                    "+ Curvature",
+                        detail |> AVal.map (fun d -> d = PlusCurvature),
+                        (fun () -> env.Emit [SetGhostDetail PlusCurvature])
+                    "+ Terrain",
+                        detail |> AVal.map (fun d -> d = PlusTerrainFeatures),
+                        (fun () -> env.Emit [SetGhostDetail PlusTerrainFeatures])
+                ]
+            }
         }
 
     let placementFlyout (env : Env<Message>) (model : AdaptiveModel) =
@@ -854,14 +872,62 @@ module Gui =
 
             div {
                 Class "card-body explore-card-body"
-                let steep = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
-                let disag = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
-                inlineSlider "Steepness" 0.0 1.0 0.01 (sprintf "%.2f") steep (fun v ->
-                    env.Emit [ExploreMsg (SetSteepnessThreshold v)])
-                inlineLogSlider "Sensitivity" 0.001 10.0 (fun v ->
-                    if v < 0.1 then sprintf "%.0f mm" (v * 1000.0)
-                    else sprintf "%.2f m" v) disag (fun v ->
-                    env.Emit [ExploreMsg (SetDisagreementThreshold v)])
+
+                // V6 §D.4 — two independently-toggled signals.
+                let fcEnabled = model.Explore |> AVal.map (fun e -> e.FeatureConfidence.Enabled)
+                let fcThresh  = model.Explore |> AVal.map (fun e -> e.FeatureConfidence.Threshold)
+                let dgEnabled = model.Explore |> AVal.map (fun e -> e.Disagreement.Enabled)
+                let dgThresh  = model.Explore |> AVal.map (fun e -> e.Disagreement.Threshold)
+                let bothOn    = (fcEnabled, dgEnabled) ||> AVal.map2 (&&)
+                let mix       = model.Explore |> AVal.map (fun e -> e.MixMode)
+
+                div {
+                    Class "explore-signal-row"
+                    compactToggle "Feature confidence" fcEnabled (fun () ->
+                        let on = AVal.force fcEnabled
+                        env.Emit [ExploreMsg (SetSignalEnabled(FeatureConfidenceSignal, not on))])
+                    div {
+                        Class "explore-signal-controls"
+                        fcEnabled |> AVal.map (fun on ->
+                            if on then None else Some (Style [Display "none"]))
+                        inlineSlider "Sensitivity" 0.0 1.0 0.01 (sprintf "%.2f") fcThresh (fun v ->
+                            env.Emit [ExploreMsg (SetSignalThreshold(FeatureConfidenceSignal, v))])
+                    }
+                }
+
+                div {
+                    Class "explore-signal-row"
+                    compactToggle "Disagreement" dgEnabled (fun () ->
+                        let on = AVal.force dgEnabled
+                        env.Emit [ExploreMsg (SetSignalEnabled(DisagreementSignal, not on))])
+                    div {
+                        Class "explore-signal-controls"
+                        dgEnabled |> AVal.map (fun on ->
+                            if on then None else Some (Style [Display "none"]))
+                        inlineLogSlider "Sensitivity" 0.001 10.0 (fun v ->
+                            if v < 0.1 then sprintf "%.0f mm" (v * 1000.0)
+                            else sprintf "%.2f m" v) dgThresh (fun v ->
+                            env.Emit [ExploreMsg (SetSignalThreshold(DisagreementSignal, v))])
+                    }
+                }
+
+                div {
+                    Class "explore-mix-row"
+                    bothOn |> AVal.map (fun on ->
+                        if on then None else Some (Style [Display "none"]))
+                    span { Class "lp-sublabel"; "Mix" }
+                    compactButtonBar [
+                        "Blended",
+                            mix |> AVal.map (fun m -> m = Blended),
+                            (fun () -> env.Emit [ExploreMsg (SetMixMode Blended)])
+                        "Side-by-side",
+                            mix |> AVal.map (fun m -> m = SideBySide),
+                            (fun () -> env.Emit [ExploreMsg (SetMixMode SideBySide)])
+                        "Alternating",
+                            mix |> AVal.map (fun m -> m = Alternating),
+                            (fun () -> env.Emit [ExploreMsg (SetMixMode Alternating)])
+                    ]
+                }
             }
         }
 

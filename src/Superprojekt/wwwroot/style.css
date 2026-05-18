@@ -623,6 +623,23 @@ body.loaded { background: #f4f6f8; }
     border-top-right-radius: 4px;
 }
 
+/* V6 §D.4 dual-signal Explore card */
+.explore-signal-row {
+    display: flex; flex-direction: column;
+    gap: 2px; padding: 4px 0;
+    border-bottom: 1px solid #e2e8f0;
+}
+.explore-signal-row:last-of-type { border-bottom: none; }
+.explore-signal-controls { padding-left: 16px; }
+.explore-mix-row {
+    display: flex; align-items: center; gap: 6px;
+    padding: 4px 0;
+}
+.explore-mix-row .lp-sublabel { flex-shrink: 0; }
+
+/* V6 §D.2 ghost detail selector */
+.lp-ghost-detail { padding-left: 16px; margin-top: 2px; }
+
 /* ── Mesh-wheel active-picking-layer label (V6 §D.1) ──────────────── */
 
 .mesh-wheel-label {

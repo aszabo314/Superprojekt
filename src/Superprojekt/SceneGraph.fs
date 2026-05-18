@@ -136,16 +136,30 @@ module SceneGraph =
                     | AlongWorldZ -> V3d.OOI
                     | AlongCameraView ->
                         v.Backward.TransformDir(V3d(0.0, 0.0, -1.0)) |> Vec.normalize)
-            let exploreEnabled  = model.Explore |> AVal.map (fun e -> e.Enabled)
-            let highlightModeInt = model.Explore |> AVal.map (fun e ->
-                match e.HighlightMode with SteepnessOnly -> 0 | DisagreementOnly -> 1 | Combined -> 2)
-            let steepnessThresh = model.Explore |> AVal.map (fun e -> e.SteepnessThreshold)
-            let disagreementThresh = model.Explore |> AVal.map (fun e -> e.DisagreementThreshold)
-            let highlightAlpha  = model.Explore |> AVal.map (fun e -> e.HighlightAlpha)
-            let highlightColor =
+            let exploreEnabled = model.Explore |> AVal.map (fun e -> e.Enabled)
+            let fcEnabled = model.Explore |> AVal.map (fun e -> if e.FeatureConfidence.Enabled then 1 else 0)
+            let dgEnabled = model.Explore |> AVal.map (fun e -> if e.Disagreement.Enabled then 1 else 0)
+            let fcThresh  = model.Explore |> AVal.map (fun e -> e.FeatureConfidence.Threshold)
+            let dgThresh  = model.Explore |> AVal.map (fun e -> e.Disagreement.Threshold)
+            let mixModeInt = model.Explore |> AVal.map (fun e ->
+                match e.MixMode with SideBySide -> 0 | Blended -> 1 | Alternating -> 2)
+            let highlightAlpha = model.Explore |> AVal.map (fun e -> e.HighlightAlpha)
+            let fcColor =
                 model.Explore |> AVal.map (fun e ->
-                    let c = e.HighlightColor
+                    let c = e.FeatureConfidence.Color
                     V4d(float c.R, float c.G, float c.B, float c.A))
+            let dgColor =
+                model.Explore |> AVal.map (fun e ->
+                    let c = e.Disagreement.Color
+                    V4d(float c.R, float c.G, float c.B, float c.A))
+            // Time uniform feeds the Alternating mix flicker. A simple
+            // wall-clock seconds value re-evaluates on every frame because
+            // the AVal.custom binding below is invalidated; this matches
+            // the existing per-frame eval pattern used for the heatmap.
+            let exploreTime =
+                AVal.custom (fun _ ->
+                    let now = System.DateTime.UtcNow
+                    float (now.TimeOfDay.TotalSeconds))
             let signature =
                 info.Runtime.CreateFramebufferSignature [
                     DefaultSemantic.Colors, TextureFormat.Rgba8
@@ -167,12 +181,16 @@ module SceneGraph =
                     Sg.Uniform("DepthTexture",       depthArrTex)
                     Sg.Uniform("ViewportSize",       info.ViewportSize)
                     Sg.Uniform("MeshVisibilityMask", meshVisibilityMask)
-                    Sg.Uniform("ReferenceAxis",      refAxis)
-                    Sg.Uniform("ExploreHighlightMode", highlightModeInt)
-                    Sg.Uniform("SteepnessThreshold", steepnessThresh)
-                    Sg.Uniform("DisagreementThreshold", disagreementThresh)
-                    Sg.Uniform("HighlightColor",    highlightColor)
-                    Sg.Uniform("HighlightAlpha",    highlightAlpha)
+                    Sg.Uniform("ReferenceAxis",        refAxis)
+                    Sg.Uniform("FcEnabled",            fcEnabled)
+                    Sg.Uniform("DgEnabled",            dgEnabled)
+                    Sg.Uniform("FcThreshold",          fcThresh)
+                    Sg.Uniform("DgThreshold",          dgThresh)
+                    Sg.Uniform("FcColor",              fcColor)
+                    Sg.Uniform("DgColor",              dgColor)
+                    Sg.Uniform("MixModeInt",           mixModeInt)
+                    Sg.Uniform("ExploreTime",          exploreTime)
+                    Sg.Uniform("HighlightAlpha",       highlightAlpha)
                     Sg.View view
                     Sg.Proj proj
                     Primitives.FullscreenQuad
@@ -196,10 +214,16 @@ module SceneGraph =
             )
         let exploreTexAsITex = exploreTex |> AVal.map (fun t -> t :> ITexture)
 
+        let ghostDetailInt =
+            model.GhostDetail |> AVal.map (function
+                | OutlineOnly -> 0
+                | PlusCurvature -> 1
+                | PlusTerrainFeatures -> 2)
+
         let composite =
             sg {
                 Sg.Active (AVal.map not fullscreenActive)
-                MeshView.composeMeshTextures cnt colors depths exploreTexAsITex model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth clipMin clipMax effectiveGhostSilhouette meshVisibilityMask
+                MeshView.composeMeshTextures cnt colors depths exploreTexAsITex model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth clipMin clipMax effectiveGhostSilhouette ghostDetailInt meshVisibilityMask
             }
 
         let fullscreenNodes =

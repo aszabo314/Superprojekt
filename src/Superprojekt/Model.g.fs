@@ -1,5 +1,5 @@
-//7e58ebe3-353c-9c64-34d9-5a3dba83461b
-//53e6241f-a1b9-a15a-7a21-63f781d8e469
+//4c521751-5ac7-e37d-3070-b53d664161f9
+//1571cc84-3fe2-2f61-e02d-e26b5c697d7b
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -32,6 +32,7 @@ type AdaptiveModel(value : Model) =
     let _MinDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MinDifferenceDepth)
     let _MaxDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MaxDifferenceDepth)
     let _GhostSilhouette_ = FSharp.Data.Adaptive.cval(value.GhostSilhouette)
+    let _GhostDetail_ = FSharp.Data.Adaptive.cval(value.GhostDetail)
     let _GhostOpacity_ = FSharp.Data.Adaptive.cval(value.GhostOpacity)
     let _ClipActive_ = FSharp.Data.Adaptive.cval(value.ClipActive)
     let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
@@ -77,6 +78,7 @@ type AdaptiveModel(value : Model) =
             _MinDifferenceDepth_.Value <- value.MinDifferenceDepth
             _MaxDifferenceDepth_.Value <- value.MaxDifferenceDepth
             _GhostSilhouette_.Value <- value.GhostSilhouette
+            _GhostDetail_.Value <- value.GhostDetail
             _GhostOpacity_.Value <- value.GhostOpacity
             _ClipActive_.Value <- value.ClipActive
             _ClipBox_.Value <- value.ClipBox
@@ -115,6 +117,7 @@ type AdaptiveModel(value : Model) =
     member __.MinDifferenceDepth = _MinDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.MaxDifferenceDepth = _MaxDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.GhostSilhouette = _GhostSilhouette_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.GhostDetail = _GhostDetail_ :> FSharp.Data.Adaptive.aval<GhostDetail>
     member __.GhostOpacity = _GhostOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ClipActive = _ClipActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>

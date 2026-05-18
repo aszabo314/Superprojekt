@@ -3,6 +3,64 @@
 Working reference for the V5→V6 migration. Lists where each V5 feature lives
 in the current codebase. Updated as each phase lands.
 
+## Phase 5 status (Dual-signal Explore + ghost silhouette enhancement, §D.4 + §D.2)
+
+Phase 5 reshapes the Explore card from a single highlight signal into
+two independently-toggled signals (Feature confidence + Disagreement)
+with three composition modes, and gives the Ghost-silhouette control
+a three-level detail selector.
+
+V6 references active after Phase 5:
+- `Model.fs`: `SignalState`, `MixMode`, `GhostDetail`. `ExploreMode` is
+  rebuilt around two `SignalState`s + `MixMode`; `ExploreMode.initial`
+  defaults to both signals on, MixMode = Blended. `Model.GhostDetail`
+  added alongside the existing `GhostSilhouette` toggle (the toggle is
+  the enable, GhostDetail is the level).
+- `Update.fs`: new `ExploreSignal` DU and `SetSignalEnabled` /
+  `SetSignalThreshold` / `SetSignalColor` / `SetMixMode` messages
+  replace `SetHighlightMode` / `SetSteepnessThreshold` /
+  `SetDisagreementThreshold`. New `SetGhostDetail` message at the top
+  level.
+- `Shader.fs`: `BlitShader.exploreHeatmap` rebuilt around the dual
+  signals. Feature-confidence score is `curvature × steepness` —
+  curvature estimated from the angular variation of the centre normal
+  against four neighbour normals (depth-derivative reconstruction);
+  steepness is `1 - |dot(N, refAxis)|`. Disagreement keeps the V5
+  depth-stddev formula. Both scores feed per-mix-mode compositing
+  (`SideBySide` = 8-px stripe pattern, `Blended` = colour-weighted
+  mean, `Alternating` = 1 Hz colour flip driven by an `ExploreTime`
+  uniform sourced from wall clock).
+  `BlitShader.readArray` learned to modulate the ghost composite with
+  a screen-space depth-Laplacian curvature term when
+  `GhostDetailMode > 0`. Mode 1 = "+ Curvature" cool→warm gradient
+  blended at 35 %; mode 2 = "+ Terrain features" widens the
+  high-curvature band so ridges crest through (cheap surrogate for
+  the spec's polyline rasterisation).
+- `MeshView.composeMeshTextures` threads the new `ghostDetailMode`
+  uniform through to `readArray`.
+- `SceneGraph.exploreTex` re-wires the explore shader bindings:
+  `FcEnabled` / `FcThreshold` / `FcColor`, `DgEnabled` / `DgThreshold`
+  / `DgColor`, `MixModeInt`, `ExploreTime`, plus the shared
+  `ReferenceAxis` and `HighlightAlpha`.
+- `Gui.fs`: `exploreCard` rebuilt as a two-row layout — each row has
+  its own toggle + sensitivity slider, with a Mix selector
+  (Blended / Side-by-side / Alternating) that only shows when both
+  signals are on. Scene tab grows a "+ Curvature / + Terrain"
+  segmented selector below the Ghost silhouette toggle, hidden until
+  the toggle is on.
+- `wwwroot/style.css`: `.explore-signal-row`, `.explore-signal-controls`,
+  `.explore-mix-row`, `.lp-ghost-detail`.
+
+V6 references still **deferred**:
+- Curvature data computed in mesh space (cached per mesh) — Phase 5
+  uses a screen-space curvature proxy, which is enough for the spec's
+  acceptance criteria but costs accuracy when the camera is grazing.
+  A mesh-local curvature texture is a Phase 9 polish target.
+- True terrain-feature polylines (ridge lines rasterised onto the
+  ghost slice). The current "+ Terrain features" mode widens the
+  high-curvature band as a cheap visual surrogate.
+- All other §D.x — Phases 6–9 per Part F.
+
 ## Phase 2 status (Anchor Sphere primitive, §D.6)
 
 Phase 2 reshaped `ScanPin` from a selection-prism cylinder into an

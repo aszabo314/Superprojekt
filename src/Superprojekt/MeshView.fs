@@ -249,6 +249,7 @@ module MeshView =
         (clipMin                : aval<V3d>)
         (clipMax                : aval<V3d>)
         (ghostSilhouette        : aval<bool>)
+        (ghostDetailMode        : aval<int>)
         (meshVisibilityMask     : aval<int>) =
         let colorTex = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
         let depthTex = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
@@ -264,6 +265,7 @@ module MeshView =
             Sg.Uniform("ClipMin",               clipMin)
             Sg.Uniform("ClipMax",               clipMax)
             Sg.Uniform("GhostSilhouette",       ghostSilhouette)
+            Sg.Uniform("GhostDetailMode",       ghostDetailMode)
             Sg.Uniform("MeshVisibilityMask",    meshVisibilityMask)
             Primitives.FullscreenQuad
         }

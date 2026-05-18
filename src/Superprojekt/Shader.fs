@@ -93,11 +93,20 @@ module BlitShader =
         member x.GhostOpacity         : float = x?GhostOpacity
         member x.CylClip              : M44d  = x?CylClip
         member x.ReferenceAxis        : V3d   = x?ReferenceAxis
-        member x.SteepnessThreshold   : float = x?SteepnessThreshold
-        member x.DisagreementThreshold : float = x?DisagreementThreshold
-        member x.HighlightColor       : V4d   = x?HighlightColor
+        // V6 §D.4 — dual-signal explore uniforms. Per-signal enable
+        // flags + thresholds + colours; MixModeInt 0=SideBySide,
+        // 1=Blended, 2=Alternating; ExploreTime is wall-clock seconds.
+        member x.FcEnabled            : int   = x?FcEnabled
+        member x.DgEnabled            : int   = x?DgEnabled
+        member x.FcThreshold          : float = x?FcThreshold
+        member x.DgThreshold          : float = x?DgThreshold
+        member x.FcColor              : V4d   = x?FcColor
+        member x.DgColor              : V4d   = x?DgColor
+        member x.MixModeInt           : int   = x?MixModeInt
+        member x.ExploreTime          : float = x?ExploreTime
         member x.HighlightAlpha       : float = x?HighlightAlpha
-        member x.ExploreHighlightMode : int   = x?ExploreHighlightMode
+        // V6 §D.2 — ghost detail mode: 0=Outline 1=+Curvature 2=+Terrain.
+        member x.GhostDetailMode      : int   = x?GhostDetailMode
         member x.LassoPlaneCount      : int   = x?LassoPlaneCount
         member x.LassoPlanes          : Arr<N<32>, V4d> = x?LassoPlanes
     
@@ -213,6 +222,7 @@ module BlitShader =
                             index <- i
                             
             let mutable ghostMinDepth = 1.0
+            let mutable ghostWinner = -1
             if uniform.GhostSilhouette then
                 for i in 0 .. uniform.MeshCount - 1 do
                     let di = deputy.SampleLevel(v.tc, 2*i+1, 0.0).X
@@ -220,7 +230,48 @@ module BlitShader =
                     if di < minDepth then
                         color.XYZ <- color.XYZ * (1.0 - c.W) + c.XYZ * c.W
                         color.W <- color.W * (1.0 - c.W) + c.W
-                        if di < ghostMinDepth then ghostMinDepth <- di
+                        if di < ghostMinDepth then
+                            ghostMinDepth <- di
+                            ghostWinner <- i
+
+            // V6 §D.2 — ghost detail "+ Curvature" / "+ Terrain features".
+            // Modulates the just-composited ghost colour with a screen-
+            // space curvature term from the front-most ghost slice. Cool
+            // (blue) for low curvature, warm (orange-red) for high.
+            // Terrain features (mode 2) additionally widens the high-band
+            // so ridges read as a thin bright crest — a cheap surrogate
+            // for the spec's "ridge/valley polyline rasterisation".
+            if uniform.GhostSilhouette && uniform.GhostDetailMode > 0 && ghostWinner >= 0 then
+                let vp = V2d(float uniform.ViewportSize.X, float uniform.ViewportSize.Y)
+                let pxX = 1.0 / vp.X
+                let pxY = 1.0 / vp.Y
+                let tcxp = v.tc + V2d(pxX, 0.0)
+                let tcyp = v.tc + V2d(0.0, pxY)
+                let tcxm = v.tc - V2d(pxX, 0.0)
+                let tcym = v.tc - V2d(0.0, pxY)
+                let slice = 2 * ghostWinner + 1
+                let dC = ghostMinDepth
+                let dXp = deputy.SampleLevel(tcxp, slice, 0.0).X
+                let dXm = deputy.SampleLevel(tcxm, slice, 0.0).X
+                let dYp = deputy.SampleLevel(tcyp, slice, 0.0).X
+                let dYm = deputy.SampleLevel(tcym, slice, 0.0).X
+                if dXp < 0.9999 && dXm < 0.9999 && dYp < 0.9999 && dYm < 0.9999 then
+                    // Depth Laplacian normalised by centre depth — a cheap
+                    // proxy for surface curvature in screen space.
+                    let lap = abs (dXp + dXm + dYp + dYm - 4.0 * dC) / max 1e-4 dC
+                    let curv = clamp 0.0 1.0 (lap * 1500.0)
+                    let widened =
+                        if uniform.GhostDetailMode > 1 then
+                            // Terrain features: emphasise the high band so
+                            // ridges pop. Curve = clamp(curv * 2 - 0.3).
+                            clamp 0.0 1.0 (curv * 2.0 - 0.3)
+                        else curv
+                    // Cool→warm gradient: low = #2563eb (blue), high = #f97316 (orange).
+                    let tintLo = V3d(0.15, 0.39, 0.92)
+                    let tintHi = V3d(0.98, 0.45, 0.09)
+                    let tint = tintLo * (1.0 - widened) + tintHi * widened
+                    let mix = 0.35  // faint per spec
+                    color.XYZ <- color.XYZ * (1.0 - mix) + tint * mix
 
             let a = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * minDepth - 1.0, 1.0)
             let b = uniform.ViewProjTrafoInv * V4d(ndc, 2.0 * maxDepth - 1.0, 1.0)
@@ -247,64 +298,102 @@ module BlitShader =
         let w = uniform.ViewProjTrafoInv * clip
         w.XYZ / w.W
 
-    // ExploreHighlightMode: 0 = SteepnessOnly, 1 = DisagreementOnly, 2 = Combined
-    // Steepness uses screen-space normals (needs neighbor depth samples).
-    // Disagreement uses axis-projected world depth (center pixel only — view-independent).
-    // Combined: disagreement over ALL meshes, qualified by steepCount >= 1.
+    // V6 §D.4 — dual-signal Explore heatmap. For each pixel:
+    //  - Feature confidence = curvature × steepness (screen-space).
+    //    Curvature is estimated as the angular variation between the
+    //    centre-pixel reconstructed normal and the four-neighbour
+    //    normals, summed and clamped to [0, 1]; steepness is the
+    //    absolute dot of the centre normal with the reference axis.
+    //  - Disagreement = depth-stddev across visible meshes (V5 formula).
+    // The two scores are gated by their respective thresholds and
+    // composited per MixModeInt (0=SideBySide, 1=Blended, 2=Alternating).
     let exploreHeatmap (v : Effects.Vertex) =
         fragment {
             let ndc = 2.0 * v.tc - V2d.II
             let vpSize = V2d(float uniform.ViewportSize.X, float uniform.ViewportSize.Y)
-            let dx = V2d(2.0 / vpSize.X, 0.0)
-            let dy = V2d(0.0, 2.0 / vpSize.Y)
-            let tcx = v.tc + V2d(1.0 / vpSize.X, 0.0)
-            let tcy = v.tc + V2d(0.0, 1.0 / vpSize.Y)
-            let mode = uniform.ExploreHighlightMode
-            let mutable steepCount = 0
-            let mutable count = 0
-            let mutable mean = 0.0
-            let mutable s2 = 0.0
+            let pxX = 1.0 / vpSize.X
+            let pxY = 1.0 / vpSize.Y
+            let dxNdc = V2d(2.0 * pxX, 0.0)
+            let dyNdc = V2d(0.0, 2.0 * pxY)
+            let tcx = v.tc + V2d(pxX, 0.0)
+            let tcy = v.tc + V2d(0.0, pxY)
+            let tcxm = v.tc - V2d(pxX, 0.0)
+            let tcym = v.tc - V2d(0.0, pxY)
+            let fcOn = uniform.FcEnabled <> 0
+            let dgOn = uniform.DgEnabled <> 0
+
+            // Disagreement: depth stddev across all visible meshes.
+            let mutable dgCount = 0
+            let mutable dgMean  = 0.0
+            let mutable dgS2    = 0.0
+            // Feature confidence: pick the front-most visible mesh's
+            // depth at this pixel and compute curvature × steepness on it.
+            let mutable bestI = -1
+            let mutable bestDepth = 1.0
             for i in 0 .. uniform.MeshCount - 1 do
                 let isVis = (uniform.MeshVisibilityMask >>> i) &&& 1 <> 0
                 if isVis then
-                    let di = deputy.SampleLevel(v.tc, 2*i, 0.0).X
+                    let di = deputy.SampleLevel(v.tc, 2 * i, 0.0).X
                     if di < 0.9999 then
-                        let p = reconstructWorld ndc di
-                        // Disagreement: accumulate axis-projected depth for all meshes (modes 1, 2)
-                        if mode <> 0 then
+                        if dgOn then
+                            let p = reconstructWorld ndc di
                             let depth = Vec.dot p uniform.ReferenceAxis
-                            count <- count + 1
-                            let delta = depth - mean
-                            mean <- mean + delta / float count
-                            let delta2 = depth - mean
-                            s2 <- s2 + delta * delta2
-                        // Steepness: reconstruct normal from depth derivatives (modes 0, 2)
-                        if mode <> 1 then
-                            let dix = deputy.SampleLevel(tcx, 2*i, 0.0).X
-                            let diy = deputy.SampleLevel(tcy, 2*i, 0.0).X
-                            if dix < 0.9999 && diy < 0.9999 then
-                                let px = reconstructWorld (ndc + dx) dix
-                                let py = reconstructWorld (ndc + dy) diy
-                                let n = Vec.cross (px - p) (py - p) |> Vec.normalize
-                                let alignment = abs (Vec.dot n uniform.ReferenceAxis)
-                                if alignment < uniform.SteepnessThreshold then
-                                    steepCount <- steepCount + 1
-            // Determine alpha before pattern
-            let mutable alpha = 0.0
-            if mode = 0 then
-                if steepCount < 1 then discard()
-                alpha <- uniform.HighlightAlpha
-            elif mode = 1 then
-                if count < 2 then discard()
-                let stddev = sqrt (s2 / float count)
-                if stddev < uniform.DisagreementThreshold then discard()
-                alpha <- clamp 0.3 1.0 (stddev / (uniform.DisagreementThreshold * 3.0)) * uniform.HighlightAlpha
-            else
-                if steepCount < 1 || count < 2 then discard()
-                let stddev = sqrt (s2 / float count)
-                if stddev < uniform.DisagreementThreshold then discard()
-                alpha <- clamp 0.3 1.0 (stddev / (uniform.DisagreementThreshold * 3.0)) * uniform.HighlightAlpha
-            // Dot grid pattern (screen-space, non-directional)
+                            dgCount <- dgCount + 1
+                            let delta = depth - dgMean
+                            dgMean <- dgMean + delta / float dgCount
+                            dgS2 <- dgS2 + delta * (depth - dgMean)
+                        if di < bestDepth then
+                            bestDepth <- di
+                            bestI <- i
+
+            let mutable fcScore = 0.0
+            if fcOn && bestI >= 0 then
+                let p = reconstructWorld ndc bestDepth
+                let dxp = deputy.SampleLevel(tcx,  2 * bestI, 0.0).X
+                let dxm = deputy.SampleLevel(tcxm, 2 * bestI, 0.0).X
+                let dyp = deputy.SampleLevel(tcy,  2 * bestI, 0.0).X
+                let dym = deputy.SampleLevel(tcym, 2 * bestI, 0.0).X
+                if dxp < 0.9999 && dxm < 0.9999 && dyp < 0.9999 && dym < 0.9999 then
+                    let pxp = reconstructWorld (ndc + dxNdc) dxp
+                    let pxm = reconstructWorld (ndc - dxNdc) dxm
+                    let pyp = reconstructWorld (ndc + dyNdc) dyp
+                    let pym = reconstructWorld (ndc - dyNdc) dym
+                    let nC  = Vec.cross (pxp - p)   (pyp - p)   |> Vec.normalize
+                    let nL  = Vec.cross (p   - pxm) (pyp - pxm) |> Vec.normalize
+                    let nR  = Vec.cross (pxp - pxm) (pyp - pxp) |> Vec.normalize
+                    let nU  = Vec.cross (pxp - pym) (p   - pym) |> Vec.normalize
+                    let nD  = Vec.cross (pxp - p)   (pym - p)   |> Vec.normalize
+                    // Curvature proxy: 1 - average dot of centre normal with
+                    // the four diagonal-neighbour normals (saturated).
+                    let curv =
+                        let s =
+                            (1.0 - max 0.0 (Vec.dot nC nL))
+                            + (1.0 - max 0.0 (Vec.dot nC nR))
+                            + (1.0 - max 0.0 (Vec.dot nC nU))
+                            + (1.0 - max 0.0 (Vec.dot nC nD))
+                        clamp 0.0 1.0 (s * 0.5)
+                    // Steepness: how non-aligned the centre normal is with
+                    // the reference axis (1 = perpendicular = steep).
+                    let steep = 1.0 - abs (Vec.dot nC uniform.ReferenceAxis)
+                    fcScore <- curv * steep
+
+            // Apply per-signal thresholds. Each score either becomes a
+            // normalised intensity in [0, 1] or 0 if below threshold.
+            let fcInt =
+                if fcOn && fcScore > uniform.FcThreshold then
+                    clamp 0.0 1.0 ((fcScore - uniform.FcThreshold) / max 1e-3 (1.0 - uniform.FcThreshold))
+                else 0.0
+            let dgInt =
+                if dgOn && dgCount >= 2 then
+                    let stddev = sqrt (dgS2 / float dgCount)
+                    if stddev > uniform.DgThreshold then
+                        clamp 0.0 1.0 ((stddev - uniform.DgThreshold) / (uniform.DgThreshold * 3.0))
+                    else 0.0
+                else 0.0
+
+            if fcInt <= 0.0 && dgInt <= 0.0 then discard()
+
+            // Dot grid pattern shared by both signals.
             let pixel = v.tc * vpSize
             let cell = 8.0
             let cx = (pixel.X % cell) - cell * 0.5
@@ -312,8 +401,48 @@ module BlitShader =
             let dist = sqrt(cx * cx + cy * cy)
             if dist > cell * 0.38 then discard()
             let dotFade = clamp 0.0 1.0 (1.0 - dist / (cell * 0.38))
+
+            // Composite: pick a colour + alpha per MixMode when both
+            // signals are active.
+            let mutable col = V3d.Zero
+            let mutable alpha = 0.0
+            if fcInt > 0.0 && dgInt <= 0.0 then
+                col <- uniform.FcColor.XYZ
+                alpha <- uniform.HighlightAlpha * (0.3 + 0.7 * fcInt)
+            elif dgInt > 0.0 && fcInt <= 0.0 then
+                col <- uniform.DgColor.XYZ
+                alpha <- uniform.HighlightAlpha * (0.3 + 0.7 * dgInt)
+            else
+                let m = uniform.MixModeInt
+                if m = 0 then
+                    // SideBySide: 8 px stripes alternating between the two
+                    // signal colours along the screen-x axis.
+                    let stripe = floor (pixel.X / 8.0) % 2.0
+                    if stripe < 0.5 then
+                        col <- uniform.FcColor.XYZ
+                        alpha <- uniform.HighlightAlpha * (0.3 + 0.7 * fcInt)
+                    else
+                        col <- uniform.DgColor.XYZ
+                        alpha <- uniform.HighlightAlpha * (0.3 + 0.7 * dgInt)
+                elif m = 2 then
+                    // Alternating: flip the two colours on a 1-second cycle.
+                    let phase = floor (uniform.ExploreTime * 1.5) % 2.0
+                    if phase < 0.5 then
+                        col <- uniform.FcColor.XYZ
+                        alpha <- uniform.HighlightAlpha * (0.3 + 0.7 * fcInt)
+                    else
+                        col <- uniform.DgColor.XYZ
+                        alpha <- uniform.HighlightAlpha * (0.3 + 0.7 * dgInt)
+                else
+                    // Blended (default): per-channel weighted mean.
+                    let w1 = fcInt
+                    let w2 = dgInt
+                    let wSum = max 1e-3 (w1 + w2)
+                    col <- (uniform.FcColor.XYZ * w1 + uniform.DgColor.XYZ * w2) / wSum
+                    alpha <- uniform.HighlightAlpha * (0.3 + 0.7 * max fcInt dgInt)
+
             let finalAlpha = alpha * (0.5 + 0.5 * dotFade)
-            return V4d(uniform.HighlightColor.XYZ, finalAlpha)
+            return V4d(col, finalAlpha)
         }
 
     let readArraySlice (v : Effects.Vertex) =

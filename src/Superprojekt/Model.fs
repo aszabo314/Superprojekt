@@ -10,10 +10,31 @@ type ReferenceAxisMode =
     | AlongWorldZ
     | AlongCameraView
 
-type ExploreHighlightMode =
-    | SteepnessOnly
-    | DisagreementOnly
-    | Combined
+/// V6 §D.4 — per-signal toggle for the dual-signal Explore mode.
+/// `Threshold` is the sensitivity slider; meaning differs per signal:
+/// for feature confidence it's the minimum curvature×steepness score,
+/// for disagreement it's the minimum cross-mesh depth stddev in metres.
+type SignalState = {
+    Enabled   : bool
+    Threshold : float
+    Color     : C4f
+}
+
+/// V6 §D.4 — composition mode when both signals are active.
+type MixMode =
+    | SideBySide   // alternating stripe pattern in two hues
+    | Blended      // arithmetic mean of both signals
+    | Alternating  // time-cycled flicker between the two
+
+/// V6 §D.2 — ghost silhouette detail level. OutlineOnly is the V5
+/// behaviour; PlusCurvature blends a faint curvature colour gradient
+/// onto the silhouette; PlusTerrainFeatures additionally rasterises
+/// ridge/valley lines. Terrain features are deferred until Phase 9
+/// polish — selectable but the same as PlusCurvature for now.
+type GhostDetail =
+    | OutlineOnly
+    | PlusCurvature
+    | PlusTerrainFeatures
 
 type RenderingMode =
     | Textured
@@ -24,13 +45,16 @@ type MeshSoloState =
     | NoSolo
     | Solo of name:string * restore:Map<string,bool>
 
+/// V6 §D.4 — restructured Explore card state. `Enabled` is the master
+/// toggle that shows/hides the tuning card. Each signal carries its
+/// own enable + threshold + colour; `MixMode` chooses how to composite
+/// when both are on.
 type ExploreMode =
     {
         Enabled            : bool
-        HighlightMode      : ExploreHighlightMode
-        SteepnessThreshold : float
-        DisagreementThreshold : float
-        HighlightColor     : C4f
+        FeatureConfidence  : SignalState
+        Disagreement       : SignalState
+        MixMode            : MixMode
         HighlightAlpha     : float
     }
 
@@ -55,12 +79,19 @@ type LassoVolume =
 module ExploreMode =
     let initial =
         {
-            Enabled            = false
-            HighlightMode      = Combined
-            SteepnessThreshold = 0.3
-            DisagreementThreshold = 0.05
-            HighlightColor     = C4f(1.0f, 0.1f, 0.35f, 1.0f)
-            HighlightAlpha     = 0.9
+            Enabled = false
+            FeatureConfidence = {
+                Enabled   = true
+                Threshold = 0.3
+                Color     = C4f(1.0f, 0.55f, 0.10f, 1.0f)  // warm orange — V5 default
+            }
+            Disagreement = {
+                Enabled   = true
+                Threshold = 0.05
+                Color     = C4f(0.15f, 0.55f, 1.0f, 1.0f)  // cool blue
+            }
+            MixMode        = Blended
+            HighlightAlpha = 0.9
         }
 
 [<ModelType>]
@@ -90,6 +121,7 @@ type Model =
         MinDifferenceDepth   : float
         MaxDifferenceDepth   : float
         GhostSilhouette      : bool
+        GhostDetail          : GhostDetail
         GhostOpacity         : float
 
         ClipActive     : bool
@@ -140,6 +172,7 @@ module Model =
             MinDifferenceDepth  = 3.0
             MaxDifferenceDepth  = 10.0
             GhostSilhouette     = false
+            GhostDetail         = OutlineOnly
             GhostOpacity        = 0.1
             ClipActive     = false
             ClipBox        = Box3d(V3d(-1e10), V3d(1e10))

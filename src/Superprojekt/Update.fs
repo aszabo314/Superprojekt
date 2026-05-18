@@ -18,6 +18,7 @@ type Message =
     | ToggleFullscreen
     | ToggleDifferenceRendering
     | ToggleGhostSilhouette
+    | SetGhostDetail of GhostDetail
     | SetGhostOpacity of float
     | SetMinDifferenceDepth of float
     | SetMaxDifferenceDepth of float
@@ -50,12 +51,18 @@ type Message =
     | LassoCancel
     | LassoClear
 
+and ExploreSignal =
+    | FeatureConfidenceSignal
+    | DisagreementSignal
+
 and ExploreModeMessage =
     | SetExploreEnabled of bool
-    | SetHighlightMode of ExploreHighlightMode
-    | SetSteepnessThreshold of float
-    | SetDisagreementThreshold of float
     | SetReferenceAxisMode of ReferenceAxisMode
+    // V6 §D.4 — dual-signal controls
+    | SetSignalEnabled of ExploreSignal * bool
+    | SetSignalThreshold of ExploreSignal * float
+    | SetSignalColor of ExploreSignal * C4f
+    | SetMixMode of MixMode
 
 and CardMessage =
     | BringToFront of CardId
@@ -368,6 +375,8 @@ module Update =
             { model with DifferenceRendering = not model.DifferenceRendering }
         | ToggleGhostSilhouette ->
             { model with GhostSilhouette = not model.GhostSilhouette }
+        | SetGhostDetail d ->
+            { model with GhostDetail = d }
         | SetGhostOpacity v ->
             { model with GhostOpacity = v }
         | SetMinDifferenceDepth v ->
@@ -395,7 +404,7 @@ module Update =
                     ClipBounds = padded
                     ClipBox = padded
                     MeshBounds = perMesh
-                    Explore = { model.Explore with DisagreementThreshold = disagreementDefault } }
+                    Explore = { model.Explore with Disagreement = { model.Explore.Disagreement with Threshold = disagreementDefault } } }
         | ToggleClip ->
             { model with ClipActive = not model.ClipActive }
         | SetClipBox box ->
@@ -543,9 +552,25 @@ module Update =
             let e = model.Explore
             match msg with
             | SetExploreEnabled v -> { model with Explore = { e with Enabled = v } }
-            | SetHighlightMode m -> { model with Explore = { e with HighlightMode = m } }
-            | SetSteepnessThreshold v -> { model with Explore = { e with SteepnessThreshold = v } }
-            | SetDisagreementThreshold v -> { model with Explore = { e with DisagreementThreshold = v } }
+            | SetSignalEnabled(sig_, on) ->
+                let next =
+                    match sig_ with
+                    | FeatureConfidenceSignal -> { e with FeatureConfidence = { e.FeatureConfidence with Enabled = on } }
+                    | DisagreementSignal      -> { e with Disagreement      = { e.Disagreement with Enabled = on } }
+                { model with Explore = next }
+            | SetSignalThreshold(sig_, v) ->
+                let next =
+                    match sig_ with
+                    | FeatureConfidenceSignal -> { e with FeatureConfidence = { e.FeatureConfidence with Threshold = v } }
+                    | DisagreementSignal      -> { e with Disagreement      = { e.Disagreement with Threshold = v } }
+                { model with Explore = next }
+            | SetSignalColor(sig_, c) ->
+                let next =
+                    match sig_ with
+                    | FeatureConfidenceSignal -> { e with FeatureConfidence = { e.FeatureConfidence with Color = c } }
+                    | DisagreementSignal      -> { e with Disagreement      = { e.Disagreement with Color = c } }
+                { model with Explore = next }
+            | SetMixMode m -> { model with Explore = { e with MixMode = m } }
             | SetReferenceAxisMode m -> { model with ReferenceAxis = m }
         | ScanPinMsg msg ->
             let sp = model.ScanPins

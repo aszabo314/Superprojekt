@@ -11,15 +11,6 @@ module PinGeometry =
         let fwd = Vec.cross right axis |> Vec.normalize
         right, fwd
 
-    let coreSampleTrafo (prism : SelectionPrism) =
-        let axis = -(prism.AxisDirection |> Vec.normalize)
-        let right, fwd = axisFrame axis
-        let rotFwd = M44d(right.X, right.Y, right.Z, 0.0,
-                          fwd.X,   fwd.Y,   fwd.Z,   0.0,
-                          axis.X,  axis.Y,  axis.Z,  0.0,
-                          0.0,     0.0,     0.0,     1.0)
-        Trafo3d.Translation(-prism.AnchorPoint) * Trafo3d(rotFwd, rotFwd.Transposed)
-
     /// Returns ((upperPos, upperIdx), (lowerPos, lowerIdx), (sidePos, sideIdx)) for the between-space volume.
     /// Quads are emitted only when all four corner nodes have brackets; side walls close the resulting boundary.
     let buildBetweenSpaceSurfaces (prism : SelectionPrism) (data : StratigraphyData) (cache : BandCache option) (colIdx : int) (hoverZ : float) =

@@ -106,6 +106,15 @@ module View =
 
                 Sg.Pass RenderPass.passZero
 
+                // Canvas-px cursor tracking — Sg-level events deliver
+                // e.Position as V3d world coords, so we capture screen px
+                // here at the DOM layer and let lasso/wheel-label consume it.
+                Dom.OnPointerMove(fun e ->
+                    let cursorPx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
+                    if cursorScreen.Value <> Some cursorPx then
+                        transact (fun () -> cursorScreen.Value <- Some cursorPx)
+                )
+
                 // V6 §D.1 mesh-wheel: cycle the active picking layer when at
                 // least two visible meshes intersect the cursor ray; otherwise
                 // forward to the orbit zoom. Alt forces zoom unconditionally.
@@ -181,8 +190,13 @@ module View =
                     let placement = AVal.force model.ScanPins.Placement
                     match AVal.force model.LassoDrawing with
                     | Some _ ->
-                        // Each click adds a vertex regardless of mesh hit.
-                        env.Emit [LassoAddVertex(V2d(float e.Position.X, float e.Position.Y))]
+                        // Each click adds a vertex at the cursor's canvas
+                        // pixel position (tracked by the Dom.OnPointerMove
+                        // handler below — Sg-level e.Position is V3d world,
+                        // not pixel coords, so we read from the cval).
+                        match cursorScreen.Value with
+                        | Some px -> env.Emit [LassoAddVertex px]
+                        | None -> ()
                         false
                     | None ->
                         match placement with
@@ -193,7 +207,7 @@ module View =
                             if e.Ctrl && e.Button = Button.Left && hitGeometry then
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
                                 env.Emit [ClearFilteredMesh]
-                                ServerActions.triggerFilter env model e.Position
+                                ServerActions.triggerFilter env model e.WorldPosition
                                 false
                             else
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
@@ -221,9 +235,6 @@ module View =
                     let cc = AVal.force model.CommonCentroid
                     let hitGeometry = e.Location.Depth < 0.9999
                     transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
-                    let cursorPx = V2d(float e.Position.X, float e.Position.Y)
-                    if cursorScreen.Value <> Some cursorPx then
-                        transact (fun () -> cursorScreen.Value <- Some cursorPx)
                     if AVal.force placementActive then
                         let next = if hitGeometry then Some e.WorldPosition else None
                         if placementHover.Value <> next then

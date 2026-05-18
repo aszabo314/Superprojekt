@@ -86,6 +86,8 @@ and ScanPinMessage =
     // Cross-mesh trace results — the same payload kind on a different
     // mesh than the host. Empty arrays clear the entry.
     | LineCrossMeshComputed of ScanPinId * meshName:string * V3d[] * scalars:float[]
+    // V6 §D.7.3 — patch payload result
+    | PatchComputed of ScanPinId * (V2d * V3d)[] * refDir:V3d * normal:V3d
 
 module CardUpdate =
 
@@ -283,6 +285,19 @@ module ScanPinUpdate =
                         if pts.Length = 0 then Map.remove mesh lp.CrossMeshTraces
                         else Map.add mesh (pts, scalars) lp.CrossMeshTraces
                     { pin with Payload = Line { lp with CrossMeshTraces = map } }
+                | _ -> pin)
+
+        | PatchComputed(id, pts, refDir, normal) ->
+            sp |> updatePin id (fun pin ->
+                match pin.Payload with
+                | Patch pp ->
+                    let pp' =
+                        { pp with
+                            ProjectedPoints = pts
+                            CompassNorth    = V2d(1.0, 0.0)
+                            RefDirWorld     = refDir
+                            NormalWorld     = normal }
+                    { pin with Payload = Patch pp' }
                 | _ -> pin)
 
 module Update =
@@ -615,6 +630,27 @@ module Update =
                                             |> Async.StartAsTask
                                         env.Emit [ScanPinMsg (LineCrossMeshComputed(id, peer, pts2, scalars2))]
                                     with _ -> ()
+                            with _ -> ()
+                        } |> ignore
+                    | _ -> ()
+                | None -> ()
+            | ChangePayloadType(id, PatchKind) ->
+                match HashMap.tryFind id sp'.Pins with
+                | Some pin ->
+                    match pin.Payload, pin.HostMeshName with
+                    | Patch pp, Some host ->
+                        let scale =
+                            model.ActiveDataset
+                            |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
+                            |> Option.defaultValue 1.0
+                        let centreWorld = pin.Centre / scale + model.CommonCentroid
+                        let radiusWorld = pp.Radius / scale
+                        task {
+                            try
+                                let! pts, refDir, normal =
+                                    Query.patch ApiConfig.apiBase.Value host centreWorld radiusWorld 4096
+                                    |> Async.StartAsTask
+                                env.Emit [ScanPinMsg (PatchComputed(id, pts, refDir, normal))]
                             with _ -> ()
                         } |> ignore
                     | _ -> ()

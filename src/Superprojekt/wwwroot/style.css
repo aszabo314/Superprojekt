@@ -602,6 +602,27 @@ body.loaded { background: #f4f6f8; }
 /* Line payload card body */
 .pin-card-line .line-plot { display: block; }
 
+/* Patch payload card body (V6 §D.7.3) */
+.pin-card-patch .patch-plot {
+    display: block;
+    margin: 0 auto;
+}
+.pin-card-patch .pin-card-caption {
+    text-align: center;
+    font-size: 10px;
+    color: #475569;
+    margin-top: 2px;
+}
+
+/* §D.12 coloured frame — a 4px strip at the top of each pin card
+   linking it visually to the host mesh's 3D rendering colour. */
+.pin-card-color-bar {
+    height: 4px;
+    width: 100%;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+}
+
 /* ── Mesh-wheel active-picking-layer label (V6 §D.1) ──────────────── */
 
 .mesh-wheel-label {

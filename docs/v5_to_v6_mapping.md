@@ -82,7 +82,28 @@ into four sub-phases:
   is selected and the line is the host trace). The card SVG renders
   every trace plus a small per-mesh legend with palette swatches; the
   host trace is starred and drawn thicker.
-- **4d: Patch payload + 2D-3D linkage (§D.12)** — deferred.
+- **4d: Patch payload + 2D-3D linkage (§D.12)** — landed.
+  Server added `/api/query/patch` doing the azimuthal-equidistant unwrap:
+  BVH-sphere triangle query, average-triangle-normal tangent plane,
+  Dijkstra on the edge graph for geodesic distance, then
+  `patch_coord = (d cos θ, d sin θ)` with θ measured from world +Y
+  projected into the tangent plane. Response carries `refDirWorld` +
+  `normalWorld` so the 3D footprint can be rebuilt without re-deriving
+  the tangent plane. Client adds `Query.patch`, `PatchComputed`
+  message, and a fan-out from `ChangePayloadType(_,PatchKind)`.
+  `PatchPayload` gains `RefDirWorld` + `NormalWorld` fields beyond the
+  spec's §C.3 shape (additive, not breaking).
+  Cards: patch section renders an SVG scatter of projected points
+  with elevation-coloured fills (cool→warm), a coloured ring matching
+  the host mesh palette, and a compass-rose arrow toward project
+  north (`CompassNorth` direction).
+  ScanPinScene: per-pin `pinPatchRings` draws a great-circle ring in
+  the tangent plane plus a compass arrow at the anchor, both linked
+  to the same palette colour as the card's frame.
+  §D.12 coloured frame: every pin card grows a `.pin-card-color-bar`
+  4px strip at the top with `background = DatasetColors[host]`, so
+  Point / Line / Patch cards all link visually to the 3D rendering
+  regardless of which payload they carry.
 
 V6 references active after Phase 4a:
 - `ScanPinModel.fs`: full `PayloadType` DU (`Point | Line | Patch`),

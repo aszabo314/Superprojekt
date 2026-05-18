@@ -336,6 +336,25 @@ module Query =
             return pts
         }
 
+    /// POST /query/patch — azimuthal-equidistant unwrap of the mesh disk
+    /// around `centre` with radius `radius`. Returns
+    /// (patchPoints, worldPoints, refDirWorld, normalWorld).
+    let patch (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int) : Async<(V2d * V3d)[] * V3d * V3d> =
+        async {
+            let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d}"""
+                        name (v3 centre) radius maxPoints
+            let! r = post serverUrl "/query/patch" json
+            let pts =
+                r.GetProperty("points").EnumerateArray() |> Seq.map (fun e ->
+                    let a = e.EnumerateArray() |> Seq.map (fun v -> v.GetDouble()) |> Seq.toArray
+                    V2d(a.[0], a.[1]), V3d(a.[2], a.[3], a.[4])
+                ) |> Seq.toArray
+            let readVec (prop : string) =
+                let a = r.GetProperty(prop).EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                V3d(a.[0], a.[1], a.[2])
+            return pts, readVec "refDir", readVec "normal"
+        }
+
     /// POST /query/curvature-ridge — returns the longest ridge polyline
     /// on the named mesh near the seed point. Threshold is dihedral-angle
     /// in radians (default 0.4 ≈ 23°). Returns (worldPoints, dihedralPerPoint).

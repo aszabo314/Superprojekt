@@ -322,11 +322,133 @@ module Cards =
                 ]
             }
 
-            // Patch payload placeholder — Phase 4d fills this.
+            // §D.7.3 — Patch payload card: azimuthal-equidistant unwrap.
+            // Each projected point is drawn as a small filled dot whose
+            // colour encodes its world-space Z. A compass rose marks
+            // CompassNorth (the in-tangent-plane direction toward world +Y).
+            let patchStateJson =
+                selectedPin |> AVal.map (function
+                    | Some pin ->
+                        match pin.Payload with
+                        | Patch pp ->
+                            let pts = pp.ProjectedPoints
+                            if pts.Length = 0 then
+                                sprintf "{\"r\":%.3f,\"empty\":true}" pp.Radius
+                            else
+                                let mutable zMin = System.Double.MaxValue
+                                let mutable zMax = System.Double.MinValue
+                                for (_, w) in pts do
+                                    if w.Z < zMin then zMin <- w.Z
+                                    if w.Z > zMax then zMax <- w.Z
+                                if zMax - zMin < 1e-6 then
+                                    let m = (zMin + zMax) * 0.5
+                                    zMin <- m - 0.5; zMax <- m + 0.5
+                                let sb = System.Text.StringBuilder()
+                                sb.Append("{\"r\":") |> ignore
+                                sb.Append(sprintf "%.3f" pp.Radius) |> ignore
+                                sb.Append(",\"zMin\":") |> ignore
+                                sb.Append(sprintf "%.3f" zMin) |> ignore
+                                sb.Append(",\"zMax\":") |> ignore
+                                sb.Append(sprintf "%.3f" zMax) |> ignore
+                                sb.Append(",\"north\":[") |> ignore
+                                sb.Append(sprintf "%.3f,%.3f" pp.CompassNorth.X pp.CompassNorth.Y) |> ignore
+                                sb.Append("],\"mesh\":\"") |> ignore
+                                sb.Append(shortName pp.SourceMeshName) |> ignore
+                                sb.Append("\",\"color\":\"") |> ignore
+                                let colorHex =
+                                    match Map.tryFind pp.SourceMeshName pin.DatasetColors with
+                                    | Some c -> c4bToHex c
+                                    | None -> "#1a56db"
+                                sb.Append(colorHex) |> ignore
+                                sb.Append("\",\"pts\":[") |> ignore
+                                for i in 0 .. pts.Length - 1 do
+                                    if i > 0 then sb.Append(',') |> ignore
+                                    let (p2, w) = pts.[i]
+                                    sb.Append(sprintf "[%.3f,%.3f,%.3f]" p2.X p2.Y w.Z) |> ignore
+                                sb.Append("]}") |> ignore
+                                sb.ToString()
+                        | _ -> "{}"
+                    | None -> "{}")
             div {
-                Class "pin-card-section pin-card-patch pin-card-empty"
+                Class "pin-card-section pin-card-patch"
                 showOnly isPatch
-                "Unwrapped 2D patch payload (Phase 4d)."
+                patchStateJson |> AVal.map (fun j -> Some (Attribute("data-patch", j)))
+                OnBoot [
+                    "(function(){"
+                    "var el = __THIS__;"
+                    "var last = '';"
+                    "var ns = 'http://www.w3.org/2000/svg';"
+                    "function render(){"
+                    "  var raw = el.getAttribute('data-patch') || '{}';"
+                    "  if(raw === last) return; last = raw;"
+                    "  try { var d = JSON.parse(raw); } catch(e) { return; }"
+                    "  el.innerHTML = '';"
+                    "  if(d.empty || !d.pts || d.pts.length < 3){"
+                    "    var p = document.createElement('div');"
+                    "    p.className = 'pin-card-empty';"
+                    "    p.textContent = 'Computing patch projection…';"
+                    "    el.appendChild(p);"
+                    "    return;"
+                    "  }"
+                    "  var size = 220, pad = 14;"
+                    "  var cx = size/2, cy = size/2;"
+                    "  var maxR = (size/2) - pad;"
+                    "  var sx = function(px){ return cx + px / d.r * maxR; };"
+                    "  var sy = function(py){ return cy - py / d.r * maxR; };"
+                    "  var svg = document.createElementNS(ns,'svg');"
+                    "  svg.setAttribute('class','patch-plot');"
+                    "  svg.setAttribute('width', size); svg.setAttribute('height', size);"
+                    "  svg.setAttribute('viewBox','0 0 '+size+' '+size);"
+                    "  var ring = document.createElementNS(ns,'circle');"
+                    "  ring.setAttribute('cx', cx); ring.setAttribute('cy', cy);"
+                    "  ring.setAttribute('r', maxR);"
+                    "  ring.setAttribute('fill','#f8fafc');"
+                    "  ring.setAttribute('stroke', d.color);"
+                    "  ring.setAttribute('stroke-width','2');"
+                    "  svg.appendChild(ring);"
+                    "  function colour(z){"
+                    "    var t = (z - d.zMin) / (d.zMax - d.zMin);"
+                    "    t = Math.max(0, Math.min(1, t));"
+                    "    var r = Math.round(255 * t);"
+                    "    var b = Math.round(255 * (1 - t));"
+                    "    return 'rgb(' + r + ',' + (60 + Math.round(120*t)) + ',' + b + ')';"
+                    "  }"
+                    "  d.pts.forEach(function(p){"
+                    "    var c = document.createElementNS(ns,'circle');"
+                    "    c.setAttribute('cx', sx(p[0])); c.setAttribute('cy', sy(p[1]));"
+                    "    c.setAttribute('r','1.6');"
+                    "    c.setAttribute('fill', colour(p[2]));"
+                    "    c.setAttribute('opacity','0.85');"
+                    "    svg.appendChild(c);"
+                    "  });"
+                    "  // Compass rose: arrow from centre toward CompassNorth."
+                    "  var nx = sx(d.north[0] * d.r * 0.9);"
+                    "  var ny = sy(d.north[1] * d.r * 0.9);"
+                    "  var arrow = document.createElementNS(ns,'line');"
+                    "  arrow.setAttribute('x1', cx); arrow.setAttribute('y1', cy);"
+                    "  arrow.setAttribute('x2', nx); arrow.setAttribute('y2', ny);"
+                    "  arrow.setAttribute('stroke','#0f172a');"
+                    "  arrow.setAttribute('stroke-width','1.5');"
+                    "  svg.appendChild(arrow);"
+                    "  var nLabel = document.createElementNS(ns,'text');"
+                    "  nLabel.setAttribute('x', nx); nLabel.setAttribute('y', ny - 2);"
+                    "  nLabel.setAttribute('text-anchor','middle');"
+                    "  nLabel.setAttribute('font-family','SF Mono, Monaco, monospace');"
+                    "  nLabel.setAttribute('font-size','10');"
+                    "  nLabel.setAttribute('font-weight','bold');"
+                    "  nLabel.setAttribute('fill','#0f172a');"
+                    "  nLabel.textContent = 'N';"
+                    "  svg.appendChild(nLabel);"
+                    "  el.appendChild(svg);"
+                    "  var caption = document.createElement('div');"
+                    "  caption.className = 'pin-card-caption';"
+                    "  caption.textContent = d.mesh + ' • r=' + d.r.toFixed(1) + 'm • ' + d.pts.length + ' pts';"
+                    "  el.appendChild(caption);"
+                    "}"
+                    "render();"
+                    "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-patch']});"
+                    "})();"
+                ]
             }
         }
 
@@ -403,6 +525,26 @@ module Cards =
                             ])
                         | _ ->
                             Some (Style [Display "none"]))
+
+                    // §D.12 — coloured frame: a thin strip at the top of
+                    // the card carries the host mesh's palette colour so
+                    // that the card visibly links to the 3D anchor + 3D
+                    // patch ring (same colour in both views).
+                    div {
+                        Class "pin-card-color-bar"
+                        selectedPin |> AVal.map (fun po ->
+                            match po with
+                            | Some p ->
+                                let bg =
+                                    match p.HostMeshName with
+                                    | Some host ->
+                                        match Map.tryFind host p.DatasetColors with
+                                        | Some c -> sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B)
+                                        | None -> "#1a56db"
+                                    | None -> "#1a56db"
+                                Some (Style [Css.Background bg])
+                            | None -> Some (Style [Display "none"]))
+                    }
 
                     div {
                         Class "card-titlebar"

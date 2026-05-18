@@ -468,6 +468,132 @@ let curvatureRidge (lm : LoadedMesh) (seed : V3d) (thresholdRad : float) (maxPoi
     let pts, _ = curvatureRidgeWithScalars lm seed thresholdRad maxPoints
     pts
 
+// V6 §D.7.3 — azimuthal-equidistant patch projection. Walks vertices
+// within `radius` of `centre` on the mesh surface (Dijkstra-on-the-edge-
+// graph for geodesic distance), then projects each vertex into 2D patch
+// coordinates `(d * cos bearing, d * sin bearing)` with `bearing` measured
+// from world +Y projected into the local tangent plane.
+//
+// Result: per-vertex (px, py, world x, world y, world z) plus the tangent
+// plane's reference direction `refDir` in world space (for the compass
+// rose). Output is capped at `maxPoints` via uniform stride sampling.
+type PatchPoint = { Px : float; Py : float; Wx : float; Wy : float; Wz : float }
+type PatchResult = { Points : PatchPoint[]; RefDirWorld : V3d; NormalWorld : V3d }
+
+let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) : PatchResult =
+    let positions = lm.parsed.positions
+    let centroid = lm.parsed.centroid
+    let centreLocal = centre - centroid
+
+    // BVH sphere query — fetch every triangle whose AABB intersects the
+    // (slightly padded) sphere around centre.
+    let triBuf =
+        trianglesInSphere lm (V3f centreLocal) (float32 (radius * 1.2))
+
+    if triBuf.Length = 0 then
+        { Points = [||]; RefDirWorld = V3d.OIO; NormalWorld = V3d.OOI }
+    else
+        let triCount = triBuf.Length / 3
+
+        // Average triangle normal — used as the local tangent-plane normal
+        // at the centre. Good enough for prototype patches; the spec calls
+        // for "mesh normal at centre" which on a discrete mesh is just a
+        // local average anyway.
+        let mutable nSum = V3d.Zero
+        for ti in 0 .. triCount - 1 do
+            let p0 = V3d positions.[triBuf.[ti * 3]]
+            let p1 = V3d positions.[triBuf.[ti * 3 + 1]]
+            let p2 = V3d positions.[triBuf.[ti * 3 + 2]]
+            nSum <- nSum + Vec.cross (p1 - p0) (p2 - p0)
+        let normal =
+            if nSum.Length > 1e-9 then Vec.normalize nSum else V3d.OOI
+        let worldNorth = V3d.OIO
+        let projN = worldNorth - normal * Vec.dot worldNorth normal
+        let refDir =
+            if projN.Length > 1e-9 then Vec.normalize projN
+            else
+                let projX = V3d.IOO - normal * Vec.dot V3d.IOO normal
+                if projX.Length > 1e-9 then Vec.normalize projX else V3d.IOO
+        let leftDir = Vec.cross normal refDir
+
+        // Vertex adjacency restricted to the triangles in the sphere.
+        let adj = System.Collections.Generic.Dictionary<int, ResizeArray<int>>()
+        let inline addEdge a b =
+            let mutable l = Unchecked.defaultof<ResizeArray<int>>
+            if adj.TryGetValue(a, &l) then ()
+            else
+                l <- ResizeArray<int>()
+                adj.[a] <- l
+            if not (l.Contains b) then l.Add b
+        for ti in 0 .. triCount - 1 do
+            let i0 = triBuf.[ti * 3]
+            let i1 = triBuf.[ti * 3 + 1]
+            let i2 = triBuf.[ti * 3 + 2]
+            addEdge i0 i1
+            addEdge i1 i0
+            addEdge i1 i2
+            addEdge i2 i1
+            addEdge i2 i0
+            addEdge i0 i2
+
+        // Seed Dijkstra at the vertex closest to the centre.
+        let mutable seedV = -1
+        let mutable seedD2 = System.Double.MaxValue
+        for v in adj.Keys do
+            let d2 = (V3d positions.[v] - centreLocal).LengthSquared
+            if d2 < seedD2 then seedD2 <- d2; seedV <- v
+
+        if seedV < 0 then
+            { Points = [||]; RefDirWorld = refDir; NormalWorld = normal }
+        else
+            let dist = System.Collections.Generic.Dictionary<int, float>()
+            let pq = System.Collections.Generic.PriorityQueue<int, float>()
+            dist.[seedV] <- 0.0
+            pq.Enqueue(seedV, 0.0)
+            while pq.Count > 0 do
+                let v = pq.Dequeue()
+                let mutable d = 0.0
+                if dist.TryGetValue(v, &d) then
+                    if d <= radius then
+                        let mutable nbrs = Unchecked.defaultof<ResizeArray<int>>
+                        if adj.TryGetValue(v, &nbrs) then
+                            let vp = V3d positions.[v]
+                            for n in nbrs do
+                                let np = V3d positions.[n]
+                                let alt = d + (np - vp).Length
+                                if alt <= radius then
+                                    let mutable cur = System.Double.MaxValue
+                                    let has = dist.TryGetValue(n, &cur)
+                                    if not has || alt < cur then
+                                        dist.[n] <- alt
+                                        pq.Enqueue(n, alt)
+
+            // Project each reached vertex into patch space.
+            let out = ResizeArray<PatchPoint>(dist.Count)
+            for kv in dist do
+                let v = kv.Key
+                let d = kv.Value
+                let vp = V3d positions.[v]
+                let dv = vp - centreLocal
+                let dvTan = dv - normal * Vec.dot dv normal
+                let world = vp + centroid
+                let x = Vec.dot dvTan refDir
+                let y = Vec.dot dvTan leftDir
+                let bearing = atan2 y x
+                let px = d * cos bearing
+                let py = d * sin bearing
+                out.Add { Px = px; Py = py; Wx = world.X; Wy = world.Y; Wz = world.Z }
+
+            let pts = out.ToArray()
+            // Down-sample if too many for the JSON payload / card render.
+            let final =
+                if pts.Length <= maxPoints then pts
+                else
+                    let stride = pts.Length / maxPoints
+                    let n = pts.Length / stride
+                    Array.init n (fun i -> pts.[i * stride])
+            { Points = final; RefDirWorld = refDir; NormalWorld = normal }
+
 // Statistics helpers
 type GridCellStats = { Average: float; Q1: float; Q3: float; Min: float; Max: float; Variance: float }
 type DatasetStats = { MeshName: string; ZMin: float; ZQ1: float; ZMedian: float; ZQ3: float; ZMax: float; ZVariance: float }

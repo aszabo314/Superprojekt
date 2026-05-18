@@ -238,6 +238,48 @@ module ScanPinScene =
                     Lines.render segs
                 })
 
+        // §D.7.3 — patch footprint: a coloured ring in the tangent plane at
+        // the anchor with a compass-rose arrow toward project north. Only
+        // shown for pins that currently have a Patch payload.
+        let pinPatchRings =
+            pinIdSet |> ASet.map (fun id ->
+                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
+                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
+                let active = (notFullscreen, isSelected) ||> AVal.map2 (&&)
+                let segs =
+                    (pinVal, model.CommonCentroid, datasetScale)
+                    |||> AVal.map3 (fun po cc scale ->
+                        match po with
+                        | Some p ->
+                            match p.Payload with
+                            | Patch pp ->
+                                let centreRender = p.Centre
+                                let radiusRender = pp.Radius
+                                let color =
+                                    match p.HostMeshName with
+                                    | Some host ->
+                                        match Map.tryFind host p.DatasetColors with
+                                        | Some c -> V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 0.95)
+                                        | None -> V4d(0.1, 0.34, 0.86, 0.95)
+                                    | None -> V4d(0.1, 0.34, 0.86, 0.95)
+                                // refDir and normal are stored world-space;
+                                // they're orientations, so scale doesn't apply.
+                                PinGeometry.buildPatchFootprint
+                                    centreRender radiusRender
+                                    pp.RefDirWorld pp.NormalWorld
+                                    color 1.5
+                            | _ -> [||]
+                        | None -> [||])
+                sg {
+                    Sg.Active active
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.BlendMode BlendMode.Blend
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.Pass RenderPass.passOne
+                    Lines.render segs
+                })
+
         // §D.6.1 ghost preview: a faint translucent sphere at the cursor's
         // current mesh hit while AnchorPlacement is active. Radius mirrors
         // the default-radius rule (5 % of the dataset diagonal).
@@ -272,4 +314,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinSpheres; pinLines; ghostPreview])
+        ASet.unionMany (ASet.ofList [pinDots; pinSpheres; pinLines; pinPatchRings; ghostPreview])

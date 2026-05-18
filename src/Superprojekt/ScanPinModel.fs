@@ -50,13 +50,17 @@ type LinePayload = {
 /// V6 §D.7.3 — unwrapped 2D patch. ProjectedPoints stores (patch_coord,
 /// world_pos) pairs; CompassNorth is the patch-space direction pointing
 /// to project north. SourceMeshName is "dataset/mesh" (switchable via
-/// the patch card's mesh selector).
+/// the patch card's mesh selector). RefDirWorld + NormalWorld are stored
+/// alongside so the 3D footprint can draw the compass-rose ring without
+/// re-deriving the tangent plane.
 type PatchPayload = {
     CenterOnMesh    : V3d
     Radius          : float
     SourceMeshName  : string
     ProjectedPoints : (V2d * V3d)[]
     CompassNorth    : V2d
+    RefDirWorld     : V3d
+    NormalWorld     : V3d
 }
 
 /// V6 §C.3 — the three payload kinds. Switching destroys the current
@@ -100,7 +104,9 @@ module PayloadType =
                 Radius          = radius
                 SourceMeshName  = host |> Option.defaultValue ""
                 ProjectedPoints = [||]
-                CompassNorth    = V2d.IO
+                CompassNorth    = V2d(1.0, 0.0)
+                RefDirWorld     = V3d.OIO
+                NormalWorld     = V3d.OOI
             }
 
 [<RequireQualifiedAccess>]

@@ -53,6 +53,10 @@ type IsolineRequest = { Name: string; Elevation: float; Seed: float[]; MaxPoints
 [<CLIMutable>]
 type RidgeRequest = { Name: string; Seed: float[]; ThresholdRad: float; MaxPoints: int }
 
+// V6 §D.7.3 — azimuthal-equidistant patch projection on a single mesh.
+[<CLIMutable>]
+type PatchRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
+
 let inline private toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
 let inline private fromV3d (v : V3d)   = [| v.X; v.Y; v.Z |]
 
@@ -305,6 +309,29 @@ let curvatureRidgeHandler : HttpHandler =
             return! json {| polyline = pts; scalars = scalars |} next ctx
         with ex ->
             log.LogError(ex, "curvature-ridge failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+// POST /api/query/patch
+// Returns the azimuthal-equidistant unwrap of a disk on the mesh
+// surface around `centre` with radius `radius`. Response payload:
+// { points : [[px, py, wx, wy, wz], …], refDir : [x,y,z], normal : [x,y,z] }
+let patchHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<PatchRequest>()
+            let dataset, name = splitName req.Name
+            let lm = MeshCache.get dataset name 0
+            let centre = toV3d req.Centre
+            let radius = if req.Radius <= 0.0 then 1.0 else req.Radius
+            let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
+            let result = MeshCache.patch lm centre radius maxPoints
+            let pts = result.Points |> Array.map (fun p -> [| p.Px; p.Py; p.Wx; p.Wy; p.Wz |])
+            log.LogInformation("patch {Name} r={Radius:F2}: {Count} pts", req.Name, radius, pts.Length)
+            return! json {| points = pts; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx
+        with ex ->
+            log.LogError(ex, "patch failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
@@ -602,6 +629,7 @@ let webApp : HttpHandler =
         route  "/api/query/plane-intersection-batch"            >=> planeIntersectionBatchHandler
         route  "/api/query/isoline"                             >=> isolineHandler
         route  "/api/query/curvature-ridge"                     >=> curvatureRidgeHandler
+        route  "/api/query/patch"                               >=> patchHandler
         route  "/api/query/grid-eval"                           >=> gridEvalHandler
         route  "/api/query/cylinder-eval"                       >=> cylinderEvalHandler
     ]

@@ -51,7 +51,20 @@ into four sub-phases:
   payload. `PayloadType` is extended to `Point | Line | Patch` with
   full record types (`LinePayload`, `PatchPayload`) so later sub-phases
   fill in geometry without touching the DU shape again.
-- **4b: Line payload — elevation isoline sub-mode** — deferred.
+- **4b: Line payload — elevation isoline sub-mode** — landed.
+  Server gained `/api/query/isoline` (Embree-backed marching: triangle-
+  edge straddle test → segment soup → edge-keyed adjacency graph →
+  connected-component walk → longest line nearest seed). Client
+  `Query.isoline` wraps the endpoint. Flyout grows a Line-mode toggle
+  (Elevation / Ridge — Ridge greyed) plus an elevation slider centred
+  on the pin's render-space Z. `Update.fs` reacts to `LineKind`
+  switches or elevation drags by firing the query in a background
+  task; the result lands as `IsolineComputed(id, V3d[], elevation)`.
+  3D rendering: `ScanPinScene.pinLines` draws the polyline as
+  pixel-constant lines (Lines.render, BlendMode.Blend, DepthTest.None,
+  passOne) coloured from `DatasetColors[HostMeshName]` or yellow when
+  selected. Card body: SVG arc-length × elevation plot via OnBoot JS
+  + MutationObserver pattern.
 - **4c: Line payload — curvature ridge sub-mode + cross-mesh tracing**
   — deferred.
 - **4d: Patch payload + 2D-3D linkage (§D.12)** — deferred.

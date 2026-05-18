@@ -330,6 +330,58 @@ module Gui =
                     | None -> ())
             }
 
+            // §D.7.2 — Line-payload sub-mode toggle + elevation slider.
+            // Visible only when the active pin currently has a Line payload.
+            // CurvatureRidge is greyed out in 4b (lands in 4c).
+            let isLine = payloadKind |> AVal.map ((=) LineKind)
+            let isIsoline =
+                activePin |> AVal.map (fun po ->
+                    match po with
+                    | Some p ->
+                        match p.Payload with
+                        | Line { Mode = ElevationIsoline _ } -> true
+                        | _ -> false
+                    | None -> false)
+            let isolineElev =
+                activePin |> AVal.map (fun po ->
+                    match po with
+                    | Some p ->
+                        match p.Payload with
+                        | Line { Mode = ElevationIsoline e } -> e
+                        | _ -> p.Centre.Z
+                    | None -> 0.0)
+            let centreZ =
+                activePin |> AVal.map (function
+                    | Some p -> p.Centre.Z
+                    | None -> 0.0)
+            div {
+                Class "lp-line-controls"
+                isLine |> AVal.map (fun v ->
+                    if v then None else Some (Style [Display "none"]))
+                div { Class "lp-sublabel"; "Line mode" }
+                compactButtonBar [
+                    "Elevation",
+                        isIsoline,
+                        (fun () ->
+                            match AVal.force pinId, AVal.force centreZ with
+                            | Some id, z -> env.Emit [ScanPinMsg (SetLineMode(id, ElevationIsoline z))]
+                            | _ -> ())
+                    "Ridge",
+                        isIsoline |> AVal.map not,
+                        // Ridge is greyed in 4b; the click is a no-op until 4c lands.
+                        (fun () -> ())
+                ]
+                div {
+                    Class "lp-isoline-row"
+                    isIsoline |> AVal.map (fun v ->
+                        if v then None else Some (Style [Display "none"]))
+                    inlineSlider "Elevation" -10000.0 10000.0 0.1 (sprintf "%.1fm") isolineElev (fun v ->
+                        match AVal.force pinId with
+                        | Some id -> env.Emit [ScanPinMsg (SetLineMode(id, ElevationIsoline v))]
+                        | None -> ())
+                }
+            }
+
             div {
                 Class "lp-commit-row"
                 button {

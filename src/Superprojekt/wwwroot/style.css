@@ -595,6 +595,13 @@ body.loaded { background: #f4f6f8; }
 /* Reliability slider container in the placement flyout. */
 .lp-reliability-row { margin-top: 2px; }
 
+/* Line payload flyout controls (V6 §D.7.2) */
+.lp-line-controls { display: flex; flex-direction: column; gap: 4px; }
+.lp-isoline-row { margin-top: 2px; }
+
+/* Line payload card body */
+.pin-card-line .line-plot { display: block; }
+
 /* ── Mesh-wheel active-picking-layer label (V6 §D.1) ──────────────── */
 
 .mesh-wheel-label {

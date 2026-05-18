@@ -168,6 +168,138 @@ let planeIntersection (lm : LoadedMesh) (planePoint : V3d) (planeNormal : V3d) (
         off <- off + b.Count
     out
 
+// V6 §D.7.2 — elevation-isoline marching. For each triangle with vertex Z
+// values straddling `elevation` (world-space), compute the segment where
+// the triangle crosses the horizontal plane. Segments share endpoints
+// via mesh edges, so we key intersection points by edge id and link the
+// per-triangle pair to build adjacency. A connected-component walk
+// produces polylines; the result is the polyline whose closest point to
+// `seed` is nearest (preferring longer lines on ties).
+//
+// Output: world-space polyline as float[] of x0,y0,z0,x1,y1,z1,...
+let isoline (lm : LoadedMesh) (elevation : float) (seed : V3d) (maxPoints : int) : float[] =
+    let positions = lm.parsed.positions
+    let centroid = lm.parsed.centroid
+    let indices = lm.parsed.indices
+    let triCount = indices.Length / 3
+    let elevLocal = float32 (elevation - centroid.Z)
+
+    let inline edgeKey (i0 : int) (i1 : int) : int64 =
+        let a = min i0 i1
+        let b = max i0 i1
+        (int64 a <<< 32) ||| int64 b
+
+    let edgePoints = System.Collections.Generic.Dictionary<int64, V3d>()
+    let inline tryAddEdge (i0 : int) (i1 : int) (out : ResizeArray<int64>) =
+        let key = edgeKey i0 i1
+        let mutable existing = Unchecked.defaultof<V3d>
+        if edgePoints.TryGetValue(key, &existing) then out.Add key
+        else
+            let p0 = positions.[i0]
+            let p1 = positions.[i1]
+            let d0 = p0.Z - elevLocal
+            let d1 = p1.Z - elevLocal
+            if (d0 > 0.0f) <> (d1 > 0.0f) then
+                let t = float d0 / float (d0 - d1)
+                let pt = V3d p0 + t * (V3d p1 - V3d p0)
+                edgePoints.[key] <- pt
+                out.Add key
+
+    let adj = System.Collections.Generic.Dictionary<int64, int64 * int64>()
+    let inline addAdj (a : int64) (b : int64) =
+        let mutable existing = Unchecked.defaultof<int64 * int64>
+        if adj.TryGetValue(a, &existing) then
+            let (x, y) = existing
+            if y = -1L then adj.[a] <- (x, b)
+        else
+            adj.[a] <- (b, -1L)
+
+    let scratch = ResizeArray<int64>(3)
+    for ti in 0 .. triCount - 1 do
+        let i0 = indices.[ti * 3]
+        let i1 = indices.[ti * 3 + 1]
+        let i2 = indices.[ti * 3 + 2]
+        scratch.Clear()
+        tryAddEdge i0 i1 scratch
+        tryAddEdge i1 i2 scratch
+        tryAddEdge i2 i0 scratch
+        if scratch.Count = 2 then
+            addAdj scratch.[0] scratch.[1]
+            addAdj scratch.[1] scratch.[0]
+
+    if edgePoints.Count = 0 then [||]
+    else
+        let visited = System.Collections.Generic.HashSet<int64>()
+        let polylines = ResizeArray<V3d[]>()
+
+        let walkFrom (start : int64) (avoid : int64) =
+            let acc = ResizeArray<int64>()
+            acc.Add start
+            visited.Add start |> ignore
+            let mutable last = avoid
+            let mutable cur = start
+            let mutable keepGoing = true
+            while keepGoing do
+                let mutable nbrs = Unchecked.defaultof<int64 * int64>
+                if adj.TryGetValue(cur, &nbrs) then
+                    let (a, b) = nbrs
+                    let nxt =
+                        if a <> last && a <> -1L && not (visited.Contains a) then a
+                        elif b <> last && b <> -1L && not (visited.Contains b) then b
+                        else -1L
+                    if nxt = -1L then keepGoing <- false
+                    else
+                        acc.Add nxt
+                        visited.Add nxt |> ignore
+                        last <- cur
+                        cur <- nxt
+                else keepGoing <- false
+            acc
+
+        let allKeys = adj.Keys |> Seq.toArray
+        for start in allKeys do
+            if not (visited.Contains start) then
+                let (a, b) = adj.[start]
+                let forward = walkFrom start -1L
+                let backward =
+                    if forward.Count >= 2 then
+                        let secondNeighbor = if forward.[1] = a then b else a
+                        if secondNeighbor = -1L || visited.Contains secondNeighbor then
+                            ResizeArray<int64>()
+                        else
+                            walkFrom secondNeighbor start
+                    else ResizeArray<int64>()
+                let combined = ResizeArray<int64>(forward.Count + backward.Count)
+                for i in backward.Count - 1 .. -1 .. 0 do combined.Add backward.[i]
+                for k in forward do combined.Add k
+                let pts = combined |> Seq.map (fun k -> edgePoints.[k] + centroid) |> Array.ofSeq
+                polylines.Add pts
+
+        if polylines.Count = 0 then [||]
+        else
+            let scored =
+                polylines |> Seq.map (fun pts ->
+                    let mutable minD2 = System.Double.MaxValue
+                    for p in pts do
+                        let d2 = (p - seed).LengthSquared
+                        if d2 < minD2 then minD2 <- d2
+                    let mutable len = 0.0
+                    for i in 1 .. pts.Length - 1 do
+                        len <- len + (pts.[i] - pts.[i - 1]).Length
+                    pts, minD2, len)
+                |> Array.ofSeq
+            // Prefer the line whose nearest point is closest to the seed; on
+            // near-ties favour the longer line.
+            let chosen, _, _ =
+                scored |> Array.maxBy (fun (_, d2, len) -> len / (1.0 + d2 * 0.5))
+            let n = min chosen.Length maxPoints
+            let out = Array.zeroCreate<float> (n * 3)
+            for i in 0 .. n - 1 do
+                out.[i * 3]     <- chosen.[i].X
+                out.[i * 3 + 1] <- chosen.[i].Y
+                out.[i * 3 + 2] <- chosen.[i].Z
+            out
+
 // Statistics helpers
 type GridCellStats = { Average: float; Q1: float; Q3: float; Min: float; Max: float; Variance: float }
 type DatasetStats = { MeshName: string; ZMin: float; ZQ1: float; ZMedian: float; ZQ3: float; ZMax: float; ZVariance: float }

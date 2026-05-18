@@ -69,6 +69,14 @@ module ScanPinScene =
             (placementHover : aval<V3d option>)
             (model : AdaptiveModel) =
 
+        // World→render conversion for §D.7.2 polyline points and any other
+        // payload that stores world-space coordinates per §C.3.
+        let datasetScale =
+            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun ds map ->
+                match ds with
+                | Some d -> Map.tryFind d map |> Option.defaultValue 1.0
+                | None -> 1.0)
+
         let notFullscreen = AVal.map not fullscreenActive
         let selectedId = model.ScanPins.SelectedPin
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
@@ -176,6 +184,59 @@ module ScanPinScene =
                     }
                 ])
 
+        // §D.7.2 — line-on-surface polyline. Renders as pixel-constant 3D
+        // lines (Shader.Lines) so the trace stays legible at any camera
+        // distance. Coloured from DatasetColors[HostMeshName], or yellow
+        // when the pin is selected. Field-projected aVals keep the rebuild
+        // cost minimal: only Points + isSelected toggle a rebuild.
+        let pinLines =
+            pinIdSet |> ASet.map (fun id ->
+                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
+                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
+                let active = (notFullscreen, isSelected) ||> AVal.map2 (&&)
+                let pointsVal =
+                    pinVal |> AVal.map (fun po ->
+                        match po with
+                        | Some p ->
+                            match p.Payload with
+                            | Line lp -> lp.Points
+                            | _ -> [||]
+                        | None -> [||])
+                let colorVal =
+                    pinVal |> AVal.map (fun po ->
+                        match po with
+                        | Some p ->
+                            let baseC =
+                                match p.HostMeshName with
+                                | Some host ->
+                                    Map.tryFind host p.DatasetColors
+                                    |> Option.map (fun c ->
+                                        V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 0.95))
+                                    |> Option.defaultValue (V4d(0.1, 0.34, 0.86, 0.95))
+                                | None -> V4d(0.1, 0.34, 0.86, 0.95)
+                            baseC
+                        | None -> V4d.Zero)
+                let renderPoints =
+                    (pointsVal, model.CommonCentroid, datasetScale)
+                    |||> AVal.map3 (fun pts cc scale ->
+                        if pts.Length = 0 then [||]
+                        else pts |> Array.map (fun p -> (p - cc) * scale))
+                let segs =
+                    (renderPoints, colorVal, isSelected) |||> AVal.map3 (fun pts color sel ->
+                        if pts.Length < 2 then [||]
+                        else
+                            let c = if sel then V4d(1.0, 0.9, 0.0, 0.98) else color
+                            Array.init (pts.Length - 1) (fun i -> pts.[i], pts.[i + 1], c, 2.0))
+                sg {
+                    Sg.Active active
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.BlendMode BlendMode.Blend
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.Pass RenderPass.passOne
+                    Lines.render segs
+                })
+
         // §D.6.1 ghost preview: a faint translucent sphere at the cursor's
         // current mesh hit while AnchorPlacement is active. Radius mirrors
         // the default-radius rule (5 % of the dataset diagonal).
@@ -210,4 +271,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinSpheres; ghostPreview])
+        ASet.unionMany (ASet.ofList [pinDots; pinSpheres; pinLines; ghostPreview])

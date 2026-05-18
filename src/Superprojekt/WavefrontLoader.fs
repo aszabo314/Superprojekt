@@ -321,6 +321,21 @@ module Query =
             return results
         }
 
+    /// POST /query/isoline — returns the longest elevation-isoline polyline
+    /// on the named mesh near the seed point. Result is a world-space V3d[].
+    let isoline (serverUrl : string) (name : string) (elevation : float) (seed : V3d) (maxPoints : int) : Async<V3d[]> =
+        async {
+            let json = sprintf """{"name":"%s","elevation":%.17g,"seed":%s,"maxPoints":%d}"""
+                        name elevation (v3 seed) maxPoints
+            let! r = post serverUrl "/query/isoline" json
+            let pts =
+                r.GetProperty("polyline").EnumerateArray() |> Seq.map (fun e ->
+                    let a = e.EnumerateArray() |> Seq.map (fun v -> v.GetDouble()) |> Seq.toArray
+                    V3d(a.[0], a.[1], a.[2])
+                ) |> Seq.toArray
+            return pts
+        }
+
     /// POST /query/ray-grid — like rayBatch but also returns per-hit world-space normal.
     /// Binary response: int32 rayCount | per-ray (byte hitFlag | float64 hitX hitY hitZ | float32 nX nY nZ)
     let rayGrid (serverUrl : string) (names : string[]) (rays : (V3d * V3d)[]) : Async<(V3d * V3d) option[]> =

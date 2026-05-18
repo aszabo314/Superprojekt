@@ -175,11 +175,103 @@ module Cards =
                 }
             }
 
-            // Line payload placeholder — Phase 4b fills this.
+            // §D.7.2 — Line payload card: arc-length × elevation plot.
+            let lineStateJson =
+                selectedPin |> AVal.map (function
+                    | Some pin ->
+                        match pin.Payload with
+                        | Line lp ->
+                            let pts = lp.Points
+                            let n = pts.Length
+                            if n < 2 then "{}"
+                            else
+                                let arc = Array.zeroCreate<float> n
+                                for i in 1 .. n - 1 do
+                                    arc.[i] <- arc.[i - 1] + (pts.[i] - pts.[i - 1]).Length
+                                let scalars = lp.ScalarVals
+                                let modeLabel =
+                                    match lp.Mode with
+                                    | ElevationIsoline _ -> "Elevation"
+                                    | CurvatureRidge -> "Curvature"
+                                let sb = System.Text.StringBuilder()
+                                sb.Append("{\"mode\":\"") |> ignore
+                                sb.Append(modeLabel) |> ignore
+                                sb.Append("\",\"len\":") |> ignore
+                                sb.Append(sprintf "%.2f" arc.[n - 1]) |> ignore
+                                sb.Append(",\"pts\":[") |> ignore
+                                for i in 0 .. n - 1 do
+                                    if i > 0 then sb.Append(',') |> ignore
+                                    let s = if i < scalars.Length then scalars.[i] else 0.0
+                                    sb.Append(sprintf "[%.3f,%.3f]" arc.[i] s) |> ignore
+                                sb.Append("]}") |> ignore
+                                sb.ToString()
+                        | _ -> "{}"
+                    | None -> "{}")
             div {
-                Class "pin-card-section pin-card-line pin-card-empty"
+                Class "pin-card-section pin-card-line"
                 showOnly isLine
-                "Line-on-surface payload (Phase 4b)."
+                lineStateJson |> AVal.map (fun j -> Some (Attribute("data-line", j)))
+                OnBoot [
+                    "(function(){"
+                    "var el = __THIS__;"
+                    "var last = '';"
+                    "var ns = 'http://www.w3.org/2000/svg';"
+                    "function render(){"
+                    "  var raw = el.getAttribute('data-line') || '{}';"
+                    "  if(raw === last) return; last = raw;"
+                    "  try { var d = JSON.parse(raw); } catch(e) { return; }"
+                    "  el.innerHTML = '';"
+                    "  if(!d.pts || d.pts.length < 2){"
+                    "    var p = document.createElement('div');"
+                    "    p.className = 'pin-card-empty';"
+                    "    p.textContent = 'Tracing isoline…';"
+                    "    el.appendChild(p);"
+                    "    return;"
+                    "  }"
+                    "  var w = 280, h = 110, padL = 36, padR = 6, padT = 6, padB = 18;"
+                    "  var iw = w - padL - padR, ih = h - padT - padB;"
+                    "  var xs = d.pts.map(function(p){return p[0];});"
+                    "  var ys = d.pts.map(function(p){return p[1];});"
+                    "  var xMin = 0, xMax = d.len;"
+                    "  var yMin = Math.min.apply(null, ys), yMax = Math.max.apply(null, ys);"
+                    "  if(yMax - yMin < 0.001){ var c = (yMax + yMin)/2; yMin = c - 0.5; yMax = c + 0.5; }"
+                    "  var sx = function(v){ return padL + (v - xMin)/(xMax - xMin) * iw; };"
+                    "  var sy = function(v){ return padT + ih - (v - yMin)/(yMax - yMin) * ih; };"
+                    "  var svg = document.createElementNS(ns,'svg');"
+                    "  svg.setAttribute('class','line-plot');"
+                    "  svg.setAttribute('width', w); svg.setAttribute('height', h);"
+                    "  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);"
+                    "  var frame = document.createElementNS(ns,'rect');"
+                    "  frame.setAttribute('x', padL); frame.setAttribute('y', padT);"
+                    "  frame.setAttribute('width', iw); frame.setAttribute('height', ih);"
+                    "  frame.setAttribute('fill','#f8fafc'); frame.setAttribute('stroke','#cbd5e1');"
+                    "  frame.setAttribute('stroke-width','1');"
+                    "  svg.appendChild(frame);"
+                    "  var pl = document.createElementNS(ns,'polyline');"
+                    "  pl.setAttribute('points', d.pts.map(function(p){return sx(p[0])+','+sy(p[1]);}).join(' '));"
+                    "  pl.setAttribute('stroke','#1a56db'); pl.setAttribute('stroke-width','1.5');"
+                    "  pl.setAttribute('fill','none');"
+                    "  svg.appendChild(pl);"
+                    "  function txt(x,y,s,anchor){"
+                    "    var t = document.createElementNS(ns,'text');"
+                    "    t.setAttribute('x', x); t.setAttribute('y', y);"
+                    "    t.setAttribute('text-anchor', anchor || 'middle');"
+                    "    t.setAttribute('font-family','SF Mono, Monaco, monospace');"
+                    "    t.setAttribute('font-size','9');"
+                    "    t.setAttribute('fill','#475569');"
+                    "    t.textContent = s; return t;"
+                    "  }"
+                    "  svg.appendChild(txt(padL - 4, padT + 8, yMax.toFixed(1), 'end'));"
+                    "  svg.appendChild(txt(padL - 4, padT + ih - 1, yMin.toFixed(1), 'end'));"
+                    "  svg.appendChild(txt(padL, h - 4, '0m', 'start'));"
+                    "  svg.appendChild(txt(w - padR, h - 4, xMax.toFixed(1) + 'm', 'end'));"
+                    "  svg.appendChild(txt((padL + w - padR)/2, h - 4, d.mode + ' • ' + d.pts.length + ' pts', 'middle'));"
+                    "  el.appendChild(svg);"
+                    "}"
+                    "render();"
+                    "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-line']});"
+                    "})();"
+                ]
             }
 
             // Patch payload placeholder — Phase 4d fills this.

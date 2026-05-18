@@ -79,6 +79,9 @@ and ScanPinMessage =
     // weight on Point payloads is editable from both flyout and card.
     | ChangePayloadType of ScanPinId * PayloadKind
     | SetReliabilityWeight of ScanPinId * float
+    // V6 §D.7.2 — line payload
+    | SetLineMode of ScanPinId * LineMode
+    | IsolineComputed of ScanPinId * V3d[] * elevation:float
 
 module CardUpdate =
 
@@ -240,6 +243,25 @@ module ScanPinUpdate =
                 | Point _ ->
                     let w = clamp 0.0 1.0 w
                     { pin with Payload = Point { ReliabilityWeight = w } }
+                | _ -> pin)
+
+        | SetLineMode(id, mode) ->
+            sp |> updatePin id (fun pin ->
+                match pin.Payload with
+                | Line lp ->
+                    // Mode change wipes the cached polyline; a fresh trace
+                    // is fired by the View handler once the new mode lands.
+                    { pin with Payload = Line { lp with Mode = mode; Points = [||]; ScalarVals = [||]; CrossMeshTraces = Map.empty } }
+                | _ -> pin)
+
+        | IsolineComputed(id, pts, _elevation) ->
+            // Points stay in world space (matches §C.3); render-space
+            // conversion happens at draw time in ScanPinScene.
+            sp |> updatePin id (fun pin ->
+                match pin.Payload with
+                | Line lp ->
+                    let scalars = pts |> Array.map (fun p -> p.Z)
+                    { pin with Payload = Line { lp with Points = pts; ScalarVals = scalars } }
                 | _ -> pin)
 
 module Update =
@@ -515,6 +537,31 @@ module Update =
                     | Some pin ->
                         env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, pin.Centre))]
                     | None -> ()
+                | None -> ()
+            | ChangePayloadType(id, LineKind)
+            | SetLineMode(id, _) ->
+                match HashMap.tryFind id sp'.Pins with
+                | Some pin ->
+                    match pin.Payload, pin.HostMeshName with
+                    | Line { Mode = ElevationIsoline elev }, Some host ->
+                        let scale =
+                            model.ActiveDataset
+                            |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
+                            |> Option.defaultValue 1.0
+                        let seedWorld = pin.Centre / scale + model.CommonCentroid
+                        // Slider elevation is given in render-space units
+                        // (matches pin.Centre.Z); undo the dataset scale
+                        // and centroid offset so the server sees world Z.
+                        let elevWorld = elev / scale + model.CommonCentroid.Z
+                        task {
+                            try
+                                let! pts =
+                                    Query.isoline ApiConfig.apiBase.Value host elevWorld seedWorld 4096
+                                    |> Async.StartAsTask
+                                env.Emit [ScanPinMsg (IsolineComputed(id, pts, elevWorld))]
+                            with _ -> ()
+                        } |> ignore
+                    | _ -> ()
                 | None -> ()
             | _ -> ()
             let model = { model with ScanPins = sp' }

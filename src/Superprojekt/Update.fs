@@ -82,6 +82,10 @@ and ScanPinMessage =
     // V6 §D.7.2 — line payload
     | SetLineMode of ScanPinId * LineMode
     | IsolineComputed of ScanPinId * V3d[] * elevation:float
+    | RidgeComputed of ScanPinId * V3d[] * scalars:float[]
+    // Cross-mesh trace results — the same payload kind on a different
+    // mesh than the host. Empty arrays clear the entry.
+    | LineCrossMeshComputed of ScanPinId * meshName:string * V3d[] * scalars:float[]
 
 module CardUpdate =
 
@@ -262,6 +266,23 @@ module ScanPinUpdate =
                 | Line lp ->
                     let scalars = pts |> Array.map (fun p -> p.Z)
                     { pin with Payload = Line { lp with Points = pts; ScalarVals = scalars } }
+                | _ -> pin)
+
+        | RidgeComputed(id, pts, scalars) ->
+            sp |> updatePin id (fun pin ->
+                match pin.Payload with
+                | Line lp ->
+                    { pin with Payload = Line { lp with Points = pts; ScalarVals = scalars } }
+                | _ -> pin)
+
+        | LineCrossMeshComputed(id, mesh, pts, scalars) ->
+            sp |> updatePin id (fun pin ->
+                match pin.Payload with
+                | Line lp ->
+                    let map =
+                        if pts.Length = 0 then Map.remove mesh lp.CrossMeshTraces
+                        else Map.add mesh (pts, scalars) lp.CrossMeshTraces
+                    { pin with Payload = Line { lp with CrossMeshTraces = map } }
                 | _ -> pin)
 
 module Update =
@@ -542,16 +563,23 @@ module Update =
             | SetLineMode(id, _) ->
                 match HashMap.tryFind id sp'.Pins with
                 | Some pin ->
+                    let scale =
+                        model.ActiveDataset
+                        |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
+                        |> Option.defaultValue 1.0
+                    let seedWorld = pin.Centre / scale + model.CommonCentroid
+                    // Cross-mesh peers: every other visible mesh in this dataset.
+                    let peers =
+                        match pin.HostMeshName with
+                        | Some host ->
+                            model.MeshNames |> IndexList.toSeq
+                            |> Seq.filter (fun n ->
+                                n <> host
+                                && Map.tryFind n model.MeshVisible |> Option.defaultValue true)
+                            |> Array.ofSeq
+                        | None -> [||]
                     match pin.Payload, pin.HostMeshName with
                     | Line { Mode = ElevationIsoline elev }, Some host ->
-                        let scale =
-                            model.ActiveDataset
-                            |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
-                            |> Option.defaultValue 1.0
-                        let seedWorld = pin.Centre / scale + model.CommonCentroid
-                        // Slider elevation is given in render-space units
-                        // (matches pin.Centre.Z); undo the dataset scale
-                        // and centroid offset so the server sees world Z.
                         let elevWorld = elev / scale + model.CommonCentroid.Z
                         task {
                             try
@@ -559,6 +587,34 @@ module Update =
                                     Query.isoline ApiConfig.apiBase.Value host elevWorld seedWorld 4096
                                     |> Async.StartAsTask
                                 env.Emit [ScanPinMsg (IsolineComputed(id, pts, elevWorld))]
+                                // Cross-mesh traces at the same elevation.
+                                for peer in peers do
+                                    try
+                                        let! pts2 =
+                                            Query.isoline ApiConfig.apiBase.Value peer elevWorld seedWorld 4096
+                                            |> Async.StartAsTask
+                                        let scalars2 = pts2 |> Array.map (fun p -> p.Z)
+                                        env.Emit [ScanPinMsg (LineCrossMeshComputed(id, peer, pts2, scalars2))]
+                                    with _ -> ()
+                            with _ -> ()
+                        } |> ignore
+                    | Line { Mode = CurvatureRidge }, Some host ->
+                        task {
+                            try
+                                let! pts, scalars =
+                                    Query.curvatureRidge ApiConfig.apiBase.Value host seedWorld 0.4 4096
+                                    |> Async.StartAsTask
+                                env.Emit [ScanPinMsg (RidgeComputed(id, pts, scalars))]
+                                // Cross-mesh: transfer seed to each peer (use the
+                                // same world-space seed; server picks the polyline
+                                // closest to that seed on the peer mesh).
+                                for peer in peers do
+                                    try
+                                        let! pts2, scalars2 =
+                                            Query.curvatureRidge ApiConfig.apiBase.Value peer seedWorld 0.4 4096
+                                            |> Async.StartAsTask
+                                        env.Emit [ScanPinMsg (LineCrossMeshComputed(id, peer, pts2, scalars2))]
+                                    with _ -> ()
                             with _ -> ()
                         } |> ignore
                     | _ -> ()

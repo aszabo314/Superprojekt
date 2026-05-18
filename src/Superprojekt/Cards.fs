@@ -175,34 +175,60 @@ module Cards =
                 }
             }
 
-            // §D.7.2 — Line payload card: arc-length × elevation plot.
+            // §D.7.2 — Line payload card: arc-length × elevation (or curvature)
+            // plot. Renders the host polyline plus every cross-mesh trace
+            // recorded in CrossMeshTraces, each in its mesh palette colour.
             let lineStateJson =
                 selectedPin |> AVal.map (function
                     | Some pin ->
                         match pin.Payload with
                         | Line lp ->
-                            let pts = lp.Points
-                            let n = pts.Length
-                            if n < 2 then "{}"
+                            let modeLabel =
+                                match lp.Mode with
+                                | ElevationIsoline _ -> "Elevation"
+                                | CurvatureRidge -> "Ridge dihedral"
+                            let traces = ResizeArray<string * V3d[] * float[] * string * bool>()
+                            let palette = pin.DatasetColors
+                            let colorHex (name : string) =
+                                match Map.tryFind name palette with
+                                | Some c -> c4bToHex c
+                                | None -> "#1a56db"
+                            let host = pin.HostMeshName |> Option.defaultValue ""
+                            traces.Add(host, lp.Points, lp.ScalarVals, colorHex host, true)
+                            for kv in lp.CrossMeshTraces do
+                                let mesh = kv.Key
+                                let pts, sc = kv.Value
+                                traces.Add(mesh, pts, sc, colorHex mesh, false)
+                            // Drop empty entries early so the OnBoot JS only
+                            // worries about valid polylines.
+                            let traces =
+                                traces |> Seq.filter (fun (_, pts, _, _, _) -> pts.Length >= 2)
+                                       |> Array.ofSeq
+                            if traces.Length = 0 then "{}"
                             else
-                                let arc = Array.zeroCreate<float> n
-                                for i in 1 .. n - 1 do
-                                    arc.[i] <- arc.[i - 1] + (pts.[i] - pts.[i - 1]).Length
-                                let scalars = lp.ScalarVals
-                                let modeLabel =
-                                    match lp.Mode with
-                                    | ElevationIsoline _ -> "Elevation"
-                                    | CurvatureRidge -> "Curvature"
                                 let sb = System.Text.StringBuilder()
                                 sb.Append("{\"mode\":\"") |> ignore
                                 sb.Append(modeLabel) |> ignore
-                                sb.Append("\",\"len\":") |> ignore
-                                sb.Append(sprintf "%.2f" arc.[n - 1]) |> ignore
-                                sb.Append(",\"pts\":[") |> ignore
-                                for i in 0 .. n - 1 do
-                                    if i > 0 then sb.Append(',') |> ignore
-                                    let s = if i < scalars.Length then scalars.[i] else 0.0
-                                    sb.Append(sprintf "[%.3f,%.3f]" arc.[i] s) |> ignore
+                                sb.Append("\",\"traces\":[") |> ignore
+                                for ti in 0 .. traces.Length - 1 do
+                                    if ti > 0 then sb.Append(',') |> ignore
+                                    let (mesh, pts, scalars, color, isHost) = traces.[ti]
+                                    let n = pts.Length
+                                    let arc = Array.zeroCreate<float> n
+                                    for i in 1 .. n - 1 do
+                                        arc.[i] <- arc.[i - 1] + (pts.[i] - pts.[i - 1]).Length
+                                    sb.Append("{\"mesh\":\"") |> ignore
+                                    sb.Append(shortName mesh) |> ignore
+                                    sb.Append("\",\"color\":\"") |> ignore
+                                    sb.Append(color) |> ignore
+                                    sb.Append("\",\"host\":") |> ignore
+                                    sb.Append(if isHost then "true" else "false") |> ignore
+                                    sb.Append(",\"pts\":[") |> ignore
+                                    for i in 0 .. n - 1 do
+                                        if i > 0 then sb.Append(',') |> ignore
+                                        let s = if i < scalars.Length then scalars.[i] else 0.0
+                                        sb.Append(sprintf "[%.3f,%.3f]" arc.[i] s) |> ignore
+                                    sb.Append("]}") |> ignore
                                 sb.Append("]}") |> ignore
                                 sb.ToString()
                         | _ -> "{}"
@@ -221,21 +247,26 @@ module Cards =
                     "  if(raw === last) return; last = raw;"
                     "  try { var d = JSON.parse(raw); } catch(e) { return; }"
                     "  el.innerHTML = '';"
-                    "  if(!d.pts || d.pts.length < 2){"
+                    "  if(!d.traces || d.traces.length === 0){"
                     "    var p = document.createElement('div');"
                     "    p.className = 'pin-card-empty';"
-                    "    p.textContent = 'Tracing isoline…';"
+                    "    p.textContent = 'Tracing…';"
                     "    el.appendChild(p);"
                     "    return;"
                     "  }"
-                    "  var w = 280, h = 110, padL = 36, padR = 6, padT = 6, padB = 18;"
+                    "  var w = 280, h = 130, padL = 38, padR = 6, padT = 6, padB = 38;"
                     "  var iw = w - padL - padR, ih = h - padT - padB;"
-                    "  var xs = d.pts.map(function(p){return p[0];});"
-                    "  var ys = d.pts.map(function(p){return p[1];});"
-                    "  var xMin = 0, xMax = d.len;"
-                    "  var yMin = Math.min.apply(null, ys), yMax = Math.max.apply(null, ys);"
+                    "  var xMax = 0, yMin = Infinity, yMax = -Infinity;"
+                    "  d.traces.forEach(function(t){"
+                    "    t.pts.forEach(function(p){"
+                    "      if(p[0] > xMax) xMax = p[0];"
+                    "      if(p[1] < yMin) yMin = p[1];"
+                    "      if(p[1] > yMax) yMax = p[1];"
+                    "    });"
+                    "  });"
                     "  if(yMax - yMin < 0.001){ var c = (yMax + yMin)/2; yMin = c - 0.5; yMax = c + 0.5; }"
-                    "  var sx = function(v){ return padL + (v - xMin)/(xMax - xMin) * iw; };"
+                    "  if(xMax < 0.001) xMax = 1.0;"
+                    "  var sx = function(v){ return padL + v / xMax * iw; };"
                     "  var sy = function(v){ return padT + ih - (v - yMin)/(yMax - yMin) * ih; };"
                     "  var svg = document.createElementNS(ns,'svg');"
                     "  svg.setAttribute('class','line-plot');"
@@ -247,25 +278,42 @@ module Cards =
                     "  frame.setAttribute('fill','#f8fafc'); frame.setAttribute('stroke','#cbd5e1');"
                     "  frame.setAttribute('stroke-width','1');"
                     "  svg.appendChild(frame);"
-                    "  var pl = document.createElementNS(ns,'polyline');"
-                    "  pl.setAttribute('points', d.pts.map(function(p){return sx(p[0])+','+sy(p[1]);}).join(' '));"
-                    "  pl.setAttribute('stroke','#1a56db'); pl.setAttribute('stroke-width','1.5');"
-                    "  pl.setAttribute('fill','none');"
-                    "  svg.appendChild(pl);"
-                    "  function txt(x,y,s,anchor){"
+                    "  d.traces.forEach(function(tr){"
+                    "    var pl = document.createElementNS(ns,'polyline');"
+                    "    pl.setAttribute('points', tr.pts.map(function(p){return sx(p[0])+','+sy(p[1]);}).join(' '));"
+                    "    pl.setAttribute('stroke', tr.color);"
+                    "    pl.setAttribute('stroke-width', tr.host ? '1.8' : '1.2');"
+                    "    pl.setAttribute('stroke-opacity', tr.host ? '1.0' : '0.85');"
+                    "    pl.setAttribute('fill','none');"
+                    "    svg.appendChild(pl);"
+                    "  });"
+                    "  function txt(x,y,s,anchor,color){"
                     "    var t = document.createElementNS(ns,'text');"
                     "    t.setAttribute('x', x); t.setAttribute('y', y);"
                     "    t.setAttribute('text-anchor', anchor || 'middle');"
                     "    t.setAttribute('font-family','SF Mono, Monaco, monospace');"
                     "    t.setAttribute('font-size','9');"
-                    "    t.setAttribute('fill','#475569');"
+                    "    t.setAttribute('fill', color || '#475569');"
                     "    t.textContent = s; return t;"
                     "  }"
-                    "  svg.appendChild(txt(padL - 4, padT + 8, yMax.toFixed(1), 'end'));"
+                    "  svg.appendChild(txt(padL - 4, padT + 8, yMax.toFixed(1)));"
                     "  svg.appendChild(txt(padL - 4, padT + ih - 1, yMin.toFixed(1), 'end'));"
-                    "  svg.appendChild(txt(padL, h - 4, '0m', 'start'));"
-                    "  svg.appendChild(txt(w - padR, h - 4, xMax.toFixed(1) + 'm', 'end'));"
-                    "  svg.appendChild(txt((padL + w - padR)/2, h - 4, d.mode + ' • ' + d.pts.length + ' pts', 'middle'));"
+                    "  svg.appendChild(txt(padL, padT + ih + 10, '0m', 'start'));"
+                    "  svg.appendChild(txt(w - padR, padT + ih + 10, xMax.toFixed(1) + 'm', 'end'));"
+                    "  svg.appendChild(txt((padL + w - padR)/2, padT + ih + 10, d.mode, 'middle'));"
+                    "  // Legend: mesh names with their colours, two-per-row max."
+                    "  var lyBase = padT + ih + 22;"
+                    "  d.traces.forEach(function(tr, i){"
+                    "    var col = i % 2;"
+                    "    var row = (i / 2) | 0;"
+                    "    var lx = padL + col * (iw / 2);"
+                    "    var ly = lyBase + row * 10;"
+                    "    var sw = document.createElementNS(ns,'rect');"
+                    "    sw.setAttribute('x', lx); sw.setAttribute('y', ly - 5);"
+                    "    sw.setAttribute('width','7'); sw.setAttribute('height','5');"
+                    "    sw.setAttribute('fill', tr.color); svg.appendChild(sw);"
+                    "    svg.appendChild(txt(lx + 10, ly, tr.mesh + (tr.host ? ' ★' : ''), 'start', tr.color));"
+                    "  });"
                     "  el.appendChild(svg);"
                     "}"
                     "render();"

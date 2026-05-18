@@ -66,7 +66,22 @@ into four sub-phases:
   selected. Card body: SVG arc-length × elevation plot via OnBoot JS
   + MutationObserver pattern.
 - **4c: Line payload — curvature ridge sub-mode + cross-mesh tracing**
-  — deferred.
+  — landed. Server added `/api/query/curvature-ridge` (dihedral-angle
+  edge classification: per-edge angle between the two adjacent triangle
+  normals, edges above threshold become ridge edges, vertex-keyed
+  adjacency walk produces the polyline). The ridge endpoint also
+  returns per-vertex peak dihedral as scalars so the card plot's y-axis
+  carries the "curvature" signal the spec asks for. Cross-mesh tracing
+  is wired for **both** sub-modes: on any payload-kind change or
+  line-mode change, the Update handler fans out the query to every
+  other visible mesh in the dataset using the same world-space seed
+  point. Results land via `LineCrossMeshComputed(id, mesh, pts,
+  scalars)` and are stored in `LinePayload.CrossMeshTraces`. The 3D
+  renderer iterates host + cross-mesh traces; each polyline is
+  coloured from its host mesh's palette colour (yellow when that pin
+  is selected and the line is the host trace). The card SVG renders
+  every trace plus a small per-mesh legend with palette swatches; the
+  host trace is starred and drawn thicker.
 - **4d: Patch payload + 2D-3D linkage (§D.12)** — deferred.
 
 V6 references active after Phase 4a:

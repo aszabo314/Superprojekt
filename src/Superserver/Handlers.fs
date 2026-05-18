@@ -48,6 +48,11 @@ type CylinderEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Ra
 [<CLIMutable>]
 type IsolineRequest = { Name: string; Elevation: float; Seed: float[]; MaxPoints: int }
 
+// V6 §D.7.2 — curvature-ridge tracing. Threshold is in radians; default
+// ~0.4 rad ≈ 23° corresponds to a moderate crease.
+[<CLIMutable>]
+type RidgeRequest = { Name: string; Seed: float[]; ThresholdRad: float; MaxPoints: int }
+
 let inline private toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
 let inline private fromV3d (v : V3d)   = [| v.X; v.Y; v.Z |]
 
@@ -277,6 +282,29 @@ let isolineHandler : HttpHandler =
             return! json {| polyline = pts |} next ctx
         with ex ->
             log.LogError(ex, "isoline failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+// POST /api/query/curvature-ridge
+// Walks ridge edges on a single mesh and returns the polyline whose
+// closest point is nearest the seed. Response: { polyline = [[x,y,z],…] }.
+let curvatureRidgeHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<RidgeRequest>()
+            let dataset, name = splitName req.Name
+            let lm = MeshCache.get dataset name 0
+            let seed = toV3d req.Seed
+            let threshold = if req.ThresholdRad <= 0.0 then 0.4 else req.ThresholdRad
+            let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
+            let flat, scalars = MeshCache.curvatureRidgeWithScalars lm seed threshold maxPoints
+            let n = flat.Length / 3
+            let pts = Array.init n (fun i -> [| flat.[i * 3]; flat.[i * 3 + 1]; flat.[i * 3 + 2] |])
+            log.LogInformation("curvature-ridge {Name} θ={Threshold:F2}rad: {Count} pts", req.Name, threshold, n)
+            return! json {| polyline = pts; scalars = scalars |} next ctx
+        with ex ->
+            log.LogError(ex, "curvature-ridge failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
@@ -573,6 +601,7 @@ let webApp : HttpHandler =
         route  "/api/query/plane-intersection"                  >=> planeIntersectionHandler
         route  "/api/query/plane-intersection-batch"            >=> planeIntersectionBatchHandler
         route  "/api/query/isoline"                             >=> isolineHandler
+        route  "/api/query/curvature-ridge"                     >=> curvatureRidgeHandler
         route  "/api/query/grid-eval"                           >=> gridEvalHandler
         route  "/api/query/cylinder-eval"                       >=> cylinderEvalHandler
     ]

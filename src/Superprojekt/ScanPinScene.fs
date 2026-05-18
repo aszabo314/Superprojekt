@@ -184,49 +184,50 @@ module ScanPinScene =
                     }
                 ])
 
-        // §D.7.2 — line-on-surface polyline. Renders as pixel-constant 3D
-        // lines (Shader.Lines) so the trace stays legible at any camera
-        // distance. Coloured from DatasetColors[HostMeshName], or yellow
-        // when the pin is selected. Field-projected aVals keep the rebuild
-        // cost minimal: only Points + isSelected toggle a rebuild.
+        // §D.7.2 — line-on-surface polylines (host + cross-mesh traces).
+        // Each polyline renders as pixel-constant 3D lines (Shader.Lines)
+        // coloured from DatasetColors[meshName] so cross-mesh traces are
+        // visually distinguishable. When the pin is selected the host
+        // trace pops in yellow.
+        let inline colorForMesh (mesh : string) (palette : Map<string, C4b>) (selected : bool) (isHost : bool) =
+            if selected && isHost then V4d(1.0, 0.9, 0.0, 0.98)
+            else
+                match Map.tryFind mesh palette with
+                | Some c -> V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 0.95)
+                | None -> V4d(0.1, 0.34, 0.86, 0.95)
+
         let pinLines =
             pinIdSet |> ASet.map (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
                 let active = (notFullscreen, isSelected) ||> AVal.map2 (&&)
-                let pointsVal =
+                let traces =
                     pinVal |> AVal.map (fun po ->
                         match po with
                         | Some p ->
-                            match p.Payload with
-                            | Line lp -> lp.Points
-                            | _ -> [||]
-                        | None -> [||])
-                let colorVal =
-                    pinVal |> AVal.map (fun po ->
-                        match po with
-                        | Some p ->
-                            let baseC =
-                                match p.HostMeshName with
-                                | Some host ->
-                                    Map.tryFind host p.DatasetColors
-                                    |> Option.map (fun c ->
-                                        V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 0.95))
-                                    |> Option.defaultValue (V4d(0.1, 0.34, 0.86, 0.95))
-                                | None -> V4d(0.1, 0.34, 0.86, 0.95)
-                            baseC
-                        | None -> V4d.Zero)
-                let renderPoints =
-                    (pointsVal, model.CommonCentroid, datasetScale)
-                    |||> AVal.map3 (fun pts cc scale ->
-                        if pts.Length = 0 then [||]
-                        else pts |> Array.map (fun p -> (p - cc) * scale))
+                            match p.Payload, p.HostMeshName with
+                            | Line lp, hostOpt ->
+                                let host = hostOpt |> Option.defaultValue ""
+                                let palette = p.DatasetColors
+                                let pairs = ResizeArray<string * V3d[] * bool>()
+                                pairs.Add(host, lp.Points, true)
+                                for kv in lp.CrossMeshTraces do
+                                    pairs.Add(kv.Key, fst kv.Value, false)
+                                palette, pairs.ToArray()
+                            | _ -> Map.empty, [||]
+                        | None -> Map.empty, [||])
+                let ccScale =
+                    (model.CommonCentroid, datasetScale) ||> AVal.map2 (fun cc s -> cc, s)
                 let segs =
-                    (renderPoints, colorVal, isSelected) |||> AVal.map3 (fun pts color sel ->
-                        if pts.Length < 2 then [||]
-                        else
-                            let c = if sel then V4d(1.0, 0.9, 0.0, 0.98) else color
-                            Array.init (pts.Length - 1) (fun i -> pts.[i], pts.[i + 1], c, 2.0))
+                    (traces, isSelected, ccScale) |||> AVal.map3 (fun (palette, lines) sel (cc, scale) ->
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        for (mesh, pts, isHost) in lines do
+                            if pts.Length >= 2 then
+                                let color = colorForMesh mesh palette sel isHost
+                                let rps = pts |> Array.map (fun p -> (p - cc) * scale)
+                                for i in 0 .. rps.Length - 2 do
+                                    out.Add(rps.[i], rps.[i + 1], color, 2.0)
+                        out.ToArray())
                 sg {
                     Sg.Active active
                     Sg.View view

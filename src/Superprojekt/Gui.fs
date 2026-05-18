@@ -368,8 +368,10 @@ module Gui =
                             | _ -> ())
                     "Ridge",
                         isIsoline |> AVal.map not,
-                        // Ridge is greyed in 4b; the click is a no-op until 4c lands.
-                        (fun () -> ())
+                        (fun () ->
+                            match AVal.force pinId with
+                            | Some id -> env.Emit [ScanPinMsg (SetLineMode(id, CurvatureRidge))]
+                            | None -> ())
                 ]
                 div {
                     Class "lp-isoline-row"

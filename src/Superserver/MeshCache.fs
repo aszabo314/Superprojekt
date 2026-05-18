@@ -300,6 +300,174 @@ let isoline (lm : LoadedMesh) (elevation : float) (seed : V3d) (maxPoints : int)
                 out.[i * 3 + 2] <- chosen.[i].Z
             out
 
+// V6 §D.7.2 — curvature-ridge tracing via dihedral angles. Per-edge ridge
+// classification: for any mesh edge with two adjacent triangles, the
+// dihedral angle is the angle between the two triangle normals; edges
+// whose dihedral exceeds `thresholdRad` are "ridge edges". Connected
+// ridge edges (linked by shared vertices) form polylines; we walk the
+// component nearest the seed.
+// Returns (worldPolyline, perVertexDihedral) — dihedral in radians, sampled
+// as the largest ridge-edge angle incident to each polyline vertex (so the
+// scalar trace in the card plot peaks at sharp corners along the ridge).
+let curvatureRidgeWithScalars (lm : LoadedMesh) (seed : V3d) (thresholdRad : float) (maxPoints : int) : float[] * float[] =
+    let positions = lm.parsed.positions
+    let centroid = lm.parsed.centroid
+    let indices = lm.parsed.indices
+    let triCount = indices.Length / 3
+
+    let inline edgeKey (a : int) (b : int) =
+        let lo = min a b
+        let hi = max a b
+        (int64 lo <<< 32) ||| int64 hi
+
+    // edge → (tri0, tri1); tri1 = -1 for boundary edges.
+    let edgeTris = System.Collections.Generic.Dictionary<int64, int * int>()
+    let inline addTri (a : int) (b : int) (ti : int) =
+        let k = edgeKey a b
+        let mutable existing = (0, 0)
+        if edgeTris.TryGetValue(k, &existing) then
+            let (t1, _) = existing
+            edgeTris.[k] <- (t1, ti)
+        else
+            edgeTris.[k] <- (ti, -1)
+
+    for ti in 0 .. triCount - 1 do
+        let i0 = indices.[ti * 3]
+        let i1 = indices.[ti * 3 + 1]
+        let i2 = indices.[ti * 3 + 2]
+        addTri i0 i1 ti
+        addTri i1 i2 ti
+        addTri i2 i0 ti
+
+    // Triangle normals (local mesh space; sign doesn't matter since we
+    // compare angle magnitudes via abs(dot)).
+    let triNormals = Array.zeroCreate<V3d> triCount
+    for ti in 0 .. triCount - 1 do
+        let p0 = V3d positions.[indices.[ti * 3]]
+        let p1 = V3d positions.[indices.[ti * 3 + 1]]
+        let p2 = V3d positions.[indices.[ti * 3 + 2]]
+        let n = Vec.cross (p1 - p0) (p2 - p0)
+        let l = n.Length
+        triNormals.[ti] <- if l > 1e-12 then n / l else V3d.OOI
+
+    // Vertex adjacency through ridge edges. Each vertex stores up to two
+    // neighbours (matching the isoline graph shape); higher-valence
+    // junctions just keep the first two we see — the walk simply stops
+    // at the junction, which is acceptable for V6's prototype.
+    let cosT = cos thresholdRad
+    let vertAdj = System.Collections.Generic.Dictionary<int, int * int>()
+    let inline addAdj (a : int) (b : int) =
+        let mutable existing = (0, -1)
+        if vertAdj.TryGetValue(a, &existing) then
+            let (x, y) = existing
+            if y = -1 then vertAdj.[a] <- (x, b)
+        else
+            vertAdj.[a] <- (b, -1)
+
+    let ridgeVerts = System.Collections.Generic.HashSet<int>()
+    // Per-vertex peak dihedral over incident ridge edges, in radians.
+    let vertDihedral = System.Collections.Generic.Dictionary<int, float>()
+    let inline bumpDihedral (v : int) (d : float) =
+        let mutable existing = 0.0
+        if vertDihedral.TryGetValue(v, &existing) then
+            if d > existing then vertDihedral.[v] <- d
+        else vertDihedral.[v] <- d
+    for kv in edgeTris do
+        let (t1, t2) = kv.Value
+        if t2 >= 0 then
+            let dot = abs (Vec.dot triNormals.[t1] triNormals.[t2])
+            if dot < cosT then
+                let key = kv.Key
+                let v0 = int (key >>> 32)
+                let v1 = int (key &&& 0xFFFFFFFFL)
+                addAdj v0 v1
+                addAdj v1 v0
+                ridgeVerts.Add v0 |> ignore
+                ridgeVerts.Add v1 |> ignore
+                let dihedral = acos (min 1.0 (max -1.0 dot))
+                bumpDihedral v0 dihedral
+                bumpDihedral v1 dihedral
+
+    if ridgeVerts.Count = 0 then [||], [||]
+    else
+        let visited = System.Collections.Generic.HashSet<int>()
+        let polylines = ResizeArray<V3d[] * float[]>()
+
+        let walkFrom (start : int) (avoid : int) =
+            let acc = ResizeArray<int>()
+            acc.Add start
+            visited.Add start |> ignore
+            let mutable last = avoid
+            let mutable cur = start
+            let mutable keep = true
+            while keep do
+                let mutable n = (0, -1)
+                if vertAdj.TryGetValue(cur, &n) then
+                    let (a, b) = n
+                    let nxt =
+                        if a <> last && a <> -1 && not (visited.Contains a) then a
+                        elif b <> last && b <> -1 && not (visited.Contains b) then b
+                        else -1
+                    if nxt = -1 then keep <- false
+                    else
+                        acc.Add nxt
+                        visited.Add nxt |> ignore
+                        last <- cur
+                        cur <- nxt
+                else keep <- false
+            acc
+
+        for start in Array.ofSeq vertAdj.Keys do
+            if not (visited.Contains start) then
+                let (a, b) = vertAdj.[start]
+                let forward = walkFrom start -1
+                let backward =
+                    if forward.Count >= 2 then
+                        let second = if forward.[1] = a then b else a
+                        if second = -1 || visited.Contains second then ResizeArray<int>()
+                        else walkFrom second start
+                    else ResizeArray<int>()
+                let combined = ResizeArray<int>(forward.Count + backward.Count)
+                for i in backward.Count - 1 .. -1 .. 0 do combined.Add backward.[i]
+                for k in forward do combined.Add k
+                let pts =
+                    combined |> Seq.map (fun vi -> V3d positions.[vi] + centroid) |> Array.ofSeq
+                let scalars =
+                    combined |> Seq.map (fun vi ->
+                        let mutable v = 0.0
+                        if vertDihedral.TryGetValue(vi, &v) then v else 0.0)
+                    |> Array.ofSeq
+                polylines.Add (pts, scalars)
+
+        if polylines.Count = 0 then [||], [||]
+        else
+            let scored =
+                polylines |> Seq.map (fun (pts, sc) ->
+                    let mutable minD2 = System.Double.MaxValue
+                    for p in pts do
+                        let d2 = (p - seed).LengthSquared
+                        if d2 < minD2 then minD2 <- d2
+                    let mutable len = 0.0
+                    for i in 1 .. pts.Length - 1 do
+                        len <- len + (pts.[i] - pts.[i - 1]).Length
+                    pts, sc, minD2, len)
+                |> Array.ofSeq
+            let chosenPts, chosenSc, _, _ =
+                scored |> Array.maxBy (fun (_, _, d2, len) -> len / (1.0 + d2 * 0.5))
+            let n = min chosenPts.Length maxPoints
+            let outPts = Array.zeroCreate<float> (n * 3)
+            let outSc  = Array.zeroCreate<float> n
+            for i in 0 .. n - 1 do
+                outPts.[i * 3]     <- chosenPts.[i].X
+                outPts.[i * 3 + 1] <- chosenPts.[i].Y
+                outPts.[i * 3 + 2] <- chosenPts.[i].Z
+                outSc.[i] <- chosenSc.[i]
+            outPts, outSc
+
+let curvatureRidge (lm : LoadedMesh) (seed : V3d) (thresholdRad : float) (maxPoints : int) : float[] =
+    let pts, _ = curvatureRidgeWithScalars lm seed thresholdRad maxPoints
+    pts
+
 // Statistics helpers
 type GridCellStats = { Average: float; Q1: float; Q3: float; Min: float; Max: float; Variance: float }
 type DatasetStats = { MeshName: string; ZMin: float; ZQ1: float; ZMedian: float; ZQ3: float; ZMax: float; ZVariance: float }

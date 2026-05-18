@@ -5,6 +5,7 @@ open Aardvark.Rendering
 open Aardworx.WebAssembly
 open FSharp.Data.Adaptive
 open Aardvark.Dom
+open FShade
 
 module SceneGraph =
 
@@ -220,10 +221,68 @@ module SceneGraph =
                 | PlusCurvature -> 1
                 | PlusTerrainFeatures -> 2)
 
+        // V6 §D.9 — assemble provenance heatmap uniforms.
+        let provenanceEnabled = model.ProvenanceHeatmap |> AVal.map (fun b -> if b then 1 else 0)
+        let falloffOnly       = model.FalloffZoneOnly   |> AVal.map (fun b -> if b then 1 else 0)
+        let provThreshold     = model.ProvenanceThreshold
+
+        // Per-mesh dataset / algorithm error packed into fixed-size arrays
+        // indexed by MeshOrder. Slots beyond MeshCount carry zeroes.
+        let provenanceArrays =
+            (model.MeshOrder |> AMap.toAVal,
+             model.MeshSensorTypes, model.MeshDatasetErrors,
+             model.MeshAlgorithmResidual)
+            |> fun (a, b, c, d) ->
+                AVal.custom (fun tok ->
+                    let order = a.GetValue tok
+                    let sensors = b.GetValue tok
+                    let overrides = c.GetValue tok
+                    let algo = d.GetValue tok
+                    let datasetArr = Arr<N<16>, float>()
+                    let algoArr = Arr<N<16>, float>()
+                    for (name, idx) in HashMap.toSeq order do
+                        if idx >= 0 && idx < 16 then
+                            datasetArr.[idx] <- Provenance.datasetError overrides sensors name
+                            algoArr.[idx]    <- Map.tryFind name algo |> Option.defaultValue 0.0
+                    datasetArr, algoArr)
+        let provenanceDataset   = provenanceArrays |> AVal.map fst
+        let provenanceAlgorithm = provenanceArrays |> AVal.map snd
+
+        // Anchor array: world-space (centre.xyz, sigma) packed into V4d's,
+        // capped at MaxProvenanceAnchors (32).
+        let provenanceAnchors =
+            (model.ScanPins.Pins |> AMap.toAVal, model.CommonCentroid,
+             model.ActiveDataset, model.DatasetScales)
+            |> fun (a, b, c, d) ->
+                AVal.custom (fun tok ->
+                    let pins = a.GetValue tok
+                    let cc = b.GetValue tok
+                    let ds = c.GetValue tok
+                    let scales = d.GetValue tok
+                    let scale = ds |> Option.bind (fun n -> Map.tryFind n scales) |> Option.defaultValue 1.0
+                    let arr = Arr<N<32>, V4d>()
+                    let mutable n = 0
+                    for (_, pin) in HashMap.toSeq pins do
+                        if pin.Phase = PinPhase.Committed && n < 32 then
+                            let world = pin.Centre / scale + cc
+                            let sigma = pin.Sigma / scale
+                            arr.[n] <- V4d(world.X, world.Y, world.Z, sigma)
+                            n <- n + 1
+                    arr, n)
+        let provenanceAnchorsArr = provenanceAnchors |> AVal.map fst
+        let provenanceAnchorCount = provenanceAnchors |> AVal.map snd
+
         let composite =
             sg {
                 Sg.Active (AVal.map not fullscreenActive)
-                MeshView.composeMeshTextures cnt colors depths exploreTexAsITex model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth clipMin clipMax effectiveGhostSilhouette ghostDetailInt meshVisibilityMask
+                MeshView.composeMeshTextures cnt colors depths exploreTexAsITex
+                    model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth
+                    clipMin clipMax
+                    effectiveGhostSilhouette ghostDetailInt
+                    provenanceEnabled provThreshold falloffOnly
+                    provenanceDataset provenanceAlgorithm
+                    provenanceAnchorCount provenanceAnchorsArr
+                    meshVisibilityMask
             }
 
         let fullscreenNodes =

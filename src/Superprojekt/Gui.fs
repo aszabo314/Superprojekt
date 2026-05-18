@@ -533,6 +533,73 @@ module Gui =
                             (fun b v -> Box3d(b.Min, V3d(b.Max.X, b.Max.Y, v)))
                     })
 
+                // V6 §D.9 — per-mesh dataset-error overrides + sensor
+                // selection. Defaults come from Provenance.defaultDatasetError;
+                // the override slider clears back to the default with the
+                // ↺ button.
+                collapsibleSection "Error metadata" false (
+                    div {
+                        Class "lp-err-meta"
+                        model.MeshNames |> AList.map (fun name ->
+                            let sensors = model.MeshSensorTypes
+                            let overrides = model.MeshDatasetErrors
+                            let sensor =
+                                sensors |> AVal.map (fun m ->
+                                    Map.tryFind name m |> Option.defaultValue UnknownSensor)
+                            let userValue =
+                                overrides |> AVal.map (fun m -> Map.tryFind name m)
+                            let displayed =
+                                (sensor, userValue) ||> AVal.map2 (fun s ov ->
+                                    ov |> Option.defaultValue (Provenance.defaultDatasetError s))
+                            div {
+                                Class "lp-err-mesh-row"
+                                div { Class "lp-err-mesh-name"; Cards.shortName name }
+                                compactButtonBar [
+                                    "Rover",
+                                        sensor |> AVal.map ((=) RoverStereo),
+                                        (fun () -> env.Emit [SetMeshSensorType(name, RoverStereo)])
+                                    "Sat",
+                                        sensor |> AVal.map ((=) Satellite),
+                                        (fun () -> env.Emit [SetMeshSensorType(name, Satellite)])
+                                    "Photo",
+                                        sensor |> AVal.map ((=) Photogrammetry),
+                                        (fun () -> env.Emit [SetMeshSensorType(name, Photogrammetry)])
+                                    "LiDAR",
+                                        sensor |> AVal.map ((=) LiDAR),
+                                        (fun () -> env.Emit [SetMeshSensorType(name, LiDAR)])
+                                ]
+                                div {
+                                    Class "lp-err-override"
+                                    inlineLogSlider "Override" 0.0001 10.0 (fun v ->
+                                        if v < 0.01 then sprintf "%.1fmm" (v * 1000.0)
+                                        else sprintf "%.3fm" v) displayed (fun v ->
+                                        env.Emit [SetMeshDatasetError(name, Some v)])
+                                    button {
+                                        Class "mb"
+                                        Attribute("title", "Revert to sensor default")
+                                        Dom.OnClick(fun _ ->
+                                            env.Emit [SetMeshDatasetError(name, None)])
+                                        "↺"
+                                    }
+                                }
+                            })
+                    })
+
+                // V6 §D.9 — global error-provenance heatmap toggle.
+                collapsibleSection "Error provenance" false (
+                    div {
+                        Class "lp-prov-body"
+                        compactToggle "Show heatmap" model.ProvenanceHeatmap (fun () ->
+                            env.Emit [ToggleProvenanceHeatmap])
+                        compactToggle "Falloff zones only" model.FalloffZoneOnly (fun () ->
+                            env.Emit [ToggleFalloffZoneOnly])
+                        inlineLogSlider "Threshold" 0.0001 10.0 (fun v ->
+                            if v < 0.01 then sprintf "%.1fmm" (v * 1000.0)
+                            else sprintf "%.2fm" v) model.ProvenanceThreshold (fun v ->
+                            env.Emit [SetProvenanceThreshold v])
+                        div { Class "lp-sublabel-hint"; "Red = dataset, green = algorithm, blue = conditioning." }
+                    })
+
                 // V6 §D.3 lasso. Sits alongside the rectangular box clip;
                 // both can be active simultaneously and the per-fragment
                 // discard enforces their intersection.

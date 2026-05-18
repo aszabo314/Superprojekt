@@ -91,7 +91,7 @@ module Cards =
     // (1) numeric readout of (centre, radius, σ); (2) error-provenance
     // stacked bar (placeholder bars until Phase 7 supplies real data);
     // (3) editable reliability-weight slider.
-    let private pinCardBody (env : Env<Message>) (_model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
+    let private pinCardBody (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
         let payloadKind =
             selectedPin |> AVal.map (function
                 | Some p -> Some (PayloadType.kind p.Payload)
@@ -147,15 +147,78 @@ module Cards =
                         span { Class "pc-val"; sigmaText }
                     }
                 }
-                // §D.9 error-provenance stacked bar — Phase 7 wires real data.
+                // §D.9 error-provenance stacked bar — real per-pin values.
+                let provenance =
+                    (selectedPin, model.MeshSensorTypes, model.MeshDatasetErrors,
+                     model.MeshAlgorithmResidual, model.CommonCentroid, model.DatasetScales,
+                     model.ActiveDataset, model.ScanPins.Pins |> AMap.toAVal)
+                    |> fun (a, b, c, d, e, f, g, h) ->
+                        AVal.custom (fun tok ->
+                            let pinOpt = a.GetValue tok
+                            let sensors = b.GetValue tok
+                            let overrides = c.GetValue tok
+                            let algo = d.GetValue tok
+                            let cc = e.GetValue tok
+                            let scales = f.GetValue tok
+                            let ds = g.GetValue tok
+                            let pins = h.GetValue tok
+                            match pinOpt with
+                            | None -> (0.0, 0.0, 0.0)
+                            | Some pin ->
+                                match pin.HostMeshName with
+                                | None -> (Provenance.defaultDatasetError UnknownSensor, 0.0, 1e6)
+                                | Some host ->
+                                    let scale = ds |> Option.bind (fun d -> Map.tryFind d scales) |> Option.defaultValue 1.0
+                                    let worldP = pin.Centre / scale + cc
+                                    let anchors =
+                                        pins |> HashMap.toSeq
+                                        |> Seq.choose (fun (_, p) ->
+                                            if p.Phase = PinPhase.Committed then
+                                                Some (p.Centre / scale + cc, p.Sigma / scale)
+                                            else None)
+                                        |> Array.ofSeq
+                                    Provenance.sourcesAt host overrides sensors algo worldP anchors)
+                let provText =
+                    provenance |> AVal.map (fun (d, a, c) ->
+                        sprintf "D %.3fm • A %.3fm • C %.0f" d a c)
                 div {
                     Class "pc-provenance"
-                    div { Class "pc-section-title"; "Error provenance (Phase 7)" }
+                    div { Class "pc-section-title"; "Error provenance" }
                     div {
                         Class "pc-bar"
-                        div { Class "pc-bar-seg pc-bar-dataset" }
-                        div { Class "pc-bar-seg pc-bar-algorithm" }
-                        div { Class "pc-bar-seg pc-bar-conditioning" }
+                        provenance |> AVal.map (fun (d, a, c) ->
+                            // Normalise to percentages so each bar segment
+                            // shows the relative contribution. Conditioning
+                            // scaled to metres-equivalent for stacking.
+                            let cM = c * 0.01
+                            let total = max 1e-6 (d + a + cM)
+                            let pd = d / total * 100.0
+                            let pa = a / total * 100.0
+                            let pc = cM / total * 100.0
+                            Some (Attribute("data-prov", sprintf "[%.1f,%.1f,%.1f]" pd pa pc)))
+                        OnBoot [
+                            "(function(){"
+                            "var el = __THIS__;"
+                            "var last = '';"
+                            "function render(){"
+                            "  var raw = el.getAttribute('data-prov') || '[]';"
+                            "  if(raw === last) return; last = raw;"
+                            "  try { var arr = JSON.parse(raw); } catch(e) { return; }"
+                            "  el.innerHTML = '';"
+                            "  if(!arr || arr.length < 3) return;"
+                            "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
+                            "  arr.forEach(function(p, i){"
+                            "    var d = document.createElement('div');"
+                            "    d.style.width = p + '%';"
+                            "    d.style.background = colours[i];"
+                            "    d.style.height = '100%';"
+                            "    el.appendChild(d);"
+                            "  });"
+                            "}"
+                            "render();"
+                            "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-prov']});"
+                            "})();"
+                        ]
                     }
                     div {
                         Class "pc-bar-legend"
@@ -163,6 +226,7 @@ module Cards =
                         span { Class "pc-legend-item pc-bar-algorithm"; "Algorithm" }
                         span { Class "pc-legend-item pc-bar-conditioning"; "Conditioning" }
                     }
+                    div { Class "pc-provenance-readout"; provText }
                 }
                 div {
                     Class "pc-reliability"

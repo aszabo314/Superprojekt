@@ -28,6 +28,12 @@ type Message =
     | RegistrationComplete of string * Trafo3d * float[] * float[]  // mesh, transform, convergence, residuals
     | RegistrationFailed of string
     | ResetMeshTransforms
+    // V6 §D.9 — error provenance
+    | SetMeshSensorType of string * SensorType
+    | SetMeshDatasetError of string * float option   // None ⇒ revert to sensor default
+    | ToggleProvenanceHeatmap
+    | SetProvenanceThreshold of float
+    | ToggleFalloffZoneOnly
     | SetMinDifferenceDepth of float
     | SetMaxDifferenceDepth of float
     | ClipBoundsLoaded   of (string * Box3d)[]
@@ -468,8 +474,16 @@ module Update =
             let mt = Map.add mesh renderTrafo model.MeshTransforms
             let iters =
                 conv |> Array.mapi (fun i rms -> { Iter = i; Rms = rms })
+            // V6 §D.9 — record per-mesh post-solve RMS as the algorithm-
+            // residual signal for that mesh. Computed as RMS of the final
+            // per-correspondence residual array.
+            let meshRms =
+                if resi.Length = 0 then 0.0
+                else sqrt ((resi |> Array.sumBy (fun x -> x * x)) / float resi.Length)
+            let algoMap = Map.add mesh meshRms model.MeshAlgorithmResidual
             { model with
                 MeshTransforms = mt
+                MeshAlgorithmResidual = algoMap
                 Registration = { model.Registration with
                                     LastResiduals = resi
                                     ConvergenceLog = iters
@@ -479,6 +493,19 @@ module Update =
             { model with
                 DebugLog = log
                 Registration = { model.Registration with Running = false } }
+
+        | SetMeshSensorType(name, sensor) ->
+            { model with MeshSensorTypes = Map.add name sensor model.MeshSensorTypes }
+        | SetMeshDatasetError(name, valueOpt) ->
+            match valueOpt with
+            | Some v -> { model with MeshDatasetErrors = Map.add name v model.MeshDatasetErrors }
+            | None -> { model with MeshDatasetErrors = Map.remove name model.MeshDatasetErrors }
+        | ToggleProvenanceHeatmap ->
+            { model with ProvenanceHeatmap = not model.ProvenanceHeatmap }
+        | SetProvenanceThreshold v ->
+            { model with ProvenanceThreshold = v }
+        | ToggleFalloffZoneOnly ->
+            { model with FalloffZoneOnly = not model.FalloffZoneOnly }
         | SetMinDifferenceDepth v ->
             { model with MinDifferenceDepth = v }
         | SetMaxDifferenceDepth v ->

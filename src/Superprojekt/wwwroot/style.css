@@ -684,6 +684,32 @@ body.loaded { background: #f4f6f8; }
     padding: 4px;
 }
 
+/* V6 §D.9 Error provenance */
+.pc-bar { display: flex; height: 8px;
+    border: 1px solid #c5cdd8; border-radius: 2px; overflow: hidden; }
+.pc-provenance-readout {
+    font-family: 'SF Mono', 'Monaco', monospace;
+    font-size: 10px; color: #475569; margin-top: 2px;
+}
+.lp-err-meta {
+    display: flex; flex-direction: column; gap: 6px;
+}
+.lp-err-mesh-row {
+    display: flex; flex-direction: column; gap: 2px;
+    padding: 4px 2px; border-bottom: 1px dashed #e2e8f0;
+}
+.lp-err-mesh-row:last-child { border-bottom: none; }
+.lp-err-mesh-name {
+    font-family: 'SF Mono', 'Monaco', monospace;
+    font-size: 11px; color: #0f172a;
+}
+.lp-err-override {
+    display: flex; gap: 4px; align-items: center;
+}
+.lp-prov-body {
+    display: flex; flex-direction: column; gap: 4px;
+}
+
 /* ── Mesh-wheel active-picking-layer label (V6 §D.1) ──────────────── */
 
 .mesh-wheel-label {

@@ -45,6 +45,16 @@ type MeshSoloState =
     | NoSolo
     | Solo of name:string * restore:Map<string,bool>
 
+/// V6 §D.9 — sensor type drives the default dataset-error value when
+/// no per-mesh override is supplied. Distance-dependent sensors fall
+/// back to the static defaults in `Provenance.defaultDatasetError`.
+type SensorType =
+    | RoverStereo
+    | Satellite
+    | Photogrammetry
+    | LiDAR
+    | UnknownSensor
+
 /// V6 §D.8 — registration solver. RegistrationMode picks the solve
 /// strategy; LastResiduals + ConvergenceLog feed the residuals
 /// histogram and iteration log on the panel.
@@ -102,6 +112,84 @@ type LassoVolume =
         ScreenPolygon : V2d[]      // px in commit viewport — kept for display only
         CommitVpSize  : V2i        // viewport size at commit time
     }
+
+/// V6 §D.9 — helpers for the three error sources (dataset / algorithm /
+/// conditioning) at a given point. Everything here is in **world space**
+/// metres so the values are comparable across signals.
+module Provenance =
+    /// Per-sensor default dataset-error value in metres. RoverStereo
+    /// is distance-dependent in the spec — we approximate with a flat
+    /// 0.5 m default for prototype purposes; a real implementation
+    /// would consult per-vertex camera distance.
+    let defaultDatasetError (sensor : SensorType) =
+        match sensor with
+        | RoverStereo     -> 0.5
+        | Satellite       -> 0.25
+        | Photogrammetry  -> 0.008
+        | LiDAR           -> 0.0005
+        | UnknownSensor   -> 0.01
+
+    let datasetError (overrides : Map<string, float>) (sensors : Map<string, SensorType>) (mesh : string) =
+        match Map.tryFind mesh overrides with
+        | Some v -> v
+        | None ->
+            Map.tryFind mesh sensors
+            |> Option.defaultValue UnknownSensor
+            |> defaultDatasetError
+
+    /// Local conditioning at point `p` based on anchor distribution.
+    /// Density × angular diversity heuristic from §D.9. `anchors` is
+    /// a list of (centre, sigma) world-space pairs; only anchors with
+    /// `weight(p) > 0.05` contribute.
+    let localConditioning (p : V3d) (anchors : (V3d * float)[]) =
+        if anchors.Length < 2 then 1e6  // ill-conditioned by default
+        else
+            let weighted =
+                anchors
+                |> Array.choose (fun (c, sigma) ->
+                    if sigma < 1e-6 then None
+                    else
+                        let d2 = (p - c).LengthSquared
+                        let w = exp (-d2 / (2.0 * sigma * sigma))
+                        if w > 0.05 then Some (c, w) else None)
+            if weighted.Length < 2 then 1e6
+            else
+                let density = weighted |> Array.sumBy snd
+                // Angular diversity: 1 - max |cos angle| over (anchor - p) directions.
+                let dirs =
+                    weighted |> Array.map (fun (c, _) ->
+                        let v = c - p
+                        if v.Length > 1e-9 then v / v.Length else V3d.OOI)
+                let mutable maxCos = 0.0
+                for i in 0 .. dirs.Length - 1 do
+                    for j in i + 1 .. dirs.Length - 1 do
+                        let c = abs (Vec.dot dirs.[i] dirs.[j])
+                        if c > maxCos then maxCos <- c
+                let angDiv = 1.0 - maxCos
+                let cond = 1.0 / (density * angDiv + 1e-3)
+                min cond 1e6
+
+    /// Returns (dataset, algorithm, conditioning) all in metres.
+    let sourcesAt
+            (mesh : string)
+            (datasetOverrides : Map<string, float>)
+            (sensors : Map<string, SensorType>)
+            (algoResiduals : Map<string, float>)
+            (worldPoint : V3d)
+            (anchors : (V3d * float)[]) =
+        let dErr = datasetError datasetOverrides sensors mesh
+        let aErr = Map.tryFind mesh algoResiduals |> Option.defaultValue 0.0
+        let cErr = localConditioning worldPoint anchors
+        dErr, aErr, cErr
+
+    /// Pick the dominant source (0 = dataset, 1 = algorithm, 2 =
+    /// conditioning). Conditioning is scaled down because its raw
+    /// values are unitless and would otherwise always dominate.
+    let dominantSource (d : float) (a : float) (c : float) =
+        let cScaled = c * 0.01   // conditioning is unitless; rough scale to match metres
+        if d >= a && d >= cScaled then 0
+        elif a >= cScaled then 1
+        else 2
 
 module ExploreMode =
     let initial =
@@ -169,6 +257,17 @@ type Model =
         MeshTransforms        : Map<string, Trafo3d>
         Registration          : RegistrationState
 
+        // V6 §D.9 — per-mesh provenance state. SensorTypes / DatasetErrors
+        // feed the dataset-error component (default per-sensor table with
+        // user override); AlgorithmResidual is the post-ICP per-mesh RMS;
+        // LocalConditioning is computed from the live anchor distribution.
+        MeshSensorTypes       : Map<string, SensorType>
+        MeshDatasetErrors     : Map<string, float>       // user override in metres; None ⇒ sensor default
+        MeshAlgorithmResidual : Map<string, float>       // post-solve RMS per mesh, metres
+        ProvenanceHeatmap     : bool                     // global heatmap toggle
+        ProvenanceThreshold   : float                    // minimum total error in metres to paint
+        FalloffZoneOnly       : bool                     // clip metrics + heatmap to anchor falloff zones
+
         ScanPins              : ScanPinModel
         ReferenceAxis         : ReferenceAxisMode
         Explore               : ExploreMode
@@ -219,6 +318,13 @@ module Model =
 
             MeshTransforms        = Map.empty
             Registration          = RegistrationState.initial
+
+            MeshSensorTypes       = Map.empty
+            MeshDatasetErrors     = Map.empty
+            MeshAlgorithmResidual = Map.empty
+            ProvenanceHeatmap     = false
+            ProvenanceThreshold   = 0.01    // 1 cm: paint anything above
+            FalloffZoneOnly       = false
 
             ScanPins              = ScanPinModel.initial
             ReferenceAxis         = AlongWorldZ

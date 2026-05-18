@@ -5,6 +5,7 @@ open Aardworx.WebAssembly
 open Aardvark.Rendering
 open FSharp.Data.Adaptive
 open Aardvark.Dom
+open FShade
 
 type LoadedMesh =
     {
@@ -261,6 +262,13 @@ module MeshView =
         (clipMax                : aval<V3d>)
         (ghostSilhouette        : aval<bool>)
         (ghostDetailMode        : aval<int>)
+        (provenanceEnabled      : aval<int>)
+        (provenanceThreshold    : aval<float>)
+        (falloffZoneOnly        : aval<int>)
+        (provenanceDataset      : aval<Arr<N<16>, float>>)
+        (provenanceAlgorithm    : aval<Arr<N<16>, float>>)
+        (provenanceAnchorCount  : aval<int>)
+        (provenanceAnchors      : aval<Arr<N<32>, V4d>>)
         (meshVisibilityMask     : aval<int>) =
         let colorTex = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
         let depthTex = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
@@ -277,6 +285,13 @@ module MeshView =
             Sg.Uniform("ClipMax",               clipMax)
             Sg.Uniform("GhostSilhouette",       ghostSilhouette)
             Sg.Uniform("GhostDetailMode",       ghostDetailMode)
+            Sg.Uniform("ProvenanceEnabled",     provenanceEnabled)
+            Sg.Uniform("ProvenanceThreshold",   provenanceThreshold)
+            Sg.Uniform("FalloffZoneOnly",       falloffZoneOnly)
+            Sg.Uniform("ProvenanceDataset",     provenanceDataset)
+            Sg.Uniform("ProvenanceAlgorithm",   provenanceAlgorithm)
+            Sg.Uniform("ProvenanceAnchorCount", provenanceAnchorCount)
+            Sg.Uniform("ProvenanceAnchors",     provenanceAnchors)
             Sg.Uniform("MeshVisibilityMask",    meshVisibilityMask)
             Primitives.FullscreenQuad
         }

@@ -1,5 +1,5 @@
-//a69a4265-390a-e01d-d8e3-4a464c59fd32
-//200fc8b1-e862-f821-344a-97a6097a2112
+//be41ea4a-831c-3159-39f4-4604d72f12bb
+//f9a6b69b-77dc-0970-419b-988da8bf86b7
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -43,6 +43,12 @@ type AdaptiveModel(value : Model) =
     let _LassoVolume_ = FSharp.Data.Adaptive.cval(value.LassoVolume)
     let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
+    let _MeshSensorTypes_ = FSharp.Data.Adaptive.cval(value.MeshSensorTypes)
+    let _MeshDatasetErrors_ = FSharp.Data.Adaptive.cval(value.MeshDatasetErrors)
+    let _MeshAlgorithmResidual_ = FSharp.Data.Adaptive.cval(value.MeshAlgorithmResidual)
+    let _ProvenanceHeatmap_ = FSharp.Data.Adaptive.cval(value.ProvenanceHeatmap)
+    let _ProvenanceThreshold_ = FSharp.Data.Adaptive.cval(value.ProvenanceThreshold)
+    let _FalloffZoneOnly_ = FSharp.Data.Adaptive.cval(value.FalloffZoneOnly)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _ReferenceAxis_ = FSharp.Data.Adaptive.cval(value.ReferenceAxis)
     let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
@@ -91,6 +97,12 @@ type AdaptiveModel(value : Model) =
             _LassoVolume_.Value <- value.LassoVolume
             _MeshTransforms_.Value <- value.MeshTransforms
             _Registration_.Value <- value.Registration
+            _MeshSensorTypes_.Value <- value.MeshSensorTypes
+            _MeshDatasetErrors_.Value <- value.MeshDatasetErrors
+            _MeshAlgorithmResidual_.Value <- value.MeshAlgorithmResidual
+            _ProvenanceHeatmap_.Value <- value.ProvenanceHeatmap
+            _ProvenanceThreshold_.Value <- value.ProvenanceThreshold
+            _FalloffZoneOnly_.Value <- value.FalloffZoneOnly
             _ScanPins_.Update(value.ScanPins)
             _ReferenceAxis_.Value <- value.ReferenceAxis
             _Explore_.Value <- value.Explore
@@ -132,6 +144,12 @@ type AdaptiveModel(value : Model) =
     member __.LassoVolume = _LassoVolume_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoVolume>>
     member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
+    member __.MeshSensorTypes = _MeshSensorTypes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, SensorType>>
+    member __.MeshDatasetErrors = _MeshDatasetErrors_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
+    member __.MeshAlgorithmResidual = _MeshAlgorithmResidual_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
+    member __.ProvenanceHeatmap = _ProvenanceHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ProvenanceThreshold = _ProvenanceThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.FalloffZoneOnly = _FalloffZoneOnly_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ScanPins = _ScanPins_
     member __.ReferenceAxis = _ReferenceAxis_ :> FSharp.Data.Adaptive.aval<ReferenceAxisMode>
     member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>

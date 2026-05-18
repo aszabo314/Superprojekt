@@ -76,6 +76,15 @@ module BlitShader =
     [<Literal>]
     let MaxLassoPlanes = 32
 
+    /// V6 §D.9 — fixed-size mesh-uniform arrays for the error provenance
+    /// heatmap. Phase 7 ships with 16 meshes; the existing scenes never
+    /// exceed 8. Anchors cap at 32 — the lasso uses the same cap, and
+    /// 32 anchors is well beyond what a user places manually.
+    [<Literal>]
+    let MaxProvenanceMeshes = 16
+    [<Literal>]
+    let MaxProvenanceAnchors = 32
+
     type UniformScope with
         member x.TextureOffset        : V2d   = x?TextureOffset
         member x.TextureScale         : V2d   = x?TextureScale
@@ -109,6 +118,14 @@ module BlitShader =
         member x.GhostDetailMode      : int   = x?GhostDetailMode
         member x.LassoPlaneCount      : int   = x?LassoPlaneCount
         member x.LassoPlanes          : Arr<N<32>, V4d> = x?LassoPlanes
+        // V6 §D.9 — error provenance heatmap uniforms.
+        member x.ProvenanceEnabled    : int   = x?ProvenanceEnabled
+        member x.ProvenanceThreshold  : float = x?ProvenanceThreshold
+        member x.FalloffZoneOnly      : int   = x?FalloffZoneOnly
+        member x.ProvenanceDataset    : Arr<N<16>, float> = x?ProvenanceDataset
+        member x.ProvenanceAlgorithm  : Arr<N<16>, float> = x?ProvenanceAlgorithm
+        member x.ProvenanceAnchorCount: int   = x?ProvenanceAnchorCount
+        member x.ProvenanceAnchors    : Arr<N<32>, V4d> = x?ProvenanceAnchors
     
     let colorMap =
         [|
@@ -287,6 +304,48 @@ module BlitShader =
             if eCol.W > 0.001 then
                 color.XYZ <- color.XYZ * (1.0 - eCol.W) + eCol.XYZ * eCol.W
                 color.W <- color.W * (1.0 - eCol.W) + eCol.W
+
+            // V6 §D.9 — error provenance heatmap. When enabled, override
+            // colour by the dominant source's hue if the per-pixel total
+            // error exceeds the threshold and (if FalloffZoneOnly is on)
+            // the pixel falls inside at least one anchor's falloff zone.
+            if uniform.ProvenanceEnabled <> 0 && index >= 0 && index < 16 then
+                let ndcProv = v.pos.XY / v.pos.W
+                let clipP = V4d(ndcProv, 2.0 * minDepth - 1.0, 1.0)
+                let worldP = uniform.ViewProjTrafoInv * clipP
+                let p = worldP.XYZ / worldP.W
+                let dErr = uniform.ProvenanceDataset.[index]
+                let aErr = uniform.ProvenanceAlgorithm.[index]
+                // Local conditioning from anchor distribution.
+                let mutable density = 0.0
+                let mutable totalWeight = 0.0
+                for i in 0 .. 31 do
+                    if i < uniform.ProvenanceAnchorCount then
+                        let a = uniform.ProvenanceAnchors.[i]
+                        let sigma = a.W
+                        if sigma > 1e-6 then
+                            let d2 = (p.X - a.X) * (p.X - a.X) + (p.Y - a.Y) * (p.Y - a.Y) + (p.Z - a.Z) * (p.Z - a.Z)
+                            let w = exp (-d2 / (2.0 * sigma * sigma))
+                            if w > 0.05 then
+                                density <- density + w
+                                totalWeight <- max totalWeight w
+                // Angular diversity is heavy in a shader; approximate with
+                // (density^0.5) — more anchors ⇒ better-conditioned.
+                let cond =
+                    if density > 1e-6 then 1.0 / (density + 1e-3)
+                    else 1e3
+                let cScaled = cond * 0.01
+                let total = dErr + aErr + cScaled
+                let zoneOk = uniform.FalloffZoneOnly = 0 || totalWeight > 0.05
+                if total > uniform.ProvenanceThreshold && zoneOk then
+                    let mutable provCol = V3d.Zero
+                    if dErr >= aErr && dErr >= cScaled then provCol <- V3d(0.95, 0.30, 0.30)
+                    elif aErr >= cScaled then provCol <- V3d(0.30, 0.80, 0.40)
+                    else provCol <- V3d(0.35, 0.50, 0.95)
+                    let alpha = 0.55
+                    color.XYZ <- color.XYZ * (1.0 - alpha) + provCol * alpha
+                    color.W <- max color.W alpha
+
             if outDepth >= 0.9999 && color.W < 0.001 then discard()
 
             return { c = color; d = outDepth }

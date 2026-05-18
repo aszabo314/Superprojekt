@@ -3,6 +3,62 @@
 Working reference for the V5→V6 migration. Lists where each V5 feature lives
 in the current codebase. Updated as each phase lands.
 
+## Phase 7 status (Error provenance, §D.9)
+
+Phase 7 wires three error sources (dataset / algorithm / conditioning)
+into the pin card and a global heatmap. Two of the three §D.9
+granularities are wired (per-pin stacked bar + global heatmap toggle);
+per-point Ctrl-click hover readout is deferred.
+
+V6 references active after Phase 7:
+- `Model.fs`: `SensorType` DU (Rover / Sat / Photo / LiDAR / Unknown),
+  `Provenance` helper module (`defaultDatasetError`, `datasetError`,
+  `localConditioning`, `sourcesAt`, `dominantSource`), per-mesh state
+  `MeshSensorTypes` / `MeshDatasetErrors` / `MeshAlgorithmResidual`,
+  global toggles `ProvenanceHeatmap` / `FalloffZoneOnly` /
+  `ProvenanceThreshold`.
+- `Update.fs`: `SetMeshSensorType`, `SetMeshDatasetError` (passes
+  `None` to revert to the sensor default), `ToggleProvenanceHeatmap`,
+  `SetProvenanceThreshold`, `ToggleFalloffZoneOnly`. The
+  `RegistrationComplete` handler now also stashes the per-mesh
+  post-solve RMS into `MeshAlgorithmResidual`.
+- `Cards.fs`: Point-payload section renders a real stacked bar with
+  data-driven segment widths (computed via OnBoot JS over a
+  `data-prov` attribute carrying [%dataset, %algo, %cond]). A numeric
+  readout `D %.3fm • A %.3fm • C %.0f` sits below the legend.
+- `Gui.fs`: Scene tab grows an "Error metadata" expander with a row
+  per mesh (sensor segmented selector + dataset-error override slider
+  + revert button), plus an "Error provenance" expander with the
+  heatmap toggle, falloff-zone toggle, and threshold slider.
+- `Shader.fs`: `readArray` learned a provenance branch that runs
+  when `ProvenanceEnabled = 1`. For the front-most mesh at each
+  pixel, computes `(dErr, aErr, cond)` from per-mesh uniform arrays
+  and an anchor list, picks the dominant source, and tints the
+  pixel red / green / blue. `FalloffZoneOnly = 1` gates pixels by
+  anchor weight > 0.05.
+- `MeshView.composeMeshTextures`: threads `ProvenanceEnabled`,
+  `ProvenanceThreshold`, `FalloffZoneOnly`, `ProvenanceDataset`,
+  `ProvenanceAlgorithm`, `ProvenanceAnchorCount`, `ProvenanceAnchors`
+  through to the composition shader.
+- `SceneGraph.fs`: builds the provenance uniform arrays (per-mesh
+  dataset / algorithm errors indexed by MeshOrder; per-anchor
+  (centre.xyz, sigma) packed into V4d).
+- `wwwroot/style.css`: `.pc-bar`, `.pc-provenance-readout`,
+  `.lp-err-meta`, `.lp-err-mesh-row`, `.lp-err-mesh-name`,
+  `.lp-err-override`, `.lp-prov-body`.
+
+V6 references still **deferred**:
+- Per-point hover readout (Ctrl-click / long-press to sample
+  provenance at an arbitrary surface point). The infrastructure is
+  there — the shader computes the same values per-fragment — but
+  there's no UI wired yet to display the readout.
+- Principled Jacobian-based conditioning ("Compute Detailed
+  Conditioning" button in the Registration panel). The current
+  shader uses `1 / (density + ε)` from anchor weights as the fast
+  heuristic; the principled version requires per-vertex Jacobian
+  assembly + eigendecomposition.
+- All other §D.x — Phases 8–9 per Part F.
+
 ## Phase 6 status (Registration solver, §D.8)
 
 Phase 6 ships per-mesh registration transforms, a server-side

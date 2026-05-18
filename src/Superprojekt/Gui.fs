@@ -190,28 +190,6 @@ module Gui =
             }
         }
 
-    let revolverBar (env : Env<Message>) (model : AdaptiveModel) =
-        div {
-            Class "rev-bar"
-            model.RevolverOn |> AVal.map (fun on ->
-                if on then None else Some (Style [Display "none"]))
-            button {
-                Class "tb-btn-tiny"
-                Attribute("title", "Previous mesh")
-                Dom.OnClick(fun _ -> env.Emit [CycleMeshOrder -1])
-                "\u25C0"
-            }
-            button {
-                Class "tb-btn-tiny"
-                Attribute("title", "Next mesh")
-                Dom.OnClick(fun _ -> env.Emit [CycleMeshOrder 1])
-                "\u25B6"
-            }
-            let size = model.RevolverSettings |> AVal.map (fun r -> r.CircleRadius)
-            inlineSlider "Size" 20.0 400.0 1.0 (sprintf "%.0f") size (fun v ->
-                env.Emit [SetRevolverRadius v])
-        }
-
     let private meshRow (env : Env<Message>) (model : AdaptiveModel) (name : string) =
         let isVis = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
         let isSolo = model.MeshSolo |> AVal.map (fun s ->
@@ -270,13 +248,6 @@ module Gui =
                         Class "mb"; Attribute("title", "Hide all")
                         Dom.OnClick(fun _ -> env.Emit [HideAllMeshes])
                         "None"
-                    }
-                    button {
-                        Class "mb"
-                        model.RevolverOn |> AVal.map (fun on -> if on then Some (Class "mb-on") else None)
-                        Attribute("title", "Toggle revolver overlay")
-                        Dom.OnClick(fun _ -> env.Emit [ToggleRevolver])
-                        "\u229E"
                     }
                 }
             }

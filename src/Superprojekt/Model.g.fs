@@ -1,5 +1,5 @@
-//2cd722f4-1501-4abe-7823-0b89cdff75fa
-//bf2e25e0-ec4d-b875-0d4a-f5d6ca71ccba
+//1dcdcdab-a5d6-370c-526c-a6cbf7567b0f
+//c9584665-9aaf-7f92-6d52-15ddb4430458
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -27,9 +27,7 @@ type AdaptiveModel(value : Model) =
     let _ActiveDataset_ = FSharp.Data.Adaptive.cval(value.ActiveDataset)
     let _DatasetScales_ = FSharp.Data.Adaptive.cval(value.DatasetScales)
     let _DatasetCentroids_ = FSharp.Data.Adaptive.cval(value.DatasetCentroids)
-    let _RevolverOn_ = FSharp.Data.Adaptive.cval(value.RevolverOn)
     let _FullscreenOn_ = FSharp.Data.Adaptive.cval(value.FullscreenOn)
-    let _RevolverCenter_ = FSharp.Data.Adaptive.cval(value.RevolverCenter)
     let _DifferenceRendering_ = FSharp.Data.Adaptive.cval(value.DifferenceRendering)
     let _MinDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MinDifferenceDepth)
     let _MaxDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MaxDifferenceDepth)
@@ -45,7 +43,6 @@ type AdaptiveModel(value : Model) =
     let _CardSystem_ = AdaptiveCardSystemModel(value.CardSystem)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
-    let _RevolverSettings_ = FSharp.Data.Adaptive.cval(value.RevolverSettings)
     let _ExploreCardPos_ = FSharp.Data.Adaptive.cval(value.ExploreCardPos)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let mutable __value = value
@@ -71,9 +68,7 @@ type AdaptiveModel(value : Model) =
             _ActiveDataset_.Value <- value.ActiveDataset
             _DatasetScales_.Value <- value.DatasetScales
             _DatasetCentroids_.Value <- value.DatasetCentroids
-            _RevolverOn_.Value <- value.RevolverOn
             _FullscreenOn_.Value <- value.FullscreenOn
-            _RevolverCenter_.Value <- value.RevolverCenter
             _DifferenceRendering_.Value <- value.DifferenceRendering
             _MinDifferenceDepth_.Value <- value.MinDifferenceDepth
             _MaxDifferenceDepth_.Value <- value.MaxDifferenceDepth
@@ -89,7 +84,6 @@ type AdaptiveModel(value : Model) =
             _CardSystem_.Update(value.CardSystem)
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
-            _RevolverSettings_.Value <- value.RevolverSettings
             _ExploreCardPos_.Value <- value.ExploreCardPos
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
     member __.Current = __adaptive
@@ -108,9 +102,7 @@ type AdaptiveModel(value : Model) =
     member __.ActiveDataset = _ActiveDataset_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.DatasetScales = _DatasetScales_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
     member __.DatasetCentroids = _DatasetCentroids_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.V3d>>
-    member __.RevolverOn = _RevolverOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.FullscreenOn = _FullscreenOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.RevolverCenter = _RevolverCenter_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V2d>
     member __.DifferenceRendering = _DifferenceRendering_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MinDifferenceDepth = _MinDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.MaxDifferenceDepth = _MaxDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
@@ -126,7 +118,6 @@ type AdaptiveModel(value : Model) =
     member __.CardSystem = _CardSystem_
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
-    member __.RevolverSettings = _RevolverSettings_ :> FSharp.Data.Adaptive.aval<RevolverSettings>
     member __.ExploreCardPos = _ExploreCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

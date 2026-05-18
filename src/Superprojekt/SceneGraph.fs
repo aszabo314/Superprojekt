@@ -8,8 +8,6 @@ open Aardvark.Dom
 
 module SceneGraph =
 
-    let private meshPalette : V4d[] = Primitives.meshPaletteV4d
-
     let private boxPos =
         [|  V3f(-0.5f, -0.5f, -0.5f); V3f( 0.5f, -0.5f, -0.5f); V3f( 0.5f,  0.5f, -0.5f); V3f(-0.5f,  0.5f, -0.5f)
             V3f(-0.5f, -0.5f,  0.5f); V3f( 0.5f, -0.5f,  0.5f); V3f( 0.5f,  0.5f,  0.5f); V3f(-0.5f,  0.5f,  0.5f) |]
@@ -101,55 +99,11 @@ module SceneGraph =
 
     let buildCutPlaneQuad = PinGeometry.buildCutPlaneQuad
 
-    let private disk
-            (revolverActive    : aval<bool>)
-            (revolverBase      : aval<option<V2d>>)
-            (colorArrTex       : aval<ITexture>)
-            (viewportSize      : aval<V2i>)
-            (sliceIndex        : aval<int>)
-            (renderPositionNdc : aval<option<V2d>>)
-            (pixelSize         : aval<float>)
-            (borderColor       : aval<V4d>) =
-        sg {
-            Sg.Active revolverActive
-            Sg.NoEvents
-            let t =
-                (renderPositionNdc, viewportSize, pixelSize) |||> AVal.map3 (fun ndc size ps ->
-                    match ndc with
-                    | Some ndc ->
-                        let scale = ps / V2d size
-                        Trafo3d.Scale(scale.X, scale.Y, 1.0) * Trafo3d.Translation(ndc.X, ndc.Y, 0.0)
-                    | None ->
-                        Trafo3d.Scale(0.0)
-                )
-            let textureOffset =
-                (revolverBase, viewportSize, pixelSize) |||> AVal.map3 (fun ndc size ps ->
-                    match ndc with
-                    | Some ndc ->
-                        let tc = (ndc + V2d.II) * 0.5
-                        tc - 0.5 * V2d(ps, ps) / V2d size
-                    | None -> V2d.Zero
-                )
-            let textureScale = (viewportSize, pixelSize) ||> AVal.map2 (fun s ps -> V2d(ps, ps) / V2d s)
-            Sg.Uniform("TextureOffset", textureOffset)
-            Sg.Uniform("TextureScale",  textureScale)
-            Sg.Uniform("SliceIndex",    sliceIndex)
-            Sg.Uniform("BorderColor",   borderColor)
-            Sg.View Trafo3d.Identity
-            Sg.Proj Trafo3d.Identity
-            Sg.Uniform("ColorTexture",  colorArrTex)
-            Sg.Trafo t
-            Sg.Shader { DefaultSurfaces.trafo; BlitShader.readArraySliceColor }
-            Primitives.FullscreenQuad
-        }
-
     let build
         (env : Env<Message>)
         (info : Aardvark.Dom.RenderControlInfo)
         (view : aval<Trafo3d>)
         (proj : aval<Trafo3d>)
-        (revolverBase     : aval<option<V2d>>)
-        (revolverActive   : aval<bool>)
         (fullscreenActive : aval<bool>)
         (model : AdaptiveModel) =
         
@@ -291,26 +245,8 @@ module SceneGraph =
                 }
             ) |> AList.toASet
 
-        let diskRadius = model.RevolverSettings |> AVal.map (fun r -> r.CircleRadius)
-        let diskNodes =
-            model.MeshNames |> AList.map (fun name ->
-                let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-                let renderPos =
-                    AVal.custom (fun t ->
-                        let p = revolverBase.GetValue(t)
-                        let o = order.GetValue(t)
-                        let size = info.ViewportSize.GetValue(t)
-                        let ps = diskRadius.GetValue(t)
-                        match p with
-                        | Some p -> Some (p + 2.0 * float o * (V2d(0.0, ps) / V2d size))
-                        | None   -> None
-                    )
-                let borderCol = order |> AVal.map (fun o -> meshPalette.[o % meshPalette.Length])
-                disk revolverActive revolverBase colorArrTex info.ViewportSize (sliceOf name) renderPos diskRadius borderCol
-            ) |> AList.toASet
-
         let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)
 
         let pinScene = ScanPinScene.build env view proj fullscreenActive model
 
-        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; diskNodes; indicatorNodes; pinScene])
+        ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; indicatorNodes; pinScene])

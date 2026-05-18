@@ -15,10 +15,7 @@ type Message =
     | FilteredMeshLoaded of string * V3d * int[]    // (mesh name, selection point, index buffer)
     | ClearFilteredMesh
     | LogDebug           of string
-    | CycleMeshOrder     of int
-    | ToggleRevolver
     | ToggleFullscreen
-    | SetRevolverCenter         of V2d
     | ToggleDifferenceRendering
     | ToggleGhostSilhouette
     | SetGhostOpacity of float
@@ -45,7 +42,6 @@ type Message =
     | ResetCamera
     | SetExploreCardPos of V2d
     | ToggleGearPopover
-    | SetRevolverRadius of float
     | EditPin of ScanPinId
 
 and ExploreModeMessage =
@@ -483,16 +479,8 @@ module Update =
             let log = model.DebugLog.InsertAt(0, s)
             let log = if log.Count > 20 then IndexList.take 20 log else log
             { model with DebugLog = log }
-        | CycleMeshOrder delta ->
-            let n = model.MeshOrder.Count
-            let d = (delta % n) + n
-            { model with MeshOrder = model.MeshOrder |> HashMap.map (fun _ idx -> (idx + d) % n) }
-        | ToggleRevolver ->
-            { model with RevolverOn = not model.RevolverOn }
         | ToggleFullscreen ->
             { model with FullscreenOn = not model.FullscreenOn }
-        | SetRevolverCenter ndc ->
-            { model with RevolverCenter = ndc }
         | ToggleDifferenceRendering ->
             { model with DifferenceRendering = not model.DifferenceRendering }
         | ToggleGhostSilhouette ->
@@ -589,8 +577,6 @@ module Update =
             { model with ExploreCardPos = Some pos }
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
-        | SetRevolverRadius r ->
-            { model with RevolverSettings = { model.RevolverSettings with CircleRadius = max 20.0 (min 400.0 r) } }
         | EditPin id ->
             let sp = model.ScanPins
             match HashMap.tryFind id sp.Pins with

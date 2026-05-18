@@ -318,18 +318,6 @@ module BlitShader =
                      d = deputy.SampleLevel(v.tc, i, 0.0).X }
         }
 
-    let readArraySliceColor (v : Effects.Vertex) =
-        fragment {
-            let ndc = 2.0 * v.tc - V2d.II
-            let r2 = Vec.lengthSquared ndc
-            if r2 > 1.0 then discard()
-            let r = sqrt r2
-            if r > 0.93 then
-                return uniform?BorderColor
-            else
-            return colon.SampleLevel(uniform.TextureOffset + uniform.TextureScale * v.tc, uniform.SliceIndex, 0.0)
-        }
-
 module Shader =
     open FShade
     open BlitShader

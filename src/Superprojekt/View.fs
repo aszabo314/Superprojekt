@@ -14,8 +14,6 @@ module View =
 
         ServerActions.init env
 
-        let cursorPosition = cval None
-        let shiftHeld      = cval false
         let spaceHeld      = cval false
         let hoverCoord     = cval<V3d option> None
         let viewportSize   = cval (V2i(1, 1))
@@ -23,14 +21,7 @@ module View =
         let autoHoverDebounce = ref (new System.Threading.CancellationTokenSource())
         let autoHoverLastWorld : ref<V3d option> = ref None
 
-        let revolverActive   = AVal.map2 (||) (shiftHeld :> aval<_>) model.RevolverOn
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
-        let revolverBase =
-            AVal.custom (fun t ->
-                if (shiftHeld :> aval<_>).GetValue(t) then (cursorPosition :> aval<_>).GetValue(t)
-                elif (model.RevolverOn :> aval<_>).GetValue(t) then Some ((model.RevolverCenter :> aval<_>).GetValue(t))
-                else None
-            )
 
         body {
             OnBoot [
@@ -341,12 +332,6 @@ module View =
                 ), pointerCapture = true)
 
                 Dom.OnPointerMove(fun e ->
-                    transact (fun () ->
-                        let b = e.ClientRect
-                        let tc = (V2d e.ClientPosition - b.Min) / b.Size
-                        cursorPosition.Value <- Some (V2d(2.0 * tc.X - 1.0, 1.0 - 2.0 * tc.Y))
-                        shiftHeld.Value <- e.Shift
-                    )
                     if AVal.force PinCylinderDrag.isActive then
                         match AVal.force editedPin with
                         | Some pin ->
@@ -356,34 +341,22 @@ module View =
                         | None -> ()
                 )
 
-                Dom.OnPointerDown((fun e ->
-                    if AVal.force model.RevolverOn && not (AVal.force shiftHeld) then
-                        let b = e.ClientRect
-                        let tc = (V2d e.ClientPosition - b.Min) / b.Size
-                        let ndc = V2d(2.0 * tc.X - 1.0, 1.0 - 2.0 * tc.Y)
-                        env.Emit [SetRevolverCenter ndc]
-                ), pointerCapture = true)
-                
-
-                SceneGraph.build env info view proj revolverBase revolverActive fullscreenActive model
+                SceneGraph.build env info view proj fullscreenActive model
             }
 
             Dom.OnKeyDown(fun e ->
                 match e.Key with
-                | "Shift"  -> transact (fun () -> shiftHeld.Value <- true)
                 | " "      -> transact (fun () -> spaceHeld.Value <- true)
                 | "Escape" -> env.Emit [ScanPinMsg CancelPlacement]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
                 match e.Key with
-                | "Shift" -> transact (fun () -> shiftHeld.Value <- false)
                 | " "     -> transact (fun () -> spaceHeld.Value <- false)
                 | _ -> ()
             )
 
             Gui.topBar env model (hoverCoord :> aval<V3d option>)
-            Gui.revolverBar env model
             Gui.leftPanel env model
             Gui.placementFlyout env model
             Gui.exploreCard env model

@@ -24,15 +24,6 @@ type MeshSoloState =
     | NoSolo
     | Solo of name:string * restore:Map<string,bool>
 
-type RevolverSettings =
-    {
-        CircleRadius    : float
-        MeshOrderOffset : int
-    }
-
-module RevolverSettings =
-    let initial = { CircleRadius = 100.0; MeshOrderOffset = 0 }
-
 type ExploreMode =
     {
         Enabled            : bool
@@ -76,9 +67,7 @@ type Model =
         DatasetScales    : Map<string, float>
         DatasetCentroids : Map<string, V3d>
 
-        RevolverOn           : bool
         FullscreenOn         : bool
-        RevolverCenter       : V2d
         DifferenceRendering  : bool
         MinDifferenceDepth   : float
         MaxDifferenceDepth   : float
@@ -97,7 +86,6 @@ type Model =
 
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
-        RevolverSettings    : RevolverSettings
         ExploreCardPos      : V2d option
         GearPopoverOpen     : bool
     }
@@ -121,9 +109,7 @@ module Model =
             DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
             DatasetCentroids = Map.empty
 
-            RevolverOn          = false
             FullscreenOn        = false
-            RevolverCenter      = V2d.Zero
             DifferenceRendering = false
             MinDifferenceDepth  = 3.0
             MaxDifferenceDepth  = 10.0
@@ -141,7 +127,6 @@ module Model =
 
             RenderingMode       = Textured
             MeshSolo            = NoSolo
-            RevolverSettings    = RevolverSettings.initial
             ExploreCardPos      = None
             GearPopoverOpen     = false
         }

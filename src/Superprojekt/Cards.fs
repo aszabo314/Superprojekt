@@ -399,28 +399,6 @@ module Cards =
             diagramSvg env selectedPin
 
             div {
-                Class "pin-card-strat"
-                let isPlacing = model.ScanPins.Placement |> AVal.map (function PlacementIdle -> false | _ -> true)
-                StratigraphyView.render env isPlacing selectedPin
-                div {
-                    Class "strat-hover-tip"
-                    selectedPin |> AVal.map (fun po ->
-                        match po |> Option.bind (fun p ->
-                            p.Stratigraphy |> Option.bind (fun data ->
-                                p.BetweenSpaceHover |> Option.bind (fun h ->
-                                    if h.ColumnIdx < 0 || h.ColumnIdx >= data.Columns.Length then None
-                                    else
-                                        Stratigraphy.tryBracket data.Columns.[h.ColumnIdx].Events h.HoverZ
-                                        |> Option.map (fun (zLo, zHi, lo, up) -> h, zLo, zHi, lo, up)))) with
-                        | Some (h, zLo, zHi, lo, up) ->
-                            let gap = zHi - zLo
-                            let pinTag = if h.Pinned then " · pinned" else ""
-                            sprintf "%s \u2194 %s · %.2fm%s" (shortName lo) (shortName up) gap pinTag
-                        | None -> "")
-                }
-            }
-
-            div {
                 Class "pin-card-inline-controls"
 
                 let oneToOne = selectedPin |> AVal.map (Option.map (fun p -> p.CutAspect = CutAspectOneToOne) >> Option.defaultValue false)
@@ -440,31 +418,6 @@ module Cards =
                             | Some p -> env.Emit [ScanPinMsg (SetCutAspect(p.Id, CutAspectFit))]
                             | None -> ())
                     ]
-                }
-
-                let normalized = selectedPin |> AVal.map (Option.map (fun p -> p.StratigraphyDisplay = Normalized) >> Option.defaultValue false)
-                div {
-                    Attribute("title", "Profile: Flat / Normalized")
-                    Primitives.compactButtonBar [
-                        "Flat",
-                        (normalized |> AVal.map not),
-                        (fun () ->
-                            match AVal.force selectedPin with
-                            | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Undistorted))]
-                            | None -> ())
-                        "Norm",
-                        normalized,
-                        (fun () ->
-                            match AVal.force selectedPin with
-                            | Some p -> env.Emit [ScanPinMsg (SetStratigraphyDisplay(p.Id, Normalized))]
-                            | None -> ())
-                    ]
-                }
-
-                div {
-                    Attribute("title", "Between-space highlighting")
-                    Primitives.compactToggle "Gap" model.ScanPins.BetweenSpaceEnabled (fun () ->
-                        env.Emit [ScanPinMsg ToggleBetweenSpaceEnabled])
                 }
 
                 let isolate = selectedPin |> AVal.map (fun po ->
@@ -539,7 +492,7 @@ module Cards =
             cardsSnapshot
             |> AVal.map (fun cards ->
                 cards |> HashMap.toSeq
-                |> Seq.filter (fun (_, c) -> match c.Content with StratigraphyDiagram _ -> true | _ -> false)
+                |> Seq.filter (fun (_, c) -> match c.Content with PinCard _ -> true)
                 |> Seq.sortBy (fun (_, c) -> c.ZOrder)
                 |> Seq.map fst
                 |> IndexList.ofSeq)

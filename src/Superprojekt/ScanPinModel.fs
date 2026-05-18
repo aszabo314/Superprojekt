@@ -48,40 +48,6 @@ type RayMeshIntersection = {
     ZValues : float list
 }
 
-type StratigraphyColumn = {
-    Angle : float
-    Events : (float * string) list
-}
-
-type StratigraphyData = {
-    AngularResolution : int
-    AxisMin : float
-    AxisMax : float
-    Columns : StratigraphyColumn[]
-    ColumnMinZ : float[]
-    ColumnMaxZ : float[]
-    Rings : StratigraphyColumn[][]
-    RingRadii : float[]
-}
-
-/// Pre-computed cache for O(1) between-space hover lookups.
-type BandCache = {
-    Brackets : (float * float)[][][]
-    Labels : int[][][]
-    Components3D : Map<int * int, (float * float) list>[]
-    Components2D : Map<int, (float * float) list>[]
-}
-
-type StratigraphyDisplayMode =
-    | Undistorted
-    | Normalized
-
-type BetweenSpaceHover = {
-    ColumnIdx : int
-    HoverZ    : float
-    Pinned    : bool
-}
-
 type GhostClipMode =
     | GhostClipOff
     | GhostClipOn
@@ -115,13 +81,9 @@ type ScanPin = {
     CutResults           : Map<string, CutResult>
     CutResultsPlane      : CutPlaneMode
     DatasetColors        : Map<string, C4b>
-    Stratigraphy         : StratigraphyData option
-    BandCache            : BandCache option
-    StratigraphyDisplay  : StratigraphyDisplayMode
     GhostClip            : GhostClipMode
     GhostClipCutPlane    : bool
     ExtractedLines       : ExtractedLinesMode
-    BetweenSpaceHover    : BetweenSpaceHover option
     CutAspect            : CutAspectMode
     CutLineHover         : CutLineHover option
 }
@@ -163,7 +125,6 @@ type ScanPinModel = {
     SelectedPin         : ScanPinId option
     Placement           : PlacementState
     LastPlacementMode   : PlacementMode
-    BetweenSpaceEnabled : bool
 }
 
 module ScanPinModel =
@@ -172,7 +133,6 @@ module ScanPinModel =
         SelectedPin         = None
         Placement           = PlacementIdle
         LastPlacementMode   = ProfileMode
-        BetweenSpaceEnabled = false
     }
 
     let activePlacementId (sp : ScanPinModel) =
@@ -197,8 +157,11 @@ type CardAttachment =
     | CardDetached of screenPos:V2d
     | CardDragging of cardPos:V2d * grabOffset:V2d
 
+/// Floating-card payload. V5's only case (StratigraphyDiagram) is gone; the
+/// card-system infrastructure (drag / redock / collapse / close) is preserved
+/// for V6 anchor-sphere payload cards (§D.7) by carrying a pin reference only.
 type CardContent =
-    | StratigraphyDiagram of ScanPinId
+    | PinCard of ScanPinId
 
 type Card = {
     Id         : CardId

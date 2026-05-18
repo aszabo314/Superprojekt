@@ -29,7 +29,6 @@ type Message =
     | SetActiveDataset   of string
     | SetDatasetScale    of string * float
     | CutResultsLoaded        of ScanPinId * Map<string, CutResult>
-    | StratigraphyComputed    of ScanPinId * StratigraphyData * BandCache
     | ScanPinMsg              of ScanPinMessage
     | JumpToMesh of string
     | ToggleColorMode
@@ -85,15 +84,10 @@ and ScanPinMessage =
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
     | FocusPin of ScanPinId
-    | SetStratigraphyDisplay  of ScanPinId * StratigraphyDisplayMode
     | SetGhostClip            of ScanPinId * GhostClipMode
     | SetGhostClipCutPlane    of ScanPinId * bool
     | SetShowCutPlaneLines    of ScanPinId * bool
     | SetShowCylinderEdgeLines of ScanPinId * bool
-    | ToggleBetweenSpaceEnabled
-    | HoverBetweenSpace       of ScanPinId * columnIdx:int * hoverZ:float
-    | PinBetweenSpaceHover    of ScanPinId
-    | ClearBetweenSpaceHover  of ScanPinId
     | SetCutLineHover         of ScanPinId * CutLineHover option
     | SetCutAspect            of ScanPinId * CutAspectMode
 
@@ -101,27 +95,27 @@ module CardUpdate =
 
     let private cardContentPinId (c : CardContent) =
         match c with
-        | StratigraphyDiagram id -> id
+        | PinCard id -> id
 
     let update (msg : CardMessage) (cs : CardSystemModel) =
         match msg with
         | CreateCardsForPin(pinId, anchor) ->
             let hasCard =
                 cs.Cards |> HashMap.exists (fun _ c ->
-                    match c.Content with StratigraphyDiagram id when id = pinId -> true | _ -> false)
+                    match c.Content with PinCard id when id = pinId -> true | _ -> false)
             if hasCard then
                 let cards = cs.Cards |> HashMap.map (fun _ c ->
                     match c.Content with
-                    | StratigraphyDiagram id when id = pinId ->
+                    | PinCard id when id = pinId ->
                         { c with Visible = true; Anchor = AnchorToWorldPoint anchor }
                     | _ -> { c with Visible = false })
                 { cs with Cards = cards }
             else
                 let hideOthers = cs.Cards |> HashMap.map (fun _ c -> { c with Visible = false })
-                let stratId = CardId.create()
+                let cardId = CardId.create()
                 let z = cs.NextZOrder
-                let strat = { Id = stratId; Anchor = AnchorToWorldPoint anchor; Attachment = CardAttached; Size = V2d(310, 430); Content = StratigraphyDiagram pinId; Visible = true; ZOrder = z }
-                let cards = hideOthers |> HashMap.add stratId strat
+                let card = { Id = cardId; Anchor = AnchorToWorldPoint anchor; Attachment = CardAttached; Size = V2d(310, 230); Content = PinCard pinId; Visible = true; ZOrder = z }
+                let cards = hideOthers |> HashMap.add cardId card
                 { cs with Cards = cards; NextZOrder = z + 1 }
 
         | RemoveCardsForPin pinId ->
@@ -178,13 +172,9 @@ module ScanPinUpdate =
           CutResults = Map.empty
           CutResultsPlane = cutPlane
           DatasetColors = assignColors model.MeshNames
-          Stratigraphy = None
-          BandCache = None
-          StratigraphyDisplay = Undistorted
           GhostClip = GhostClipOff
           GhostClipCutPlane = false
           ExtractedLines = ExtractedLinesMode.initial
-          BetweenSpaceHover = None
           CutAspect = CutAspectFit
           CutLineHover = None }
 
@@ -371,9 +361,6 @@ module ScanPinUpdate =
 
         | FocusPin _ -> sp
 
-        | SetStratigraphyDisplay(id, mode) ->
-            sp |> updatePin id (fun pin -> { pin with StratigraphyDisplay = mode })
-
         | SetGhostClip(id, mode) ->
             sp |> updatePin id (fun pin -> { pin with GhostClip = mode })
 
@@ -386,29 +373,6 @@ module ScanPinUpdate =
         | SetShowCylinderEdgeLines(id, on) ->
             sp |> updatePin id (fun pin -> { pin with ExtractedLines = { pin.ExtractedLines with ShowCylinderEdgeLines = on } })
 
-        | ToggleBetweenSpaceEnabled ->
-            { sp with BetweenSpaceEnabled = not sp.BetweenSpaceEnabled }
-
-        | HoverBetweenSpace(id, col, z) ->
-            if not sp.BetweenSpaceEnabled then sp
-            else
-                sp |> updatePin id (fun pin ->
-                    let pinned = pin.BetweenSpaceHover |> Option.map (fun h -> h.Pinned) |> Option.defaultValue false
-                    if pinned then pin
-                    else { pin with BetweenSpaceHover = Some { ColumnIdx = col; HoverZ = z; Pinned = false } })
-
-        | PinBetweenSpaceHover id ->
-            sp |> updatePin id (fun pin ->
-                match pin.BetweenSpaceHover with
-                | Some h -> { pin with BetweenSpaceHover = Some { h with Pinned = not h.Pinned } }
-                | None -> pin)
-
-        | ClearBetweenSpaceHover id ->
-            sp |> updatePin id (fun pin ->
-                match pin.BetweenSpaceHover with
-                | Some h when h.Pinned -> pin
-                | _ -> { pin with BetweenSpaceHover = None })
-
         | SetCutLineHover(id, hv) ->
             sp |> updatePin id (fun pin -> { pin with CutLineHover = hv })
 
@@ -417,7 +381,6 @@ module ScanPinUpdate =
 
 module Update =
     let private cutDebounce = ref (new System.Threading.CancellationTokenSource())
-    let private stratDebounce = ref (new System.Threading.CancellationTokenSource())
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
@@ -606,13 +569,6 @@ module Update =
                 let pin = { pin with CutResults = results; CutResultsPlane = pin.CutPlane }
                 { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
             | None -> model
-        | StratigraphyComputed(pinId, data, cache) ->
-            let sp = model.ScanPins
-            match HashMap.tryFind pinId sp.Pins with
-            | Some pin ->
-                let pin = { pin with Stratigraphy = Some data; BandCache = Some cache }
-                { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
-            | None -> model
         | ScanPinMsg msg ->
             let sp = model.ScanPins
             let sp' = ScanPinUpdate.update model msg sp
@@ -770,40 +726,6 @@ module Update =
                         } |> ignore
                     | None -> ()
                 | None -> ()
-            let needsStrat =
-                match msg with
-                | ProfileClickSecond _ | PlanDragEnd | AutoClick _
-                | SetFootprintRadius _ | SetFootprintScale _ | SetPinExtent _ -> true
-                | _ -> false
-            if needsStrat then
-                let targetId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
-                match targetId with
-                | Some id ->
-                    match HashMap.tryFind id sp'.Pins with
-                    | Some pin ->
-                        let names = model.MeshNames
-                        let prism = pin.Prism
-                        let dataset = match IndexList.tryFirst names with Some n -> n.Split('/', 2).[0] | None -> ""
-                        let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
-                        let pinId = id
-                        let cts = new System.Threading.CancellationTokenSource()
-                        stratDebounce.Value.Cancel()
-                        stratDebounce.Value <- cts
-                        task {
-                            try
-                                do! System.Threading.Tasks.Task.Delay(500, cts.Token)
-                                if cts.Token.IsCancellationRequested then () else
-                                let! data = Stratigraphy.compute ApiConfig.apiBase.Value dataset prism model.CommonCentroid scale 180 |> Async.StartAsTask
-                                if not cts.Token.IsCancellationRequested then
-                                    let cache = Stratigraphy.buildBandCache data
-                                    if not cts.Token.IsCancellationRequested then
-                                        env.Emit [StratigraphyComputed(pinId, data, cache)]
-                            with
-                            | :? System.Threading.Tasks.TaskCanceledException -> ()
-                            | ex -> env.Emit [LogDebug (sprintf "strat failed: %s" ex.Message)]
-                        } |> ignore
-                    | None -> ()
-                | None -> ()
             let model = { model with ScanPins = sp' }
             let selChanged = sp'.SelectedPin <> sp.SelectedPin || ScanPinModel.activePlacementId sp' <> ScanPinModel.activePlacementId sp
             if selChanged then
@@ -832,7 +754,7 @@ module Update =
                         let cs = model.CardSystem
                         let cards = cs.Cards |> HashMap.map (fun _ c ->
                             match c.Content with
-                            | StratigraphyDiagram pid when pid = id ->
+                            | PinCard pid when pid = id ->
                                 { c with Anchor = AnchorToWorldPoint anchor }
                             | _ -> c)
                         { model with CardSystem = { cs with Cards = cards } }

@@ -217,62 +217,6 @@ module ScanPinScene =
                     (ASet.unionMany (ASet.ofList [labelNodes; centroidNode]))
             )
 
-        let betweenSpaceBand =
-            pinIdSet |> ASet.collect (fun id ->
-                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
-                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
-                let bsEnabled = model.ScanPins.BetweenSpaceEnabled
-                let isActiveAndSelected = (notFullscreen, isSelected, bsEnabled) |||> AVal.map3 (fun nf sel bs -> nf && sel && bs)
-                let prismVal = pinVal |> AVal.map (Option.map (fun p -> p.Prism))
-                let stratVal = pinVal |> AVal.map (Option.bind (fun p -> p.Stratigraphy))
-                let cacheVal = pinVal |> AVal.map (Option.bind (fun p -> p.BandCache))
-                let hoverVal =
-                    (pinVal, bsEnabled) ||> AVal.map2 (fun po enabled ->
-                        if not enabled then None
-                        else po |> Option.bind (fun p -> p.BetweenSpaceHover)
-                                |> Option.map (fun h -> h.ColumnIdx, h.HoverZ))
-                let prismCacheVal = (prismVal, cacheVal) ||> AVal.map2 (fun a b -> a, b)
-                let geo =
-                    (prismCacheVal, stratVal, hoverVal) |||> AVal.map3 (fun (prismO, cacheO) dataO hOpt ->
-                        match prismO, dataO, hOpt with
-                        | Some prism, Some data, Some (col, z) -> PinGeometry.buildBetweenSpaceSurfaces prism data cacheO col z
-                        | _ -> ([||], [||]), ([||], [||]), ([||], [||]))
-                let dummyP = [| V3f.Zero |]
-                let safeP (a : V3f[]) = if a.Length = 0 then dummyP else a
-                let upperPos = geo |> AVal.map (fun ((p, _), _, _) -> ArrayBuffer (safeP p) :> IBuffer)
-                let upperIdx = geo |> AVal.map (fun ((_, i), _, _) -> ArrayBuffer i :> IBuffer)
-                let upperCnt = geo |> AVal.map (fun ((_, i), _, _) -> i.Length)
-                let lowerPos = geo |> AVal.map (fun (_, (p, _), _) -> ArrayBuffer (safeP p) :> IBuffer)
-                let lowerIdx = geo |> AVal.map (fun (_, (_, i), _) -> ArrayBuffer i :> IBuffer)
-                let lowerCnt = geo |> AVal.map (fun (_, (_, i), _) -> i.Length)
-                let sidePos  = geo |> AVal.map (fun (_, _, (p, _)) -> ArrayBuffer (safeP p) :> IBuffer)
-                let sideIdx  = geo |> AVal.map (fun (_, _, (_, i)) -> ArrayBuffer i :> IBuffer)
-                let sideCnt  = geo |> AVal.map (fun (_, _, (_, i)) -> i.Length)
-                let makeSurface (color : V4d) (positions : aval<IBuffer>) (idx : aval<IBuffer>) (cnt : aval<int>) =
-                    sg {
-                        Sg.Active isActiveAndSelected
-                        Sg.View view
-                        Sg.Proj proj
-                        Sg.Pass RenderPass.passTwo
-                        Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                        Sg.Uniform("FlatColor", AVal.constant color)
-                        Sg.BlendMode BlendMode.Blend
-                        Sg.DepthTest (AVal.constant DepthTest.None)
-                        Sg.NoEvents
-                        Sg.VertexAttributes(
-                            HashMap.ofList [
-                                string DefaultSemantic.Positions, BufferView(positions, typeof<V3f>)
-                            ])
-                        Sg.Index(BufferView(idx, typeof<int>))
-                        Sg.Render cnt
-                    }
-                ASet.ofList [
-                    makeSurface (V4d(1.0, 1.0, 0.9, 0.55)) upperPos upperIdx upperCnt
-                    makeSurface (V4d(1.0, 0.95, 0.7, 0.55)) lowerPos lowerIdx lowerCnt
-                    makeSurface (V4d(1.0, 0.97, 0.8, 0.40)) sidePos  sideIdx  sideCnt
-                ]
-            )
-
         let extractedLines =
             let toV4d (c : C4b) =
                 let f = c.ToC4f()
@@ -286,12 +230,6 @@ module ScanPinScene =
                         po |> Option.bind (fun p ->
                             if p.ExtractedLines.ShowCutPlaneLines && not (Map.isEmpty p.CutResults)
                             then Some (p.Prism, p.CutResultsPlane, p.CutResults, p.DatasetColors)
-                            else None))
-                let edgeDeps =
-                    pinVal |> AVal.map (fun po ->
-                        po |> Option.bind (fun p ->
-                            if p.ExtractedLines.ShowCylinderEdgeLines
-                            then Some (p.Prism, p.Stratigraphy, p.DatasetColors)
                             else None))
 
                 let cutSegs =
@@ -319,50 +257,6 @@ module ScanPinScene =
                             segs.ToArray()
                         | _ -> [||])
 
-                let edgeSegs =
-                    edgeDeps |> AVal.map (fun depsOpt ->
-                        match depsOpt with
-                        | Some(prism, Some data, datasetColors) when data.Columns.Length >= 2 ->
-                            let axis = prism.AxisDirection |> Vec.normalize
-                            let right, fwd = PinGeometry.axisFrame axis
-                            let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                            let toPoint (angle : float) (z : float) =
-                                prism.AnchorPoint + (right * cos angle + fwd * sin angle) * radius + axis * z
-                            let datasets =
-                                data.Columns
-                                |> Array.collect (fun c -> c.Events |> List.map snd |> List.toArray)
-                                |> Array.distinct
-                            let segs = ResizeArray<V3d * V3d * V4d * float>()
-                            let widthPx = 1.0
-                            for ds in datasets do
-                                let color = datasetColors |> Map.tryFind ds |> Option.defaultValue (C4b(120uy,120uy,120uy)) |> toV4d
-                                let perColumn =
-                                    data.Columns |> Array.map (fun col ->
-                                        col.Events
-                                        |> List.filter (fun (_, n) -> n = ds)
-                                        |> List.map fst
-                                        |> List.sort)
-                                let maxLanes = perColumn |> Array.map List.length |> Array.fold max 0
-                                for lane in 0 .. maxLanes - 1 do
-                                    let mutable accum = ResizeArray<V3d>()
-                                    let flush () =
-                                        if accum.Count >= 2 then
-                                            PinGeometry.appendPolylineSegments segs (accum.ToArray()) color widthPx
-                                        accum <- ResizeArray<V3d>()
-                                    for ci in 0 .. data.Columns.Length - 1 do
-                                        let zs = perColumn.[ci]
-                                        if lane < zs.Length then
-                                            accum.Add(toPoint data.Columns.[ci].Angle zs.[lane])
-                                        else
-                                            flush ()
-                                    if accum.Count > 0 then
-                                        let zs0 = perColumn.[0]
-                                        if lane < zs0.Length then
-                                            accum.Add(toPoint data.Columns.[0].Angle zs0.[lane])
-                                        flush ()
-                            segs.ToArray()
-                        | _ -> [||])
-
                 ASet.ofList [
                     sg {
                         Sg.Active notFullscreen
@@ -371,14 +265,6 @@ module ScanPinScene =
                         Sg.BlendMode BlendMode.Blend
                         Sg.DepthTest (AVal.constant DepthTest.None)
                         Lines.render cutSegs
-                    }
-                    sg {
-                        Sg.Active notFullscreen
-                        Sg.View view
-                        Sg.Proj proj
-                        Sg.BlendMode BlendMode.Blend
-                        Sg.DepthTest (AVal.constant DepthTest.None)
-                        Lines.render edgeSegs
                     }
                 ])
 
@@ -616,4 +502,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinPrisms; betweenSpaceBand; extractedLines; cutHoverMarker; hullPicking; placementPreview])
+        ASet.unionMany (ASet.ofList [pinDots; pinPrisms; extractedLines; cutHoverMarker; hullPicking; placementPreview])

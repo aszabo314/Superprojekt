@@ -83,6 +83,17 @@ module Gui =
                 "\u25CB Pin"
             }
 
+            // V6 \u00A7D.10 \u2014 Fusion mode toggle. When on, the composition pass
+            // picks per-pixel the lowest-total-error mesh from the visible
+            // set instead of the front-most one.
+            button {
+                Class "tb-btn"
+                model.FusionMode |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Fusion mesh: per-pixel best mesh from the registered ensemble (V6 \u00A7D.10)")
+                Dom.OnClick(fun _ -> env.Emit [ToggleFusionMode])
+                "\u25C8 Fusion"
+            }
+
             button {
                 Class "tb-btn tb-btn-icon"
                 Attribute("title", "Reset camera")

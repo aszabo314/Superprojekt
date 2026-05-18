@@ -269,6 +269,7 @@ module MeshView =
         (provenanceAlgorithm    : aval<Arr<N<16>, float>>)
         (provenanceAnchorCount  : aval<int>)
         (provenanceAnchors      : aval<Arr<N<32>, V4d>>)
+        (fusionMode             : aval<int>)
         (meshVisibilityMask     : aval<int>) =
         let colorTex = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
         let depthTex = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
@@ -292,6 +293,7 @@ module MeshView =
             Sg.Uniform("ProvenanceAlgorithm",   provenanceAlgorithm)
             Sg.Uniform("ProvenanceAnchorCount", provenanceAnchorCount)
             Sg.Uniform("ProvenanceAnchors",     provenanceAnchors)
+            Sg.Uniform("FusionMode",            fusionMode)
             Sg.Uniform("MeshVisibilityMask",    meshVisibilityMask)
             Primitives.FullscreenQuad
         }

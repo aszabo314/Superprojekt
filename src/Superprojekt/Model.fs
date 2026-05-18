@@ -268,6 +268,12 @@ type Model =
         ProvenanceThreshold   : float                    // minimum total error in metres to paint
         FalloffZoneOnly       : bool                     // clip metrics + heatmap to anchor falloff zones
 
+        // V6 §D.10 — Fusion mesh mode. When on, the composition pass
+        // picks per-pixel the visible mesh with the lowest combined
+        // error (dataset + algorithm + conditioning) instead of the
+        // front-most one. Off by default.
+        FusionMode            : bool
+
         ScanPins              : ScanPinModel
         ReferenceAxis         : ReferenceAxisMode
         Explore               : ExploreMode
@@ -325,6 +331,8 @@ module Model =
             ProvenanceHeatmap     = false
             ProvenanceThreshold   = 0.01    // 1 cm: paint anything above
             FalloffZoneOnly       = false
+
+            FusionMode            = false
 
             ScanPins              = ScanPinModel.initial
             ReferenceAxis         = AlongWorldZ

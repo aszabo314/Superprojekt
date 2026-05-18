@@ -126,6 +126,8 @@ module BlitShader =
         member x.ProvenanceAlgorithm  : Arr<N<16>, float> = x?ProvenanceAlgorithm
         member x.ProvenanceAnchorCount: int   = x?ProvenanceAnchorCount
         member x.ProvenanceAnchors    : Arr<N<32>, V4d> = x?ProvenanceAnchors
+        // V6 §D.10 — fusion mesh
+        member x.FusionMode           : int   = x?FusionMode
     
     let colorMap =
         [|
@@ -226,6 +228,14 @@ module BlitShader =
             let mutable color = V4d.Zero
             let mutable index = -1
 
+            // V6 §D.10 — Fusion mode selects per-pixel the mesh with the
+            // minimum total error (w_d * dataset + w_a * algo + w_c * cond)
+            // rather than the front-most. Depth + colour come from the
+            // chosen winner so the rendered surface stays geometrically
+            // coherent at that pixel.
+            let fusion = uniform.FusionMode <> 0
+            let mutable bestErr = 1e9
+
             for i in 0 .. uniform.MeshCount - 1 do
                 let di = deputy.SampleLevel(v.tc, 2*i, 0.0).X
                 let c = colon.SampleLevel(v.tc, 2*i, 0.0)
@@ -233,10 +243,44 @@ module BlitShader =
                     let isVis = (uniform.MeshVisibilityMask >>> i) &&& 1 <> 0
                     if isVis then
                         maxDepth <- max di maxDepth
-                        if di < minDepth then
-                            minDepth <- di
-                            color <- c
-                            index <- i
+                        if fusion then
+                            // Local conditioning approximated by density from
+                            // anchor list, same heuristic as the heatmap.
+                            let mutable density = 0.0
+                            let clipP = V4d(ndc, 2.0 * di - 1.0, 1.0)
+                            let worldP4 = uniform.ViewProjTrafoInv * clipP
+                            let pW = worldP4.XYZ / worldP4.W
+                            for ai in 0 .. 31 do
+                                if ai < uniform.ProvenanceAnchorCount then
+                                    let a = uniform.ProvenanceAnchors.[ai]
+                                    let sigma = a.W
+                                    if sigma > 1e-6 then
+                                        let d2 =
+                                            (pW.X - a.X) * (pW.X - a.X)
+                                            + (pW.Y - a.Y) * (pW.Y - a.Y)
+                                            + (pW.Z - a.Z) * (pW.Z - a.Z)
+                                        let w = exp (-d2 / (2.0 * sigma * sigma))
+                                        if w > 0.05 then density <- density + w
+                            let cond =
+                                if density > 1e-6 then 1.0 / (density + 1e-3)
+                                else 1e3
+                            let dErr =
+                                if i < 16 then uniform.ProvenanceDataset.[i] else 0.0
+                            let aErr =
+                                if i < 16 then uniform.ProvenanceAlgorithm.[i] else 0.0
+                            // Weights chosen to keep the three signals on
+                            // roughly comparable footing on Mars Kodiak.
+                            let total = dErr + aErr + cond * 0.01
+                            if total < bestErr then
+                                bestErr <- total
+                                minDepth <- di
+                                color <- c
+                                index <- i
+                        else
+                            if di < minDepth then
+                                minDepth <- di
+                                color <- c
+                                index <- i
                             
             let mutable ghostMinDepth = 1.0
             let mutable ghostWinner = -1

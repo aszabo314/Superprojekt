@@ -34,6 +34,8 @@ type Message =
     | ToggleProvenanceHeatmap
     | SetProvenanceThreshold of float
     | ToggleFalloffZoneOnly
+    // V6 §D.10 — fusion mesh
+    | ToggleFusionMode
     | SetMinDifferenceDepth of float
     | SetMaxDifferenceDepth of float
     | ClipBoundsLoaded   of (string * Box3d)[]
@@ -506,6 +508,8 @@ module Update =
             { model with ProvenanceThreshold = v }
         | ToggleFalloffZoneOnly ->
             { model with FalloffZoneOnly = not model.FalloffZoneOnly }
+        | ToggleFusionMode ->
+            { model with FusionMode = not model.FusionMode }
         | SetMinDifferenceDepth v ->
             { model with MinDifferenceDepth = v }
         | SetMaxDifferenceDepth v ->

@@ -1,5 +1,5 @@
-//be41ea4a-831c-3159-39f4-4604d72f12bb
-//f9a6b69b-77dc-0970-419b-988da8bf86b7
+//79adf6eb-8462-4383-f8e3-ce7f06d6744e
+//48183a79-2d10-278f-8cdf-9c9db9305d1e
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -49,6 +49,7 @@ type AdaptiveModel(value : Model) =
     let _ProvenanceHeatmap_ = FSharp.Data.Adaptive.cval(value.ProvenanceHeatmap)
     let _ProvenanceThreshold_ = FSharp.Data.Adaptive.cval(value.ProvenanceThreshold)
     let _FalloffZoneOnly_ = FSharp.Data.Adaptive.cval(value.FalloffZoneOnly)
+    let _FusionMode_ = FSharp.Data.Adaptive.cval(value.FusionMode)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _ReferenceAxis_ = FSharp.Data.Adaptive.cval(value.ReferenceAxis)
     let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
@@ -103,6 +104,7 @@ type AdaptiveModel(value : Model) =
             _ProvenanceHeatmap_.Value <- value.ProvenanceHeatmap
             _ProvenanceThreshold_.Value <- value.ProvenanceThreshold
             _FalloffZoneOnly_.Value <- value.FalloffZoneOnly
+            _FusionMode_.Value <- value.FusionMode
             _ScanPins_.Update(value.ScanPins)
             _ReferenceAxis_.Value <- value.ReferenceAxis
             _Explore_.Value <- value.Explore
@@ -150,6 +152,7 @@ type AdaptiveModel(value : Model) =
     member __.ProvenanceHeatmap = _ProvenanceHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ProvenanceThreshold = _ProvenanceThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.FalloffZoneOnly = _FalloffZoneOnly_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.FusionMode = _FusionMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ScanPins = _ScanPins_
     member __.ReferenceAxis = _ReferenceAxis_ :> FSharp.Data.Adaptive.aval<ReferenceAxisMode>
     member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>

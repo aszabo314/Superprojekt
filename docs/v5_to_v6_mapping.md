@@ -3,6 +3,35 @@
 Working reference for the V5→V6 migration. Lists where each V5 feature lives
 in the current codebase. Updated as each phase lands.
 
+## Phase 8 status (Fusion mesh, §D.10)
+
+Phase 8 adds a per-pixel composite mode that picks the lowest-total-
+error mesh from the visible set instead of the front-most one. The
+winner-ID buffer + click-pickability machinery is deferred to polish.
+
+V6 references active after Phase 8:
+- `Model.fs`: `FusionMode : bool`.
+- `Update.fs`: `ToggleFusionMode` message.
+- `Shader.fs`: `readArray` learned a fusion branch (gated on
+  `FusionMode = 1`) that re-uses the same per-mesh dataset /
+  algorithm / conditioning values the heatmap uses. For each visible
+  mesh with a hit at the pixel, computes `total = dErr + aErr +
+  cond * 0.01` and keeps the winner. Both `minDepth` and `color`
+  follow the winner, so the rendered surface stays geometrically
+  coherent.
+- `MeshView.composeMeshTextures`: threads a `fusionMode : aval<int>`
+  uniform.
+- `Gui.topBar`: "◈ Fusion" toggle button next to "◯ Pin".
+
+V6 references still **deferred**:
+- Winner-ID buffer + click-pickability. Requires WebGL2 MRT with an
+  R32_UINT attachment plus CPU-side per-click readback. The
+  prototype's fusion view shows the surface; clicking falls through
+  to the front-most mesh's pick path (same as non-fusion). A polish
+  pass can add the winner-ID flow alongside a "Place anchor on
+  fusion source" affordance.
+- All other §D.x — Phase 9 per Part F.
+
 ## Phase 7 status (Error provenance, §D.9)
 
 Phase 7 wires three error sources (dataset / algorithm / conditioning)

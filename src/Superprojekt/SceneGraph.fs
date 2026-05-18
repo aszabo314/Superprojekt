@@ -272,6 +272,9 @@ module SceneGraph =
         let provenanceAnchorsArr = provenanceAnchors |> AVal.map fst
         let provenanceAnchorCount = provenanceAnchors |> AVal.map snd
 
+        let fusionModeInt =
+            model.FusionMode |> AVal.map (fun b -> if b then 1 else 0)
+
         let composite =
             sg {
                 Sg.Active (AVal.map not fullscreenActive)
@@ -282,6 +285,7 @@ module SceneGraph =
                     provenanceEnabled provThreshold falloffOnly
                     provenanceDataset provenanceAlgorithm
                     provenanceAnchorCount provenanceAnchorsArr
+                    fusionModeInt
                     meshVisibilityMask
             }
 

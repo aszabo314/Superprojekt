@@ -57,8 +57,11 @@ and CardMessage =
     | RemoveCardsForPin of ScanPinId
 
 and ScanPinMessage =
+    | EnterAnchorPlacement
     | CancelPlacement
-    | SetFootprintRadius of float
+    | PlaceAnchor of centre:V3d
+    | SetAnchorRadius of float
+    | SetAnchorSigma of float
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
@@ -120,12 +123,27 @@ module ScanPinUpdate =
     let private assignColors (meshNames : IndexList<string>) =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
 
-    let private circleFootprint (radius : float) =
-        let n = 32
-        [ for i in 0 .. n - 1 -> let a = float i / float n * Constant.PiTimesTwo in V2d(cos a, sin a) * radius ]
+    /// V6 §D.6.1 default radius is 5% of the dataset's bounding-box diagonal.
+    let defaultRadius (model : Model) =
+        if model.ClipBounds.IsInvalid then 1.0
+        else max 0.1 (model.ClipBounds.Size.Length * 0.05)
 
-    let private setRadius (pin : ScanPin) (r : float) =
-        { pin with Prism = { pin.Prism with Footprint = { Vertices = circleFootprint r } } }
+    let private makeAnchor (model : Model) (id : ScanPinId) (centre : V3d) (radius : float) =
+        let sigma = radius * 0.5
+        let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
+        {
+            Id                   = id
+            Phase                = PinPhase.Placement
+            Centre               = centre
+            Radius               = radius
+            Sigma                = sigma
+            Payload              = Point { ReliabilityWeight = 1.0 }
+            HostMeshName         = None
+            CorrespondenceLinkId = None
+            CreationCameraState  = cam
+            CreatedAt            = System.DateTime.UtcNow
+            DatasetColors        = assignColors model.MeshNames
+        }
 
     let private updatePin (id : ScanPinId) (f : ScanPin -> ScanPin) (sp : ScanPinModel) =
         match HashMap.tryFind id sp.Pins with
@@ -141,14 +159,40 @@ module ScanPinUpdate =
 
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
+        | EnterAnchorPlacement ->
+            let sp = discardActivePin sp
+            { sp with Placement = AnchorPlacement }
+
         | CancelPlacement ->
             let sp = discardActivePin sp
             { sp with Placement = PlacementIdle }
 
-        | SetFootprintRadius radius ->
+        | PlaceAnchor centre ->
+            match sp.Placement with
+            | AnchorPlacement ->
+                let id = ScanPinId.create()
+                let pin = makeAnchor model id centre (defaultRadius model)
+                { sp with
+                    Pins = HashMap.add id pin sp.Pins
+                    Placement = AdjustingPin id
+                    SelectedPin = Some id }
+            | _ -> sp
+
+        | SetAnchorRadius r ->
             match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
-                if pin.Phase = PinPhase.Placement then setRadius pin (max 0.1 radius) else pin)
+                if pin.Phase = PinPhase.Placement then
+                    let r = max 0.05 r
+                    { pin with Radius = r; Sigma = min pin.Sigma r }
+                else pin)
+            | None -> sp
+
+        | SetAnchorSigma s ->
+            match ScanPinModel.activePlacementId sp with
+            | Some id -> sp |> updatePin id (fun pin ->
+                if pin.Phase = PinPhase.Placement then
+                    { pin with Sigma = clamp 0.01 pin.Radius s }
+                else pin)
             | None -> sp
 
         | CommitPin ->
@@ -360,6 +404,14 @@ module Update =
                     let c = pin.CreationCameraState
                     env.Emit [CameraMessage (OrbitMessage.SetTarget(true, c.Center, c.Radius, c.Phi, c.Theta))]
                 | None -> ()
+            | PlaceAnchor _ ->
+                match ScanPinModel.activePlacementId sp' with
+                | Some id ->
+                    match HashMap.tryFind id sp'.Pins with
+                    | Some pin ->
+                        env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, pin.Centre))]
+                    | None -> ()
+                | None -> ()
             | _ -> ()
             let model = { model with ScanPins = sp' }
             let selChanged = sp'.SelectedPin <> sp.SelectedPin || ScanPinModel.activePlacementId sp' <> ScanPinModel.activePlacementId sp
@@ -369,7 +421,7 @@ module Update =
                 | Some id ->
                     match HashMap.tryFind id sp'.Pins with
                     | Some pin ->
-                        let cs = CardUpdate.update (CreateCardsForPin(id, pin.Prism.AnchorPoint)) model.CardSystem
+                        let cs = CardUpdate.update (CreateCardsForPin(id, pin.Centre)) model.CardSystem
                         { model with CardSystem = cs }
                     | None ->
                         let cs = CardUpdate.update (RemoveCardsForPin id) model.CardSystem
@@ -379,13 +431,13 @@ module Update =
                     let cards = cs.Cards |> HashMap.map (fun _ c -> { c with Visible = false })
                     { model with CardSystem = { cs with Cards = cards } }
             else
-                // Sync card anchor when active pin's prism moves
+                // Sync card anchor when active pin's centre moves
                 let effectiveId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
                 match effectiveId with
                 | Some id ->
                     match HashMap.tryFind id sp'.Pins with
                     | Some pin ->
-                        let anchor = pin.Prism.AnchorPoint
+                        let anchor = pin.Centre
                         let cs = model.CardSystem
                         let cards = cs.Cards |> HashMap.map (fun _ c ->
                             match c.Content with

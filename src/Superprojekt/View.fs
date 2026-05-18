@@ -14,11 +14,17 @@ module View =
 
         ServerActions.init env
 
-        let spaceHeld      = cval false
-        let hoverCoord     = cval<V3d option> None
-        let viewportSize   = cval (V2i(1, 1))
+        let spaceHeld       = cval false
+        let hoverCoord      = cval<V3d option> None
+        let viewportSize    = cval (V2i(1, 1))
+        // §D.6.1 ghost preview tracker — kept as a View-side cval so high-
+        // frequency mouse moves don't churn the AdaptiveModel.
+        let placementHover  = cval<V3d option> None
 
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
+
+        let placementActive =
+            model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
         body {
             OnBoot [
@@ -35,6 +41,9 @@ module View =
                 Dom.Style [
                     Css.Background "rgb(244, 246, 248)"
                 ]
+                model.ScanPins.Placement |> AVal.map (function
+                    | PlacementIdle -> None
+                    | _ -> Some (Dom.Style [Css.Cursor "crosshair"]))
 
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
@@ -83,14 +92,20 @@ module View =
                     let cc = AVal.force model.CommonCentroid
                     let worldPos = e.WorldPosition / scale + cc
                     let hitGeometry = e.Location.Depth < 0.9999
-                    if e.Ctrl && e.Button = Button.Left && hitGeometry then
-                        transact (fun () -> hoverCoord.Value <- Some worldPos)
-                        env.Emit [ClearFilteredMesh]
-                        ServerActions.triggerFilter env model e.Position
+                    let placement = AVal.force model.ScanPins.Placement
+                    match placement with
+                    | AnchorPlacement when hitGeometry ->
+                        env.Emit [ScanPinMsg (PlaceAnchor e.WorldPosition)]
                         false
-                    else
-                        transact (fun () -> hoverCoord.Value <- Some worldPos)
-                        true
+                    | _ ->
+                        if e.Ctrl && e.Button = Button.Left && hitGeometry then
+                            transact (fun () -> hoverCoord.Value <- Some worldPos)
+                            env.Emit [ClearFilteredMesh]
+                            ServerActions.triggerFilter env model e.Position
+                            false
+                        else
+                            transact (fun () -> hoverCoord.Value <- Some worldPos)
+                            true
                 )
 
                 Sg.OnLongPress(fun e ->
@@ -112,11 +127,18 @@ module View =
                         |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
                         |> Option.defaultValue 1.0
                     let cc = AVal.force model.CommonCentroid
+                    let hitGeometry = e.Location.Depth < 0.9999
                     transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
+                    if AVal.force placementActive then
+                        let next = if hitGeometry then Some e.WorldPosition else None
+                        if placementHover.Value <> next then
+                            transact (fun () -> placementHover.Value <- next)
+                    elif placementHover.Value.IsSome then
+                        transact (fun () -> placementHover.Value <- None)
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) model
             }
 
             Dom.OnKeyDown(fun e ->

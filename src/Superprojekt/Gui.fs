@@ -65,6 +65,22 @@ module Gui =
                 "\u25C9 Explore"
             }
 
+            let placementActive =
+                model.ScanPins.Placement |> AVal.map (function
+                    | AnchorPlacement -> true
+                    | _ -> false)
+
+            button {
+                Class "tb-btn"
+                placementActive |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Place anchor \u2014 click on a surface (Esc cancels)")
+                Dom.OnClick(fun _ ->
+                    let active = AVal.force placementActive
+                    if active then env.Emit [ScanPinMsg CancelPlacement]
+                    else env.Emit [ScanPinMsg EnterAnchorPlacement])
+                "\u25CB Pin"
+            }
+
             button {
                 Class "tb-btn tb-btn-icon"
                 Attribute("title", "Reset camera")
@@ -252,15 +268,15 @@ module Gui =
                 else "placement-flyout pf-left-closed")
         div {
             flyoutClass |> AVal.map (fun c -> Some (Class c))
-            div { Class "lp-section-title"; "Adjust Pin" }
+            div { Class "lp-section-title"; "Adjust Anchor" }
 
-            let radius = activePin |> AVal.map (fun p ->
-                match p with
-                | Some pin ->
-                    match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                | None -> 1.0)
-            inlineSlider "Radius" 0.1 50.0 0.1 (sprintf "%.1fm") radius (fun v ->
-                env.Emit [ScanPinMsg (SetFootprintRadius v)])
+            let radius = activePin |> AVal.map (Option.map (fun p -> p.Radius) >> Option.defaultValue 1.0)
+            let sigma = activePin |> AVal.map (Option.map (fun p -> p.Sigma) >> Option.defaultValue 0.5)
+            // SetAnchorSigma clamps to \u2264 Radius in the handler (\u00a7D.6.4).
+            inlineSlider "Radius" 0.05 50.0 0.05 (sprintf "%.2fm") radius (fun v ->
+                env.Emit [ScanPinMsg (SetAnchorRadius v)])
+            inlineSlider "\u03c3 (sigma)" 0.01 50.0 0.01 (sprintf "%.2fm") sigma (fun v ->
+                env.Emit [ScanPinMsg (SetAnchorSigma v)])
 
             div {
                 Class "lp-commit-row"
@@ -312,7 +328,7 @@ module Gui =
                             pinVal |> AVal.map (fun po ->
                                 match po with
                                 | Some p ->
-                                    let a = p.Prism.AnchorPoint
+                                    let a = p.Centre
                                     sprintf "(%.1f, %.1f, %.1f)" a.X a.Y a.Z
                                 | None -> "(removed)")
                         }

@@ -103,6 +103,7 @@ module SceneGraph =
         (view : aval<Trafo3d>)
         (proj : aval<Trafo3d>)
         (fullscreenActive : aval<bool>)
+        (placementHover : aval<V3d option>)
         (model : AdaptiveModel) =
         
         let loadFinished (name : string) =
@@ -229,6 +230,6 @@ module SceneGraph =
 
         let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)
 
-        let pinScene = ScanPinScene.build env view proj fullscreenActive model
+        let pinScene = ScanPinScene.build env view proj fullscreenActive placementHover model
 
         ASet.unionMany (ASet.ofList [ASet.single composite; fullscreenNodes; indicatorNodes; pinScene])

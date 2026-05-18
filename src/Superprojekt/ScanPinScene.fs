@@ -8,6 +8,12 @@ open Aardvark.Dom
 
 module ScanPinScene =
 
+    // Pre-baked unit icosphere (subdiv=2 — 162 verts / 320 tris).
+    let private spherePos, sphereIdx = PinGeometry.buildIcosphere 2
+
+    // Compact "+"-shaped 3D marker that survives the off-screen depth gate
+    // because we render it with DepthTest.LessOrEqual; large enough to click,
+    // small enough not to dominate the anchor sphere visually.
     let private pinMarkerPos, pinMarkerIdx =
         let pos = System.Collections.Generic.List<V3f>()
         let idx = System.Collections.Generic.List<int>()
@@ -20,28 +26,63 @@ module ScanPinScene =
             let offs = [| 0;1;2; 0;2;3;  5;4;7; 5;7;6;  4;0;3; 4;3;7
                           1;5;6; 1;6;2;  0;4;5; 0;5;1;  3;2;6; 3;6;7 |]
             for o in offs do idx.Add(base0 + o)
-        addBox 0.03 0.03 0.5
         addBox 0.18 0.025 0.025
         addBox 0.025 0.18 0.025
+        addBox 0.025 0.025 0.18
         pos.ToArray(), idx.ToArray()
+
+    let private spherePosBuf = AVal.constant (ArrayBuffer spherePos :> IBuffer)
+    let private sphereIdxBuf = AVal.constant (ArrayBuffer sphereIdx :> IBuffer)
+    let private sphereIdxCnt = AVal.constant sphereIdx.Length
+    let private markerPosBuf = AVal.constant (ArrayBuffer pinMarkerPos :> IBuffer)
+    let private markerIdxBuf = AVal.constant (ArrayBuffer pinMarkerIdx :> IBuffer)
+    let private markerIdxCnt = AVal.constant pinMarkerIdx.Length
+
+    /// V6 §D.6.3 — translucent volume at Radius + inner hard-edged sphere at
+    /// Sigma. Both spheres render in passOne with `DepthTest.None` so the
+    /// anchor reads through scene geometry; that matches the spec's
+    /// "see the sphere even through walls" intent.
+    let private sphereShell
+            (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
+            (active : aval<bool>) (trafo : aval<Trafo3d>) (color : aval<V4d>) =
+        sg {
+            Sg.Active active
+            Sg.View view
+            Sg.Proj proj
+            Sg.Trafo trafo
+            Sg.Pass RenderPass.passOne
+            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+            Sg.Uniform("FlatColor", color)
+            Sg.BlendMode (AVal.constant BlendMode.Blend)
+            Sg.DepthTest (AVal.constant DepthTest.None)
+            Sg.NoEvents
+            Sg.VertexAttributes(
+                HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
+            Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
+            Sg.Render sphereIdxCnt
+        }
 
     let build
             (env : Env<Message>)
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (fullscreenActive : aval<bool>)
+            (placementHover : aval<V3d option>)
             (model : AdaptiveModel) =
 
         let notFullscreen = AVal.map not fullscreenActive
         let selectedId = model.ScanPins.SelectedPin
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let placementActive =
+            model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
+        // The clickable centre marker for each anchor. Stays small and
+        // depth-tested so it shows in front of the sphere shells.
         let pinDots =
             pinIdSet |> ASet.map (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let phaseVal = pinVal |> AVal.map (Option.map (fun p -> p.Phase))
-                let anchorVal = pinVal |> AVal.map (Option.map (fun p -> p.Prism.AnchorPoint))
-                let axisVal = pinVal |> AVal.map (Option.map (fun p -> p.Prism.AxisDirection))
+                let centreVal = pinVal |> AVal.map (Option.map (fun p -> p.Centre))
                 let color =
                     (selectedId, phaseVal) ||> AVal.map2 (fun sel phaseOpt ->
                         match phaseOpt with
@@ -51,18 +92,9 @@ module ScanPinScene =
                             else V4d(1.0, 0.3, 0.3, 1.0)
                         | None -> V4d(0.0, 0.0, 0.0, 0.0))
                 let trafo =
-                    (anchorVal, axisVal) ||> AVal.map2 (fun aOpt xOpt ->
-                        match aOpt, xOpt with
-                        | Some a, Some axis ->
-                            let axis = Vec.normalize axis
-                            let right, fwd = PinGeometry.axisFrame axis
-                            let rotM =
-                                M44d(right.X, fwd.X, axis.X, 0.0,
-                                     right.Y, fwd.Y, axis.Y, 0.0,
-                                     right.Z, fwd.Z, axis.Z, 0.0,
-                                     0.0,     0.0,   0.0,    1.0)
-                            Trafo3d(rotM, rotM.Transposed) * Trafo3d.Translation(a)
-                        | _ -> Trafo3d.Scale(0.0))
+                    centreVal |> AVal.map (function
+                        | Some c -> Trafo3d.Translation c
+                        | None -> Trafo3d.Scale 0.0)
                 sg {
                     Sg.Active notFullscreen
                     Sg.View view
@@ -72,74 +104,103 @@ module ScanPinScene =
                     Sg.Uniform("FlatColor", color)
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                     Sg.OnTap(fun _ ->
-                        let sel = AVal.force selectedId
-                        if sel = Some id then env.Emit [ScanPinMsg (SelectPin None)]
-                        else env.Emit [ScanPinMsg (SelectPin (Some id))]
-                        false)
+                        match AVal.force placementActive with
+                        | true -> true   // pass through so renderControl's PlaceAnchor handler fires
+                        | false ->
+                            let sel = AVal.force selectedId
+                            if sel = Some id then env.Emit [ScanPinMsg (SelectPin None)]
+                            else env.Emit [ScanPinMsg (SelectPin (Some id))]
+                            false)
                     Sg.OnDoubleTap(fun _ ->
                         env.Emit [ScanPinMsg (FocusPin id)]
                         false)
                     Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer pinMarkerPos :> IBuffer), typeof<V3f>) ]
-                    )
-                    Sg.Index(BufferView(AVal.constant (ArrayBuffer pinMarkerIdx :> IBuffer), typeof<int>))
-                    Sg.Render (AVal.constant pinMarkerIdx.Length)
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(markerPosBuf, typeof<V3f>) ])
+                    Sg.Index(BufferView(markerIdxBuf, typeof<int>))
+                    Sg.Render markerIdxCnt
                 }
             )
 
-        let adjustingHull =
-            let activeId =
-                model.ScanPins.Placement |> AVal.map (function
-                    | AdjustingPin id -> Some id
-                    | _ -> None)
-            let editedPin =
-                (selectedId, activeId, pinsVal) |||> AVal.map3 (fun sel act pins ->
-                    let id = act |> Option.orElse sel
-                    id |> Option.bind (fun id -> HashMap.tryFind id pins))
+        // Per-anchor sphere shells (outer translucent + inner solid-ish).
+        // Field-projected aVals so the geometry only rebuilds when the
+        // relevant field actually changes (per the CLAUDE.md adaptive-perf
+        // rule).
+        let pinSpheres =
+            pinIdSet |> ASet.collect (fun id ->
+                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
+                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
+                let active = (notFullscreen, isSelected) ||> AVal.map2 (&&)
+                let centreVal = pinVal |> AVal.map (Option.map (fun p -> p.Centre))
+                let radiusVal = pinVal |> AVal.map (Option.map (fun p -> p.Radius) >> Option.defaultValue 0.0)
+                let sigmaVal  = pinVal |> AVal.map (Option.map (fun p -> p.Sigma)  >> Option.defaultValue 0.0)
+                let phaseVal  = pinVal |> AVal.map (Option.map (fun p -> p.Phase))
+                let outerTrafo =
+                    (centreVal, radiusVal) ||> AVal.map2 (fun co r ->
+                        match co with
+                        | Some c -> Trafo3d.Scale r * Trafo3d.Translation c
+                        | None -> Trafo3d.Scale 0.0)
+                let innerTrafo =
+                    (centreVal, sigmaVal) ||> AVal.map2 (fun co s ->
+                        match co with
+                        | Some c -> Trafo3d.Scale s * Trafo3d.Translation c
+                        | None -> Trafo3d.Scale 0.0)
+                // Selected pin pops in yellow; placing in green; committed in red.
+                let baseColor =
+                    (isSelected, phaseVal) ||> AVal.map2 (fun sel phaseOpt ->
+                        if sel then V3d(1.0, 0.9, 0.0)
+                        else
+                            match phaseOpt with
+                            | Some PinPhase.Placement -> V3d(0.2, 1.0, 0.3)
+                            | Some PinPhase.Committed -> V3d(1.0, 0.5, 0.5)
+                            | None -> V3d.Zero)
+                let outerColor = baseColor |> AVal.map (fun c -> V4d(c.X, c.Y, c.Z, 0.10))
+                let innerColor = baseColor |> AVal.map (fun c -> V4d(c.X, c.Y, c.Z, 0.30))
+                let outlineSegs =
+                    (centreVal, radiusVal, isSelected) |||> AVal.map3 (fun co r sel ->
+                        if sel then
+                            match co with
+                            | Some c -> PinGeometry.buildSphereOutline c r (V4d(1.0, 1.0, 1.0, 0.55)) 1.0
+                            | None -> [||]
+                        else [||])
+                ASet.ofList [
+                    sphereShell view proj active outerTrafo outerColor
+                    sphereShell view proj active innerTrafo innerColor
+                    sg {
+                        Sg.Active active
+                        Sg.View view
+                        Sg.Proj proj
+                        Sg.BlendMode BlendMode.Blend
+                        Sg.DepthTest (AVal.constant DepthTest.None)
+                        Sg.Pass RenderPass.passOne
+                        Lines.render outlineSegs
+                    }
+                ])
 
-            let editedPrism = editedPin |> AVal.map (Option.map (fun p -> p.Prism))
-
-            let hullGeometry =
-                editedPrism |> AVal.map (fun prismOpt ->
-                    match prismOpt with
-                    | Some prism ->
-                        let p, i = PinGeometry.buildCylinderHull prism 64
-                        p, i, true
-                    | None -> [||], [||], false)
-
-            let hullPos = hullGeometry |> AVal.map (fun (p,_,_) -> ArrayBuffer p :> IBuffer)
-            let hullIdx = hullGeometry |> AVal.map (fun (_,i,_) -> ArrayBuffer i :> IBuffer)
-            let hullCnt = hullGeometry |> AVal.map (fun (_,i,_) -> i.Length)
-            let hullActive =
-                (notFullscreen, hullGeometry) ||> AVal.map2 (fun nf (_,_,act) -> nf && act)
-
-            let camPos = view |> AVal.map (fun v -> v.Backward.TransformPos(V3d.Zero))
+        // §D.6.1 ghost preview: a faint translucent sphere at the cursor's
+        // current mesh hit while AnchorPlacement is active. Radius mirrors
+        // the default-radius rule (5 % of the dataset diagonal).
+        let ghostPreview =
+            let defaultR =
+                model.ClipBounds |> AVal.map (fun b ->
+                    if b.IsInvalid then 1.0
+                    else max 0.1 (b.Size.Length * 0.05))
+            let active =
+                (notFullscreen, placementActive, placementHover) |||> AVal.map3 (fun nf pa hOpt ->
+                    nf && pa && hOpt.IsSome)
+            let trafo =
+                (placementHover, defaultR) ||> AVal.map2 (fun hOpt r ->
+                    match hOpt with
+                    | Some c -> Trafo3d.Scale r * Trafo3d.Translation c
+                    | None -> Trafo3d.Scale 0.0)
             let outlineSegs =
-                (editedPrism, camPos) ||> AVal.map2 (fun prismOpt cp ->
-                    match prismOpt with
-                    | Some prism ->
-                        PinGeometry.buildCylinderOutline prism cp
-                            (V4d(1.0, 1.0, 1.0, 0.55)) (V4d(1.0, 1.0, 1.0, 0.85))
+                (placementHover, defaultR) ||> AVal.map2 (fun hOpt r ->
+                    match hOpt with
+                    | Some c -> PinGeometry.buildSphereOutline c r (V4d(0.1, 0.34, 0.86, 0.85)) 1.5
                     | None -> [||])
-
             ASet.ofList [
+                sphereShell view proj active trafo (AVal.constant (V4d(0.1, 0.34, 0.86, 0.18)))
                 sg {
-                    Sg.Active hullActive
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant (V4d(1.0, 1.0, 1.0, 0.1)))
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.Pass RenderPass.passOne
-                    Sg.NoEvents
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(hullPos, typeof<V3f>) ])
-                    Sg.Index(BufferView(hullIdx, typeof<int>))
-                    Sg.Render hullCnt
-                }
-                sg {
-                    Sg.Active hullActive
+                    Sg.Active active
                     Sg.View view
                     Sg.Proj proj
                     Sg.BlendMode BlendMode.Blend
@@ -149,4 +210,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; adjustingHull])
+        ASet.unionMany (ASet.ofList [pinDots; pinSpheres; ghostPreview])

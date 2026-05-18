@@ -1,7 +1,40 @@
 # V5 → V6 Mapping
 
 Working reference for the V5→V6 migration. Lists where each V5 feature lives
-in the current codebase. Updated as Phase 1 (deletion) progresses.
+in the current codebase. Updated as each phase lands.
+
+## Phase 2 status (Anchor Sphere primitive, §D.6)
+
+Phase 2 reshaped `ScanPin` from a selection-prism cylinder into an
+anchor sphere with `Centre` / `Radius` / `Sigma` / `Payload` / `HostMeshName`
+/ `CorrespondenceLinkId` / `CreatedAt`. `SelectionPrism` and
+`FootprintPolygon` are gone. The single-click placement gesture is wired
+through `Sg.OnTap` in `View.fs`, the ghost-preview cval `placementHover`
+threads into `SceneGraph.build` → `ScanPinScene.build`, and the top-bar
+`◯ Pin` button toggles `AnchorPlacement`. Adjustment flyout exposes
+Radius + σ sliders; σ clamps to ≤ Radius in `SetAnchorSigma`.
+
+V6 references active after Phase 2:
+- `ScanPinModel.fs`: `PointPayload`, `PayloadType`, `CorrespondenceLinkId`,
+  reshaped `ScanPin`, simplified `PlacementState = PlacementIdle |
+  AnchorPlacement | AdjustingPin of ScanPinId`.
+- `PinGeometry.buildIcosphere` / `buildSphereOutline` — the
+  anchor-sphere primitive.
+- `ScanPinScene.sphereShell` — translucent outer (Radius) + inner (σ) +
+  centre marker + great-circle outline.
+- `Update.fs`: `EnterAnchorPlacement`, `PlaceAnchor`, `SetAnchorRadius`,
+  `SetAnchorSigma`, `ScanPinUpdate.defaultRadius`, `makeAnchor`.
+
+V6 references still **deferred**:
+- Lasso placement (§D.3 + §D.6.1) — Phase 3.
+- Mesh-wheel + `HostMeshName` resolution (§D.1) — Phase 3.
+- Payload-specific cards (§D.7) — Phase 4.
+- `CorrespondenceLinkId` issuance / management (§D.6.5) — Phase 4.
+- True Gaussian-modulated volume rendering (§D.6.3 in its full form)
+  — Phase 2 ships the two-shell approximation the spec describes as
+  "translucent outer + inner hard-edged sphere at σ contour". A real
+  per-fragment Gaussian alpha rebuild is reserved for a later polish
+  pass if visual evaluation flags the approximation.
 
 Conventions:
 - All paths relative to `src/Superprojekt/` unless noted.

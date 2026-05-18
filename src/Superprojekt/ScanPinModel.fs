@@ -9,22 +9,6 @@ open Adaptify
 type ScanPinId = ScanPinId of Guid with
     static member create () = ScanPinId (Guid.NewGuid())
 
-type FootprintPolygon = {
-    Vertices : V2d list
-}
-
-/// V5's selection cylinder. The fields survive into Phase 1 as the
-/// renderable carrier of an "annotated region in 3D" — Phase 2 replaces
-/// it with an Anchor Sphere (§D.6) and `Footprint`/`ExtentForward`/
-/// `ExtentBackward` collapse into a single Radius + σ.
-type SelectionPrism = {
-    AnchorPoint    : V3d
-    AxisDirection  : V3d
-    Footprint      : FootprintPolygon
-    ExtentForward  : float
-    ExtentBackward : float
-}
-
 [<RequireQualifiedAccess>]
 type PinPhase =
     | Placement
@@ -37,25 +21,47 @@ type CameraSnapshot = {
     Theta  : float
 }
 
-type RayMeshIntersection = {
-    DatasetId : string
-    ZValues : float list
+/// V6 §D.7.1 — the 0D payload. The sphere alone defines a region of
+/// interest; ReliabilityWeight feeds the registration solver weighting
+/// once Phase 6 lands. Phase 2 always uses ReliabilityWeight = 1.0.
+type PointPayload = {
+    ReliabilityWeight : float
 }
 
+/// V6 §C.3 — Line / Patch payloads arrive in Phase 4 (§D.7.2 / §D.7.3).
+/// Phase 2 ships only the placeholder Point case.
+type PayloadType =
+    | Point of PointPayload
+
+[<RequireQualifiedAccess>]
+type CorrespondenceLinkId = CorrespondenceLinkId of Guid
+
+/// V6 §D.6 — the V6 annotation primitive. Replaces the V5 selection-prism
+/// cylinder + cut plane. Centre is in render space (after dataset scale and
+/// centroid offset); Sigma ≤ Radius and drives the Gaussian falloff
+/// rendered by ScanPinScene + consumed by the registration / error
+/// pipelines in later phases.
 type ScanPin = {
     Id                   : ScanPinId
     Phase                : PinPhase
-    Prism                : SelectionPrism
+    Centre               : V3d
+    Radius               : float
+    Sigma                : float
+    Payload              : PayloadType
+    HostMeshName         : string option
+    CorrespondenceLinkId : CorrespondenceLinkId option
     CreationCameraState  : CameraSnapshot
+    CreatedAt            : DateTime
     DatasetColors        : Map<string, C4b>
 }
 
-/// V5's three placement-mode gestures (§B.4) are gone; only the
-/// idle/adjusting binary state survives. Phase 2 will reuse
-/// `AdjustingPin` as the destination state for the V6 single-click and
-/// lasso placement gestures (§D.6.1).
+/// Anchor-placement is the single placement gesture available in Phase 2;
+/// the lasso variant arrives in Phase 3 (§D.3 + §D.6.1). Hover preview state
+/// lives in a View-side cval (`placementHover`), so the model only carries
+/// the active/idle distinction.
 type PlacementState =
     | PlacementIdle
+    | AnchorPlacement
     | AdjustingPin of ScanPinId
 
 [<ModelType>]

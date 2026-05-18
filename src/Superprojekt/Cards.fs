@@ -210,7 +210,7 @@ module Cards =
                             selectedPin |> AVal.map (fun po ->
                                 match po with
                                 | Some pin ->
-                                    let p = pin.Prism.AnchorPoint
+                                    let p = pin.Centre
                                     sprintf "Pin  (%.1f, %.1f, %.1f)" p.X p.Y p.Z
                                 | None -> "Pin")
                         }

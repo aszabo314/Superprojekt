@@ -139,33 +139,6 @@ body.loaded { background: #f4f6f8; }
 }
 .tb-btn-tiny:hover { background: #edf0f4; color: #0f172a; }
 
-/* Segmented mode-selector: three buttons that share a bounding box,
-   no gaps between them, outer corners rounded. Visually reads as one
-   control with three exclusive options. */
-.tb-seg-group {
-    display: inline-flex; align-items: stretch;
-    border: 1px solid #c5cdd8; border-radius: 3px;
-    background: #ffffff; overflow: hidden;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.6);
-}
-.tb-seg-btn {
-    height: 24px; padding: 0 12px;
-    background: #ffffff; border: none; border-left: 1px solid #c5cdd8;
-    font-size: 12px; font-weight: 600; color: #0f172a;
-    cursor: pointer; white-space: nowrap;
-}
-.tb-seg-btn:first-child { border-left: none; }
-.tb-seg-btn:hover { background: #edf0f4; }
-.tb-seg-btn-active {
-    background: #1a56db; color: #ffffff;
-    box-shadow: inset 0 1px 2px rgba(0,0,0,0.15);
-}
-.tb-seg-btn-active:hover { background: #1447ba; }
-.tb-seg-btn-disabled {
-    color: #94a3b8; cursor: not-allowed; background: #f6f8fb;
-}
-.tb-seg-btn-disabled:hover { background: #f6f8fb; }
-
 .explore-card { z-index: 950; min-width: 240px; }
 .explore-card-body { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; }
 
@@ -205,8 +178,6 @@ body.loaded { background: #f4f6f8; }
 .lp-section-actions { display: flex; gap: 2px; }
 .lp-sublabel { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
 .lp-sub { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
-
-.lp-hint { font-size: 11px; color: #64748b; margin: 2px 0; }
 
 /* ── Mesh list ─────────────────────────────────────────────────────── */
 
@@ -284,9 +255,6 @@ body.loaded { background: #f4f6f8; }
     display: inline-block; width: 12px; text-align: center;
     color: #1a56db; font-family: monospace; font-weight: bold;
 }
-.ct-disabled { opacity: 0.4; pointer-events: none; }
-.lp-ghost-row { display: flex; align-items: center; gap: 8px; }
-
 /* ── Primitives: InlineSlider ──────────────────────────────────────── */
 
 .is {
@@ -571,18 +539,9 @@ body.loaded { background: #f4f6f8; }
     display: flex; flex-direction: column; gap: 6px;
 }
 
-.card-cut-diagram {
-    width: 280px; height: 180px;
-    border: 1px solid #e2e8f0;
-    border-radius: 3px;
-    overflow: hidden;
-    flex-shrink: 0;
-    background: #fafbfc;
-}
-
-.pin-card-inline-controls {
-    display: flex; align-items: center; gap: 8px;
-    padding: 2px 0;
+.pin-card-empty {
+    font-size: 11px; color: #94a3b8;
+    padding: 12px 8px; text-align: center; font-style: italic;
 }
 
 /* ── Ranking (existing) ───────────────────────────────────────────── */

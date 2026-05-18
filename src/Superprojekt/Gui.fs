@@ -65,42 +65,6 @@ module Gui =
                 "\u25C9 Explore"
             }
 
-            let placingMode =
-                model.ScanPins.Placement |> AVal.map (function
-                    | PlacementIdle -> None
-                    | ProfilePlacement _ -> Some ProfileMode
-                    | PlanPlacement _ -> Some PlanMode
-                    | AutoPlacement _ -> Some AutoMode
-                    | AdjustingPin(_, m) -> Some m)
-            let exploreOn = model.Explore |> AVal.map (fun e -> e.Enabled)
-
-            let modeButton (mode : PlacementMode) (label : string) (tooltip : string) (enabled : aval<bool>) =
-                button {
-                    (placingMode, enabled) ||> AVal.map2 (fun cur en ->
-                        let baseCls = "tb-seg-btn"
-                        match cur with
-                        | Some m when m = mode -> Class (baseCls + " tb-seg-btn-active")
-                        | _ when not en -> Class (baseCls + " tb-seg-btn-disabled")
-                        | _ -> Class baseCls)
-                    Attribute("title", tooltip)
-                    Dom.OnClick(fun _ ->
-                        if not (AVal.force enabled) then ()
-                        else
-                            match AVal.force placingMode with
-                            | Some m when m = mode -> env.Emit [ScanPinMsg CancelPlacement]
-                            | _ -> env.Emit [ScanPinMsg (SelectPlacementMode mode)])
-                    label
-                }
-
-            div {
-                Class "tb-seg-group"
-                Attribute("role", "group")
-                Attribute("title", "ScanPin placement mode")
-                modeButton ProfileMode "Profile" "Vertical cut — two clicks on a surface" (AVal.constant true)
-                modeButton PlanMode    "Plan"    "Horizontal cut — click-drag on a surface" (AVal.constant true)
-                modeButton AutoMode    "Auto"    "From explore hot-spot (enable explore mode first)" exploreOn
-            }
-
             button {
                 Class "tb-btn tb-btn-icon"
                 Attribute("title", "Reset camera")
@@ -273,7 +237,7 @@ module Gui =
         let sp = model.ScanPins
         let activePlacementId =
             sp.Placement |> AVal.map (function
-                | AdjustingPin(id, _) -> Some id
+                | AdjustingPin id -> Some id
                 | _ -> None)
         let activePin =
             activePlacementId |> AVal.bind (function
@@ -281,14 +245,6 @@ module Gui =
                 | None -> AVal.constant None)
         let adjusting =
             sp.Placement |> AVal.map (function AdjustingPin _ -> true | _ -> false)
-        let placementHint =
-            sp.Placement |> AVal.map (function
-                | ProfilePlacement ProfileWaitingForFirstPoint -> "Click the first point on a surface."
-                | ProfilePlacement (ProfileWaitingForSecondPoint _) -> "Click the second point to set cut direction."
-                | PlanPlacement PlanWaitingForDrag -> "Click and drag to lasso a circular area."
-                | PlanPlacement (PlanDragging _) -> "Release to place the pin."
-                | AutoPlacement _ -> "Click a hot spot to place the pin."
-                | _ -> "")
         let flyoutClass =
             (adjusting, model.MenuOpen) ||> AVal.map2 (fun adj open_ ->
                 if not adj then "placement-flyout hidden"
@@ -296,11 +252,7 @@ module Gui =
                 else "placement-flyout pf-left-closed")
         div {
             flyoutClass |> AVal.map (fun c -> Some (Class c))
-            div { Class "lp-section-title"; "Placing Pin" }
-            p {
-                Class "lp-hint"
-                placementHint
-            }
+            div { Class "lp-section-title"; "Adjust Pin" }
 
             let radius = activePin |> AVal.map (fun p ->
                 match p with
@@ -309,85 +261,6 @@ module Gui =
                 | None -> 1.0)
             inlineSlider "Radius" 0.1 50.0 0.1 (sprintf "%.1fm") radius (fun v ->
                 env.Emit [ScanPinMsg (SetFootprintRadius v)])
-
-            let extentBelow = activePin |> AVal.map (fun p ->
-                match p with
-                | Some pin -> -pin.Prism.ExtentBackward
-                | None -> -3.0)
-            let extentAbove = activePin |> AVal.map (fun p ->
-                match p with
-                | Some pin -> pin.Prism.ExtentForward
-                | None -> 1.0)
-            let extentFmt lo hi = sprintf "%+.1f / %+.1fm" lo hi
-            inlineRangeSlider "Length" -10.0 10.0 0.5 extentFmt extentBelow extentAbove (fun lo hi ->
-                env.Emit [ScanPinMsg (SetPinExtent (max 0.0 hi, max 0.0 -lo))])
-
-            let editingMode =
-                sp.Placement |> AVal.map (function
-                    | AdjustingPin(_, m) -> Some m
-                    | _ -> None)
-            div {
-                Class "lp-sub"
-                editingMode |> AVal.map (function
-                    | Some AutoMode | None -> None
-                    | Some _ -> Some (Style [Display "none"]))
-                span { Class "lp-sublabel"; "Cut Plane" }
-                let mode = activePin |> AVal.map (fun p ->
-                    match p with
-                    | Some pin ->
-                        match pin.CutPlane with
-                        | CutPlaneMode.AlongAxis _ -> 0
-                        | CutPlaneMode.AcrossAxis _ -> 1
-                    | None -> 0)
-                compactButtonBar [
-                    "Vertical",   (mode |> AVal.map (fun m -> m = 0)),
-                        (fun () ->
-                            match AVal.force activePin with
-                            | Some p ->
-                                match p.CutPlane with
-                                | CutPlaneMode.AlongAxis _ -> ()
-                                | _ -> env.Emit [ScanPinMsg (SetCutPlaneMode (CutPlaneMode.AlongAxis 0.0))]
-                            | None -> ())
-                    "Horizontal", (mode |> AVal.map (fun m -> m = 1)),
-                        (fun () ->
-                            match AVal.force activePin with
-                            | Some p ->
-                                match p.CutPlane with
-                                | CutPlaneMode.AcrossAxis _ -> ()
-                                | _ ->
-                                    let mid = (p.Prism.ExtentForward - p.Prism.ExtentBackward) * 0.5
-                                    env.Emit [ScanPinMsg (SetCutPlaneMode (CutPlaneMode.AcrossAxis mid))]
-                            | None -> ())
-                ]
-            }
-
-            let ghost = activePin |> AVal.map (fun p ->
-                match p with
-                | Some pin -> pin.GhostClip = GhostClipOn
-                | None -> false)
-            let ghostCut = activePin |> AVal.map (fun p ->
-                match p with
-                | Some pin -> pin.GhostClipCutPlane
-                | None -> false)
-            div {
-                Class "lp-ghost-row"
-                compactToggle "Solo" ghost (fun () ->
-                    match AVal.force activePin with
-                    | Some p ->
-                        let next = if p.GhostClip = GhostClipOn then GhostClipOff else GhostClipOn
-                        env.Emit [ScanPinMsg (SetGhostClip(p.Id, next))]
-                    | None -> ())
-                div {
-                    Class "ct-gated"
-                    ghost |> AVal.map (fun g -> if g then None else Some (Class "ct-disabled"))
-                    Attribute("title", "Clip in front of cut plane")
-                    compactToggle "+ Cut" ghostCut (fun () ->
-                        match AVal.force activePin with
-                        | Some p when p.GhostClip = GhostClipOn ->
-                            env.Emit [ScanPinMsg (SetGhostClipCutPlane(p.Id, not p.GhostClipCutPlane))]
-                        | _ -> ())
-                }
-            }
 
             div {
                 Class "lp-commit-row"

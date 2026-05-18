@@ -84,7 +84,6 @@ module BlitShader =
         member x.MeshVisibilityMask   : int   = x?MeshVisibilityMask
         member x.IsGhost              : bool  = x?IsGhost
         member x.MeshIndex            : int   = x?MeshIndex
-        member x.CoreRadius           : float = x?CoreRadius
         member x.GhostOpacity         : float = x?GhostOpacity
         member x.CylClip              : M44d  = x?CylClip
         member x.ReferenceAxis        : V3d   = x?ReferenceAxis
@@ -149,20 +148,6 @@ module BlitShader =
                 color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, uniform.GhostOpacity)
 
             return { c = color; n = V4d(worldNormal, 1.0) }
-        }
-
-    let coreClip (v : Effects.Vertex) =
-        fragment {
-            let p = v.wp.XYZ / v.wp.W
-            let r = sqrt(p.X * p.X + p.Y * p.Y)
-            if r > uniform.CoreRadius then
-                discard()
-            let mutable color = v.c
-            let gradWidth = max 1.0e-4 (uniform.CoreRadius * 0.08)
-            let edgeT = clamp 0.0 1.0 ((uniform.CoreRadius - r) / gradWidth)
-            if edgeT < 1.0 then
-                color <- lerp colorMap.[uniform.MeshIndex%5] color edgeT
-            return color
         }
 
     let colon =

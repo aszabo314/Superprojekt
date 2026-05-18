@@ -28,7 +28,6 @@ type Message =
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
     | SetDatasetScale    of string * float
-    | CutResultsLoaded        of ScanPinId * Map<string, CutResult>
     | ScanPinMsg              of ScanPinMessage
     | JumpToMesh of string
     | ToggleColorMode
@@ -58,38 +57,12 @@ and CardMessage =
     | RemoveCardsForPin of ScanPinId
 
 and ScanPinMessage =
-    | SelectPlacementMode of PlacementMode
     | CancelPlacement
-    // Profile gesture
-    | ProfileClickFirst of renderPos : V3d
-    | ProfileClickSecond of renderPos : V3d
-    | ProfilePreviewUpdate of previewPos : V3d option
-    // Plan gesture
-    | PlanDragStart of renderPos : V3d
-    | PlanDragUpdate of currentRadius : float
-    | PlanDragEnd
-    | PlanMedianElevationLoaded of ScanPinId * medianZ : float
-    // Auto gesture
-    | AutoHoverUpdate of AutoPreview option
-    | AutoClick of renderPos : V3d * worldRays : (V3d * V3d)[] * refAxisWorld : V3d
-    | AutoDerivationComplete of ScanPinId * axisWorld : V3d * cutPlane : CutPlaneMode * radiusRender : float
-    // Shared adjustment
     | SetFootprintRadius of float
-    | SetCutPlaneMode of CutPlaneMode
-    | SetCutPlaneAngle of float
-    | SetCutPlaneDistance of float
-    | SetFootprintScale of float
-    | SetPinExtent of float * float
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
     | FocusPin of ScanPinId
-    | SetGhostClip            of ScanPinId * GhostClipMode
-    | SetGhostClipCutPlane    of ScanPinId * bool
-    | SetShowCutPlaneLines    of ScanPinId * bool
-    | SetShowCylinderEdgeLines of ScanPinId * bool
-    | SetCutLineHover         of ScanPinId * CutLineHover option
-    | SetCutAspect            of ScanPinId * CutAspectMode
 
 module CardUpdate =
 
@@ -154,38 +127,9 @@ module ScanPinUpdate =
     let private setRadius (pin : ScanPin) (r : float) =
         { pin with Prism = { pin.Prism with Footprint = { Vertices = circleFootprint r } } }
 
-    let private autoDepth (model : Model) =
-        if model.ClipBounds.IsInvalid then 3.0
-        else
-            let span = model.ClipBounds.Max.Z - model.ClipBounds.Min.Z
-            min 10.0 (max 1.0 (span + 2.0))
-
-    let private makePin (model : Model) (id : ScanPinId) (anchor : V3d) (axis : V3d) (radius : float) (cutPlane : CutPlaneMode) (length : float) =
-        let prism =
-            { AnchorPoint = anchor; AxisDirection = axis
-              Footprint = { Vertices = circleFootprint radius }
-              ExtentForward = 1.0; ExtentBackward = length }
-        let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
-        { Id = id; Phase = PinPhase.Placement; Prism = prism
-          CutPlane = cutPlane
-          CreationCameraState = cam
-          CutResults = Map.empty
-          CutResultsPlane = cutPlane
-          DatasetColors = assignColors model.MeshNames
-          GhostClip = GhostClipOff
-          GhostClipCutPlane = false
-          ExtractedLines = ExtractedLinesMode.initial
-          CutAspect = CutAspectFit
-          CutLineHover = None }
-
     let private updatePin (id : ScanPinId) (f : ScanPin -> ScanPin) (sp : ScanPinModel) =
         match HashMap.tryFind id sp.Pins with
         | Some pin -> { sp with Pins = HashMap.add id (f pin) sp.Pins }
-        | None -> sp
-
-    let private updateTarget (f : ScanPin -> ScanPin) (sp : ScanPinModel) =
-        match ScanPinModel.activePlacementId sp |> Option.orElse sp.SelectedPin with
-        | Some id -> updatePin id f sp
         | None -> sp
 
     let private discardActivePin (sp : ScanPinModel) =
@@ -195,152 +139,17 @@ module ScanPinUpdate =
             { sp with Pins = HashMap.remove id sp.Pins; SelectedPin = selected }
         | None -> sp
 
-    let private initialStateFor (mode : PlacementMode) =
-        match mode with
-        | ProfileMode -> ProfilePlacement ProfileWaitingForFirstPoint
-        | PlanMode    -> PlanPlacement PlanWaitingForDrag
-        | AutoMode    -> AutoPlacement (AutoHovering None)
-
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
-        | SelectPlacementMode mode ->
-            let sp = discardActivePin sp
-            { sp with Placement = initialStateFor mode; LastPlacementMode = mode }
-
         | CancelPlacement ->
             let sp = discardActivePin sp
             { sp with Placement = PlacementIdle }
-
-        | ProfileClickFirst p1 ->
-            match sp.Placement with
-            | ProfilePlacement ProfileWaitingForFirstPoint ->
-                { sp with Placement = ProfilePlacement (ProfileWaitingForSecondPoint(p1, None)) }
-            | _ -> sp
-
-        | ProfileClickSecond p2 ->
-            match sp.Placement with
-            | ProfilePlacement (ProfileWaitingForSecondPoint(p1, _)) ->
-                let diff = p2 - p1
-                let len = diff.Length
-                if len < 1e-3 then sp
-                else
-                    let center = (p1 + p2) * 0.5
-                    let axis = V3d.OOI
-                    let radius = max 0.1 (len * 0.6)
-                    // cut direction in XY
-                    let dir = V2d(diff.X, diff.Y)
-                    let angleRad =
-                        if dir.Length < 1e-6 then 0.0 else atan2 dir.Y dir.X
-                    let angleDeg = angleRad * Constant.DegreesPerRadian
-                    let cutPlane = CutPlaneMode.AlongAxis angleDeg
-                    let id = ScanPinId.create()
-                    let pin = makePin model id center axis radius cutPlane (autoDepth model)
-                    { sp with
-                        Pins = HashMap.add id pin sp.Pins
-                        Placement = AdjustingPin(id, ProfileMode)
-                        SelectedPin = Some id }
-            | _ -> sp
-
-        | ProfilePreviewUpdate pos ->
-            match sp.Placement with
-            | ProfilePlacement (ProfileWaitingForSecondPoint(p1, _)) ->
-                { sp with Placement = ProfilePlacement (ProfileWaitingForSecondPoint(p1, pos)) }
-            | _ -> sp
-
-        | PlanDragStart center ->
-            match sp.Placement with
-            | PlanPlacement PlanWaitingForDrag ->
-                { sp with Placement = PlanPlacement (PlanDragging(center, 0.0)) }
-            | _ -> sp
-
-        | PlanDragUpdate r ->
-            match sp.Placement with
-            | PlanPlacement (PlanDragging(c, _)) ->
-                { sp with Placement = PlanPlacement (PlanDragging(c, max 0.0 r)) }
-            | _ -> sp
-
-        | PlanDragEnd ->
-            match sp.Placement with
-            | PlanPlacement (PlanDragging(center, r)) when r >= 0.1 ->
-                let axis = V3d.OOI
-                let cutPlane = CutPlaneMode.AcrossAxis 0.0
-                let id = ScanPinId.create()
-                let pin = makePin model id center axis (max 0.1 r) cutPlane (autoDepth model)
-                { sp with
-                    Pins = HashMap.add id pin sp.Pins
-                    Placement = AdjustingPin(id, PlanMode)
-                    SelectedPin = Some id }
-            | PlanPlacement _ ->
-                // Drag too short — abort back to waiting
-                { sp with Placement = PlanPlacement PlanWaitingForDrag }
-            | _ -> sp
-
-        | PlanMedianElevationLoaded(id, medianZ) ->
-            sp |> updatePin id (fun pin ->
-                if pin.Phase <> PinPhase.Placement then pin
-                else
-                    let dist = medianZ - pin.Prism.AnchorPoint.Z
-                    let clamped = clamp (-pin.Prism.ExtentBackward) pin.Prism.ExtentForward dist
-                    { pin with CutPlane = CutPlaneMode.AcrossAxis clamped
-                               CutResultsPlane = CutPlaneMode.AcrossAxis clamped })
-
-        | AutoHoverUpdate preview ->
-            match sp.Placement with
-            | AutoPlacement (AutoHovering current) when current = preview -> sp
-            | AutoPlacement (AutoHovering _) ->
-                { sp with Placement = AutoPlacement (AutoHovering preview) }
-            | _ -> sp
-
-        | AutoClick (renderPos, _, _) ->
-            // The server-side ray-grid derivation kicks off in Update.update once the
-            // pin exists. Here we just create a placeholder pin at the click.
-            match sp.Placement with
-            | AutoPlacement _ ->
-                let id = ScanPinId.create()
-                let axis = V3d.OOI
-                let cutPlane = CutPlaneMode.AlongAxis 0.0
-                let pin = makePin model id renderPos axis 1.0 cutPlane (autoDepth model)
-                { sp with
-                    Pins = HashMap.add id pin sp.Pins
-                    Placement = AdjustingPin(id, AutoMode)
-                    SelectedPin = Some id }
-            | _ -> sp
-
-        | AutoDerivationComplete (id, axisWorld, cutPlane, radiusRender) ->
-            sp |> updatePin id (fun pin ->
-                if pin.Phase <> PinPhase.Placement then pin
-                else
-                    let axis = axisWorld |> Vec.normalize
-                    let footprint = { Vertices = circleFootprint (max 0.1 radiusRender) }
-                    { pin with
-                        Prism = { pin.Prism with AxisDirection = axis; Footprint = footprint }
-                        CutPlane = cutPlane
-                        CutResultsPlane = cutPlane })
 
         | SetFootprintRadius radius ->
             match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
                 if pin.Phase = PinPhase.Placement then setRadius pin (max 0.1 radius) else pin)
             | None -> sp
-
-        | SetCutPlaneMode mode ->
-            sp |> updateTarget (fun pin -> { pin with CutPlane = mode })
-
-        | SetCutPlaneAngle deg ->
-            sp |> updateTarget (fun pin -> { pin with CutPlane = CutPlaneMode.AlongAxis deg })
-
-        | SetCutPlaneDistance dist ->
-            sp |> updateTarget (fun pin -> { pin with CutPlane = CutPlaneMode.AcrossAxis dist })
-
-        | SetFootprintScale scale ->
-            match ScanPinModel.activePlacementId sp with
-            | Some id -> sp |> updatePin id (fun pin ->
-                if pin.Phase = PinPhase.Placement then setRadius pin (max 0.1 scale) else pin)
-            | None -> sp
-
-        | SetPinExtent (forward, backward) ->
-            sp |> updateTarget (fun pin ->
-                { pin with Prism = { pin.Prism with ExtentForward = max 0.0 forward; ExtentBackward = max 0.0 backward } })
 
         | CommitPin ->
             match ScanPinModel.activePlacementId sp with
@@ -361,38 +170,12 @@ module ScanPinUpdate =
 
         | FocusPin _ -> sp
 
-        | SetGhostClip(id, mode) ->
-            sp |> updatePin id (fun pin -> { pin with GhostClip = mode })
-
-        | SetGhostClipCutPlane(id, on) ->
-            sp |> updatePin id (fun pin -> { pin with GhostClipCutPlane = on })
-
-        | SetShowCutPlaneLines(id, on) ->
-            sp |> updatePin id (fun pin -> { pin with ExtractedLines = { pin.ExtractedLines with ShowCutPlaneLines = on } })
-
-        | SetShowCylinderEdgeLines(id, on) ->
-            sp |> updatePin id (fun pin -> { pin with ExtractedLines = { pin.ExtractedLines with ShowCylinderEdgeLines = on } })
-
-        | SetCutLineHover(id, hv) ->
-            sp |> updatePin id (fun pin -> { pin with CutLineHover = hv })
-
-        | SetCutAspect(id, mode) ->
-            sp |> updatePin id (fun pin -> { pin with CutAspect = mode })
-
 module Update =
-    let private cutDebounce = ref (new System.Threading.CancellationTokenSource())
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
         | CameraMessage msg ->
-            let swallow =
-                if AVal.force PinCylinderDrag.isActive then
-                    match msg with
-                    | OrbitMessage.PointerDown _ | OrbitMessage.PointerMove _ | OrbitMessage.PointerUp _ -> true
-                    | _ -> false
-                else false
-            if swallow then model
-            else { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
+            { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
         | CentroidsLoaded centroids ->
             let common  = if centroids.Length > 0 then centroids |> Array.averageBy snd else V3d.Zero
             let names   = centroids |> Array.map fst |> IndexList.ofArray
@@ -545,11 +328,7 @@ module Update =
             match HashMap.tryFind id sp.Pins with
             | Some pin ->
                 let pin = { pin with Phase = PinPhase.Placement }
-                let mode =
-                    match pin.CutPlane with
-                    | CutPlaneMode.AcrossAxis _ -> PlanMode
-                    | CutPlaneMode.AlongAxis _ -> ProfileMode
-                let sp = { sp with Pins = HashMap.add id pin sp.Pins; Placement = AdjustingPin(id, mode); SelectedPin = Some id }
+                let sp = { sp with Pins = HashMap.add id pin sp.Pins; Placement = AdjustingPin id; SelectedPin = Some id }
                 { model with ScanPins = sp }
             | None -> model
         | CardMsg msg ->
@@ -562,13 +341,6 @@ module Update =
             | SetSteepnessThreshold v -> { model with Explore = { e with SteepnessThreshold = v } }
             | SetDisagreementThreshold v -> { model with Explore = { e with DisagreementThreshold = v } }
             | SetReferenceAxisMode m -> { model with ReferenceAxis = m }
-        | CutResultsLoaded(pinId, results) ->
-            let sp = model.ScanPins
-            match HashMap.tryFind pinId sp.Pins with
-            | Some pin ->
-                let pin = { pin with CutResults = results; CutResultsPlane = pin.CutPlane }
-                { model with ScanPins = { sp with Pins = HashMap.add pinId pin sp.Pins } }
-            | None -> model
         | ScanPinMsg msg ->
             let sp = model.ScanPins
             let sp' = ScanPinUpdate.update model msg sp
@@ -588,144 +360,7 @@ module Update =
                     let c = pin.CreationCameraState
                     env.Emit [CameraMessage (OrbitMessage.SetTarget(true, c.Center, c.Radius, c.Phi, c.Theta))]
                 | None -> ()
-            | ProfileClickSecond _ | PlanDragEnd | AutoClick _ ->
-                // Pin just created — re-center camera on it
-                match ScanPinModel.activePlacementId sp' with
-                | Some id ->
-                    match HashMap.tryFind id sp'.Pins with
-                    | Some pin ->
-                        env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, pin.Prism.AnchorPoint))]
-                    | None -> ()
-                | None -> ()
             | _ -> ()
-            // Plan mode: kick off median-elevation server request on pin creation
-            match msg with
-            | PlanDragEnd ->
-                match ScanPinModel.activePlacementId sp' with
-                | Some id ->
-                    match HashMap.tryFind id sp'.Pins with
-                    | Some pin ->
-                        let names = model.MeshNames |> Seq.toArray
-                        let dataset = if names.Length > 0 then names.[0].Split('/', 2).[0] else ""
-                        let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
-                        let cc = model.CommonCentroid
-                        let center = pin.Prism.AnchorPoint
-                        let r = match pin.Prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                        let topZRender    = (model.ClipBounds.Max.Z - cc.Z) * scale + 10.0
-                        let bottomZRender = (model.ClipBounds.Min.Z - cc.Z) * scale - 10.0
-                        let rayCount = 10
-                        let rays =
-                            [| for i in 0 .. rayCount - 1 do
-                                for j in 0 .. rayCount - 1 do
-                                    let fi = (float i + 0.5) / float rayCount
-                                    let fj = (float j + 0.5) / float rayCount
-                                    let u = (fi * 2.0 - 1.0) * r
-                                    let v = (fj * 2.0 - 1.0) * r
-                                    if u * u + v * v <= r * r then
-                                        let origin = V3d(center.X + u, center.Y + v, topZRender)
-                                        let origWorld = origin / scale + cc
-                                        yield origWorld, V3d(0.0, 0.0, -1.0) |]
-                        if rays.Length > 0 then
-                            task {
-                                try
-                                    let! hits =
-                                        Query.rayBatch ApiConfig.apiBase.Value names rays
-                                        |> Async.StartAsTask
-                                    let zs = hits |> Array.choose (Option.map (fun p -> p.Z))
-                                    if zs.Length > 0 then
-                                        let sorted = zs |> Array.sort
-                                        let medianWorld = sorted.[sorted.Length / 2]
-                                        let medianRender = (medianWorld - cc.Z) * scale
-                                        env.Emit [ScanPinMsg (PlanMedianElevationLoaded(id, medianRender))]
-                                with
-                                | ex -> env.Emit [LogDebug (sprintf "plan median failed: %s" ex.Message)]
-                            } |> ignore
-                    | None -> ()
-                | None -> ()
-            | AutoClick (renderPos, worldRays, refAxisWorld) ->
-                match ScanPinModel.activePlacementId sp' with
-                | Some id ->
-                    let names = model.MeshNames |> Seq.toArray
-                    let dataset = if names.Length > 0 then names.[0].Split('/', 2).[0] else ""
-                    let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
-                    let cc = model.CommonCentroid
-                    let clickWorld = renderPos / scale + cc
-                    if names.Length > 0 && worldRays.Length > 0 then
-                        task {
-                            try
-                                let! hits =
-                                    Query.rayGrid ApiConfig.apiBase.Value names worldRays
-                                    |> Async.StartAsTask
-                                match PinGeometry.deriveAutoPreview hits clickWorld refAxisWorld scale with
-                                | None ->
-                                    env.Emit [LogDebug "auto derive: insufficient steep neighborhood — keeping defaults"]
-                                | Some (axisWorld, cutPlane, radiusRender, _) ->
-                                    env.Emit [ScanPinMsg (AutoDerivationComplete(id, axisWorld, cutPlane, radiusRender))]
-                            with
-                            | ex -> env.Emit [LogDebug (sprintf "auto derive failed: %s" ex.Message)]
-                        } |> ignore
-                | None -> ()
-            | _ -> ()
-            let needsCutUpdate =
-                match msg with
-                | ProfileClickSecond _ | PlanDragEnd | AutoClick _
-                | PlanMedianElevationLoaded _ | AutoDerivationComplete _
-                | SetFootprintRadius _ | SetCutPlaneMode _ | SetCutPlaneAngle _ | SetCutPlaneDistance _ | SetFootprintScale _ | SetPinExtent _ -> true
-                | _ -> false
-            if needsCutUpdate then
-                let targetId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
-                match targetId with
-                | Some id ->
-                    match HashMap.tryFind id sp'.Pins with
-                    | Some pin ->
-                        let cc = model.CommonCentroid
-                        let names = model.MeshNames
-                        let prism = pin.Prism
-                        let radius = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                        let axis = prism.AxisDirection |> Vec.normalize
-                        let right, fwd = PinGeometry.axisFrame axis
-                        let dataset = match IndexList.tryFirst names with Some n -> n.Split('/', 2).[0] | None -> ""
-                        let scale = model.DatasetScales |> Map.tryFind dataset |> Option.defaultValue 1.0
-                        let planePoint, planeNormal, axisU, axisV, extentU, extentV =
-                            match pin.CutPlane with
-                            | CutPlaneMode.AlongAxis angleDeg ->
-                                let a = angleDeg * Constant.RadiansPerDegree
-                                let planeDir = right * cos a + fwd * sin a
-                                let normal = Vec.cross planeDir axis |> Vec.normalize
-                                prism.AnchorPoint / scale + cc, normal, planeDir, axis, radius / scale, max prism.ExtentForward prism.ExtentBackward / scale
-                            | CutPlaneMode.AcrossAxis dist ->
-                                prism.AnchorPoint / scale + axis * dist / scale + cc, axis, right, fwd, radius / scale, radius / scale
-                        let pinId = id
-                        let cts = new System.Threading.CancellationTokenSource()
-                        cutDebounce.Value.Cancel()
-                        cutDebounce.Value <- cts
-                        task {
-                            try
-                                do! System.Threading.Tasks.Task.Delay(300, cts.Token)
-                                let nameArr = names |> Seq.toArray
-                                let! batch =
-                                    Query.planeIntersectionBatch ApiConfig.apiBase.Value nameArr planePoint planeNormal axisU axisV 0.5 extentU extentV
-                                    |> Async.StartAsTask
-                                if not cts.IsCancellationRequested then
-                                    let totalSegs = batch |> List.sumBy (fun (_, s) -> s.Length)
-                                    let results =
-                                        batch
-                                        |> List.choose (fun (name, segments) ->
-                                            if segments.Length > 0 then
-                                                let polylines = segments |> List.map (fun (a, b) -> [V2d(a.X * scale, a.Y * scale); V2d(b.X * scale, b.Y * scale)])
-                                                Some (name, { MeshName = name; Polylines = polylines })
-                                            else None)
-                                        |> Map.ofList
-                                    env.Emit [
-                                        LogDebug (sprintf "cut: %d meshes, %d segs (%d non-empty)" nameArr.Length totalSegs results.Count)
-                                        CutResultsLoaded(pinId, results)
-                                    ]
-                            with
-                            | :? System.Threading.Tasks.TaskCanceledException -> ()
-                            | ex -> env.Emit [LogDebug (sprintf "cut failed: %s" ex.Message)]
-                        } |> ignore
-                    | None -> ()
-                | None -> ()
             let model = { model with ScanPins = sp' }
             let selChanged = sp'.SelectedPin <> sp.SelectedPin || ScanPinModel.activePlacementId sp' <> ScanPinModel.activePlacementId sp
             if selChanged then

@@ -13,22 +13,16 @@ type FootprintPolygon = {
     Vertices : V2d list
 }
 
+/// V5's selection cylinder. The fields survive into Phase 1 as the
+/// renderable carrier of an "annotated region in 3D" — Phase 2 replaces
+/// it with an Anchor Sphere (§D.6) and `Footprint`/`ExtentForward`/
+/// `ExtentBackward` collapse into a single Radius + σ.
 type SelectionPrism = {
     AnchorPoint    : V3d
     AxisDirection  : V3d
     Footprint      : FootprintPolygon
     ExtentForward  : float
     ExtentBackward : float
-}
-
-[<RequireQualifiedAccess>]
-type CutPlaneMode =
-    | AlongAxis  of angleDegrees : float
-    | AcrossAxis of distanceFromAnchor : float
-
-type CutResult = {
-    MeshName  : string
-    Polylines : V2d list list
 }
 
 [<RequireQualifiedAccess>]
@@ -48,96 +42,39 @@ type RayMeshIntersection = {
     ZValues : float list
 }
 
-type GhostClipMode =
-    | GhostClipOff
-    | GhostClipOn
-
-type ExtractedLinesMode = {
-    ShowCutPlaneLines     : bool
-    ShowCylinderEdgeLines : bool
-}
-
-module ExtractedLinesMode =
-    let initial = { ShowCutPlaneLines = true; ShowCylinderEdgeLines = false }
-
-type CutAspectMode =
-    | CutAspectFit
-    | CutAspectOneToOne
-
-type CutLineHover = {
-    MeshName    : string
-    DiagramPos  : V2d
-    WorldPos    : V3d
-    CutDistance : float
-    Elevation   : float
-}
-
 type ScanPin = {
     Id                   : ScanPinId
     Phase                : PinPhase
     Prism                : SelectionPrism
-    CutPlane             : CutPlaneMode
     CreationCameraState  : CameraSnapshot
-    CutResults           : Map<string, CutResult>
-    CutResultsPlane      : CutPlaneMode
     DatasetColors        : Map<string, C4b>
-    GhostClip            : GhostClipMode
-    GhostClipCutPlane    : bool
-    ExtractedLines       : ExtractedLinesMode
-    CutAspect            : CutAspectMode
-    CutLineHover         : CutLineHover option
 }
 
-type PlacementMode =
-    | ProfileMode
-    | PlanMode
-    | AutoMode
-
-type ProfilePlacementState =
-    | ProfileWaitingForFirstPoint
-    | ProfileWaitingForSecondPoint of firstPoint:V3d * previewPos:V3d option
-
-type PlanPlacementState =
-    | PlanWaitingForDrag
-    | PlanDragging of center:V3d * currentRadius:float
-
-type AutoPreview = {
-    Center         : V3d
-    Axis           : V3d
-    Radius         : float
-    CutPlaneMode   : CutPlaneMode
-    DominantNormal : V3d
-}
-
-type AutoPlacementState =
-    | AutoHovering of AutoPreview option
-
+/// V5's three placement-mode gestures (§B.4) are gone; only the
+/// idle/adjusting binary state survives. Phase 2 will reuse
+/// `AdjustingPin` as the destination state for the V6 single-click and
+/// lasso placement gestures (§D.6.1).
 type PlacementState =
     | PlacementIdle
-    | ProfilePlacement of ProfilePlacementState
-    | PlanPlacement of PlanPlacementState
-    | AutoPlacement of AutoPlacementState
-    | AdjustingPin of ScanPinId * PlacementMode
+    | AdjustingPin of ScanPinId
 
 [<ModelType>]
 type ScanPinModel = {
-    Pins                : HashMap<ScanPinId, ScanPin>
-    SelectedPin         : ScanPinId option
-    Placement           : PlacementState
-    LastPlacementMode   : PlacementMode
+    Pins        : HashMap<ScanPinId, ScanPin>
+    SelectedPin : ScanPinId option
+    Placement   : PlacementState
 }
 
 module ScanPinModel =
     let initial = {
-        Pins                = HashMap.empty
-        SelectedPin         = None
-        Placement           = PlacementIdle
-        LastPlacementMode   = ProfileMode
+        Pins        = HashMap.empty
+        SelectedPin = None
+        Placement   = PlacementIdle
     }
 
     let activePlacementId (sp : ScanPinModel) =
         match sp.Placement with
-        | AdjustingPin(id, _) -> Some id
+        | AdjustingPin id -> Some id
         | _ -> None
 
     let isPlacing (sp : ScanPinModel) =
@@ -186,6 +123,3 @@ module CardSystemModel =
         DraggedCard = None
         NextZOrder  = 1
     }
-
-module PinCylinderDrag =
-    let isActive : cval<bool> = cval false

@@ -97,8 +97,6 @@ module SceneGraph =
             yield! labelNodes zColor V3d.OOI V3d.IOO textTrafoZ
         ]
 
-    let buildCutPlaneQuad = PinGeometry.buildCutPlaneQuad
-
     let build
         (env : Env<Message>)
         (info : Aardvark.Dom.RenderControlInfo)
@@ -128,23 +126,7 @@ module SceneGraph =
                 ) 0
             )
 
-        let activePlacementId =
-            model.ScanPins.Placement |> AVal.map (function
-                | AdjustingPin(id, _) -> Some id
-                | _ -> None)
-        let effectiveGhostSilhouette =
-            let cylClipActive =
-                (model.ScanPins.SelectedPin, activePlacementId, model.ScanPins.Pins |> AMap.toAVal)
-                |||> AVal.map3 (fun sel act pins ->
-                    let id = act |> Option.orElse sel
-                    match id |> Option.bind (fun id -> HashMap.tryFind id pins) with
-                    | Some pin -> pin.GhostClip = GhostClipOn
-                    | _ -> false)
-            let placementPreviewActive =
-                (model.ScanPins.Placement, model.ClipBounds)
-                ||> AVal.map2 (fun p b -> (PinGeometry.placementPreviewPrism p b).IsSome)
-            (model.GhostSilhouette, cylClipActive, placementPreviewActive)
-            |||> AVal.map3 (fun g c p -> g || c || p)
+        let effectiveGhostSilhouette = model.GhostSilhouette
 
         let exploreTex : aval<IBackendTexture> =
             let refAxis =

@@ -164,63 +164,9 @@ module MeshView =
                 )
             )
         
-        let activePlacementId =
-            model.ScanPins.Placement |> AVal.map (function
-                | AdjustingPin(id, _) -> Some id
-                | _ -> None)
-        let activePin =
-            (model.ScanPins.SelectedPin, activePlacementId, model.ScanPins.Pins |> AMap.toAVal)
-            |||> AVal.map3 (fun sel act pins ->
-                let id = act |> Option.orElse sel
-                id |> Option.bind (fun id -> HashMap.tryFind id pins))
-        let previewPrism =
-            (model.ScanPins.Placement, model.ClipBounds) ||> AVal.map2 PinGeometry.placementPreviewPrism
-        let ghostClipVal = activePin |> AVal.map (Option.map (fun p -> p.GhostClip))
-        let prismVal = activePin |> AVal.map (Option.map (fun p -> p.Prism))
-        let cutPlaneVal = activePin |> AVal.map (Option.map (fun p -> p.CutPlane))
-        let ghostCutVal = activePin |> AVal.map (Option.map (fun p -> p.GhostClipCutPlane) >> Option.defaultValue false)
-        let cameraFwd = view |> AVal.map (fun v -> v.Backward.TransformDir(V3d(0.0, 0.0, -1.0)) |> Vec.normalize)
-        let cylClip =
-            AVal.custom (fun tok ->
-                let prev = previewPrism.GetValue tok
-                let gc = ghostClipVal.GetValue tok
-                let prismOpt = prismVal.GetValue tok
-                let cutOpt = cutPlaneVal.GetValue tok
-                let ghostCut = ghostCutVal.GetValue tok
-                let camFwd = cameraFwd.GetValue tok
-                // Preview takes priority — force solo ghost-clip on the cylinder before commit.
-                let effectivePrism, effectiveGhost, effectiveCut =
-                    match prev with
-                    | Some p -> Some p, Some GhostClipOn, None
-                    | None -> prismOpt, gc, cutOpt
-                match effectiveGhost, effectivePrism with
-                | Some GhostClipOn, Some prism ->
-                    let axis = Vec.normalize prism.AxisDirection
-                    let r = match prism.Footprint.Vertices with v :: _ -> v.Length | _ -> 1.0
-                    let cutActive, cutN, cutD =
-                        if ghostCut && prev.IsNone then
-                            match effectiveCut with
-                            | Some cp ->
-                                let right, fwd = PinGeometry.axisFrame axis
-                                let planePoint, planeNormal =
-                                    match cp with
-                                    | CutPlaneMode.AlongAxis angleDeg ->
-                                        let a = angleDeg * Constant.RadiansPerDegree
-                                        let planeDir = right * cos a + fwd * sin a
-                                        prism.AnchorPoint, Vec.cross planeDir axis |> Vec.normalize
-                                    | CutPlaneMode.AcrossAxis dist ->
-                                        prism.AnchorPoint + axis * dist, axis
-                                let n =
-                                    if Vec.dot planeNormal camFwd > 0.0 then -planeNormal else planeNormal
-                                1.0, n, Vec.dot planePoint n
-                            | None -> 0.0, V3d.Zero, 0.0
-                        else 0.0, V3d.Zero, 0.0
-                    M44d(
-                        1.0, r, prism.ExtentForward, prism.ExtentBackward,
-                        prism.AnchorPoint.X, prism.AnchorPoint.Y, prism.AnchorPoint.Z, cutActive,
-                        axis.X, axis.Y, axis.Z, cutD,
-                        cutN.X, cutN.Y, cutN.Z, 0.0)
-                | _ -> M44d.Zero)
+        // V5 per-pin ghost-clip / cut-plane is gone (Phase 1, §B.1 / §B.7); the
+        // shader still reads a CylClip uniform but treats M00 = 0 as inactive.
+        let cylClip = AVal.constant M44d.Zero
         let tasks =
             let filter =
                 (model.ClipActive, model.ClipBox, model.CommonCentroid) |||> AVal.map3 (fun active box cc ->

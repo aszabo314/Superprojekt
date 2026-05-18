@@ -1,5 +1,5 @@
-//12d9db89-9ca3-a1f1-463c-ca14ea7897fa
-//35303757-879c-8668-e839-a662f6364614
+//027461f2-6cf9-ceaa-f956-78219755f1b2
+//fe82b959-9b27-79be-e0b0-ec3ad0990786
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -15,7 +15,6 @@ type AdaptiveScanPinModel(value : ScanPinModel) =
     let _Pins_ = FSharp.Data.Adaptive.cmap(value.Pins)
     let _SelectedPin_ = FSharp.Data.Adaptive.cval(value.SelectedPin)
     let _Placement_ = FSharp.Data.Adaptive.cval(value.Placement)
-    let _LastPlacementMode_ = FSharp.Data.Adaptive.cval(value.LastPlacementMode)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : ScanPinModel) = AdaptiveScanPinModel(value)
@@ -27,12 +26,10 @@ type AdaptiveScanPinModel(value : ScanPinModel) =
             _Pins_.Value <- value.Pins
             _SelectedPin_.Value <- value.SelectedPin
             _Placement_.Value <- value.Placement
-            _LastPlacementMode_.Value <- value.LastPlacementMode
     member __.Current = __adaptive
     member __.Pins = _Pins_ :> FSharp.Data.Adaptive.amap<ScanPinId, ScanPin>
     member __.SelectedPin = _SelectedPin_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
     member __.Placement = _Placement_ :> FSharp.Data.Adaptive.aval<PlacementState>
-    member __.LastPlacementMode = _LastPlacementMode_ :> FSharp.Data.Adaptive.aval<PlacementMode>
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveCardSystemModel(value : CardSystemModel) =
     let _Cards_ = FSharp.Data.Adaptive.cmap(value.Cards)

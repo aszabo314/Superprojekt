@@ -521,7 +521,10 @@ module OrbitController =
                     env.Emit [PointerMove(e.PointerId, e.Button, false, e.OffsetPosition)]
             )
             Dom.OnContextMenu(ignore, preventDefault = true)
-            Dom.OnMouseWheel(fun e -> env.Emit [Wheel(false, V2d(e.DeltaX, e.DeltaY) / 120.0)])
+            // No wheel handler here — View.fs registers one that arbitrates
+            // between zoom (default / Alt-forced) and the V6 mesh-wheel
+            // active-picking-layer cycle (§D.1), then forwards to
+            // OrbitMessage.Wheel only when zoom is the chosen action.
 
             Dom.OnTouchStart((fun e ->
                 e.ChangedTouches |> HashMap.toList |> List.map (fun (id, t) ->

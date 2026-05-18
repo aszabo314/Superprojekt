@@ -70,6 +70,12 @@ module BlitShader =
             [<Semantic("Normals")>] n : V4d
         }
 
+    /// V6 §D.3 — fixed-size cap on lasso polygon vertex count. The polygon
+    /// produces one half-plane per edge; 32 covers the planetary expert's
+    /// hand-drawn polygons with plenty of headroom.
+    [<Literal>]
+    let MaxLassoPlanes = 32
+
     type UniformScope with
         member x.TextureOffset        : V2d   = x?TextureOffset
         member x.TextureScale         : V2d   = x?TextureScale
@@ -92,6 +98,8 @@ module BlitShader =
         member x.HighlightColor       : V4d   = x?HighlightColor
         member x.HighlightAlpha       : float = x?HighlightAlpha
         member x.ExploreHighlightMode : int   = x?ExploreHighlightMode
+        member x.LassoPlaneCount      : int   = x?LassoPlaneCount
+        member x.LassoPlanes          : Arr<N<32>, V4d> = x?LassoPlanes
     
     let colorMap =
         [|
@@ -109,6 +117,18 @@ module BlitShader =
                 p.X >= uniform.ClipMin.X && p.X <= uniform.ClipMax.X &&
                 p.Y >= uniform.ClipMin.Y && p.Y <= uniform.ClipMax.Y &&
                 p.Z >= uniform.ClipMin.Z && p.Z <= uniform.ClipMax.Z
+            // V6 §D.3 — lasso sweep volume. Each half-plane contains the
+            // commit-time camera position; fragments with a positive signed
+            // distance against any plane lie outside the cone.
+            let lc = uniform.LassoPlaneCount
+            if lc > 0 then
+                let mutable insideLasso = true
+                for i in 0 .. 31 do
+                    if i < lc then
+                        let plane = uniform.LassoPlanes.[i]
+                        let d = plane.X * p.X + plane.Y * p.Y + plane.Z * p.Z + plane.W
+                        if d > 0.0 then insideLasso <- false
+                if not insideLasso then insideClip <- false
             let cyl = uniform.CylClip
             let mutable cylEdgeT = 1.0
             if cyl.M00 <> 0.0 then

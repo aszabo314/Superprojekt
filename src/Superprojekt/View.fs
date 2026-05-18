@@ -10,6 +10,29 @@ open Superprojekt
 
 module View =
 
+    /// Slab-test ray-box intersection. Returns Some t (entry distance ≥ 0)
+    /// when the ray hits the box ahead of the camera; None otherwise.
+    let private rayBoxT (ray : Ray3d) (box : Box3d) : float option =
+        let inv = V3d(1.0 / ray.Direction.X, 1.0 / ray.Direction.Y, 1.0 / ray.Direction.Z)
+        let tx1 = (box.Min.X - ray.Origin.X) * inv.X
+        let tx2 = (box.Max.X - ray.Origin.X) * inv.X
+        let ty1 = (box.Min.Y - ray.Origin.Y) * inv.Y
+        let ty2 = (box.Max.Y - ray.Origin.Y) * inv.Y
+        let tz1 = (box.Min.Z - ray.Origin.Z) * inv.Z
+        let tz2 = (box.Max.Z - ray.Origin.Z) * inv.Z
+        let tmin = max (max (min tx1 tx2) (min ty1 ty2)) (min tz1 tz2)
+        let tmax = min (min (max tx1 tx2) (max ty1 ty2)) (max tz1 tz2)
+        if tmax < 0.0 || tmin > tmax then None
+        else Some (max tmin 0.0)
+
+    let private pickRay (cursorPx : V2d) (vpSize : V2i) (viewTrafo : Trafo3d) (projTrafo : Trafo3d) =
+        let ndc = V2d(2.0 * cursorPx.X / float vpSize.X - 1.0,
+                      1.0 - 2.0 * cursorPx.Y / float vpSize.Y)
+        let vp = viewTrafo * projTrafo
+        let p0 = vp.Backward.TransformPosProj(V3d(ndc, -1.0))
+        let p1 = vp.Backward.TransformPosProj(V3d(ndc, 1.0))
+        Ray3d(p0, (p1 - p0) |> Vec.normalize)
+
     let view (env : Env<Message>) (model : AdaptiveModel) =
 
         ServerActions.init env
@@ -17,14 +40,18 @@ module View =
         let spaceHeld       = cval false
         let hoverCoord      = cval<V3d option> None
         let viewportSize    = cval (V2i(1, 1))
-        // §D.6.1 ghost preview tracker — kept as a View-side cval so high-
-        // frequency mouse moves don't churn the AdaptiveModel.
         let placementHover  = cval<V3d option> None
+        // V6 §D.1 mesh-wheel — cursor position in viewport px, used to
+        // position the floating active-picking-layer label and the lasso
+        // overlay's "next segment" preview.
+        let cursorScreen    = cval<V2d option> None
 
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
 
         let placementActive =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
+
+        let lassoActive = model.LassoDrawing |> AVal.map Option.isSome
 
         body {
             OnBoot [
@@ -41,8 +68,9 @@ module View =
                 Dom.Style [
                     Css.Background "rgb(244, 246, 248)"
                 ]
-                model.ScanPins.Placement |> AVal.map (function
-                    | PlacementIdle -> None
+                (model.ScanPins.Placement, lassoActive) ||> AVal.map2 (fun p lasso ->
+                    match p, lasso with
+                    | PlacementIdle, false -> None
                     | _ -> Some (Dom.Style [Css.Cursor "crosshair"]))
 
                 let! info = RenderControl.Info
@@ -78,10 +106,68 @@ module View =
 
                 Sg.Pass RenderPass.passZero
 
+                // V6 §D.1 mesh-wheel: cycle the active picking layer when at
+                // least two visible meshes intersect the cursor ray; otherwise
+                // forward to the orbit zoom. Alt forces zoom unconditionally.
+                Dom.OnMouseWheel(fun e ->
+                    let delta = V2d(e.DeltaX, e.DeltaY) / 120.0
+                    let forwardZoom () =
+                        env.Emit [CameraMessage (OrbitMessage.Wheel(false, delta))]
+                    if e.Alt then
+                        forwardZoom ()
+                    else
+                        let cursorPx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
+                        let vpSize = AVal.force size
+                        let v = AVal.force view
+                        let p = AVal.force proj
+                        let ray = pickRay cursorPx vpSize v p
+                        let visible = AVal.force model.MeshVisible
+                        let bounds = AVal.force model.MeshBounds
+                        let cc = AVal.force model.CommonCentroid
+                        let scales = AVal.force model.DatasetScales
+                        let hits =
+                            bounds |> Map.toSeq
+                            |> Seq.choose (fun (name, world) ->
+                                if Map.tryFind name visible |> Option.defaultValue true then
+                                    let dataset =
+                                        let s = name.IndexOf('/')
+                                        if s >= 0 then name.[..s-1] else ""
+                                    let scale = Map.tryFind dataset scales |> Option.defaultValue 1.0
+                                    let lo = (world.Min - cc) * scale
+                                    let hi = (world.Max - cc) * scale
+                                    let box = Box3d(V3d(min lo.X hi.X, min lo.Y hi.Y, min lo.Z hi.Z),
+                                                    V3d(max lo.X hi.X, max lo.Y hi.Y, max lo.Z hi.Z))
+                                    rayBoxT ray box |> Option.map (fun t -> t, name)
+                                else None)
+                            |> Seq.sortBy fst
+                            |> Seq.map snd
+                            |> Array.ofSeq
+                        if hits.Length < 2 then
+                            forwardZoom ()
+                        else
+                            let cur = AVal.force model.ActivePickingLayer
+                            let n = hits.Length
+                            let dir = if e.DeltaY > 0.0 then 1 else -1
+                            let next =
+                                match cur with
+                                | None -> hits.[if dir > 0 then 0 else n - 1]
+                                | Some c ->
+                                    match Array.tryFindIndex ((=) c) hits with
+                                    | Some i -> hits.[((i + dir) % n + n) % n]
+                                    | None -> hits.[if dir > 0 then 0 else n - 1]
+                            env.Emit [SetActivePickingLayer (Some next)]
+                )
+
                 Sg.OnDoubleTap(fun e ->
-                    if e.Location.Depth < 0.9999 then
-                        env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
-                    false
+                    // Double-tap during lasso drawing commits the polygon.
+                    match AVal.force model.LassoDrawing with
+                    | Some _ ->
+                        env.Emit [LassoCommit(AVal.force view, AVal.force proj, AVal.force size)]
+                        false
+                    | None ->
+                        if e.Location.Depth < 0.9999 then
+                            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
+                        false
                 )
 
                 Sg.OnTap(fun e ->
@@ -93,19 +179,25 @@ module View =
                     let worldPos = e.WorldPosition / scale + cc
                     let hitGeometry = e.Location.Depth < 0.9999
                     let placement = AVal.force model.ScanPins.Placement
-                    match placement with
-                    | AnchorPlacement when hitGeometry ->
-                        env.Emit [ScanPinMsg (PlaceAnchor e.WorldPosition)]
+                    match AVal.force model.LassoDrawing with
+                    | Some _ ->
+                        // Each click adds a vertex regardless of mesh hit.
+                        env.Emit [LassoAddVertex(V2d(float e.Position.X, float e.Position.Y))]
                         false
-                    | _ ->
-                        if e.Ctrl && e.Button = Button.Left && hitGeometry then
-                            transact (fun () -> hoverCoord.Value <- Some worldPos)
-                            env.Emit [ClearFilteredMesh]
-                            ServerActions.triggerFilter env model e.Position
+                    | None ->
+                        match placement with
+                        | AnchorPlacement when hitGeometry ->
+                            env.Emit [ScanPinMsg (PlaceAnchor e.WorldPosition)]
                             false
-                        else
-                            transact (fun () -> hoverCoord.Value <- Some worldPos)
-                            true
+                        | _ ->
+                            if e.Ctrl && e.Button = Button.Left && hitGeometry then
+                                transact (fun () -> hoverCoord.Value <- Some worldPos)
+                                env.Emit [ClearFilteredMesh]
+                                ServerActions.triggerFilter env model e.Position
+                                false
+                            else
+                                transact (fun () -> hoverCoord.Value <- Some worldPos)
+                                true
                 )
 
                 Sg.OnLongPress(fun e ->
@@ -129,6 +221,9 @@ module View =
                     let cc = AVal.force model.CommonCentroid
                     let hitGeometry = e.Location.Depth < 0.9999
                     transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
+                    let cursorPx = V2d(float e.Position.X, float e.Position.Y)
+                    if cursorScreen.Value <> Some cursorPx then
+                        transact (fun () -> cursorScreen.Value <- Some cursorPx)
                     if AVal.force placementActive then
                         let next = if hitGeometry then Some e.WorldPosition else None
                         if placementHover.Value <> next then
@@ -144,7 +239,10 @@ module View =
             Dom.OnKeyDown(fun e ->
                 match e.Key with
                 | " "      -> transact (fun () -> spaceHeld.Value <- true)
-                | "Escape" -> env.Emit [ScanPinMsg CancelPlacement]
+                | "Escape" ->
+                    match AVal.force model.LassoDrawing with
+                    | Some _ -> env.Emit [LassoCancel]
+                    | None -> env.Emit [ScanPinMsg CancelPlacement]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
@@ -157,6 +255,8 @@ module View =
             Gui.leftPanel env model
             Gui.placementFlyout env model
             Gui.exploreCard env model
+            Gui.meshWheelLabel model (cursorScreen :> aval<_>)
+            Gui.lassoOverlay env model (cursorScreen :> aval<_>)
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
             Gui.fullscreenInfo model
             Gui.scaleBar model (viewportSize :> aval<V2i>)

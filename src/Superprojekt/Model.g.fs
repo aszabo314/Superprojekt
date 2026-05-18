@@ -1,5 +1,5 @@
-//1dcdcdab-a5d6-370c-526c-a6cbf7567b0f
-//c9584665-9aaf-7f92-6d52-15ddb4430458
+//7e58ebe3-353c-9c64-34d9-5a3dba83461b
+//53e6241f-a1b9-a15a-7a21-63f781d8e469
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -36,6 +36,10 @@ type AdaptiveModel(value : Model) =
     let _ClipActive_ = FSharp.Data.Adaptive.cval(value.ClipActive)
     let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
     let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
+    let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
+    let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
+    let _LassoDrawing_ = FSharp.Data.Adaptive.cval(value.LassoDrawing)
+    let _LassoVolume_ = FSharp.Data.Adaptive.cval(value.LassoVolume)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _ReferenceAxis_ = FSharp.Data.Adaptive.cval(value.ReferenceAxis)
     let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
@@ -77,6 +81,10 @@ type AdaptiveModel(value : Model) =
             _ClipActive_.Value <- value.ClipActive
             _ClipBox_.Value <- value.ClipBox
             _ClipBounds_.Value <- value.ClipBounds
+            _MeshBounds_.Value <- value.MeshBounds
+            _ActivePickingLayer_.Value <- value.ActivePickingLayer
+            _LassoDrawing_.Value <- value.LassoDrawing
+            _LassoVolume_.Value <- value.LassoVolume
             _ScanPins_.Update(value.ScanPins)
             _ReferenceAxis_.Value <- value.ReferenceAxis
             _Explore_.Value <- value.Explore
@@ -111,6 +119,10 @@ type AdaptiveModel(value : Model) =
     member __.ClipActive = _ClipActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
+    member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>
+    member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.LassoDrawing = _LassoDrawing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoDraft>>
+    member __.LassoVolume = _LassoVolume_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoVolume>>
     member __.ScanPins = _ScanPins_
     member __.ReferenceAxis = _ReferenceAxis_ :> FSharp.Data.Adaptive.aval<ReferenceAxisMode>
     member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>

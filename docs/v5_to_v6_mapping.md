@@ -26,8 +26,8 @@ V6 references active after Phase 2:
   `SetAnchorSigma`, `ScanPinUpdate.defaultRadius`, `makeAnchor`.
 
 V6 references still **deferred**:
-- Lasso placement (§D.3 + §D.6.1) — Phase 3.
-- Mesh-wheel + `HostMeshName` resolution (§D.1) — Phase 3.
+- Lasso placement (§D.6.1's lasso variant of anchor placement) — Phase 3
+  wires up the §D.3 clip lasso but not yet the anchor-placement lasso.
 - Payload-specific cards (§D.7) — Phase 4.
 - `CorrespondenceLinkId` issuance / management (§D.6.5) — Phase 4.
 - True Gaussian-modulated volume rendering (§D.6.3 in its full form)
@@ -35,6 +35,58 @@ V6 references still **deferred**:
   "translucent outer + inner hard-edged sphere at σ contour". A real
   per-fragment Gaussian alpha rebuild is reserved for a later polish
   pass if visual evaluation flags the approximation.
+
+## Phase 3 status (Mesh-wheel + Polygonal lasso, §D.1 + §D.3)
+
+Phase 3 adds the V6 mesh-wheel scroll-cycle interaction and the
+polygonal-lasso clip. The previously-dummy `HostMeshName` field
+(introduced placeholder-only in Phase 2) is now stamped from
+`ActivePickingLayer` when an anchor is placed.
+
+V6 references active after Phase 3:
+- `Model.fs`: `MeshBounds : Map<string, Box3d>` (populated from the
+  bboxes endpoint), `ActivePickingLayer : string option`,
+  `LassoDrawing : LassoDraft option`, `LassoVolume : LassoVolume
+  option`. New types `LassoDraft` and `LassoVolume`.
+- `Update.fs`: `SetActivePickingLayer`, `LassoBegin`,
+  `LassoAddVertex`, `LassoCommit`, `LassoCancel`, `LassoClear`.
+- `OrbitController.fs`: wheel handler removed from `getAttributes` —
+  View.fs registers its own wheel handler that arbitrates between
+  zoom and mesh-wheel cycle.
+- `View.fs`: `rayBoxT` slab-test, `pickRay` (re-added from V5),
+  `Dom.OnMouseWheel` handler that cycles `ActivePickingLayer` when
+  ≥ 2 visible mesh bboxes intersect the cursor ray (Alt forces
+  zoom regardless), `cursorScreen` cval for cursor-adjacent label
+  + lasso preview, `Sg.OnTap` lasso branch (adds vertex on click,
+  double-tap commits with view+proj+vpSize captured).
+- `Shader.fs`: `MaxLassoPlanes = 32`, `LassoPlaneCount` and
+  `LassoPlanes` uniforms, fragment-shader plane sweep test inside
+  `BlitShader.clippy`.
+- `MeshView.fs`: pads `LassoVolume.Planes` to 32 entries and threads
+  the uniforms into every off-screen mesh task.
+- `Gui.fs`: `meshWheelLabel` (cursor-anchored mesh-name label),
+  `lassoOverlay` (SVG polyline rendering for the in-progress
+  polygon with closing dashed segment to cursor), Clip-tab "Lasso"
+  collapsible section with Draw / Clear buttons.
+- `wwwroot/style.css`: `.mesh-wheel-label`, `.lasso-overlay`,
+  `.lp-clip-actions`, `.lp-sublabel-hint`.
+
+V6 references still **deferred**:
+- Anchor-placement lasso variant (§D.6.1's "Lasso placement —
+  user draws a closed 2D polygon on the viewport; the sphere is
+  fitted to enclose the back-projection of the polygon"). The §D.3
+  *clip* lasso is in place; the §D.6.1 *anchor-placement* lasso
+  reuses the same gesture but produces an anchor instead of a clip
+  volume. Deferred to Phase 4 alongside payload work, since the
+  anchor-placement lasso most cleanly slots in alongside the
+  patch-payload UI.
+- Touch-device two-finger swipe substitute for scroll-wheel cycling
+  (§D.1 specifies it; Phase 3 ships only the desktop scroll-wheel
+  path).
+- Lasso self-intersection detection (§D.3 edge case). Phase 3
+  accepts any 3+-vertex polygon; user can re-draw if the result is
+  wrong.
+- All other §D.x — Phases 4–9 per Part F.
 
 Conventions:
 - All paths relative to `src/Superprojekt/` unless noted.

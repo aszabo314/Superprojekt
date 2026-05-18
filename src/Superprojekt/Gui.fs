@@ -77,7 +77,9 @@ module Gui =
                 Dom.OnClick(fun _ ->
                     let active = AVal.force placementActive
                     if active then env.Emit [ScanPinMsg CancelPlacement]
-                    else env.Emit [ScanPinMsg EnterAnchorPlacement])
+                    // Mutual-exclusion: kicking off pin placement clears any
+                    // in-progress lasso (\u00A7D.3 / \u00A7D.6 share the cursor).
+                    else env.Emit [LassoCancel; ScanPinMsg EnterAnchorPlacement])
                 "\u25CB Pin"
             }
 
@@ -408,6 +410,46 @@ module Gui =
                             (fun b v -> Box3d(V3d(b.Min.X, b.Min.Y, v), b.Max))
                             (fun b v -> Box3d(b.Min, V3d(b.Max.X, b.Max.Y, v)))
                     })
+
+                // V6 §D.3 lasso. Sits alongside the rectangular box clip;
+                // both can be active simultaneously and the per-fragment
+                // discard enforces their intersection.
+                collapsibleSection "Lasso" false (
+                    div {
+                        Class "lp-clip-body"
+                        let drawing = model.LassoDrawing |> AVal.map Option.isSome
+                        let committed = model.LassoVolume |> AVal.map Option.isSome
+                        div {
+                            Class "lp-clip-actions"
+                            button {
+                                Class "mb"
+                                drawing |> AVal.map (fun on ->
+                                    if on then Some (Class "mb-on") else None)
+                                Attribute("title", "Click vertices on the viewport; double-click to commit; Esc cancels.")
+                                Dom.OnClick(fun _ ->
+                                    if AVal.force drawing then env.Emit [LassoCancel]
+                                    else env.Emit [LassoBegin])
+                                drawing |> AVal.map (fun on ->
+                                    if on then "Drawing…" else "Draw Lasso")
+                            }
+                            button {
+                                Class "mb"
+                                committed |> AVal.map (fun c ->
+                                    if c then None else Some (Style [Display "none"]))
+                                Attribute("title", "Clear committed lasso")
+                                Dom.OnClick(fun _ -> env.Emit [LassoClear])
+                                "Clear"
+                            }
+                        }
+                        div {
+                            Class "lp-sublabel-hint"
+                            (drawing, committed) ||> AVal.map2 (fun d c ->
+                                match d, c with
+                                | true, _  -> "Click to add vertex · double-click to commit · Esc to cancel"
+                                | _, true  -> "Lasso committed. Camera-anchored cone."
+                                | _ -> "")
+                        }
+                    })
             })
 
     let leftPanel (env : Env<Message>) (model : AdaptiveModel) =
@@ -421,6 +463,99 @@ module Gui =
                 pinSection env model
                 visTechSection env model
             }
+        }
+
+    /// V6 §D.1 — small floating label next to the cursor indicating which
+    /// mesh is currently the active picking layer. Hidden until the user
+    /// has cycled at least once and the cursor is over the viewport.
+    let meshWheelLabel (model : AdaptiveModel) (cursorScreen : aval<V2d option>) =
+        div {
+            Class "mesh-wheel-label"
+            (model.ActivePickingLayer, cursorScreen) ||> AVal.map2 (fun layer cOpt ->
+                match layer, cOpt with
+                | Some _, Some pos ->
+                    Some (Style [
+                        Left (sprintf "%.0fpx" (pos.X + 14.0))
+                        Top  (sprintf "%.0fpx" (pos.Y - 10.0))
+                    ])
+                | _ -> Some (Style [Display "none"]))
+            model.ActivePickingLayer |> AVal.map (function
+                | Some name -> Cards.shortName name
+                | None -> "")
+        }
+
+    /// V6 §D.3 — in-progress lasso overlay (SVG polyline rendered above the
+    /// renderControl). Shows the committed-so-far polygon plus a dashed
+    /// preview segment from the last vertex to the cursor.
+    let lassoOverlay (env : Env<Message>) (model : AdaptiveModel) (cursorScreen : aval<V2d option>) =
+        let stateJson =
+            (model.LassoDrawing, cursorScreen, model.LassoVolume) |||> AVal.map3 (fun drawing cursor committed ->
+                let drawingArr =
+                    match drawing with
+                    | Some d -> d.Vertices
+                    | None -> [||]
+                let cursorArr =
+                    match cursor with
+                    | Some c -> [| c |]
+                    | None -> [||]
+                let committedArr =
+                    match committed with
+                    | Some v -> v.ScreenPolygon
+                    | None -> [||]
+                let fmtArr (a : V2d[]) =
+                    a |> Array.map (fun p -> sprintf "[%.1f,%.1f]" p.X p.Y) |> String.concat ","
+                sprintf "{\"d\":[%s],\"c\":[%s],\"k\":[%s]}"
+                    (fmtArr drawingArr) (fmtArr cursorArr) (fmtArr committedArr))
+        div {
+            Class "lasso-overlay"
+            stateJson |> AVal.map (fun j -> Some (Attribute("data-lasso", j)))
+            OnBoot [
+                "(function(){"
+                "var el = __THIS__;"
+                "var last = '';"
+                "var ns = 'http://www.w3.org/2000/svg';"
+                "function poly(points, attrs){"
+                "  var p = document.createElementNS(ns, 'polyline');"
+                "  p.setAttribute('points', points.map(function(pt){return pt[0]+','+pt[1];}).join(' '));"
+                "  for(var k in attrs) p.setAttribute(k, attrs[k]);"
+                "  return p;"
+                "}"
+                "function render(){"
+                "  var raw = el.getAttribute('data-lasso') || '{}';"
+                "  if(raw === last) return; last = raw;"
+                "  try { var d = JSON.parse(raw); } catch(e) { return; }"
+                "  el.innerHTML = '';"
+                "  var svg = document.createElementNS(ns, 'svg');"
+                "  svg.setAttribute('class','lasso-svg');"
+                "  el.appendChild(svg);"
+                "  if(d.k && d.k.length >= 3){"
+                "    var k = d.k.slice(); k.push(k[0]);"
+                "    svg.appendChild(poly(k, {stroke:'#1a56db','stroke-width':'1.5','stroke-dasharray':'4,3',fill:'rgba(26,86,219,0.04)'}));"
+                "  }"
+                "  if(d.d && d.d.length > 0){"
+                "    if(d.d.length >= 2)"
+                "      svg.appendChild(poly(d.d, {stroke:'#0f172a','stroke-width':'1.5',fill:'none'}));"
+                "    d.d.forEach(function(pt){"
+                "      var c = document.createElementNS(ns, 'circle');"
+                "      c.setAttribute('cx', pt[0]); c.setAttribute('cy', pt[1]);"
+                "      c.setAttribute('r','3'); c.setAttribute('fill','#0f172a');"
+                "      svg.appendChild(c);"
+                "    });"
+                "    if(d.c && d.c.length > 0){"
+                "      var last = d.d[d.d.length-1];"
+                "      var line = document.createElementNS(ns, 'line');"
+                "      line.setAttribute('x1', last[0]); line.setAttribute('y1', last[1]);"
+                "      line.setAttribute('x2', d.c[0][0]); line.setAttribute('y2', d.c[0][1]);"
+                "      line.setAttribute('stroke','#0f172a'); line.setAttribute('stroke-width','1');"
+                "      line.setAttribute('stroke-dasharray','4,4');"
+                "      svg.appendChild(line);"
+                "    }"
+                "  }"
+                "}"
+                "render();"
+                "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-lasso']});"
+                "})();"
+            ]
         }
 
     let private niceRoundDistance (d : float) =

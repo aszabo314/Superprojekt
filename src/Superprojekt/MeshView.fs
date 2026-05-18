@@ -167,6 +167,22 @@ module MeshView =
         // V5 per-pin ghost-clip / cut-plane is gone (Phase 1, §B.1 / §B.7); the
         // shader still reads a CylClip uniform but treats M00 = 0 as inactive.
         let cylClip = AVal.constant M44d.Zero
+        // V6 §D.3 lasso uniforms. Pad LassoPlanes to MaxLassoPlanes so the
+        // shader's fixed-size Arr<N<32>, V4d> always sees a full payload;
+        // LassoPlaneCount gates the actual loop iterations.
+        let lassoPlaneCount =
+            model.LassoVolume |> AVal.map (function
+                | Some v -> v.Planes.Length |> min BlitShader.MaxLassoPlanes
+                | None -> 0)
+        let lassoPlanes =
+            model.LassoVolume |> AVal.map (fun vOpt ->
+                let arr = Array.create BlitShader.MaxLassoPlanes V4d.Zero
+                match vOpt with
+                | Some v ->
+                    let n = min v.Planes.Length BlitShader.MaxLassoPlanes
+                    for i in 0 .. n - 1 do arr.[i] <- v.Planes.[i]
+                | None -> ()
+                arr)
         let tasks =
             let filter =
                 (model.ClipActive, model.ClipBox, model.CommonCentroid) |||> AVal.map3 (fun active box cc ->
@@ -182,6 +198,8 @@ module MeshView =
                         Sg.Proj proj
                         Sg.Uniform("ViewportSize", info.ViewportSize)
                         Sg.Uniform("CylClip", cylClip)
+                        Sg.Uniform("LassoPlaneCount", lassoPlaneCount)
+                        Sg.Uniform("LassoPlanes", lassoPlanes)
                         let modeInt = model.RenderingMode |> AVal.map (function Textured -> 0 | Shaded -> 1 | WhiteSurface -> 2)
                         renderMesh loaded filter (AVal.constant isGhost) (AVal.constant meshIndex) isActive model.CommonCentroid scale model.GhostOpacity modeInt
                     }

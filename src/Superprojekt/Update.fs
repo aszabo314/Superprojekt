@@ -41,6 +41,14 @@ type Message =
     | SetExploreCardPos of V2d
     | ToggleGearPopover
     | EditPin of ScanPinId
+    // V6 §D.1 — mesh-wheel
+    | SetActivePickingLayer of string option
+    // V6 §D.3 — polygonal lasso
+    | LassoBegin
+    | LassoAddVertex of V2d
+    | LassoCommit    of viewTrafo:Trafo3d * projTrafo:Trafo3d * vpSize:V2i
+    | LassoCancel
+    | LassoClear
 
 and ExploreModeMessage =
     | SetExploreEnabled of bool
@@ -138,7 +146,7 @@ module ScanPinUpdate =
             Radius               = radius
             Sigma                = sigma
             Payload              = Point { ReliabilityWeight = 1.0 }
-            HostMeshName         = None
+            HostMeshName         = model.ActivePickingLayer
             CorrespondenceLinkId = None
             CreationCameraState  = cam
             CreatedAt            = System.DateTime.UtcNow
@@ -243,7 +251,14 @@ module Update =
                     let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) model.DatasetCentroids
                     if dataset <> "" then Map.add dataset common perMesh else perMesh }
         | SetVisible(name, v) ->
-            { model with MeshVisible = Map.add name v model.MeshVisible }
+            // V6 §D.1: if the active picking layer becomes invisible, clear it
+            // so the next mesh-wheel scroll starts from a clean slate.
+            let activePickingLayer =
+                if not v && model.ActivePickingLayer = Some name then None
+                else model.ActivePickingLayer
+            { model with
+                MeshVisible = Map.add name v model.MeshVisible
+                ActivePickingLayer = activePickingLayer }
         | ToggleMenu ->
             let sp = model.ScanPins
             if ScanPinModel.isPlacing sp then model
@@ -297,9 +312,11 @@ module Update =
                     | None -> 1.0
                 let renderDiag = union.Size.Length * scale
                 let disagreementDefault = clamp 0.001 1.0 (renderDiag * 1e-3)
+                let perMesh = bboxes |> Array.fold (fun m (n, b) -> Map.add n b m) Map.empty
                 { model with
                     ClipBounds = padded
                     ClipBox = padded
+                    MeshBounds = perMesh
                     Explore = { model.Explore with DisagreementThreshold = disagreementDefault } }
         | ToggleClip ->
             { model with ClipActive = not model.ClipActive }
@@ -318,6 +335,10 @@ module Update =
                     Filtered = HashMap.empty
                     FilterCenter = None
                     MeshSolo = NoSolo
+                    MeshBounds = Map.empty
+                    ActivePickingLayer = None
+                    LassoDrawing = None
+                    LassoVolume = None
                     Explore = { model.Explore with Enabled = false }
                     CardSystem = { model.CardSystem with Cards = model.CardSystem.Cards |> HashMap.map (fun _ c -> { c with Visible = false }) } }
         | SetDatasetScale(dataset, scale) ->
@@ -375,6 +396,69 @@ module Update =
                 let sp = { sp with Pins = HashMap.add id pin sp.Pins; Placement = AdjustingPin id; SelectedPin = Some id }
                 { model with ScanPins = sp }
             | None -> model
+        | SetActivePickingLayer name ->
+            { model with ActivePickingLayer = name }
+        | LassoBegin ->
+            // Mutually exclusive with anchor placement — discard any
+            // in-flight anchor before entering lasso mode.
+            let scanPins =
+                match model.ScanPins.Placement with
+                | AnchorPlacement -> { model.ScanPins with Placement = PlacementIdle }
+                | _ -> model.ScanPins
+            { model with ScanPins = scanPins; LassoDrawing = Some { Vertices = [||] } }
+        | LassoAddVertex p ->
+            match model.LassoDrawing with
+            | Some d -> { model with LassoDrawing = Some { Vertices = Array.append d.Vertices [| p |] } }
+            | None -> model
+        | LassoCommit(viewTrafo, projTrafo, vpSize) ->
+            match model.LassoDrawing with
+            | Some d when d.Vertices.Length >= 3 ->
+                let poly = d.Vertices
+                let n = poly.Length
+                // NDC: y flipped from screen px.
+                let toNdc (px : V2d) =
+                    V2d(2.0 * px.X / float vpSize.X - 1.0,
+                        1.0 - 2.0 * px.Y / float vpSize.Y)
+                let vp = viewTrafo * projTrafo
+                let camPos = viewTrafo.Backward.TransformPos V3d.Zero
+                // Near-plane unprojection per polygon vertex.
+                let dirs =
+                    poly |> Array.map (fun px ->
+                        let ndc = toNdc px
+                        let pNear = vp.Backward.TransformPosProj(V3d(ndc, -1.0))
+                        (pNear - camPos) |> Vec.normalize)
+                let planes =
+                    Array.init n (fun i ->
+                        let d0 = dirs.[i]
+                        let d1 = dirs.[(i + 1) % n]
+                        let normal = Vec.cross d0 d1 |> Vec.normalize
+                        let offset = -(Vec.dot normal camPos)
+                        V4d(normal.X, normal.Y, normal.Z, offset))
+                // Orientation-fix: the polygon centroid (back-projected to mid
+                // depth) must satisfy every plane inequality with signed dist ≤ 0.
+                // If most planes report it outside, flip all of them.
+                let centroidNdc =
+                    let mutable s = V2d.Zero
+                    for px in poly do
+                        s <- s + toNdc px
+                    s / float n
+                let centroidWorld =
+                    vp.Backward.TransformPosProj(V3d(centroidNdc, 0.0))
+                let outside =
+                    planes |> Array.sumBy (fun p ->
+                        let d = p.X * centroidWorld.X + p.Y * centroidWorld.Y + p.Z * centroidWorld.Z + p.W
+                        if d > 0.0 then 1 else 0)
+                let planes =
+                    if outside > n / 2 then planes |> Array.map (fun p -> -p)
+                    else planes
+                let volume = { Planes = planes; ScreenPolygon = poly; CommitVpSize = vpSize }
+                { model with LassoDrawing = None; LassoVolume = Some volume }
+            | _ ->
+                { model with LassoDrawing = None }
+        | LassoCancel ->
+            { model with LassoDrawing = None }
+        | LassoClear ->
+            { model with LassoDrawing = None; LassoVolume = None }
         | CardMsg msg ->
             { model with CardSystem = CardUpdate.update msg model.CardSystem }
         | ExploreMsg msg ->

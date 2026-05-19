@@ -1,179 +1,6 @@
 namespace Superprojekt
 
 open Aardvark.Base
-open Microsoft.FSharp.NativeInterop
-
-#nowarn "9"
-
-type MeshData =
-    {
-        centroid  : V3d
-        positions : V3f[]
-        uvs       : V2f[]
-        normals   : V3f[]
-        indices   : int[]
-        atlasUrl  : string
-    }
-
-module MeshData =
-
-    // Binary layout (little-endian) — matches Superserver:
-    //   magic           4 bytes  "MESH"
-    //   vertexCount     int32
-    //   indexCount      int32
-    //   centroid X/Y/Z  3 × float64
-    //   positions       vertexCount × 3 × float32   (centroid-relative)
-    //   uvs             vertexCount × 2 × float32
-    //   normals         vertexCount × 3 × float32
-    //   indices         indexCount × int32
-
-    let decode (atlasUrl : string) (data : byte[]) : MeshData =
-        use ptr = fixed data
-        let mutable ptr = ptr
-
-        let inline readByte () =
-            let v = NativePtr.read ptr
-            ptr <- NativePtr.add ptr 1
-            v
-
-        let inline readInt32 () =
-            let v : int = NativePtr.read (NativePtr.cast ptr)
-            ptr <- NativePtr.add ptr 4
-            v
-
-        let inline readDouble () =
-            let v : float = NativePtr.read (NativePtr.cast ptr)
-            ptr <- NativePtr.add ptr 8
-            v
-
-        let a = readByte ()
-        let b = readByte ()
-        let c = readByte ()
-        let d = readByte ()
-        if [| a; b; c; d |] <> "MESH"B then failwith "invalid mesh magic"
-
-        let vertexCount = readInt32 ()
-        let indexCount  = readInt32 ()
-        let centroid    = V3d(readDouble (), readDouble (), readDouble ())
-
-        let positions = Array.zeroCreate<V3f> vertexCount
-        System.Span<V3f>(NativePtr.toVoidPtr ptr, vertexCount).CopyTo(positions)
-        ptr <- NativePtr.add ptr (vertexCount * sizeof<V3f>)
-
-        let uvs = Array.zeroCreate<V2f> vertexCount
-        System.Span<V2f>(NativePtr.toVoidPtr ptr, vertexCount).CopyTo(uvs)
-        ptr <- NativePtr.add ptr (vertexCount * sizeof<V2f>)
-
-        let normals = Array.zeroCreate<V3f> vertexCount
-        System.Span<V3f>(NativePtr.toVoidPtr ptr, vertexCount).CopyTo(normals)
-        ptr <- NativePtr.add ptr (vertexCount * sizeof<V3f>)
-
-        let indices = Array.zeroCreate<int> indexCount
-        System.Span<int>(NativePtr.toVoidPtr ptr, indexCount).CopyTo(indices)
-
-        { centroid = centroid; positions = positions; uvs = uvs; normals = normals; indices = indices; atlasUrl = atlasUrl }
-
-    let fetchDatasets (serverUrl : string) : Async<string[]> =
-        async {
-            use client = new System.Net.Http.HttpClient()
-            let! json = client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets") |> Async.AwaitTask
-            let doc = System.Text.Json.JsonDocument.Parse(json)
-            return doc.RootElement.EnumerateArray() |> Seq.map (fun e -> e.GetString()) |> Seq.toArray
-        }
-
-    let fetchDefaultDataset (serverUrl : string) : Async<string> =
-        async {
-            use client = new System.Net.Http.HttpClient()
-            let! json = client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets/default") |> Async.AwaitTask
-            let doc = System.Text.Json.JsonDocument.Parse(json)
-            return doc.RootElement.GetString()
-        }
-
-    let fetchCentroids (serverUrl : string) (dataset : string) : Async<(string * V3d)[]> =
-        async {
-            use client = new System.Net.Http.HttpClient()
-            let url = sprintf "%s/datasets/%s/centroids" (serverUrl.TrimEnd('/')) dataset
-            let! json = client.GetStringAsync(url) |> Async.AwaitTask
-            let doc = System.Text.Json.JsonDocument.Parse(json)
-            return
-                doc.RootElement.EnumerateObject()
-                |> Seq.map (fun prop ->
-                    let a = prop.Value.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                    dataset + "/" + prop.Name, V3d(a.[0], a.[1], a.[2])
-                )
-                |> Seq.toArray
-        }
-
-    let filterByTriangles (triangleIds : int[]) (mesh : MeshData) : MeshData =
-        let indices = Array.zeroCreate (triangleIds.Length * 3)
-        for i = 0 to triangleIds.Length - 1 do
-            let src = triangleIds.[i] * 3
-            let dst = i * 3
-            indices.[dst]     <- mesh.indices.[src]
-            indices.[dst + 1] <- mesh.indices.[src + 1]
-            indices.[dst + 2] <- mesh.indices.[src + 2]
-        { mesh with indices = indices }
-
-    let compact (mesh : MeshData) : MeshData =
-        let remap = System.Collections.Generic.Dictionary<int, int>()
-        let positions = System.Collections.Generic.List<V3f>()
-        let uvs       = System.Collections.Generic.List<V2f>()
-        let normals   = System.Collections.Generic.List<V3f>()
-        let hasNormals = mesh.normals.Length = mesh.positions.Length
-        let newIndices = Array.zeroCreate mesh.indices.Length
-        for i = 0 to mesh.indices.Length - 1 do
-            let oldIdx = mesh.indices.[i]
-            let mutable newIdx = 0
-            if not (remap.TryGetValue(oldIdx, &newIdx)) then
-                newIdx <- positions.Count
-                remap.[oldIdx] <- newIdx
-                positions.Add(mesh.positions.[oldIdx])
-                uvs.Add(mesh.uvs.[oldIdx])
-                if hasNormals then normals.Add(mesh.normals.[oldIdx])
-            newIndices.[i] <- newIdx
-        { mesh with positions = positions.ToArray(); uvs = uvs.ToArray(); normals = normals.ToArray(); indices = newIndices }
-
-    let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d)[]> =
-        async {
-            use client = new System.Net.Http.HttpClient()
-            let url = sprintf "%s/datasets/%s/bboxes" (serverUrl.TrimEnd('/')) dataset
-            let! json = client.GetStringAsync(url) |> Async.AwaitTask
-            let doc = System.Text.Json.JsonDocument.Parse(json)
-            return
-                doc.RootElement.EnumerateObject()
-                |> Seq.map (fun prop ->
-                    let mn = prop.Value.GetProperty("min").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                    let mx = prop.Value.GetProperty("max").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                    dataset + "/" + prop.Name, Box3d(V3d(mn.[0], mn.[1], mn.[2]), V3d(mx.[0], mx.[1], mx.[2]))
-                )
-                |> Seq.toArray
-        }
-
-    let fetch (serverUrl : string) (name : string) (index : int) : Async<MeshData> =
-        async {
-            let parts    = name.Split([|'/'|], 2)
-            let dataset  = parts.[0]
-            let meshName = parts.[1]
-            use client = new System.Net.Http.HttpClient()
-            let base' = serverUrl.TrimEnd('/')
-            let meshUrl  = sprintf "%s/datasets/%s/mesh/%s/%d"       base' dataset meshName index
-            let atlasUrl = sprintf "%s/datasets/%s/mesh/%s/%d/atlas" base' dataset meshName index
-            let! bytes = client.GetByteArrayAsync(meshUrl) |> Async.AwaitTask
-            return decode atlasUrl bytes
-        }
-
-
-module ApiConfig =
-    open Aardworx.WebAssembly
-    let apiBase =
-        lazy (
-            let href = Window.Location.Href
-            let uri = System.Uri(href)
-            let mutable path = uri.AbsolutePath
-            if path.Contains('.') then path <- path.Substring(0, path.LastIndexOf('/') + 1)
-            path <- path.TrimEnd('/')
-            uri.GetLeftPart(System.UriPartial.Authority) + path + "/api"
-        )
 
 module Query =
 
@@ -193,7 +20,6 @@ module Query =
             return JsonDocument.Parse(text).RootElement
         }
 
-    /// POST /query/ray  — returns (hit, t, hitPoint, triangleId) option
     let rayHit (serverUrl : string) (name : string) (index : int) (origin : V3d) (direction : V3d) =
         async {
             let json = sprintf """{"name":"%s","index":%d,"origin":%s,"direction":%s}""" name index (v3 origin) (v3 direction)
@@ -207,7 +33,6 @@ module Query =
                 return None
         }
 
-    /// POST /query/closest  — returns (closestPoint, distanceSquared, triangleId) option
     let closestPoint (serverUrl : string) (name : string) (index : int) (queryPoint : V3d) =
         async {
             let json = sprintf """{"name":"%s","index":%d,"point":%s}""" name index (v3 queryPoint)
@@ -234,13 +59,10 @@ module Query =
             return indices
         }
 
-    /// POST /query/sphere  — returns triangle indices (binary: int32 count + int32[])
     let sphereTriangles (serverUrl : string) (name : string) (index : int) (center : V3d) (radius : float) =
         let json = sprintf """{"name":"%s","index":%d,"center":%s,"radius":%.17g}""" name index (v3 center) radius
         postBinaryIndices serverUrl "/query/sphere" json
 
-    /// POST /query/sphere-batch  — returns per-mesh triangle indices
-    /// Binary: int32 meshCount | for each: int32 nameLen | utf8 name | int32 indexCount | int32[] indices
     let sphereTrianglesBatch (serverUrl : string) (names : string[]) (center : V3d) (radius : float) : Async<(string * int[])[]> =
         async {
             let namesJson =
@@ -275,12 +97,10 @@ module Query =
             return results
         }
 
-    /// POST /query/box  — returns triangle indices (binary: int32 count + int32[])
     let boxTriangles (serverUrl : string) (name : string) (index : int) (min : V3d) (max : V3d) =
         let json = sprintf """{"name":"%s","index":%d,"min":%s,"max":%s}""" name index (v3 min) (v3 max)
         postBinaryIndices serverUrl "/query/box" json
 
-    /// POST /query/plane-intersection — returns 2D line segments
     let planeIntersection (serverUrl : string) (name : string) (index : int) (planePoint : V3d) (planeNormal : V3d) (axisU : V3d) (axisV : V3d) (thickness : float) (maxExtentU : float) (maxExtentV : float) =
         async {
             let json = sprintf """{"name":"%s","index":%d,"planePoint":%s,"planeNormal":%s,"axisU":%s,"axisV":%s,"thickness":%.17g,"maxExtentU":%.17g,"maxExtentV":%.17g}"""
@@ -294,7 +114,6 @@ module Query =
             return segments
         }
 
-    /// POST /query/plane-intersection-batch — returns per-mesh 2D line segments
     let planeIntersectionBatch (serverUrl : string) (names : string[]) (planePoint : V3d) (planeNormal : V3d) (axisU : V3d) (axisV : V3d) (thickness : float) (maxExtentU : float) (maxExtentV : float) =
         async {
             let namesJson =
@@ -321,8 +140,6 @@ module Query =
             return results
         }
 
-    /// POST /query/isoline — returns the longest elevation-isoline polyline
-    /// on the named mesh near the seed point. Result is a world-space V3d[].
     let isoline (serverUrl : string) (name : string) (elevation : float) (seed : V3d) (maxPoints : int) : Async<V3d[]> =
         async {
             let json = sprintf """{"name":"%s","elevation":%.17g,"seed":%s,"maxPoints":%d}"""
@@ -336,17 +153,12 @@ module Query =
             return pts
         }
 
-    /// POST /query/icp — runs point-to-point ICP between two meshes,
-    /// optionally weighted by anchor Gaussians (centres + sigmas + per-
-    /// anchor multipliers). Returns the moving mesh's final world-space
-    /// rigid transform as a Trafo3d, plus per-iteration RMS log and
-    /// final per-correspondence residuals.
     let runIcp
             (serverUrl : string)
             (referenceName : string) (movingName : string)
             (initialTransform : M44d)
             (sampleStride : int) (maxIterations : int)
-            (anchors : (V3d * float * float)[])  // (centre, sigma, weight)
+            (anchors : (V3d * float * float)[])
             (regionEps : float)
             : Async<Trafo3d * float[] * float[]> =
         async {
@@ -397,9 +209,6 @@ module Query =
             return trafo, conv, resi
         }
 
-    /// POST /query/patch — azimuthal-equidistant unwrap of the mesh disk
-    /// around `centre` with radius `radius`. Returns
-    /// (patchPoints, worldPoints, refDirWorld, normalWorld).
     let patch (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int) : Async<(V2d * V3d)[] * V3d * V3d> =
         async {
             let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d}"""
@@ -416,9 +225,6 @@ module Query =
             return pts, readVec "refDir", readVec "normal"
         }
 
-    /// POST /query/curvature-ridge — returns the longest ridge polyline
-    /// on the named mesh near the seed point. Threshold is dihedral-angle
-    /// in radians (default 0.4 ≈ 23°). Returns (worldPoints, dihedralPerPoint).
     let curvatureRidge (serverUrl : string) (name : string) (seed : V3d) (thresholdRad : float) (maxPoints : int) : Async<V3d[] * float[]> =
         async {
             let json = sprintf """{"name":"%s","seed":%s,"thresholdRad":%.17g,"maxPoints":%d}"""
@@ -435,8 +241,6 @@ module Query =
             return pts, scalars
         }
 
-    /// POST /query/ray-grid — like rayBatch but also returns per-hit world-space normal.
-    /// Binary response: int32 rayCount | per-ray (byte hitFlag | float64 hitX hitY hitZ | float32 nX nY nZ)
     let rayGrid (serverUrl : string) (names : string[]) (rays : (V3d * V3d)[]) : Async<(V3d * V3d) option[]> =
         async {
             let namesJson =
@@ -484,8 +288,6 @@ module Query =
             return results
         }
 
-    /// POST /query/ray-batch — returns per-ray world-space hit point (None when no hit)
-    /// Binary response: int32 rayCount | per-ray (byte hitFlag | float64 worldX | float64 worldY | float64 worldZ)
     let rayBatch (serverUrl : string) (names : string[]) (rays : (V3d * V3d)[]) : Async<V3d option[]> =
         async {
             let namesJson =
@@ -536,8 +338,6 @@ module Query =
             return! resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
         }
 
-    /// POST /query/cylinder-eval — returns per-ring, per-angle hit lists:
-    /// result.[ring].[angle] = (height, meshName) ResizeArray. Ring 0 is the outer wall.
     let cylinderEval (serverUrl : string) (dataset : string) (anchor : V3d) (axis : V3d) (radii : float[]) (angularRes : int) (extFwd : float) (extBack : float) =
         async {
             let radiiJson =

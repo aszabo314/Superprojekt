@@ -9,14 +9,14 @@ open Microsoft.JSInterop
 let main _ =
     task {
         do! Window.Document.Ready
-        
+
         let query = Window.Location.GetQuery()
-            
+
         let version =
             let v = typeof<Message>.Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
             if isNull v then "0.0.4"
             else v.InformationalVersion
-            
+
         match Map.tryFind "nocache" query with
         | Some (Some "true") ->
             JSRuntime.Instance.InvokeVoid "localStorage.clear"
@@ -28,8 +28,7 @@ let main _ =
                 for k, v in ShaderCache.cacheContent do
                     LocalStorage.Set(k, v)
                 LocalStorage.Set("super_cache_version", version)
-            
-        
+
         let gl = new WebGLApplication(CommandStreamMode.Managed, false)
         Boot.run gl App.app
     } |> ignore

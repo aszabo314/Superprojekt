@@ -10,8 +10,6 @@ open Superprojekt
 
 module View =
 
-    /// Slab-test ray-box intersection. Returns Some t (entry distance ≥ 0)
-    /// when the ray hits the box ahead of the camera; None otherwise.
     let private rayBoxT (ray : Ray3d) (box : Box3d) : float option =
         let inv = V3d(1.0 / ray.Direction.X, 1.0 / ray.Direction.Y, 1.0 / ray.Direction.Z)
         let tx1 = (box.Min.X - ray.Origin.X) * inv.X
@@ -41,11 +39,7 @@ module View =
         let hoverCoord      = cval<V3d option> None
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
-        // V6 §D.1 mesh-wheel — cursor position in viewport px, used to
-        // position the floating active-picking-layer label and the lasso
-        // overlay's "next segment" preview.
         let cursorScreen    = cval<V2d option> None
-        // V6 §D.8 — registration solver card open/close state.
         let registrationOpen = cval false
 
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
@@ -61,7 +55,6 @@ module View =
                 "if(l) l.remove();"
                 "document.body.classList.add('loaded');"
             ]
-
 
             renderControl {
                 RenderControl.Samples 1
@@ -108,18 +101,12 @@ module View =
 
                 Sg.Pass RenderPass.passZero
 
-                // Canvas-px cursor tracking — Sg-level events deliver
-                // e.Position as V3d world coords, so we capture screen px
-                // here at the DOM layer and let lasso/wheel-label consume it.
                 Dom.OnPointerMove(fun e ->
                     let cursorPx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
                     if cursorScreen.Value <> Some cursorPx then
                         transact (fun () -> cursorScreen.Value <- Some cursorPx)
                 )
 
-                // V6 §D.1 mesh-wheel: cycle the active picking layer when at
-                // least two visible meshes intersect the cursor ray; otherwise
-                // forward to the orbit zoom. Alt forces zoom unconditionally.
                 Dom.OnMouseWheel(fun e ->
                     let delta = V2d(e.DeltaX, e.DeltaY) / 120.0
                     let forwardZoom () =
@@ -170,7 +157,6 @@ module View =
                 )
 
                 Sg.OnDoubleTap(fun e ->
-                    // Double-tap during lasso drawing commits the polygon.
                     match AVal.force model.LassoDrawing with
                     | Some _ ->
                         env.Emit [LassoCommit(AVal.force view, AVal.force proj, AVal.force size)]
@@ -192,10 +178,6 @@ module View =
                     let placement = AVal.force model.ScanPins.Placement
                     match AVal.force model.LassoDrawing with
                     | Some _ ->
-                        // Each click adds a vertex at the cursor's canvas
-                        // pixel position (tracked by the Dom.OnPointerMove
-                        // handler below — Sg-level e.Position is V3d world,
-                        // not pixel coords, so we read from the cval).
                         match cursorScreen.Value with
                         | Some px -> env.Emit [LassoAddVertex px]
                         | None -> ()
@@ -225,7 +207,7 @@ module View =
                         let cc = AVal.force model.CommonCentroid
                         transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
                         env.Emit [ClearFilteredMesh]
-                        ServerActions.triggerFilter env model e.Position
+                        ServerActions.triggerFilter env model e.WorldPosition
                     false
                 )
 
@@ -264,21 +246,20 @@ module View =
                 | _ -> ()
             )
 
-            Gui.topBar env model (hoverCoord :> aval<V3d option>)
-            Gui.leftPanel env model
-            Gui.placementFlyout env model
-            Gui.exploreCard env model
-            Gui.registrationCard env model registrationOpen
-            Gui.registrationToggleButton registrationOpen
-            Gui.persistenceBridge env
-            Gui.meshWheelLabel model (cursorScreen :> aval<_>)
-            Gui.lassoOverlay env model (cursorScreen :> aval<_>)
+            GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
+            GuiPanels.leftPanel env model
+            GuiPanels.placementFlyout env model
+            GuiCards.exploreCard env model
+            GuiCards.registrationCard env model registrationOpen
+            GuiCards.registrationToggleButton registrationOpen
+            GuiOverlays.persistenceBridge env
+            GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
+            GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
-            Gui.fullscreenInfo model
-            Gui.scaleBar model (viewportSize :> aval<V2i>)
-            Gui.orientationIndicator model
+            GuiOverlays.fullscreenInfo model
+            GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
+            GuiOverlays.orientationIndicator model
         }
-
 
 module App =
     let app =

@@ -8,85 +8,6 @@ open Aardvark.Application
 open Superprojekt
 open Aardvark.Dom
 
-[<AutoOpen>]
-module TimeUtilities =
-
-    let private sw = System.Diagnostics.Stopwatch.StartNew()
-
-    let now() = sw.MicroTime
-
-type MouseEvent =
-    {
-        pixel     : V2d
-        viewport  : V2d
-        button    : MouseButtons
-        pointerId : int
-        alt       : bool
-        ctrl      : bool
-        shift     : bool
-    }
-
-type KeyEvent =
-    {
-        key   : Keys
-        repeat : bool
-        alt   : bool
-        ctrl  : bool
-        shift : bool
-    }
-
-module Integrator =
-
-    let inline private dbl one = one + one
-
-    let inline rungeKutta (f : ^t -> ^a -> ^da) (y0 : ^a) (h : ^t) : ^a =
-        let twa : ^t = dbl LanguagePrimitives.GenericOne
-        let half : ^t = LanguagePrimitives.GenericOne / twa
-        let hHalf = h * half
-        let k1 = h * f LanguagePrimitives.GenericZero y0
-        let k2 = h * f hHalf (y0 + k1 * half)
-        let k3 = h * f hHalf (y0 + k2 * half)
-        let k4 = h * f h (y0 + k3)
-        let sixth = LanguagePrimitives.GenericOne / (dbl twa + twa)
-        y0 + (k1 + twa*k2 + twa*k3 + k4) * sixth
-
-    let inline euler (f : ^t -> ^a -> ^da) (y0 : ^a) (h : ^t) : ^a =
-        y0 + h * f LanguagePrimitives.GenericZero y0
-
-    let rec integrate (maxDt : float) (f : 'm -> float -> 'm) (m0 : 'm) (dt : float) =
-        if dt <= maxDt then
-            f m0 dt
-        else
-            integrate maxDt f (f m0 maxDt) (dt - maxDt)
-
-
-type OrbitMessage =
-    | PointerDown of id : int * button : Button * isTouch : bool * pos : V2i
-    | PointerUp   of id : int * isTouch : bool * V2i
-    | PointerMove of id : int * button : Button * isTouch : bool * V2i
-    | Wheel       of shift : bool * delta : V2d
-
-    | Rendered
-    | SetTargetCenter of user : bool * AnimationKind * V3d
-    | SetTargetPhi    of user : bool * float
-    | SetTargetTheta  of user : bool * float
-    | SetTargetRadius of user : bool * float
-    | SetTarget       of user : bool * center : V3d * radius : float * phi : float * theta : float
-
-    | SetPhi    of float
-    | SetTheta  of float
-    | SetRadius of float
-    | SetCenter of V3d
-
-    | Set of center : V3d * radius : float * phi : float * theta : float
-
-    | UpdateCenter of V3d
-
-    | SetSpeed of float
-
-    | Nothing
-
-
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module OrbitState =
     let clamp (min : float) (max : float) (value : float) =
@@ -147,7 +68,6 @@ module OrbitState =
             isOrtho         = false
             pick            = fun _ -> Log.warn "no pick installed"; None
         }
-
 
 module OrbitController =
     let private sw = System.Diagnostics.Stopwatch.StartNew()
@@ -503,7 +423,6 @@ module OrbitController =
 
             model
 
-
     let animationRunning (model : OrbitState) = model.animationRunning
 
     let getAttributes (env : Env<OrbitMessage>) =
@@ -521,10 +440,6 @@ module OrbitController =
                     env.Emit [PointerMove(e.PointerId, e.Button, false, e.OffsetPosition)]
             )
             Dom.OnContextMenu(ignore, preventDefault = true)
-            // No wheel handler here — View.fs registers one that arbitrates
-            // between zoom (default / Alt-forced) and the V6 mesh-wheel
-            // active-picking-layer cycle (§D.1), then forwards to
-            // OrbitMessage.Wheel only when zoom is the chosen action.
 
             Dom.OnTouchStart((fun e ->
                 e.ChangedTouches |> HashMap.toList |> List.map (fun (id, t) ->

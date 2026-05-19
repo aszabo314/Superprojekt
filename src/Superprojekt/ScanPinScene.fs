@@ -8,12 +8,8 @@ open Aardvark.Dom
 
 module ScanPinScene =
 
-    // Pre-baked unit icosphere (subdiv=2 — 162 verts / 320 tris).
     let private spherePos, sphereIdx = PinGeometry.buildIcosphere 2
 
-    // Compact "+"-shaped 3D marker that survives the off-screen depth gate
-    // because we render it with DepthTest.LessOrEqual; large enough to click,
-    // small enough not to dominate the anchor sphere visually.
     let private pinMarkerPos, pinMarkerIdx =
         let pos = System.Collections.Generic.List<V3f>()
         let idx = System.Collections.Generic.List<int>()
@@ -38,10 +34,6 @@ module ScanPinScene =
     let private markerIdxBuf = AVal.constant (ArrayBuffer pinMarkerIdx :> IBuffer)
     let private markerIdxCnt = AVal.constant pinMarkerIdx.Length
 
-    /// V6 §D.6.3 — translucent volume at Radius + inner hard-edged sphere at
-    /// Sigma. Both spheres render in passOne with `DepthTest.None` so the
-    /// anchor reads through scene geometry; that matches the spec's
-    /// "see the sphere even through walls" intent.
     let private sphereShell
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (active : aval<bool>) (trafo : aval<Trafo3d>) (color : aval<V4d>) =
@@ -69,8 +61,6 @@ module ScanPinScene =
             (placementHover : aval<V3d option>)
             (model : AdaptiveModel) =
 
-        // World→render conversion for §D.7.2 polyline points and any other
-        // payload that stores world-space coordinates per §C.3.
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun ds map ->
                 match ds with
@@ -84,8 +74,6 @@ module ScanPinScene =
         let placementActive =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
-        // The clickable centre marker for each anchor. Stays small and
-        // depth-tested so it shows in front of the sphere shells.
         let pinDots =
             pinIdSet |> ASet.map (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
@@ -113,7 +101,7 @@ module ScanPinScene =
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                     Sg.OnTap(fun _ ->
                         match AVal.force placementActive with
-                        | true -> true   // pass through so renderControl's PlaceAnchor handler fires
+                        | true -> true
                         | false ->
                             let sel = AVal.force selectedId
                             if sel = Some id then env.Emit [ScanPinMsg (SelectPin None)]
@@ -129,10 +117,6 @@ module ScanPinScene =
                 }
             )
 
-        // Per-anchor sphere shells (outer translucent + inner solid-ish).
-        // Field-projected aVals so the geometry only rebuilds when the
-        // relevant field actually changes (per the CLAUDE.md adaptive-perf
-        // rule).
         let pinSpheres =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
@@ -152,7 +136,6 @@ module ScanPinScene =
                         match co with
                         | Some c -> Trafo3d.Scale s * Trafo3d.Translation c
                         | None -> Trafo3d.Scale 0.0)
-                // Selected pin pops in yellow; placing in green; committed in red.
                 let baseColor =
                     (isSelected, phaseVal) ||> AVal.map2 (fun sel phaseOpt ->
                         if sel then V3d(1.0, 0.9, 0.0)
@@ -184,11 +167,6 @@ module ScanPinScene =
                     }
                 ])
 
-        // §D.7.2 — line-on-surface polylines (host + cross-mesh traces).
-        // Each polyline renders as pixel-constant 3D lines (Shader.Lines)
-        // coloured from DatasetColors[meshName] so cross-mesh traces are
-        // visually distinguishable. When the pin is selected the host
-        // trace pops in yellow.
         let inline colorForMesh (mesh : string) (palette : Map<string, C4b>) (selected : bool) (isHost : bool) =
             if selected && isHost then V4d(1.0, 0.9, 0.0, 0.98)
             else
@@ -238,9 +216,6 @@ module ScanPinScene =
                     Lines.render segs
                 })
 
-        // §D.7.3 — patch footprint: a coloured ring in the tangent plane at
-        // the anchor with a compass-rose arrow toward project north. Only
-        // shown for pins that currently have a Patch payload.
         let pinPatchRings =
             pinIdSet |> ASet.map (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
@@ -262,8 +237,6 @@ module ScanPinScene =
                                         | Some c -> V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 0.95)
                                         | None -> V4d(0.1, 0.34, 0.86, 0.95)
                                     | None -> V4d(0.1, 0.34, 0.86, 0.95)
-                                // refDir and normal are stored world-space;
-                                // they're orientations, so scale doesn't apply.
                                 PinGeometry.buildPatchFootprint
                                     centreRender radiusRender
                                     pp.RefDirWorld pp.NormalWorld
@@ -280,9 +253,6 @@ module ScanPinScene =
                     Lines.render segs
                 })
 
-        // §D.6.1 ghost preview: a faint translucent sphere at the cursor's
-        // current mesh hit while AnchorPlacement is active. Radius mirrors
-        // the default-radius rule (5 % of the dataset diagonal).
         let ghostPreview =
             let defaultR =
                 model.ClipBounds |> AVal.map (fun b ->

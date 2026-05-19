@@ -4,18 +4,12 @@ open Aardvark.Base
 
 module PinGeometry =
 
-    /// Returns (right, fwd) so (right, fwd, axis) is right-handed; up defaults
-    /// to +Z unless axis is near ±Z. Kept as a generic basis-frame utility.
     let axisFrame (axis : V3d) =
         let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
         let right = Vec.cross axis up |> Vec.normalize
         let fwd = Vec.cross right axis |> Vec.normalize
         right, fwd
 
-    /// Unit icosphere centred at the origin. Subdivisions raise vertex count
-    /// roughly 4x per step; (12, 0) = 12 verts / 20 faces, (subdiv=2) gives
-    /// 162 verts / 320 faces — plenty for an anchor preview, cheap enough to
-    /// pre-bake.
     let buildIcosphere (subdivisions : int) : V3f[] * int[] =
         let phi = (1.0 + sqrt 5.0) * 0.5
         let a = 1.0 / sqrt (1.0 + phi * phi)
@@ -74,9 +68,6 @@ module PinGeometry =
             if (b - a).LengthSquared > 1e-20 then
                 segs.Add((a, b, color, widthPx))
 
-    /// Great-circle outline of a sphere centred at `centre` with `radius` —
-    /// three circles in the XY / XZ / YZ planes for a quick visual cue that
-    /// the sphere extends in 3D. Returned as `Lines.render` segments.
     let buildSphereOutline (centre : V3d) (radius : float) (color : V4d) (widthPx : float) =
         let n = 64
         let segs = ResizeArray<V3d * V3d * V4d * float>(3 * n)
@@ -87,16 +78,11 @@ module PinGeometry =
                 let p0 = centre + (basisU * cos a0 + basisV * sin a0) * radius
                 let p1 = centre + (basisU * cos a1 + basisV * sin a1) * radius
                 segs.Add((p0, p1, color, widthPx))
-        circle V3d.IOO V3d.OIO   // XY plane
-        circle V3d.IOO V3d.OOI   // XZ plane
-        circle V3d.OIO V3d.OOI   // YZ plane
+        circle V3d.IOO V3d.OIO
+        circle V3d.IOO V3d.OOI
+        circle V3d.OIO V3d.OOI
         segs.ToArray()
 
-    /// V6 §D.7.3 / §D.12 — patch footprint: a single great-circle ring in
-    /// the tangent plane defined by `normalWorld`, plus an arrow from
-    /// centre toward `refDirWorld` for the compass "N" indicator. The
-    /// arrow uses a darker fixed colour so it reads against the ring's
-    /// mesh-palette colour.
     let buildPatchFootprint
             (centre : V3d) (radius : float)
             (refDirWorld : V3d) (normalWorld : V3d)

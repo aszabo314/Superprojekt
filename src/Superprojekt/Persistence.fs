@@ -6,11 +6,6 @@ open System.Text.Json.Nodes
 open Aardvark.Base
 open FSharp.Data.Adaptive
 
-/// V6 §D.13 — workspace save/load. Serialises the user-facing parts of
-/// the model to JSON and rehydrates them back. Mesh references survive
-/// across sessions via `(DatasetId, MeshId)` name pairs; anchor centres
-/// are stored in **world space** so a reload against a re-scaled dataset
-/// still places them correctly.
 module Persistence =
 
     let private fileVersion = 1
@@ -72,10 +67,6 @@ module Persistence =
         | Line _  -> "line"
         | Patch _ -> "patch"
 
-    /// Renders the workspace's persistable state into a JSON string.
-    /// Anchor centres are converted from render space (model's
-    /// convention) to world space for storage so a reload survives
-    /// a dataset-scale change.
     let serialize (model : Model) : string =
         let root = JsonObject()
         root.["version"] <- JsonValue.Create fileVersion
@@ -90,14 +81,12 @@ module Persistence =
             |> Option.defaultValue 1.0
         let cc = model.CommonCentroid
 
-        // Anchors (committed + in-flight; both rehydrate cleanly).
         let pinsArr = JsonArray()
         for (id, pin) in HashMap.toSeq model.ScanPins.Pins do
             let o = JsonObject()
             o.["id"] <- JsonValue.Create (match id with ScanPinId.ScanPinId g -> g.ToString())
             o.["phase"] <-
                 JsonValue.Create (match pin.Phase with PinPhase.Placement -> "placement" | PinPhase.Committed -> "committed")
-            // Centre + sigma + radius in world space (mesh-independent).
             let worldCentre = pin.Centre / scale + cc
             let worldSigma  = pin.Sigma / scale
             let worldRadius = pin.Radius / scale
@@ -124,7 +113,6 @@ module Persistence =
             pinsArr.Add o |> ignore
         root.["anchors"] <- pinsArr
 
-        // Per-mesh transforms (render-space rigid; rehydrated as-is).
         let txObj = JsonObject()
         for (name, t) in Map.toSeq model.MeshTransforms do
             let o = JsonObject()
@@ -132,7 +120,6 @@ module Persistence =
             txObj.[name] <- o
         root.["meshTransforms"] <- txObj
 
-        // Sensor types + dataset error overrides.
         let sensorObj = JsonObject()
         for (name, s) in Map.toSeq model.MeshSensorTypes do
             sensorObj.[name] <- JsonValue.Create (sensorToString s)
@@ -143,7 +130,6 @@ module Persistence =
             errObj.[name] <- JsonValue.Create v
         root.["meshDatasetErrors"] <- errObj
 
-        // Mesh visibility + dataset scales (so a reload preserves user choices).
         let visObj = JsonObject()
         for (name, v) in Map.toSeq model.MeshVisible do
             visObj.[name] <- JsonValue.Create v
@@ -154,7 +140,6 @@ module Persistence =
             scaleObj.[name] <- JsonValue.Create v
         root.["datasetScales"] <- scaleObj
 
-        // Clip + lasso state.
         let clip = JsonObject()
         clip.["active"] <- JsonValue.Create model.ClipActive
         writeBox clip "box" model.ClipBox
@@ -184,7 +169,6 @@ module Persistence =
             root.["lassoVolume"] <- lo
         | None -> ()
 
-        // Explore mode (dual-signal state).
         let ex = JsonObject()
         ex.["enabled"] <- JsonValue.Create model.Explore.Enabled
         let writeSignal (s : SignalState) =
@@ -208,7 +192,6 @@ module Persistence =
         ex.["alpha"] <- JsonValue.Create model.Explore.HighlightAlpha
         root.["explore"] <- ex
 
-        // Other top-level toggles.
         root.["fullscreen"]    <- JsonValue.Create model.FullscreenOn
         root.["ghostOn"]       <- JsonValue.Create model.GhostSilhouette
         root.["ghostDetail"]   <-
@@ -226,7 +209,6 @@ module Persistence =
                               | AlongWorldZ -> "z"
                               | AlongCameraView -> "view")
 
-        // Registration state (mode + reference + per-mesh transforms cover the rest).
         let reg = JsonObject()
         reg.["mode"] <-
             JsonValue.Create (match model.Registration.Mode with
@@ -241,12 +223,6 @@ module Persistence =
         let opts = JsonSerializerOptions(WriteIndented = true)
         root.ToJsonString(opts)
 
-    /// Apply a snapshot to a model. Anchors arrive in world space and
-    /// are converted back to the model's render-space convention using
-    /// the **current** dataset scale + centroid. If `activeDataset` in
-    /// the snapshot differs from the current model, we just keep the
-    /// current one (the spec's "loaded workspace references a dataset
-    /// not currently available" warning lives in the caller).
     let private applySnapshot (current : Model) (json : string) : Result<Model, string> =
         try
             let root = JsonNode.Parse(json).AsObject()
@@ -256,7 +232,6 @@ module Persistence =
                 |> Option.defaultValue 1.0
             let cc = current.CommonCentroid
 
-            // Anchors.
             let mutable pinMap = HashMap.empty
             match root.["anchors"] with
             | null -> ()
@@ -340,7 +315,6 @@ module Persistence =
                     }
                     pinMap <- HashMap.add id pin pinMap
 
-            // Per-mesh transforms.
             let mutable txMap = Map.empty
             match root.["meshTransforms"] with
             | null -> ()
@@ -349,7 +323,6 @@ module Persistence =
                     let fwd = readM44 (kv.Value.AsObject().["forward"])
                     txMap <- Map.add kv.Key (Trafo3d(fwd, fwd.Inverse)) txMap
 
-            // Sensor types.
             let mutable sensors = Map.empty
             match root.["meshSensors"] with
             | null -> ()
@@ -371,7 +344,6 @@ module Persistence =
                 for kv in n.AsObject() do
                     vis <- Map.add kv.Key (kv.Value.GetValue<bool>()) vis
 
-            // Clip box.
             let mutable clipActive = current.ClipActive
             let mutable clipBox = current.ClipBox
             match root.["clip"] with
@@ -381,7 +353,6 @@ module Persistence =
                 clipActive <- o.["active"].GetValue<bool>()
                 clipBox <- readBox o.["box"]
 
-            // Lasso.
             let lassoVol =
                 match root.["lassoVolume"] with
                 | null -> None
@@ -404,7 +375,6 @@ module Persistence =
                         CommitVpSize = V2i(o.["vpX"].GetValue<int>(), o.["vpY"].GetValue<int>())
                     }
 
-            // Explore mode.
             let exMode =
                 match root.["explore"] with
                 | null -> current.Explore

@@ -106,10 +106,10 @@ module SceneGraph =
         (fullscreenActive : aval<bool>)
         (placementHover : aval<V3d option>)
         (model : AdaptiveModel) =
-        
+
         let loadFinished (name : string) =
             env.Emit [ LoadFinished name ]
-        
+
         let cnt, colors, normals, depths, meshIndices = MeshView.buildMeshTextures info loadFinished view proj model
         let colorArrTex  = colors  |> AdaptiveResource.map (fun t -> t :> ITexture)
         let normalArrTex = normals |> AdaptiveResource.map (fun t -> t :> ITexture)
@@ -153,10 +153,6 @@ module SceneGraph =
                 model.Explore |> AVal.map (fun e ->
                     let c = e.Disagreement.Color
                     V4d(float c.R, float c.G, float c.B, float c.A))
-            // Time uniform feeds the Alternating mix flicker. A simple
-            // wall-clock seconds value re-evaluates on every frame because
-            // the AVal.custom binding below is invalidated; this matches
-            // the existing per-frame eval pattern used for the heatmap.
             let exploreTime =
                 AVal.custom (fun _ ->
                     let now = System.DateTime.UtcNow
@@ -221,13 +217,10 @@ module SceneGraph =
                 | PlusCurvature -> 1
                 | PlusTerrainFeatures -> 2)
 
-        // V6 §D.9 — assemble provenance heatmap uniforms.
         let provenanceEnabled = model.ProvenanceHeatmap |> AVal.map (fun b -> if b then 1 else 0)
         let falloffOnly       = model.FalloffZoneOnly   |> AVal.map (fun b -> if b then 1 else 0)
         let provThreshold     = model.ProvenanceThreshold
 
-        // Per-mesh dataset / algorithm error packed into fixed-size arrays
-        // indexed by MeshOrder. Slots beyond MeshCount carry zeroes.
         let provenanceArrays =
             (model.MeshOrder |> AMap.toAVal,
              model.MeshSensorTypes, model.MeshDatasetErrors,
@@ -248,8 +241,6 @@ module SceneGraph =
         let provenanceDataset   = provenanceArrays |> AVal.map fst
         let provenanceAlgorithm = provenanceArrays |> AVal.map snd
 
-        // Anchor array: world-space (centre.xyz, sigma) packed into V4d's,
-        // capped at MaxProvenanceAnchors (32).
         let provenanceAnchors =
             (model.ScanPins.Pins |> AMap.toAVal, model.CommonCentroid,
              model.ActiveDataset, model.DatasetScales)

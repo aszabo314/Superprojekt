@@ -8,11 +8,11 @@ open Aardvark.Data.Wavefront
 type ParsedMesh =
     {
         centroid  : V3d
-        positions : V3f[]   // centroid-relative
+        positions : V3f[]
         uvs       : V2f[]
-        normals   : V3f[]   // per-vertex, normalized, +Z biased when ambiguous
-        indices   : int[]   // flat triangle list  (triangleCount × 3)
-        bbox      : Box3d   // AABB of positions (centroid-relative)
+        normals   : V3f[]
+        indices   : int[]
+        bbox      : Box3d
     }
 
 let private findDataRoot () =

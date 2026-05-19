@@ -1,0 +1,388 @@
+module MeshAnalysis
+
+open System
+open Aardvark.Base
+open Aardvark.Embree
+open MeshCache
+
+let isoline (lm : LoadedMesh) (elevation : float) (seed : V3d) (maxPoints : int) : float[] =
+    let positions = lm.parsed.positions
+    let centroid = lm.parsed.centroid
+    let indices = lm.parsed.indices
+    let triCount = indices.Length / 3
+    let elevLocal = float32 (elevation - centroid.Z)
+
+    let inline edgeKey (i0 : int) (i1 : int) : int64 =
+        let a = min i0 i1
+        let b = max i0 i1
+        (int64 a <<< 32) ||| int64 b
+
+    let edgePoints = System.Collections.Generic.Dictionary<int64, V3d>()
+    let inline tryAddEdge (i0 : int) (i1 : int) (out : ResizeArray<int64>) =
+        let key = edgeKey i0 i1
+        let mutable existing = Unchecked.defaultof<V3d>
+        if edgePoints.TryGetValue(key, &existing) then out.Add key
+        else
+            let p0 = positions.[i0]
+            let p1 = positions.[i1]
+            let d0 = p0.Z - elevLocal
+            let d1 = p1.Z - elevLocal
+            if (d0 > 0.0f) <> (d1 > 0.0f) then
+                let t = float d0 / float (d0 - d1)
+                let pt = V3d p0 + t * (V3d p1 - V3d p0)
+                edgePoints.[key] <- pt
+                out.Add key
+
+    let adj = System.Collections.Generic.Dictionary<int64, int64 * int64>()
+    let inline addAdj (a : int64) (b : int64) =
+        let mutable existing = Unchecked.defaultof<int64 * int64>
+        if adj.TryGetValue(a, &existing) then
+            let (x, y) = existing
+            if y = -1L then adj.[a] <- (x, b)
+        else
+            adj.[a] <- (b, -1L)
+
+    let scratch = ResizeArray<int64>(3)
+    for ti in 0 .. triCount - 1 do
+        let i0 = indices.[ti * 3]
+        let i1 = indices.[ti * 3 + 1]
+        let i2 = indices.[ti * 3 + 2]
+        scratch.Clear()
+        tryAddEdge i0 i1 scratch
+        tryAddEdge i1 i2 scratch
+        tryAddEdge i2 i0 scratch
+        if scratch.Count = 2 then
+            addAdj scratch.[0] scratch.[1]
+            addAdj scratch.[1] scratch.[0]
+
+    if edgePoints.Count = 0 then [||]
+    else
+        let visited = System.Collections.Generic.HashSet<int64>()
+        let polylines = ResizeArray<V3d[]>()
+
+        let walkFrom (start : int64) (avoid : int64) =
+            let acc = ResizeArray<int64>()
+            acc.Add start
+            visited.Add start |> ignore
+            let mutable last = avoid
+            let mutable cur = start
+            let mutable keepGoing = true
+            while keepGoing do
+                let mutable nbrs = Unchecked.defaultof<int64 * int64>
+                if adj.TryGetValue(cur, &nbrs) then
+                    let (a, b) = nbrs
+                    let nxt =
+                        if a <> last && a <> -1L && not (visited.Contains a) then a
+                        elif b <> last && b <> -1L && not (visited.Contains b) then b
+                        else -1L
+                    if nxt = -1L then keepGoing <- false
+                    else
+                        acc.Add nxt
+                        visited.Add nxt |> ignore
+                        last <- cur
+                        cur <- nxt
+                else keepGoing <- false
+            acc
+
+        let allKeys = adj.Keys |> Seq.toArray
+        for start in allKeys do
+            if not (visited.Contains start) then
+                let (a, b) = adj.[start]
+                let forward = walkFrom start -1L
+                let backward =
+                    if forward.Count >= 2 then
+                        let secondNeighbor = if forward.[1] = a then b else a
+                        if secondNeighbor = -1L || visited.Contains secondNeighbor then
+                            ResizeArray<int64>()
+                        else
+                            walkFrom secondNeighbor start
+                    else ResizeArray<int64>()
+                let combined = ResizeArray<int64>(forward.Count + backward.Count)
+                for i in backward.Count - 1 .. -1 .. 0 do combined.Add backward.[i]
+                for k in forward do combined.Add k
+                let pts = combined |> Seq.map (fun k -> edgePoints.[k] + centroid) |> Array.ofSeq
+                polylines.Add pts
+
+        if polylines.Count = 0 then [||]
+        else
+            let scored =
+                polylines |> Seq.map (fun pts ->
+                    let mutable minD2 = System.Double.MaxValue
+                    for p in pts do
+                        let d2 = (p - seed).LengthSquared
+                        if d2 < minD2 then minD2 <- d2
+                    let mutable len = 0.0
+                    for i in 1 .. pts.Length - 1 do
+                        len <- len + (pts.[i] - pts.[i - 1]).Length
+                    pts, minD2, len)
+                |> Array.ofSeq
+
+            let chosen, _, _ =
+                scored |> Array.maxBy (fun (_, d2, len) -> len / (1.0 + d2 * 0.5))
+            let n = min chosen.Length maxPoints
+            let out = Array.zeroCreate<float> (n * 3)
+            for i in 0 .. n - 1 do
+                out.[i * 3]     <- chosen.[i].X
+                out.[i * 3 + 1] <- chosen.[i].Y
+                out.[i * 3 + 2] <- chosen.[i].Z
+            out
+
+let curvatureRidgeWithScalars (lm : LoadedMesh) (seed : V3d) (thresholdRad : float) (maxPoints : int) : float[] * float[] =
+    let positions = lm.parsed.positions
+    let centroid = lm.parsed.centroid
+    let indices = lm.parsed.indices
+    let triCount = indices.Length / 3
+
+    let inline edgeKey (a : int) (b : int) =
+        let lo = min a b
+        let hi = max a b
+        (int64 lo <<< 32) ||| int64 hi
+
+    let edgeTris = System.Collections.Generic.Dictionary<int64, int * int>()
+    let inline addTri (a : int) (b : int) (ti : int) =
+        let k = edgeKey a b
+        let mutable existing = (0, 0)
+        if edgeTris.TryGetValue(k, &existing) then
+            let (t1, _) = existing
+            edgeTris.[k] <- (t1, ti)
+        else
+            edgeTris.[k] <- (ti, -1)
+
+    for ti in 0 .. triCount - 1 do
+        let i0 = indices.[ti * 3]
+        let i1 = indices.[ti * 3 + 1]
+        let i2 = indices.[ti * 3 + 2]
+        addTri i0 i1 ti
+        addTri i1 i2 ti
+        addTri i2 i0 ti
+
+    let triNormals = Array.zeroCreate<V3d> triCount
+    for ti in 0 .. triCount - 1 do
+        let p0 = V3d positions.[indices.[ti * 3]]
+        let p1 = V3d positions.[indices.[ti * 3 + 1]]
+        let p2 = V3d positions.[indices.[ti * 3 + 2]]
+        let n = Vec.cross (p1 - p0) (p2 - p0)
+        let l = n.Length
+        triNormals.[ti] <- if l > 1e-12 then n / l else V3d.OOI
+
+    let cosT = cos thresholdRad
+    let vertAdj = System.Collections.Generic.Dictionary<int, int * int>()
+    let inline addAdj (a : int) (b : int) =
+        let mutable existing = (0, -1)
+        if vertAdj.TryGetValue(a, &existing) then
+            let (x, y) = existing
+            if y = -1 then vertAdj.[a] <- (x, b)
+        else
+            vertAdj.[a] <- (b, -1)
+
+    let ridgeVerts = System.Collections.Generic.HashSet<int>()
+
+    let vertDihedral = System.Collections.Generic.Dictionary<int, float>()
+    let inline bumpDihedral (v : int) (d : float) =
+        let mutable existing = 0.0
+        if vertDihedral.TryGetValue(v, &existing) then
+            if d > existing then vertDihedral.[v] <- d
+        else vertDihedral.[v] <- d
+    for kv in edgeTris do
+        let (t1, t2) = kv.Value
+        if t2 >= 0 then
+            let dot = abs (Vec.dot triNormals.[t1] triNormals.[t2])
+            if dot < cosT then
+                let key = kv.Key
+                let v0 = int (key >>> 32)
+                let v1 = int (key &&& 0xFFFFFFFFL)
+                addAdj v0 v1
+                addAdj v1 v0
+                ridgeVerts.Add v0 |> ignore
+                ridgeVerts.Add v1 |> ignore
+                let dihedral = acos (min 1.0 (max -1.0 dot))
+                bumpDihedral v0 dihedral
+                bumpDihedral v1 dihedral
+
+    if ridgeVerts.Count = 0 then [||], [||]
+    else
+        let visited = System.Collections.Generic.HashSet<int>()
+        let polylines = ResizeArray<V3d[] * float[]>()
+
+        let walkFrom (start : int) (avoid : int) =
+            let acc = ResizeArray<int>()
+            acc.Add start
+            visited.Add start |> ignore
+            let mutable last = avoid
+            let mutable cur = start
+            let mutable keep = true
+            while keep do
+                let mutable n = (0, -1)
+                if vertAdj.TryGetValue(cur, &n) then
+                    let (a, b) = n
+                    let nxt =
+                        if a <> last && a <> -1 && not (visited.Contains a) then a
+                        elif b <> last && b <> -1 && not (visited.Contains b) then b
+                        else -1
+                    if nxt = -1 then keep <- false
+                    else
+                        acc.Add nxt
+                        visited.Add nxt |> ignore
+                        last <- cur
+                        cur <- nxt
+                else keep <- false
+            acc
+
+        for start in Array.ofSeq vertAdj.Keys do
+            if not (visited.Contains start) then
+                let (a, b) = vertAdj.[start]
+                let forward = walkFrom start -1
+                let backward =
+                    if forward.Count >= 2 then
+                        let second = if forward.[1] = a then b else a
+                        if second = -1 || visited.Contains second then ResizeArray<int>()
+                        else walkFrom second start
+                    else ResizeArray<int>()
+                let combined = ResizeArray<int>(forward.Count + backward.Count)
+                for i in backward.Count - 1 .. -1 .. 0 do combined.Add backward.[i]
+                for k in forward do combined.Add k
+                let pts =
+                    combined |> Seq.map (fun vi -> V3d positions.[vi] + centroid) |> Array.ofSeq
+                let scalars =
+                    combined |> Seq.map (fun vi ->
+                        let mutable v = 0.0
+                        if vertDihedral.TryGetValue(vi, &v) then v else 0.0)
+                    |> Array.ofSeq
+                polylines.Add (pts, scalars)
+
+        if polylines.Count = 0 then [||], [||]
+        else
+            let scored =
+                polylines |> Seq.map (fun (pts, sc) ->
+                    let mutable minD2 = System.Double.MaxValue
+                    for p in pts do
+                        let d2 = (p - seed).LengthSquared
+                        if d2 < minD2 then minD2 <- d2
+                    let mutable len = 0.0
+                    for i in 1 .. pts.Length - 1 do
+                        len <- len + (pts.[i] - pts.[i - 1]).Length
+                    pts, sc, minD2, len)
+                |> Array.ofSeq
+            let chosenPts, chosenSc, _, _ =
+                scored |> Array.maxBy (fun (_, _, d2, len) -> len / (1.0 + d2 * 0.5))
+            let n = min chosenPts.Length maxPoints
+            let outPts = Array.zeroCreate<float> (n * 3)
+            let outSc  = Array.zeroCreate<float> n
+            for i in 0 .. n - 1 do
+                outPts.[i * 3]     <- chosenPts.[i].X
+                outPts.[i * 3 + 1] <- chosenPts.[i].Y
+                outPts.[i * 3 + 2] <- chosenPts.[i].Z
+                outSc.[i] <- chosenSc.[i]
+            outPts, outSc
+
+let curvatureRidge (lm : LoadedMesh) (seed : V3d) (thresholdRad : float) (maxPoints : int) : float[] =
+    let pts, _ = curvatureRidgeWithScalars lm seed thresholdRad maxPoints
+    pts
+
+type PatchPoint = { Px : float; Py : float; Wx : float; Wy : float; Wz : float }
+type PatchResult = { Points : PatchPoint[]; RefDirWorld : V3d; NormalWorld : V3d }
+
+let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) : PatchResult =
+    let positions = lm.parsed.positions
+    let centroid = lm.parsed.centroid
+    let centreLocal = centre - centroid
+
+    let triBuf =
+        trianglesInSphere lm (V3f centreLocal) (float32 (radius * 1.2))
+
+    if triBuf.Length = 0 then
+        { Points = [||]; RefDirWorld = V3d.OIO; NormalWorld = V3d.OOI }
+    else
+        let triCount = triBuf.Length / 3
+
+        let mutable nSum = V3d.Zero
+        for ti in 0 .. triCount - 1 do
+            let p0 = V3d positions.[triBuf.[ti * 3]]
+            let p1 = V3d positions.[triBuf.[ti * 3 + 1]]
+            let p2 = V3d positions.[triBuf.[ti * 3 + 2]]
+            nSum <- nSum + Vec.cross (p1 - p0) (p2 - p0)
+        let normal =
+            if nSum.Length > 1e-9 then Vec.normalize nSum else V3d.OOI
+        let worldNorth = V3d.OIO
+        let projN = worldNorth - normal * Vec.dot worldNorth normal
+        let refDir =
+            if projN.Length > 1e-9 then Vec.normalize projN
+            else
+                let projX = V3d.IOO - normal * Vec.dot V3d.IOO normal
+                if projX.Length > 1e-9 then Vec.normalize projX else V3d.IOO
+        let leftDir = Vec.cross normal refDir
+
+        let adj = System.Collections.Generic.Dictionary<int, ResizeArray<int>>()
+        let inline addEdge a b =
+            let mutable l = Unchecked.defaultof<ResizeArray<int>>
+            if adj.TryGetValue(a, &l) then ()
+            else
+                l <- ResizeArray<int>()
+                adj.[a] <- l
+            if not (l.Contains b) then l.Add b
+        for ti in 0 .. triCount - 1 do
+            let i0 = triBuf.[ti * 3]
+            let i1 = triBuf.[ti * 3 + 1]
+            let i2 = triBuf.[ti * 3 + 2]
+            addEdge i0 i1
+            addEdge i1 i0
+            addEdge i1 i2
+            addEdge i2 i1
+            addEdge i2 i0
+            addEdge i0 i2
+
+        let mutable seedV = -1
+        let mutable seedD2 = System.Double.MaxValue
+        for v in adj.Keys do
+            let d2 = (V3d positions.[v] - centreLocal).LengthSquared
+            if d2 < seedD2 then seedD2 <- d2; seedV <- v
+
+        if seedV < 0 then
+            { Points = [||]; RefDirWorld = refDir; NormalWorld = normal }
+        else
+            let dist = System.Collections.Generic.Dictionary<int, float>()
+            let pq = System.Collections.Generic.PriorityQueue<int, float>()
+            dist.[seedV] <- 0.0
+            pq.Enqueue(seedV, 0.0)
+            while pq.Count > 0 do
+                let v = pq.Dequeue()
+                let mutable d = 0.0
+                if dist.TryGetValue(v, &d) then
+                    if d <= radius then
+                        let mutable nbrs = Unchecked.defaultof<ResizeArray<int>>
+                        if adj.TryGetValue(v, &nbrs) then
+                            let vp = V3d positions.[v]
+                            for n in nbrs do
+                                let np = V3d positions.[n]
+                                let alt = d + (np - vp).Length
+                                if alt <= radius then
+                                    let mutable cur = System.Double.MaxValue
+                                    let has = dist.TryGetValue(n, &cur)
+                                    if not has || alt < cur then
+                                        dist.[n] <- alt
+                                        pq.Enqueue(n, alt)
+
+            let out = ResizeArray<PatchPoint>(dist.Count)
+            for kv in dist do
+                let v = kv.Key
+                let d = kv.Value
+                let vp = V3d positions.[v]
+                let dv = vp - centreLocal
+                let dvTan = dv - normal * Vec.dot dv normal
+                let world = vp + centroid
+                let x = Vec.dot dvTan refDir
+                let y = Vec.dot dvTan leftDir
+                let bearing = atan2 y x
+                let px = d * cos bearing
+                let py = d * sin bearing
+                out.Add { Px = px; Py = py; Wx = world.X; Wy = world.Y; Wz = world.Z }
+
+            let pts = out.ToArray()
+
+            let final =
+                if pts.Length <= maxPoints then pts
+                else
+                    let stride = pts.Length / maxPoints
+                    let n = pts.Length / stride
+                    Array.init n (fun i -> pts.[i * stride])
+            { Points = final; RefDirWorld = refDir; NormalWorld = normal }

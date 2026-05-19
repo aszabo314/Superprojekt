@@ -65,7 +65,6 @@ module Animation =
 
     let inline interpolate t a = interpolateAux Unchecked.defaultof<TimesFloat> t a
 
-
 [<ModelType>]
 type OrbitState =
     {

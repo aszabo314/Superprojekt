@@ -62,7 +62,7 @@ module MeshView =
                     )
                     let! img = JSImage.load mesh.atlasUrl
                     transact (fun () -> (m.tex :?> cval<ITexture>).Value <- JSTexture(img, true))
-                    
+
                     finished()
                 with e ->
                     Log.error "failed to load mesh %s: %A" name e
@@ -96,12 +96,6 @@ module MeshView =
                     if g then V3d.III * -10000.0 else V3d.III * 10000.0))
         let depthTestMode =
             isGhost |> AVal.map (fun g -> if g then DepthTest.Always else DepthTest.LessOrEqual)
-        // V6 §D.8 — the per-mesh registration transform is render-space
-        // rigid (rotation + translation in the scaled/centroid-offset
-        // coordinate system used by the scene graph). Applied LAST so
-        // the dataset-scale + centroid pipeline keeps its existing
-        // semantics; a mesh with identity transform renders exactly as
-        // before.
         let trafo =
             let base_ =
                 (commonCentroid, loaded.centroid, meshScale) |||> AVal.map3 (fun common mesh scale ->
@@ -172,13 +166,8 @@ module MeshView =
                     )
                 )
             )
-        
-        // V5 per-pin ghost-clip / cut-plane is gone (Phase 1, §B.1 / §B.7); the
-        // shader still reads a CylClip uniform but treats M00 = 0 as inactive.
+
         let cylClip = AVal.constant M44d.Zero
-        // V6 §D.3 lasso uniforms. Pad LassoPlanes to MaxLassoPlanes so the
-        // shader's fixed-size Arr<N<32>, V4d> always sees a full payload;
-        // LassoPlaneCount gates the actual loop iterations.
         let lassoPlaneCount =
             model.LassoVolume |> AVal.map (function
                 | Some v -> v.Planes.Length |> min BlitShader.MaxLassoPlanes

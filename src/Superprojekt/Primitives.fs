@@ -21,19 +21,17 @@ module Primitives =
         | true, v -> Some v
         | _ -> None
 
-    /// Tiny labeled on/off switch. [■] or [□] + label on one line.
     let compactToggle (labelText : string) (value : aval<bool>) (onToggle : unit -> unit) =
         div {
             Class "ct"
             Dom.OnClick(fun _ -> onToggle ())
             span {
                 Class "ct-box"
-                value |> AVal.map (fun v -> if v then "\u25A0" else "\u25A1")
+                value |> AVal.map (fun v -> if v then "■" else "□")
             }
             " " + labelText
         }
 
-    /// Label + range slider + editable numeric value, all on one line.
     let inlineSlider
             (labelText : string)
             (minV : float) (maxV : float) (stepV : float)
@@ -60,7 +58,6 @@ module Primitives =
             }
         }
 
-    /// Log-spaced variant of inlineSlider (for small→large ranges like sensitivity).
     let inlineLogSlider
             (labelText : string)
             (minV : float) (maxV : float)
@@ -87,7 +84,6 @@ module Primitives =
             span { Class "is-value-ro"; value |> AVal.map format }
         }
 
-    /// Row of mutually-exclusive mode buttons. Items: (label, isActive aval, onClick).
     let compactButtonBar (items : (string * aval<bool> * (unit -> unit)) list) =
         div {
             Class "cbb"
@@ -101,8 +97,6 @@ module Primitives =
                 })
         }
 
-    /// A section with a ▸/▾ triangle that expands/collapses its content.
-    /// `body` is a single DOM node (wrap in a div if you need multiple children).
     let collapsibleSection (title : string) (startExpanded : bool) (body : DomNode) =
         let expanded = cval startExpanded
         div {
@@ -112,7 +106,7 @@ module Primitives =
                 Dom.OnClick(fun _ -> transact (fun () -> expanded.Value <- not expanded.Value))
                 span {
                     Class "cs-tri"
-                    (expanded :> aval<bool>) |> AVal.map (fun e -> if e then "\u25BE" else "\u25B8")
+                    (expanded :> aval<bool>) |> AVal.map (fun e -> if e then "▾" else "▸")
                 }
                 " " + title
             }
@@ -124,17 +118,12 @@ module Primitives =
             }
         }
 
-    /// Dual-handle range slider rendered as two stacked range inputs.
-    /// min/max/step are adaptive so the slider updates its range when the underlying bounds change.
     let inlineRangeSliderA
             (labelText : string)
             (minV : aval<float>) (maxV : aval<float>) (stepV : aval<float>)
             (format : (float -> float -> string) option)
             (valueMin : aval<float>) (valueMax : aval<float>)
             (onChange : float -> float -> unit) =
-        // Both thumbs share the full [minV, maxV] range: narrowing one thumb's
-        // range to the other's current value re-normalizes its position when the
-        // other is dragged. Non-crossing is enforced in the input handlers.
         let attrStep = stepV |> AVal.map (fun v -> Some (Attribute("step", sprintf "%.6g" v)))
         let attrMin  = minV  |> AVal.map (fun v -> Some (Attribute("min",  sprintf "%.6g" v)))
         let attrMax  = maxV  |> AVal.map (fun v -> Some (Attribute("max",  sprintf "%.6g" v)))
@@ -188,7 +177,6 @@ module Primitives =
             (AVal.constant minV) (AVal.constant maxV) (AVal.constant stepV)
             (Some format) valueMin valueMax onChange
 
-    /// Tiny icon-only button (e.g. 🎯, 🔍, ✕, ✎) with a title-tooltip.
     let miniButton (icon : string) (tooltip : string) (onClick : unit -> unit) =
         button {
             Class "mb"

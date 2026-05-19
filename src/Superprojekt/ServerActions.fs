@@ -14,7 +14,7 @@ module ServerActions =
             with _ -> ()
             try
                 let! bboxes = MeshData.fetchBboxes MeshView.apiBase.Value dataset
-                env.Emit [ClipBoundsLoaded bboxes]
+                env.Emit [SceneBoundsLoaded bboxes]
             with _ -> ()
         } |> ignore
 

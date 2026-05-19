@@ -118,9 +118,6 @@ module SceneGraph =
         let sliceOf name =
             meshIndices |> AVal.map (fun m -> 2 * (Map.tryFind name m |> Option.defaultValue 0))
 
-        let clipMin = AVal.map2 (fun (b : Box3d) cc -> b.Min - cc) model.ClipBox model.CommonCentroid
-        let clipMax = AVal.map2 (fun (b : Box3d) cc -> b.Max - cc) model.ClipBox model.CommonCentroid
-
         let meshVisibilityMask =
             (model.MeshVisible, meshIndices) ||> AVal.map2 (fun vis indices ->
                 indices |> Map.fold (fun mask name i ->
@@ -128,7 +125,8 @@ module SceneGraph =
                 ) 0
             )
 
-        let effectiveGhostSilhouette = model.GhostSilhouette
+        let effectiveGhostSilhouette =
+            (model.GhostSilhouette, model.AnchorGhostMode) ||> AVal.map2 (||)
 
         let exploreTex : aval<IBackendTexture> =
             let refAxis =
@@ -271,7 +269,6 @@ module SceneGraph =
                 Sg.Active (AVal.map not fullscreenActive)
                 MeshView.composeMeshTextures cnt colors depths exploreTexAsITex
                     model.DifferenceRendering model.MinDifferenceDepth model.MaxDifferenceDepth
-                    clipMin clipMax
                     effectiveGhostSilhouette ghostDetailInt
                     provenanceEnabled provThreshold falloffOnly
                     provenanceDataset provenanceAlgorithm

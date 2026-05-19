@@ -255,7 +255,7 @@ module ScanPinScene =
 
         let ghostPreview =
             let defaultR =
-                model.ClipBounds |> AVal.map (fun b ->
+                model.SceneBounds |> AVal.map (fun b ->
                     if b.IsInvalid then 1.0
                     else max 0.1 (b.Size.Length * 0.05))
             let active =

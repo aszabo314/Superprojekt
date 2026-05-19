@@ -140,11 +140,6 @@ module Persistence =
             scaleObj.[name] <- JsonValue.Create v
         root.["datasetScales"] <- scaleObj
 
-        let clip = JsonObject()
-        clip.["active"] <- JsonValue.Create model.ClipActive
-        writeBox clip "box" model.ClipBox
-        root.["clip"] <- clip
-
         match model.LassoVolume with
         | Some v ->
             let lo = JsonObject()
@@ -200,6 +195,7 @@ module Persistence =
                               | PlusCurvature -> "curv"
                               | PlusTerrainFeatures -> "terrain")
         root.["ghostOpacity"]  <- JsonValue.Create model.GhostOpacity
+        root.["anchorGhost"]   <- JsonValue.Create model.AnchorGhostMode
         root.["fusion"]        <- JsonValue.Create model.FusionMode
         root.["provHeatmap"]   <- JsonValue.Create model.ProvenanceHeatmap
         root.["provThreshold"] <- JsonValue.Create model.ProvenanceThreshold
@@ -344,15 +340,6 @@ module Persistence =
                 for kv in n.AsObject() do
                     vis <- Map.add kv.Key (kv.Value.GetValue<bool>()) vis
 
-            let mutable clipActive = current.ClipActive
-            let mutable clipBox = current.ClipBox
-            match root.["clip"] with
-            | null -> ()
-            | n ->
-                let o = n.AsObject()
-                clipActive <- o.["active"].GetValue<bool>()
-                clipBox <- readBox o.["box"]
-
             let lassoVol =
                 match root.["lassoVolume"] with
                 | null -> None
@@ -443,8 +430,6 @@ module Persistence =
                     MeshSensorTypes = sensors
                     MeshDatasetErrors = errors
                     MeshVisible = vis
-                    ClipActive = clipActive
-                    ClipBox = clipBox
                     LassoVolume = lassoVol
                     LassoDrawing = None
                     Explore = exMode
@@ -453,6 +438,7 @@ module Persistence =
                     GhostSilhouette = jbool "ghostOn" current.GhostSilhouette
                     GhostDetail = ghostDetail
                     GhostOpacity = jfloat "ghostOpacity" current.GhostOpacity
+                    AnchorGhostMode = jbool "anchorGhost" current.AnchorGhostMode
                     FusionMode = jbool "fusion" current.FusionMode
                     ProvenanceHeatmap = jbool "provHeatmap" current.ProvenanceHeatmap
                     ProvenanceThreshold = jfloat "provThreshold" current.ProvenanceThreshold

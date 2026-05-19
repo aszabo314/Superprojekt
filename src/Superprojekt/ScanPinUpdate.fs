@@ -15,8 +15,8 @@ module ScanPinUpdate =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
 
     let defaultRadius (model : Model) =
-        if model.ClipBounds.IsInvalid then 1.0
-        else max 0.1 (model.ClipBounds.Size.Length * 0.05)
+        if model.SceneBounds.IsInvalid then 1.0
+        else max 0.1 (model.SceneBounds.Size.Length * 0.05)
 
     let private makeAnchor (model : Model) (id : ScanPinId) (centre : V3d) (radius : float) =
         let sigma = radius * 0.5

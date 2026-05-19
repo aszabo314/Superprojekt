@@ -194,10 +194,9 @@ type Model =
         GhostSilhouette      : bool
         GhostDetail          : GhostDetail
         GhostOpacity         : float
+        AnchorGhostMode      : bool
 
-        ClipActive     : bool
-        ClipBox        : Box3d
-        ClipBounds     : Box3d
+        SceneBounds    : Box3d
         MeshBounds     : Map<string, Box3d>
 
         ActivePickingLayer : string option
@@ -254,9 +253,8 @@ module Model =
             GhostSilhouette     = false
             GhostDetail         = OutlineOnly
             GhostOpacity        = 0.1
-            ClipActive     = false
-            ClipBox        = Box3d(V3d(-1e10), V3d(1e10))
-            ClipBounds     = Box3d.Invalid
+            AnchorGhostMode     = false
+            SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             ActivePickingLayer = None
             LassoDrawing = None

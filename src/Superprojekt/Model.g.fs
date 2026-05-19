@@ -1,5 +1,5 @@
-//79adf6eb-8462-4383-f8e3-ce7f06d6744e
-//48183a79-2d10-278f-8cdf-9c9db9305d1e
+//8def318f-cf11-e438-19a6-46352a8c51c1
+//a4131219-a2a1-415b-0e41-66ec918507b0
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -34,9 +34,8 @@ type AdaptiveModel(value : Model) =
     let _GhostSilhouette_ = FSharp.Data.Adaptive.cval(value.GhostSilhouette)
     let _GhostDetail_ = FSharp.Data.Adaptive.cval(value.GhostDetail)
     let _GhostOpacity_ = FSharp.Data.Adaptive.cval(value.GhostOpacity)
-    let _ClipActive_ = FSharp.Data.Adaptive.cval(value.ClipActive)
-    let _ClipBox_ = FSharp.Data.Adaptive.cval(value.ClipBox)
-    let _ClipBounds_ = FSharp.Data.Adaptive.cval(value.ClipBounds)
+    let _AnchorGhostMode_ = FSharp.Data.Adaptive.cval(value.AnchorGhostMode)
+    let _SceneBounds_ = FSharp.Data.Adaptive.cval(value.SceneBounds)
     let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
     let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
     let _LassoDrawing_ = FSharp.Data.Adaptive.cval(value.LassoDrawing)
@@ -89,9 +88,8 @@ type AdaptiveModel(value : Model) =
             _GhostSilhouette_.Value <- value.GhostSilhouette
             _GhostDetail_.Value <- value.GhostDetail
             _GhostOpacity_.Value <- value.GhostOpacity
-            _ClipActive_.Value <- value.ClipActive
-            _ClipBox_.Value <- value.ClipBox
-            _ClipBounds_.Value <- value.ClipBounds
+            _AnchorGhostMode_.Value <- value.AnchorGhostMode
+            _SceneBounds_.Value <- value.SceneBounds
             _MeshBounds_.Value <- value.MeshBounds
             _ActivePickingLayer_.Value <- value.ActivePickingLayer
             _LassoDrawing_.Value <- value.LassoDrawing
@@ -137,9 +135,8 @@ type AdaptiveModel(value : Model) =
     member __.GhostSilhouette = _GhostSilhouette_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.GhostDetail = _GhostDetail_ :> FSharp.Data.Adaptive.aval<GhostDetail>
     member __.GhostOpacity = _GhostOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.ClipActive = _ClipActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.ClipBox = _ClipBox_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
-    member __.ClipBounds = _ClipBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
+    member __.AnchorGhostMode = _AnchorGhostMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.SceneBounds = _SceneBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>
     member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.LassoDrawing = _LassoDrawing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoDraft>>

@@ -43,8 +43,7 @@ module Update =
                 MeshesLoaded     = HashSet.empty
                 Filtered         = HashMap.empty
                 FilterCenter     = None
-                ClipBounds       = Box3d.Invalid
-                ClipBox          = Box3d(V3d(-1e10), V3d(1e10))
+                SceneBounds      = Box3d.Invalid
                 DatasetCentroids =
                     let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) model.DatasetCentroids
                     if dataset <> "" then Map.add dataset common perMesh else perMesh }
@@ -89,6 +88,8 @@ module Update =
             { model with GhostDetail = d }
         | SetGhostOpacity v ->
             { model with GhostOpacity = v }
+        | ToggleAnchorGhostMode ->
+            { model with AnchorGhostMode = not model.AnchorGhostMode }
 
         | SetRegistrationMode m ->
             { model with Registration = { model.Registration with Mode = m } }
@@ -226,7 +227,7 @@ module Update =
             { model with MinDifferenceDepth = v }
         | SetMaxDifferenceDepth v ->
             { model with MaxDifferenceDepth = v }
-        | ClipBoundsLoaded bboxes ->
+        | SceneBoundsLoaded bboxes ->
             if bboxes.Length = 0 then model
             else
                 let union =
@@ -244,16 +245,9 @@ module Update =
                 let disagreementDefault = clamp 0.001 1.0 (renderDiag * 1e-3)
                 let perMesh = bboxes |> Array.fold (fun m (n, b) -> Map.add n b m) Map.empty
                 { model with
-                    ClipBounds = padded
-                    ClipBox = padded
+                    SceneBounds = padded
                     MeshBounds = perMesh
                     Explore = { model.Explore with Disagreement = { model.Explore.Disagreement with Threshold = disagreementDefault } } }
-        | ToggleClip ->
-            { model with ClipActive = not model.ClipActive }
-        | SetClipBox box ->
-            { model with ClipBox = box }
-        | ResetClip ->
-            { model with ClipBox = model.ClipBounds }
         | DatasetsLoaded datasets ->
             { model with Datasets = datasets |> Array.toList }
         | SetActiveDataset dataset ->
@@ -278,8 +272,8 @@ module Update =
             | Some centroid ->
                 let renderPos = (centroid - model.CommonCentroid) * (model.DatasetScales |> Map.tryFind (meshName.Split('/', 2).[0]) |> Option.defaultValue 1.0)
                 let radius =
-                    if model.ClipBounds.IsInvalid then 50.0
-                    else model.ClipBounds.Size.Length * 0.6
+                    if model.SceneBounds.IsInvalid then 50.0
+                    else model.SceneBounds.Size.Length * 0.6
                 env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
                 env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
             | None -> ()
@@ -309,8 +303,8 @@ module Update =
             { model with MeshVisible = vis; MeshSolo = NoSolo }
         | ResetCamera ->
             let center, radius =
-                if model.ClipBounds.IsInvalid then V3d.Zero, 50.0
-                else V3d.Zero, max 1.0 (model.ClipBounds.Size.Length * 0.6)
+                if model.SceneBounds.IsInvalid then V3d.Zero, 50.0
+                else V3d.Zero, max 1.0 (model.SceneBounds.Size.Length * 0.6)
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, center))]
             env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
             model

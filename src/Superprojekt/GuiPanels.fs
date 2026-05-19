@@ -93,6 +93,8 @@ module GuiPanels =
                     "+ Terrain", detail |> AVal.map (fun d -> d = PlusTerrainFeatures), (fun () -> env.Emit [SetGhostDetail PlusTerrainFeatures])
                 ]
             }
+            compactToggle "Anchor-blob ghost" model.AnchorGhostMode (fun () ->
+                env.Emit [ToggleAnchorGhostMode])
         }
 
     let placementFlyout (env : Env<Message>) (model : AdaptiveModel) =
@@ -298,39 +300,6 @@ module GuiPanels =
                         (fun lo hi ->
                             env.Emit [SetMinDifferenceDepth lo; SetMaxDifferenceDepth hi])
                 }
-
-                collapsibleSection "Clipping Box" false (
-                    div {
-                        Class "lp-clip-body"
-                        compactToggle "Enabled" model.ClipActive (fun () -> env.Emit [ToggleClip])
-                        let bounds = model.ClipBounds
-                        let box = model.ClipBox
-                        let axisSlider (label : string) (getLo : Box3d -> float) (getHi : Box3d -> float)
-                                       (setLo : Box3d -> float -> Box3d) (setHi : Box3d -> float -> Box3d) =
-                            let lo = box |> AVal.map getLo
-                            let hi = box |> AVal.map getHi
-                            let bLo = bounds |> AVal.map (fun b -> if b.IsInvalid then -100.0 else getLo b)
-                            let bHi = bounds |> AVal.map (fun b -> if b.IsInvalid then  100.0 else getHi b)
-                            let step = (bLo, bHi) ||> AVal.map2 (fun lo hi -> max 0.01 ((hi - lo) / 100.0))
-                            inlineRangeSliderA label bLo bHi step
-                                None lo hi (fun a b ->
-                                let cur = AVal.force box
-                                let cur = setLo cur a
-                                let cur = setHi cur b
-                                env.Emit [SetClipBox cur])
-                        axisSlider "X"
-                            (fun b -> b.Min.X) (fun b -> b.Max.X)
-                            (fun b v -> Box3d(V3d(v, b.Min.Y, b.Min.Z), b.Max))
-                            (fun b v -> Box3d(b.Min, V3d(v, b.Max.Y, b.Max.Z)))
-                        axisSlider "Y"
-                            (fun b -> b.Min.Y) (fun b -> b.Max.Y)
-                            (fun b v -> Box3d(V3d(b.Min.X, v, b.Min.Z), b.Max))
-                            (fun b v -> Box3d(b.Min, V3d(b.Max.X, v, b.Max.Z)))
-                        axisSlider "Z"
-                            (fun b -> b.Min.Z) (fun b -> b.Max.Z)
-                            (fun b v -> Box3d(V3d(b.Min.X, b.Min.Y, v), b.Max))
-                            (fun b v -> Box3d(b.Min, V3d(b.Max.X, b.Max.Y, v)))
-                    })
 
                 collapsibleSection "Error metadata" false (
                     div {

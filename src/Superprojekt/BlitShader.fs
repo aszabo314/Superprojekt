@@ -85,14 +85,12 @@ module BlitShader =
         member x.MinDifferenceDepth   : float = x?MinDifferenceDepth
         member x.MaxDifferenceDepth   : float = x?MaxDifferenceDepth
         member x.SliceIndex           : int   = x?SliceIndex
-        member x.ClipMin              : V3d   = x?ClipMin
-        member x.ClipMax              : V3d   = x?ClipMax
         member x.GhostSilhouette      : bool  = x?GhostSilhouette
         member x.MeshVisibilityMask   : int   = x?MeshVisibilityMask
         member x.IsGhost              : bool  = x?IsGhost
         member x.MeshIndex            : int   = x?MeshIndex
         member x.GhostOpacity         : float = x?GhostOpacity
-        member x.CylClip              : M44d  = x?CylClip
+        member x.AnchorGhostMode      : bool  = x?AnchorGhostMode
         member x.ReferenceAxis        : V3d   = x?ReferenceAxis
         member x.FcEnabled            : int   = x?FcEnabled
         member x.DgEnabled            : int   = x?DgEnabled
@@ -127,56 +125,49 @@ module BlitShader =
         fragment {
             let p = v.wp.XYZ / v.wp.W
             let worldNormal = v.n |> Vec.normalize
-            let mutable insideClip =
-                p.X >= uniform.ClipMin.X && p.X <= uniform.ClipMax.X &&
-                p.Y >= uniform.ClipMin.Y && p.Y <= uniform.ClipMax.Y &&
-                p.Z >= uniform.ClipMin.Z && p.Z <= uniform.ClipMax.Z
+
+            let mutable insideLasso = true
             let lc = uniform.LassoPlaneCount
             if lc > 0 then
-                let mutable insideLasso = true
                 for i in 0 .. 31 do
                     if i < lc then
                         let plane = uniform.LassoPlanes.[i]
                         let d = plane.X * p.X + plane.Y * p.Y + plane.Z * p.Z + plane.W
                         if d > 0.0 then insideLasso <- false
-                if not insideLasso then insideClip <- false
-            let cyl = uniform.CylClip
-            let mutable cylEdgeT = 1.0
-            if cyl.M00 <> 0.0 then
-                let anchor = V3d(cyl.M10, cyl.M11, cyl.M12)
-                let axis = V3d(cyl.M20, cyl.M21, cyl.M22)
-                let rel = p - anchor
-                let axisProj = Vec.dot rel axis
-                let radial = rel - axis * axisProj
-                let radialDist = Vec.length radial
-                let mutable insideCyl =
-                    radialDist <= cyl.M01 &&
-                    axisProj >= -cyl.M03 &&
-                    axisProj <= cyl.M02
-                let gradWidth = max 1.0e-4 (cyl.M01 * 0.08)
-                cylEdgeT <- clamp 0.0 1.0 (abs (cyl.M01 - radialDist) / gradWidth)
-                if cyl.M13 > 0.5 then
-                    let cutNormal = V3d(cyl.M30, cyl.M31, cyl.M32)
-                    let cutD = cyl.M23
-                    let signedDist = Vec.dot p cutNormal - cutD
-                    if signedDist > 0.0 then insideCyl <- false
-                    cylEdgeT <- min cylEdgeT (clamp 0.0 1.0 (abs signedDist / gradWidth))
-                insideClip <- insideClip && insideCyl
+
+            let useAnchorGhost =
+                uniform.AnchorGhostMode && uniform.ProvenanceAnchorCount > 0
+
+            let mutable anchorWeight = 0.0
+            if useAnchorGhost then
+                for i in 0 .. 31 do
+                    if i < uniform.ProvenanceAnchorCount then
+                        let a = uniform.ProvenanceAnchors.[i]
+                        let sigma = a.W
+                        if sigma > 1e-6 then
+                            let dx = p.X - a.X
+                            let dy = p.Y - a.Y
+                            let dz = p.Z - a.Z
+                            let d2 = dx*dx + dy*dy + dz*dz
+                            let wi = exp (-d2 / (2.0 * sigma * sigma))
+                            if wi > anchorWeight then anchorWeight <- wi
+
             let mutable color = v.c
             if not uniform.IsGhost then
-                if not insideClip then
-                    discard()
-                let boxBDist =
-                        min (min (abs (uniform.ClipMin.X - p.X)) (abs (uniform.ClipMax.X - p.X)))
-                            (min (min (abs (uniform.ClipMin.Y - p.Y)) (abs (uniform.ClipMax.Y - p.Y)))
-                                 (min (abs (uniform.ClipMin.Z - p.Z)) (abs (uniform.ClipMax.Z - p.Z))))
-                let edgeT = min (clamp 0.0 1.0 boxBDist) cylEdgeT
-                if edgeT < 1.0 then
-                    color <- lerp colorMap.[uniform.MeshIndex%5] color edgeT
+                if not insideLasso then discard()
+                if useAnchorGhost then
+                    if anchorWeight < 0.01 then discard()
+                    color <- V4d(color.XYZ, anchorWeight)
             else
-                if insideClip then
-                    discard()
-                color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, uniform.GhostOpacity)
+                if insideLasso then
+                    if useAnchorGhost then
+                        let alpha = uniform.GhostOpacity * (1.0 - anchorWeight)
+                        if alpha < 0.001 then discard()
+                        color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, alpha)
+                    else
+                        discard()
+                else
+                    color <- V4d(colorMap.[uniform.MeshIndex%5].XYZ, uniform.GhostOpacity)
 
             return { c = color; n = V4d(worldNormal, 1.0) }
         }

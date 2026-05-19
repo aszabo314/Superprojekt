@@ -17,6 +17,7 @@ type Message =
     | ToggleGhostSilhouette
     | SetGhostDetail of GhostDetail
     | SetGhostOpacity of float
+    | ToggleAnchorGhostMode
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
     | RunRegistration
@@ -34,10 +35,7 @@ type Message =
     | LoadWorkspace of string
     | SetMinDifferenceDepth of float
     | SetMaxDifferenceDepth of float
-    | ClipBoundsLoaded   of (string * Box3d)[]
-    | ToggleClip
-    | SetClipBox         of Box3d
-    | ResetClip
+    | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
     | SetDatasetScale    of string * float

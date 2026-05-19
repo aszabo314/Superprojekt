@@ -71,7 +71,6 @@ module MeshView =
 
     let renderMesh
         (loaded : LoadedMesh)
-        (filter : aval<Box3d>)
         (isGhost : aval<bool>)
         (meshIndex : aval<int>)
         (active : aval<bool>)
@@ -80,22 +79,10 @@ module MeshView =
         (meshTransform : aval<Trafo3d>)
         (ghostOpacity : aval<float>)
         (colorMode : aval<int>) =
-        let scaledFilter =
-            (meshScale, filter) ||> AVal.map2 (fun scale (f : Box3d) ->
-                Box3d(f.Min * scale, f.Max * scale)
-            )
-        let clipMin =
-            active |> AVal.bind (fun a ->
-                if a then scaledFilter |> AVal.map _.Min
-                else isGhost |> AVal.map (fun g ->
-                    if g then V3d.III * 10000.0 else V3d.III * -10000.0))
-        let clipMax =
-            active |> AVal.bind (fun a ->
-                if a then scaledFilter |> AVal.map _.Max
-                else isGhost |> AVal.map (fun g ->
-                    if g then V3d.III * -10000.0 else V3d.III * 10000.0))
         let depthTestMode =
             isGhost |> AVal.map (fun g -> if g then DepthTest.Always else DepthTest.LessOrEqual)
+        let renderEnabled =
+            (isGhost, active, loaded.fvc) |||> AVal.map3 (fun g a c -> (a || not g) && c > 3)
         let trafo =
             let base_ =
                 (commonCentroid, loaded.centroid, meshScale) |||> AVal.map3 (fun common mesh scale ->
@@ -110,8 +97,6 @@ module MeshView =
                 BlitShader.clippy
             }
             Sg.Uniform("DiffuseColorTexture", loaded.tex)
-            Sg.Uniform("ClipMin", clipMin)
-            Sg.Uniform("ClipMax", clipMax)
             Sg.Uniform("IsGhost", isGhost)
             Sg.Uniform("MeshIndex", meshIndex)
             Sg.Uniform("GhostOpacity", ghostOpacity)
@@ -125,7 +110,7 @@ module MeshView =
                     string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
                 ]
             )
-            Sg.Active(loaded.fvc |> AVal.map (fun c -> c > 3))
+            Sg.Active renderEnabled
             Sg.Index(BufferView(loaded.idx, typeof<int>))
             Sg.Render loaded.fvc
         }
@@ -167,7 +152,6 @@ module MeshView =
                 )
             )
 
-        let cylClip = AVal.constant M44d.Zero
         let lassoPlaneCount =
             model.LassoVolume |> AVal.map (function
                 | Some v -> v.Planes.Length |> min BlitShader.MaxLassoPlanes
@@ -181,11 +165,18 @@ module MeshView =
                     for i in 0 .. n - 1 do arr.[i] <- v.Planes.[i]
                 | None -> ()
                 arr)
+        let provenanceAnchors =
+            model.ScanPins.Pins |> AMap.toAVal |> AVal.map (fun pins ->
+                let arr = Arr<N<32>, V4d>()
+                let mutable n = 0
+                for (_, pin) in HashMap.toSeq pins do
+                    if pin.Phase = PinPhase.Committed && n < 32 then
+                        arr.[n] <- V4d(pin.Centre.X, pin.Centre.Y, pin.Centre.Z, pin.Sigma)
+                        n <- n + 1
+                arr, n)
+        let provenanceAnchorsArr = provenanceAnchors |> AVal.map fst
+        let provenanceAnchorCount = provenanceAnchors |> AVal.map snd
         let tasks =
-            let filter =
-                (model.ClipActive, model.ClipBox, model.CommonCentroid) |||> AVal.map3 (fun active box cc ->
-                    if active then box - cc else Box3d(V3d(-1e10), V3d(1e10))
-                )
             let scaleFor (name : string) =
                 let dataset = name.Split('/', 2).[0]
                 model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
@@ -195,11 +186,13 @@ module MeshView =
                         Sg.View view
                         Sg.Proj proj
                         Sg.Uniform("ViewportSize", info.ViewportSize)
-                        Sg.Uniform("CylClip", cylClip)
                         Sg.Uniform("LassoPlaneCount", lassoPlaneCount)
                         Sg.Uniform("LassoPlanes", lassoPlanes)
+                        Sg.Uniform("AnchorGhostMode", model.AnchorGhostMode)
+                        Sg.Uniform("ProvenanceAnchorCount", provenanceAnchorCount)
+                        Sg.Uniform("ProvenanceAnchors", provenanceAnchorsArr)
                         let modeInt = model.RenderingMode |> AVal.map (function Textured -> 0 | Shaded -> 1 | WhiteSurface -> 2)
-                        renderMesh loaded filter (AVal.constant isGhost) (AVal.constant meshIndex) isActive model.CommonCentroid scale meshT model.GhostOpacity modeInt
+                        renderMesh loaded (AVal.constant isGhost) (AVal.constant meshIndex) isActive model.CommonCentroid scale meshT model.GhostOpacity modeInt
                     }
                 info.Runtime.CompileRender(signature, body.GetRenderObjects(TraversalState.empty info.Runtime))
             meshIndices |> AList.bind (fun meshIndices ->
@@ -247,8 +240,6 @@ module MeshView =
         (differenceRendering    : aval<bool>)
         (minDifferenceDepth     : aval<float>)
         (maxDifferenceDepth     : aval<float>)
-        (clipMin                : aval<V3d>)
-        (clipMax                : aval<V3d>)
         (ghostSilhouette        : aval<bool>)
         (ghostDetailMode        : aval<int>)
         (provenanceEnabled      : aval<int>)
@@ -271,8 +262,6 @@ module MeshView =
             Sg.Uniform("DifferenceRendering",   differenceRendering)
             Sg.Uniform("MinDifferenceDepth",    minDifferenceDepth)
             Sg.Uniform("MaxDifferenceDepth",    maxDifferenceDepth)
-            Sg.Uniform("ClipMin",               clipMin)
-            Sg.Uniform("ClipMax",               clipMax)
             Sg.Uniform("GhostSilhouette",       ghostSilhouette)
             Sg.Uniform("GhostDetailMode",       ghostDetailMode)
             Sg.Uniform("ProvenanceEnabled",     provenanceEnabled)

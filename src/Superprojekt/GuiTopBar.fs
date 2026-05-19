@@ -133,7 +133,7 @@ module GuiTopBar =
                             span { Class "lp-sublabel"; "Dataset" }
                             span {
                                 Class "tb-gear-val"
-                                (model.ActiveDataset, model.ClipBounds, model.CommonCentroid)
+                                (model.ActiveDataset, model.SceneBounds, model.CommonCentroid)
                                 |||> AVal.map3 (fun ds bb cc ->
                                     let name = ds |> Option.defaultValue "(none)"
                                     if bb.IsInvalid then sprintf "%s — (bounds pending)" name

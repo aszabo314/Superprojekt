@@ -31,6 +31,60 @@ module View =
         let p1 = vp.Backward.TransformPosProj(V3d(ndc, 1.0))
         Ray3d(p0, (p1 - p0) |> Vec.normalize)
 
+    let private worldFromRender (model : AdaptiveModel) (renderPos : V3d) =
+        let scale =
+            AVal.force model.ActiveDataset
+            |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
+            |> Option.defaultValue 1.0
+        let cc = AVal.force model.CommonCentroid
+        renderPos / scale + cc
+
+    let private resolvePick
+            (model : AdaptiveModel)
+            (cursorPx : V2d) (vpSize : V2i)
+            (viewT : Trafo3d) (projT : Trafo3d)
+            (frontMost : V3d) (frontHit : bool)
+            (k : V3d -> bool -> unit) =
+        let active = AVal.force model.ActivePickingLayer
+        match active with
+        | None -> k frontMost frontHit
+        | Some _ when not frontHit -> k frontMost false
+        | Some name ->
+            let cc = AVal.force model.CommonCentroid
+            let scales = AVal.force model.DatasetScales
+            let bounds = AVal.force model.MeshBounds
+            let dataset =
+                let s = name.IndexOf('/')
+                if s >= 0 then name.[..s-1] else ""
+            let scale = Map.tryFind dataset scales |> Option.defaultValue 1.0
+            let ray = pickRay cursorPx vpSize viewT projT
+            let hitsBbox =
+                match Map.tryFind name bounds with
+                | Some w ->
+                    let lo = (w.Min - cc) * scale
+                    let hi = (w.Max - cc) * scale
+                    let box = Box3d(V3d(min lo.X hi.X, min lo.Y hi.Y, min lo.Z hi.Z),
+                                    V3d(max lo.X hi.X, max lo.Y hi.Y, max lo.Z hi.Z))
+                    rayBoxT ray box |> Option.isSome
+                | None -> false
+            if not hitsBbox then
+                k frontMost frontHit
+            else
+                let worldOrigin = ray.Origin / scale + cc
+                let worldDir = ray.Direction |> Vec.normalize
+                async {
+                    try
+                        let! hits =
+                            Query.rayBatch ApiConfig.apiBase.Value [| name |] [| (worldOrigin, worldDir) |]
+                        match hits.[0] with
+                        | Some worldHit ->
+                            let renderHit = (worldHit - cc) * scale
+                            k renderHit true
+                        | None ->
+                            k frontMost frontHit
+                    with _ -> k frontMost frontHit
+                } |> Async.StartImmediate
+
     let view (env : Env<Message>) (model : AdaptiveModel) =
 
         ServerActions.init env
@@ -163,19 +217,20 @@ module View =
                         false
                     | None ->
                         if e.Location.Depth < 0.9999 then
-                            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
+                            match cursorScreen.Value with
+                            | Some cursorPx ->
+                                let vpSize = AVal.force size
+                                let viewT = AVal.force view
+                                let projT = AVal.force proj
+                                resolvePick model cursorPx vpSize viewT projT e.WorldPosition true (fun renderPos hit ->
+                                    if hit then
+                                        env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))])
+                            | None ->
+                                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, e.WorldPosition))]
                         false
                 )
 
                 Sg.OnTap(fun e ->
-                    let scale =
-                        AVal.force model.ActiveDataset
-                        |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
-                        |> Option.defaultValue 1.0
-                    let cc = AVal.force model.CommonCentroid
-                    let worldPos = e.WorldPosition / scale + cc
-                    let hitGeometry = e.Location.Depth < 0.9999
-                    let placement = AVal.force model.ScanPins.Placement
                     match AVal.force model.LassoDrawing with
                     | Some _ ->
                         match cursorScreen.Value with
@@ -183,31 +238,59 @@ module View =
                         | None -> ()
                         false
                     | None ->
+                        let placement = AVal.force model.ScanPins.Placement
+                        let hitGeometry = e.Location.Depth < 0.9999
+                        let ctrlLeft = e.Ctrl && e.Button = Button.Left
+                        let withCursor (run : V2d -> V2i -> Trafo3d -> Trafo3d -> unit) (fallback : V3d -> unit) =
+                            match cursorScreen.Value with
+                            | Some cursorPx ->
+                                let vpSize = AVal.force size
+                                let viewT = AVal.force view
+                                let projT = AVal.force proj
+                                run cursorPx vpSize viewT projT
+                            | None -> fallback e.WorldPosition
                         match placement with
                         | AnchorPlacement when hitGeometry ->
-                            env.Emit [ScanPinMsg (PlaceAnchor e.WorldPosition)]
+                            withCursor
+                                (fun cursorPx vpSize viewT projT ->
+                                    resolvePick model cursorPx vpSize viewT projT e.WorldPosition true (fun renderPos hit ->
+                                        if hit then env.Emit [ScanPinMsg (PlaceAnchor renderPos)]))
+                                (fun fallback -> env.Emit [ScanPinMsg (PlaceAnchor fallback)])
                             false
-                        | _ ->
-                            if e.Ctrl && e.Button = Button.Left && hitGeometry then
+                        | _ when ctrlLeft && hitGeometry ->
+                            let dispatch (renderPos : V3d) =
+                                let worldPos = worldFromRender model renderPos
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
                                 env.Emit [ClearFilteredMesh]
-                                ServerActions.triggerFilter env model e.WorldPosition
-                                false
-                            else
+                                ServerActions.triggerFilter env model renderPos
+                            withCursor
+                                (fun cursorPx vpSize viewT projT ->
+                                    resolvePick model cursorPx vpSize viewT projT e.WorldPosition true (fun renderPos hit ->
+                                        if hit then dispatch renderPos))
+                                dispatch
+                            false
+                        | _ ->
+                            if hitGeometry then
+                                let worldPos = worldFromRender model e.WorldPosition
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
-                                true
+                            true
                 )
 
                 Sg.OnLongPress(fun e ->
                     if e.Location.Depth < 0.9999 then
-                        let scale =
-                            AVal.force model.ActiveDataset
-                            |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
-                            |> Option.defaultValue 1.0
-                        let cc = AVal.force model.CommonCentroid
-                        transact (fun () -> hoverCoord.Value <- Some (e.WorldPosition / scale + cc))
-                        env.Emit [ClearFilteredMesh]
-                        ServerActions.triggerFilter env model e.WorldPosition
+                        let dispatch (renderPos : V3d) =
+                            let worldPos = worldFromRender model renderPos
+                            transact (fun () -> hoverCoord.Value <- Some worldPos)
+                            env.Emit [ClearFilteredMesh]
+                            ServerActions.triggerFilter env model renderPos
+                        match cursorScreen.Value with
+                        | Some cursorPx ->
+                            let vpSize = AVal.force size
+                            let viewT = AVal.force view
+                            let projT = AVal.force proj
+                            resolvePick model cursorPx vpSize viewT projT e.WorldPosition true (fun renderPos hit ->
+                                if hit then dispatch renderPos)
+                        | None -> dispatch e.WorldPosition
                     false
                 )
 

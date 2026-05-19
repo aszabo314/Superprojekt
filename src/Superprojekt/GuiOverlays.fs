@@ -60,23 +60,19 @@ module GuiOverlays =
 
     let lassoOverlay (env : Env<Message>) (model : AdaptiveModel) (cursorScreen : aval<V2d option>) =
         let stateJson =
-            (model.LassoDrawing, cursorScreen, model.LassoVolume) |||> AVal.map3 (fun drawing cursor committed ->
+            (model.LassoDrawing, cursorScreen) ||> AVal.map2 (fun drawing cursor ->
                 let drawingArr =
                     match drawing with
                     | Some d -> d.Vertices
                     | None -> [||]
                 let cursorArr =
-                    match cursor with
-                    | Some c -> [| c |]
-                    | None -> [||]
-                let committedArr =
-                    match committed with
-                    | Some v -> v.ScreenPolygon
-                    | None -> [||]
+                    match drawing, cursor with
+                    | Some _, Some c -> [| c |]
+                    | _ -> [||]
                 let fmtArr (a : V2d[]) =
                     a |> Array.map (fun p -> sprintf "[%.1f,%.1f]" p.X p.Y) |> String.concat ","
-                sprintf "{\"d\":[%s],\"c\":[%s],\"k\":[%s]}"
-                    (fmtArr drawingArr) (fmtArr cursorArr) (fmtArr committedArr))
+                sprintf "{\"d\":[%s],\"c\":[%s]}"
+                    (fmtArr drawingArr) (fmtArr cursorArr))
         div {
             Class "lasso-overlay"
             stateJson |> AVal.map (fun j -> Some (Attribute("data-lasso", j)))
@@ -102,10 +98,6 @@ module GuiOverlays =
                 "  svg.setAttribute('width', rect.width);"
                 "  svg.setAttribute('height', rect.height);"
                 "  el.appendChild(svg);"
-                "  if(d.k && d.k.length >= 3){"
-                "    var k = d.k.slice(); k.push(k[0]);"
-                "    svg.appendChild(poly(k, {stroke:'#1a56db','stroke-width':'1.5','stroke-dasharray':'4,3',fill:'rgba(26,86,219,0.04)'}));"
-                "  }"
                 "  if(d.d && d.d.length > 0){"
                 "    if(d.d.length >= 2)"
                 "      svg.appendChild(poly(d.d, {stroke:'#0f172a','stroke-width':'1.5',fill:'none'}));"

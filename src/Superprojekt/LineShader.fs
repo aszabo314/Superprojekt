@@ -12,32 +12,32 @@ module Lines =
         open FShade
 
         type Vertex = {
-            [<Semantic("P0")>]        p0 : V3d
-            [<Semantic("P1")>]        p1 : V3d
-            [<Semantic("LineColor")>] color : V4d
-            [<Semantic("LineWidth")>] width : float
-            [<Position>]              pos : V4d
-            [<Color>]                 col : V4d
-            [<VertexId>]              id : int
+            [<Semantic("P0")>]        p0    : V3f
+            [<Semantic("P1")>]        p1    : V3f
+            [<Semantic("LineColor")>] color : V4f
+            [<Semantic("LineWidth")>] width : float32
+            [<Position>]              pos   : V4f
+            [<Color>]                 col   : V4f
+            [<VertexId>]              id    : int
         }
 
-        let clipPlane (o : V3d) (d : V3d) (plane : V4d) (t0 : float) (t1 : float) =
+        let clipPlane (o : V3f) (d : V3f) (plane : V4f) (t0 : float32) (t1 : float32) =
             let dir = Vec.dot plane.XYZ d
             let t   = (plane.W + Vec.dot plane.XYZ o) / -dir
             let mutable a = t0
             let mutable b = t1
-            if dir > 1E-9 then
+            if dir > 1e-9f then
                 if t < b then b <- t
-            elif dir < -1E-9 then
+            elif dir < -1e-9f then
                 if t > a then a <- t
-            V2d(a, b)
+            V2f(a, b)
 
         let line (v : Vertex) =
             vertex {
                 let m = uniform.ModelViewProjTrafo
                 let o = v.p0
                 let d = v.p1 - v.p0
-                let mutable tt = V2d(0.0, 1.0)
+                let mutable tt = V2f(0.0f, 1.0f)
                 tt <- clipPlane o d (-m.R3 - m.R0) tt.X tt.Y
                 tt <- clipPlane o d (-m.R3 + m.R0) tt.X tt.Y
                 tt <- clipPlane o d (-m.R3 - m.R1) tt.X tt.Y
@@ -50,43 +50,43 @@ module Lines =
                     let p1w = o + tt.Y * d
 
                     let corner = v.id % 4
-                    let mpX = if corner &&& 1 <> 0 then 1.0 else 0.0
-                    let mpY = if corner &&& 2 <> 0 then 1.0 else 0.0
+                    let mpX = if corner &&& 1 <> 0 then 1.0f else 0.0f
+                    let mpY = if corner &&& 2 <> 0 then 1.0f else 0.0f
 
                     let vs   = uniform.ViewportSize
-                    let p0c  = m * V4d(p0w, 1.0)
-                    let p1c  = m * V4d(p1w, 1.0)
+                    let p0c  = m * V4f(p0w, 1.0f)
+                    let p1c  = m * V4f(p1w, 1.0f)
                     let p0n  = p0c.XYZ / p0c.W
                     let p1n  = p1c.XYZ / p1c.W
 
-                    let pixelToNdc    = V2d(2.0 / float vs.X, 2.0 / float vs.Y)
-                    let halfWidthPx   = v.width * 0.5
+                    let pixelToNdc    = V2f(2.0f / float32 vs.X, 2.0f / float32 vs.Y)
+                    let halfWidthPx   = v.width * 0.5f
 
                     let diff     = p1n - p0n
-                    let pixelDir = V2d(diff.X * float vs.X * 0.5, diff.Y * float vs.Y * 0.5)
+                    let pixelDir = V2f(diff.X * float32 vs.X * 0.5f, diff.Y * float32 vs.Y * 0.5f)
                     let pixelLen = Vec.length pixelDir
 
                     let perpDir =
-                        if pixelLen > 1e-10 then V2d(-pixelDir.Y, pixelDir.X) / pixelLen
-                        else V2d(0.0, 1.0)
+                        if pixelLen > 1e-10f then V2f(-pixelDir.Y, pixelDir.X) / pixelLen
+                        else V2f(0.0f, 1.0f)
                     let lineDir =
-                        if pixelLen > 1e-10 then pixelDir / pixelLen
-                        else V2d(0.0, 1.0)
+                        if pixelLen > 1e-10f then pixelDir / pixelLen
+                        else V2f(0.0f, 1.0f)
 
-                    let perpSign = if mpX > 0.5 then 1.0 else -1.0
-                    let lineSign = if mpY > 0.5 then 1.0 else -1.0
+                    let perpSign = if mpX > 0.5f then 1.0f else -1.0f
+                    let lineSign = if mpY > 0.5f then 1.0f else -1.0f
                     let perpOffset = perpDir * (perpSign * halfWidthPx) * pixelToNdc
                     let lineOffset = lineDir * (lineSign * halfWidthPx) * pixelToNdc
 
-                    let basePos = if mpY > 0.5 then p1n.XY else p0n.XY
+                    let basePos = if mpY > 0.5f then p1n.XY else p0n.XY
                     let xy      = basePos + perpOffset + lineOffset
 
-                    let zT = if mpY > 0.5 then 1.0 else 0.0
-                    let z  = p0n.Z * (1.0 - zT) + p1n.Z * zT
+                    let zT = if mpY > 0.5f then 1.0f else 0.0f
+                    let z  = p0n.Z * (1.0f - zT) + p1n.Z * zT
 
-                    return { v with pos = V4d(xy.X, xy.Y, z, 1.0); col = v.color }
+                    return { v with pos = V4f(xy.X, xy.Y, z, 1.0f); col = v.color }
                 else
-                    return { v with pos = V4d(2.0, 2.0, 2.0, 1.0); col = V4d.Zero }
+                    return { v with pos = V4f(2.0f, 2.0f, 2.0f, 1.0f); col = V4f.Zero }
             }
 
         let fragment (v : Vertex) =
@@ -129,7 +129,7 @@ module Lines =
         let idxArr   = buffers |> AVal.map (fun (_,_,_,_,a,_) -> ArrayBuffer a :> IBuffer)
         let count    = buffers |> AVal.map (fun (_,_,_,_,_,n) -> if n = 0 then 0 else 6 * n)
         sg {
-            Sg.Shader { LineShader.line; LineShader.fragment }
+            Sg.Shader { LineShader.line; LineShader.fragment; OIT.weightedBlend }
             Sg.NoEvents
             Sg.VertexAttributes(
                 HashMap.ofList [

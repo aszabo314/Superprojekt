@@ -43,9 +43,8 @@ module ScanPinScene =
             Sg.Proj proj
             Sg.Trafo trafo
             Sg.Pass RenderPass.passOne
-            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-            Sg.Uniform("FlatColor", color)
-            Sg.BlendMode (AVal.constant BlendMode.Blend)
+            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor; OIT.weightedBlend }
+            Sg.Uniform("FlatColor", color |> AVal.map V4f)
             Sg.DepthTest (AVal.constant DepthTest.None)
             Sg.NoEvents
             Sg.VertexAttributes(
@@ -96,8 +95,8 @@ module ScanPinScene =
                     Sg.View view
                     Sg.Proj proj
                     Sg.Trafo trafo
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", color)
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor; OIT.weightedBlend }
+                    Sg.Uniform("FlatColor", color |> AVal.map V4f)
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                     Sg.OnTap(fun _ ->
                         match AVal.force placementActive with
@@ -160,7 +159,6 @@ module ScanPinScene =
                         Sg.Active active
                         Sg.View view
                         Sg.Proj proj
-                        Sg.BlendMode BlendMode.Blend
                         Sg.DepthTest (AVal.constant DepthTest.None)
                         Sg.Pass RenderPass.passOne
                         Lines.render outlineSegs
@@ -210,7 +208,6 @@ module ScanPinScene =
                     Sg.Active active
                     Sg.View view
                     Sg.Proj proj
-                    Sg.BlendMode BlendMode.Blend
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.Pass RenderPass.passOne
                     Lines.render segs
@@ -247,7 +244,6 @@ module ScanPinScene =
                     Sg.Active active
                     Sg.View view
                     Sg.Proj proj
-                    Sg.BlendMode BlendMode.Blend
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.Pass RenderPass.passOne
                     Lines.render segs
@@ -277,7 +273,6 @@ module ScanPinScene =
                     Sg.Active active
                     Sg.View view
                     Sg.Proj proj
-                    Sg.BlendMode BlendMode.Blend
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.Pass RenderPass.passOne
                     Lines.render outlineSegs

@@ -130,6 +130,11 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            inlineSlider "Ghost opacity" 0.0 1.0 0.01 (sprintf "%.2f") model.GhostOpacity (fun v ->
+                                env.Emit [SetGhostOpacity v])
+                        }
+                        div {
+                            Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Dataset" }
                             span {
                                 Class "tb-gear-val"

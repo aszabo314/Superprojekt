@@ -21,11 +21,6 @@ type MixMode =
     | Blended
     | Alternating
 
-type GhostDetail =
-    | OutlineOnly
-    | PlusCurvature
-    | PlusTerrainFeatures
-
 type RenderingMode =
     | Textured
     | Shaded
@@ -192,7 +187,6 @@ type Model =
         MinDifferenceDepth   : float
         MaxDifferenceDepth   : float
         GhostSilhouette      : bool
-        GhostDetail          : GhostDetail
         GhostOpacity         : float
         AnchorGhostMode      : bool
 
@@ -251,7 +245,6 @@ module Model =
             MinDifferenceDepth  = 3.0
             MaxDifferenceDepth  = 10.0
             GhostSilhouette     = false
-            GhostDetail         = OutlineOnly
             GhostOpacity        = 0.1
             AnchorGhostMode     = false
             SceneBounds    = Box3d.Invalid

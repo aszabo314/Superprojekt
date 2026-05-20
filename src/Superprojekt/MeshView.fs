@@ -69,209 +69,56 @@ module MeshView =
             } |> ignore
             m
 
-    let renderMesh
-        (loaded : LoadedMesh)
-        (isGhost : aval<bool>)
-        (meshIndex : aval<int>)
-        (active : aval<bool>)
-        (commonCentroid : aval<V3d>)
-        (meshScale : aval<float>)
-        (meshTransform : aval<Trafo3d>)
-        (ghostOpacity : aval<float>)
-        (colorMode : aval<int>) =
-        let depthTestMode =
-            isGhost |> AVal.map (fun g -> if g then DepthTest.Always else DepthTest.LessOrEqual)
-        let renderEnabled =
-            (isGhost, active, loaded.fvc) |||> AVal.map3 (fun g a c -> (a || not g) && c > 3)
-        let trafo =
-            let base_ =
-                (commonCentroid, loaded.centroid, meshScale) |||> AVal.map3 (fun common mesh scale ->
-                    Trafo3d.Translation(mesh - common) * Trafo3d.Scale(scale))
-            (base_, meshTransform) ||> AVal.map2 (fun b t -> t * b)
-        sg {
-            Sg.Trafo trafo
-            Sg.Shader {
-                DefaultSurfaces.trafo
-                DefaultSurfaces.diffuseTexture
-                Shader.headlight
-                BlitShader.clippy
-            }
-            Sg.Uniform("DiffuseColorTexture", loaded.tex)
-            Sg.Uniform("IsGhost", isGhost)
-            Sg.Uniform("MeshIndex", meshIndex)
-            Sg.Uniform("GhostOpacity", ghostOpacity)
-            Sg.Uniform("ColorMode", colorMode)
-            Sg.BlendMode BlendMode.Blend
-            Sg.DepthTest depthTestMode
-            Sg.VertexAttributes(
-                HashMap.ofList [
-                    string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
-                    string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
-                    string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
-                ]
-            )
-            Sg.Active renderEnabled
-            Sg.Index(BufferView(loaded.idx, typeof<int>))
-            Sg.Render loaded.fvc
+    let private meshTrafo
+        (commonCentroid : aval<V3d>) (loaded : LoadedMesh)
+        (meshScale : aval<float>) (meshTransform : aval<Trafo3d>) =
+        let base_ =
+            (commonCentroid, loaded.centroid, meshScale) |||> AVal.map3 (fun common mesh scale ->
+                Trafo3d.Translation(mesh - common) * Trafo3d.Scale(scale))
+        (base_, meshTransform) ||> AVal.map2 (fun b t -> t * b)
+
+    let private headlight (v : Effects.Vertex) =
+        fragment {
+            let n = v.n |> Vec.normalize
+            let toCam = uniform.CameraLocation - v.wp.XYZ |> Vec.normalize
+            let ndl = max 0.15 (abs (Vec.dot n toCam))
+            return V4d(v.c.XYZ * ndl, v.c.W)
         }
 
-    let buildMeshTextures (info : RenderControlInfo) (loadFinished : string -> unit) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (model : AdaptiveModel) =
-        let signature =
-            info.Runtime.CreateFramebufferSignature [
-                DefaultSemantic.Colors,       TextureFormat.Rgba8
-                DefaultSemantic.Normals,      TextureFormat.Rgba16f
-                DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
-            ]
+    // Regular forward rendering: one draw call per mesh, each with its own
+    // texture atlas. Per-mesh visibility (`MeshVisible`) drives Sg.Active.
+    let buildScene (loadFinished : string -> unit) (model : AdaptiveModel) : aset<ISceneNode> =
+        let scaleFor (name : string) =
+            let dataset = name.Split('/', 2).[0]
+            model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
 
-        let meshIndices =
-            model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
-                names |> Seq.mapi (fun i a -> a, i) |> Map.ofSeq
-            )
-        let texCount = model.MeshNames |> AList.count |> AVal.map (max 1) |> AVal.map ((*)2)
-        let colorTex =
-            info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Rgba8, 1, 1, texCount)
-
-        let normalTex =
-            info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Rgba16f, 1, 1, texCount)
-
-        let depthTex =
-            info.Runtime.CreateTexture2DArray(info.ViewportSize, TextureFormat.Depth24Stencil8, 1, 1, texCount)
-
-        let fbos =
-            (colorTex, normalTex, depthTex) |||> AdaptiveResource.bind3 (fun color normal depth ->
-                texCount |> AVal.map (fun cnt ->
-                    Array.init cnt (fun i ->
-                        info.Runtime.CreateFramebuffer(
-                            signature, [
-                                DefaultSemantic.Colors, color.[TextureAspect.Color, 0, i] :> IFramebufferOutput
-                                DefaultSemantic.Normals, normal.[TextureAspect.Color, 0, i] :> IFramebufferOutput
-                                DefaultSemantic.DepthStencil, depth.[TextureAspect.DepthStencil, 0, i] :> IFramebufferOutput
-                            ]
-                        )
-                    )
-                )
-            )
-
-        let lassoPlaneCount =
-            model.LassoVolume |> AVal.map (function
-                | Some v -> v.Planes.Length |> min BlitShader.MaxLassoPlanes
-                | None -> 0)
-        let lassoPlanes =
-            model.LassoVolume |> AVal.map (fun vOpt ->
-                let arr = Array.create BlitShader.MaxLassoPlanes V4d.Zero
-                match vOpt with
-                | Some v ->
-                    let n = min v.Planes.Length BlitShader.MaxLassoPlanes
-                    for i in 0 .. n - 1 do arr.[i] <- v.Planes.[i]
-                | None -> ()
-                arr)
-        let provenanceAnchors =
-            model.ScanPins.Pins |> AMap.toAVal |> AVal.map (fun pins ->
-                let arr = Arr<N<32>, V4d>()
-                let mutable n = 0
-                for (_, pin) in HashMap.toSeq pins do
-                    if pin.Phase = PinPhase.Committed && n < 32 then
-                        arr.[n] <- V4d(pin.Centre.X, pin.Centre.Y, pin.Centre.Z, pin.Sigma)
-                        n <- n + 1
-                arr, n)
-        let provenanceAnchorsArr = provenanceAnchors |> AVal.map fst
-        let provenanceAnchorCount = provenanceAnchors |> AVal.map snd
-        let tasks =
-            let scaleFor (name : string) =
-                let dataset = name.Split('/', 2).[0]
-                model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
-            let makeTask (loaded : LoadedMesh) (meshIndex : int) (isActive : aval<bool>) (scale : aval<float>) (meshT : aval<Trafo3d>) (isGhost : bool) =
-                let body =
-                    sg {
-                        Sg.View view
-                        Sg.Proj proj
-                        Sg.Uniform("ViewportSize", info.ViewportSize)
-                        Sg.Uniform("LassoPlaneCount", lassoPlaneCount)
-                        Sg.Uniform("LassoPlanes", lassoPlanes)
-                        Sg.Uniform("AnchorGhostMode", model.AnchorGhostMode)
-                        Sg.Uniform("ProvenanceAnchorCount", provenanceAnchorCount)
-                        Sg.Uniform("ProvenanceAnchors", provenanceAnchorsArr)
-                        let modeInt = model.RenderingMode |> AVal.map (function Textured -> 0 | Shaded -> 1 | WhiteSurface -> 2)
-                        renderMesh loaded (AVal.constant isGhost) (AVal.constant meshIndex) isActive model.CommonCentroid scale meshT model.GhostOpacity modeInt
-                    }
-                info.Runtime.CompileRender(signature, body.GetRenderObjects(TraversalState.empty info.Runtime))
-            meshIndices |> AList.bind (fun meshIndices ->
-                model.MeshNames |> AList.collect (fun name ->
-                    let loaded = loadMeshAsync (fun () -> loadFinished name) name
-                    let meshIndex = meshIndices.[name]
-                    let isActive = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-                    let scale = scaleFor name
-                    let meshT =
-                        model.MeshTransforms |> AVal.map (fun m ->
-                            Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
-                    AList.ofList [
-                        (2 * meshIndex,     makeTask loaded meshIndex isActive scale meshT false)
-                        (2 * meshIndex + 1, makeTask loaded meshIndex isActive scale meshT true)
+        model.MeshNames |> AList.map (fun name ->
+            let loaded = loadMeshAsync (fun () -> loadFinished name) name
+            let isActive =
+                model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+            let scale = scaleFor name
+            let meshT =
+                model.MeshTransforms |> AVal.map (fun m ->
+                    Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
+            let renderEnabled =
+                (isActive, loaded.fvc) ||> AVal.map2 (fun a c -> a && c > 3)
+            sg {
+                Sg.Active renderEnabled
+                Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                Sg.Shader {
+                    DefaultSurfaces.trafo
+                    DefaultSurfaces.diffuseTexture
+                    headlight
+                }
+                Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                Sg.VertexAttributes(
+                    HashMap.ofList [
+                        string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
+                        string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
+                        string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
                     ]
                 )
-            )
-
-        let clear =
-            info.Runtime.CompileClear(signature, clear { color C4f.Zero; depth 1.0; stencil 0 })
-
-        let output =
-            (colorTex, normalTex, depthTex) |||> AdaptiveResource.bind3 (fun color normal depth ->
-                fbos |> AdaptiveResource.bind (fun fbos ->
-                    AList.toAVal tasks |> AVal.bind (fun tasks ->
-                        AVal.custom (fun t ->
-                            for (i, mainTask) in tasks do
-                                clear.Run(t, RenderToken.Empty, fbos.[i])
-                                mainTask.Run(t, RenderToken.Empty, fbos.[i])
-                            color, normal, depth
-                        )
-                    )
-                )
-            )
-        let colorTex  = AdaptiveResource.map (fun (c, _, _) -> c) output
-        let normalTex = AdaptiveResource.map (fun (_, n, _) -> n) output
-        let depthTex  = AdaptiveResource.map (fun (_, _, d) -> d) output
-        model.MeshNames |> AList.count, colorTex, normalTex, depthTex, meshIndices
-
-    let composeMeshTextures
-        (count : aval<int>)
-        (colors : aval<IBackendTexture>)
-        (depths : aval<IBackendTexture>)
-        (explore : aval<ITexture>)
-        (differenceRendering    : aval<bool>)
-        (minDifferenceDepth     : aval<float>)
-        (maxDifferenceDepth     : aval<float>)
-        (ghostSilhouette        : aval<bool>)
-        (ghostDetailMode        : aval<int>)
-        (provenanceEnabled      : aval<int>)
-        (provenanceThreshold    : aval<float>)
-        (falloffZoneOnly        : aval<int>)
-        (provenanceDataset      : aval<Arr<N<16>, float>>)
-        (provenanceAlgorithm    : aval<Arr<N<16>, float>>)
-        (provenanceAnchorCount  : aval<int>)
-        (provenanceAnchors      : aval<Arr<N<32>, V4d>>)
-        (fusionMode             : aval<int>)
-        (meshVisibilityMask     : aval<int>) =
-        let colorTex = colors |> AdaptiveResource.map (fun t -> t :> ITexture)
-        let depthTex = depths |> AdaptiveResource.map (fun t -> t :> ITexture)
-        sg {
-            Sg.Shader { BlitShader.readArray }
-            Sg.Uniform("MeshCount",          count)
-            Sg.Uniform("ColorTexture",          colorTex)
-            Sg.Uniform("DepthTexture",          depthTex)
-            Sg.Uniform("ExploreTexture",        explore)
-            Sg.Uniform("DifferenceRendering",   differenceRendering)
-            Sg.Uniform("MinDifferenceDepth",    minDifferenceDepth)
-            Sg.Uniform("MaxDifferenceDepth",    maxDifferenceDepth)
-            Sg.Uniform("GhostSilhouette",       ghostSilhouette)
-            Sg.Uniform("GhostDetailMode",       ghostDetailMode)
-            Sg.Uniform("ProvenanceEnabled",     provenanceEnabled)
-            Sg.Uniform("ProvenanceThreshold",   provenanceThreshold)
-            Sg.Uniform("FalloffZoneOnly",       falloffZoneOnly)
-            Sg.Uniform("ProvenanceDataset",     provenanceDataset)
-            Sg.Uniform("ProvenanceAlgorithm",   provenanceAlgorithm)
-            Sg.Uniform("ProvenanceAnchorCount", provenanceAnchorCount)
-            Sg.Uniform("ProvenanceAnchors",     provenanceAnchors)
-            Sg.Uniform("FusionMode",            fusionMode)
-            Sg.Uniform("MeshVisibilityMask",    meshVisibilityMask)
-            Primitives.FullscreenQuad
-        }
+                Sg.Index(BufferView(loaded.idx, typeof<int>))
+                Sg.Render loaded.fvc
+            }
+        ) |> AList.toASet

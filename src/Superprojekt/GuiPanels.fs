@@ -82,17 +82,6 @@ module GuiPanels =
             }
             compactToggle "Ghost silhouette" model.GhostSilhouette (fun () ->
                 env.Emit [ToggleGhostSilhouette])
-            div {
-                Class "lp-sub lp-ghost-detail"
-                model.GhostSilhouette |> AVal.map (fun on ->
-                    if on then None else Some (Style [Display "none"]))
-                let detail = model.GhostDetail
-                compactButtonBar [
-                    "Outline", detail |> AVal.map (fun d -> d = OutlineOnly), (fun () -> env.Emit [SetGhostDetail OutlineOnly])
-                    "+ Curvature", detail |> AVal.map (fun d -> d = PlusCurvature), (fun () -> env.Emit [SetGhostDetail PlusCurvature])
-                    "+ Terrain", detail |> AVal.map (fun d -> d = PlusTerrainFeatures), (fun () -> env.Emit [SetGhostDetail PlusTerrainFeatures])
-                ]
-            }
             compactToggle "Anchor-blob ghost" model.AnchorGhostMode (fun () ->
                 env.Emit [ToggleAnchorGhostMode])
         }

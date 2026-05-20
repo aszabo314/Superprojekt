@@ -84,8 +84,6 @@ module Update =
             { model with DifferenceRendering = not model.DifferenceRendering }
         | ToggleGhostSilhouette ->
             { model with GhostSilhouette = not model.GhostSilhouette }
-        | SetGhostDetail d ->
-            { model with GhostDetail = d }
         | SetGhostOpacity v ->
             { model with GhostOpacity = v }
         | ToggleAnchorGhostMode ->

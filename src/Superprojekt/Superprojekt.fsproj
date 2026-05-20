@@ -18,6 +18,7 @@
     <None Include="paket.references" />
     <Compile Include="RankingState.fs" />
     <Compile Include="MeshData.fs" />
+    <Compile Include="BspTree.fs" />
     <Compile Include="Query.fs" />
     <Compile Include="CameraModel.fs" />
     <Compile Include="CameraModel.g.fs" />

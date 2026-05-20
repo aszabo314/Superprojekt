@@ -189,11 +189,6 @@ module Persistence =
 
         root.["fullscreen"]    <- JsonValue.Create model.FullscreenOn
         root.["ghostOn"]       <- JsonValue.Create model.GhostSilhouette
-        root.["ghostDetail"]   <-
-            JsonValue.Create (match model.GhostDetail with
-                              | OutlineOnly -> "outline"
-                              | PlusCurvature -> "curv"
-                              | PlusTerrainFeatures -> "terrain")
         root.["ghostOpacity"]  <- JsonValue.Create model.GhostOpacity
         root.["anchorGhost"]   <- JsonValue.Create model.AnchorGhostMode
         root.["fusion"]        <- JsonValue.Create model.FusionMode
@@ -413,12 +408,6 @@ module Persistence =
                 let n : JsonNode = root.[key]
                 if isNull n then dflt else n.GetValue<string>()
 
-            let ghostDetail =
-                match jstr "ghostDetail" "outline" with
-                | "curv" -> PlusCurvature
-                | "terrain" -> PlusTerrainFeatures
-                | _ -> OutlineOnly
-
             let refAxis =
                 match jstr "refAxis" "z" with
                 | "view" -> AlongCameraView
@@ -436,7 +425,6 @@ module Persistence =
                     Registration = registrationMode
                     FullscreenOn = jbool "fullscreen" current.FullscreenOn
                     GhostSilhouette = jbool "ghostOn" current.GhostSilhouette
-                    GhostDetail = ghostDetail
                     GhostOpacity = jfloat "ghostOpacity" current.GhostOpacity
                     AnchorGhostMode = jbool "anchorGhost" current.AnchorGhostMode
                     FusionMode = jbool "fusion" current.FusionMode

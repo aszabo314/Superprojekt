@@ -15,7 +15,6 @@ type Message =
     | ToggleFullscreen
     | ToggleDifferenceRendering
     | ToggleGhostSilhouette
-    | SetGhostDetail of GhostDetail
     | SetGhostOpacity of float
     | ToggleAnchorGhostMode
     | SetRegistrationMode of RegistrationMode

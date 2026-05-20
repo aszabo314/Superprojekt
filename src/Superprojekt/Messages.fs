@@ -16,6 +16,8 @@ type Message =
     | ToggleDifferenceRendering
     | ToggleGhostSilhouette
     | SetGhostOpacity of float
+    | SetShadingStrength of float
+    | SetSlopeThresholdDeg of float
     | ToggleAnchorGhostMode
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option

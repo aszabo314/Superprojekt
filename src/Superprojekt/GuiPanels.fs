@@ -77,7 +77,7 @@ module GuiPanels =
                 compactButtonBar [
                     "Textured", (rm |> AVal.map (fun m -> m = Textured)), (fun () -> env.Emit [SetRenderingMode Textured])
                     "Shaded",   (rm |> AVal.map (fun m -> m = Shaded)),   (fun () -> env.Emit [SetRenderingMode Shaded])
-                    "White",    (rm |> AVal.map (fun m -> m = WhiteSurface)), (fun () -> env.Emit [SetRenderingMode WhiteSurface])
+                    "Slope",    (rm |> AVal.map (fun m -> m = SlopeColor)),   (fun () -> env.Emit [SetRenderingMode SlopeColor])
                 ]
             }
             compactToggle "Ghost silhouette" model.GhostSilhouette (fun () ->

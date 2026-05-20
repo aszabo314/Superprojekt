@@ -86,6 +86,10 @@ module Update =
             { model with GhostSilhouette = not model.GhostSilhouette }
         | SetGhostOpacity v ->
             { model with GhostOpacity = v }
+        | SetShadingStrength v ->
+            { model with ShadingStrength = v }
+        | SetSlopeThresholdDeg v ->
+            { model with SlopeThresholdDeg = v }
         | ToggleAnchorGhostMode ->
             { model with AnchorGhostMode = not model.AnchorGhostMode }
 

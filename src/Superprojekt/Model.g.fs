@@ -1,5 +1,5 @@
-//1192b168-639a-6f37-fd0c-b0ab3210a940
-//6511380d-e70f-6078-6e51-8ab7d4056e49
+//db9177a0-87a4-ed5f-227e-6965f476ec2e
+//b08132c0-bca2-a457-44f9-5f8a1dc19bae
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -33,6 +33,8 @@ type AdaptiveModel(value : Model) =
     let _MaxDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MaxDifferenceDepth)
     let _GhostSilhouette_ = FSharp.Data.Adaptive.cval(value.GhostSilhouette)
     let _GhostOpacity_ = FSharp.Data.Adaptive.cval(value.GhostOpacity)
+    let _ShadingStrength_ = FSharp.Data.Adaptive.cval(value.ShadingStrength)
+    let _SlopeThresholdDeg_ = FSharp.Data.Adaptive.cval(value.SlopeThresholdDeg)
     let _AnchorGhostMode_ = FSharp.Data.Adaptive.cval(value.AnchorGhostMode)
     let _SceneBounds_ = FSharp.Data.Adaptive.cval(value.SceneBounds)
     let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
@@ -86,6 +88,8 @@ type AdaptiveModel(value : Model) =
             _MaxDifferenceDepth_.Value <- value.MaxDifferenceDepth
             _GhostSilhouette_.Value <- value.GhostSilhouette
             _GhostOpacity_.Value <- value.GhostOpacity
+            _ShadingStrength_.Value <- value.ShadingStrength
+            _SlopeThresholdDeg_.Value <- value.SlopeThresholdDeg
             _AnchorGhostMode_.Value <- value.AnchorGhostMode
             _SceneBounds_.Value <- value.SceneBounds
             _MeshBounds_.Value <- value.MeshBounds
@@ -132,6 +136,8 @@ type AdaptiveModel(value : Model) =
     member __.MaxDifferenceDepth = _MaxDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.GhostSilhouette = _GhostSilhouette_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.GhostOpacity = _GhostOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.ShadingStrength = _ShadingStrength_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.SlopeThresholdDeg = _SlopeThresholdDeg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.AnchorGhostMode = _AnchorGhostMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SceneBounds = _SceneBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>

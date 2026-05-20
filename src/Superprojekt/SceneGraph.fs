@@ -76,10 +76,16 @@ module SceneGraph =
             env.Emit [ LoadFinished name ]
 
         // ---- Render pipeline:
-        //   1. Depth pre-pass: only fully-opaque (enabled) meshes write depth.
+        //   1. Depth pre-pass: only fully-opaque (enabled) meshes write depth into
+        //      the shared depth attachment. The OIT pass then depth-tests against
+        //      this without writing depth itself — that's the only way WBOIT can
+        //      give correct occlusion. Without the pre-pass, two opaque fragments
+        //      at the same pixel both contribute to Accum (back-most can still
+        //      leak ~10% through the depth-based weight), producing the "missing
+        //      depth occlusion" artifact.
         //   2. OIT pass: all visible 3D objects (incl. ghost meshes, pins, axes)
         //      emit weighted Accum + Revealage MRT outputs; depth-test against (1),
-        //      depth-write off.
+        //      depth-write OFF.
         //   3. Compose pass (a fullscreen quad as an ASet leaf): sample Accum +
         //      Revealage and alpha-blend (baseColor, density) over the screen.
 
@@ -119,7 +125,7 @@ module SceneGraph =
                             DefaultSemantic.DepthStencil, d.[TextureAspect.DepthStencil, 0, 0] :> IFramebufferOutput
                         ])))
 
-        // Pre-pass scene: only enabled meshes, trafo-only shader.
+        // Pre-pass scene: only enabled meshes, trafo + depth-only fragment.
         let prepassScene =
             sg {
                 Sg.View view
@@ -134,7 +140,8 @@ module SceneGraph =
         let prepassClear =
             info.Runtime.CompileClear(prepassSig, clear { depth 1.0; stencil 0 })
 
-        // OIT scene: every 3D leaf emits MRT to Accum + Revealage; depth-write off.
+        // OIT scene: every 3D leaf emits MRT to Accum + Revealage. Depth-write OFF
+        // so opaque meshes don't pollute the depth buffer the pre-pass populated.
         let meshScene = MeshView.buildScene loadFinished model
         let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)
         let pinScene = ScanPinScene.build env view proj fullscreenActive placementHover model
@@ -199,6 +206,7 @@ module SceneGraph =
                 Sg.Shader { DefaultSurfaces.trafo; OIT.compose }
                 Sg.Uniform("AccumTexture",     accumOut)
                 Sg.Uniform("RevealageTexture", revealageOut)
+                Sg.Uniform("DepthTexture", depthTex)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.View Trafo3d.Identity

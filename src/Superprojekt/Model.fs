@@ -24,7 +24,7 @@ type MixMode =
 type RenderingMode =
     | Textured
     | Shaded
-    | WhiteSurface
+    | SlopeColor
 
 type MeshSoloState =
     | NoSolo
@@ -188,6 +188,8 @@ type Model =
         MaxDifferenceDepth   : float
         GhostSilhouette      : bool
         GhostOpacity         : float
+        ShadingStrength      : float
+        SlopeThresholdDeg    : float
         AnchorGhostMode      : bool
 
         SceneBounds    : Box3d
@@ -246,6 +248,8 @@ module Model =
             MaxDifferenceDepth  = 10.0
             GhostSilhouette     = false
             GhostOpacity        = 0.5
+            ShadingStrength     = 0.5
+            SlopeThresholdDeg   = 30.0
             AnchorGhostMode     = false
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty

@@ -190,6 +190,8 @@ module Persistence =
         root.["fullscreen"]    <- JsonValue.Create model.FullscreenOn
         root.["ghostOn"]       <- JsonValue.Create model.GhostSilhouette
         root.["ghostOpacity"]  <- JsonValue.Create model.GhostOpacity
+        root.["shadingStrength"] <- JsonValue.Create model.ShadingStrength
+        root.["slopeThresholdDeg"] <- JsonValue.Create model.SlopeThresholdDeg
         root.["anchorGhost"]   <- JsonValue.Create model.AnchorGhostMode
         root.["fusion"]        <- JsonValue.Create model.FusionMode
         root.["provHeatmap"]   <- JsonValue.Create model.ProvenanceHeatmap
@@ -426,6 +428,8 @@ module Persistence =
                     FullscreenOn = jbool "fullscreen" current.FullscreenOn
                     GhostSilhouette = jbool "ghostOn" current.GhostSilhouette
                     GhostOpacity = jfloat "ghostOpacity" current.GhostOpacity
+                    ShadingStrength = jfloat "shadingStrength" current.ShadingStrength
+                    SlopeThresholdDeg = jfloat "slopeThresholdDeg" current.SlopeThresholdDeg
                     AnchorGhostMode = jbool "anchorGhost" current.AnchorGhostMode
                     FusionMode = jbool "fusion" current.FusionMode
                     ProvenanceHeatmap = jbool "provHeatmap" current.ProvenanceHeatmap

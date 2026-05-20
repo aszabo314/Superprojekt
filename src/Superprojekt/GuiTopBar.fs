@@ -135,6 +135,16 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            inlineSlider "Shading strength" 0.0 1.0 0.01 (sprintf "%.2f") model.ShadingStrength (fun v ->
+                                env.Emit [SetShadingStrength v])
+                        }
+                        div {
+                            Class "tb-gear-row"
+                            inlineSlider "Slope threshold (°)" 1.0 89.0 1.0 (sprintf "%.0f°") model.SlopeThresholdDeg (fun v ->
+                                env.Emit [SetSlopeThresholdDeg v])
+                        }
+                        div {
+                            Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Dataset" }
                             span {
                                 Class "tb-gear-val"

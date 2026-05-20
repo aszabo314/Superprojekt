@@ -12,7 +12,10 @@ open Aardvark.Rendering
 //     outputs to two attachments: Accum (Rgba16f, additive blend) and
 //     Revealage (Rgba8, Zero/InvSourceColor blend → ∏(1-α)).
 //   - A depth pre-pass populates a shared depth buffer with the closest
-//     fully-opaque fragment per pixel; the OIT pass depth-tests against it.
+//     fully-opaque fragment per pixel; the OIT pass depth-tests against it
+//     with depth-write OFF. Required for correct occlusion — without it,
+//     two overlapping opaque fragments both get accumulated and back-most
+//     ones leak through the depth-based WBOIT weight.
 //   - OIT.compose reads back Accum + Revealage and produces (baseColor, density)
 //     to alpha-blend over the screen.
 module OIT =
@@ -72,7 +75,20 @@ module OIT =
                 addressU WrapMode.Clamp
                 addressV WrapMode.Clamp
             }
+        let private depthSampler =
+            sampler2d {
+                texture uniform?DepthTexture
+                filter Filter.MinMagPoint
+                addressU WrapMode.Clamp
+                addressV WrapMode.Clamp
+            }
 
+        type ComposeFragment =
+            {
+                [<Color>] c : V4f
+                [<Depth>] d : float32
+            }
+        
         type ComposeVertex =
             {
                 [<Position>] pos : V4f
@@ -88,7 +104,7 @@ module OIT =
                     else accum0
                 let baseColor = accum.XYZ / max accum.W 1e-5f
                 let density = 1.0f - revealage
-                return V4f(baseColor, density)
+                return {c = V4f(baseColor, density); d = depthSampler.SampleLevel(v.tc, 0.0f).X }
             }
 
     let weightedBlend = Shaders.weightedBlend

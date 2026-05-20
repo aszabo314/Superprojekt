@@ -92,7 +92,7 @@ module Lines =
         let fragment (v : Vertex) =
             fragment { return v.col }
 
-    let render (segments : aval<(V3d * V3d * V4d * float)[]>) =
+    let private buildBuffers (segments : aval<(V3d * V3d * V4d * float)[]>) =
         let buffers =
             segments |> AVal.map (fun segs ->
                 let n = segs.Length
@@ -128,8 +128,33 @@ module Lines =
         let widthArr = buffers |> AVal.map (fun (_,_,_,a,_,_) -> ArrayBuffer a :> IBuffer)
         let idxArr   = buffers |> AVal.map (fun (_,_,_,_,a,_) -> ArrayBuffer a :> IBuffer)
         let count    = buffers |> AVal.map (fun (_,_,_,_,_,n) -> if n = 0 then 0 else 6 * n)
+        p0Arr, p1Arr, colArr, widthArr, idxArr, count
+
+    let render (segments : aval<(V3d * V3d * V4d * float)[]>) =
+        let p0Arr, p1Arr, colArr, widthArr, idxArr, count = buildBuffers segments
         sg {
             Sg.Shader { LineShader.line; LineShader.fragment; OIT.weightedBlend }
+            Sg.NoEvents
+            Sg.VertexAttributes(
+                HashMap.ofList [
+                    "P0",        BufferView(p0Arr,    typeof<V3f>)
+                    "P1",        BufferView(p1Arr,    typeof<V3f>)
+                    "LineColor", BufferView(colArr,   typeof<V4f>)
+                    "LineWidth", BufferView(widthArr, typeof<float32>)
+                ])
+            Sg.Index(BufferView(idxArr, typeof<int>))
+            Sg.Render count
+        }
+
+    // Forward-rendered variant: emits a normal RGBA color attachment (no WBOIT
+    // MRT). Use for UI overlays (coordinate widget, etc.) that should be drawn
+    // straight to the main framebuffer on a post-OIT pass — the OIT pass
+    // washes thin lines out by averaging them with any overlapping mesh
+    // contributions at the same pixel.
+    let renderForward (segments : aval<(V3d * V3d * V4d * float)[]>) =
+        let p0Arr, p1Arr, colArr, widthArr, idxArr, count = buildBuffers segments
+        sg {
+            Sg.Shader { LineShader.line; LineShader.fragment }
             Sg.NoEvents
             Sg.VertexAttributes(
                 HashMap.ofList [

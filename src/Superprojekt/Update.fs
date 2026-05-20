@@ -80,8 +80,6 @@ module Update =
             { model with DebugLog = log }
         | ToggleFullscreen ->
             { model with FullscreenOn = not model.FullscreenOn }
-        | ToggleDifferenceRendering ->
-            { model with DifferenceRendering = not model.DifferenceRendering }
         | ToggleGhostSilhouette ->
             { model with GhostSilhouette = not model.GhostSilhouette }
         | SetGhostOpacity v ->
@@ -225,10 +223,6 @@ module Update =
             | Result.Error err ->
                 let log = model.DebugLog.InsertAt(0, sprintf "workspace load failed: %s" err)
                 { model with DebugLog = log }
-        | SetMinDifferenceDepth v ->
-            { model with MinDifferenceDepth = v }
-        | SetMaxDifferenceDepth v ->
-            { model with MaxDifferenceDepth = v }
         | SceneBoundsLoaded bboxes ->
             if bboxes.Length = 0 then model
             else

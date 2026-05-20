@@ -1,5 +1,5 @@
-//db9177a0-87a4-ed5f-227e-6965f476ec2e
-//b08132c0-bca2-a457-44f9-5f8a1dc19bae
+//d07e0356-81aa-705f-bd04-67ea604cce0c
+//778c318d-c9cb-b125-92a0-ed22575af2f0
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -28,9 +28,6 @@ type AdaptiveModel(value : Model) =
     let _DatasetScales_ = FSharp.Data.Adaptive.cval(value.DatasetScales)
     let _DatasetCentroids_ = FSharp.Data.Adaptive.cval(value.DatasetCentroids)
     let _FullscreenOn_ = FSharp.Data.Adaptive.cval(value.FullscreenOn)
-    let _DifferenceRendering_ = FSharp.Data.Adaptive.cval(value.DifferenceRendering)
-    let _MinDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MinDifferenceDepth)
-    let _MaxDifferenceDepth_ = FSharp.Data.Adaptive.cval(value.MaxDifferenceDepth)
     let _GhostSilhouette_ = FSharp.Data.Adaptive.cval(value.GhostSilhouette)
     let _GhostOpacity_ = FSharp.Data.Adaptive.cval(value.GhostOpacity)
     let _ShadingStrength_ = FSharp.Data.Adaptive.cval(value.ShadingStrength)
@@ -83,9 +80,6 @@ type AdaptiveModel(value : Model) =
             _DatasetScales_.Value <- value.DatasetScales
             _DatasetCentroids_.Value <- value.DatasetCentroids
             _FullscreenOn_.Value <- value.FullscreenOn
-            _DifferenceRendering_.Value <- value.DifferenceRendering
-            _MinDifferenceDepth_.Value <- value.MinDifferenceDepth
-            _MaxDifferenceDepth_.Value <- value.MaxDifferenceDepth
             _GhostSilhouette_.Value <- value.GhostSilhouette
             _GhostOpacity_.Value <- value.GhostOpacity
             _ShadingStrength_.Value <- value.ShadingStrength
@@ -131,9 +125,6 @@ type AdaptiveModel(value : Model) =
     member __.DatasetScales = _DatasetScales_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
     member __.DatasetCentroids = _DatasetCentroids_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.V3d>>
     member __.FullscreenOn = _FullscreenOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.DifferenceRendering = _DifferenceRendering_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.MinDifferenceDepth = _MinDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.MaxDifferenceDepth = _MaxDifferenceDepth_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.GhostSilhouette = _GhostSilhouette_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.GhostOpacity = _GhostOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ShadingStrength = _ShadingStrength_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>

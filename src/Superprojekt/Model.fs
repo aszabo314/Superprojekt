@@ -183,9 +183,6 @@ type Model =
         DatasetCentroids : Map<string, V3d>
 
         FullscreenOn         : bool
-        DifferenceRendering  : bool
-        MinDifferenceDepth   : float
-        MaxDifferenceDepth   : float
         GhostSilhouette      : bool
         GhostOpacity         : float
         ShadingStrength      : float
@@ -243,9 +240,6 @@ module Model =
             DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
             DatasetCentroids = Map.empty
             FullscreenOn        = false
-            DifferenceRendering = false
-            MinDifferenceDepth  = 3.0
-            MaxDifferenceDepth  = 10.0
             GhostSilhouette     = false
             GhostOpacity        = 0.5
             ShadingStrength     = 0.5

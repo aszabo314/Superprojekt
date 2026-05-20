@@ -279,16 +279,6 @@ module GuiPanels =
         collapsibleSection "Visualization" false (
             div {
                 Class "lp-vis-body"
-                div {
-                    Class "lp-diff-row"
-                    compactToggle "Difference" model.DifferenceRendering (fun () ->
-                        env.Emit [ToggleDifferenceRendering])
-                    inlineRangeSlider "" 0.0 20.0 0.1
-                        (fun lo hi -> sprintf "%.1f–%.1fm" lo hi)
-                        model.MinDifferenceDepth model.MaxDifferenceDepth
-                        (fun lo hi ->
-                            env.Emit [SetMinDifferenceDepth lo; SetMaxDifferenceDepth hi])
-                }
 
                 collapsibleSection "Error metadata" false (
                     div {

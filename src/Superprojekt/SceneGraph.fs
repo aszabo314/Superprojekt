@@ -29,9 +29,28 @@ module SceneGraph =
             Sg.Render (AVal.constant boxIdx.Length)
         }
 
-    // Origin indicator: 3 axes + tick marks. (Text labels are dropped — Sg.Text
-    // uses its own internal shader that can't be composed with OIT.weightedBlend.
-    // TODO: re-add labels via a post-OIT overlay pass if needed.)
+    // Forward-shaded version of axisBox — emits a regular Color attachment for
+    // the post-OIT overlay (passOne) instead of WBOIT MRT outputs.
+    let private axisBoxForward (color : V4d) (trafo : Trafo3d) =
+        sg {
+            Sg.Trafo (AVal.constant trafo)
+            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+            Sg.Uniform("FlatColor", AVal.constant (V4f color))
+            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+            Sg.NoEvents
+            Sg.VertexAttributes(
+                HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer boxPos :> IBuffer), typeof<V3f>) ]
+            )
+            Sg.Index(BufferView(AVal.constant (ArrayBuffer boxIdx :> IBuffer), typeof<int>))
+            Sg.Render (AVal.constant boxIdx.Length)
+        }
+
+    // Origin indicator: 3 axes + tick marks. Rendered as a forward overlay on
+    // RenderPass.passOne (post-OIT compose). The OIT pass washes thin lines
+    // out — WBOIT averages line color with any overlapping mesh fragment at
+    // the same pixel, which muddies / hides the cross — so the coordinate
+    // widget renders straight into the main framebuffer with depth-test
+    // against the mesh depth that compose wrote.
     let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
         let axisLength = 3.0
         let tickSpacing = 0.25
@@ -59,9 +78,76 @@ module SceneGraph =
             ])
 
         ASet.ofList [
-            sg { Sg.Active active; Sg.View view; Sg.Proj proj; axisBox (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 0.08) }
-            sg { Sg.Active active; Sg.View view; Sg.Proj proj; Lines.render allLineSegs }
+            sg { Sg.Active active; Sg.View view; Sg.Proj proj
+                 Sg.Pass RenderPass.passOne
+                 axisBoxForward (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 0.08) }
+            sg { Sg.Active active; Sg.View view; Sg.Proj proj
+                 Sg.Pass RenderPass.passOne
+                 Lines.renderForward allLineSegs }
         ]
+
+    // Origin tick + tip text labels. Runs on RenderPass.passOne — i.e. AFTER the
+    // OIT compose quad writes its color + (pre-pass) depth into the main FB —
+    // so the labels depth-test against mesh depth just like in the old forward
+    // pipeline. Sg.Text's internal shader is incompatible with OIT MRT, hence
+    // this separate forward overlay.
+    let private originLabels (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
+        let axisLength = 3.0
+        let tickSpacing = 0.25
+        let tickLen = 0.12
+        let labelSize = 0.15
+
+        let xColor = V4d(0.82, 0.15, 0.1, 1.0)
+        let yColor = V4d(0.1, 0.72, 0.1, 1.0)
+        let zColor = V4d(0.15, 0.35, 0.9, 1.0)
+
+        let toC4b (c : V4d) = C4b(byte(c.X*255.0), byte(c.Y*255.0), byte(c.Z*255.0))
+        let darken (c : V4d) = toC4b (V4d(c.X * 0.55, c.Y * 0.55, c.Z * 0.55, 1.0))
+
+        // Each axis' tick labels are written in a plane whose first basis is the
+        // axis direction. The text is rotated so its baseline aligns with that
+        // direction and faces outward along the chosen perpendicular.
+        let textTrafoX = Trafo3d.RotationX(Constant.PiHalf)
+        let textTrafoY = Trafo3d.RotationX(Constant.PiHalf) * Trafo3d.RotationZ(Constant.PiHalf)
+        let textTrafoZ = Trafo3d.RotationX(Constant.PiHalf)
+
+        let labelNodes (color : V4d) (dir : V3d) (perpA : V3d) (textRot : Trafo3d) =
+            let n = int (axisLength / tickSpacing)
+            let textColor = darken color
+            [ for i in 1 .. n do
+                // Every 4th tick → integer-metre labels (spacing 0.25 → label every 1.0).
+                if i % 4 = 0 then
+                    let dist = float i * tickSpacing
+                    let center = dir * dist
+                    let labelPos = center + perpA * (tickLen * 0.5 + labelSize * 1.2)
+                    let trafo = Trafo3d.Scale(labelSize) * textRot * Trafo3d.Translation(labelPos)
+                    yield sg {
+                        Sg.Active active; Sg.View view; Sg.Proj proj
+                        Sg.Pass RenderPass.passOne
+                        Sg.Trafo (AVal.constant trafo)
+                        Sg.Text(sprintf "%.0f" dist, color = AVal.constant textColor, align = TextAlignment.Center)
+                    } ]
+
+        let tipOffset = axisLength + labelSize * 1.5
+        let tipNodes =
+            [ sg { Sg.Active active; Sg.View view; Sg.Proj proj
+                   Sg.Pass RenderPass.passOne
+                   Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoX * Trafo3d.Translation(V3d.IOO * tipOffset)))
+                   Sg.Text("X", color = AVal.constant (darken xColor), align = TextAlignment.Center) }
+              sg { Sg.Active active; Sg.View view; Sg.Proj proj
+                   Sg.Pass RenderPass.passOne
+                   Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoY * Trafo3d.Translation(V3d.OIO * tipOffset)))
+                   Sg.Text("Y", color = AVal.constant (darken yColor), align = TextAlignment.Center) }
+              sg { Sg.Active active; Sg.View view; Sg.Proj proj
+                   Sg.Pass RenderPass.passOne
+                   Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoZ * Trafo3d.Translation(V3d.OOI * tipOffset)))
+                   Sg.Text("Z", color = AVal.constant (darken zColor), align = TextAlignment.Center) } ]
+
+        ASet.ofList (
+            tipNodes
+            @ labelNodes xColor V3d.IOO V3d.OOI textTrafoX
+            @ labelNodes yColor V3d.OIO V3d.IOO textTrafoY
+            @ labelNodes zColor V3d.OOI V3d.IOO textTrafoZ)
 
     let build
         (env : Env<Message>)
@@ -142,11 +228,13 @@ module SceneGraph =
 
         // OIT scene: every 3D leaf emits MRT to Accum + Revealage. Depth-write OFF
         // so opaque meshes don't pollute the depth buffer the pre-pass populated.
+        // The coordinate-cross indicator is NOT in here — it renders on passOne
+        // as a forward overlay (see `indicatorNodes` below). WBOIT thin-line
+        // washout would otherwise make the cross hard / impossible to see.
         let meshScene = MeshView.buildScene loadFinished model
-        let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)
         let pinScene = ScanPinScene.build env view proj fullscreenActive placementHover model
 
-        let oitContent = ASet.unionMany (ASet.ofList [ meshScene; indicatorNodes; pinScene ])
+        let oitContent = ASet.unionMany (ASet.ofList [ meshScene; pinScene ])
 
         let oitScene =
             sg {
@@ -221,4 +309,11 @@ module SceneGraph =
                 Sg.Render (AVal.constant 6)
             }
 
-        ASet.single composeNode
+        // Coordinate cross + labels: forward overlay on passOne. Runs after
+        // the compose quad writes its color + (OIT-prepass) depth into the main
+        // framebuffer, so the widget depth-tests against the opaque-mesh depth
+        // exactly like the old forward pipeline.
+        let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)
+        let labelNodes     = originLabels    view proj (AVal.map not fullscreenActive)
+
+        ASet.unionMany (ASet.ofList [ ASet.single composeNode; indicatorNodes; labelNodes ])

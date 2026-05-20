@@ -430,9 +430,6 @@ body.loaded { background: #f4f6f8; }
 /* ── Vis techniques ────────────────────────────────────────────────── */
 
 .lp-vis-body { display: flex; flex-direction: column; gap: 2px; }
-.lp-diff-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.lp-diff-row .ct { flex-shrink: 0; }
-.lp-diff-row .irs { flex: 1; min-width: 140px; }
 .lp-clip-body { display: flex; flex-direction: column; gap: 2px; }
 
 /* ── Top bar: right-side cluster, coord, gear flyout ─────────────── */

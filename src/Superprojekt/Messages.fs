@@ -13,7 +13,6 @@ type Message =
     | ClearFilteredMesh
     | LogDebug           of string
     | ToggleFullscreen
-    | ToggleDifferenceRendering
     | ToggleGhostSilhouette
     | SetGhostOpacity of float
     | SetShadingStrength of float
@@ -34,8 +33,6 @@ type Message =
     | ToggleFusionMode
     | SaveWorkspace
     | LoadWorkspace of string
-    | SetMinDifferenceDepth of float
-    | SetMaxDifferenceDepth of float
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string

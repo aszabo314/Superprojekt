@@ -120,34 +120,85 @@ A ScanPin is a 3D annotation: a selection prism (32-gon cylinder) extruded along
 
 **Open TODOs:** See `scanpin-v2-spec.md` — key gaps: dummy cut results (no real mesh intersection), no arcball gizmo, no deserialization, top view mode, summary meshes, boxplot ranking.
 
-## Off-screen render pipeline
+## Render pipeline (hybrid Forward + WBOIT)
 
-Each mesh has **two texture slices** in a packed `Texture2DArray`: slice `2i` (solid) and slice `2i+1` (ghost). Both are rendered every frame into separate FBO attachments via `buildMeshTextures`.
+For exhaustive reference (resources, FBO signature, shader math, clear values), see **`rendering_pipeline.md`** in the repo root. The summary below is the **decision guide for adding new renderable objects**.
 
-**Per-mesh off-screen pass** (`MeshView.renderMesh`, shader `BlitShader.clippy`):
-- Applies per-dataset scale via `Trafo3d.Translation(delta) * Trafo3d.Scale(scale)` where `DatasetScales` provides scale (default 1.0; SETSM_glacier = 0.01). Clip bounds are scaled to match.
-- Cylinder clip for the active pin's `GhostClip = On` state is packed into a single `CylClip : M44d` uniform (the Aardvark.Dom shader pipeline supports vectors or matrices only). Layout: row 0 = `(active, radius, extFwd, extBack)`, row 1 = anchor xyz, row 2 = axis xyz (normalized), row 3 unused. Shader reads `M00`–`M22`.
-- **Solid slice** (`IsGhost=false`): discards fragments outside `[ClipMin, ClipMax]` (only when `ClipActive`); highlights boundary in a per-mesh color from `colorMap`; respects `active` (mesh visibility drives the clip range — hidden mesh gets infinite clip so it still renders, making its depth available)
-- **Ghost slice** (`IsGhost=true`): discards fragments *inside* the clip box (opposite of solid); renders a tinted semi-transparent color for the clipped-away / hidden region
+### Architecture at a glance
 
-**Composition pass** (`MeshView.composeMeshTextures`, shader `BlitShader.readArray`):
+```
+[ Pass 1: Forward opaque ]     IsForwardPass=true,  DepthMask=ON,  α≥τ → ForwardColor
+[ Pass 2: WBOIT translucent ]  IsForwardPass=false, DepthMask=OFF, α<τ → Accum + Revealage
+[ Compose ]                    fullscreen quad,  WBOIT-over-Forward → main FB color (no depth)
+[ passOne overlays ]           DepthTest=None forward draws on main FB (lines, text, gizmos)
+```
 
-Runs as a fullscreen quad over all mesh slices. Two loops:
+One offscreen FBO with three colour attachments + a shared depth attachment is created in `SceneGraph.build`:
 
-1. **Solid loop** — finds the front-most solid fragment among visible meshes (`MeshVisibilityMask` bitmask); tracks `minDepth`/`maxDepth` for difference metric
-2. **Ghost loop** (only when `GhostSilhouette=true`) — blends ghost fragments in front of the solid winner using alpha compositing
+| Attachment | Format | Blend | Purpose |
+| --- | --- | --- | --- |
+| `ForwardColor` | Rgba8 | straight alpha | front-most α≥τ fragment per pixel |
+| `Accum` | Rgba16f | additive | WBOIT numerator |
+| `Revealage` | Rgba8 | `Zero`/`InvSourceColor` | WBOIT ∏(1−α) denominator |
+| Depth24Stencil8 | — | — | written in pass 1, tested (no write) in pass 2 |
 
-After the loops, applies **difference rendering**: reconstructs world-space positions of `minDepth`/`maxDepth` via `ViewProjTrafoInv`, computes distance, maps to heat color if `> MinDifferenceDepth`.
+Both passes route through `OIT.hybridBlend` (in `BlitShader.fs`); the `IsForwardPass` uniform selects which branch runs. Threshold `τ = alphaThreshold = 0.99f`; below τ the WBOIT path also smoothstep-bridges revealage toward 1.0 across `[τ−Δ, τ]` (Δ = `alphaBridgeBand = 0.02f`) so `density` is continuous across the seam.
 
-Output: single color+depth fragment composited into the main framebuffer.
+Compose math (`OIT.compose`):
+```
+density  = 1 − revealage.r
+oitColor = accum.rgb / max(accum.w, ε)
+finalRGB = oitColor·density + forward.rgb·forward.a·(1 − density)
+finalA   = density + forward.a·(1 − density)
+```
+Pure α=1 → `forward.rgb` unmodified. Pure translucent → standard WBOIT. Translucent over opaque → properly composited.
 
-**Revolver / fullscreen overlay** — instead of the composition quad, `readArraySlice` samples a single slice for fullscreen tile layout; `readArraySliceColor` clips to a circle and applies offset+scale for magnifier disks.
+### Where does a new object go?
 
-**Core sample shader** (`BlitShader.coreClip`): used by the mini 3D view in GuiPins. Discards fragments where XY distance from origin exceeds `CoreRadius` uniform — a cylindrical clip in core sample space (Z = prism axis, origin = anchor). No box clipping.
+| Object kind | Pass slot | Shader output | Notes |
+| --- | --- | --- | --- |
+| **Mesh-like (variable α: fully opaque cores, soft falloff edges, lasso/blob cutouts)** | both passes (route via `IsForwardPass`) | `OIT.hybridBlend` (or any shader that branches on `IsForwardPass` and emits the 3-attachment `Output` struct) | add to `meshScene`; it is rendered once in `forwardOpaqueScene` (pass 1) and once in `wbOitScene` (pass 2). Per-fragment α decides the path. |
+| **Always-translucent (pins, ghosts, hover previews, between-space surfaces, cut-plane quads, gizmos that should depth-fade with the scene)** | WBOIT pass only | `OIT.weightedBlend` | add to `pinScene` (or anything merged into `wbOitContent`). Emits zero to `ForwardColor` (no-op under blend modes), so even if the node is accidentally compiled into pass 1 it produces no visible artefact. |
+| **Lines / pixel-constant strokes that must integrate with the WBOIT alpha pipeline** | WBOIT pass | `LineShader` style → `OIT.weightedBlend` chain (see `Lines.render`) | depth-test against the pass-1 opaque depth (`DepthTest.LessOrEqual`). Use this when lines should be occluded by meshes in front of them. |
+| **Always-on-top overlays (coordinate cross axes + labels, HUD gizmos, debug tick marks, `Sg.Text`)** | post-compose forward overlay | regular forward shader (no MRT) | tag with `Sg.Pass RenderPass.passOne` + `Sg.DepthTest (AVal.constant DepthTest.None)`. Compose writes color only (no depth) into the main FB, so passOne draws are always on top. Use `Lines.renderForward` for lines here (see `originIndicator`/`originLabels` in `SceneGraph.fs`). |
+| **`Sg.Text`** | post-compose forward overlay only | its internal shader (no MRT support) | always passOne + `DepthTest.None`. Text in the WBOIT pass would silently fail because the text shader doesn't write the MRT semantics. |
+| **Screen-space post-process (explore-mode heatmap-style)** | own offscreen FBO, sampled in compose | own shader → single attachment | WebGL2 has no per-attachment blending, so a post-process with a different blend mode cannot share the OIT FBO. Render into a dedicated texture, then sample it inside `OIT.compose` (or insert an additional compose stage). |
 
-**Pixel-constant 3D lines** (`Shader.fs` `Lines` module): `Lines.render : aval<(V3d * V3d * V4d * float)[]> -> ISg` draws line segments as screen-space-constant-width quads. The vertex shader (`LineShader.line`) does Liang-Barsky frustum clipping on the segment, projects to NDC, and expands one quad per segment in pixel space (perpendicular + parallel offsets so the line is always exactly `widthPx` CSS pixels regardless of camera distance / orientation). Non-instanced — 4 vertices per segment, with `gl_VertexID % 4` selecting the corner. Each segment carries its own color and width, so a single call can mix a 1.5 px frame with 1 px grid lines at different alphas. Width must be passed in pixels (caller's responsibility). Currently used for the coordinate-cross axes (SceneGraph `originIndicator`) and the cut-plane frame + grid (PinGeometry `buildCutPlaneEdges`); old code that did "thin cylinders" or per-segment triangle ribbons (e.g. `appendPolylineRibbon`, `buildPrismWireframe`) is the migration backlog. Not pickable — the gist this is based on includes `Sg.ForcePixelPicking` + `IIntersectable` machinery, but we skipped it; if a line ever needs to be clickable we add a parallel `Dom.OnPointerDown` ray-cast like the cylinder-drag picker.
+### How a hybrid-blend shader must emit
 
-**Explore mode heatmap** (`BlitShader.exploreHeatmap`, SceneGraph.fs `exploreTex`): Screen-space post-process that highlights pixels where multiple meshes have steep faces *and* disagree in depth. Renders into a dedicated single-attachment Rgba8 offscreen texture (`CreateTexture2D` + single-color-FBO) so blend state stays isolated — WebGL2 has no per-attachment blending, so the explore pass cannot share an FBO with anything that needs different blend settings. The render task only runs when `model.Explore.Enabled = true`; otherwise the texture is just cleared to transparent. Then `composeMeshTextures` samples the explore texture via `exploreSampler` and alpha-blends it inline at the end of `readArray`, so the final canvas only sees a single draw with one consistent blend state. Algorithm per pixel: reconstruct world-space normals from depth gradients (`ViewProjTrafoInv` on `(ndc, ndc+dx, ndc+dy)`), keep meshes whose `|dot(n, ReferenceAxis)| < SteepnessThreshold`, compute Welford variance of their depths, discard if `< VarianceThreshold`, otherwise output `HighlightColor` modulated by `intensity * HighlightAlpha`. Reference axis comes from `model.ReferenceAxis` (`AlongWorldZ` → `V3d.OOI`; `AlongCameraView` → camera back-Z). Highlight is visible through the `if eCol.W > 0.001` blend in `readArray` even where the underlying scene is empty.
+```fsharp
+type Output = {
+    [<Semantic("ForwardColor")>] forward   : V4f
+    [<Semantic("Accum")>]        accum     : V4f
+    [<Semantic("Revealage")>]    revealage : V4f
+}
+```
+- Forward branch (`uniform.IsForwardPass = true`, α ≥ τ): `forward = (rgb, 1)`, `accum = 0`, `revealage = 0`.
+- WBOIT branch (α < τ): `forward = 0`, `accum = (rgb·α, α)·w`, `revealage = (aRev, 0, 0, 0)` where `w` is the WBOIT weight and `aRev = lerp(α, 1, smoothstep(τ−Δ, τ, α))`.
+- The "do-nothing" output for any branch is `V4f.Zero`. The per-attachment blend modes leave the framebuffer untouched on a zero source.
+
+A new translucent-only object should use `OIT.weightedBlend` unchanged — never reimplement the weight/revealage formula inline. A new hybrid object should call `OIT.hybridBlend` (or copy its structure if it needs additional clipping / discard logic).
+
+### Required scene-graph wiring for new nodes
+
+- New nodes inside `meshScene` automatically participate in **both** passes (forward + WBOIT). The shader must branch on `IsForwardPass`.
+- New nodes inside `pinScene` (or any sibling merged into `wbOitContent`) participate **only** in pass 2. They must use a pure WBOIT shader.
+- Anything added to the post-compose overlay must use `Sg.Pass RenderPass.passOne` and `Sg.DepthTest (AVal.constant DepthTest.None)`.
+- Never set `Sg.BlendMode` per node — the per-attachment blend modes are configured once at the pass scope (`forwardOpaqueScene` / `wbOitScene`) and override per-node settings would cause MRT inconsistency.
+- The shared FBO has a depth attachment but **compose does not write depth to the main FB**. Always-on-top overlays must rely on `passOne` ordering, not on depth-testing against the scene.
+
+### Picking
+
+The main FB has no usable depth (compose writes color only), so `e.Location.Depth` from `Sg.OnTap` etc. is **not** a usable world-position source. Two patterns:
+
+1. **CPU/server raycast (default for world-coordinate picks):** `View.tryPickRender` filters visible meshes by bbox, groups by dataset, calls `Query.rayBatch`, picks the closest render-space hit. Pointer-move uses a debounced (120 ms) variant `queueHoverPick`. Use this for tap-to-place, double-tap-to-focus, hover previews, and any handler that needs world coordinates.
+2. **Sg.OnPointerDown on a dedicated pickable node:** still works for in-scene Intersectables that don't need depth gating — e.g. a small handle drawn last in `passOne` with `DepthTest.None`. For anything occlusion-dependent, prefer the CPU raycast (the Sg picker's depth gate is unreliable now).
+
+### Adaptive performance reminders (in addition to the general rule above)
+
+- WBOIT weight uses `f.fc.Z` (clip-space depth) — do not multiply by anything frame-variant unless you really mean to. Most "wrong-looking ghost ordering" is a sign of a runaway weight, not a WBOIT bug.
+- Re-compiling render tasks (`info.Runtime.CompileRender`) is expensive. Add a new node to the existing `meshScene` / `pinScene` ASet rather than building a second pair of forward/WBOIT tasks.
+- Per-attachment blend modes are set with `Sg.BlendMode(semantic, mode)` — see the three calls inside `forwardOpaqueScene`/`wbOitScene` in `SceneGraph.fs`. New attachments require new semantics and new clear values inside `oitClear`.
 
 ## Client model fields
 

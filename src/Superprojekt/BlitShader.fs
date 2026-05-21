@@ -53,9 +53,16 @@ module OIT =
     // of the lasso/blob soft transition into WBOIT (smoother boundary at the
     // expense of slightly more bleed-prone WBOIT mass near α=1). A lower value
     // pushes more of the transition into the forward path (less bleed, slightly
-    // bigger visual seam at α≈τ). 0.97 keeps the seam at ~3% brightness step.
+    // bigger visual seam at α≈τ).
     [<Literal>]
-    let private alphaThreshold = 0.97f
+    let private alphaThreshold = 0.99f
+
+    /// Width of the smoothstep band below `alphaThreshold` inside which the
+    /// WBOIT-path revealage write is inflated toward 1.0, bridging `density`
+    /// continuously across the forward/WBOIT seam. Set to 0.0 to disable
+    /// (restores the raw discontinuity).
+    [<Literal>]
+    let private alphaBridgeBand = 0.02f
 
     [<ReflectedDefinition>]
     module Shaders =
@@ -98,10 +105,14 @@ module OIT =
                     let b = -f.fc.Z * 0.95f + 1.0f
                     let w = clamp 1e-2f 3e2f (a * a * a * 1e8f * b * b * b)
                     let color = V4f(f.c.XYZ * alpha, alpha) * w
+                    let bandLo = alphaThreshold - alphaBridgeBand
+                    let t      = clamp 0.0f 1.0f ((alpha - bandLo) / alphaBridgeBand)
+                    let s      = t * t * (3.0f - 2.0f * t)
+                    let aRev   = alpha * (1.0f - s) + s
                     return {
                         forward   = V4f.Zero
                         accum     = color
-                        revealage = V4f(alpha, 0.0f, 0.0f, 0.0f)
+                        revealage = V4f(aRev, 0.0f, 0.0f, 0.0f)
                     }
             }
 

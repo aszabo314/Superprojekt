@@ -30,13 +30,15 @@ module SceneGraph =
         }
 
     // Forward-shaded version of axisBox — emits a regular Color attachment for
-    // the post-OIT overlay (passOne) instead of WBOIT MRT outputs.
+    // the post-OIT overlay (passOne) instead of WBOIT MRT outputs. Renders as
+    // always-on-top (DepthTest.None): the unified WBOIT pipeline has no main-FB
+    // depth attachment for the widget to test against.
     let private axisBoxForward (color : V4d) (trafo : Trafo3d) =
         sg {
             Sg.Trafo (AVal.constant trafo)
             Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
             Sg.Uniform("FlatColor", AVal.constant (V4f color))
-            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+            Sg.DepthTest (AVal.constant DepthTest.None)
             Sg.NoEvents
             Sg.VertexAttributes(
                 HashMap.ofList [ string DefaultSemantic.Positions, BufferView(AVal.constant (ArrayBuffer boxPos :> IBuffer), typeof<V3f>) ]
@@ -46,11 +48,9 @@ module SceneGraph =
         }
 
     // Origin indicator: 3 axes + tick marks. Rendered as a forward overlay on
-    // RenderPass.passOne (post-OIT compose). The OIT pass washes thin lines
-    // out — WBOIT averages line color with any overlapping mesh fragment at
-    // the same pixel, which muddies / hides the cross — so the coordinate
-    // widget renders straight into the main framebuffer with depth-test
-    // against the mesh depth that compose wrote.
+    // RenderPass.passOne (post-OIT compose). Always-on-top now that the unified
+    // WBOIT pipeline no longer maintains a main-FB depth attachment — typical
+    // behaviour for a world-origin gizmo in CAD-style tools.
     let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
         let axisLength = 3.0
         let tickSpacing = 0.25
@@ -80,9 +80,11 @@ module SceneGraph =
         ASet.ofList [
             sg { Sg.Active active; Sg.View view; Sg.Proj proj
                  Sg.Pass RenderPass.passOne
+                 Sg.DepthTest (AVal.constant DepthTest.None)
                  axisBoxForward (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 0.08) }
             sg { Sg.Active active; Sg.View view; Sg.Proj proj
                  Sg.Pass RenderPass.passOne
+                 Sg.DepthTest (AVal.constant DepthTest.None)
                  Lines.renderForward allLineSegs }
         ]
 
@@ -124,6 +126,7 @@ module SceneGraph =
                     yield sg {
                         Sg.Active active; Sg.View view; Sg.Proj proj
                         Sg.Pass RenderPass.passOne
+                        Sg.DepthTest (AVal.constant DepthTest.None)
                         Sg.Trafo (AVal.constant trafo)
                         Sg.Text(sprintf "%.0f" dist, color = AVal.constant textColor, align = TextAlignment.Center)
                     } ]
@@ -132,14 +135,17 @@ module SceneGraph =
         let tipNodes =
             [ sg { Sg.Active active; Sg.View view; Sg.Proj proj
                    Sg.Pass RenderPass.passOne
+                   Sg.DepthTest (AVal.constant DepthTest.None)
                    Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoX * Trafo3d.Translation(V3d.IOO * tipOffset)))
                    Sg.Text("X", color = AVal.constant (darken xColor), align = TextAlignment.Center) }
               sg { Sg.Active active; Sg.View view; Sg.Proj proj
                    Sg.Pass RenderPass.passOne
+                   Sg.DepthTest (AVal.constant DepthTest.None)
                    Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoY * Trafo3d.Translation(V3d.OIO * tipOffset)))
                    Sg.Text("Y", color = AVal.constant (darken yColor), align = TextAlignment.Center) }
               sg { Sg.Active active; Sg.View view; Sg.Proj proj
                    Sg.Pass RenderPass.passOne
+                   Sg.DepthTest (AVal.constant DepthTest.None)
                    Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoZ * Trafo3d.Translation(V3d.OOI * tipOffset)))
                    Sg.Text("Z", color = AVal.constant (darken zColor), align = TextAlignment.Center) } ]
 
@@ -161,122 +167,132 @@ module SceneGraph =
         let loadFinished (name : string) =
             env.Emit [ LoadFinished name ]
 
-        // ---- Render pipeline:
-        //   1. Depth pre-pass: only fully-opaque (enabled) meshes write depth into
-        //      the shared depth attachment. The OIT pass then depth-tests against
-        //      this without writing depth itself — that's the only way WBOIT can
-        //      give correct occlusion. Without the pre-pass, two opaque fragments
-        //      at the same pixel both contribute to Accum (back-most can still
-        //      leak ~10% through the depth-based weight), producing the "missing
-        //      depth occlusion" artifact.
-        //   2. OIT pass: all visible 3D objects (incl. ghost meshes, pins, axes)
-        //      emit weighted Accum + Revealage MRT outputs; depth-test against (1),
-        //      depth-write OFF.
-        //   3. Compose pass (a fullscreen quad as an ASet leaf): sample Accum +
-        //      Revealage and alpha-blend (baseColor, density) over the screen.
+        // ---- Render pipeline (hybrid Forward + WBOIT, two offscreen passes):
+        //   1. Forward-opaque pass (DepthMask=ON, LessOrEqual):
+        //        meshScene with Sg.Uniform IsForwardPass = true. The shader
+        //        discards α<τ and writes the colour to the ForwardColor
+        //        attachment; α=1 surfaces compete via depth-test, so the
+        //        front-most α=1 mesh wins per-pixel — no WBOIT colour bleed
+        //        inside the lasso/blob interior.
+        //   2. WBOIT translucent pass (DepthMask=OFF, LessOrEqual against the
+        //      depth buffer pass 1 just wrote):
+        //        meshScene + pinScene with IsForwardPass = false. The shader
+        //        discards α≥τ and emits to Accum/Revealage. Translucent
+        //        fragments behind the forward-opaque depth are rejected
+        //        (occluded ghosts disappear — accepted trade-off); fragments
+        //        in front of or beside opaques accumulate via WBOIT.
+        //   3. Compose pass: samples ForwardColor + Accum + Revealage, applies
+        //      "WBOIT over Forward" and writes colour into the main FB. Does
+        //      not write depth — passOne overlays draw with DepthTest.None.
+        //   4. Picking that used to read main-FB depth (`e.Location.Depth`) is
+        //      driven by explicit CPU/server raycasts in View.fs.
 
         let oitSize = info.ViewportSize
 
-        let accumTex     = info.Runtime.CreateTexture2D(oitSize, TextureFormat.Rgba16f, 1, 1)
-        let revealageTex = info.Runtime.CreateTexture2D(oitSize, TextureFormat.Rgba8,   1, 1)
-        let depthTex     = info.Runtime.CreateTexture2D(oitSize, TextureFormat.Depth24Stencil8, 1, 1)
+        let forwardColorTex = info.Runtime.CreateTexture2D(oitSize, TextureFormat.Rgba8,           1, 1)
+        let accumTex        = info.Runtime.CreateTexture2D(oitSize, TextureFormat.Rgba16f,         1, 1)
+        let revealageTex    = info.Runtime.CreateTexture2D(oitSize, TextureFormat.Rgba8,           1, 1)
+        let depthTex        = info.Runtime.CreateTexture2D(oitSize, TextureFormat.Depth24Stencil8, 1, 1)
 
-        let prepassSig =
-            info.Runtime.CreateFramebufferSignature [
-                DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
-            ]
         let oitSig =
             info.Runtime.CreateFramebufferSignature [
+                OIT.ForwardColorSemantic,     TextureFormat.Rgba8
                 OIT.AccumSemantic,            TextureFormat.Rgba16f
                 OIT.RevealageSemantic,        TextureFormat.Rgba8
                 DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
             ]
 
-        let prepassFbo =
-            depthTex |> AdaptiveResource.bind (fun (d : IBackendTexture) ->
-                AVal.constant (
-                    info.Runtime.CreateFramebuffer(
-                        prepassSig,
-                        [ DefaultSemantic.DepthStencil, d.[TextureAspect.DepthStencil, 0, 0] :> IFramebufferOutput ]
-                    )))
-
         let oitFbo =
-            (accumTex, revealageTex, depthTex) |||> AdaptiveResource.bind3 (fun (a : IBackendTexture) (r : IBackendTexture) (d : IBackendTexture) ->
-                AVal.constant (
-                    info.Runtime.CreateFramebuffer(
-                        oitSig,
-                        [
-                            OIT.AccumSemantic,            a.[TextureAspect.Color, 0, 0] :> IFramebufferOutput
-                            OIT.RevealageSemantic,        r.[TextureAspect.Color, 0, 0] :> IFramebufferOutput
-                            DefaultSemantic.DepthStencil, d.[TextureAspect.DepthStencil, 0, 0] :> IFramebufferOutput
-                        ])))
+            (forwardColorTex, accumTex, revealageTex)
+            |||> AdaptiveResource.bind3 (fun (fw : IBackendTexture) (a : IBackendTexture) (r : IBackendTexture) ->
+                depthTex |> AdaptiveResource.bind (fun (d : IBackendTexture) ->
+                    AVal.constant (
+                        info.Runtime.CreateFramebuffer(
+                            oitSig,
+                            [
+                                OIT.ForwardColorSemantic,     fw.[TextureAspect.Color, 0, 0]        :> IFramebufferOutput
+                                OIT.AccumSemantic,            a.[TextureAspect.Color, 0, 0]         :> IFramebufferOutput
+                                OIT.RevealageSemantic,        r.[TextureAspect.Color, 0, 0]         :> IFramebufferOutput
+                                DefaultSemantic.DepthStencil, d.[TextureAspect.DepthStencil, 0, 0]  :> IFramebufferOutput
+                            ]))))
 
-        // Pre-pass scene: only enabled meshes, trafo + depth-only fragment.
-        let prepassScene =
+        let meshScene = MeshView.buildScene loadFinished model
+        let pinScene  = ScanPinScene.build env view proj fullscreenActive placementHover model
+
+        // Shared per-attachment blend modes. ForwardColor uses straight alpha
+        // blend so a fragment with src=(0,0,0,0) leaves the dst untouched —
+        // the WBOIT pass never clobbers the forward result, and vice-versa.
+        let accumBlend     = AVal.constant BlendMode.Add
+        let revealageBlend = AVal.constant OIT.revealageBlendMode
+        let forwardBlend   = AVal.constant BlendMode.Blend
+
+        // Pass 1: forward-opaque (α ≥ τ writes ForwardColor; α < τ discards).
+        let forwardOpaqueScene =
             sg {
                 Sg.View view
                 Sg.Proj proj
                 Sg.DepthMask (AVal.constant true)
                 Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                Sg.BlendMode(OIT.ForwardColorSemantic, forwardBlend)
+                Sg.BlendMode(OIT.AccumSemantic,        accumBlend)
+                Sg.BlendMode(OIT.RevealageSemantic,    revealageBlend)
+                Sg.Uniform("IsForwardPass", AVal.constant true)
                 Sg.Uniform("ViewportSize", info.ViewportSize)
-                MeshView.buildOpaqueDepthScene loadFinished model
+                meshScene
             }
-        let prepassTask =
-            info.Runtime.CompileRender(prepassSig, prepassScene.GetRenderObjects(TraversalState.empty info.Runtime))
-        let prepassClear =
-            info.Runtime.CompileClear(prepassSig, clear { depth 1.0; stencil 0 })
 
-        // OIT scene: every 3D leaf emits MRT to Accum + Revealage. Depth-write OFF
-        // so opaque meshes don't pollute the depth buffer the pre-pass populated.
-        // The coordinate-cross indicator is NOT in here — it renders on passOne
-        // as a forward overlay (see `indicatorNodes` below). WBOIT thin-line
-        // washout would otherwise make the cross hard / impossible to see.
-        let meshScene = MeshView.buildScene loadFinished model
-        let pinScene = ScanPinScene.build env view proj fullscreenActive placementHover model
-
-        let oitContent = ASet.unionMany (ASet.ofList [ meshScene; pinScene ])
-
-        let oitScene =
+        // Pass 2: WBOIT (α < τ writes Accum/Revealage; α ≥ τ discards). Pins +
+        // line widgets only emit WBOIT (they use OIT.weightedBlend, ignoring
+        // IsForwardPass) so they live here.
+        let wbOitContent = ASet.unionMany (ASet.ofList [ meshScene; pinScene ])
+        let wbOitScene =
             sg {
                 Sg.View view
                 Sg.Proj proj
                 Sg.DepthMask (AVal.constant false)
                 Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                Sg.BlendMode(OIT.AccumSemantic,     AVal.constant BlendMode.Add)
-                Sg.BlendMode(OIT.RevealageSemantic, AVal.constant OIT.revealageBlendMode)
+                Sg.BlendMode(OIT.ForwardColorSemantic, forwardBlend)
+                Sg.BlendMode(OIT.AccumSemantic,        accumBlend)
+                Sg.BlendMode(OIT.RevealageSemantic,    revealageBlend)
+                Sg.Uniform("IsForwardPass", AVal.constant false)
                 Sg.Uniform("ViewportSize", info.ViewportSize)
-                oitContent
+                wbOitContent
             }
-        let oitTask =
-            info.Runtime.CompileRender(oitSig, oitScene.GetRenderObjects(TraversalState.empty info.Runtime))
+
+        let forwardTask =
+            info.Runtime.CompileRender(oitSig, forwardOpaqueScene.GetRenderObjects(TraversalState.empty info.Runtime))
+        let wbOitTask =
+            info.Runtime.CompileRender(oitSig, wbOitScene.GetRenderObjects(TraversalState.empty info.Runtime))
         let oitClear =
             info.Runtime.CompileClear(
                 oitSig,
                 clear {
                     colors [
-                        OIT.AccumSemantic,     C4f.Zero
-                        OIT.RevealageSemantic, C4f.White
+                        OIT.ForwardColorSemantic, C4f.Zero
+                        OIT.AccumSemantic,        C4f.Zero
+                        OIT.RevealageSemantic,    C4f.White
                     ]
+                    depth 1.0
+                    stencil 0
                 })
 
         // Drive the offscreen tasks via an AVal.custom that returns the resolved
-        // Accum + Revealage textures.
+        // ForwardColor + Accum + Revealage textures.
         let oitOutputs =
-            (accumTex, revealageTex)
-            ||> AdaptiveResource.bind2 (fun (a : IBackendTexture) (r : IBackendTexture) ->
-                prepassFbo |> AVal.bind (fun pFbo ->
-                    oitFbo |> AVal.bind (fun oFbo ->
-                        AVal.custom (fun tok ->
-                            prepassClear.Run(tok, RenderToken.Empty, pFbo)
-                            prepassTask.Run (tok, RenderToken.Empty, pFbo)
-                            oitClear.Run    (tok, RenderToken.Empty, oFbo)
-                            oitTask.Run     (tok, RenderToken.Empty, oFbo)
-                            a, r))))
-        let accumOut     = oitOutputs |> AVal.map fst |> AdaptiveResource.map (fun t -> t :> ITexture)
-        let revealageOut = oitOutputs |> AVal.map snd |> AdaptiveResource.map (fun t -> t :> ITexture)
+            (forwardColorTex, accumTex, revealageTex)
+            |||> AdaptiveResource.bind3 (fun (fw : IBackendTexture) (a : IBackendTexture) (r : IBackendTexture) ->
+                oitFbo |> AVal.bind (fun oFbo ->
+                    AVal.custom (fun tok ->
+                        oitClear.Run    (tok, RenderToken.Empty, oFbo)
+                        forwardTask.Run (tok, RenderToken.Empty, oFbo)
+                        wbOitTask.Run   (tok, RenderToken.Empty, oFbo)
+                        fw, a, r)))
+        let forwardOut   = oitOutputs |> AVal.map (fun (fw,_,_) -> fw) |> AdaptiveResource.map (fun t -> t :> ITexture)
+        let accumOut     = oitOutputs |> AVal.map (fun (_,a,_)  -> a)  |> AdaptiveResource.map (fun t -> t :> ITexture)
+        let revealageOut = oitOutputs |> AVal.map (fun (_,_,r)  -> r)  |> AdaptiveResource.map (fun t -> t :> ITexture)
 
-        // Compose pass — a fullscreen quad written into the main framebuffer using
-        // straight alpha blending of (baseColor, density) over the gradient.
+        // Compose pass — a fullscreen quad samples all three attachments and
+        // applies "WBOIT over Forward" into the main framebuffer.
         let quadPos =
             AVal.constant (ArrayBuffer [|
                 V3f(-1.0f, -1.0f, 0.0f); V3f( 1.0f, -1.0f, 0.0f)
@@ -292,9 +308,9 @@ module SceneGraph =
         let composeNode =
             sg {
                 Sg.Shader { DefaultSurfaces.trafo; OIT.compose }
-                Sg.Uniform("AccumTexture",     accumOut)
-                Sg.Uniform("RevealageTexture", revealageOut)
-                Sg.Uniform("DepthTexture", depthTex)
+                Sg.Uniform("ForwardColorTexture", forwardOut)
+                Sg.Uniform("AccumTexture",        accumOut)
+                Sg.Uniform("RevealageTexture",    revealageOut)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.View Trafo3d.Identity
@@ -309,10 +325,9 @@ module SceneGraph =
                 Sg.Render (AVal.constant 6)
             }
 
-        // Coordinate cross + labels: forward overlay on passOne. Runs after
-        // the compose quad writes its color + (OIT-prepass) depth into the main
-        // framebuffer, so the widget depth-tests against the opaque-mesh depth
-        // exactly like the old forward pipeline.
+        // Coordinate cross + labels: forward overlay on passOne. Compose writes
+        // color only (no depth) into the main FB, so the widget renders as
+        // always-on-top — set DepthTest.None below.
         let indicatorNodes = originIndicator view proj (AVal.map not fullscreenActive)
         let labelNodes     = originLabels    view proj (AVal.map not fullscreenActive)
 

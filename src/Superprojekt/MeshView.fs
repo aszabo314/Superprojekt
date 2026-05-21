@@ -157,11 +157,6 @@ module MeshShader =
             return V4f(baseRgb * shade, alpha)
         }
 
-    // Depth-only shader for the pre-pass; the FBO has no color attachment so
-    // the fragment output is discarded.
-    let depthOnly (_v : Effects.Vertex) =
-        fragment { return V4f.IIII }
-
 module MeshView =
 
     let apiBase = ApiConfig.apiBase
@@ -287,7 +282,7 @@ module MeshView =
                     DefaultSurfaces.trafo
                     DefaultSurfaces.diffuseTexture
                     MeshShader.shade
-                    OIT.weightedBlend
+                    OIT.hybridBlend
                 }
                 Sg.Uniform("DiffuseColorTexture", loaded.tex)
                 Sg.Uniform("MeshActive",      isActive)
@@ -315,31 +310,4 @@ module MeshView =
             }
         ) |> AList.toASet
 
-    // Depth pre-pass: only fully-opaque meshes (i.e. enabled), trafo-only shader,
-    // depth-write on. Populates the shared depth attachment that the OIT pass
-    // then depth-tests against (read-only).
-    let buildOpaqueDepthScene (loadFinished : string -> unit) (model : AdaptiveModel) : aset<ISceneNode> =
-        model.MeshNames |> AList.map (fun name ->
-            let loaded = loadMeshAsync (fun () -> loadFinished name) name
-            let isActive =
-                model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-            let scale = scaleFor model name
-            let meshT =
-                model.MeshTransforms |> AVal.map (fun m ->
-                    Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
-            let renderEnabled =
-                (isActive, loaded.fvc) ||> AVal.map2 (fun a c -> a && c > 3)
-            sg {
-                Sg.Active renderEnabled
-                Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
-                Sg.Shader { DefaultSurfaces.trafo; MeshShader.depthOnly }
-                Sg.VertexAttributes(
-                    HashMap.ofList [
-                        string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
-                    ]
-                )
-                Sg.Index(BufferView(loaded.idx, typeof<int>))
-                Sg.Render loaded.fvc
-            }
-        ) |> AList.toASet
 

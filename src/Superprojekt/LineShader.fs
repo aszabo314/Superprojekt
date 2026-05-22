@@ -59,8 +59,8 @@ module Lines =
                     let p0n  = p0c.XYZ / p0c.W
                     let p1n  = p1c.XYZ / p1c.W
 
-                    let pixelToNdc    = V2f(2.0f / float32 vs.X, 2.0f / float32 vs.Y)
-                    let halfWidthPx   = v.width * 0.5f
+                    let pixelToNdc  = V2f(2.0f / float32 vs.X, 2.0f / float32 vs.Y)
+                    let halfWidthPx = v.width * 0.5f
 
                     let diff     = p1n - p0n
                     let pixelDir = V2f(diff.X * float32 vs.X * 0.5f, diff.Y * float32 vs.Y * 0.5f)
@@ -130,28 +130,12 @@ module Lines =
         let count    = buffers |> AVal.map (fun (_,_,_,_,_,n) -> if n = 0 then 0 else 6 * n)
         p0Arr, p1Arr, colArr, widthArr, idxArr, count
 
+    // Straight forward-rendered alpha-blended lines: emits (rgb, α) on the
+    // standard Color attachment. Callers control depth-test / depth-mask via
+    // surrounding Sg properties — typical use is DepthTest=LessOrEqual,
+    // DepthMask=false so lines integrate visually with the depth of opaque
+    // meshes without writing depth themselves.
     let render (segments : aval<(V3d * V3d * V4d * float)[]>) =
-        let p0Arr, p1Arr, colArr, widthArr, idxArr, count = buildBuffers segments
-        sg {
-            Sg.Shader { LineShader.line; LineShader.fragment; OIT.weightedBlend }
-            Sg.NoEvents
-            Sg.VertexAttributes(
-                HashMap.ofList [
-                    "P0",        BufferView(p0Arr,    typeof<V3f>)
-                    "P1",        BufferView(p1Arr,    typeof<V3f>)
-                    "LineColor", BufferView(colArr,   typeof<V4f>)
-                    "LineWidth", BufferView(widthArr, typeof<float32>)
-                ])
-            Sg.Index(BufferView(idxArr, typeof<int>))
-            Sg.Render count
-        }
-
-    // Forward-rendered variant: emits a normal RGBA color attachment (no WBOIT
-    // MRT). Use for UI overlays (coordinate widget, etc.) that should be drawn
-    // straight to the main framebuffer on a post-OIT pass — the OIT pass
-    // washes thin lines out by averaging them with any overlapping mesh
-    // contributions at the same pixel.
-    let renderForward (segments : aval<(V3d * V3d * V4d * float)[]>) =
         let p0Arr, p1Arr, colArr, widthArr, idxArr, count = buildBuffers segments
         sg {
             Sg.Shader { LineShader.line; LineShader.fragment }

@@ -42,10 +42,11 @@ module ScanPinScene =
             Sg.View view
             Sg.Proj proj
             Sg.Trafo trafo
-            Sg.Pass RenderPass.passOne
-            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor; OIT.weightedBlend }
+            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
             Sg.Uniform("FlatColor", color |> AVal.map V4f)
-            Sg.DepthTest (AVal.constant DepthTest.None)
+            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+            Sg.DepthMask (AVal.constant false)
+            Sg.BlendMode (AVal.constant BlendMode.Blend)
             Sg.NoEvents
             Sg.VertexAttributes(
                 HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
@@ -95,9 +96,11 @@ module ScanPinScene =
                     Sg.View view
                     Sg.Proj proj
                     Sg.Trafo trafo
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor; OIT.weightedBlend }
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
                     Sg.Uniform("FlatColor", color |> AVal.map V4f)
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.DepthMask (AVal.constant false)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Sg.OnTap(fun _ ->
                         match AVal.force placementActive with
                         | true -> true
@@ -159,8 +162,9 @@ module ScanPinScene =
                         Sg.Active active
                         Sg.View view
                         Sg.Proj proj
-                        Sg.DepthTest (AVal.constant DepthTest.None)
-                        Sg.Pass RenderPass.passOne
+                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                        Sg.DepthMask (AVal.constant false)
+                        Sg.BlendMode (AVal.constant BlendMode.Blend)
                         Lines.render outlineSegs
                     }
                 ])
@@ -208,8 +212,9 @@ module ScanPinScene =
                     Sg.Active active
                     Sg.View view
                     Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.Pass RenderPass.passOne
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.DepthMask (AVal.constant false)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Lines.render segs
                 })
 
@@ -244,8 +249,9 @@ module ScanPinScene =
                     Sg.Active active
                     Sg.View view
                     Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.Pass RenderPass.passOne
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.DepthMask (AVal.constant false)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Lines.render segs
                 })
 
@@ -273,8 +279,9 @@ module ScanPinScene =
                     Sg.Active active
                     Sg.View view
                     Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.None)
-                    Sg.Pass RenderPass.passOne
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.DepthMask (AVal.constant false)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Lines.render outlineSegs
                 }
             ]

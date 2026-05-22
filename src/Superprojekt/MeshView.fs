@@ -29,22 +29,33 @@ module RenderPass =
 module MeshShader =
     open FShade
 
-    // Per-pixel opacity is the union (max) of independent "on-sources":
-    //   • mesh-on toggle (uniform across the mesh)
-    //   • lasso polygon — point inside the world-space frustum defined by
-    //     the polygon's silhouette planes
-    //   • scanpin blobs — Gaussian falloff exp(-d²/(2σ²)) per pin, taking the
-    //     max across all pins
-    // The hard cap on counts must match the Sg.Uniform packing below.
+    // Per-pixel opacity for a mesh:
+    //   • If MeshActive is false the fragment renders as a faint ghost at
+    //     uniform.GhostOpacity — gives the "vague outline of hidden mesh parts"
+    //     look without needing a separate toggle.
+    //   • If MeshActive is true the alpha is the union (max) of:
+    //       – lasso polygon: 1.0 inside the world-space half-space frustum, 0.0
+    //         outside; if no lasso is defined this contributes 1.0 unrestricted.
+    //       – scanpin blobs: Gaussian falloff exp(-d²/(2σ²)) per pin, max across
+    //         all pins; if no blobs this contributes 0.0.
+    //     If neither lasso nor blobs exist → alpha = 1.0 everywhere.
+    //
+    // Depth output is α-gated: fragments with α ≥ 0.99 write their natural
+    // depth (gl_FragCoord.z) so they occlude things behind them and so the
+    // depth-buffer pixel-picker can resolve a world position; fragments with
+    // α < 0.99 write 1.0 (far plane) so they never occlude anything and so
+    // opaque fragments anywhere in the scene overdraw them.
     [<Literal>]
     let MaxLassoPlanes = 32
 
     [<Literal>]
     let MaxBlobs = 32
 
+    [<Literal>]
+    let opaqueThreshold = 0.99f
+
     type UniformScope with
         member x.MeshActive      : bool    = x?MeshActive
-        member x.GhostSilhouette : bool    = x?GhostSilhouette
         member x.GhostOpacity    : float32 = x?GhostOpacity
         // 0 = Textured (sample atlas), 1 = Shaded (per-mesh palette colour),
         // 2 = SlopeColor (colour by angle of surface normal to horizontal).
@@ -65,7 +76,19 @@ module MeshShader =
         member x.BlobCount       : int     = x?BlobCount
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
 
-    let shade (v : Effects.Vertex) =
+    type FragIn = {
+        [<Color>]                              c  : V4f
+        [<Semantic("Normals")>]                n  : V3f
+        [<Semantic("WorldPosition")>]          wp : V4f
+        [<FragCoord>]                          fc : V4f
+    }
+
+    type FragOut = {
+        [<Color>] color : V4f
+        [<Depth>] depth : float
+    }
+
+    let shade (v : FragIn) =
         fragment {
             let wp = v.wp.XYZ
             // Lasso half-space test. Inside iff dot(plane.xyz, wp) + plane.w <= 0
@@ -95,7 +118,6 @@ module MeshShader =
                             let d2 = dx*dx + dy*dy + dz*dz
                             let w = exp (-d2 / (2.0f * sigma * sigma))
                             if w > blobMax then blobMax <- w
-            // Combine into the per-pixel mask in [0,1]:
             //   nothing active → 1.0 (no restriction)
             //   only lasso     → lassoMask (binary)
             //   only blobs     → blobMax (smooth)
@@ -107,22 +129,11 @@ module MeshShader =
                 elif lassoActive then lassoMask
                 elif blobsActive then blobMax
                 else 1.0f
-            // Master gate is the mesh on/off toggle. The lasso/blob mask only
-            // further restricts ON meshes — it never lights up OFF meshes.
             let mutable alpha = 0.0f
             if uniform.MeshActive then
-                if uniform.GhostSilhouette then
-                    // Lerp from ghost → fully opaque by the mask. Inside the mask
-                    // alpha = 1.0; outside the mask alpha = GhostOpacity (visible
-                    // ghost). Blobs give a smooth ghost→opaque transition.
-                    alpha <- uniform.GhostOpacity + (1.0f - uniform.GhostOpacity) * maskFactor
-                else
-                    if maskFactor < 0.05f then discard()
-                    alpha <- maskFactor
-            elif uniform.GhostSilhouette then
-                alpha <- uniform.GhostOpacity
+                alpha <- maskFactor
             else
-                discard()
+                alpha <- uniform.GhostOpacity
             if alpha < 1e-4f then discard()
             let n = v.n |> Vec.normalize
             let toCam = (uniform.CameraLocation - v.wp.XYZ) |> Vec.normalize
@@ -140,13 +151,11 @@ module MeshShader =
             let tT = clamp 0.01f 0.99f uniform.SlopeThreshold
             let slopeCol =
                 if nz > tT then
-                    // upper hemisphere: blue → white over half the gap to vertical.
                     let fadeW = max 0.05f ((1.0f - tT) * 0.5f)
                     let t = clamp 0.0f 1.0f ((nz - tT) / fadeW)
                     let s = t * t * (3.0f - 2.0f * t)
                     blueCol * (1.0f - s) + whiteCol * s
                 else
-                    // lower hemisphere: blue at threshold, ramping up to hot at horizontal.
                     let t = clamp 0.0f 1.0f ((tT - nz) / tT)
                     let s = t * t * (3.0f - 2.0f * t)
                     blueCol * (1.0f - s) + hotCol * s
@@ -154,7 +163,13 @@ module MeshShader =
                 if uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
-            return V4f(baseRgb * shade, alpha)
+            let depth =
+                if alpha >= opaqueThreshold then float v.fc.Z
+                else 1.0
+            return {
+                color = V4f(baseRgb * shade, alpha)
+                depth = depth
+            }
         }
 
 module MeshView =
@@ -213,8 +228,10 @@ module MeshView =
         let dataset = name.Split('/', 2).[0]
         model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
 
-    // Main OIT-targeted scene: every loaded mesh as a draw call, all visible (so the
-    // ghost path can still produce fragments). Alpha gating happens in the shader.
+    // Forward mesh scene: one draw call per mesh, plain alpha blending plus
+    // shader-driven custom depth (α-gated). Every mesh is always rendered —
+    // active meshes resolve their alpha from the lasso/blob rules, inactive
+    // meshes show as a faint ghost at GhostOpacity.
     let buildScene (loadFinished : string -> unit) (model : AdaptiveModel) : aset<ISceneNode> =
         let renderingModeInt =
             model.RenderingMode |> AVal.map (function
@@ -265,12 +282,10 @@ module MeshView =
             let meshT =
                 model.MeshTransforms |> AVal.map (fun m ->
                     Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
-            // Active in OIT pass when enabled, OR when ghost mode would show it.
-            // The lasso / blob mask only attenuates ON-meshes; it does NOT
-            // unlock OFF-meshes, so toggled-off meshes don't need force-rendering.
+            // Inactive meshes still render as ghost outline, so the only reason
+            // to gate Sg.Active is the load-not-yet-arrived case (fvc <= 3).
             let renderEnabled =
-                (isActive, model.GhostSilhouette, loaded.fvc) |||> AVal.map3 (fun a g c ->
-                    (a || g) && c > 3)
+                loaded.fvc |> AVal.map (fun c -> c > 3)
             let meshColor =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
@@ -282,11 +297,9 @@ module MeshView =
                     DefaultSurfaces.trafo
                     DefaultSurfaces.diffuseTexture
                     MeshShader.shade
-                    OIT.hybridBlend
                 }
                 Sg.Uniform("DiffuseColorTexture", loaded.tex)
                 Sg.Uniform("MeshActive",      isActive)
-                Sg.Uniform("GhostSilhouette", model.GhostSilhouette)
                 Sg.Uniform("GhostOpacity",    model.GhostOpacity |> AVal.map float32)
                 Sg.Uniform("RenderingMode",   renderingModeInt)
                 Sg.Uniform("MeshColor",       meshColor)

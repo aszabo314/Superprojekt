@@ -46,61 +46,6 @@ module Query =
                 return None
         }
 
-    let private postBinaryIndices (serverUrl : string) (path : string) (json : string) : Async<int[]> =
-        async {
-            use client = new HttpClient()
-            use content = new StringContent(json, Encoding.UTF8, "application/json")
-            let! resp = client.PostAsync(serverUrl.TrimEnd('/') + path, content) |> Async.AwaitTask
-            resp.EnsureSuccessStatusCode() |> ignore
-            let! buf = resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
-            let count = System.BitConverter.ToInt32(buf, 0)
-            let indices = Array.zeroCreate<int> count
-            System.Buffer.BlockCopy(buf, 4, indices, 0, count * 4)
-            return indices
-        }
-
-    let sphereTriangles (serverUrl : string) (name : string) (index : int) (center : V3d) (radius : float) =
-        let json = sprintf """{"name":"%s","index":%d,"center":%s,"radius":%.17g}""" name index (v3 center) radius
-        postBinaryIndices serverUrl "/query/sphere" json
-
-    let sphereTrianglesBatch (serverUrl : string) (names : string[]) (center : V3d) (radius : float) : Async<(string * int[])[]> =
-        async {
-            let namesJson =
-                let sb = System.Text.StringBuilder()
-                sb.Append('[') |> ignore
-                for i in 0 .. names.Length - 1 do
-                    if i > 0 then sb.Append(',') |> ignore
-                    sb.Append('"').Append(names.[i]).Append('"') |> ignore
-                sb.Append(']') |> ignore
-                sb.ToString()
-            let json = sprintf """{"names":%s,"center":%s,"radius":%.17g}""" namesJson (v3 center) radius
-            use client = new HttpClient()
-            use content = new StringContent(json, Encoding.UTF8, "application/json")
-            let! resp = client.PostAsync(serverUrl.TrimEnd('/') + "/query/sphere-batch", content) |> Async.AwaitTask
-            resp.EnsureSuccessStatusCode() |> ignore
-            let! buf = resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
-            let mutable o = 0
-            let meshCount = System.BitConverter.ToInt32(buf, o)
-            o <- o + 4
-            let results = Array.zeroCreate<string * int[]> meshCount
-            for i in 0 .. meshCount - 1 do
-                let nameLen = System.BitConverter.ToInt32(buf, o)
-                o <- o + 4
-                let name = Encoding.UTF8.GetString(buf, o, nameLen)
-                o <- o + nameLen
-                let idxCount = System.BitConverter.ToInt32(buf, o)
-                o <- o + 4
-                let idx = Array.zeroCreate<int> idxCount
-                System.Buffer.BlockCopy(buf, o, idx, 0, idxCount * 4)
-                o <- o + idxCount * 4
-                results.[i] <- name, idx
-            return results
-        }
-
-    let boxTriangles (serverUrl : string) (name : string) (index : int) (min : V3d) (max : V3d) =
-        let json = sprintf """{"name":"%s","index":%d,"min":%s,"max":%s}""" name index (v3 min) (v3 max)
-        postBinaryIndices serverUrl "/query/box" json
-
     let planeIntersection (serverUrl : string) (name : string) (index : int) (planePoint : V3d) (planeNormal : V3d) (axisU : V3d) (axisV : V3d) (thickness : float) (maxExtentU : float) (maxExtentV : float) =
         async {
             let json = sprintf """{"name":"%s","index":%d,"planePoint":%s,"planeNormal":%s,"axisU":%s,"axisV":%s,"thickness":%.17g,"maxExtentU":%.17g,"maxExtentV":%.17g}"""

@@ -7,41 +7,6 @@ open Aardvark.Dom
 
 module GuiOverlays =
 
-    let persistenceBridge (env : Env<Message>) =
-        div {
-            Class "persistence-bridge"
-            Style [Display "none"]
-            input {
-                Attribute("type", "file")
-                Attribute("id", "ws-file-picker")
-                Attribute("accept", ".json,.scanpin.json,application/json")
-            }
-            input {
-                Attribute("type", "text")
-                Attribute("id", "ws-load-sink")
-                Dom.OnInput(fun e ->
-                    if not (System.String.IsNullOrEmpty e.Value) then
-                        env.Emit [LoadWorkspace e.Value])
-            }
-            OnBoot [
-                "(function(){"
-                "var fp = document.getElementById('ws-file-picker');"
-                "var sink = document.getElementById('ws-load-sink');"
-                "if (!fp || !sink) return;"
-                "fp.addEventListener('change', function(){"
-                "  var f = fp.files && fp.files[0]; if (!f) return;"
-                "  var r = new FileReader();"
-                "  r.onload = function(){"
-                "    sink.value = r.result;"
-                "    sink.dispatchEvent(new Event('input', {bubbles: true}));"
-                "    fp.value = '';"
-                "  };"
-                "  r.readAsText(f);"
-                "});"
-                "})();"
-            ]
-        }
-
     let meshWheelLabel (model : AdaptiveModel) (cursorScreen : aval<V2d option>) =
         div {
             Class "mesh-wheel-label"

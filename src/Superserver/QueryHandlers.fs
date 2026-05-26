@@ -15,19 +15,10 @@ type RayRequest     = { Name: string; Index: int; Origin: float[]; Direction: fl
 type ClosestRequest = { Name: string; Index: int; Point: float[] }
 
 [<CLIMutable>]
-type SphereRequest  = { Name: string; Index: int; Center: float[]; Radius: float }
-
-[<CLIMutable>]
-type BoxRequest     = { Name: string; Index: int; Min: float[]; Max: float[] }
-
-[<CLIMutable>]
 type PlaneIntersectionRequest = { Name: string; Index: int; PlanePoint: float[]; PlaneNormal: float[]; AxisU: float[]; AxisV: float[]; Thickness: float; MaxExtentU: float; MaxExtentV: float }
 
 [<CLIMutable>]
 type PlaneIntersectionBatchRequest = { Names: string[]; PlanePoint: float[]; PlaneNormal: float[]; AxisU: float[]; AxisV: float[]; Thickness: float; MaxExtentU: float; MaxExtentV: float }
-
-[<CLIMutable>]
-type SphereBatchRequest = { Names: string[]; Center: float[]; Radius: float }
 
 [<CLIMutable>]
 type RayBatchRequest = { Names: string[]; Origins: float[]; Directions: float[] }
@@ -101,50 +92,6 @@ let closestHandler : HttpHandler =
             else
                 return! json {| found = false |} next ctx
         with ex -> return! RequestErrors.notFound (text ex.Message) next ctx
-    }
-
-let private binaryIndices (tris : int[]) : HttpHandler =
-    fun next ctx -> task {
-        ctx.SetContentType "application/octet-stream"
-        let len = tris.Length
-        let buf = Array.zeroCreate<byte> (4 + len * 4)
-        BitConverter.TryWriteBytes(buf.AsSpan(0, 4), len) |> ignore
-        Buffer.BlockCopy(tris, 0, buf, 4, len * 4)
-        ctx.Response.ContentLength <- Nullable<int64>(int64 buf.Length)
-        do! ctx.Response.Body.WriteAsync(buf, 0, buf.Length)
-        return! next ctx
-    }
-
-let sphereHandler : HttpHandler =
-    fun next ctx -> task {
-        let log = ctx.GetLogger "Superserver"
-        try
-            let! req  = ctx.BindJsonAsync<SphereRequest>()
-            let dataset, name = splitName req.Name
-            let lm    = MeshCache.get dataset name req.Index
-            let lc    = V3f(toV3d req.Center - lm.parsed.centroid)
-            let tris  = MeshCache.trianglesInSphere lm lc (float32 req.Radius)
-            log.LogDebug("sphere {Name}: r={Radius:F2}, {Count} indices", req.Name, req.Radius, tris.Length)
-            return! binaryIndices tris next ctx
-        with ex ->
-            log.LogError(ex, "sphere query failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
-    }
-
-let boxHandler : HttpHandler =
-    fun next ctx -> task {
-        let log = ctx.GetLogger "Superserver"
-        try
-            let! req  = ctx.BindJsonAsync<BoxRequest>()
-            let dataset, name = splitName req.Name
-            let lm    = MeshCache.get dataset name req.Index
-            let c     = lm.parsed.centroid
-            let tris  = MeshCache.trianglesInBox lm (V3f(toV3d req.Min - c)) (V3f(toV3d req.Max - c))
-            log.LogDebug("box {Name}: {Count} indices", req.Name, tris.Length)
-            return! binaryIndices tris next ctx
-        with ex ->
-            log.LogError(ex, "box query failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
 let planeIntersectionHandler : HttpHandler =

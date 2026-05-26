@@ -130,40 +130,6 @@ module SceneGraph =
             @ labelNodes yColor V3d.OIO V3d.IOO textTrafoY
             @ labelNodes zColor V3d.OOI V3d.IOO textTrafoZ)
 
-    // 100×100 unit floor grid in the render-space XY plane (z=0). Grey lines
-    // at α≈0.5, every 10th line slightly darker as a major tick.
-    let private groundGridSegments =
-        let extent     = 50.0
-        let minorStep  = 1.0
-        let majorStep  = 10.0
-        let minorColor = V4d(0.55, 0.55, 0.55, 0.5)
-        let majorColor = V4d(0.30, 0.30, 0.30, 0.5)
-        let minorWidth = 1.0
-        let majorWidth = 1.4
-        let segs = ResizeArray<V3d * V3d * V4d * float>()
-        let n = int (extent / minorStep)
-        let majorEvery = int (majorStep / minorStep)
-        for i in -n .. n do
-            let t = float i * minorStep
-            let isMajor = (i % majorEvery = 0)
-            let color, width =
-                if isMajor then majorColor, majorWidth
-                else            minorColor, minorWidth
-            segs.Add(V3d(-extent, t, 0.0), V3d(extent, t, 0.0), color, width)
-            segs.Add(V3d(t, -extent, 0.0), V3d(t, extent, 0.0), color, width)
-        AVal.constant (segs.ToArray())
-
-    let private groundGrid (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
-        ASet.single (
-            sg {
-                Sg.Active active
-                Sg.View view
-                Sg.Proj proj
-                Sg.DepthTest (AVal.constant DepthTest.GreaterOrEqual)
-                Sg.BlendMode (AVal.constant BlendMode.Blend)
-                Lines.render groundGridSegments
-            })
-
     let build
         (env : Env<Message>)
         (info : Aardvark.Dom.RenderControlInfo)
@@ -181,8 +147,8 @@ module SceneGraph =
         //     fragments (α ≥ 0.99) write their natural depth, transparent
         //     fragments write 1.0 (far). All passZero geometry shares one
         //     depth buffer.
-        //   • Pin geometry, ground grid: depth-tested against the mesh depth
-        //     so they fade behind opaque surfaces; alpha-blended.
+        //   • Pin geometry: depth-tested against the mesh depth so it fades
+        //     behind opaque surfaces; alpha-blended.
         //   • Coordinate cross + labels: passOne with DepthTest.None — always
         //     on top.
         //
@@ -200,7 +166,6 @@ module SceneGraph =
         let notFullscreen = AVal.map not fullscreenActive
         let cross         = originIndicator view proj notFullscreen
         let labels        = originLabels    view proj notFullscreen
-        let grid          = groundGrid      view proj notFullscreen
 
         let viewportUni =
             sg {
@@ -210,11 +175,9 @@ module SceneGraph =
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Uniform("ViewportSize", info.ViewportSize)
                 meshScene
-                //grid
                 cross
                 pinScene
                 labels
-                //ASet.unionMany (ASet.ofList [ meshScene; pinScene; grid; cross; labels ])
             }
 
         ASet.single viewportUni

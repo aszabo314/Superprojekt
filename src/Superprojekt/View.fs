@@ -188,7 +188,6 @@ module View =
                         false
                     | None ->
                         let placement = AVal.force model.ScanPins.Placement
-                        let ctrlLeft = e.Ctrl && e.Button = Button.Left
                         let pick =
                             if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
                         match placement, pick with
@@ -196,27 +195,11 @@ module View =
                             env.Emit [ScanPinMsg (PlaceAnchor renderPos)]
                             false
                         | AnchorPlacement, None -> false
-                        | _, Some renderPos when ctrlLeft ->
-                            let worldPos = worldFromRender model renderPos
-                            transact (fun () -> hoverCoord.Value <- Some worldPos)
-                            env.Emit [ClearFilteredMesh]
-                            ServerActions.triggerFilter env model renderPos
-                            false
                         | _, Some renderPos ->
                             let worldPos = worldFromRender model renderPos
                             transact (fun () -> hoverCoord.Value <- Some worldPos)
                             true
                         | _, None -> true
-                )
-
-                Sg.OnLongPress(fun e ->
-                    if e.Location.Depth < 0.9999 then
-                        let renderPos = e.WorldPosition
-                        let worldPos = worldFromRender model renderPos
-                        transact (fun () -> hoverCoord.Value <- Some worldPos)
-                        env.Emit [ClearFilteredMesh]
-                        ServerActions.triggerFilter env model renderPos
-                    false
                 )
 
                 Sg.OnPointerMove(fun e ->
@@ -264,7 +247,6 @@ module View =
             GuiCards.exploreCard env model
             GuiCards.registrationCard env model registrationOpen
             GuiCards.registrationToggleButton registrationOpen
-            GuiOverlays.persistenceBridge env
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)

@@ -33,7 +33,6 @@
     <Compile Include="Shader.fs" />
     <Compile Include="LineShader.fs" />
     <Compile Include="Primitives.fs" />
-    <Compile Include="Persistence.fs" />
     <Compile Include="Messages.fs" />
     <Compile Include="CardUpdate.fs" />
     <Compile Include="ScanPinUpdate.fs" />

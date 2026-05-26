@@ -1,26 +1,79 @@
-# Superprojekt
+# Superprojekt — assistant notes
 
-Research prototype for interactive 3D mesh/pointcloud visualization. Two F# projects:
+Research prototype for interactive 3D mesh/pointcloud visualisation. Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe, serves mesh data and spatial queries (Embree BVH)
-- **Superprojekt** — Blazor WASM client, Aardvark.Dom Elm-style architecture, WebGL rendering
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, plane intersections, cylinder evaluation, ICP). Runs on `http://localhost:5000` and also hosts the WASM client.
+- **Superprojekt** — Blazor WASM client. Aardvark.Dom Elm-style architecture, WebGL2 rendering. Must work on desktop and mobile; the client stays thin and pushes heavy compute to the server.
 
-The client is thin and must work on desktop and mobile. The server does all heavy computation.
-
-## Intended workflow (partially implemented)
-
-1. User loads a dataset (multiple meshes or pointclouds) from the server
-2. User explores with: juxtaposition overlays, filters, workspace clipping, mesh difference + false color
-3. User places 3D annotations ("ScanPins") with cut-plane diagrams *(partially implemented)*
-4. UX: tabbed side panel (implemented); floating pin diagrams near 3D anchor points *(implemented)*
-5. User produces screenshots or a report
+See `README.md` for what the app does and how to run it.
 
 ## Style
 
-- No comments unless the logic is non-obvious
-- Concise code; no unnecessary abstractions or helpers
-- Light theme, high contrast, print-appropriate — suitable for publication
-- GUI must be understandable to a non-expert at first glance
+- Light theme, high contrast, print-appropriate.
+- GUI must be readable to a non-expert at first glance.
+- No comments unless the logic is non-obvious.
+- Concise code, no unnecessary abstractions, no premature helpers.
+
+## Render pipeline (single forward pass)
+
+There is **one render pass** into the main framebuffer. There is no OIT, no compose pass, no FBO. The earlier hybrid-forward + WBOIT pipeline was removed (see commit history if you really need it).
+
+```
+[ passZero ]
+  • meshes      : MeshShader.shade → custom α + α-gated gl_FragDepth
+  • pin geometry: DepthTest.LessOrEqual, alpha-blended
+[ passOne ]
+  • coordinate cross + tick lines + axis-tip/integer-metre labels
+    DepthTest.None — always on top.
+```
+
+### Mesh shader (`MeshView.MeshShader.shade`)
+
+Inputs (custom record):
+- `[<Color>] c : V4f` (from `DefaultSurfaces.diffuseTexture`)
+- `[<Semantic("Normals")>] n : V3f`
+- `[<Semantic("WorldPosition")>] wp : V4f`
+- `[<FragCoord>] fc : V4f`
+
+Outputs (custom record):
+- `[<Color>] color : V4f`
+- `[<Depth>] depth : float32`
+
+Per-fragment α:
+- `MeshActive = false` → α = `GhostOpacity`
+- `MeshActive = true`  → α = `lerp(GhostOpacity, 1, mask)` with `mask = max(lassoMask, blobMax)`
+  - no lasso, no blobs → `mask = 1.0` → α = 1.0
+  - lasso only → `mask = 1.0` inside, `0.0` outside
+  - blobs only → smooth Gaussian falloff `exp(-d² / (2σ²))`
+  - both → union (max) of the two
+
+α-gated depth output:
+- α ≥ 0.99 → writes `v.fc.Z` (window-space depth, identical to the rasterizer's natural depth)
+- α < 0.99 → writes `1.0f` (far plane) so the fragment never occludes anything
+
+Discard at `α < 1e-4f` so the gated path doesn't bother with truly invisible fragments.
+
+Uniforms set per draw call:
+- `MeshActive`, `GhostOpacity`, `RenderingMode`, `MeshColor`, `ShadingStrength`, `SlopeThreshold`
+- `LassoPlaneCount` + `LassoPlanes : Arr<N<32>, V4f>` — outward-facing half-space planes packed as `V4f(nx, ny, nz, d)`; inside iff `dot(plane.xyz, p) + plane.w <= 0` for ALL active planes.
+- `BlobCount` + `Blobs : Arr<N<32>, V4f>` — each pin packed as `V4f(cx, cy, cz, σ)` in render space (post-meshTrafo), matching `v.wp.XYZ`. Hard cap = 32.
+
+### `Sg.DepthMask` is forbidden
+
+Do not add `Sg.DepthMask` anywhere. It is buggy in this Aardvark/Aardworx WebGL build and silently breaks the depth pipeline. Ordering is steered with `Sg.DepthTest` + `Sg.Pass` alone. This means lines, pin geometry, and text all write depth too — that violates the textbook "translucent shouldn't write depth" rule but is the only combination that actually renders correctly in this stack. Comments in `LineShader.fs` and `SceneGraph.fs` (search for "Sg.DepthMask") capture the reason in code; leave them.
+
+### Picking
+
+Pixel picking via `Sg.OnTap` / `Sg.OnPointerMove`:
+
+```fsharp
+let pick =
+    if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+```
+
+Background misses leave depth at the clear value (1.0); the gate is required. The α-gated depth write in the mesh shader is what makes this work — translucent ghost fragments leave depth at 1.0 so picks pass through them down to the opaque surface behind.
+
+Note: `Sg.OnTap`/`OnDoubleTap`/`OnLongPress` fire on background misses too. Any handler that creates state from `e.WorldPosition` MUST gate on the depth check. Without it you get pins placed at infinity, cameras flying to empty space, and (in placement mode) an unbounded loop of bogus entries.
 
 ## Adaptive performance (critical)
 
@@ -39,286 +92,163 @@ let geo = (prismVal, stratVal) ||> AVal.map2 (fun prism strat -> ...)
 ```
 
 For scene graph nodes (`Sg.Text`, `sg { ... }`), this matters even more: rebuilding an `AList` of sg nodes destroys and recreates GPU resources (font atlases, draw calls). Instead:
-- **Split structure from placement.** Build static sg node lists from slowly-changing data (e.g. tick count/text from prism geometry). Use adaptive `Sg.Trafo` for fast-changing placement (e.g. cut plane position → trafo update is just a uniform, no sg rebuild).
+
+- **Split structure from placement.** Build static sg node lists from slowly-changing data. Use adaptive `Sg.Trafo` for fast-changing placement (uniform update, no sg rebuild).
 - **Push adaptivity down.** A parent `AList.ofAVal` that rebuilds all children is expensive. An `AVal`-driven `Sg.Trafo` on each stable child is cheap.
 
 ## Server query performance
 
-Costly spatial queries (`cylinder-eval`, `plane-intersection`) scale with mesh count and ring/angle density. Rules of thumb, learned the hard way:
+Costly spatial queries (`cylinder-eval`, `plane-intersection`) scale with mesh count and ring/angle density. Rules of thumb:
 
-- **Never issue per-mesh requests in a `for` loop.** For multi-mesh operations, add a batched endpoint and let the server fan out with `Parallel.For`. One HTTP roundtrip with N-way server parallelism beats N sequential roundtrips by an order of magnitude even on localhost (JSON + HTTP overhead dominates). The cut-plane pipeline uses `/api/query/plane-intersection-batch` for this reason.
-- **Parallelize the heavy inner loop server-side** whenever the inputs are independent. `cylinderEval` runs `Parallel.For` across rings with per-thread `ResizeArray` hit buffers merged at the end. Embree `Scene.Intersect` is thread-safe.
-- **Cap density rather than grow it linearly.** `Stratigraphy.compute` uses a **log-spaced, max-12 ring ladder** instead of a constant 0.25 m step — a 10 m prism now queries 12 rings instead of 40 with no visible difference in the between-space flood topology. Angular resolution defaults to 180 (not 360) for the same reason.
-- **Keep heavy post-processing off the Elm update thread.** `buildBandCache` is union-find over the full (ring, angle, bracket) graph — milliseconds for small prisms, seconds for large ones. It runs in the same background `task` that issued `cylinder-eval`, and only the final `StratigraphyComputed(id, data, cache)` message crosses into the update loop.
-- **Debounce user-driven query triggers.** Cut-plane slider drags debounce 300 ms; stratigraphy recomputes debounce 500 ms. Both use a `CancellationTokenSource` ref that the next event cancels, so only the final drag position hits the server.
-- **Mesh caches are warmed at dataset load.** `bboxesHandler` calls `MeshCache.get` for every mesh + part, which parses OBJ + builds Embree scene + BbTree. So the first real query never pays the lazy-load cost.
+- **Never issue per-mesh requests in a `for` loop.** Use the batched endpoints; the server fans out with `Parallel.For`. One HTTP roundtrip with N-way server parallelism beats N sequential roundtrips by an order of magnitude even on localhost.
+- **Parallelise the heavy inner loop server-side** when inputs are independent. Embree `Scene.Intersect` is thread-safe.
+- **Cap density rather than grow linearly.** Log-spaced ring ladders; angular resolution defaults to 180, not 360.
+- **Keep heavy post-processing off the Elm update thread.** Union-find over band caches, ICP residuals, etc. run in the background task that issued the query; only the final result message crosses into the update loop.
+- **Debounce user-driven triggers.** Cut-plane sliders ~300 ms, stratigraphy recomputes ~500 ms. Use a `CancellationTokenSource` ref so the next event cancels the previous.
+- **Mesh caches are warmed at dataset load** by `bboxesHandler` — it calls `MeshCache.get` for every mesh + part, so the first interactive query never pays the lazy-load cost.
 
-## Client architecture
+## Client compile order (`Superprojekt.fsproj`)
 
-Elm-style: `Model` → `Update.update` → `View.view` → `Boot.run`
-
-**Compile order** (Superprojekt.fsproj):
 ```
-WavefrontLoader.fs
-CameraModel.fs / CameraModel.g.fs
+RankingState.fs
+MeshData.fs
+BspTree.fs
+Query.fs
+CameraModel.fs / .g.fs
+OrbitTypes.fs
 OrbitController.fs
-ScanPinModel.fs / ScanPinModel.g.fs  ← ScanPin types + serialization
-Model.fs / Model.g.fs                ← [<ModelType>], Adaptify-generated .g.fs
-Shader.fs                            ← BlitShader (clippy, coreClip, readArray…) + Shader (flatColor) + Lines (pixel-constant 3D lines)
-Update.fs                            ← Message DU, ScanPinUpdate module, Update module
-MeshView.fs                          ← LoadedMesh, mesh loading, off-screen render, composition
-ServerActions.fs                     ← init (fetch centroids + bboxes), triggerFilter
-Revolver.fs                          ← full scene graph; owns buildMeshTextures; pin dots + prism wireframes
-GuiPins.fs                           ← ScanPin tab panel + floating diagram overlay (SVG + core sample 3D view)
-Gui.fs                               ← burger button, HUD tabs (Scene/Overlay/Clip), overlays
-View.fs                              ← view function + App module
-ShaderCache.fs
-Program.fs
+ScanPinModel.fs / .g.fs
+PinGeometry.fs
+Model.fs / .g.fs                ← [<ModelType>], Adaptify-generated .g.fs
+BlitShader.fs                   ← empty placeholder, kept so the fsproj is stable
+Shader.fs                       ← Shader.flatColor + helpers
+LineShader.fs                   ← Lines.render (pixel-constant 3D lines)
+Primitives.fs                   ← compactToggle, inlineSlider, compactButtonBar, etc.
+Messages.fs                     ← Message DU
+CardUpdate.fs / ScanPinUpdate.fs
+Update.fs                       ← main reducer
+MeshView.fs                     ← LoadedMesh, MeshShader.shade, buildScene
+ServerActions.fs                ← init + loadDataset (datasets list + centroids + bboxes)
+ScanPinScene.fs                 ← pin sg nodes
+SceneGraph.fs                   ← composes meshScene + pinScene + cross + labels
+CardsPin.fs / Cards.fs
+GuiTopBar.fs / GuiPanels.fs / GuiOverlays.fs / GuiCards.fs
+View.fs                         ← App module wires Boot.run
+ShaderCache.fs / Program.fs
 ```
 
-**Key modules:**
+`.g.fs` files are Adaptify-generated. **Never edit them by hand.** Re-run `dotnet adaptify --local --force ./src/Superprojekt/Superprojekt.fsproj` (or `adaptify.cmd` / `adaptify.sh`) after editing the corresponding `.fs` model file.
 
-`Model` — application state. `[<ModelType>]` triggers Adaptify to generate `AdaptiveModel` in `Model.g.fs` — never edit `.g.fs` manually.
-
-`MeshView` — `loadMeshAsync` fetches binary mesh from server (lazy, cached by name). `buildMeshTextures` and `composeMeshTextures` implement the off-screen render pipeline (see below).
-
-`Revolver` — owns the `buildMeshTextures` call; builds the full render scene graph: the composition quad (normal view), fullscreen tile overlay, circular magnifier disks, and ScanPin 3D elements (`pinDots` for clickable markers, `pinPrisms` for wireframe prisms + cut plane quads). `buildPrismWireframe` and `buildCutPlaneQuad` are public — reused by GuiPins for the core sample view.
-
-`GuiPins` — ScanPin-specific GUI: `pinsTabPanel` (placement controls, cut plane sliders, pin list with focus/delete), `pinDiagram` (floating overlay positioned via 3D→screen projection: SVG profile via OnBoot JS + MutationObserver, and a secondary `renderControl` "core sample" 3D view). Also owns `shortName` utility, `coreSampleTrafo` (aligns prism axis to Z).
-
-`Gui` — burger button + tabbed HUD (Scene tab: dataset selector buttons + scale input, mesh visibility, ghost; Overlay tab: revolver/fullscreen toggles, mesh order, difference rendering; Clip tab: enable toggle + per-axis range sliders). Delegates Pins tab to `GuiPins.pinsTabPanel`. Also: `fullscreenInfo` overlay, `debugLog` overlay, `coordinateDisplay`.
-
-`ServerActions` — `init`: fetches dataset list, emits `DatasetsLoaded`. `loadDataset`: fetches centroids + bboxes for a dataset, emits `CentroidsLoaded`/`ClipBoundsLoaded`. `triggerFilter`: sphere query on all meshes at tap/long-press position, emits `FilteredMeshLoaded`.
-
-`View` — wires up renderControl, orbit camera, keyboard/pointer events, revolver state (`shiftHeld`, `spaceHeld`, `cursorPosition` as local `cval`s), calls `Revolver.build`. Passes view trafo + viewport size to `GuiPins.pinDiagram` for perspective-correct positioning.
-
-`ScanPinModel` — data types (`ScanPinId`, `SelectionPrism`, `CutPlaneMode`, `ScanPin`, `ScanPinModel`, etc.) + `ScanPinSerialize` module (JSON export only, no import yet).
-
-`Update` — contains `ScanPinUpdate` module (must appear before `Update` module to avoid F# forward-reference errors). `ScanPinUpdate.update` handles all `ScanPinMessage` cases. Cut-plane updates fire a debounced (300 ms) batched plane-intersection request against all meshes; stratigraphy updates fire a debounced (500 ms) cylinder-eval and build the `BandCache` inside the background task before emitting `StratigraphyComputed(pinId, data, cache)` so the Elm update handler never does heavy work.
-
-## ScanPin system
-
-A ScanPin is a 3D annotation: a selection prism (32-gon cylinder) extruded along an axis, with a cutting plane that intersects loaded meshes. The cut produces polylines rendered as an SVG elevation profile diagram.
-
-**Placement workflow:** Top-bar segmented mode-selector (three side-by-side buttons sharing one bounding box: Profile / Plan / Auto) chooses a mode — clicking the active mode cancels, clicking another switches. Per-mode gesture derives the prism. **Profile** = two clicks on a surface (first = anchor, second = cut direction; axis vertical, radius ≈ 0.6 · |p2 − p1|, cut plane vertical along xy-direction). **Plan** = click-drag on a surface (center at down, radius tracked by ray-plane intersection at anchor Z; axis vertical; cut plane horizontal at median-elevation from a 10×10 ray batch). **Auto** = single click on an explore hot-spot. `View.fs` builds a 5×5 world-space ray grid (±2 m transverse to camera view) at click time and emits `AutoClick(renderPos, rays, refAxisWorld)`; `Update.fs` creates the pin with placeholder params, then calls `Query.rayGrid` in a background task (server endpoint `/api/query/ray-grid` — returns hit point + world-space normal from Embree). Derivation (`PinGeometry.deriveAutoPreview`) weights hits by `steepness × proximity` (`steepness = max 0 (1 − |dot(n, refAxis)|/0.9)`, `proximity = exp(−d²/25)`), averages normals (flipped to the reference-axis hemisphere) to get the dominant face direction N, then: if `|dot(N, refAxis)| > 0.95` → axis = refAxis and `AcrossAxis 0`; otherwise axis = `normalize(refAxis − N·dot(refAxis,N))` and `AlongAxis atan2(N·fwd, N·right)` in the axis frame. Radius = max world-space transverse distance of hot hits (× scale → render). `AutoDerivationComplete` updates the pin when the task returns. Fewer than 3 hot hits → placeholder defaults persist. After creation, placement transitions to `AdjustingPin(id, mode)`; the flyout's radius/length/cut-plane sliders serve as *fine adjustment* only. Commit / Discard / Escape end placement.
-
-**Auto hover preview:** While `Placement = AutoPlacement (AutoHovering _)`, `Sg.OnPointerMove` in `View.fs` re-issues the same ray-grid probe whenever the world-space hit point has moved more than 0.3 m since the last query, debounced 120 ms via a shared `CancellationTokenSource`. The probe runs `PinGeometry.deriveAutoPreview` and emits `AutoHoverUpdate (Some preview)` (or `None` for cold regions / off-geometry); the update handler skips no-op writes so the placement state only churns when the preview actually changes. `SceneGraph.placementPreview` renders the ghost as cylinder hull + translucent cut-plane quad + axis line (passOne, BlendMode.Blend, DepthTest.None) using `PinGeometry.autoPreviewPrism` to synthesise a `SelectionPrism` from the preview record.
-
-**State:** `Placement : PlacementState` single DU on `ScanPinModel` — `PlacementIdle | ProfilePlacement of ProfilePlacementState | PlanPlacement of PlanPlacementState | AutoPlacement of AutoPlacementState | AdjustingPin of ScanPinId * PlacementMode`. Helpers: `ScanPinModel.activePlacementId sp` returns the id of a pin being adjusted, `ScanPinModel.isPlacing sp` is true for anything other than `PlacementIdle`.
-
-**3D rendering** (in SceneGraph.fs): `pinDots` renders clickable spheres at anchor points (tap=select, double-tap=focus camera). `pinPrisms` renders wireframe (thin triangle-quads, no GL_LINES) + translucent cut plane quad per pin.
-
-**Cylinder-drag picking** (in View.fs): The cut plane drag on the visible pin cylinder is **not** wired through `Sg.Intersectable` / `Sg.OnPointerDown`. The off-screen mesh composite writes `gl_FragDepth = minMeshDepth` (`Shader.fs:readArray`), and Aardvark's Sg picker depth-gates Intersectable hits against that — so a cylinder behind a mesh is silently rejected even though the CPU ray-cylinder intersection would succeed. Instead, `View.fs` owns a `Dom.OnPointerDown/Move/Up` trio on the renderControl that does the ray-cylinder test itself, bypassing the depth gate. Shared state: `PinCylinderDrag.isActive : cval<bool>` (ScanPinModel.fs). While that flag is true, `Update.fs` drops orbit `PointerDown/Move/Up` messages so the camera doesn't also drag. The old Sg-level pick node (dummy triangle + `Sg.Intersectable cylinder` + `Sg.OnPointerDown` handlers) was deleted.
-
-**Diagram** (in GuiPins.fs): `pinDiagram` computes screen position via `proj.Forward * view.Forward * V4d(pt, 1.0)` (column-vector convention: clip = proj * view * pos). Hidden when behind camera (W < 0.1) or off-screen (|ndc| > 1.5). SVG rendered by JS reading `data-diagram` JSON attribute, with MutationObserver for reactive updates.
-
-**Core sample 3D view** (in GuiPins.fs): A secondary `renderControl` embedded in `pinDiagram`, stacked below the SVG profile. Shows the selected pin's region as a vertical "core sample" — the prism axis is rotated to Z and centered at the origin via `coreSampleTrafo`. Meshes are rendered with `BlitShader.coreClip` (cylindrical discard: fragments with XY distance > footprint radius are discarded). The prism wireframe and cut plane quad are pre-transformed into core sample space. Uses an orthographic projection (`Frustum.ortho`) with constrained side-view camera: horizontal drag rotates around Z axis (`CoreSampleRotation`), vertical drag pans along Z (`CoreSamplePanZ`), scroll zooms (`CoreSampleZoom`). Camera state stored as three floats on Model; custom pointer handlers in GuiPins.fs (no OrbitController). View matrix built manually via `CameraView(sky, eye, forward, up, right)`. Side/Top view mode toggle (`CoreSampleViewMode`) — TopView not yet wired up.
-
-**Stratigraphy** (Stratigraphy.fs, StratigraphyView.fs, SceneGraph.fs): 2D diagram + 3D between-space picking. `Stratigraphy.compute` queries the server's `/query/cylinder-eval` on a **log-spaced ring ladder capped at 12 rings** between prism wall (`worldR`) and a `minInner = 0.02 m` floor — this keeps cylinder-eval cost roughly constant in prism radius. Default angular resolution is **180** (was 360; visually identical for the 2D diagram, halves server work and payload). Data is stored in `StratigraphyData.Rings : StratigraphyColumn[][]` (outer→inner; `Rings.[0]` aliases the legacy `Columns` field that drives the 2D diagram — axis stats still come from the outer ring only). `floodContinuousBand3D` BFS-floods a continuous gap across `(angleIdx, ringIdx, bracketIdx)` nodes, seeded at the hovered bracket on the outer ring; angular neighbors wrap, radial neighbors clamp. Two brackets connect iff `overlap > 0.5 * max(len1, len2)` — symmetric majority-overlap rule prevents a fat bracket from bridging two disjoint thin ones. `floodContinuousBand` is a thin wrapper that filters to `ringIdx = 0` for the 2D view. Hover state: `BetweenSpaceHover { ColumnIdx; HoverZ; Pinned }` on ScanPin, toggled by Shift+Left in the diagram. `BandCache` (union-find over the full (ring, angle, bracket) graph) is built once per cylinder-eval inside the background task and attached to the `StratigraphyComputed` message.
-
-**Between-space 3D volume** (PinGeometry.fs `buildBetweenSpaceSurfaces`, SceneGraph.fs `betweenSpaceBand`): Renders the continuous-gap volume as three translucent surfaces — upper (warm white), lower (cream), and side walls closing the volume boundary. Upper/lower are triangulated over grid quads where all four `(angle, ring)` corners are in the band; side walls are emitted on any grid edge where both endpoints are in the band but at least one adjacent quad is incomplete. All three draw calls use `BlendMode.Blend` and `DepthTest.None` in `passTwo` so the volume is visible through every mesh. Field-projected aVals (`prismVal`, `stratVal`, `hoverVal`) keep the rebuild cost minimal.
-
-**Open TODOs:** See `scanpin-v2-spec.md` — key gaps: dummy cut results (no real mesh intersection), no arcball gizmo, no deserialization, top view mode, summary meshes, boxplot ranking.
-
-## Render pipeline (hybrid Forward + WBOIT)
-
-For exhaustive reference (resources, FBO signature, shader math, clear values), see **`rendering_pipeline.md`** in the repo root. The summary below is the **decision guide for adding new renderable objects**.
-
-### Architecture at a glance
+## Server compile order (`Superserver.fsproj`)
 
 ```
-[ Pass 1: Forward opaque ]     IsForwardPass=true,  DepthMask=ON,  α≥τ → ForwardColor
-[ Pass 2: WBOIT translucent ]  IsForwardPass=false, DepthMask=OFF, α<τ → Accum + Revealage
-[ Compose ]                    fullscreen quad,  WBOIT-over-Forward → main FB color (no depth)
-[ passOne overlays ]           DepthTest=None forward draws on main FB (lines, text, gizmos)
+MeshLoader.fs          OBJ parse, centroid file, atlas paths
+MeshCache.fs           Embree scene + BbTree cache (lazy, permanent)
+MeshAnalysis.fs        cylinder evaluation, patch sampling, ridge tracing
+MeshIcp.fs             ICP solver
+QueryHandlers.fs       per-mesh HTTP handlers
+BatchHandlers.fs       multi-mesh HTTP handlers (Parallel.For fan-out)
+Handlers.fs            routing
+Program.fs             ASP.NET startup
 ```
 
-One offscreen FBO with three colour attachments + a shared depth attachment is created in `SceneGraph.build`:
+## API endpoints
 
-| Attachment | Format | Blend | Purpose |
-| --- | --- | --- | --- |
-| `ForwardColor` | Rgba8 | straight alpha | front-most α≥τ fragment per pixel |
-| `Accum` | Rgba16f | additive | WBOIT numerator |
-| `Revealage` | Rgba8 | `Zero`/`InvSourceColor` | WBOIT ∏(1−α) denominator |
-| Depth24Stencil8 | — | — | written in pass 1, tested (no write) in pass 2 |
-
-Both passes route through `OIT.hybridBlend` (in `BlitShader.fs`); the `IsForwardPass` uniform selects which branch runs. Threshold `τ = alphaThreshold = 0.99f`; below τ the WBOIT path also smoothstep-bridges revealage toward 1.0 across `[τ−Δ, τ]` (Δ = `alphaBridgeBand = 0.02f`) so `density` is continuous across the seam.
-
-Compose math (`OIT.compose`):
-```
-density  = 1 − revealage.r
-oitColor = accum.rgb / max(accum.w, ε)
-finalRGB = oitColor·density + forward.rgb·forward.a·(1 − density)
-finalA   = density + forward.a·(1 − density)
-```
-Pure α=1 → `forward.rgb` unmodified. Pure translucent → standard WBOIT. Translucent over opaque → properly composited.
-
-### Where does a new object go?
-
-| Object kind | Pass slot | Shader output | Notes |
-| --- | --- | --- | --- |
-| **Mesh-like (variable α: fully opaque cores, soft falloff edges, lasso/blob cutouts)** | both passes (route via `IsForwardPass`) | `OIT.hybridBlend` (or any shader that branches on `IsForwardPass` and emits the 3-attachment `Output` struct) | add to `meshScene`; it is rendered once in `forwardOpaqueScene` (pass 1) and once in `wbOitScene` (pass 2). Per-fragment α decides the path. |
-| **Always-translucent (pins, ghosts, hover previews, between-space surfaces, cut-plane quads, gizmos that should depth-fade with the scene)** | WBOIT pass only | `OIT.weightedBlend` | add to `pinScene` (or anything merged into `wbOitContent`). Emits zero to `ForwardColor` (no-op under blend modes), so even if the node is accidentally compiled into pass 1 it produces no visible artefact. |
-| **Lines / pixel-constant strokes that must integrate with the WBOIT alpha pipeline** | WBOIT pass | `LineShader` style → `OIT.weightedBlend` chain (see `Lines.render`) | depth-test against the pass-1 opaque depth (`DepthTest.LessOrEqual`). Use this when lines should be occluded by meshes in front of them. |
-| **Always-on-top overlays (coordinate cross axes + labels, HUD gizmos, debug tick marks, `Sg.Text`)** | post-compose forward overlay | regular forward shader (no MRT) | tag with `Sg.Pass RenderPass.passOne` + `Sg.DepthTest (AVal.constant DepthTest.None)`. Compose writes color only (no depth) into the main FB, so passOne draws are always on top. Use `Lines.renderForward` for lines here (see `originIndicator`/`originLabels` in `SceneGraph.fs`). |
-| **`Sg.Text`** | post-compose forward overlay only | its internal shader (no MRT support) | always passOne + `DepthTest.None`. Text in the WBOIT pass would silently fail because the text shader doesn't write the MRT semantics. |
-| **Screen-space post-process (explore-mode heatmap-style)** | own offscreen FBO, sampled in compose | own shader → single attachment | WebGL2 has no per-attachment blending, so a post-process with a different blend mode cannot share the OIT FBO. Render into a dedicated texture, then sample it inside `OIT.compose` (or insert an additional compose stage). |
-
-### How a hybrid-blend shader must emit
-
-```fsharp
-type Output = {
-    [<Semantic("ForwardColor")>] forward   : V4f
-    [<Semantic("Accum")>]        accum     : V4f
-    [<Semantic("Revealage")>]    revealage : V4f
-}
-```
-- Forward branch (`uniform.IsForwardPass = true`, α ≥ τ): `forward = (rgb, 1)`, `accum = 0`, `revealage = 0`.
-- WBOIT branch (α < τ): `forward = 0`, `accum = (rgb·α, α)·w`, `revealage = (aRev, 0, 0, 0)` where `w` is the WBOIT weight and `aRev = lerp(α, 1, smoothstep(τ−Δ, τ, α))`.
-- The "do-nothing" output for any branch is `V4f.Zero`. The per-attachment blend modes leave the framebuffer untouched on a zero source.
-
-A new translucent-only object should use `OIT.weightedBlend` unchanged — never reimplement the weight/revealage formula inline. A new hybrid object should call `OIT.hybridBlend` (or copy its structure if it needs additional clipping / discard logic).
-
-### Required scene-graph wiring for new nodes
-
-- New nodes inside `meshScene` automatically participate in **both** passes (forward + WBOIT). The shader must branch on `IsForwardPass`.
-- New nodes inside `pinScene` (or any sibling merged into `wbOitContent`) participate **only** in pass 2. They must use a pure WBOIT shader.
-- Anything added to the post-compose overlay must use `Sg.Pass RenderPass.passOne` and `Sg.DepthTest (AVal.constant DepthTest.None)`.
-- Never set `Sg.BlendMode` per node — the per-attachment blend modes are configured once at the pass scope (`forwardOpaqueScene` / `wbOitScene`) and override per-node settings would cause MRT inconsistency.
-- The shared FBO has a depth attachment but **compose does not write depth to the main FB**. Always-on-top overlays must rely on `passOne` ordering, not on depth-testing against the scene.
-
-### Picking
-
-The main FB has no usable depth (compose writes color only), so `e.Location.Depth` from `Sg.OnTap` etc. is **not** a usable world-position source. Two patterns:
-
-1. **CPU/server raycast (default for world-coordinate picks):** `View.tryPickRender` filters visible meshes by bbox, groups by dataset, calls `Query.rayBatch`, picks the closest render-space hit. Pointer-move uses a debounced (120 ms) variant `queueHoverPick`. Use this for tap-to-place, double-tap-to-focus, hover previews, and any handler that needs world coordinates.
-2. **Sg.OnPointerDown on a dedicated pickable node:** still works for in-scene Intersectables that don't need depth gating — e.g. a small handle drawn last in `passOne` with `DepthTest.None`. For anything occlusion-dependent, prefer the CPU raycast (the Sg picker's depth gate is unreliable now).
-
-### Adaptive performance reminders (in addition to the general rule above)
-
-- WBOIT weight uses `f.fc.Z` (clip-space depth) — do not multiply by anything frame-variant unless you really mean to. Most "wrong-looking ghost ordering" is a sign of a runaway weight, not a WBOIT bug.
-- Re-compiling render tasks (`info.Runtime.CompileRender`) is expensive. Add a new node to the existing `meshScene` / `pinScene` ASet rather than building a second pair of forward/WBOIT tasks.
-- Per-attachment blend modes are set with `Sg.BlendMode(semantic, mode)` — see the three calls inside `forwardOpaqueScene`/`wbOitScene` in `SceneGraph.fs`. New attachments require new semantics and new clear values inside `oitClear`.
-
-## Client model fields
-
-```fsharp
-Camera, MeshOrder, MeshNames, MeshVisible, MeshesLoaded, CommonCentroid, MenuOpen
-Filtered, FilterCenter        // active filter: HashMap<meshName, vertexIndices[]>
-DebugLog                      // rolling log, max 20 entries
-Datasets                      // list of dataset names from server
-ActiveDataset                 // currently loaded dataset name
-DatasetScales                 // per-dataset render scale (default: {"SETSM_glacier" → 0.01})
-DatasetCentroids              // per-dataset mean centroid, populated on CentroidsLoaded
-RevolverOn, FullscreenOn      // GUI toggles (combined with shift/space keys in View)
-RevolverCenter                // NDC anchor when revolver activated via GUI (not shift)
-DifferenceRendering           // heat-color depth difference between mesh layers
-MinDifferenceDepth            // world-space distance threshold to start heat coloring
-MaxDifferenceDepth            // world-space distance for full heat color saturation
-GhostSilhouette               // show semi-transparent ghost of clipped/hidden geometry
-ClipActive                    // whether workspace clipping is enabled
-ClipBox                       // active clip range (Box3d in world space)
-ClipBounds                    // world-space union of all dataset bboxes; Box3d.Invalid until loaded
-GhostOpacity                  // ghost silhouette opacity (0.01–1.0, default 0.1)
-ScanPins                      // ScanPinModel: pins, active placement, selected pin, placing mode
-CoreSampleViewMode            // SideView | TopView toggle for the core sample inspector
-CoreSampleRotation            // radians, angle around Z axis in core sample space
-CoreSamplePanZ                // vertical pan offset along Z axis
-CoreSampleZoom                // ortho half-height scale (zoom level)
-Explore                       // ExploreMode: Enabled, SteepnessThreshold, DisagreementThreshold (stddev in meters), HighlightColor, HighlightAlpha
-ReferenceAxis                 // AlongWorldZ | AlongCameraView — global; drives explore heatmap + pin placement
-```
-
-## Server architecture
-
-**Compile order** (Superserver.fsproj):
-```
-MeshLoader.fs    ← OBJ parsing, centroid files, atlas paths
-MeshCache.fs     ← Embree scene + BbTree cache (load-on-demand, permanent)
-Handlers.fs      ← HTTP handlers + routing
-Program.fs       ← ASP.NET startup
-```
-
-**Data layout on disk:**
-```
-data/
-  default.txt             ← optional; contents = name of default dataset (auto-loaded by client)
-  <dataset>/
-    <mesh>/
-      *.obj                 ← one file per mesh part (sorted = index order)
-      *centroid.txt         ← "x y z" (may have # comment lines); V3d.Zero if absent
-      *_atlas.jpg or *.jpg  ← texture atlas (both patterns tried)
-```
-
-**API endpoints:**
 ```
 GET  /api/datasets                              → string[]
 GET  /api/datasets/default                      → string (from data/default.txt, fallback = first alphabetically)
 GET  /api/datasets/{dataset}/centroids          → { meshName: [x,y,z] }
 GET  /api/datasets/{dataset}/bboxes             → { meshName: { min:[x,y,z], max:[x,y,z] } }
 GET  /api/datasets/{dataset}/mesh/{name}        → count of OBJ files
-GET  /api/datasets/{dataset}/mesh/{name}/{i}    → binary mesh (same format as before)
+GET  /api/datasets/{dataset}/mesh/{name}/{i}    → binary mesh
 GET  /api/datasets/{dataset}/mesh/{name}/{i}/atlas → JPEG
-POST /api/query/ray              → { hit, t, point, triangleId }   Name = "dataset/mesh"
-POST /api/query/closest          → { found, point, distanceSquared, triangleId }
-POST /api/query/sphere           → binary: int32 count | int32[] vertexIndices
-POST /api/query/sphere-batch     → binary: int32 meshCount | per-mesh (int32 nameLen | utf8 name | int32 idxCount | int32[] vertexIndices)
-                                    Request: { Names: string[], Center: [x,y,z], Radius }
-                                    Server Parallel.For across meshes. **Prefer this over per-mesh sphere loops.**
-POST /api/query/box              → binary: int32 count | int32[] vertexIndices
-POST /api/query/plane-intersection → { segments: [[u0,v0,u1,v1], ...] }  2D cut polylines (single mesh)
-POST /api/query/plane-intersection-batch → { results: [{ name, segments: [...] }, ...] }
-                                    Request: { Names: string[], PlanePoint, PlaneNormal, AxisU, AxisV, ... }
-                                    Server runs Parallel.For across meshes. **Prefer this for multi-mesh cuts** —
-                                    one roundtrip instead of N sequential calls.
-POST /api/query/ray-grid         → binary: int32 rayCount | per-ray (byte hitFlag | float64 hitX hitY hitZ | float32 nX nY nZ)
-                                    Request same shape as ray-batch: { Names, Origins, Directions } (flat 3*N arrays).
-                                    Returns closest hit across all named meshes and its world-space normal from Embree.
-                                    Used by Auto-mode placement (`Query.rayGrid`).
-POST /api/query/grid-eval        → binary grid of per-cell stats within a core sample prism
-POST /api/query/cylinder-eval    → binary: per-ring, per-angle mesh-intersection heights
-                                    Request: { Radii: float[], AngularResolution, ExtentForward, ExtentBackward, ... }
-                                    Response: int32 angularRes | int32 ringCount | int32 hitCount
-                                              then hitCount × (int32 ring, int32 angle, int32 nameLen, utf8 name, float64 height)
-                                    Server uses Parallel.For across rings (Embree Scene.Intersect is thread-safe).
+POST /api/query/ray                             → { hit, t, point, triangleId }   Name = "dataset/mesh"
+POST /api/query/closest                         → { found, point, distanceSquared, triangleId }
+POST /api/query/ray-batch                       → binary closest-hit per ray across N meshes
+POST /api/query/ray-grid                        → binary closest-hit + normal per ray
+POST /api/query/plane-intersection              → single mesh, 2D cut polylines
+POST /api/query/plane-intersection-batch        → multi-mesh, Parallel.For server-side
+POST /api/query/grid-eval                       → per-cell stats inside a core sample prism
+POST /api/query/cylinder-eval                   → per-ring per-angle mesh intersection heights
+POST /api/query/isoline                         → polyline at a given elevation
+POST /api/query/curvature-ridge                 → polyline along a curvature ridge
+POST /api/query/patch                           → tangent + normal at a point, plus neighbour sample
+POST /api/query/icp                             → ICP transform + convergence + residuals
 ```
 
-Client mesh names use `"dataset/meshName"` format throughout. Query `Name` field uses the same format; server splits on first `/`.
-All query coordinates are **absolute world space**. Server converts: `localPos = V3f(worldPos - centroid)`.
-Sphere/box results return **vertex indices** (3 per triangle), not triangle IDs.
+All query coordinates are **absolute world space**. The server converts: `localPos = V3f(worldPos - meshCentroid)`.
 
-## Key Aardvark.Dom gotchas
+The sphere / box / sphere-batch endpoints used by the old per-vertex filter feature were removed along with the `Filtered` model field — don't re-add them without a clear consumer.
 
-- `Attribute("for", "...")` on `<label>` is silently dropped — nest `<input>` inside `<label>` instead
-- `Attribute("checked", "")` is dropped — use `Attribute("checked", "checked")`
-- CSS `~` sibling combinator breaks (Aardvark inserts wrapper nodes) — use `:has()` on a known ancestor
-- Active tab CSS: `.tab-labels label:has(:checked)` and `.tabs:has(#hud-tabN:checked) #hud-panelN`
-- `RenderControlInfo` and `TraversalState` both have `.Runtime` — annotate `(info : Aardvark.Dom.RenderControlInfo)` when ambiguous
-- `yield!` is not supported in Aardvark.Dom computation expression builders — use OnBoot JS with MutationObserver for dynamic SVG/canvas rendering
-- `NodeBuilder "svg" { ... }` can create arbitrary HTML elements but SVG attributes need special handling
-- `renderControl { ... }` can be nested inside `div { ... }` — it creates a WebGL canvas as a child element
-- `AVal.map4` does not exist — combine with `AVal.map2`/`AVal.map3` instead
-- `Dom.Style` for renderControl; `Style` for HTML elements (div, button, etc.)
-- `Css.Custom` does not exist — use CSS classes in `style.css` for properties not covered by `Css.*`
-- `Sg.OnPointerDown(bool, handler)` — the bool is **capture-vs-bubble phase** for the Sg event bus, **not** pointer capture. For drag operations (pin cylinder, core sample gizmo, etc.) call `e.Context.SetPointerCapture(e.Target, e.PointerId)` inside the down handler and `ReleasePointerCapture(...)` in up — this is the Sg-level capture that reroutes move/up to the captured scope even when the pick ray no longer hits the original object.
-- `Dom.OnPointerDown((...), pointerCapture = true)` — browser-level `element.setPointerCapture` on the DOM node; use this on renderControl canvas drags so events continue to flow when the cursor leaves the canvas or is released over an overlapping GUI element.
-- **`Sg.OnTap` / `Sg.OnDoubleTap` / `Sg.OnLongPress` fire on background misses too.** When the tap ray hits no pickable geometry, the handler still runs but `e.WorldPosition` is derived from the far-plane intersection (arbitrary coordinates) and `e.Location.Depth ≈ 1.0` (clear value). Any handler that creates state from world coords (placing a ScanPin, re-targeting the camera, issuing a world-space server query) **must gate on `e.Location.Depth < 0.9999`**. Without the guard you'll get "invisible" pins/filters at infinity, a camera that flies to empty space, and — during placement mode — an unbounded loop of bogus entries because the `PlacingMode` flag re-fires on every subsequent canvas click. Correspondingly, `DeletePin` on a placement-phase pin must also clear `PlacingMode`, otherwise the next click just re-creates one.
-- **Sg picker depth-gates Intersectable hits against `gl_FragDepth`.** A `Sg.Intersectable` whose geometry is occluded by any fragment that wrote a nearer depth (e.g. the off-screen mesh composite quad writing `minMeshDepth`) will **not** fire `Sg.OnPointerDown/Tap` even though the CPU ray hit is valid. Workarounds: (a) render the pick geometry last with `DepthTest.Always` writing its true depth, or (b) bypass the Sg picker entirely and do a `Dom.OnPointerDown` + manual ray-cast on the renderControl (see cylinder-drag picking).
+## Client Model snapshot
+
+Top-level `Model` fields (see `Model.fs`):
+
+- `Camera`, `MeshOrder`, `MeshNames`, `MeshVisible`, `MeshesLoaded`, `CommonCentroid`, `MenuOpen`, `SavedMenuOpen`
+- `DebugLog`
+- `Datasets`, `ActiveDataset`, `DatasetScales` (`{"SETSM_glacier" → 0.01}`), `DatasetCentroids`
+- `FullscreenOn`, `GhostSilhouette` (default **on**), `GhostOpacity` (0.5), `ShadingStrength` (0.5), `SlopeThresholdDeg` (30°), `AnchorGhostMode` (default **on**)
+- `SceneBounds`, `MeshBounds`
+- `ActivePickingLayer`
+- `LassoDrawing`, `LassoVolume`
+- `MeshTransforms`, `Registration` (mode + reference mesh + residuals + convergence + running flag)
+- `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `ProvenanceHeatmap`, `ProvenanceThreshold`, `FalloffZoneOnly`
+- `FusionMode`
+- `ScanPins`, `ReferenceAxis` (AlongWorldZ | AlongCameraView), `Explore`, `ColorMode`, `CardSystem`
+- `RenderingMode` (Textured | Shaded | SlopeColor), `MeshSolo`, `ExploreCardPos`, `GearPopoverOpen`
+
+GUI placement:
+- Left panel (`GuiPanels.leftPanel`): mesh list, pin list, error metadata, error provenance card, lasso card.
+- Top bar (`GuiTopBar.topBar`): hamburger, dataset selector, pin-placement mode segmented control, explore toggle, camera reset, world coordinate readout, gear popover.
+- Gear popover (debug flyout, end of `GuiTopBar.fs`): reference axis, camera speed, **Ghost silhouette toggle**, **Ghost opacity slider**, **Anchor-blob ghost toggle**, shading strength, slope threshold, dataset info, mesh centroids, debug log.
+
+## ScanPin system
+
+A ScanPin is a 3D annotation with a world-space anchor, a Gaussian falloff radius, and a payload (`Point` / `Line` / `Patch`). Pins drive the per-pixel blob in the mesh shader (`Blobs` uniform) and can host derived line/patch overlays.
+
+**Placement workflow:** Top-bar segmented mode-selector (Profile / Plan / Auto) chooses a mode. After click-placement the pin enters `AdjustingPin` state with a flyout for radius / sigma / payload-type fine-tuning. Commit / Discard / Escape end placement.
+
+**State:** `Placement : PlacementState` single DU on `ScanPinModel` — `PlacementIdle | AnchorPlacement | AdjustingPin of ScanPinId`. Helpers: `ScanPinModel.activePlacementId sp`, `ScanPinModel.isPlacing sp`.
+
+**3D rendering** (`ScanPinScene.fs`): `pinDots` clickable markers, `pinSpheres` translucent shell + sigma sphere + selected-outline, `pinLines` for Line payloads, `pinPatchRings` for Patch payloads, `ghostPreview` for the placement hover.
+
+## Open TODOs
+
+- **Dead toggles to either re-wire or remove**: `ProvenanceHeatmap`, `FalloffZoneOnly`, `FusionMode`, `MeshAlgorithmResidual`, `CardSystem`-driven visuals. Their model fields and GUI controls survived the OIT removal but their render-time consumers were in shader paths that no longer exist.
+- **`ActivePickingLayer`** is still toggled by wheel-zoom in `View.fs` but no longer restricts picking — pick happens against whatever is in the depth buffer.
+- **No JSON / workspace persistence**: removed. Pins, lasso, transforms are all in-memory per session.
+- **No real cut-plane mesh intersection rendering** in the pin diagram yet. The flyout shows the prism/blob but the cross-section profile is sketched out, not driven by `/query/plane-intersection-batch`.
+- **No arcball gizmo** for pin axis tweaks; the flyout slider is the only adjustment.
+- **No top-view mode** for the core sample inspector — `CoreSampleViewMode = TopView` exists on the model but isn't wired to a renderControl.
+- **Ranking / BspTree / MeshIcp residual visualisation** is partial. Residuals come back from `/query/icp` but the chart in `GuiPanels` is rudimentary.
+
+## Aardvark.Dom gotchas
+
+- `Attribute("for", "...")` on `<label>` is silently dropped — nest `<input>` inside `<label>` instead.
+- `Attribute("checked", "")` is dropped — use `Attribute("checked", "checked")`.
+- CSS `~` sibling combinator breaks (Aardvark inserts wrapper nodes) — use `:has()` on a known ancestor.
+- `RenderControlInfo` and `TraversalState` both have `.Runtime` — annotate `(info : Aardvark.Dom.RenderControlInfo)` when ambiguous.
+- `yield!` is not supported in Aardvark.Dom CE builders — use OnBoot JS with MutationObserver for dynamic SVG/canvas rendering.
+- `NodeBuilder "svg" { ... }` can create arbitrary HTML elements but SVG attributes need special handling.
+- `renderControl { ... }` can be nested inside `div { ... }` — it creates a WebGL canvas as a child element.
+- `AVal.map4` does not exist — combine with `AVal.map2`/`AVal.map3`.
+- `Dom.Style` for renderControl; `Style` for HTML elements.
+- `Css.Custom` does not exist — use CSS classes in `style.css` for properties not covered by `Css.*`.
+- `Sg.OnPointerDown(bool, handler)` — the bool is **capture-vs-bubble phase** for the Sg event bus, not pointer capture. For drag operations call `e.Context.SetPointerCapture(e.Target, e.PointerId)` inside the down handler and `ReleasePointerCapture(...)` in up.
+- `Dom.OnPointerDown((...), pointerCapture = true)` — browser-level `element.setPointerCapture`; use this on renderControl canvas drags so events keep flowing when the cursor leaves the canvas.
+- **`Sg.OnTap` / `Sg.OnDoubleTap` / `Sg.OnLongPress` fire on background misses too.** Always gate on `e.Location.Depth < 0.9999`.
 
 ## CSS / design
 
-- Light theme, `'Segoe UI'`/`'Inter'`, accent `#1a56db`
-- Body bg `#f4f6f8`, panel bg `#ffffff`, text `#0f172a`
-- Render canvas (`.render-control`): `linear-gradient(to top, #d0dce8, #eaf1f8)`
-- All styles in `wwwroot/style.css`; no inline styles except model-dependent ones (e.g. cursor)
-- `.pin-diagram`: fixed-position floating overlay, positioned via inline style from 3D projection
-- `.pin-mini-view`: 280×200 secondary renderControl inside pin-diagram (core sample 3D view)
-- `.btn-active`: darker blue with inset shadow for toggle buttons
-- Tab IDs: `hud-tab1/2/3/4`, panel IDs: `hud-panel1/2/3/4`, radio name: `hud-tabs`
+- Light theme, `'Segoe UI'`/`'Inter'`, accent `#1a56db`.
+- Body bg `#f4f6f8`, panel bg `#ffffff`, text `#0f172a`.
+- Render canvas (`.render-control`): `linear-gradient(to top, #d0dce8, #eaf1f8)`.
+- All styles in `wwwroot/style.css`; no inline styles except model-dependent ones (e.g. cursor).
+- `.btn-active`: darker blue with inset shadow for toggle buttons.
 
 ## fsproj notes
 
-- Client: `Microsoft.NET.Sdk.BlazorWebAssembly`, `net8.0`, `WasmBuildNative=true`, `LocalAdaptify=true`
-- Server: `Microsoft.NET.Sdk.Web`, `net8.0`; references client project for static file hosting
-- Server runs on `http://localhost:5000`
-- Run Adaptify with `adaptify.cmd` (not `dotnet adaptify`)
+- Client: `Microsoft.NET.Sdk.BlazorWebAssembly`, `net8.0`, `WasmBuildNative=true`, `LocalAdaptify=true`.
+- Server: `Microsoft.NET.Sdk.Web`, `net8.0`; references client project for static file hosting.
+- Server runs on `http://localhost:5000`.
+- Run Adaptify with `adaptify.cmd` (Windows) or `adaptify.sh` (Unix) — both wrap `dotnet adaptify --local --force ./src/Superprojekt/Superprojekt.fsproj`.

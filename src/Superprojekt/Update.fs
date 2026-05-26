@@ -41,8 +41,6 @@ module Update =
                 CommonCentroid   = common
                 MeshOrder        = indices
                 MeshesLoaded     = HashSet.empty
-                Filtered         = HashMap.empty
-                FilterCenter     = None
                 SceneBounds      = Box3d.Invalid
                 DatasetCentroids =
                     let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) model.DatasetCentroids
@@ -58,8 +56,6 @@ module Update =
             let sp = model.ScanPins
             if ScanPinModel.isPlacing sp then model
             else { model with MenuOpen = not model.MenuOpen }
-        | FilteredMeshLoaded(name, selPt, indices) ->
-            { model with Filtered = HashMap.add name indices model.Filtered; FilterCenter = Some selPt }
         | LoadFinished name ->
             let model = { model with MeshesLoaded = HashSet.add name model.MeshesLoaded }
 
@@ -72,8 +68,6 @@ module Update =
                 d.Style.PointerEvents <- "none"
                 Window.Document.Body.AppendChild(d) |> ignore
             model
-        | ClearFilteredMesh ->
-            { model with Filtered = HashMap.empty; FilterCenter = None }
         | LogDebug s ->
             let log = model.DebugLog.InsertAt(0, s)
             let log = if log.Count > 20 then IndexList.take 20 log else log
@@ -196,33 +190,6 @@ module Update =
         | ToggleFusionMode ->
             { model with FusionMode = not model.FusionMode }
 
-        | SaveWorkspace ->
-            let json = Persistence.serialize model
-            let escaped =
-                json.Replace("\\", "\\\\").Replace("`", "\\`").Replace("$", "\\$")
-            let stamp = System.DateTime.UtcNow.ToString("yyyyMMdd-HHmmss")
-            let script = Window.Document.CreateElement("script")
-            script.InnerText <-
-                sprintf """
-                var b = new Blob([`%s`], {type:'application/json'});
-                var u = URL.createObjectURL(b);
-                var a = document.createElement('a');
-                a.href = u; a.download = 'workspace-%s.scanpin.json';
-                document.body.appendChild(a); a.click(); document.body.removeChild(a);
-                URL.revokeObjectURL(u);
-                """ escaped stamp
-            Window.Document.Body.AppendChild(script) |> ignore
-            Window.Document.Body.RemoveChild(script) |> ignore
-            model
-
-        | LoadWorkspace json ->
-            match Persistence.deserialize model json with
-            | Result.Ok m ->
-                let log = m.DebugLog.InsertAt(0, "workspace loaded")
-                { m with DebugLog = log }
-            | Result.Error err ->
-                let log = model.DebugLog.InsertAt(0, sprintf "workspace load failed: %s" err)
-                { model with DebugLog = log }
         | SceneBoundsLoaded bboxes ->
             if bboxes.Length = 0 then model
             else
@@ -252,8 +219,6 @@ module Update =
                 { model with
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
-                    Filtered = HashMap.empty
-                    FilterCenter = None
                     MeshSolo = NoSolo
                     MeshBounds = Map.empty
                     ActivePickingLayer = None

@@ -1,0 +1,143 @@
+# Superprojekt
+
+Research prototype for interactive 3D inspection of geological mesh and pointcloud datasets. Two F# projects:
+
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, multi-mesh raycasts, plane intersections, cylinder evaluation, ICP).
+- **Superprojekt** — Blazor WebAssembly client. Aardvark.Dom Elm-style architecture, WebGL rendering. Runs on desktop and mobile browsers; thin client by design — heavy compute lives on the server.
+
+## Run it
+
+You need .NET 8 SDK and a recent browser. First-time setup:
+
+```bash
+dotnet tool restore
+dotnet paket restore
+```
+
+Start the server (serves both the API and the WASM client at `http://localhost:5000`):
+
+```bash
+dotnet run --project src/Superserver
+```
+
+Open `http://localhost:5000`. The default dataset (read from `src/Superserver/data/default.txt`) auto-loads on first paint.
+
+### Datasets
+
+Put OBJ files in `src/Superserver/data/<dataset>/<mesh>/`:
+
+```
+data/
+  default.txt              # contents = name of default dataset (optional)
+  <dataset>/
+    <mesh>/
+      *.obj                # one file per mesh part
+      *centroid.txt        # "x y z" (V3d.Zero if absent)
+      *_atlas.jpg or *.jpg # texture atlas
+```
+
+The first request for a mesh parses OBJ + builds an Embree scene + BbTree; the result is cached for the process lifetime. Dataset bbox fetch warms the cache for every mesh up front, so the first interactive query never pays the lazy-load cost.
+
+### Docker
+
+`Dockerfile` + `docker-compose.yml` package the server + published WASM bundle behind nginx. `docker-compose up` builds and runs on port 80.
+
+## What you can do today
+
+- **Load and explore a dataset.** Orbit camera (drag/right-drag/scroll, or touch). Double-tap geometry to recenter. Hold Space for fullscreen review.
+- **Toggle individual meshes / solo / focus.** Bulk All / None. Choose textured, shaded, or slope-color rendering.
+- **Ghost silhouette.** Inactive meshes render as a faint translucent shell so you keep spatial context. Toggle + opacity in the gear popover; default on.
+- **Lasso clip.** Draw a polygon in the viewport; outside-lasso fragments fade to ghost level instead of being clipped.
+- **ScanPins (annotations).** Place a 3D anchor on a surface, edit its radius and Gaussian sigma, attach a Point / Line / Patch payload. Pins fade meshes around them via a per-pixel Gaussian blob in the mesh shader (same code path as the lasso).
+- **Mesh registration.** Reference-based ICP (traditional, region-restricted, point-pair + refinement). Pin centers + sigmas feed the region-restricted variant.
+- **Error provenance overlay.** Per-mesh sensor type + dataset-error override, with a tunable heatmap.
+- **Explore mode.** Highlights regions of high disagreement or steep slope; tunable in its own card.
+
+## Architecture
+
+Elm-style: `Model` → `Update.update` → `View.view` → `Boot.run`.
+
+The client compiles in this order (`src/Superprojekt/Superprojekt.fsproj`):
+
+```
+RankingState.fs                      adaptive ranking helper
+MeshData.fs                          mesh fetch / parse
+BspTree.fs                           in-browser BSP for local queries
+Query.fs                             server query wrappers (Async)
+CameraModel.fs / .g.fs               OrbitState [<ModelType>]
+OrbitTypes.fs / OrbitController.fs   orbit camera
+ScanPinModel.fs / .g.fs              ScanPin types
+PinGeometry.fs                       icosphere + footprint geometry
+Model.fs / .g.fs                     application Model [<ModelType>]
+BlitShader.fs                        placeholder (kept for fsproj stability)
+Shader.fs                            FlatColor + helpers
+LineShader.fs                        pixel-constant 3D lines
+Primitives.fs                        compact GUI widgets
+Messages.fs                          Message DU
+CardUpdate.fs / ScanPinUpdate.fs     sub-reducers
+Update.fs                            main reducer
+MeshView.fs                          mesh shader + per-mesh scene nodes
+ServerActions.fs                     init, loadDataset
+ScanPinScene.fs                      pin sg nodes
+SceneGraph.fs                        scene composition + coordinate cross
+CardsPin.fs / Cards.fs               floating pin diagrams
+GuiTopBar.fs / GuiPanels.fs          top bar + left panel
+GuiOverlays.fs / GuiCards.fs         overlays + cards
+View.fs                              view function + App module
+ShaderCache.fs                       FShade AOT cache
+Program.fs                           Boot.run entry
+```
+
+The server is much smaller (`src/Superserver/`):
+
+```
+MeshLoader.fs                        OBJ parse + centroid file + atlas paths
+MeshCache.fs                         lazy Embree scene + BbTree cache
+MeshAnalysis.fs                      cylinder evaluation, patch sampling
+MeshIcp.fs                           ICP solver
+QueryHandlers.fs                     per-mesh HTTP handlers
+BatchHandlers.fs                     multi-mesh HTTP handlers
+Handlers.fs                          routing
+Program.fs                           ASP.NET startup
+```
+
+## Render pipeline
+
+**Single forward pass into the main framebuffer.** The mesh shader (`MeshView.MeshShader.shade`) is the only thing that writes depth per fragment:
+
+- Per-fragment α = ghost-lerp of a mask. Mask is `max(lasso, blobs)`; outside the mask α drops to `GhostOpacity`. Inactive meshes get `GhostOpacity` everywhere.
+- α-gated `gl_FragDepth`: fragments with α ≥ 0.99 write their natural `gl_FragCoord.z`; α < 0.99 writes 1.0 (far). Result: translucent ghost geometry doesn't occlude opaque surfaces behind it, but opaque overdraw still works.
+- 32-slot uniform array of lasso half-space planes; 32-slot uniform array of pin Gaussian blobs `(cx, cy, cz, σ)`.
+
+Pin geometry, lines, and text are drawn in the same pass with `DepthTest.LessOrEqual` so they fade behind opaque meshes. The coordinate cross + tick labels are in `passOne` with `DepthTest.None` so they always overlay everything.
+
+**`Sg.DepthMask` is never used.** It is buggy in this Aardvark / Aardworx WebGL build and silently breaks the depth pipeline. Ordering is steered with `Sg.DepthTest` + `Sg.Pass` alone. This violates the textbook "translucent should not write depth" rule but is the only configuration that actually renders correctly in this stack.
+
+**Picking** uses Aardvark's pixel picker. `e.Location.Depth < 0.9999` gates valid hits (background misses leave depth at the clear value).
+
+## Server query performance
+
+Costly queries scale with mesh count × angular density. Rules learned the hard way:
+
+- **Never per-mesh loops over HTTP.** Use the batch endpoints (`plane-intersection-batch`, `ray-batch`, `ray-grid`, `cylinder-eval`) and let the server fan out with `Parallel.For`.
+- **Embree `Scene.Intersect` is thread-safe** — ring loops inside `cylinder-eval` are parallelised across rings with per-thread `ResizeArray` hit buffers.
+- **Cap density.** `Stratigraphy.compute` uses a log-spaced max-12 ring ladder rather than a constant 0.25 m step; angular resolution defaults to 180.
+- **Debounce user-driven triggers** with a `CancellationTokenSource` so only the final drag position hits the server.
+- **Mesh caches are warmed at dataset load** by the bbox handler.
+
+## TODOs / known gaps
+
+- `RankingState`, `BspTree`, `MeshIcp` features partially exposed in the GUI; rough edges around residual visualisation and convergence display.
+- ScanPin Patch / Line payloads work end-to-end but the cut-plane diagram is still a sketch; no real mesh intersection rendered yet.
+- No arcball gizmo for pin axis tweaks (the flyout slider is enough for now).
+- No JSON serialisation of the workspace; everything is in-memory per session.
+- Top-view mode for the core sample inspector exists in the model but isn't wired into the side renderControl.
+- A handful of model fields (`ProvenanceHeatmap`, `FalloffZoneOnly`, `FusionMode`, `MeshAlgorithmResidual`, `CardSystem`) still have GUI controls but no live render-time consumer after the OIT removal — kept for now until their corresponding shader paths are reimplemented on top of the single-pass pipeline.
+- The mesh shader's `[<Depth>] depth : float32` output writes `gl_FragDepth = gl_FragCoord.z` for opaque fragments; this is a no-op on paper but the surrounding stack only behaves correctly *because* it's explicitly written. Don't simplify it back to standard depth.
+
+## Style
+
+- Light theme, high contrast, print-appropriate.
+- GUI must be readable to a non-expert at first glance.
+- No comments unless the logic is non-obvious; concise code; no unnecessary abstractions.
+- See `CLAUDE.md` for the detailed conventions an AI assistant should follow.

@@ -80,8 +80,6 @@ module GuiPanels =
                     "Slope",    (rm |> AVal.map (fun m -> m = SlopeColor)),   (fun () -> env.Emit [SetRenderingMode SlopeColor])
                 ]
             }
-            compactToggle "Anchor-blob ghost" model.AnchorGhostMode (fun () ->
-                env.Emit [ToggleAnchorGhostMode])
         }
 
     let placementFlyout (env : Env<Message>) (model : AdaptiveModel) =

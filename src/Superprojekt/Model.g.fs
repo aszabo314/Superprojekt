@@ -1,5 +1,5 @@
-//d07e0356-81aa-705f-bd04-67ea604cce0c
-//778c318d-c9cb-b125-92a0-ed22575af2f0
+//1863aec6-4ca8-1d89-40ff-01a9925726e4
+//df10f933-4b00-7f71-bf48-d0289235678a
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -20,8 +20,6 @@ type AdaptiveModel(value : Model) =
     let _CommonCentroid_ = FSharp.Data.Adaptive.cval(value.CommonCentroid)
     let _MenuOpen_ = FSharp.Data.Adaptive.cval(value.MenuOpen)
     let _SavedMenuOpen_ = FSharp.Data.Adaptive.cval(value.SavedMenuOpen)
-    let _Filtered_ = FSharp.Data.Adaptive.cmap(value.Filtered)
-    let _FilterCenter_ = FSharp.Data.Adaptive.cval(value.FilterCenter)
     let _DebugLog_ = FSharp.Data.Adaptive.clist(value.DebugLog)
     let _Datasets_ = FSharp.Data.Adaptive.cval(value.Datasets)
     let _ActiveDataset_ = FSharp.Data.Adaptive.cval(value.ActiveDataset)
@@ -72,8 +70,6 @@ type AdaptiveModel(value : Model) =
             _CommonCentroid_.Value <- value.CommonCentroid
             _MenuOpen_.Value <- value.MenuOpen
             _SavedMenuOpen_.Value <- value.SavedMenuOpen
-            _Filtered_.Value <- value.Filtered
-            _FilterCenter_.Value <- value.FilterCenter
             _DebugLog_.Value <- value.DebugLog
             _Datasets_.Value <- value.Datasets
             _ActiveDataset_.Value <- value.ActiveDataset
@@ -117,8 +113,6 @@ type AdaptiveModel(value : Model) =
     member __.CommonCentroid = _CommonCentroid_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V3d>
     member __.MenuOpen = _MenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SavedMenuOpen = _SavedMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.bool>>
-    member __.Filtered = _Filtered_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.int)[]>
-    member __.FilterCenter = _FilterCenter_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.DebugLog = _DebugLog_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
     member __.Datasets = _Datasets_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
     member __.ActiveDataset = _ActiveDataset_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>

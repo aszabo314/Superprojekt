@@ -137,6 +137,11 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            compactToggle "Anchor-blob ghost" model.AnchorGhostMode (fun () ->
+                                env.Emit [ToggleAnchorGhostMode])
+                        }
+                        div {
+                            Class "tb-gear-row"
                             inlineSlider "Shading strength" 0.0 1.0 0.01 (sprintf "%.2f") model.ShadingStrength (fun v ->
                                 env.Emit [SetShadingStrength v])
                         }
@@ -173,26 +178,6 @@ module GuiTopBar =
                                             sprintf "centroid (%.1f, %.1f, %.1f)" c.X c.Y c.Z)
                                     }
                                 })
-                        }
-                        div {
-                            Class "tb-gear-row tb-gear-persist"
-                            span { Class "lp-sublabel"; "Workspace" }
-                            button {
-                                Class "mb"
-                                Attribute("title", "Save workspace JSON to a file")
-                                Dom.OnClick(fun _ -> env.Emit [SaveWorkspace])
-                                "💾 Save"
-                            }
-                            button {
-                                Class "mb"
-                                Attribute("title", "Load a previously-saved workspace JSON")
-                                Dom.OnClick(fun _ ->
-                                    let script = Window.Document.CreateElement("script")
-                                    script.InnerText <- "document.getElementById('ws-file-picker').click();"
-                                    Window.Document.Body.AppendChild(script) |> ignore
-                                    Window.Document.Body.RemoveChild(script) |> ignore)
-                                "📂 Load"
-                            }
                         }
                         div {
                             Class "tb-gear-log"

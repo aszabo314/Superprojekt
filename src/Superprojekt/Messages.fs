@@ -9,8 +9,6 @@ type Message =
     | LoadFinished       of string
     | SetVisible         of string * bool
     | ToggleMenu
-    | FilteredMeshLoaded of string * V3d * int[]
-    | ClearFilteredMesh
     | LogDebug           of string
     | ToggleFullscreen
     | ToggleGhostSilhouette
@@ -31,8 +29,6 @@ type Message =
     | SetProvenanceThreshold of float
     | ToggleFalloffZoneOnly
     | ToggleFusionMode
-    | SaveWorkspace
-    | LoadWorkspace of string
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string

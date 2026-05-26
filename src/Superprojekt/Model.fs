@@ -172,9 +172,6 @@ type Model =
         MenuOpen       : bool
         SavedMenuOpen  : bool option
 
-        [<CheapEquals>]
-        Filtered       : HashMap<string, int[]>
-        FilterCenter   : option<V3d>
         DebugLog       : IndexList<string>
 
         Datasets         : string list
@@ -232,8 +229,6 @@ module Model =
             CommonCentroid = V3d.Zero
             MenuOpen       = false
             SavedMenuOpen  = None
-            Filtered       = HashMap.empty
-            FilterCenter   = None
             DebugLog       = IndexList.empty
             Datasets         = []
             ActiveDataset    = None
@@ -244,7 +239,7 @@ module Model =
             GhostOpacity        = 0.5
             ShadingStrength     = 0.5
             SlopeThresholdDeg   = 30.0
-            AnchorGhostMode     = false
+            AnchorGhostMode     = true
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             ActivePickingLayer = None

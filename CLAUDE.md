@@ -39,24 +39,27 @@ Outputs (custom record):
 - `[<Color>] color : V4f`
 - `[<Depth>] depth : float32`
 
-Per-fragment α:
-- `MeshActive = false` → α = `GhostOpacity`
-- `MeshActive = true`  → α = `lerp(GhostOpacity, 1, mask)` with `mask = max(lassoMask, blobMax)`
-  - no lasso, no blobs → `mask = 1.0` → α = 1.0
-  - lasso only → `mask = 1.0` inside, `0.0` outside
-  - blobs only → smooth Gaussian falloff `exp(-d² / (2σ²))`
-  - both → union (max) of the two
+Per-fragment α — three-stage filter chain (each filter can only RESTRICT):
+
+1. **MeshActive**: `false` → α = `GhostOpacity` (whole mesh ghosted, next filters skipped).
+2. **Lasso**: outward-facing half-space planes packed as `V4f(nx, ny, nz, d)`. `lassoComponent = 1.0` iff `dot(plane.xyz, p) + plane.w ≤ 0` for **all** active planes; else `0.0`. No lasso → `1.0` (no restriction).
+3. **Falloff blob**: each pin has an `InnerRadius` (hard core, weight = 1.0) and a larger `FalloffRadius` (exponential decay `exp(-3·(d-inner)/(outer-inner))` to ≈0.05 at `FalloffRadius`). `blobComponent` = max weight across all pins, or `0.0` if the fragment is outside every pin's `FalloffRadius`. No blobs → `1.0`.
+
+`mask = lassoComponent * blobComponent` — conjunctive. Both filters must say "include me at full strength" for α = 1; otherwise α drops toward `GhostOpacity`. Final α = `lerp(GhostOpacity, 1.0, mask)`.
+
+Implication: inside-lasso-outside-blob fragments are **ghosted**, the same as outside-lasso fragments. The pins carve the visible region inside the lasso.
 
 α-gated depth output:
-- α ≥ 0.99 → writes `v.fc.Z` (window-space depth, identical to the rasterizer's natural depth)
-- α < 0.99 → writes `1.0f` (far plane) so the fragment never occludes anything
+- Hard-core fragments (α reaches 1 via inHardCore + lasso satisfied) → write `v.fc.Z` (window-space depth, identical to the rasterizer's natural depth).
+- Falloff / outside fragments → write `1.0f` (far plane) so the fragment never occludes anything.
+- A `fullySolid` flag also clamps non-hard-core fragments below `opaqueThreshold - 0.01` after the ghost-lerp, so the depth-write branch can't flip mid-falloff (which would otherwise produce a thin occlusion ring inside the falloff zone).
 
 Discard at `α < 1e-4f` so the gated path doesn't bother with truly invisible fragments.
 
 Uniforms set per draw call:
 - `MeshActive`, `GhostOpacity`, `RenderingMode`, `MeshColor`, `ShadingStrength`, `SlopeThreshold`
-- `LassoPlaneCount` + `LassoPlanes : Arr<N<32>, V4f>` — outward-facing half-space planes packed as `V4f(nx, ny, nz, d)`; inside iff `dot(plane.xyz, p) + plane.w <= 0` for ALL active planes.
-- `BlobCount` + `Blobs : Arr<N<32>, V4f>` — each pin packed as `V4f(cx, cy, cz, σ)` in render space (post-meshTrafo), matching `v.wp.XYZ`. Hard cap = 32.
+- `LassoPlaneCount` + `LassoPlanes : Arr<N<32>, V4f>` — half-space planes (see filter 2).
+- `BlobCount` + `Blobs : Arr<N<32>, V4f>` = `(cx, cy, cz, innerRadiusRender)` + `BlobFalloffs : Arr<N<32>, V4f>` = `(falloffRadiusRender, 0, 0, 0)`. Pin centres and radii are stored in **metric world-space** on the model and converted to render-space (`* datasetScale`) on upload. Hard cap = 32.
 
 ### `Sg.DepthMask` is forbidden
 
@@ -195,22 +198,25 @@ Top-level `Model` fields (see `Model.fs`):
 - `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `ProvenanceHeatmap`, `ProvenanceThreshold`, `FalloffZoneOnly`
 - `FusionMode`
 - `ScanPins`, `ReferenceAxis` (AlongWorldZ | AlongCameraView), `Explore`, `ColorMode`, `CardSystem`
-- `RenderingMode` (Textured | Shaded | SlopeColor), `MeshSolo`, `ExploreCardPos`, `GearPopoverOpen`
+- `RenderingMode` (Textured | Shaded | SlopeColor), `MeshSolo`, `ExploreCardPos`, `LassoCardPos`, `GearPopoverOpen`
 
 GUI placement:
-- Left panel (`GuiPanels.leftPanel`): mesh list, pin list, error metadata, error provenance card, lasso card.
-- Top bar (`GuiTopBar.topBar`): hamburger, dataset selector, pin-placement mode segmented control, explore toggle, camera reset, world coordinate readout, gear popover.
+- Left panel (`GuiPanels.leftPanel`): mesh list, pin list, error metadata, error provenance card.
+- Top bar (`GuiTopBar.topBar`): hamburger, dataset selector, **◉ Explore**, **◌ Lasso**, **○ Pin** placement, **◈ Fusion**, camera reset, world coordinate readout, gear popover.
+- Floating cards (`GuiCards.fs`): `exploreCard`, `lassoCard`, `registrationCard` — draggable, persisted positions via `ExploreCardPos` / `LassoCardPos` / no-persist for registration.
 - Gear popover (debug flyout, end of `GuiTopBar.fs`): reference axis, camera speed, **Ghost silhouette toggle**, **Ghost opacity slider**, **Anchor-blob ghost toggle**, shading strength, slope threshold, dataset info, mesh centroids, debug log.
 
 ## ScanPin system
 
-A ScanPin is a 3D annotation with a world-space anchor, a Gaussian falloff radius, and a payload (`Point` / `Line` / `Patch`). Pins drive the per-pixel blob in the mesh shader (`Blobs` uniform) and can host derived line/patch overlays.
+A ScanPin is a 3D annotation in **metric world-space**: `Centre : V3d` (world metres), `InnerRadius : float` (hard truth — α = 1 and full evaluation weight inside; metres), `FalloffRadius : float` (exponential decay to ~0 by this distance; metres). InnerRadius and FalloffRadius are independent — `GhostOpacity` and falloff slider changes never move the inner radius. The placement flyout exposes inner radius directly and the falloff as a *relative* slider whose value is the delta `FalloffRadius - InnerRadius`; moving the inner slider preserves that delta. Pins drive the per-pixel blob in the mesh shader (`Blobs` + `BlobFalloffs` uniforms) and can host a `Point` / `Line` / `Patch` payload.
+
+Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc scale` and `ScanPin.renderLength scale` in `ScanPinModel.fs`. `MeshView.buildScene` projects centres/radii to render-space on upload; `ScanPinScene.fs` does the same for marker dots, spheres, outline, patch footprint. The `Cards.projectToScreen` anchor is stashed in render-space by `ScanPinUpdate.handleMsg`. Camera focus (`OrbitMessage.SetTargetCenter`) takes render-space coords too.
 
 **Placement workflow:** Top-bar segmented mode-selector (Profile / Plan / Auto) chooses a mode. After click-placement the pin enters `AdjustingPin` state with a flyout for radius / sigma / payload-type fine-tuning. Commit / Discard / Escape end placement.
 
 **State:** `Placement : PlacementState` single DU on `ScanPinModel` — `PlacementIdle | AnchorPlacement | AdjustingPin of ScanPinId`. Helpers: `ScanPinModel.activePlacementId sp`, `ScanPinModel.isPlacing sp`.
 
-**3D rendering** (`ScanPinScene.fs`): `pinDots` clickable markers, `pinSpheres` translucent shell + sigma sphere + selected-outline, `pinLines` for Line payloads, `pinPatchRings` for Patch payloads, `ghostPreview` for the placement hover.
+**3D rendering** (`ScanPinScene.fs`): `pinDots` clickable markers, `pinSpheres` shows two translucent shells (outer = FalloffRadius, inner = InnerRadius) + selected-outline, `pinLines` for Line payloads, `pinPatchRings` for Patch payloads, `ghostPreview` for the placement hover.
 
 ## Open TODOs
 

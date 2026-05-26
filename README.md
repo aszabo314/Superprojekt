@@ -47,9 +47,10 @@ The first request for a mesh parses OBJ + builds an Embree scene + BbTree; the r
 - **Load and explore a dataset.** Orbit camera (drag/right-drag/scroll, or touch). Double-tap geometry to recenter. Hold Space for fullscreen review.
 - **Toggle individual meshes / solo / focus.** Bulk All / None. Choose textured, shaded, or slope-color rendering.
 - **Ghost silhouette.** Inactive meshes render as a faint translucent shell so you keep spatial context. Toggle + opacity in the gear popover; default on.
-- **Lasso clip.** Draw a polygon in the viewport; outside-lasso fragments fade to ghost level instead of being clipped.
-- **ScanPins (annotations).** Place a 3D anchor on a surface, edit its radius and Gaussian sigma, attach a Point / Line / Patch payload. Pins fade meshes around them via a per-pixel Gaussian blob in the mesh shader (same code path as the lasso).
-- **Mesh registration.** Reference-based ICP (traditional, region-restricted, point-pair + refinement). Pin centers + sigmas feed the region-restricted variant.
+- **Lasso clip.** Top-level `◌ Lasso` button opens a floating card; draw a polygon in the viewport, outside-lasso fragments fade to ghost level.
+- **ScanPins (annotations).** Place a 3D anchor on a surface. Each pin has an **Inner radius** (hard truth: α = 1 and full evaluation weight inside) and a **Falloff radius** (exponential decay beyond inner). Both stored in metric world-metres; the falloff slider is relative to the inner radius. Pin Point / Line / Patch payloads carry derived analysis.
+- **Filter chain.** Visibility is the conjunction of three filters: MeshActive toggle → lasso region → pin blob field. Both lasso and blob must agree for a fragment to be fully opaque; inside-lasso-outside-blob fragments fall to ghost level.
+- **Mesh registration.** Reference-based ICP (traditional, region-restricted, point-pair + refinement). Pin centres + falloff radii feed the region-restricted variant.
 - **Error provenance overlay.** Per-mesh sensor type + dataset-error override, with a tunable heatmap.
 - **Explore mode.** Highlights regions of high disagreement or steep slope; tunable in its own card.
 
@@ -105,9 +106,12 @@ Program.fs                           ASP.NET startup
 
 **Single forward pass into the main framebuffer.** The mesh shader (`MeshView.MeshShader.shade`) is the only thing that writes depth per fragment:
 
-- Per-fragment α = ghost-lerp of a mask. Mask is `max(lasso, blobs)`; outside the mask α drops to `GhostOpacity`. Inactive meshes get `GhostOpacity` everywhere.
-- α-gated `gl_FragDepth`: fragments with α ≥ 0.99 write their natural `gl_FragCoord.z`; α < 0.99 writes 1.0 (far). Result: translucent ghost geometry doesn't occlude opaque surfaces behind it, but opaque overdraw still works.
-- 32-slot uniform array of lasso half-space planes; 32-slot uniform array of pin Gaussian blobs `(cx, cy, cz, σ)`.
+- Per-fragment α = `lerp(GhostOpacity, 1, mask)` with `mask = lassoComponent * blobComponent` — conjunctive: both filters must agree. Inactive meshes get `GhostOpacity` everywhere.
+- Lasso component is 1 inside the half-space polytope, 0 outside (or 1 if no lasso).
+- Blob component is the max weight across pins: 1 inside any pin's `InnerRadius`, `exp(-3·(d-inner)/(outer-inner))` between inner and `FalloffRadius`, 0 outside every pin's range (or 1 if no pins).
+- α-gated `gl_FragDepth`: hard-core fragments write their natural `gl_FragCoord.z`; falloff and outside fragments write 1.0 (far). Result: translucent ghost geometry doesn't occlude opaque surfaces behind it, but opaque overdraw still works.
+- Post-lerp clamp: non-hard-core fragments are pinned below the opaque threshold to prevent the depth-write branch from flipping mid-falloff (which would otherwise produce a visible occlusion ring).
+- 32-slot uniform arrays of lasso half-space planes, pin centres + inner radii `(cx, cy, cz, innerR)`, and pin falloff radii `(falloffR, 0, 0, 0)`. Pin geometry is stored in metric world-space on the model and converted to render-space (`* datasetScale`) on upload.
 
 Pin geometry, lines, and text are drawn in the same pass with `DepthTest.LessOrEqual` so they fade behind opaque meshes. The coordinate cross + tick labels are in `passOne` with `DepthTest.None` so they always overlay everything.
 

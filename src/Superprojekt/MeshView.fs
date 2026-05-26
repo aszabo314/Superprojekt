@@ -29,22 +29,25 @@ module RenderPass =
 module MeshShader =
     open FShade
 
-    // Per-pixel opacity for a mesh:
-    //   • If MeshActive is false the whole mesh renders as a faint ghost at
-    //     uniform.GhostOpacity.
-    //   • If MeshActive is true a mask is computed as the union (max) of:
-    //       – lasso polygon: 1.0 inside the world-space half-space frustum, 0.0
-    //         outside; if no lasso is defined this contributes 1.0 unrestricted.
-    //       – scanpin blobs: each pin has an InnerRadius (hard core, weight = 1)
-    //         and an outer FalloffRadius (exponential decay to ~0 by that
-    //         radius). Per pin: 1 if d ≤ inner, exp(-3·(d-inner)/(falloff-inner))
-    //         beyond. Max across all pins. InnerRadius and FalloffRadius are
-    //         independent — changing GhostOpacity or FalloffRadius does NOT
-    //         move InnerRadius. If no blobs this contributes 0.0.
-    //     The final alpha is lerp(GhostOpacity, 1.0, mask) — so inside the
-    //     mask the mesh is fully opaque and outside it fades down to the
-    //     ghost level. With no lasso and no blobs the mask is 1.0 everywhere
-    //     and the mesh is fully opaque.
+    // Per-pixel opacity filter chain (each filter can only RESTRICT):
+    //   1. MeshActive: if false, the whole mesh renders as a faint ghost at
+    //      uniform.GhostOpacity. The next two filters are skipped.
+    //   2. Lasso: if defined, fragments inside the world-space half-space
+    //      polytope get lassoComponent = 1.0, outside get 0.0. Undefined →
+    //      treated as 1.0 (no restriction).
+    //   3. Falloff blob: each pin has an InnerRadius (hard core, weight = 1)
+    //      and a larger FalloffRadius (exp(-3·(d-inner)/(outer-inner)) decay
+    //      to ~0.05 at FalloffRadius). blobComponent is the max weight across
+    //      all pins (0 if the fragment is outside every pin's FalloffRadius).
+    //      No blobs → blobComponent = 1.0 (no restriction). InnerRadius and
+    //      FalloffRadius are independent — GhostOpacity and FalloffRadius
+    //      changes never move InnerRadius.
+    //
+    // mask = lassoComponent * blobComponent — both filters must agree for a
+    // fragment to be fully opaque. Inside-lasso-outside-blob fragments fall
+    // to ghost level (same as outside-lasso fragments).
+    //
+    // Final alpha is lerp(GhostOpacity, 1.0, mask).
     //
     // Depth output is α-gated: fragments with α ≥ 0.99 write their natural
     // depth (gl_FragCoord.z) so they occlude things behind them and so the
@@ -113,13 +116,13 @@ module MeshShader =
                         if d > 0.0f then inside <- false
                 lassoMask <- if inside then 1.0f else 0.0f
             // Two-radius blob: 1 inside InnerRadius, exponential decay between
-            // InnerRadius and FalloffRadius, ~0 beyond. Independent radii;
-            // InnerRadius is the "hard truth" and isn't moved by FalloffRadius
-            // or GhostOpacity changes. Track separately whether this fragment
-            // sits in *any* pin's hard core, so the post-lerp depth clamp can
-            // tell hard-core fragments from falloff-only fragments.
+            // InnerRadius and FalloffRadius, ~0 beyond. Independent radii.
+            // Track inHardCore (any pin's hard core) for the depth clamp, and
+            // inAnyBlob (fragment is within at least one pin's FalloffRadius)
+            // so the filter chain can let the blob override the lasso.
             let mutable blobMax = 0.0f
             let mutable inHardCore = false
+            let mutable inAnyBlob = false
             let bc = uniform.BlobCount
             if bc > 0 then
                 for i in 0 .. MaxBlobs - 1 do
@@ -135,23 +138,29 @@ module MeshShader =
                         let w =
                             if d <= inner then
                                 inHardCore <- true
+                                inAnyBlob  <- true
                                 1.0f
-                            elif outer > inner then
+                            elif d <= outer && outer > inner then
+                                inAnyBlob <- true
                                 let t = (d - inner) / (outer - inner)
                                 exp (-3.0f * t)
                             else 0.0f
                         if w > blobMax then blobMax <- w
-            //   nothing active → 1.0 (no restriction)
-            //   only lasso     → lassoMask (binary)
-            //   only blobs     → blobMax (smooth)
-            //   both           → max(lassoMask, blobMax) — union of opaque regions
-            let lassoActive = lc > 0
-            let blobsActive = bc > 0
-            let maskFactor =
-                if lassoActive && blobsActive then max lassoMask blobMax
-                elif lassoActive then lassoMask
-                elif blobsActive then blobMax
+            // Conjunctive mask: both filters must agree for full opacity.
+            //   lassoComponent = 1 if no lasso or inside lasso, else 0.
+            //   blobComponent  = 1 if no blobs, else blobMax (0 outside every
+            //                    pin's FalloffRadius).
+            // mask = lasso * blob — outside-lasso → 0, inside-lasso-outside-blob → 0,
+            // both inside → blob's weight.
+            let lassoActive  = lc > 0
+            let blobsActive  = bc > 0
+            let lassoComponent =
+                if lassoActive then lassoMask else 1.0f
+            let blobComponent =
+                if blobsActive then
+                    if inAnyBlob then blobMax else 0.0f
                 else 1.0f
+            let maskFactor = lassoComponent * blobComponent
             let ghost = uniform.GhostOpacity
             let mutable alpha = 0.0f
             if uniform.MeshActive then
@@ -166,10 +175,12 @@ module MeshShader =
             // branch can't flip mid-falloff. Without this, a thin ring inside
             // the falloff zone where exp(-3·t) ≈ 1 momentarily writes opaque
             // depth and produces a visible occlusion artefact.
-            let fullySolid =
-                inHardCore
-                || (uniform.LassoPlaneCount > 0 && lassoMask >= 1.0f)
-                || (bc = 0 && uniform.LassoPlaneCount = 0)
+            // Fully solid (= eligible for the opaque depth-write branch) when
+            // BOTH filters are at full strength: lasso is satisfied (no lasso,
+            // or inside it) AND blob is satisfied (no blobs, or hard core).
+            let lassoFull = (lc = 0) || lassoMask >= 1.0f
+            let blobFull  = (bc = 0) || inHardCore
+            let fullySolid = lassoFull && blobFull
             if uniform.MeshActive && not fullySolid then
                 alpha <- min alpha (opaqueThreshold - 0.01f)
             let n = v.n |> Vec.normalize

@@ -45,7 +45,6 @@ module ScanPinScene =
             Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
             Sg.Uniform("FlatColor", color |> AVal.map V4f)
             Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-            Sg.DepthMask (AVal.constant false)
             Sg.BlendMode (AVal.constant BlendMode.Blend)
             Sg.NoEvents
             Sg.VertexAttributes(
@@ -99,7 +98,6 @@ module ScanPinScene =
                     Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
                     Sg.Uniform("FlatColor", color |> AVal.map V4f)
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.DepthMask (AVal.constant false)
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Sg.OnTap(fun _ ->
                         match AVal.force placementActive with
@@ -163,7 +161,6 @@ module ScanPinScene =
                         Sg.View view
                         Sg.Proj proj
                         Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                        Sg.DepthMask (AVal.constant false)
                         Sg.BlendMode (AVal.constant BlendMode.Blend)
                         Lines.render outlineSegs
                     }
@@ -213,7 +210,6 @@ module ScanPinScene =
                     Sg.View view
                     Sg.Proj proj
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.DepthMask (AVal.constant false)
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Lines.render segs
                 })
@@ -250,7 +246,6 @@ module ScanPinScene =
                     Sg.View view
                     Sg.Proj proj
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.DepthMask (AVal.constant false)
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Lines.render segs
                 })
@@ -280,7 +275,6 @@ module ScanPinScene =
                     Sg.View view
                     Sg.Proj proj
                     Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.DepthMask (AVal.constant false)
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Lines.render outlineSegs
                 }

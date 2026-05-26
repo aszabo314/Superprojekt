@@ -30,15 +30,17 @@ module MeshShader =
     open FShade
 
     // Per-pixel opacity for a mesh:
-    //   • If MeshActive is false the fragment renders as a faint ghost at
-    //     uniform.GhostOpacity — gives the "vague outline of hidden mesh parts"
-    //     look without needing a separate toggle.
-    //   • If MeshActive is true the alpha is the union (max) of:
+    //   • If MeshActive is false the whole mesh renders as a faint ghost at
+    //     uniform.GhostOpacity.
+    //   • If MeshActive is true a mask is computed as the union (max) of:
     //       – lasso polygon: 1.0 inside the world-space half-space frustum, 0.0
     //         outside; if no lasso is defined this contributes 1.0 unrestricted.
     //       – scanpin blobs: Gaussian falloff exp(-d²/(2σ²)) per pin, max across
     //         all pins; if no blobs this contributes 0.0.
-    //     If neither lasso nor blobs exist → alpha = 1.0 everywhere.
+    //     The final alpha is lerp(GhostOpacity, 1.0, mask) — so inside the
+    //     mask the mesh is fully opaque and outside it fades down to the
+    //     ghost level. With no lasso and no blobs the mask is 1.0 everywhere
+    //     and the mesh is fully opaque.
     //
     // Depth output is α-gated: fragments with α ≥ 0.99 write their natural
     // depth (gl_FragCoord.z) so they occlude things behind them and so the
@@ -85,7 +87,7 @@ module MeshShader =
 
     type FragOut = {
         [<Color>] color : V4f
-        [<Depth>] depth : float
+        [<Depth>] depth : float32
     }
 
     let shade (v : FragIn) =
@@ -129,11 +131,13 @@ module MeshShader =
                 elif lassoActive then lassoMask
                 elif blobsActive then blobMax
                 else 1.0f
+            let ghost = uniform.GhostOpacity
             let mutable alpha = 0.0f
             if uniform.MeshActive then
-                alpha <- maskFactor
+                // Inside mask → fully opaque, outside → ghost level.
+                alpha <- ghost + (1.0f - ghost) * maskFactor
             else
-                alpha <- uniform.GhostOpacity
+                alpha <- ghost
             if alpha < 1e-4f then discard()
             let n = v.n |> Vec.normalize
             let toCam = (uniform.CameraLocation - v.wp.XYZ) |> Vec.normalize
@@ -164,8 +168,8 @@ module MeshShader =
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
             let depth =
-                if alpha >= opaqueThreshold then float v.fc.Z
-                else 1.0
+                if alpha >= opaqueThreshold then v.fc.Z
+                else 1.0f
             return {
                 color = V4f(baseRgb * shade, alpha)
                 depth = depth
@@ -300,7 +304,11 @@ module MeshView =
                 }
                 Sg.Uniform("DiffuseColorTexture", loaded.tex)
                 Sg.Uniform("MeshActive",      isActive)
-                Sg.Uniform("GhostOpacity",    model.GhostOpacity |> AVal.map float32)
+                // GhostSilhouette gates the ghost — when off, push 0 so the
+                // shader's inactive-mesh path discards (alpha < 1e-4).
+                Sg.Uniform("GhostOpacity",
+                    (model.GhostSilhouette, model.GhostOpacity)
+                    ||> AVal.map2 (fun on op -> if on then float32 op else 0.0f))
                 Sg.Uniform("RenderingMode",   renderingModeInt)
                 Sg.Uniform("MeshColor",       meshColor)
                 Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)

@@ -15,15 +15,16 @@ module SceneGraph =
     let private boxIdx =
         [| 0;1;2; 0;2;3;  5;4;7; 5;7;6;  4;0;3; 4;3;7;  1;5;6; 1;6;2;  0;4;5; 0;5;1;  3;2;6; 3;6;7 |]
 
-    // Coordinate-cross centre block. Standard depth test (occluded by opaque
-    // meshes in front), no depth write, alpha-blended.
+    // Coordinate-cross centre block. Always-on-top: depth test disabled and
+    // drawn in passOne after the opaque mesh pass, so it overlays everything.
+    // Alpha-blended.
     let private axisBox (color : V4d) (trafo : Trafo3d) =
         sg {
+            Sg.Pass RenderPass.passOne
             Sg.Trafo (AVal.constant trafo)
             Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
             Sg.Uniform("FlatColor", AVal.constant (V4f color))
-            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-            Sg.DepthMask (AVal.constant false)
+            Sg.DepthTest (AVal.constant DepthTest.None)
             Sg.BlendMode (AVal.constant BlendMode.Blend)
             Sg.NoEvents
             Sg.VertexAttributes(
@@ -34,8 +35,7 @@ module SceneGraph =
         }
 
     // Origin cross + tick segments + axis-tip and integer-metre labels.
-    // All depth-test against opaque mesh depth (LessOrEqual) but do not write
-    // depth — so they integrate with the scene without occluding anything.
+    // Always-on-top: depth test disabled, drawn in passOne after meshes.
     let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
         let axisLength = 3.0
         let tickSpacing = 0.25
@@ -66,8 +66,8 @@ module SceneGraph =
             sg { Sg.Active active; Sg.View view; Sg.Proj proj
                  axisBox (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 0.08) }
             sg { Sg.Active active; Sg.View view; Sg.Proj proj
-                 Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                 Sg.DepthMask (AVal.constant false)
+                 Sg.Pass RenderPass.passOne
+                 Sg.DepthTest (AVal.constant DepthTest.None)
                  Sg.BlendMode (AVal.constant BlendMode.Blend)
                  Lines.render allLineSegs }
         ]
@@ -100,8 +100,8 @@ module SceneGraph =
                     let trafo = Trafo3d.Scale(labelSize) * textRot * Trafo3d.Translation(labelPos)
                     yield sg {
                         Sg.Active active; Sg.View view; Sg.Proj proj
-                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                        Sg.DepthMask (AVal.constant false)
+                        Sg.Pass RenderPass.passOne
+                        Sg.DepthTest (AVal.constant DepthTest.None)
                         Sg.Trafo (AVal.constant trafo)
                         Sg.Text(sprintf "%.0f" dist, color = AVal.constant textColor, align = TextAlignment.Center)
                     } ]
@@ -109,18 +109,18 @@ module SceneGraph =
         let tipOffset = axisLength + labelSize * 1.5
         let tipNodes =
             [ sg { Sg.Active active; Sg.View view; Sg.Proj proj
-                   Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                   Sg.DepthMask (AVal.constant false)
+                   Sg.Pass RenderPass.passOne
+                   Sg.DepthTest (AVal.constant DepthTest.None)
                    Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoX * Trafo3d.Translation(V3d.IOO * tipOffset)))
                    Sg.Text("X", color = AVal.constant (darken xColor), align = TextAlignment.Center) }
               sg { Sg.Active active; Sg.View view; Sg.Proj proj
-                   Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                   Sg.DepthMask (AVal.constant false)
+                   Sg.Pass RenderPass.passOne
+                   Sg.DepthTest (AVal.constant DepthTest.None)
                    Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoY * Trafo3d.Translation(V3d.OIO * tipOffset)))
                    Sg.Text("Y", color = AVal.constant (darken yColor), align = TextAlignment.Center) }
               sg { Sg.Active active; Sg.View view; Sg.Proj proj
-                   Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                   Sg.DepthMask (AVal.constant false)
+                   Sg.Pass RenderPass.passOne
+                   Sg.DepthTest (AVal.constant DepthTest.None)
                    Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoZ * Trafo3d.Translation(V3d.OOI * tipOffset)))
                    Sg.Text("Z", color = AVal.constant (darken zColor), align = TextAlignment.Center) } ]
 
@@ -131,8 +131,7 @@ module SceneGraph =
             @ labelNodes zColor V3d.OOI V3d.IOO textTrafoZ)
 
     // 100×100 unit floor grid in the render-space XY plane (z=0). Grey lines
-    // at α≈0.5, every 10th line slightly darker as a major tick. Depth-test
-    // against opaque mesh fragments, no depth write.
+    // at α≈0.5, every 10th line slightly darker as a major tick.
     let private groundGridSegments =
         let extent     = 50.0
         let minorStep  = 1.0
@@ -160,8 +159,7 @@ module SceneGraph =
                 Sg.Active active
                 Sg.View view
                 Sg.Proj proj
-                Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                Sg.DepthMask (AVal.constant false)
+                Sg.DepthTest (AVal.constant DepthTest.GreaterOrEqual)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Lines.render groundGridSegments
             })
@@ -181,14 +179,20 @@ module SceneGraph =
         // Single forward render pass into the main framebuffer:
         //   • Meshes: shader writes (rgb, α) and α-gated gl_FragDepth — opaque
         //     fragments (α ≥ 0.99) write their natural depth, transparent
-        //     fragments write 1.0 (far) so they're occluded by any opaque
-        //     pixel in the scene but still blend over the clear colour.
-        //   • Pin geometry, ground grid, coordinate cross + labels: standard
-        //     depth test (LessOrEqual against the opaque mesh depth), no
-        //     depth write, alpha-blended.
+        //     fragments write 1.0 (far). All passZero geometry shares one
+        //     depth buffer.
+        //   • Pin geometry, ground grid: depth-tested against the mesh depth
+        //     so they fade behind opaque surfaces; alpha-blended.
+        //   • Coordinate cross + labels: passOne with DepthTest.None — always
+        //     on top.
         //
-        // BlendMode.Blend is the default for the renderControl; per-node Sg.BlendMode
-        // overrides are set where straight α blending matters (lines, axisBox).
+        // Sg.DepthMask is intentionally NEVER set anywhere in the scene graph:
+        // it is buggy in this Aardvark/WebGL build and silently breaks the
+        // depth pipeline when used. Every node therefore writes depth using
+        // whatever its shader produces; the visible ordering is steered via
+        // Sg.DepthTest + Sg.Pass alone. This violates the textbook
+        // "translucent should not write depth" rule but is the only
+        // combination that actually renders correctly here.
 
         let meshScene  = MeshView.buildScene loadFinished model
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
@@ -205,7 +209,12 @@ module SceneGraph =
                 Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Uniform("ViewportSize", info.ViewportSize)
-                ASet.unionMany (ASet.ofList [ meshScene; pinScene; grid; cross; labels ])
+                meshScene
+                //grid
+                cross
+                pinScene
+                labels
+                //ASet.unionMany (ASet.ofList [ meshScene; pinScene; grid; cross; labels ])
             }
 
         ASet.single viewportUni

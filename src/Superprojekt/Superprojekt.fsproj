@@ -12,7 +12,7 @@
     <WasmBuildNative>true</WasmBuildNative>
     <ScanForPInvokes>true</ScanForPInvokes>
     <LocalAdaptify>true</LocalAdaptify>
-<!--    <PostBuildEvent>dotnet fshadeaot $(MSBuildThisFileDirectory)/bin/$(Configuration)/$(TargetFramework)/ServerActions.WASM.dll</PostBuildEvent>-->
+<!--    <PostBuildEvent>dotnet fshadeaot $(MSBuildThisFileDirectory)/bin/$(Configuration)/$(TargetFramework)/Superprojekt.dll</PostBuildEvent>-->
   </PropertyGroup>
   <ItemGroup>
     <None Include="paket.references" />

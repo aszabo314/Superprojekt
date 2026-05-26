@@ -6,91 +6,123 @@ open Aardvark.Rendering
 module Lines =
     open Aardvark.Dom
     open FSharp.Data.Adaptive
+    open FShade
 
-    [<ReflectedDefinition>]
-    module LineShader =
-        open FShade
+    type Vertex = {
+        [<Semantic("P0")>]        p0    : V3f
+        [<Semantic("P1")>]        p1    : V3f
+        [<Semantic("LineColor")>] color : V4f
+        [<Semantic("LineWidth")>] width : float32
+        [<Position>]              pos   : V4f
+        [<Color>]                 col   : V4f
+        [<VertexId>]              id    : int
+    }
 
-        type Vertex = {
-            [<Semantic("P0")>]        p0    : V3f
-            [<Semantic("P1")>]        p1    : V3f
-            [<Semantic("LineColor")>] color : V4f
-            [<Semantic("LineWidth")>] width : float32
-            [<Position>]              pos   : V4f
-            [<Color>]                 col   : V4f
-            [<VertexId>]              id    : int
+    let line (v : Vertex) =
+        vertex {
+            let m = uniform.ModelViewProjTrafo
+            let o = v.p0
+            let d = v.p1 - v.p0
+            let mutable tLo = 0.0f
+            let mutable tHi = 1.0f
+
+            // Clip the segment against the 6 view-frustum half-spaces.
+            // For each plane: parametric intersection t = -(p·o + p.w) / (p·d);
+            // dir > 0 → entering at t → tighten tHi; dir < 0 → exiting at t → tighten tLo.
+            let pl0  = -m.R3 - m.R0
+            let dir0 = Vec.dot pl0.XYZ d
+            let tp0  = (pl0.W + Vec.dot pl0.XYZ o) / -dir0
+            if dir0 > 1e-9f then
+                if tp0 < tHi then tHi <- tp0
+            elif dir0 < -1e-9f then
+                if tp0 > tLo then tLo <- tp0
+
+            let pl1  = -m.R3 + m.R0
+            let dir1 = Vec.dot pl1.XYZ d
+            let tp1  = (pl1.W + Vec.dot pl1.XYZ o) / -dir1
+            if dir1 > 1e-9f then
+                if tp1 < tHi then tHi <- tp1
+            elif dir1 < -1e-9f then
+                if tp1 > tLo then tLo <- tp1
+
+            let pl2  = -m.R3 - m.R1
+            let dir2 = Vec.dot pl2.XYZ d
+            let tp2  = (pl2.W + Vec.dot pl2.XYZ o) / -dir2
+            if dir2 > 1e-9f then
+                if tp2 < tHi then tHi <- tp2
+            elif dir2 < -1e-9f then
+                if tp2 > tLo then tLo <- tp2
+
+            let pl3  = -m.R3 + m.R1
+            let dir3 = Vec.dot pl3.XYZ d
+            let tp3  = (pl3.W + Vec.dot pl3.XYZ o) / -dir3
+            if dir3 > 1e-9f then
+                if tp3 < tHi then tHi <- tp3
+            elif dir3 < -1e-9f then
+                if tp3 > tLo then tLo <- tp3
+
+            let pl4  = -m.R3 - m.R2
+            let dir4 = Vec.dot pl4.XYZ d
+            let tp4  = (pl4.W + Vec.dot pl4.XYZ o) / -dir4
+            if dir4 > 1e-9f then
+                if tp4 < tHi then tHi <- tp4
+            elif dir4 < -1e-9f then
+                if tp4 > tLo then tLo <- tp4
+
+            let pl5  = -m.R3 + m.R2
+            let dir5 = Vec.dot pl5.XYZ d
+            let tp5  = (pl5.W + Vec.dot pl5.XYZ o) / -dir5
+            if dir5 > 1e-9f then
+                if tp5 < tHi then tHi <- tp5
+            elif dir5 < -1e-9f then
+                if tp5 > tLo then tLo <- tp5
+
+            if tHi > tLo then
+                let p0w = o + tLo * d
+                let p1w = o + tHi * d
+
+                let corner = v.id % 4
+                let mpX = if corner &&& 1 <> 0 then 1.0f else 0.0f
+                let mpY = if corner &&& 2 <> 0 then 1.0f else 0.0f
+
+                let vs   = uniform.ViewportSize
+                let p0c  = m * V4f(p0w, 1.0f)
+                let p1c  = m * V4f(p1w, 1.0f)
+                let p0n  = p0c.XYZ / p0c.W
+                let p1n  = p1c.XYZ / p1c.W
+
+                let pixelToNdc  = V2f(2.0f / float32 vs.X, 2.0f / float32 vs.Y)
+                let halfWidthPx = v.width * 0.5f
+
+                let diff     = p1n - p0n
+                let pixelDir = V2f(diff.X * float32 vs.X * 0.5f, diff.Y * float32 vs.Y * 0.5f)
+                let pixelLen = Vec.length pixelDir
+
+                let perpDir =
+                    if pixelLen > 1e-10f then V2f(-pixelDir.Y, pixelDir.X) / pixelLen
+                    else V2f(0.0f, 1.0f)
+                let lineDir =
+                    if pixelLen > 1e-10f then pixelDir / pixelLen
+                    else V2f(0.0f, 1.0f)
+
+                let perpSign = if mpX > 0.5f then 1.0f else -1.0f
+                let lineSign = if mpY > 0.5f then 1.0f else -1.0f
+                let perpOffset = perpDir * (perpSign * halfWidthPx) * pixelToNdc
+                let lineOffset = lineDir * (lineSign * halfWidthPx) * pixelToNdc
+
+                let basePos = if mpY > 0.5f then p1n.XY else p0n.XY
+                let xy      = basePos + perpOffset + lineOffset
+
+                let zT = if mpY > 0.5f then 1.0f else 0.0f
+                let z  = p0n.Z * (1.0f - zT) + p1n.Z * zT
+
+                return { v with pos = V4f(xy.X, xy.Y, z, 1.0f); col = v.color }
+            else
+                return { v with pos = V4f(2.0f, 2.0f, 2.0f, 1.0f); col = V4f.Zero }
         }
 
-        let clipPlane (o : V3f) (d : V3f) (plane : V4f) (t0 : float32) (t1 : float32) =
-            let dir = Vec.dot plane.XYZ d
-            let t   = (plane.W + Vec.dot plane.XYZ o) / -dir
-            let mutable a = t0
-            let mutable b = t1
-            if dir > 1e-9f then
-                if t < b then b <- t
-            elif dir < -1e-9f then
-                if t > a then a <- t
-            V2f(a, b)
-
-        let line (v : Vertex) =
-            vertex {
-                let m = uniform.ModelViewProjTrafo
-                let o = v.p0
-                let d = v.p1 - v.p0
-                let mutable tt = V2f(0.0f, 1.0f)
-                tt <- clipPlane o d (-m.R3 - m.R0) tt.X tt.Y
-                tt <- clipPlane o d (-m.R3 + m.R0) tt.X tt.Y
-                tt <- clipPlane o d (-m.R3 - m.R1) tt.X tt.Y
-                tt <- clipPlane o d (-m.R3 + m.R1) tt.X tt.Y
-                tt <- clipPlane o d (-m.R3 - m.R2) tt.X tt.Y
-                tt <- clipPlane o d (-m.R3 + m.R2) tt.X tt.Y
-
-                if tt.Y > tt.X then
-                    let p0w = o + tt.X * d
-                    let p1w = o + tt.Y * d
-
-                    let corner = v.id % 4
-                    let mpX = if corner &&& 1 <> 0 then 1.0f else 0.0f
-                    let mpY = if corner &&& 2 <> 0 then 1.0f else 0.0f
-
-                    let vs   = uniform.ViewportSize
-                    let p0c  = m * V4f(p0w, 1.0f)
-                    let p1c  = m * V4f(p1w, 1.0f)
-                    let p0n  = p0c.XYZ / p0c.W
-                    let p1n  = p1c.XYZ / p1c.W
-
-                    let pixelToNdc  = V2f(2.0f / float32 vs.X, 2.0f / float32 vs.Y)
-                    let halfWidthPx = v.width * 0.5f
-
-                    let diff     = p1n - p0n
-                    let pixelDir = V2f(diff.X * float32 vs.X * 0.5f, diff.Y * float32 vs.Y * 0.5f)
-                    let pixelLen = Vec.length pixelDir
-
-                    let perpDir =
-                        if pixelLen > 1e-10f then V2f(-pixelDir.Y, pixelDir.X) / pixelLen
-                        else V2f(0.0f, 1.0f)
-                    let lineDir =
-                        if pixelLen > 1e-10f then pixelDir / pixelLen
-                        else V2f(0.0f, 1.0f)
-
-                    let perpSign = if mpX > 0.5f then 1.0f else -1.0f
-                    let lineSign = if mpY > 0.5f then 1.0f else -1.0f
-                    let perpOffset = perpDir * (perpSign * halfWidthPx) * pixelToNdc
-                    let lineOffset = lineDir * (lineSign * halfWidthPx) * pixelToNdc
-
-                    let basePos = if mpY > 0.5f then p1n.XY else p0n.XY
-                    let xy      = basePos + perpOffset + lineOffset
-
-                    let zT = if mpY > 0.5f then 1.0f else 0.0f
-                    let z  = p0n.Z * (1.0f - zT) + p1n.Z * zT
-
-                    return { v with pos = V4f(xy.X, xy.Y, z, 1.0f); col = v.color }
-                else
-                    return { v with pos = V4f(2.0f, 2.0f, 2.0f, 1.0f); col = V4f.Zero }
-            }
-
-        let fragment (v : Vertex) =
-            fragment { return v.col }
+    let fragment (v : Vertex) =
+        fragment { return v.col }
 
     let private buildBuffers (segments : aval<(V3d * V3d * V4d * float)[]>) =
         let buffers =
@@ -131,14 +163,15 @@ module Lines =
         p0Arr, p1Arr, colArr, widthArr, idxArr, count
 
     // Straight forward-rendered alpha-blended lines: emits (rgb, α) on the
-    // standard Color attachment. Callers control depth-test / depth-mask via
-    // surrounding Sg properties — typical use is DepthTest=LessOrEqual,
-    // DepthMask=false so lines integrate visually with the depth of opaque
-    // meshes without writing depth themselves.
+    // standard Color attachment. Callers steer ordering via Sg.DepthTest and
+    // Sg.Pass — typical use is DepthTest=LessOrEqual so lines fade behind
+    // opaque meshes. Sg.DepthMask is intentionally never used anywhere in
+    // this project (see SceneGraph.build for the reason), so line fragments
+    // also write to the depth buffer; ordering is good enough in practice.
     let render (segments : aval<(V3d * V3d * V4d * float)[]>) =
         let p0Arr, p1Arr, colArr, widthArr, idxArr, count = buildBuffers segments
         sg {
-            Sg.Shader { LineShader.line; LineShader.fragment }
+            Sg.Shader { line; fragment }
             Sg.NoEvents
             Sg.VertexAttributes(
                 HashMap.ofList [

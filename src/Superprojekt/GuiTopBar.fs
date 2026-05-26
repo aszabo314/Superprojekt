@@ -130,6 +130,8 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            compactToggle "Ghost silhouette" model.GhostSilhouette (fun () ->
+                                env.Emit [ToggleGhostSilhouette])
                             inlineSlider "Ghost opacity" 0.0 1.0 0.01 (sprintf "%.2f") model.GhostOpacity (fun v ->
                                 env.Emit [SetGhostOpacity v])
                         }

@@ -80,8 +80,6 @@ module GuiPanels =
                     "Slope",    (rm |> AVal.map (fun m -> m = SlopeColor)),   (fun () -> env.Emit [SetRenderingMode SlopeColor])
                 ]
             }
-            compactToggle "Ghost silhouette" model.GhostSilhouette (fun () ->
-                env.Emit [ToggleGhostSilhouette])
             compactToggle "Anchor-blob ghost" model.AnchorGhostMode (fun () ->
                 env.Emit [ToggleAnchorGhostMode])
         }

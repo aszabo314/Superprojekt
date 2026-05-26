@@ -44,6 +44,7 @@ type Message =
     | HideAllMeshes
     | ResetCamera
     | SetExploreCardPos of V2d
+    | SetLassoCardPos of V2d
     | ToggleGearPopover
     | EditPin of ScanPinId
     | SetActivePickingLayer of string option
@@ -75,9 +76,10 @@ and CardMessage =
 and ScanPinMessage =
     | EnterAnchorPlacement
     | CancelPlacement
-    | PlaceAnchor of centre:V3d
-    | SetAnchorRadius of float
-    | SetAnchorSigma of float
+    | PlaceAnchor of worldCentre:V3d
+    | SetInnerRadius of float
+    // Delta added to InnerRadius to get FalloffRadius — slider is relative.
+    | SetFalloffDelta of float
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option

@@ -142,6 +142,9 @@ body.loaded { background: #f4f6f8; }
 .explore-card { z-index: 950; min-width: 240px; }
 .explore-card-body { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; }
 
+.lasso-card { z-index: 950; min-width: 240px; }
+.lasso-card-body { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; }
+
 /* ── Left panel ─────────────────────────────────────────────────────── */
 
 .left-panel {
@@ -822,6 +825,7 @@ body.loaded { background: #f4f6f8; }
 @media (max-width: 600px) {
     .left-panel { width: 85vw; }
     .explore-card { min-width: 200px; }
+    .lasso-card { min-width: 200px; }
     .tb-gear-popover { width: calc(100vw - 16px); }
     .tb-coord { font-size: 10px; }
 }

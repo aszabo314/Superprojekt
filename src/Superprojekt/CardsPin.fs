@@ -32,13 +32,13 @@ module CardsPin =
             v |> AVal.map (fun on -> if on then None else Some (Style [Display "none"]))
 
         let centreText = selectedPin |> AVal.map (function
-            | Some p -> sprintf "(%.2f, %.2f, %.2f)" p.Centre.X p.Centre.Y p.Centre.Z
+            | Some p -> sprintf "(%.2f, %.2f, %.2f) m" p.Centre.X p.Centre.Y p.Centre.Z
             | None -> "—")
-        let radiusText = selectedPin |> AVal.map (function
-            | Some p -> sprintf "%.2f m" p.Radius
+        let innerText = selectedPin |> AVal.map (function
+            | Some p -> sprintf "%.2f m" p.InnerRadius
             | None -> "—")
-        let sigmaText = selectedPin |> AVal.map (function
-            | Some p -> sprintf "%.2f m" p.Sigma
+        let falloffText = selectedPin |> AVal.map (function
+            | Some p -> sprintf "%.2f m" p.FalloffRadius
             | None -> "—")
         let reliability = selectedPin |> AVal.map (function
             | Some p ->
@@ -66,42 +66,38 @@ module CardsPin =
                     }
                     div {
                         Class "pc-readout-row"
-                        span { Class "pc-key"; "Radius" }
-                        span { Class "pc-val"; radiusText }
+                        span { Class "pc-key"; "Inner R" }
+                        span { Class "pc-val"; innerText }
                     }
                     div {
                         Class "pc-readout-row"
-                        span { Class "pc-key"; "σ" }
-                        span { Class "pc-val"; sigmaText }
+                        span { Class "pc-key"; "Falloff R" }
+                        span { Class "pc-val"; falloffText }
                     }
                 }
                 let provenance =
                     (selectedPin, model.MeshSensorTypes, model.MeshDatasetErrors,
-                     model.MeshAlgorithmResidual, model.CommonCentroid, model.DatasetScales,
-                     model.ActiveDataset, model.ScanPins.Pins |> AMap.toAVal)
-                    |> fun (a, b, c, d, e, f, g, h) ->
+                     model.MeshAlgorithmResidual, model.ScanPins.Pins |> AMap.toAVal)
+                    |> fun (a, b, c, d, e) ->
                         AVal.custom (fun tok ->
                             let pinOpt = a.GetValue tok
                             let sensors = b.GetValue tok
                             let overrides = c.GetValue tok
                             let algo = d.GetValue tok
-                            let cc = e.GetValue tok
-                            let scales = f.GetValue tok
-                            let ds = g.GetValue tok
-                            let pins = h.GetValue tok
+                            let pins = e.GetValue tok
                             match pinOpt with
                             | None -> (0.0, 0.0, 0.0)
                             | Some pin ->
                                 match pin.HostMeshName with
                                 | None -> (Provenance.defaultDatasetError UnknownSensor, 0.0, 1e6)
                                 | Some host ->
-                                    let scale = ds |> Option.bind (fun d -> Map.tryFind d scales) |> Option.defaultValue 1.0
-                                    let worldP = pin.Centre / scale + cc
+                                    // pin.Centre / FalloffRadius are already metric.
+                                    let worldP = pin.Centre
                                     let anchors =
                                         pins |> HashMap.toSeq
                                         |> Seq.choose (fun (_, p) ->
                                             if p.Phase = PinPhase.Committed then
-                                                Some (p.Centre / scale + cc, p.Sigma / scale)
+                                                Some (p.Centre, p.FalloffRadius)
                                             else None)
                                         |> Array.ofSeq
                                     Provenance.sourcesAt host overrides sensors algo worldP anchors)

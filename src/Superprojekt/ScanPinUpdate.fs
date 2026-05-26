@@ -14,19 +14,37 @@ module ScanPinUpdate =
     let private assignColors (meshNames : IndexList<string>) =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
 
-    let defaultRadius (model : Model) =
-        if model.SceneBounds.IsInvalid then 1.0
-        else max 0.1 (model.SceneBounds.Size.Length * 0.05)
+    let activeScale (model : Model) =
+        model.ActiveDataset
+        |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
+        |> Option.defaultValue 1.0
 
-    let private makeAnchor (model : Model) (id : ScanPinId) (centre : V3d) (radius : float) =
-        let sigma = radius * 0.5
+    // Metric defaults: 1 m hard core, 4 m falloff, give or take the
+    // scene size (so a planet-scale dataset still gets pins you can see).
+    let defaultInnerRadius (model : Model) =
+        let scale = activeScale model
+        if model.SceneBounds.IsInvalid then 1.0
+        else max 0.05 (model.SceneBounds.Size.Length * 0.02 / scale)
+
+    // Defaults give a ~3:1 falloff-to-inner ratio (matching the slider's
+    // relative semantics).
+    let defaultFalloffRadius (model : Model) =
+        let scale = activeScale model
+        let inner = defaultInnerRadius model
+        if model.SceneBounds.IsInvalid then inner + 3.0
+        else max (inner + 0.1) (inner + model.SceneBounds.Size.Length * 0.06 / scale)
+
+    // centre is in world-space metres.
+    let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
+        let inner   = defaultInnerRadius model
+        let falloff = defaultFalloffRadius model
         let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
         {
             Id                   = id
             Phase                = PinPhase.Placement
-            Centre               = centre
-            Radius               = radius
-            Sigma                = sigma
+            Centre               = worldCentre
+            InnerRadius          = inner
+            FalloffRadius        = falloff
             Payload              = Point { ReliabilityWeight = 1.0 }
             HostMeshName         = model.ActivePickingLayer
             CorrespondenceLinkId = None
@@ -57,31 +75,37 @@ module ScanPinUpdate =
             let sp = discardActivePin sp
             { sp with Placement = PlacementIdle }
 
-        | PlaceAnchor centre ->
+        | PlaceAnchor worldCentre ->
             match sp.Placement with
             | AnchorPlacement ->
                 let id = ScanPinId.create()
-                let pin = makeAnchor model id centre (defaultRadius model)
+                let pin = makeAnchor model id worldCentre
                 { sp with
                     Pins = HashMap.add id pin sp.Pins
                     Placement = AdjustingPin id
                     SelectedPin = Some id }
             | _ -> sp
 
-        | SetAnchorRadius r ->
+        // InnerRadius is the "hard truth" and is unaffected by the falloff
+        // slider or GhostOpacity changes. The falloff slider is *relative*:
+        // its value is the delta added to InnerRadius. Moving the inner
+        // slider preserves that delta (the falloff-zone thickness stays
+        // constant) so the falloff slider doesn't jump under the user.
+        | SetInnerRadius r ->
             match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
                 if pin.Phase = PinPhase.Placement then
-                    let r = max 0.05 r
-                    { pin with Radius = r; Sigma = min pin.Sigma r }
+                    let r' = max 0.01 r
+                    let delta = max 0.0 (pin.FalloffRadius - pin.InnerRadius)
+                    { pin with InnerRadius = r'; FalloffRadius = r' + delta }
                 else pin)
             | None -> sp
 
-        | SetAnchorSigma s ->
+        | SetFalloffDelta d ->
             match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
                 if pin.Phase = PinPhase.Placement then
-                    { pin with Sigma = clamp 0.01 pin.Radius s }
+                    { pin with FalloffRadius = pin.InnerRadius + max 0.0 d }
                 else pin)
             | None -> sp
 
@@ -108,7 +132,13 @@ module ScanPinUpdate =
             sp |> updatePin id (fun pin ->
                 if PayloadType.kind pin.Payload = kind then pin
                 else
-                    let payload = PayloadType.defaultFor pin.Radius pin.Centre pin.HostMeshName kind
+                    // PayloadType.defaultFor expects render-space (the Patch
+                    // payload's Radius is render-space throughout the rest of
+                    // the pipeline). Convert from metric here.
+                    let scale = activeScale model
+                    let payloadRadiusRender = ScanPin.renderLength scale pin.FalloffRadius
+                    let renderCentre = ScanPin.renderCentre model.CommonCentroid scale pin.Centre
+                    let payload = PayloadType.defaultFor payloadRadiusRender renderCentre pin.HostMeshName kind
                     { pin with Payload = payload })
 
         | SetReliabilityWeight(id, w) ->
@@ -188,18 +218,17 @@ module ScanPinUpdate =
             | Some id ->
                 match HashMap.tryFind id sp'.Pins with
                 | Some pin ->
-                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, pin.Centre))]
+                    let scale = activeScale model
+                    let renderCentre = ScanPin.renderCentre model.CommonCentroid scale pin.Centre
+                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderCentre))]
                 | None -> ()
             | None -> ()
         | ChangePayloadType(id, LineKind)
         | SetLineMode(id, _) ->
             match HashMap.tryFind id sp'.Pins with
             | Some pin ->
-                let scale =
-                    model.ActiveDataset
-                    |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
-                    |> Option.defaultValue 1.0
-                let seedWorld = pin.Centre / scale + model.CommonCentroid
+                let scale = activeScale model
+                let seedWorld = pin.Centre
                 let peers =
                     match pin.HostMeshName with
                     | Some host ->
@@ -216,7 +245,9 @@ module ScanPinUpdate =
                     if not token.IsCancellationRequested then env.Emit [ScanPinMsg m]
                 match pin.Payload, pin.HostMeshName with
                 | Line { Mode = ElevationIsoline elev }, Some host ->
-                    let elevWorld = elev / scale + model.CommonCentroid.Z
+                    // elev is already world-space metres (LineMode is fed from
+                    // pin.Centre.Z, which is metric).
+                    let elevWorld = elev
                     let queryOne (name : string) (isHost : bool) =
                         task {
                             try
@@ -276,11 +307,10 @@ module ScanPinUpdate =
             | Some pin ->
                 match pin.Payload, pin.HostMeshName with
                 | Patch pp, Some host ->
-                    let scale =
-                        model.ActiveDataset
-                        |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
-                        |> Option.defaultValue 1.0
-                    let centreWorld = pin.Centre / scale + model.CommonCentroid
+                    let scale = activeScale model
+                    let centreWorld = pin.Centre
+                    // pp.Radius stays render-space for the rest of the patch
+                    // pipeline; convert to metres for the server query.
                     let radiusWorld = pp.Radius / scale
                     task {
                         try
@@ -295,13 +325,19 @@ module ScanPinUpdate =
         | _ -> ()
         let model = { model with ScanPins = sp' }
         let selChanged = sp'.SelectedPin <> sp.SelectedPin || ScanPinModel.activePlacementId sp' <> ScanPinModel.activePlacementId sp
+        // CardSystem anchor is fed to Cards.projectToScreen, which uses the
+        // viewTrafo over RENDER-space coordinates. Convert pin.Centre (metric)
+        // → render-space before stashing it as the card anchor.
+        let scale = activeScale model
+        let cc = model.CommonCentroid
+        let renderAnchor (pin : ScanPin) = ScanPin.renderCentre cc scale pin.Centre
         if selChanged then
             let effectiveId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
             match effectiveId with
             | Some id ->
                 match HashMap.tryFind id sp'.Pins with
                 | Some pin ->
-                    let cs = CardUpdate.update (CreateCardsForPin(id, pin.Centre)) model.CardSystem
+                    let cs = CardUpdate.update (CreateCardsForPin(id, renderAnchor pin)) model.CardSystem
                     { model with CardSystem = cs }
                 | None ->
                     let cs = CardUpdate.update (RemoveCardsForPin id) model.CardSystem
@@ -316,7 +352,7 @@ module ScanPinUpdate =
             | Some id ->
                 match HashMap.tryFind id sp'.Pins with
                 | Some pin ->
-                    let anchor = pin.Centre
+                    let anchor = renderAnchor pin
                     let cs = model.CardSystem
                     let cards = cs.Cards |> HashMap.map (fun _ c ->
                         match c.Content with

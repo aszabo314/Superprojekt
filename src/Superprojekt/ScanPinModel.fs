@@ -87,12 +87,19 @@ module PayloadType =
 [<RequireQualifiedAccess>]
 type CorrespondenceLinkId = CorrespondenceLinkId of Guid
 
+// All ScanPin geometry is METRIC (world-space):
+//   • Centre        : V3d  — anchor point in absolute world coordinates (metres)
+//   • InnerRadius   : float — hard-truth core; α = 1 and full evaluation weight inside (metres)
+//   • FalloffRadius : float — exponential decay beyond InnerRadius; α/weight → 0 by FalloffRadius (metres)
+// InnerRadius and FalloffRadius are independent; changing one (or the global
+// GhostOpacity) must not move the other. Render-space conversions happen at
+// pipeline boundaries via ((wp - centroid) * datasetScale).
 type ScanPin = {
     Id                   : ScanPinId
     Phase                : PinPhase
     Centre               : V3d
-    Radius               : float
-    Sigma                : float
+    InnerRadius          : float
+    FalloffRadius        : float
     Payload              : PayloadType
     HostMeshName         : string option
     CorrespondenceLinkId : CorrespondenceLinkId option
@@ -129,6 +136,17 @@ module ScanPinModel =
         match sp.Placement with
         | PlacementIdle -> false
         | _ -> true
+
+module ScanPin =
+    // World-space (metric) → render-space (post centroid translate, post scale).
+    let renderCentre (commonCentroid : V3d) (datasetScale : float) (worldCentre : V3d) =
+        (worldCentre - commonCentroid) * datasetScale
+    // Render-space → world-space (metric).
+    let worldCentre (commonCentroid : V3d) (datasetScale : float) (renderCentre : V3d) =
+        renderCentre / datasetScale + commonCentroid
+    // Metric distance/radius → render-space.
+    let renderLength (datasetScale : float) (metricLength : float) =
+        metricLength * datasetScale
 
 [<RequireQualifiedAccess>]
 type CardId = CardId of Guid with

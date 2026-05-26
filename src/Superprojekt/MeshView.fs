@@ -35,8 +35,12 @@ module MeshShader =
     //   • If MeshActive is true a mask is computed as the union (max) of:
     //       – lasso polygon: 1.0 inside the world-space half-space frustum, 0.0
     //         outside; if no lasso is defined this contributes 1.0 unrestricted.
-    //       – scanpin blobs: Gaussian falloff exp(-d²/(2σ²)) per pin, max across
-    //         all pins; if no blobs this contributes 0.0.
+    //       – scanpin blobs: each pin has an InnerRadius (hard core, weight = 1)
+    //         and an outer FalloffRadius (exponential decay to ~0 by that
+    //         radius). Per pin: 1 if d ≤ inner, exp(-3·(d-inner)/(falloff-inner))
+    //         beyond. Max across all pins. InnerRadius and FalloffRadius are
+    //         independent — changing GhostOpacity or FalloffRadius does NOT
+    //         move InnerRadius. If no blobs this contributes 0.0.
     //     The final alpha is lerp(GhostOpacity, 1.0, mask) — so inside the
     //     mask the mesh is fully opaque and outside it fades down to the
     //     ghost level. With no lasso and no blobs the mask is 1.0 everywhere
@@ -73,10 +77,13 @@ module MeshShader =
         // count = 0 means "no lasso defined" — contributes nothing.
         member x.LassoPlaneCount : int     = x?LassoPlaneCount
         member x.LassoPlanes     : Arr<N<32>, V4f> = x?LassoPlanes
-        // Pin blobs: world-space anchor + Gaussian sigma packed as V4f(cx,cy,cz,σ);
-        // count = 0 means "no blobs" — contributes nothing.
+        // Pin blobs (all coordinates in render-space — converted from metric on
+        // upload). count = 0 means "no blobs" → contributes nothing.
+        //   Blobs        : V4f(cx, cy, cz, innerRadiusRender)
+        //   BlobFalloffs : V4f(falloffRadiusRender, 0, 0, 0)
         member x.BlobCount       : int     = x?BlobCount
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
+        member x.BlobFalloffs    : Arr<N<32>, V4f> = x?BlobFalloffs
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -105,21 +112,35 @@ module MeshShader =
                         let d = pl.X * wp.X + pl.Y * wp.Y + pl.Z * wp.Z + pl.W
                         if d > 0.0f then inside <- false
                 lassoMask <- if inside then 1.0f else 0.0f
-            // Gaussian blob max — soft per-pixel "on" sources, taken in the union.
+            // Two-radius blob: 1 inside InnerRadius, exponential decay between
+            // InnerRadius and FalloffRadius, ~0 beyond. Independent radii;
+            // InnerRadius is the "hard truth" and isn't moved by FalloffRadius
+            // or GhostOpacity changes. Track separately whether this fragment
+            // sits in *any* pin's hard core, so the post-lerp depth clamp can
+            // tell hard-core fragments from falloff-only fragments.
             let mutable blobMax = 0.0f
+            let mutable inHardCore = false
             let bc = uniform.BlobCount
             if bc > 0 then
                 for i in 0 .. MaxBlobs - 1 do
                     if i < bc then
-                        let b = uniform.Blobs.[i]
-                        let sigma = b.W
-                        if sigma > 1e-6f then
-                            let dx = wp.X - b.X
-                            let dy = wp.Y - b.Y
-                            let dz = wp.Z - b.Z
-                            let d2 = dx*dx + dy*dy + dz*dz
-                            let w = exp (-d2 / (2.0f * sigma * sigma))
-                            if w > blobMax then blobMax <- w
+                        let b      = uniform.Blobs.[i]
+                        let f      = uniform.BlobFalloffs.[i]
+                        let inner  = b.W
+                        let outer  = f.X
+                        let dx = wp.X - b.X
+                        let dy = wp.Y - b.Y
+                        let dz = wp.Z - b.Z
+                        let d  = sqrt (dx*dx + dy*dy + dz*dz)
+                        let w =
+                            if d <= inner then
+                                inHardCore <- true
+                                1.0f
+                            elif outer > inner then
+                                let t = (d - inner) / (outer - inner)
+                                exp (-3.0f * t)
+                            else 0.0f
+                        if w > blobMax then blobMax <- w
             //   nothing active → 1.0 (no restriction)
             //   only lasso     → lassoMask (binary)
             //   only blobs     → blobMax (smooth)
@@ -139,6 +160,18 @@ module MeshShader =
             else
                 alpha <- ghost
             if alpha < 1e-4f then discard()
+            // Falloff-zone clamp: fragments that are NOT in any pin's hard
+            // core (and the lasso isn't carrying them either) must stay
+            // strictly below opaqueThreshold so the α-gated depth-write
+            // branch can't flip mid-falloff. Without this, a thin ring inside
+            // the falloff zone where exp(-3·t) ≈ 1 momentarily writes opaque
+            // depth and produces a visible occlusion artefact.
+            let fullySolid =
+                inHardCore
+                || (uniform.LassoPlaneCount > 0 && lassoMask >= 1.0f)
+                || (bc = 0 && uniform.LassoPlaneCount = 0)
+            if uniform.MeshActive && not fullySolid then
+                alpha <- min alpha (opaqueThreshold - 0.01f)
             let n = v.n |> Vec.normalize
             let toCam = (uniform.CameraLocation - v.wp.XYZ) |> Vec.normalize
             let ndl = max 0.15f (abs (Vec.dot n toCam))
@@ -264,20 +297,37 @@ module MeshView =
                 | None -> ()
                 arr)
 
-        // ---- Blob uniforms: each pin packed as V4f(cx,cy,cz,sigma). Pin centres
-        // are stored in render space (post-meshTrafo), matching v.wp.XYZ in the
-        // mesh shader. Hard-capped at MeshShader.MaxBlobs.
+        // ---- Blob uniforms.
+        // Pins are stored in metric world-space (Centre, InnerRadius,
+        // FalloffRadius all in metres). The mesh shader works in render space
+        // (where v.wp.XYZ lives after meshTrafo applies the dataset scale), so
+        // we convert here:
+        //   centreRender = (centreWorld - commonCentroid) * datasetScale
+        //   radiusRender = radiusMetric * datasetScale
+        // Blobs        : V4f(cx, cy, cz, innerRadiusRender)
+        // BlobFalloffs : V4f(falloffRadiusRender, 0, 0, 0)
+        // Hard-capped at MeshShader.MaxBlobs.
+        let datasetScale =
+            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun dsOpt scales ->
+                dsOpt |> Option.bind (fun ds -> Map.tryFind ds scales) |> Option.defaultValue 1.0)
         let blobsArr =
-            model.ScanPins.Pins |> AMap.toAVal |> AVal.map (fun pinsMap ->
-                let pins = HashMap.toArray pinsMap |> Array.map snd
-                let n = min pins.Length MeshShader.MaxBlobs
-                let arr = Array.zeroCreate<V4f> MeshShader.MaxBlobs
+            (model.ScanPins.Pins |> AMap.toAVal, model.CommonCentroid, datasetScale)
+            |||> AVal.map3 (fun pinsMap cc scale ->
+                let pins  = HashMap.toArray pinsMap |> Array.map snd
+                let n     = min pins.Length MeshShader.MaxBlobs
+                let centres  = Array.zeroCreate<V4f> MeshShader.MaxBlobs
+                let falloffs = Array.zeroCreate<V4f> MeshShader.MaxBlobs
                 for i in 0 .. n - 1 do
-                    let p = pins.[i]
-                    arr.[i] <- V4f(float32 p.Centre.X, float32 p.Centre.Y, float32 p.Centre.Z, float32 p.Sigma)
-                n, arr)
-        let blobCount = blobsArr |> AVal.map fst
-        let blobs     = blobsArr |> AVal.map snd
+                    let p  = pins.[i]
+                    let cr = (p.Centre - cc) * scale
+                    let ir = float32 (p.InnerRadius   * scale)
+                    let fr = float32 (p.FalloffRadius * scale)
+                    centres.[i]  <- V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, ir)
+                    falloffs.[i] <- V4f(fr, 0.0f, 0.0f, 0.0f)
+                n, centres, falloffs)
+        let blobCount    = blobsArr |> AVal.map (fun (n, _, _) -> n)
+        let blobs        = blobsArr |> AVal.map (fun (_, c, _) -> c)
+        let blobFalloffs = blobsArr |> AVal.map (fun (_, _, f) -> f)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             let isActive =
@@ -319,6 +369,7 @@ module MeshView =
                 Sg.Uniform("LassoPlanes",     lassoPlanes)
                 Sg.Uniform("BlobCount",       blobCount)
                 Sg.Uniform("Blobs",           blobs)
+                Sg.Uniform("BlobFalloffs",    blobFalloffs)
                 Sg.VertexAttributes(
                     HashMap.ofList [
                         string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)

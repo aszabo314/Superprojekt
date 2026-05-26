@@ -203,7 +203,7 @@ module Cards =
                                 match po with
                                 | Some pin ->
                                     let p = pin.Centre
-                                    sprintf "Pin  (%.1f, %.1f, %.1f)" p.X p.Y p.Z
+                                    sprintf "Pin  (%.1f, %.1f, %.1f) m" p.X p.Y p.Z
                                 | None -> "Pin")
                         }
 

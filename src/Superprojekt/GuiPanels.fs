@@ -101,12 +101,18 @@ module GuiPanels =
         div {
             flyoutClass |> AVal.map (fun c -> Some (Class c))
             div { Class "lp-section-title"; "Adjust Anchor" }
-            let radius = activePin |> AVal.map (Option.map (fun p -> p.Radius) >> Option.defaultValue 1.0)
-            let sigma = activePin |> AVal.map (Option.map (fun p -> p.Sigma) >> Option.defaultValue 0.5)
-            inlineSlider "Radius" 0.05 50.0 0.05 (sprintf "%.2fm") radius (fun v ->
-                env.Emit [ScanPinMsg (SetAnchorRadius v)])
-            inlineSlider "σ (sigma)" 0.01 50.0 0.01 (sprintf "%.2fm") sigma (fun v ->
-                env.Emit [ScanPinMsg (SetAnchorSigma v)])
+            // Inner radius is the "hard truth" (full alpha inside). Falloff
+            // slider is *relative* to the inner radius — its value is the
+            // delta added to InnerRadius to get FalloffRadius. Moving the
+            // inner slider preserves that delta.
+            let innerR =
+                activePin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 1.0)
+            let falloffDelta =
+                activePin |> AVal.map (Option.map (fun p -> max 0.01 (p.FalloffRadius - p.InnerRadius)) >> Option.defaultValue 3.0)
+            inlineLogSlider "Inner radius" 0.01 10000.0 (sprintf "%.2f m") innerR (fun v ->
+                env.Emit [ScanPinMsg (SetInnerRadius v)])
+            inlineLogSlider "Falloff +" 0.01 10000.0 (sprintf "+%.2f m") falloffDelta (fun v ->
+                env.Emit [ScanPinMsg (SetFalloffDelta v)])
 
             let payloadKind =
                 activePin |> AVal.map (function
@@ -331,42 +337,6 @@ module GuiPanels =
                         div { Class "lp-sublabel-hint"; "Red = dataset, green = algorithm, blue = conditioning." }
                     })
 
-                collapsibleSection "Lasso" false (
-                    div {
-                        Class "lp-clip-body"
-                        let drawing = model.LassoDrawing |> AVal.map Option.isSome
-                        let committed = model.LassoVolume |> AVal.map Option.isSome
-                        div {
-                            Class "lp-clip-actions"
-                            button {
-                                Class "mb"
-                                drawing |> AVal.map (fun on ->
-                                    if on then Some (Class "mb-on") else None)
-                                Attribute("title", "Click vertices on the viewport; double-click to commit; Esc cancels.")
-                                Dom.OnClick(fun _ ->
-                                    if AVal.force drawing then env.Emit [LassoCancel]
-                                    else env.Emit [LassoBegin])
-                                drawing |> AVal.map (fun on ->
-                                    if on then "Drawing…" else "Draw Lasso")
-                            }
-                            button {
-                                Class "mb"
-                                committed |> AVal.map (fun c ->
-                                    if c then None else Some (Style [Display "none"]))
-                                Attribute("title", "Clear committed lasso")
-                                Dom.OnClick(fun _ -> env.Emit [LassoClear])
-                                "Clear"
-                            }
-                        }
-                        div {
-                            Class "lp-sublabel-hint"
-                            (drawing, committed) ||> AVal.map2 (fun d c ->
-                                match d, c with
-                                | true, _  -> "Click to add vertex · double-click to commit · Esc to cancel"
-                                | _, true  -> "Lasso committed. Camera-anchored cone."
-                                | _ -> "")
-                        }
-                    })
             })
 
     let leftPanel (env : Env<Message>) (model : AdaptiveModel) =

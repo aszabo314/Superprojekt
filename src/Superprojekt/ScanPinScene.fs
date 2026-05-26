@@ -73,11 +73,22 @@ module ScanPinScene =
         let placementActive =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
+        // Pin centres and radii are stored in metric world-space; the scene
+        // graph works in render-space (post centroid translate, post dataset
+        // scale). Project every pin coordinate before using it as a trafo.
+        let renderCentreOpt =
+            (model.CommonCentroid, datasetScale) ||> AVal.map2 (fun cc s ->
+                fun (w : V3d) -> ScanPin.renderCentre cc s w)
+        let renderLength =
+            datasetScale |> AVal.map (fun s -> ScanPin.renderLength s)
+
         let pinDots =
             pinIdSet |> ASet.map (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let phaseVal = pinVal |> AVal.map (Option.map (fun p -> p.Phase))
-                let centreVal = pinVal |> AVal.map (Option.map (fun p -> p.Centre))
+                let centreVal =
+                    (pinVal, renderCentreOpt) ||> AVal.map2 (fun po f ->
+                        po |> Option.map (fun p -> f p.Centre))
                 let color =
                     (selectedId, phaseVal) ||> AVal.map2 (fun sel phaseOpt ->
                         match phaseOpt with
@@ -122,17 +133,24 @@ module ScanPinScene =
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
                 let active = (notFullscreen, isSelected) ||> AVal.map2 (&&)
-                let centreVal = pinVal |> AVal.map (Option.map (fun p -> p.Centre))
-                let radiusVal = pinVal |> AVal.map (Option.map (fun p -> p.Radius) >> Option.defaultValue 0.0)
-                let sigmaVal  = pinVal |> AVal.map (Option.map (fun p -> p.Sigma)  >> Option.defaultValue 0.0)
-                let phaseVal  = pinVal |> AVal.map (Option.map (fun p -> p.Phase))
+                // All three values projected from metric to render-space.
+                let centreVal =
+                    (pinVal, renderCentreOpt) ||> AVal.map2 (fun po f ->
+                        po |> Option.map (fun p -> f p.Centre))
+                let outerRadius =
+                    (pinVal, renderLength) ||> AVal.map2 (fun po f ->
+                        po |> Option.map (fun p -> f p.FalloffRadius) |> Option.defaultValue 0.0)
+                let innerRadius =
+                    (pinVal, renderLength) ||> AVal.map2 (fun po f ->
+                        po |> Option.map (fun p -> f p.InnerRadius) |> Option.defaultValue 0.0)
+                let phaseVal = pinVal |> AVal.map (Option.map (fun p -> p.Phase))
                 let outerTrafo =
-                    (centreVal, radiusVal) ||> AVal.map2 (fun co r ->
+                    (centreVal, outerRadius) ||> AVal.map2 (fun co r ->
                         match co with
                         | Some c -> Trafo3d.Scale r * Trafo3d.Translation c
                         | None -> Trafo3d.Scale 0.0)
                 let innerTrafo =
-                    (centreVal, sigmaVal) ||> AVal.map2 (fun co s ->
+                    (centreVal, innerRadius) ||> AVal.map2 (fun co s ->
                         match co with
                         | Some c -> Trafo3d.Scale s * Trafo3d.Translation c
                         | None -> Trafo3d.Scale 0.0)
@@ -147,7 +165,7 @@ module ScanPinScene =
                 let outerColor = baseColor |> AVal.map (fun c -> V4d(c.X, c.Y, c.Z, 0.10))
                 let innerColor = baseColor |> AVal.map (fun c -> V4d(c.X, c.Y, c.Z, 0.30))
                 let outlineSegs =
-                    (centreVal, radiusVal, isSelected) |||> AVal.map3 (fun co r sel ->
+                    (centreVal, outerRadius, isSelected) |||> AVal.map3 (fun co r sel ->
                         if sel then
                             match co with
                             | Some c -> PinGeometry.buildSphereOutline c r (V4d(1.0, 1.0, 1.0, 0.55)) 1.0
@@ -226,7 +244,7 @@ module ScanPinScene =
                         | Some p ->
                             match p.Payload with
                             | Patch pp ->
-                                let centreRender = p.Centre
+                                let centreRender = ScanPin.renderCentre cc scale p.Centre
                                 let radiusRender = pp.Radius
                                 let color =
                                     match p.HostMeshName with

@@ -1,5 +1,5 @@
-//1863aec6-4ca8-1d89-40ff-01a9925726e4
-//df10f933-4b00-7f71-bf48-d0289235678a
+//20f7d097-7997-2742-b5a1-2bd1e2471e4f
+//c57f830b-5156-30dc-406a-4d026247be49
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -53,6 +53,7 @@ type AdaptiveModel(value : Model) =
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _ExploreCardPos_ = FSharp.Data.Adaptive.cval(value.ExploreCardPos)
+    let _LassoCardPos_ = FSharp.Data.Adaptive.cval(value.LassoCardPos)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
@@ -103,6 +104,7 @@ type AdaptiveModel(value : Model) =
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
             _ExploreCardPos_.Value <- value.ExploreCardPos
+            _LassoCardPos_.Value <- value.LassoCardPos
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
     member __.Current = __adaptive
     member __.Camera = _Camera_
@@ -146,5 +148,6 @@ type AdaptiveModel(value : Model) =
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.ExploreCardPos = _ExploreCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>
+    member __.LassoCardPos = _LassoCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

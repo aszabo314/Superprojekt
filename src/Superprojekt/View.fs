@@ -192,7 +192,8 @@ module View =
                             if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
                         match placement, pick with
                         | AnchorPlacement, Some renderPos ->
-                            env.Emit [ScanPinMsg (PlaceAnchor renderPos)]
+                            let worldPos = worldFromRender model renderPos
+                            env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
                             false
                         | AnchorPlacement, None -> false
                         | _, Some renderPos ->
@@ -245,6 +246,7 @@ module View =
             GuiPanels.leftPanel env model
             GuiPanels.placementFlyout env model
             GuiCards.exploreCard env model
+            GuiCards.lassoCard env model
             GuiCards.registrationCard env model registrationOpen
             GuiCards.registrationToggleButton registrationOpen
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)

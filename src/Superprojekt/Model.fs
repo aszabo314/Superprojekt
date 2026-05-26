@@ -215,6 +215,7 @@ type Model =
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
         ExploreCardPos      : V2d option
+        LassoCardPos        : V2d option
         GearPopoverOpen     : bool
     }
 
@@ -262,5 +263,6 @@ module Model =
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             ExploreCardPos      = None
+            LassoCardPos        = None
             GearPopoverOpen     = false
         }

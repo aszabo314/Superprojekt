@@ -60,6 +60,19 @@ module GuiTopBar =
                 "◉ Explore"
             }
 
+            let lassoActive =
+                (model.LassoDrawing, model.LassoVolume)
+                ||> AVal.map2 (fun d v -> d.IsSome || v.IsSome)
+            button {
+                Class "tb-btn"
+                lassoActive |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Lasso: start drawing a clip polygon on the viewport")
+                Dom.OnClick(fun _ ->
+                    if AVal.force lassoActive then env.Emit [LassoClear]
+                    else env.Emit [LassoBegin])
+                "◌ Lasso"
+            }
+
             let placementActive =
                 model.ScanPins.Placement |> AVal.map (function
                     | AnchorPlacement -> true

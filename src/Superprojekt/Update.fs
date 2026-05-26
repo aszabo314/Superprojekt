@@ -119,13 +119,13 @@ module Update =
                             model.ScanPins.Pins |> HashMap.toSeq
                             |> Seq.choose (fun (_, pin) ->
                                 if pin.Phase = PinPhase.Committed then
-                                    let centreWorld = pin.Centre / scale + cc
-                                    let sigmaWorld = pin.Sigma / scale
+                                    // pin.Centre and pin.FalloffRadius are
+                                    // already world-space metres.
                                     let w =
                                         match pin.Payload with
                                         | Point pp -> pp.ReliabilityWeight
                                         | _ -> 1.0
-                                    Some (centreWorld, sigmaWorld, w)
+                                    Some (pin.Centre, pin.FalloffRadius, w)
                                 else None)
                             |> Array.ofSeq
                     let eps =
@@ -271,6 +271,8 @@ module Update =
             model
         | SetExploreCardPos pos ->
             { model with ExploreCardPos = Some pos }
+        | SetLassoCardPos pos ->
+            { model with LassoCardPos = Some pos }
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
         | EditPin id ->

@@ -114,6 +114,76 @@ module GuiCards =
             }
         }
 
+    let lassoCard (env : Env<Message>) (model : AdaptiveModel) =
+        let dragState : cval<(V2d * V2d) option> = cval None
+        let defaultPos = V2d(340.0, 44.0)
+        let pos =
+            (model.LassoCardPos, dragState :> aval<_>)
+            ||> AVal.map2 (fun saved drag ->
+                match drag with
+                | Some (p, _) -> p
+                | None -> saved |> Option.defaultValue defaultPos)
+        let drawing   = model.LassoDrawing |> AVal.map Option.isSome
+        let committed = model.LassoVolume  |> AVal.map Option.isSome
+        let visible   = (drawing, committed) ||> AVal.map2 (||)
+        div {
+            Class "card lasso-card"
+            (visible, pos) ||> AVal.map2 (fun on p ->
+                if not on then Some (Style [Display "none"])
+                else Some (Style [
+                    Left (sprintf "%.0fpx" p.X)
+                    Top (sprintf "%.0fpx" p.Y)
+                ]))
+            div {
+                Class "card-titlebar"
+                cardDragHandle "Lasso" pos dragState (fun p -> env.Emit [SetLassoCardPos p])
+                button {
+                    Class "card-btn-close"
+                    Attribute("title", "Clear lasso")
+                    Dom.OnClick(fun _ -> env.Emit [LassoClear])
+                    "×"
+                }
+            }
+            div {
+                Class "card-body lasso-card-body"
+                div {
+                    Class "lp-sublabel-hint"
+                    (drawing, committed) ||> AVal.map2 (fun d c ->
+                        match d, c with
+                        | true, _ -> "Click to add vertex · double-click to commit · Esc to cancel"
+                        | _, true -> "Lasso committed. Camera-anchored cone."
+                        | _ -> "")
+                }
+                div {
+                    Class "lp-clip-actions"
+                    button {
+                        Class "mb"
+                        drawing |> AVal.map (fun on ->
+                            if on then Some (Style [Display "none"]) else None)
+                        Attribute("title", "Discard current lasso and start drawing a new one")
+                        Dom.OnClick(fun _ -> env.Emit [LassoClear; LassoBegin])
+                        "Redraw"
+                    }
+                    button {
+                        Class "mb"
+                        drawing |> AVal.map (fun on ->
+                            if on then None else Some (Style [Display "none"]))
+                        Attribute("title", "Cancel drawing")
+                        Dom.OnClick(fun _ -> env.Emit [LassoCancel])
+                        "Cancel"
+                    }
+                    button {
+                        Class "mb"
+                        committed |> AVal.map (fun c ->
+                            if c then None else Some (Style [Display "none"]))
+                        Attribute("title", "Clear committed lasso")
+                        Dom.OnClick(fun _ -> env.Emit [LassoClear])
+                        "Clear"
+                    }
+                }
+            }
+        }
+
     let registrationCard (env : Env<Message>) (model : AdaptiveModel) (openCval : cval<bool>) =
         let dragState : cval<(V2d * V2d) option> = cval None
         let defaultPos = V2d(200.0, 280.0)

@@ -55,6 +55,11 @@ type Message =
     | LassoClear
     | SaveWorkspace
     | LoadWorkspaceJson of string
+    | StartRetarget of targetMesh:string
+    | RetargetCandidatesReady of RetargetCandidate[]
+    | SetRetargetDecision of ScanPinId * RetargetDecision
+    | CommitRetarget
+    | CancelRetarget
 
 and ExploreSignal =
     | FeatureConfidenceSignal

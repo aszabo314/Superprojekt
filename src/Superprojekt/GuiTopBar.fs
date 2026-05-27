@@ -126,6 +126,25 @@ module GuiTopBar =
                         model.GearPopoverOpen |> AVal.map (fun o -> if o then None else Some (Style [Display "none"]))
                         div {
                             Class "tb-gear-row"
+                            span { Class "lp-sublabel"; "Retarget" }
+                            div {
+                                Class "tb-gear-btn-row"
+                                button {
+                                    Class "tb-gear-btn"
+                                    Attribute("title", "Project all pins onto the active picking layer (use wheel-zoom to pick the target mesh first)")
+                                    model.ActivePickingLayer |> AVal.map (function
+                                        | Some _ -> None
+                                        | None -> Some (Attribute("disabled", "disabled")))
+                                    Dom.OnClick(fun _ ->
+                                        match AVal.force model.ActivePickingLayer with
+                                        | Some target -> env.Emit [StartRetarget target]
+                                        | None -> ())
+                                    "→ Project pins to active layer"
+                                }
+                            }
+                        }
+                        div {
+                            Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Workspace" }
                             div {
                                 Class "tb-gear-btn-row"

@@ -340,3 +340,101 @@ module GuiCards =
                 transact (fun () -> openCval.Value <- not openCval.Value))
             "⚙ Registration"
         }
+
+    // Retarget review card. Shown while RetargetState is RetargetProjecting
+    // (waiting on server) or RetargetReviewing (user picks accept/reject per
+    // pin). Hidden on RetargetIdle.
+    let retargetCard (env : Env<Message>) (model : AdaptiveModel) =
+        let candidatesAList =
+            model.Retarget
+            |> AVal.map (function
+                | RetargetReviewing cs -> IndexList.ofArray cs
+                | _ -> IndexList.empty)
+            |> AList.ofAVal
+        let title =
+            model.Retarget |> AVal.map (function
+                | RetargetProjecting target ->
+                    sprintf "Retarget to %s — projecting…" (Cards.shortName target)
+                | RetargetReviewing cs ->
+                    sprintf "Retarget review (%d pins)" cs.Length
+                | _ -> "Retarget")
+        let progressNote =
+            model.Retarget |> AVal.map (function
+                | RetargetProjecting _ -> "Projecting pins onto target mesh…"
+                | _ -> "")
+        div {
+            Class "card retarget-card"
+            model.Retarget |> AVal.map (function
+                | RetargetIdle -> Some (Style [Display "none"])
+                | _ -> None)
+            div {
+                Class "card-titlebar"
+                span { Class "card-title"; title }
+                button {
+                    Class "card-btn-close"
+                    Attribute("title", "Cancel retarget")
+                    Dom.OnClick(fun _ -> env.Emit [CancelRetarget])
+                    "×"
+                }
+            }
+            div {
+                Class "card-body retarget-card-body"
+                div { Class "retarget-empty"; progressNote }
+                div {
+                    Class "retarget-list"
+                    candidatesAList |> AList.map (fun c ->
+                        let infinite = System.Double.IsInfinity c.ProjectionDistance
+                        let highRisk = infinite || c.ProjectionDistance > 2.0 * c.FalloffRadius
+                        let distLabel =
+                            if infinite then "no projection"
+                            else sprintf "Δ %.3fm" c.ProjectionDistance
+                        let baseClass =
+                            "retarget-row" +
+                            (if highRisk then " retarget-row-risk" else "") +
+                            (match c.Decision with
+                             | RetargetAccept -> " retarget-row-accepted"
+                             | RetargetReject -> " retarget-row-rejected"
+                             | _ -> "")
+                        div {
+                            Class baseClass
+                            span {
+                                Class "retarget-pin"
+                                c.OriginalHostMesh |> Option.defaultValue "—" |> Cards.shortName
+                            }
+                            span { Class "retarget-dist"; distLabel }
+                            div {
+                                Class "retarget-actions"
+                                button {
+                                    Class "retarget-btn-accept"
+                                    Attribute("title", "Accept projection")
+                                    Dom.OnClick(fun _ -> env.Emit [SetRetargetDecision(c.PinId, RetargetAccept)])
+                                    "✓"
+                                }
+                                button {
+                                    Class "retarget-btn-reject"
+                                    Attribute("title", "Reject (keep current position)")
+                                    Dom.OnClick(fun _ -> env.Emit [SetRetargetDecision(c.PinId, RetargetReject)])
+                                    "✕"
+                                }
+                            }
+                        })
+                }
+                div {
+                    Class "retarget-commit-row"
+                    model.Retarget |> AVal.map (function
+                        | RetargetReviewing _ -> None
+                        | _ -> Some (Style [Display "none"]))
+                    button {
+                        Class "lp-commit"
+                        Attribute("title", "Apply accepted projections")
+                        Dom.OnClick(fun _ -> env.Emit [CommitRetarget])
+                        "Apply"
+                    }
+                    button {
+                        Class "lp-discard"
+                        Dom.OnClick(fun _ -> env.Emit [CancelRetarget])
+                        "Cancel"
+                    }
+                }
+            }
+        }

@@ -763,6 +763,62 @@ body.loaded { background: #f4f6f8; }
 .prov-hover-bar { width: 100%; }
 .prov-hover-nums { color: #475569; }
 
+/* ── Retarget review card ─────────────────────────────────────────── */
+
+.retarget-card {
+    position: fixed;
+    left: 50%; transform: translateX(-50%);
+    top: 60px;
+    min-width: 360px; max-width: 480px;
+    background: #ffffff;
+    border: 1px solid #c5cdd8;
+    border-radius: 4px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.20);
+    z-index: 9000;
+}
+.retarget-card .card-titlebar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 10px; border-bottom: 1px solid #e2e8f0;
+    background: #f8fafc;
+}
+.retarget-card .card-title {
+    font-weight: 600; font-size: 12px; color: #0f172a;
+}
+.retarget-card .card-btn-close {
+    background: transparent; border: none; cursor: pointer; font-size: 18px; color: #64748b;
+    padding: 0 4px;
+}
+.retarget-card-body {
+    padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
+    max-height: 60vh; overflow-y: auto;
+}
+.retarget-empty { color: #64748b; font-style: italic; }
+.retarget-empty:empty { display: none; }
+.retarget-list { display: flex; flex-direction: column; gap: 4px; }
+.retarget-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 6px;
+    border: 1px solid #e2e8f0; border-radius: 3px;
+    font-family: 'SF Mono', 'Monaco', monospace; font-size: 11px;
+}
+.retarget-row-risk { border-color: #f59e0b; background: #fffbeb; }
+.retarget-row-accepted { background: #ecfdf5; border-color: #34d399; }
+.retarget-row-rejected { background: #fef2f2; border-color: #fca5a5; opacity: 0.6; }
+.retarget-pin { min-width: 100px; color: #334155; }
+.retarget-dist { flex: 1; color: #475569; }
+.retarget-actions { display: flex; gap: 4px; }
+.retarget-btn-accept, .retarget-btn-reject {
+    background: #ffffff; border: 1px solid #c5cdd8;
+    border-radius: 2px; padding: 2px 6px; cursor: pointer;
+    font-size: 11px;
+}
+.retarget-btn-accept:hover { background: #ecfdf5; border-color: #34d399; }
+.retarget-btn-reject:hover { background: #fef2f2; border-color: #fca5a5; }
+.retarget-commit-row {
+    display: flex; gap: 8px; justify-content: flex-end;
+    margin-top: 6px; padding-top: 6px; border-top: 1px solid #e2e8f0;
+}
+
 /* ── Lasso overlay (V6 §D.3) ──────────────────────────────────────── */
 
 .lasso-overlay {

@@ -324,6 +324,7 @@ module View =
             GuiCards.lassoCard env model
             GuiCards.registrationCard env model registrationOpen
             GuiCards.registrationToggleButton registrationOpen
+            GuiCards.retargetCard env model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.provenanceHoverOverlay model (hoverCoord :> aval<_>) (cursorScreen :> aval<_>)
             GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)

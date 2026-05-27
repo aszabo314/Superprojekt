@@ -377,3 +377,83 @@ module Update =
             | Result.Ok m -> m
             | Result.Error err ->
                 { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "workspace load failed: %s" err) }
+        | StartRetarget target ->
+            let pins =
+                model.ScanPins.Pins
+                |> HashMap.toSeq
+                |> Seq.choose (fun (_, p) ->
+                    if p.Phase = PinPhase.Committed then Some p else None)
+                |> Array.ofSeq
+            if pins.Length = 0 then
+                { model with DebugLog = model.DebugLog.InsertAt(0, "retarget: no committed pins") }
+            else
+                task {
+                    try
+                        let! candidates =
+                            pins
+                            |> Array.map (fun p ->
+                                async {
+                                    let! res = Query.closestPoint ApiConfig.apiBase.Value target 0 p.Centre
+                                    return
+                                        match res with
+                                        | Some r ->
+                                            let dist = sqrt (float r.distanceSquared)
+                                            {
+                                                PinId = p.Id
+                                                OriginalCentre = p.Centre
+                                                OriginalHostMesh = p.HostMeshName
+                                                FalloffRadius = p.FalloffRadius
+                                                ProjectedCentre = r.point
+                                                ProjectionDistance = dist
+                                                TargetMesh = target
+                                                Decision = RetargetUndecided
+                                            }
+                                        | None ->
+                                            // No projection — flag with a sentinel large distance
+                                            {
+                                                PinId = p.Id
+                                                OriginalCentre = p.Centre
+                                                OriginalHostMesh = p.HostMeshName
+                                                FalloffRadius = p.FalloffRadius
+                                                ProjectedCentre = p.Centre
+                                                ProjectionDistance = System.Double.PositiveInfinity
+                                                TargetMesh = target
+                                                Decision = RetargetReject
+                                            }
+                                })
+                            |> Async.Parallel
+                        env.Emit [RetargetCandidatesReady candidates]
+                    with ex ->
+                        env.Emit [LogDebug (sprintf "retarget projection failed: %s" ex.Message)]
+                } |> ignore
+                { model with Retarget = RetargetProjecting target }
+        | RetargetCandidatesReady candidates ->
+            { model with Retarget = RetargetReviewing candidates }
+        | SetRetargetDecision(pinId, decision) ->
+            match model.Retarget with
+            | RetargetReviewing cs ->
+                let updated =
+                    cs |> Array.map (fun c ->
+                        if c.PinId = pinId then { c with Decision = decision } else c)
+                { model with Retarget = RetargetReviewing updated }
+            | _ -> model
+        | CommitRetarget ->
+            match model.Retarget with
+            | RetargetReviewing cs ->
+                let mutable pins = model.ScanPins.Pins
+                for c in cs do
+                    if c.Decision = RetargetAccept then
+                        match HashMap.tryFind c.PinId pins with
+                        | Some p ->
+                            let p' =
+                                { p with
+                                    Centre = c.ProjectedCentre
+                                    HostMeshName = Some c.TargetMesh }
+                            pins <- HashMap.add c.PinId p' pins
+                        | None -> ()
+                { model with
+                    ScanPins = { model.ScanPins with Pins = pins }
+                    Retarget = RetargetIdle }
+            | _ -> model
+        | CancelRetarget ->
+            { model with Retarget = RetargetIdle }

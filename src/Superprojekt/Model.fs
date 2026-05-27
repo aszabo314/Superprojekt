@@ -57,6 +57,30 @@ module RegistrationState =
         Running        = false
     }
 
+type RetargetDecision =
+    | RetargetUndecided
+    | RetargetAccept
+    | RetargetReject
+
+type RetargetCandidate = {
+    PinId              : ScanPinId
+    OriginalCentre     : V3d
+    OriginalHostMesh   : string option
+    FalloffRadius      : float
+    ProjectedCentre    : V3d
+    ProjectionDistance : float
+    TargetMesh         : string
+    Decision           : RetargetDecision
+}
+
+type RetargetState =
+    | RetargetIdle
+    | RetargetProjecting of targetMesh:string
+    | RetargetReviewing  of candidates:RetargetCandidate[]
+
+module RetargetState =
+    let initial = RetargetIdle
+
 type ExploreMode =
     {
         Enabled            : bool
@@ -193,6 +217,7 @@ type Model =
 
         MeshTransforms        : Map<string, Trafo3d>
         Registration          : RegistrationState
+        Retarget              : RetargetState
 
         MeshSensorTypes       : Map<string, SensorType>
         MeshDatasetErrors     : Map<string, float>
@@ -246,6 +271,7 @@ module Model =
             LassoEnabled = true
             MeshTransforms        = Map.empty
             Registration          = RegistrationState.initial
+            Retarget              = RetargetState.initial
             MeshSensorTypes       = Map.empty
             MeshDatasetErrors     = Map.empty
             MeshAlgorithmResidual = Map.empty

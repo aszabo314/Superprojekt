@@ -1,5 +1,5 @@
-//c78b6673-8633-434a-5f45-5359ec8eea64
-//402463b0-c96d-023b-d204-e5095c49b711
+//9869e593-e876-dcf5-c53c-9d95427cc26b
+//abe84f31-8c98-746f-125e-0b95e1bb2c96
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -39,6 +39,7 @@ type AdaptiveModel(value : Model) =
     let _LassoEnabled_ = FSharp.Data.Adaptive.cval(value.LassoEnabled)
     let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
+    let _Retarget_ = FSharp.Data.Adaptive.cval(value.Retarget)
     let _MeshSensorTypes_ = FSharp.Data.Adaptive.cval(value.MeshSensorTypes)
     let _MeshDatasetErrors_ = FSharp.Data.Adaptive.cval(value.MeshDatasetErrors)
     let _MeshAlgorithmResidual_ = FSharp.Data.Adaptive.cval(value.MeshAlgorithmResidual)
@@ -91,6 +92,7 @@ type AdaptiveModel(value : Model) =
             _LassoEnabled_.Value <- value.LassoEnabled
             _MeshTransforms_.Value <- value.MeshTransforms
             _Registration_.Value <- value.Registration
+            _Retarget_.Value <- value.Retarget
             _MeshSensorTypes_.Value <- value.MeshSensorTypes
             _MeshDatasetErrors_.Value <- value.MeshDatasetErrors
             _MeshAlgorithmResidual_.Value <- value.MeshAlgorithmResidual
@@ -136,6 +138,7 @@ type AdaptiveModel(value : Model) =
     member __.LassoEnabled = _LassoEnabled_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
+    member __.Retarget = _Retarget_ :> FSharp.Data.Adaptive.aval<RetargetState>
     member __.MeshSensorTypes = _MeshSensorTypes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, SensorType>>
     member __.MeshDatasetErrors = _MeshDatasetErrors_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
     member __.MeshAlgorithmResidual = _MeshAlgorithmResidual_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>

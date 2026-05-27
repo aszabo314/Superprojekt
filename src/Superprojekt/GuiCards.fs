@@ -222,7 +222,6 @@ module GuiCards =
                 let mode       = model.Registration |> AVal.map (fun r -> r.Mode)
                 let refMeshOpt = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
                 let running    = model.Registration |> AVal.map (fun r -> r.Running)
-                let conv       = model.Registration |> AVal.map (fun r -> r.ConvergenceLog)
                 let resi       = model.Registration |> AVal.map (fun r -> r.LastResiduals)
                 div { Class "lp-sublabel"; "Solve mode" }
                 compactButtonBar [
@@ -329,16 +328,6 @@ module GuiCards =
                         "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-hist']});"
                         "})();"
                     ]
-                }
-                div { Class "lp-sublabel"; "Convergence" }
-                div {
-                    Class "reg-convergence-log"
-                    conv |> AVal.map (fun (iters : RegistrationIteration[]) ->
-                        if iters.Length = 0 then "—"
-                        else
-                            iters
-                            |> Array.map (fun it -> sprintf "  iter %2d  RMS %.4fm" it.Iter it.Rms)
-                            |> String.concat "\n")
                 }
             }
         }

@@ -19,7 +19,6 @@ type Message =
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
     | RunRegistration
-    | RegistrationProgress of int * float
     | RegistrationComplete of string * Trafo3d * float[] * float[]
     | RegistrationFailed of string
     | ResetMeshTransforms

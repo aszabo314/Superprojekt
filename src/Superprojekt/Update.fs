@@ -92,7 +92,7 @@ module Update =
         | ResetMeshTransforms ->
             { model with
                 MeshTransforms = Map.empty
-                Registration = { model.Registration with LastResiduals = [||]; ConvergenceLog = [||]; Running = false } }
+                Registration = { model.Registration with LastResiduals = [||]; Running = false } }
         | RunRegistration ->
             let reg = model.Registration
             match reg.ReferenceMesh with
@@ -147,17 +147,13 @@ module Update =
                             with ex ->
                                 env.Emit [RegistrationFailed (sprintf "%s: %s" movName ex.Message)]
                         } |> ignore
-                    { model with Registration = { reg with Running = true; ConvergenceLog = [||]; LastResiduals = [||] } }
-        | RegistrationProgress _ ->
-            model
-        | RegistrationComplete(mesh, trafo, conv, resi) ->
+                    { model with Registration = { reg with Running = true; LastResiduals = [||] } }
+        | RegistrationComplete(mesh, trafo, _conv, resi) ->
             let meshScale =
                 let dataset = mesh.Split('/', 2).[0]
                 Map.tryFind dataset model.DatasetScales |> Option.defaultValue 1.0
             let renderTrafo = worldToRenderRigid meshScale model.CommonCentroid trafo
             let mt = Map.add mesh renderTrafo model.MeshTransforms
-            let iters =
-                conv |> Array.mapi (fun i rms -> { Iter = i; Rms = rms })
             let meshRms =
                 if resi.Length = 0 then 0.0
                 else sqrt ((resi |> Array.sumBy (fun x -> x * x)) / float resi.Length)
@@ -167,7 +163,6 @@ module Update =
                 MeshAlgorithmResidual = algoMap
                 Registration = { model.Registration with
                                     LastResiduals = resi
-                                    ConvergenceLog = iters
                                     Running = false } }
         | RegistrationFailed err ->
             let log = model.DebugLog.InsertAt(0, sprintf "registration failed: %s" err)

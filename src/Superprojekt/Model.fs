@@ -42,13 +42,10 @@ type RegistrationMode =
     | RegionRestrictedIcp
     | PointPairPlusRefinement
 
-type RegistrationIteration = { Iter : int; Rms : float }
-
 type RegistrationState = {
     Mode             : RegistrationMode
     ReferenceMesh    : string option
     LastResiduals    : float[]
-    ConvergenceLog   : RegistrationIteration[]
     Running          : bool
 }
 
@@ -57,7 +54,6 @@ module RegistrationState =
         Mode           = TraditionalIcp
         ReferenceMesh  = None
         LastResiduals  = [||]
-        ConvergenceLog = [||]
         Running        = false
     }
 

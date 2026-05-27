@@ -207,8 +207,15 @@ module MeshShader =
                     let t = clamp 0.0f 1.0f ((tT - nz) / tT)
                     let s = t * t * (3.0f - 2.0f * t)
                     blueCol * (1.0f - s) + hotCol * s
+            // Render mode (textured / shaded / slope) only applies to fragments
+            // above ghost level. Fragments sitting at ghost opacity (inactive
+            // mesh, outside-lasso, outside-blob) always use the solid mesh
+            // colour so the ghost reads as a uniform silhouette regardless of
+            // what the visible region is showing.
+            let aboveGhost = alpha > ghost + 1e-4f
             let baseRgb =
-                if uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
+                if not aboveGhost then uniform.MeshColor.XYZ
+                elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
             let depth =

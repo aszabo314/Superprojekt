@@ -19,20 +19,11 @@ module ScanPinUpdate =
         |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
         |> Option.defaultValue 1.0
 
-    // Metric defaults: 1 m hard core, 4 m falloff, give or take the
-    // scene size (so a planet-scale dataset still gets pins you can see).
-    let defaultInnerRadius (model : Model) =
-        let scale = activeScale model
-        if model.SceneBounds.IsInvalid then 1.0
-        else max 0.05 (model.SceneBounds.Size.Length * 0.02 / scale)
-
-    // Defaults give a ~3:1 falloff-to-inner ratio (matching the slider's
-    // relative semantics).
-    let defaultFalloffRadius (model : Model) =
-        let scale = activeScale model
-        let inner = defaultInnerRadius model
-        if model.SceneBounds.IsInvalid then inner + 3.0
-        else max (inner + 0.1) (inner + model.SceneBounds.Size.Length * 0.06 / scale)
+    // Metric defaults: 5 m hard core, +1 m falloff delta (i.e. absolute
+    // FalloffRadius = 6 m). Constants — datasets in real-world metres get the
+    // same starting pin regardless of scene size.
+    let defaultInnerRadius (_ : Model) = 5.0
+    let defaultFalloffRadius (model : Model) = defaultInnerRadius model + 1.0
 
     // centre is in world-space metres.
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =

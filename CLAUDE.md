@@ -171,7 +171,7 @@ POST /api/query/ray-batch                       → binary closest-hit per ray a
 POST /api/query/ray-grid                        → binary closest-hit + normal per ray
 POST /api/query/plane-intersection              → single mesh, 2D cut polylines
 POST /api/query/plane-intersection-batch        → multi-mesh, Parallel.For server-side
-POST /api/query/grid-eval                       → per-cell stats inside a core sample prism
+POST /api/query/grid-eval                       → per-cell stats inside a prism region
 POST /api/query/cylinder-eval                   → per-ring per-angle mesh intersection heights
 POST /api/query/isoline                         → polyline at a given elevation
 POST /api/query/curvature-ridge                 → polyline along a curvature ridge
@@ -224,8 +224,6 @@ Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc
 - **`ActivePickingLayer`** is still toggled by wheel-zoom in `View.fs` but no longer restricts picking — pick happens against whatever is in the depth buffer.
 - **No JSON / workspace persistence**: removed. Pins, lasso, transforms are all in-memory per session.
 - **No real cut-plane mesh intersection rendering** in the pin diagram yet. The flyout shows the prism/blob but the cross-section profile is sketched out, not driven by `/query/plane-intersection-batch`.
-- **No arcball gizmo** for pin axis tweaks; the flyout slider is the only adjustment.
-- **No top-view mode** for the core sample inspector — `CoreSampleViewMode = TopView` exists on the model but isn't wired to a renderControl.
 - **Ranking / BspTree / MeshIcp residual visualisation** is partial. Residuals come back from `/query/icp` but the chart in `GuiPanels` is rudimentary.
 
 ## Aardvark.Dom gotchas

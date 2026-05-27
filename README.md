@@ -133,9 +133,7 @@ Costly queries scale with mesh count × angular density. Rules learned the hard 
 
 - `RankingState`, `BspTree`, `MeshIcp` features partially exposed in the GUI; rough edges around residual visualisation and convergence display.
 - ScanPin Patch / Line payloads work end-to-end but the cut-plane diagram is still a sketch; no real mesh intersection rendered yet.
-- No arcball gizmo for pin axis tweaks (the flyout slider is enough for now).
 - No JSON serialisation of the workspace; everything is in-memory per session.
-- Top-view mode for the core sample inspector exists in the model but isn't wired into the side renderControl.
 - A handful of model fields (`ProvenanceHeatmap`, `FalloffZoneOnly`, `FusionMode`, `MeshAlgorithmResidual`, `CardSystem`) still have GUI controls but no live render-time consumer after the OIT removal — kept for now until their corresponding shader paths are reimplemented on top of the single-pass pipeline.
 - The mesh shader's `[<Depth>] depth : float32` output writes `gl_FragDepth = gl_FragCoord.z` for opaque fragments; this is a no-op on paper but the surrounding stack only behaves correctly *because* it's explicitly written. Don't simplify it back to standard depth.
 

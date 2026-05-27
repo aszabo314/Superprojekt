@@ -302,6 +302,7 @@ module View =
             GuiCards.registrationCard env model registrationOpen
             GuiCards.registrationToggleButton registrationOpen
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
+            GuiOverlays.provenanceHoverOverlay model (hoverCoord :> aval<_>) (cursorScreen :> aval<_>)
             GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
             GuiOverlays.fullscreenInfo model

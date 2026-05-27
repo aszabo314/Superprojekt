@@ -733,6 +733,30 @@ body.loaded { background: #f4f6f8; }
     white-space: nowrap;
 }
 
+/* ── Provenance hover readout (heatmap probe) ─────────────────────── */
+
+.prov-hover {
+    position: fixed;
+    pointer-events: none;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #c5cdd8;
+    border-radius: 3px;
+    padding: 4px 8px;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+    z-index: 10000;
+    font-family: 'SF Mono', 'Monaco', monospace;
+    font-size: 10px;
+    color: #0f172a;
+    display: flex; flex-direction: column; gap: 2px;
+    min-width: 140px;
+}
+.prov-hover-mesh {
+    font-weight: 600;
+    color: #334155;
+}
+.prov-hover-bar { width: 100%; }
+.prov-hover-nums { color: #475569; }
+
 /* ── Lasso overlay (V6 §D.3) ──────────────────────────────────────── */
 
 .lasso-overlay {

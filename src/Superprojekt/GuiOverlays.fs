@@ -23,6 +23,100 @@ module GuiOverlays =
                 | None -> "")
         }
 
+    // Surface-probe readout for error provenance. Visible only when the
+    // ProvenanceHeatmap toggle is on and the cursor is on a surface. Reuses
+    // Provenance.sourcesAt — the same routine that paints the per-pin card
+    // and the global heatmap — so the three numbers and the stacked bar
+    // agree with what the user sees in the viewport.
+    let provenanceHoverOverlay
+            (model : AdaptiveModel)
+            (hoverWorld : aval<V3d option>)
+            (cursorScreen : aval<V2d option>) =
+        let payload =
+            AVal.custom (fun t ->
+                let on = model.ProvenanceHeatmap.GetValue t
+                let cOpt = cursorScreen.GetValue t
+                let wOpt = hoverWorld.GetValue t
+                let layer = model.ActivePickingLayer.GetValue t
+                match on, cOpt, wOpt with
+                | true, Some px, Some w ->
+                    let sensors   = model.MeshSensorTypes.GetValue t
+                    let overrides = model.MeshDatasetErrors.GetValue t
+                    let algo      = model.MeshAlgorithmResidual.GetValue t
+                    let pinsMap   = (model.ScanPins.Pins |> AMap.toAVal).GetValue t
+                    let anchors =
+                        pinsMap |> HashMap.toSeq
+                        |> Seq.choose (fun (_, p) ->
+                            if p.Phase = PinPhase.Committed then Some (p.Centre, p.FalloffRadius)
+                            else None)
+                        |> Array.ofSeq
+                    let mesh = layer |> Option.defaultValue ""
+                    let d, a, c = Provenance.sourcesAt mesh overrides sensors algo w anchors
+                    Some (px, d, a, c, layer)
+                | _ -> None)
+        let visStyle =
+            payload |> AVal.map (fun p ->
+                match p with
+                | Some (px, _, _, _, _) ->
+                    Some (Style [
+                        Left (sprintf "%.0fpx" (px.X + 16.0))
+                        Top  (sprintf "%.0fpx" (px.Y + 18.0))
+                    ])
+                | None -> Some (Style [Display "none"]))
+        let label =
+            payload |> AVal.map (function
+                | Some (_, _, _, _, Some name) -> Cards.shortName name
+                | Some (_, _, _, _, None)      -> "— no layer —"
+                | None                          -> "")
+        let nums =
+            payload |> AVal.map (function
+                | Some (_, d, a, c, _) ->
+                    sprintf "D %.3fm • A %.3fm • C %.0f" d a c
+                | None -> "")
+        let barAttr =
+            payload |> AVal.map (function
+                | Some (_, d, a, c, _) ->
+                    let cM = c * 0.01
+                    let total = max 1e-6 (d + a + cM)
+                    let pd = d / total * 100.0
+                    let pa = a / total * 100.0
+                    let pc = cM / total * 100.0
+                    Some (Attribute("data-prov", sprintf "[%.1f,%.1f,%.1f]" pd pa pc))
+                | None -> Some (Attribute("data-prov", "[]")))
+        div {
+            Class "prov-hover"
+            visStyle
+            div { Class "prov-hover-mesh"; label }
+            div {
+                Class "pc-bar prov-hover-bar"
+                barAttr
+                OnBoot [
+                    "(function(){"
+                    "var el = __THIS__;"
+                    "var last = '';"
+                    "function render(){"
+                    "  var raw = el.getAttribute('data-prov') || '[]';"
+                    "  if(raw === last) return; last = raw;"
+                    "  try { var arr = JSON.parse(raw); } catch(e) { return; }"
+                    "  el.innerHTML = '';"
+                    "  if(!arr || arr.length < 3) return;"
+                    "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
+                    "  arr.forEach(function(p, i){"
+                    "    var d = document.createElement('div');"
+                    "    d.style.width = p + '%';"
+                    "    d.style.background = colours[i];"
+                    "    d.style.height = '100%';"
+                    "    el.appendChild(d);"
+                    "  });"
+                    "}"
+                    "render();"
+                    "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-prov']});"
+                    "})();"
+                ]
+            }
+            div { Class "prov-hover-nums"; nums }
+        }
+
     let lassoOverlay (env : Env<Message>) (model : AdaptiveModel) (cursorScreen : aval<V2d option>) =
         let stateJson =
             (model.LassoDrawing, cursorScreen) ||> AVal.map2 (fun drawing cursor ->

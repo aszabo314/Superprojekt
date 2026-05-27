@@ -87,6 +87,17 @@ module MeshShader =
         member x.BlobCount       : int     = x?BlobCount
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
         member x.BlobFalloffs    : Arr<N<32>, V4f> = x?BlobFalloffs
+        // Error-provenance heatmap. When ProvenanceHeatmap = 1 fragments above
+        // ghost level are painted by the dominant error source (dataset
+        // sensor, algorithm residual, or local conditioning) provided the
+        // dominant value exceeds ProvThreshold. FalloffZoneOnly = 1 further
+        // restricts painting to fragments inside at least one pin's falloff
+        // zone. MeshDatasetError + MeshAlgoResidual are per-draw-call.
+        member x.ProvenanceHeatmap : int     = x?ProvenanceHeatmap
+        member x.ProvThreshold     : float32 = x?ProvThreshold
+        member x.FalloffZoneOnly   : int     = x?FalloffZoneOnly
+        member x.MeshDatasetError  : float32 = x?MeshDatasetError
+        member x.MeshAlgoResidual  : float32 = x?MeshAlgoResidual
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -213,11 +224,90 @@ module MeshShader =
             // colour so the ghost reads as a uniform silhouette regardless of
             // what the visible region is showing.
             let aboveGhost = alpha > ghost + 1e-4f
-            let baseRgb =
+            let mutable baseRgb =
                 if not aboveGhost then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
+            // Error provenance heatmap: overrides baseRgb for above-ghost
+            // fragments where the dominant source exceeds the threshold.
+            // Conditioning uses the same anchor data the blob filter loops
+            // over (centre = Blobs[i].xyz, sigma = BlobFalloffs[i].x).
+            if uniform.ProvenanceHeatmap <> 0 && aboveGhost then
+                let zoneOk = uniform.FalloffZoneOnly = 0 || inAnyBlob
+                if zoneOk then
+                    // Pass 1: total weight + valid-anchor count.
+                    let mutable wSum = 0.0f
+                    let mutable validCount = 0
+                    for i in 0 .. MaxBlobs - 1 do
+                        if i < bc then
+                            let bi = uniform.Blobs.[i]
+                            let sigma = uniform.BlobFalloffs.[i].X
+                            if sigma > 1e-6f then
+                                let dx = wp.X - bi.X
+                                let dy = wp.Y - bi.Y
+                                let dz = wp.Z - bi.Z
+                                let d2 = dx*dx + dy*dy + dz*dz
+                                let w = exp (-d2 / (2.0f * sigma * sigma))
+                                if w > 0.05f then
+                                    wSum <- wSum + w
+                                    validCount <- validCount + 1
+                    // Pass 2: pairwise angular diversity (max |cos|).
+                    let mutable maxCos = 0.0f
+                    if validCount >= 2 then
+                        for i in 0 .. MaxBlobs - 1 do
+                            if i < bc then
+                                let bi = uniform.Blobs.[i]
+                                let sigmaI = uniform.BlobFalloffs.[i].X
+                                if sigmaI > 1e-6f then
+                                    let dxI = wp.X - bi.X
+                                    let dyI = wp.Y - bi.Y
+                                    let dzI = wp.Z - bi.Z
+                                    let dI2 = dxI*dxI + dyI*dyI + dzI*dzI
+                                    let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
+                                    if wI > 0.05f then
+                                        let lenI = sqrt dI2
+                                        if lenI > 1e-9f then
+                                            let nix = (bi.X - wp.X) / lenI
+                                            let niy = (bi.Y - wp.Y) / lenI
+                                            let niz = (bi.Z - wp.Z) / lenI
+                                            for j in 0 .. MaxBlobs - 1 do
+                                                if j > i && j < bc then
+                                                    let bj = uniform.Blobs.[j]
+                                                    let sigmaJ = uniform.BlobFalloffs.[j].X
+                                                    if sigmaJ > 1e-6f then
+                                                        let dxJ = wp.X - bj.X
+                                                        let dyJ = wp.Y - bj.Y
+                                                        let dzJ = wp.Z - bj.Z
+                                                        let dJ2 = dxJ*dxJ + dyJ*dyJ + dzJ*dzJ
+                                                        let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
+                                                        if wJ > 0.05f then
+                                                            let lenJ = sqrt dJ2
+                                                            if lenJ > 1e-9f then
+                                                                let njx = (bj.X - wp.X) / lenJ
+                                                                let njy = (bj.Y - wp.Y) / lenJ
+                                                                let njz = (bj.Z - wp.Z) / lenJ
+                                                                let dotV = nix*njx + niy*njy + niz*njz
+                                                                let cAbs = abs dotV
+                                                                if cAbs > maxCos then maxCos <- cAbs
+                    let mutable cond = 1e6f
+                    if validCount >= 2 then
+                        let angDiv = 1.0f - maxCos
+                        let raw = 1.0f / (wSum * angDiv + 1e-3f)
+                        cond <- if raw > 1e6f then 1e6f else raw
+                    let d = uniform.MeshDatasetError
+                    let a = uniform.MeshAlgoResidual
+                    let cScaled = cond * 0.01f
+                    let total = max d (max a cScaled)
+                    if total >= uniform.ProvThreshold then
+                        let datasetCol = V3f(0.376f, 0.647f, 0.980f) // #60a5fa
+                        let algoCol    = V3f(0.961f, 0.620f, 0.044f) // #f59e0b
+                        let condCol    = V3f(0.655f, 0.545f, 0.913f) // #a78bfa
+                        let domCol =
+                            if d >= a && d >= cScaled then datasetCol
+                            elif a >= cScaled then algoCol
+                            else condCol
+                        baseRgb <- domCol
             let depth =
                 if alpha >= opaqueThreshold then v.fc.Z
                 else 1.0f
@@ -350,6 +440,12 @@ module MeshView =
         let blobCount    = blobsArr |> AVal.map (fun (n, _, _) -> n)
         let blobs        = blobsArr |> AVal.map (fun (_, c, _) -> c)
         let blobFalloffs = blobsArr |> AVal.map (fun (_, _, f) -> f)
+        let provenanceOn =
+            model.ProvenanceHeatmap |> AVal.map (fun on -> if on then 1 else 0)
+        let provThreshold =
+            model.ProvenanceThreshold |> AVal.map float32
+        let falloffZoneOnly =
+            model.FalloffZoneOnly |> AVal.map (fun on -> if on then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             let isActive =
@@ -366,6 +462,14 @@ module MeshView =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
+            let meshDatasetErr =
+                (model.MeshSensorTypes, model.MeshDatasetErrors)
+                ||> AVal.map2 (fun sensors overrides ->
+                    Provenance.datasetError overrides sensors name |> float32)
+            let meshAlgoRes =
+                model.MeshAlgorithmResidual
+                |> AVal.map (fun m ->
+                    Map.tryFind name m |> Option.defaultValue 0.0 |> float32)
             sg {
                 Sg.Active renderEnabled
                 Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
@@ -392,6 +496,11 @@ module MeshView =
                 Sg.Uniform("BlobCount",       blobCount)
                 Sg.Uniform("Blobs",           blobs)
                 Sg.Uniform("BlobFalloffs",    blobFalloffs)
+                Sg.Uniform("ProvenanceHeatmap", provenanceOn)
+                Sg.Uniform("ProvThreshold",     provThreshold)
+                Sg.Uniform("FalloffZoneOnly",   falloffZoneOnly)
+                Sg.Uniform("MeshDatasetError",  meshDatasetErr)
+                Sg.Uniform("MeshAlgoResidual",  meshAlgoRes)
                 Sg.VertexAttributes(
                     HashMap.ofList [
                         string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)

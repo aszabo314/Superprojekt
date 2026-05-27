@@ -53,6 +53,8 @@ type Message =
     | LassoCommit    of viewTrafo:Trafo3d * projTrafo:Trafo3d * vpSize:V2i
     | LassoCancel
     | LassoClear
+    | SaveWorkspace
+    | LoadWorkspaceJson of string
 
 and ExploreSignal =
     | FeatureConfidenceSignal

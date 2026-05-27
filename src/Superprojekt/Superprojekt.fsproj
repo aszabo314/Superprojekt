@@ -27,6 +27,7 @@
     <Compile Include="PinGeometry.fs" />
     <Compile Include="Model.fs" />
     <Compile Include="Model.g.fs" />
+    <Compile Include="Persistence.fs" />
     <Compile Include="Shader.fs" />
     <Compile Include="LineShader.fs" />
     <Compile Include="Primitives.fs" />

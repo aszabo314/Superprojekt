@@ -2,6 +2,7 @@ namespace Superprojekt
 
 open Aardvark.Base
 open Aardworx.WebAssembly
+open Microsoft.JSInterop
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Superprojekt
@@ -365,3 +366,14 @@ module Update =
             | SetReferenceAxisMode m -> { model with ReferenceAxis = m }
         | ScanPinMsg msg ->
             ScanPinUpdate.handleMsg env model msg
+        | SaveWorkspace ->
+            let json = Persistence.serialize model
+            try
+                JSRuntime.Instance.InvokeVoid("SuperWorkspaceSave", "workspace.json", json)
+            with _ -> ()
+            model
+        | LoadWorkspaceJson json ->
+            match Persistence.apply json model with
+            | Result.Ok m -> m
+            | Result.Error err ->
+                { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "workspace load failed: %s" err) }

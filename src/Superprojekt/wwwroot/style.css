@@ -457,6 +457,12 @@ body.loaded { background: #f4f6f8; }
     z-index: 1001;
 }
 .tb-gear-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; }
+.tb-gear-btn-row { display: flex; gap: 6px; margin-left: auto; }
+.tb-gear-btn {
+    background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
+    border-radius: 2px; padding: 2px 8px; font-size: 11px; cursor: pointer;
+}
+.tb-gear-btn:hover { background: #334155; }
 .tb-gear-row .cbb-btn { background: #1e293b; color: #cbd5e1; border-color: #334155; }
 .tb-gear-row .cbb-btn:hover { background: #334155; }
 .tb-gear-row .cbb-btn-active { background: #1a56db !important; color: #ffffff !important; }

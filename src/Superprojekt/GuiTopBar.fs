@@ -126,6 +126,33 @@ module GuiTopBar =
                         model.GearPopoverOpen |> AVal.map (fun o -> if o then None else Some (Style [Display "none"]))
                         div {
                             Class "tb-gear-row"
+                            span { Class "lp-sublabel"; "Workspace" }
+                            div {
+                                Class "tb-gear-btn-row"
+                                button {
+                                    Class "tb-gear-btn"
+                                    Attribute("title", "Save workspace as JSON")
+                                    Dom.OnClick(fun _ -> env.Emit [SaveWorkspace])
+                                    "💾 Save"
+                                }
+                                button {
+                                    Class "tb-gear-btn"
+                                    Attribute("title", "Load workspace from JSON file")
+                                    Dom.OnClick(fun _ ->
+                                        task {
+                                            try
+                                                let rt = Aardworx.WebAssembly.JSRuntime.Instance :> Microsoft.JSInterop.IJSRuntime
+                                                let! json = rt.InvokeAsync<string>("SuperWorkspaceLoad", [||]).AsTask()
+                                                if not (isNull json) && json.Length > 0 then
+                                                    env.Emit [LoadWorkspaceJson json]
+                                            with _ -> ()
+                                        } |> ignore)
+                                    "📂 Load"
+                                }
+                            }
+                        }
+                        div {
+                            Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Reference axis" }
                             compactButtonBar [
                                 "World Z",

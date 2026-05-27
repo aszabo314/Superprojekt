@@ -42,7 +42,7 @@ Outputs (custom record):
 Per-fragment α — three-stage filter chain (each filter can only RESTRICT):
 
 1. **MeshActive**: `false` → α = `GhostOpacity` (whole mesh ghosted, next filters skipped).
-2. **Lasso**: outward-facing half-space planes packed as `V4f(nx, ny, nz, d)`. `lassoComponent = 1.0` iff `dot(plane.xyz, p) + plane.w ≤ 0` for **all** active planes; else `0.0`. No lasso → `1.0` (no restriction).
+2. **Lasso**: outward-facing half-space planes packed as `V4f(nx, ny, nz, d)`. `lassoComponent = 1.0` iff `dot(plane.xyz, p) + plane.w ≤ 0` for **all** active planes; else `0.0`. No lasso → `1.0` (no restriction). `Model.LassoEnabled = false` zeroes `LassoPlaneCount` on upload so the filter is skipped while the polygon is kept (the user can re-enable it from the card).
 3. **Falloff blob**: each pin has an `InnerRadius` (hard core, weight = 1.0) and a larger `FalloffRadius` (exponential decay `exp(-3·(d-inner)/(outer-inner))` to ≈0.05 at `FalloffRadius`). `blobComponent` = max weight across all pins, or `0.0` if the fragment is outside every pin's `FalloffRadius`. No blobs → `1.0`.
 
 `mask = lassoComponent * blobComponent` — conjunctive. Both filters must say "include me at full strength" for α = 1; otherwise α drops toward `GhostOpacity`. Final α = `lerp(GhostOpacity, 1.0, mask)`.
@@ -193,7 +193,7 @@ Top-level `Model` fields (see `Model.fs`):
 - `FullscreenOn`, `GhostSilhouette` (default **on**), `GhostOpacity` (0.5), `ShadingStrength` (0.5), `SlopeThresholdDeg` (30°), `AnchorGhostMode` (default **on**)
 - `SceneBounds`, `MeshBounds`
 - `ActivePickingLayer`
-- `LassoDrawing`, `LassoVolume`
+- `LassoDrawing`, `LassoVolume`, `LassoEnabled` (filter on/off, polygon kept)
 - `MeshTransforms`, `Registration` (mode + reference mesh + residuals + convergence + running flag)
 - `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `ProvenanceHeatmap`, `ProvenanceThreshold`, `FalloffZoneOnly`
 - `FusionMode`
@@ -203,7 +203,7 @@ Top-level `Model` fields (see `Model.fs`):
 GUI placement:
 - Left panel (`GuiPanels.leftPanel`): mesh list, pin list, error metadata, error provenance card.
 - Top bar (`GuiTopBar.topBar`): hamburger, dataset selector, **◉ Explore**, **◌ Lasso**, **○ Pin** placement, **◈ Fusion**, camera reset, world coordinate readout, gear popover.
-- Floating cards (`GuiCards.fs`): `exploreCard`, `lassoCard`, `registrationCard` — draggable, persisted positions via `ExploreCardPos` / `LassoCardPos` / no-persist for registration.
+- Floating cards (`GuiCards.fs`): `exploreCard`, `lassoCard`, `registrationCard` — draggable, persisted positions via `ExploreCardPos` / `LassoCardPos` / no-persist for registration. `lassoCard` is symbol-only: `◉/○` (enable/disable, polygon kept), `✎` (redraw), `⊘` (cancel drawing), `✕` (clear).
 - Gear popover (debug flyout, end of `GuiTopBar.fs`): reference axis, camera speed, **Ghost silhouette toggle**, **Ghost opacity slider**, **Anchor-blob ghost toggle**, shading strength, slope threshold, dataset info, mesh centroids, debug log.
 
 ## ScanPin system

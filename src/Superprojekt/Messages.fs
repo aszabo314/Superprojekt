@@ -49,6 +49,7 @@ type Message =
     | EditPin of ScanPinId
     | SetActivePickingLayer of string option
     | LassoBegin
+    | ToggleLassoEnabled
     | LassoAddVertex of V2d
     | LassoCommit    of viewTrafo:Trafo3d * projTrafo:Trafo3d * vpSize:V2i
     | LassoCancel

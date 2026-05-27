@@ -193,6 +193,7 @@ type Model =
 
         LassoDrawing : LassoDraft option
         LassoVolume  : LassoVolume option
+        LassoEnabled : bool
 
         MeshTransforms        : Map<string, Trafo3d>
         Registration          : RegistrationState
@@ -246,6 +247,7 @@ module Model =
             ActivePickingLayer = None
             LassoDrawing = None
             LassoVolume  = None
+            LassoEnabled = true
             MeshTransforms        = Map.empty
             Registration          = RegistrationState.initial
             MeshSensorTypes       = Map.empty

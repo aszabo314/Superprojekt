@@ -292,10 +292,14 @@ module MeshView =
         let palette = Primitives.meshPaletteV4d
 
         // ---- Lasso uniforms: count + 32-slot V4f array of half-space planes.
+        // LassoEnabled gates the count to 0 so a disabled-but-not-cleared
+        // lasso has no effect on the mesh shader; the volume itself is kept
+        // around so the user can re-enable without redrawing.
         let lassoPlaneCount =
-            model.LassoVolume |> AVal.map (function
-                | Some v -> min v.Planes.Length MeshShader.MaxLassoPlanes
-                | None   -> 0)
+            (model.LassoVolume, model.LassoEnabled) ||> AVal.map2 (fun lv on ->
+                match lv with
+                | Some v when on -> min v.Planes.Length MeshShader.MaxLassoPlanes
+                | _              -> 0)
         let lassoPlanes =
             model.LassoVolume |> AVal.map (fun lv ->
                 let arr = Array.zeroCreate<V4f> MeshShader.MaxLassoPlanes

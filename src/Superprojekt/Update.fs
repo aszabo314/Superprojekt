@@ -224,6 +224,7 @@ module Update =
                     ActivePickingLayer = None
                     LassoDrawing = None
                     LassoVolume = None
+                    LassoEnabled = true
                     Explore = { model.Explore with Enabled = false }
                     CardSystem = { model.CardSystem with Cards = model.CardSystem.Cards |> HashMap.map (fun _ c -> { c with Visible = false }) } }
         | SetDatasetScale(dataset, scale) ->
@@ -290,7 +291,9 @@ module Update =
                 match model.ScanPins.Placement with
                 | AnchorPlacement -> { model.ScanPins with Placement = PlacementIdle }
                 | _ -> model.ScanPins
-            { model with ScanPins = scanPins; LassoDrawing = Some { Vertices = [||] } }
+            { model with ScanPins = scanPins; LassoDrawing = Some { Vertices = [||] }; LassoEnabled = true }
+        | ToggleLassoEnabled ->
+            { model with LassoEnabled = not model.LassoEnabled }
         | LassoAddVertex p ->
             match model.LassoDrawing with
             | Some d -> { model with LassoDrawing = Some { Vertices = Array.append d.Vertices [| p |] } }
@@ -332,13 +335,13 @@ module Update =
                     if outside > n / 2 then planes |> Array.map (fun p -> -p)
                     else planes
                 let volume = { Planes = planes; ScreenPolygon = poly; CommitVpSize = vpSize }
-                { model with LassoDrawing = None; LassoVolume = Some volume }
+                { model with LassoDrawing = None; LassoVolume = Some volume; LassoEnabled = true }
             | _ ->
                 { model with LassoDrawing = None }
         | LassoCancel ->
             { model with LassoDrawing = None }
         | LassoClear ->
-            { model with LassoDrawing = None; LassoVolume = None }
+            { model with LassoDrawing = None; LassoVolume = None; LassoEnabled = true }
         | CardMsg msg ->
             { model with CardSystem = CardUpdate.update msg model.CardSystem }
         | ExploreMsg msg ->

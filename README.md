@@ -47,7 +47,7 @@ The first request for a mesh parses OBJ + builds an Embree scene + BbTree; the r
 - **Load and explore a dataset.** Orbit camera (drag/right-drag/scroll, or touch). Double-tap geometry to recenter. Hold Space for fullscreen review.
 - **Toggle individual meshes / solo / focus.** Bulk All / None. Choose textured, shaded, or slope-color rendering.
 - **Ghost silhouette.** Inactive meshes render as a faint translucent shell so you keep spatial context. Toggle + opacity in the gear popover; default on.
-- **Lasso clip.** Top-level `◌ Lasso` button opens a floating card; draw a polygon in the viewport, outside-lasso fragments fade to ghost level.
+- **Lasso clip.** Top-level `◌ Lasso` button opens a floating card; draw a polygon in the viewport, outside-lasso fragments fade to ghost level. The card has a symbol toolbar (`◉/○` enable, `✎` redraw, `⊘` cancel, `✕` clear) — toggling the filter off keeps the polygon so you can re-enable without redrawing.
 - **ScanPins (annotations).** Place a 3D anchor on a surface. Each pin has an **Inner radius** (hard truth: α = 1 and full evaluation weight inside) and a **Falloff radius** (exponential decay beyond inner). Both stored in metric world-metres; the falloff slider is relative to the inner radius. Pin Point / Line / Patch payloads carry derived analysis.
 - **Filter chain.** Visibility is the conjunction of three filters: MeshActive toggle → lasso region → pin blob field. Both lasso and blob must agree for a fragment to be fully opaque; inside-lasso-outside-blob fragments fall to ghost level.
 - **Mesh registration.** Reference-based ICP (traditional, region-restricted, point-pair + refinement). Pin centres + falloff radii feed the region-restricted variant.

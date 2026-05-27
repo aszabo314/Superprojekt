@@ -125,7 +125,13 @@ module GuiCards =
                 | None -> saved |> Option.defaultValue defaultPos)
         let drawing   = model.LassoDrawing |> AVal.map Option.isSome
         let committed = model.LassoVolume  |> AVal.map Option.isSome
+        let enabled   = model.LassoEnabled
         let visible   = (drawing, committed) ||> AVal.map2 (||)
+        // Show only when this button's predicate is true.
+        let showWhen (a : aval<bool>) =
+            a |> AVal.map (fun on -> if on then None else Some (Style [Display "none"]))
+        let showWhenNot (a : aval<bool>) =
+            a |> AVal.map (fun on -> if on then Some (Style [Display "none"]) else None)
         div {
             Class "card lasso-card"
             (visible, pos) ||> AVal.map2 (fun on p ->
@@ -147,38 +153,40 @@ module GuiCards =
             div {
                 Class "card-body lasso-card-body"
                 div {
-                    Class "lp-sublabel-hint"
-                    (drawing, committed) ||> AVal.map2 (fun d c ->
-                        match d, c with
-                        | true, _ -> "Click to add vertex · double-click to commit · Esc to cancel"
-                        | _, true -> "Lasso committed. Camera-anchored cone."
-                        | _ -> "")
-                }
-                div {
                     Class "lp-clip-actions"
+                    // ◉/○ — toggle filter on/off without clearing the polygon.
                     button {
                         Class "mb"
-                        drawing |> AVal.map (fun on ->
-                            if on then Some (Style [Display "none"]) else None)
-                        Attribute("title", "Discard current lasso and start drawing a new one")
-                        Dom.OnClick(fun _ -> env.Emit [LassoClear; LassoBegin])
-                        "Redraw"
+                        showWhen committed
+                        enabled |> AVal.map (fun on ->
+                            if on then Some (Class "mb-on") else None)
+                        Attribute("title", "Enable / disable lasso filter (keeps the polygon)")
+                        Dom.OnClick(fun _ -> env.Emit [ToggleLassoEnabled])
+                        enabled |> AVal.map (fun on -> if on then "◉" else "○")
                     }
+                    // ✎ — clear and start a new lasso.
                     button {
                         Class "mb"
-                        drawing |> AVal.map (fun on ->
-                            if on then None else Some (Style [Display "none"]))
+                        showWhenNot drawing
+                        Attribute("title", "Redraw (clear + start new)")
+                        Dom.OnClick(fun _ -> env.Emit [LassoClear; LassoBegin])
+                        "✎"
+                    }
+                    // ⊘ — cancel an in-progress drawing.
+                    button {
+                        Class "mb"
+                        showWhen drawing
                         Attribute("title", "Cancel drawing")
                         Dom.OnClick(fun _ -> env.Emit [LassoCancel])
-                        "Cancel"
+                        "⊘"
                     }
+                    // ✕ — clear committed lasso.
                     button {
                         Class "mb"
-                        committed |> AVal.map (fun c ->
-                            if c then None else Some (Style [Display "none"]))
-                        Attribute("title", "Clear committed lasso")
+                        showWhen committed
+                        Attribute("title", "Clear")
                         Dom.OnClick(fun _ -> env.Emit [LassoClear])
-                        "Clear"
+                        "✕"
                     }
                 }
             }

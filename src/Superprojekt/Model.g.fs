@@ -1,5 +1,5 @@
-//20f7d097-7997-2742-b5a1-2bd1e2471e4f
-//c57f830b-5156-30dc-406a-4d026247be49
+//4ff95d2f-b243-17c5-196f-6a2916a38fce
+//402463b0-c96d-023b-d204-e5095c49b711
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -36,6 +36,7 @@ type AdaptiveModel(value : Model) =
     let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
     let _LassoDrawing_ = FSharp.Data.Adaptive.cval(value.LassoDrawing)
     let _LassoVolume_ = FSharp.Data.Adaptive.cval(value.LassoVolume)
+    let _LassoEnabled_ = FSharp.Data.Adaptive.cval(value.LassoEnabled)
     let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _MeshSensorTypes_ = FSharp.Data.Adaptive.cval(value.MeshSensorTypes)
@@ -87,6 +88,7 @@ type AdaptiveModel(value : Model) =
             _ActivePickingLayer_.Value <- value.ActivePickingLayer
             _LassoDrawing_.Value <- value.LassoDrawing
             _LassoVolume_.Value <- value.LassoVolume
+            _LassoEnabled_.Value <- value.LassoEnabled
             _MeshTransforms_.Value <- value.MeshTransforms
             _Registration_.Value <- value.Registration
             _MeshSensorTypes_.Value <- value.MeshSensorTypes
@@ -131,6 +133,7 @@ type AdaptiveModel(value : Model) =
     member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.LassoDrawing = _LassoDrawing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoDraft>>
     member __.LassoVolume = _LassoVolume_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoVolume>>
+    member __.LassoEnabled = _LassoEnabled_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.MeshSensorTypes = _MeshSensorTypes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, SensorType>>

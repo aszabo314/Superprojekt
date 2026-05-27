@@ -107,6 +107,50 @@ module View =
                         Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo
                     )
 
+                // When ActivePickingLayer is set, prefer that layer's surface
+                // over the frontmost surface — but only if the cursor ray
+                // actually intersects the layer's bounding box. Falls back to
+                // the GPU frontmost pick otherwise. Result is async because
+                // the layer-specific raycast goes through the server.
+                let resolveLayerPick (frontmost : V3d option) : Async<V3d option> =
+                    let activeLayer = AVal.force model.ActivePickingLayer
+                    match activeLayer, cursorScreen.Value with
+                    | None, _ -> async.Return frontmost
+                    | Some _, None -> async.Return frontmost
+                    | Some layer, Some cursorPx ->
+                        let bounds = AVal.force model.MeshBounds
+                        match Map.tryFind layer bounds with
+                        | None -> async.Return frontmost
+                        | Some worldBox ->
+                            let cc = AVal.force model.CommonCentroid
+                            let scales = AVal.force model.DatasetScales
+                            let dataset =
+                                let s = layer.IndexOf('/')
+                                if s >= 0 then layer.[..s-1] else ""
+                            let scale = Map.tryFind dataset scales |> Option.defaultValue 1.0
+                            let lo = (worldBox.Min - cc) * scale
+                            let hi = (worldBox.Max - cc) * scale
+                            let renderBox =
+                                Box3d(V3d(min lo.X hi.X, min lo.Y hi.Y, min lo.Z hi.Z),
+                                      V3d(max lo.X hi.X, max lo.Y hi.Y, max lo.Z hi.Z))
+                            let vpSize = AVal.force size
+                            let v = AVal.force view
+                            let p = AVal.force proj
+                            let ray = pickRay cursorPx vpSize v p
+                            match rayBoxT ray renderBox with
+                            | None -> async.Return frontmost
+                            | Some _ ->
+                                async {
+                                    let originW = ray.Origin / scale + cc
+                                    let dirW = ray.Direction
+                                    let! hit = Query.rayHit ApiConfig.apiBase.Value layer 0 originW dirW
+                                    match hit with
+                                    | Some h ->
+                                        let renderPos = (h.point - cc) * scale
+                                        return Some renderPos
+                                    | None -> return frontmost
+                                }
+
                 Sg.View view
                 Sg.Proj proj
 
@@ -173,9 +217,15 @@ module View =
                         env.Emit [LassoCommit(AVal.force view, AVal.force proj, AVal.force size)]
                         false
                     | None ->
-                        if e.Location.Depth < 0.9999 then
-                            let renderPos = e.WorldPosition
-                            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
+                        let frontmost =
+                            if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                        async {
+                            let! resolved = resolveLayerPick frontmost
+                            match resolved with
+                            | Some renderPos ->
+                                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
+                            | None -> ()
+                        } |> Async.Start
                         false
                 )
 
@@ -188,19 +238,21 @@ module View =
                         false
                     | None ->
                         let placement = AVal.force model.ScanPins.Placement
-                        let pick =
+                        let frontmost =
                             if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                        match placement, pick with
-                        | AnchorPlacement, Some renderPos ->
-                            let worldPos = worldFromRender model renderPos
-                            env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
-                            false
-                        | AnchorPlacement, None -> false
-                        | _, Some renderPos ->
-                            let worldPos = worldFromRender model renderPos
-                            transact (fun () -> hoverCoord.Value <- Some worldPos)
-                            true
-                        | _, None -> true
+                        async {
+                            let! resolved = resolveLayerPick frontmost
+                            match placement, resolved with
+                            | AnchorPlacement, Some renderPos ->
+                                let worldPos = worldFromRender model renderPos
+                                env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
+                            | AnchorPlacement, None -> ()
+                            | _, Some renderPos ->
+                                let worldPos = worldFromRender model renderPos
+                                transact (fun () -> hoverCoord.Value <- Some worldPos)
+                            | _, None -> ()
+                        } |> Async.Start
+                        true
                 )
 
                 Sg.OnPointerMove(fun e ->

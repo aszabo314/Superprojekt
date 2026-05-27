@@ -15,19 +15,10 @@ type RayRequest     = { Name: string; Index: int; Origin: float[]; Direction: fl
 type ClosestRequest = { Name: string; Index: int; Point: float[] }
 
 [<CLIMutable>]
-type PlaneIntersectionRequest = { Name: string; Index: int; PlanePoint: float[]; PlaneNormal: float[]; AxisU: float[]; AxisV: float[]; Thickness: float; MaxExtentU: float; MaxExtentV: float }
-
-[<CLIMutable>]
-type PlaneIntersectionBatchRequest = { Names: string[]; PlanePoint: float[]; PlaneNormal: float[]; AxisU: float[]; AxisV: float[]; Thickness: float; MaxExtentU: float; MaxExtentV: float }
-
-[<CLIMutable>]
 type RayBatchRequest = { Names: string[]; Origins: float[]; Directions: float[] }
 
 [<CLIMutable>]
 type GridEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Radius: float; Resolution: int; ExtentForward: float; ExtentBackward: float }
-
-[<CLIMutable>]
-type CylinderEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Radii: float[]; AngularResolution: int; ExtentForward: float; ExtentBackward: float }
 
 [<CLIMutable>]
 type IsolineRequest = { Name: string; Elevation: float; Seed: float[]; MaxPoints: int }
@@ -92,26 +83,6 @@ let closestHandler : HttpHandler =
             else
                 return! json {| found = false |} next ctx
         with ex -> return! RequestErrors.notFound (text ex.Message) next ctx
-    }
-
-let planeIntersectionHandler : HttpHandler =
-    fun next ctx -> task {
-        let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<PlaneIntersectionRequest>()
-            let dataset, name = splitName req.Name
-            let lm = MeshCache.get dataset name req.Index
-            let c = lm.parsed.centroid
-            let planePoint = toV3d req.PlanePoint - c
-            let planeNormal = toV3d req.PlaneNormal
-            let axisU = toV3d req.AxisU
-            let axisV = toV3d req.AxisV
-            let segments = MeshCache.planeIntersection lm planePoint planeNormal axisU axisV req.Thickness req.MaxExtentU req.MaxExtentV
-            log.LogDebug("plane-intersection {Name}: {Count} segments", req.Name, segments.Length)
-            return! json {| segments = segments |} next ctx
-        with ex ->
-            log.LogError(ex, "plane-intersection failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
 let isolineHandler : HttpHandler =

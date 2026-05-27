@@ -16,9 +16,7 @@
   </PropertyGroup>
   <ItemGroup>
     <None Include="paket.references" />
-    <Compile Include="RankingState.fs" />
     <Compile Include="MeshData.fs" />
-    <Compile Include="BspTree.fs" />
     <Compile Include="Query.fs" />
     <Compile Include="CameraModel.fs" />
     <Compile Include="CameraModel.g.fs" />
@@ -29,7 +27,6 @@
     <Compile Include="PinGeometry.fs" />
     <Compile Include="Model.fs" />
     <Compile Include="Model.g.fs" />
-    <Compile Include="BlitShader.fs" />
     <Compile Include="Shader.fs" />
     <Compile Include="LineShader.fs" />
     <Compile Include="Primitives.fs" />

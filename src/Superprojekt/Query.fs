@@ -46,45 +46,6 @@ module Query =
                 return None
         }
 
-    let planeIntersection (serverUrl : string) (name : string) (index : int) (planePoint : V3d) (planeNormal : V3d) (axisU : V3d) (axisV : V3d) (thickness : float) (maxExtentU : float) (maxExtentV : float) =
-        async {
-            let json = sprintf """{"name":"%s","index":%d,"planePoint":%s,"planeNormal":%s,"axisU":%s,"axisV":%s,"thickness":%.17g,"maxExtentU":%.17g,"maxExtentV":%.17g}"""
-                        name index (v3 planePoint) (v3 planeNormal) (v3 axisU) (v3 axisV) thickness maxExtentU maxExtentV
-            let! r = post serverUrl "/query/plane-intersection" json
-            let segments =
-                r.GetProperty("segments").EnumerateArray() |> Seq.map (fun seg ->
-                    let a = seg.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                    V2d(a.[0], a.[1]), V2d(a.[2], a.[3])
-                ) |> Seq.toList
-            return segments
-        }
-
-    let planeIntersectionBatch (serverUrl : string) (names : string[]) (planePoint : V3d) (planeNormal : V3d) (axisU : V3d) (axisV : V3d) (thickness : float) (maxExtentU : float) (maxExtentV : float) =
-        async {
-            let namesJson =
-                let sb = System.Text.StringBuilder()
-                sb.Append('[') |> ignore
-                for i in 0 .. names.Length - 1 do
-                    if i > 0 then sb.Append(',') |> ignore
-                    sb.Append('"').Append(names.[i]).Append('"') |> ignore
-                sb.Append(']') |> ignore
-                sb.ToString()
-            let json = sprintf """{"names":%s,"planePoint":%s,"planeNormal":%s,"axisU":%s,"axisV":%s,"thickness":%.17g,"maxExtentU":%.17g,"maxExtentV":%.17g}"""
-                        namesJson (v3 planePoint) (v3 planeNormal) (v3 axisU) (v3 axisV) thickness maxExtentU maxExtentV
-            let! r = post serverUrl "/query/plane-intersection-batch" json
-            let results =
-                r.GetProperty("results").EnumerateArray() |> Seq.map (fun entry ->
-                    let name = entry.GetProperty("name").GetString()
-                    let segments =
-                        entry.GetProperty("segments").EnumerateArray() |> Seq.map (fun seg ->
-                            let a = seg.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                            V2d(a.[0], a.[1]), V2d(a.[2], a.[3])
-                        ) |> Seq.toList
-                    name, segments
-                ) |> Seq.toList
-            return results
-        }
-
     let isoline (serverUrl : string) (name : string) (elevation : float) (seed : V3d) (maxPoints : int) : Async<V3d[]> =
         async {
             let json = sprintf """{"name":"%s","elevation":%.17g,"seed":%s,"maxPoints":%d}"""
@@ -186,53 +147,6 @@ module Query =
             return pts, scalars
         }
 
-    let rayGrid (serverUrl : string) (names : string[]) (rays : (V3d * V3d)[]) : Async<(V3d * V3d) option[]> =
-        async {
-            let namesJson =
-                let sb = System.Text.StringBuilder()
-                sb.Append('[') |> ignore
-                for i in 0 .. names.Length - 1 do
-                    if i > 0 then sb.Append(',') |> ignore
-                    sb.Append('"').Append(names.[i]).Append('"') |> ignore
-                sb.Append(']') |> ignore
-                sb.ToString()
-            let flatten (pick : V3d * V3d -> V3d) =
-                let parts = ResizeArray<string>()
-                for i in 0 .. rays.Length - 1 do
-                    let v = pick rays.[i]
-                    parts.Add(sprintf "%.17g,%.17g,%.17g" v.X v.Y v.Z)
-                "[" + String.concat "," parts + "]"
-            let originsJson    = flatten fst
-            let directionsJson = flatten snd
-            let json = sprintf """{"names":%s,"origins":%s,"directions":%s}""" namesJson originsJson directionsJson
-            use client = new HttpClient()
-            use content = new StringContent(json, Encoding.UTF8, "application/json")
-            let! resp = client.PostAsync(serverUrl.TrimEnd('/') + "/query/ray-grid", content) |> Async.AwaitTask
-            resp.EnsureSuccessStatusCode() |> ignore
-            let! buf = resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
-            let mutable o = 0
-            let rayCount = System.BitConverter.ToInt32(buf, o)
-            o <- o + 4
-            let results = Array.zeroCreate<(V3d * V3d) option> rayCount
-            for i in 0 .. rayCount - 1 do
-                let flag = buf.[o]
-                o <- o + 1
-                let hx = System.BitConverter.ToDouble(buf, o)
-                o <- o + 8
-                let hy = System.BitConverter.ToDouble(buf, o)
-                o <- o + 8
-                let hz = System.BitConverter.ToDouble(buf, o)
-                o <- o + 8
-                let nx = float (System.BitConverter.ToSingle(buf, o))
-                o <- o + 4
-                let ny = float (System.BitConverter.ToSingle(buf, o))
-                o <- o + 4
-                let nz = float (System.BitConverter.ToSingle(buf, o))
-                o <- o + 4
-                results.[i] <- if flag <> 0uy then Some (V3d(hx, hy, hz), V3d(nx, ny, nz)) else None
-            return results
-        }
-
     let rayBatch (serverUrl : string) (names : string[]) (rays : (V3d * V3d)[]) : Async<V3d option[]> =
         async {
             let namesJson =
@@ -274,42 +188,3 @@ module Query =
             return results
         }
 
-    let private postBinary (serverUrl : string) (path : string) (json : string) : Async<byte[]> =
-        async {
-            use client = new HttpClient()
-            use content = new StringContent(json, Encoding.UTF8, "application/json")
-            let! resp = client.PostAsync(serverUrl.TrimEnd('/') + path, content) |> Async.AwaitTask
-            resp.EnsureSuccessStatusCode() |> ignore
-            return! resp.Content.ReadAsByteArrayAsync() |> Async.AwaitTask
-        }
-
-    let cylinderEval (serverUrl : string) (dataset : string) (anchor : V3d) (axis : V3d) (radii : float[]) (angularRes : int) (extFwd : float) (extBack : float) =
-        async {
-            let radiiJson =
-                "[" + (radii |> Array.map (sprintf "%.17g") |> String.concat ",") + "]"
-            let json = sprintf """{"dataset":"%s","anchor":%s,"axis":%s,"radii":%s,"angularResolution":%d,"extentForward":%.17g,"extentBackward":%.17g}"""
-                        dataset (v3 anchor) (v3 axis) radiiJson angularRes extFwd extBack
-            let! buf = postBinary serverUrl "/query/cylinder-eval" json
-            let mutable off = 0
-            let readInt () =
-                let v = System.BitConverter.ToInt32(buf, off)
-                off <- off + 4; v
-            let readFloat () =
-                let v = System.BitConverter.ToDouble(buf, off)
-                off <- off + 8; v
-            let res = readInt ()
-            let ringCount = readInt ()
-            let hitCount = readInt ()
-            let perRingAngle =
-                Array.init ringCount (fun _ ->
-                    Array.init res (fun _ -> ResizeArray<float * string>()))
-            for _ in 0 .. hitCount - 1 do
-                let ri = readInt ()
-                let ai = readInt ()
-                let nameLen = readInt ()
-                let name = Encoding.UTF8.GetString(buf, off, nameLen)
-                off <- off + nameLen
-                let h = readFloat ()
-                perRingAngle.[ri].[ai].Add(h, dataset + "/" + name)
-            return res, ringCount, perRingAngle
-        }

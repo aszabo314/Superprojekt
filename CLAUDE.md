@@ -107,15 +107,13 @@ Costly spatial queries (`cylinder-eval`, `plane-intersection`) scale with mesh c
 - **Parallelise the heavy inner loop server-side** when inputs are independent. Embree `Scene.Intersect` is thread-safe.
 - **Cap density rather than grow linearly.** Log-spaced ring ladders; angular resolution defaults to 180, not 360.
 - **Keep heavy post-processing off the Elm update thread.** Union-find over band caches, ICP residuals, etc. run in the background task that issued the query; only the final result message crosses into the update loop.
-- **Debounce user-driven triggers.** Cut-plane sliders ~300 ms, stratigraphy recomputes ~500 ms. Use a `CancellationTokenSource` ref so the next event cancels the previous.
+- **Debounce user-driven triggers.** Use a `CancellationTokenSource` ref so the next event cancels the previous.
 - **Mesh caches are warmed at dataset load** by `bboxesHandler` — it calls `MeshCache.get` for every mesh + part, so the first interactive query never pays the lazy-load cost.
 
 ## Client compile order (`Superprojekt.fsproj`)
 
 ```
-RankingState.fs
 MeshData.fs
-BspTree.fs
 Query.fs
 CameraModel.fs / .g.fs
 OrbitTypes.fs
@@ -123,7 +121,6 @@ OrbitController.fs
 ScanPinModel.fs / .g.fs
 PinGeometry.fs
 Model.fs / .g.fs                ← [<ModelType>], Adaptify-generated .g.fs
-BlitShader.fs                   ← empty placeholder, kept so the fsproj is stable
 Shader.fs                       ← Shader.flatColor + helpers
 LineShader.fs                   ← Lines.render (pixel-constant 3D lines)
 Primitives.fs                   ← compactToggle, inlineSlider, compactButtonBar, etc.
@@ -168,11 +165,7 @@ GET  /api/datasets/{dataset}/mesh/{name}/{i}/atlas → JPEG
 POST /api/query/ray                             → { hit, t, point, triangleId }   Name = "dataset/mesh"
 POST /api/query/closest                         → { found, point, distanceSquared, triangleId }
 POST /api/query/ray-batch                       → binary closest-hit per ray across N meshes
-POST /api/query/ray-grid                        → binary closest-hit + normal per ray
-POST /api/query/plane-intersection              → single mesh, 2D cut polylines
-POST /api/query/plane-intersection-batch        → multi-mesh, Parallel.For server-side
 POST /api/query/grid-eval                       → per-cell stats inside a prism region
-POST /api/query/cylinder-eval                   → per-ring per-angle mesh intersection heights
 POST /api/query/isoline                         → polyline at a given elevation
 POST /api/query/curvature-ridge                 → polyline along a curvature ridge
 POST /api/query/patch                           → tangent + normal at a point, plus neighbour sample

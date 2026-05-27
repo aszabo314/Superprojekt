@@ -61,16 +61,13 @@ Elm-style: `Model` → `Update.update` → `View.view` → `Boot.run`.
 The client compiles in this order (`src/Superprojekt/Superprojekt.fsproj`):
 
 ```
-RankingState.fs                      adaptive ranking helper
 MeshData.fs                          mesh fetch / parse
-BspTree.fs                           in-browser BSP for local queries
 Query.fs                             server query wrappers (Async)
 CameraModel.fs / .g.fs               OrbitState [<ModelType>]
 OrbitTypes.fs / OrbitController.fs   orbit camera
 ScanPinModel.fs / .g.fs              ScanPin types
 PinGeometry.fs                       icosphere + footprint geometry
 Model.fs / .g.fs                     application Model [<ModelType>]
-BlitShader.fs                        placeholder (kept for fsproj stability)
 Shader.fs                            FlatColor + helpers
 LineShader.fs                        pixel-constant 3D lines
 Primitives.fs                        compact GUI widgets
@@ -123,18 +120,14 @@ Pin geometry, lines, and text are drawn in the same pass with `DepthTest.LessOrE
 
 Costly queries scale with mesh count × angular density. Rules learned the hard way:
 
-- **Never per-mesh loops over HTTP.** Use the batch endpoints (`plane-intersection-batch`, `ray-batch`, `ray-grid`, `cylinder-eval`) and let the server fan out with `Parallel.For`.
-- **Embree `Scene.Intersect` is thread-safe** — ring loops inside `cylinder-eval` are parallelised across rings with per-thread `ResizeArray` hit buffers.
-- **Cap density.** `Stratigraphy.compute` uses a log-spaced max-12 ring ladder rather than a constant 0.25 m step; angular resolution defaults to 180.
+- **Never per-mesh loops over HTTP.** Use the batch endpoints (`ray-batch`, `grid-eval`) and let the server fan out with `Parallel.For`.
+- **Embree `Scene.Intersect` is thread-safe** — outer loops use `Parallel.For` with per-thread `ResizeArray` hit buffers.
 - **Debounce user-driven triggers** with a `CancellationTokenSource` so only the final drag position hits the server.
 - **Mesh caches are warmed at dataset load** by the bbox handler.
 
 ## TODOs / known gaps
 
-- `RankingState`, `BspTree`, `MeshIcp` features partially exposed in the GUI; rough edges around residual visualisation and convergence display.
-- ScanPin Patch / Line payloads work end-to-end but the cut-plane diagram is still a sketch; no real mesh intersection rendered yet.
 - No JSON serialisation of the workspace; everything is in-memory per session.
-- A handful of model fields (`ProvenanceHeatmap`, `FalloffZoneOnly`, `FusionMode`, `MeshAlgorithmResidual`, `CardSystem`) still have GUI controls but no live render-time consumer after the OIT removal — kept for now until their corresponding shader paths are reimplemented on top of the single-pass pipeline.
 - The mesh shader's `[<Depth>] depth : float32` output writes `gl_FragDepth = gl_FragCoord.z` for opaque fragments; this is a no-op on paper but the surrounding stack only behaves correctly *because* it's explicitly written. Don't simplify it back to standard depth.
 
 ## Style

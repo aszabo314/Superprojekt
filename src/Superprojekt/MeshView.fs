@@ -317,6 +317,109 @@ module MeshShader =
             }
         }
 
+// Fusion offscreen shader. Reuses MeshShader's UniformScope members
+// (MeshDatasetError, MeshAlgoResidual, BlobCount/Blobs/BlobFalloffs). Writes
+// the per-fragment combined provenance error as gl_FragDepth so the
+// lowest-error mesh wins the offscreen LessOrEqual depth test — i.e. the
+// composite shows the lowest-error source at each pixel. Conditioning is the
+// same density × angular-diversity heuristic as the heatmap; it is ~constant
+// across overlapping meshes at a pixel, so it barely shifts the winner, but it
+// is included to keep the combined error faithful to the three-source model.
+[<ReflectedDefinition>]
+module FusionShader =
+    open FShade
+    open MeshShader   // brings the UniformScope augmentation (Blobs, MeshDatasetError, …) into scope
+
+    type FragIn = {
+        [<Color>]                              c  : V4f
+        [<Semantic("Normals")>]                n  : V3f
+        [<Semantic("WorldPosition")>]          wp : V4f
+        [<FragCoord>]                          fc : V4f
+    }
+
+    type FragOut = {
+        [<Color>] color : V4f
+        [<Depth>] depth : float32
+    }
+
+    let shade (v : FragIn) =
+        fragment {
+            let wp = v.wp.XYZ
+            let bc = uniform.BlobCount
+            // Local conditioning (density × angular diversity) over anchors.
+            let mutable wSum = 0.0f
+            let mutable validCount = 0
+            for i in 0 .. MeshShader.MaxBlobs - 1 do
+                if i < bc then
+                    let bi = uniform.Blobs.[i]
+                    let sigma = uniform.BlobFalloffs.[i].X
+                    if sigma > 1e-6f then
+                        let dx = wp.X - bi.X
+                        let dy = wp.Y - bi.Y
+                        let dz = wp.Z - bi.Z
+                        let d2 = dx*dx + dy*dy + dz*dz
+                        let w = exp (-d2 / (2.0f * sigma * sigma))
+                        if w > 0.05f then
+                            wSum <- wSum + w
+                            validCount <- validCount + 1
+            let mutable maxCos = 0.0f
+            if validCount >= 2 then
+                for i in 0 .. MeshShader.MaxBlobs - 1 do
+                    if i < bc then
+                        let bi = uniform.Blobs.[i]
+                        let sigmaI = uniform.BlobFalloffs.[i].X
+                        if sigmaI > 1e-6f then
+                            let dxI = wp.X - bi.X
+                            let dyI = wp.Y - bi.Y
+                            let dzI = wp.Z - bi.Z
+                            let dI2 = dxI*dxI + dyI*dyI + dzI*dzI
+                            let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
+                            if wI > 0.05f then
+                                let lenI = sqrt dI2
+                                if lenI > 1e-9f then
+                                    let nix = (bi.X - wp.X) / lenI
+                                    let niy = (bi.Y - wp.Y) / lenI
+                                    let niz = (bi.Z - wp.Z) / lenI
+                                    for j in 0 .. MeshShader.MaxBlobs - 1 do
+                                        if j > i && j < bc then
+                                            let bj = uniform.Blobs.[j]
+                                            let sigmaJ = uniform.BlobFalloffs.[j].X
+                                            if sigmaJ > 1e-6f then
+                                                let dxJ = wp.X - bj.X
+                                                let dyJ = wp.Y - bj.Y
+                                                let dzJ = wp.Z - bj.Z
+                                                let dJ2 = dxJ*dxJ + dyJ*dyJ + dzJ*dzJ
+                                                let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
+                                                if wJ > 0.05f then
+                                                    let lenJ = sqrt dJ2
+                                                    if lenJ > 1e-9f then
+                                                        let njx = (bj.X - wp.X) / lenJ
+                                                        let njy = (bj.Y - wp.Y) / lenJ
+                                                        let njz = (bj.Z - wp.Z) / lenJ
+                                                        let dotV = nix*njx + niy*njy + niz*njz
+                                                        let cAbs = abs dotV
+                                                        if cAbs > maxCos then maxCos <- cAbs
+            let mutable cond = 1e6f
+            if validCount >= 2 then
+                let angDiv = 1.0f - maxCos
+                let raw = 1.0f / (wSum * angDiv + 1e-3f)
+                cond <- if raw > 1e6f then 1e6f else raw
+            let d = uniform.MeshDatasetError
+            let a = uniform.MeshAlgoResidual
+            let cScaled = cond * 0.01f
+            // Combined error: dataset + algorithm dominate the winner; a small,
+            // capped conditioning term contributes without saturating depth.
+            let combined = d + a + 0.01f * (min cScaled 50.0f)
+            // Map error → depth. Lowest error → smallest depth → wins.
+            let depth = clamp 0.0001f 0.9999f (combined * 0.3f)
+            // Light headlight shading on the textured colour.
+            let nn = v.n |> Vec.normalize
+            let toCam = (uniform.CameraLocation - wp) |> Vec.normalize
+            let ndl = max 0.2f (abs (Vec.dot nn toCam))
+            let rgb = v.c.XYZ * ndl
+            return { color = V4f(rgb, 1.0f); depth = depth }
+        }
+
 module MeshView =
 
     let apiBase = ApiConfig.apiBase
@@ -522,6 +625,29 @@ module MeshView =
     // plain textured surface + natural depth; the error-as-depth + winner-id
     // MRT shader is layered on in a later step.
     let buildFusionNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+        // Anchor blobs (render-space) for the conditioning term — same
+        // derivation as buildScene's heatmap path.
+        let datasetScale =
+            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun dsOpt scales ->
+                dsOpt |> Option.bind (fun ds -> Map.tryFind ds scales) |> Option.defaultValue 1.0)
+        let blobsArr =
+            (model.ScanPins.Pins |> AMap.toAVal, model.CommonCentroid, datasetScale)
+            |||> AVal.map3 (fun pinsMap cc scale ->
+                let pins  = HashMap.toArray pinsMap |> Array.map snd
+                let n     = min pins.Length MeshShader.MaxBlobs
+                let centres  = Array.zeroCreate<V4f> MeshShader.MaxBlobs
+                let falloffs = Array.zeroCreate<V4f> MeshShader.MaxBlobs
+                for i in 0 .. n - 1 do
+                    let p  = pins.[i]
+                    let cr = (p.Centre - cc) * scale
+                    let ir = float32 (p.InnerRadius   * scale)
+                    let fr = float32 (p.FalloffRadius * scale)
+                    centres.[i]  <- V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, ir)
+                    falloffs.[i] <- V4f(fr, 0.0f, 0.0f, 0.0f)
+                n, centres, falloffs)
+        let blobCount    = blobsArr |> AVal.map (fun (n, _, _) -> n)
+        let blobs        = blobsArr |> AVal.map (fun (_, c, _) -> c)
+        let blobFalloffs = blobsArr |> AVal.map (fun (_, _, f) -> f)
         let nodes =
             model.MeshNames |> AList.map (fun name ->
                 let loaded = loadMeshAsync (fun () -> ()) name
@@ -533,14 +659,24 @@ module MeshView =
                         Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
                 let renderEnabled =
                     (loaded.fvc, isActive) ||> AVal.map2 (fun c a -> c > 3 && a)
+                let meshDatasetErr =
+                    (model.MeshSensorTypes, model.MeshDatasetErrors)
+                    ||> AVal.map2 (fun sensors overrides ->
+                        Provenance.datasetError overrides sensors name |> float32)
+                let meshAlgoRes =
+                    model.MeshAlgorithmResidual
+                    |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0.0 |> float32)
                 sg {
                     Sg.Active renderEnabled
                     Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
                     Sg.Shader {
                         DefaultSurfaces.trafo
                         DefaultSurfaces.diffuseTexture
+                        FusionShader.shade
                     }
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                    Sg.Uniform("MeshDatasetError", meshDatasetErr)
+                    Sg.Uniform("MeshAlgoResidual", meshAlgoRes)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
@@ -555,6 +691,9 @@ module MeshView =
         sg {
             Sg.View view
             Sg.Proj proj
+            Sg.Uniform("BlobCount",    blobCount)
+            Sg.Uniform("Blobs",        blobs)
+            Sg.Uniform("BlobFalloffs", blobFalloffs)
             nodes
         }
 

@@ -420,6 +420,28 @@ module FusionShader =
             return { color = V4f(rgb, 1.0f); depth = depth }
         }
 
+// Panorama mesh shader: plain textured surface + headlight shading and the
+// rasterizer's natural depth (nearest surface wins). No lasso/blob/ghost
+// filters — a panorama capture wants the meshes as-is. Used by the cube-face
+// render tasks that feed PanoramaView's cylindrical reprojection.
+[<ReflectedDefinition>]
+module PanoramaShader =
+    open FShade
+
+    type FragIn = {
+        [<Color>]                     c  : V4f
+        [<Semantic("Normals")>]       n  : V3f
+        [<Semantic("WorldPosition")>] wp : V4f
+    }
+
+    let shade (v : FragIn) =
+        fragment {
+            let nn = v.n |> Vec.normalize
+            let toCam = (uniform.CameraLocation - v.wp.XYZ) |> Vec.normalize
+            let ndl = max 0.25f (abs (Vec.dot nn toCam))
+            return V4f(v.c.XYZ * ndl, 1.0f)
+        }
+
 module MeshView =
 
     let apiBase = ApiConfig.apiBase
@@ -710,6 +732,53 @@ module MeshView =
             Sg.Uniform("BlobCount",    blobCount)
             Sg.Uniform("Blobs",        blobs)
             Sg.Uniform("BlobFalloffs", blobFalloffs)
+            nodes
+        }
+
+    // Panorama capture scene: textured meshes from a given pose (view+proj),
+    // used by PanoramaView for the 6 cube faces. useTransforms = false renders
+    // the "reference" state (identity transforms, all visible) for the Photo
+    // mode; true renders the current live state (registration + visibility) for
+    // Render mode. Reuses the shared LoadedMesh cache.
+    let buildPanoramaNode (model : AdaptiveModel) (useTransforms : bool) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+        let nodes =
+            model.MeshNames |> AList.map (fun name ->
+                let loaded = loadMeshAsync (fun () -> ()) name
+                let isActive =
+                    if useTransforms then
+                        model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+                    else AVal.constant true
+                let scale = scaleFor model name
+                let meshT =
+                    if useTransforms then
+                        model.MeshTransforms |> AVal.map (fun m ->
+                            Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
+                    else AVal.constant Trafo3d.Identity
+                let renderEnabled =
+                    (loaded.fvc, isActive) ||> AVal.map2 (fun c a -> c > 3 && a)
+                sg {
+                    Sg.Active renderEnabled
+                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                    Sg.Shader {
+                        DefaultSurfaces.trafo
+                        DefaultSurfaces.diffuseTexture
+                        PanoramaShader.shade
+                    }
+                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
+                            string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
+                            string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
+                        ]
+                    )
+                    Sg.Index(BufferView(loaded.idx, typeof<int>))
+                    Sg.Render loaded.fvc
+                }
+            ) |> AList.toASet
+        sg {
+            Sg.View view
+            Sg.Proj proj
             nodes
         }
 

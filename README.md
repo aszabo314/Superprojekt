@@ -56,6 +56,7 @@ The first request for a mesh parses OBJ + builds an Embree scene + BbTree; the r
 - **Fusion mode.** Top-bar `◈ Fusion` renders all visible meshes into an offscreen MRT pass where per-fragment depth carries combined error, so the lowest-error surface wins the depth test; the composite is drawn back as a fullscreen quad. Picking raycasts every visible mesh and keeps the same lowest-error winner.
 - **Retarget.** Re-project the existing pins' anchors onto a chosen target mesh (server closest-point per pin), review the per-pin projection distances in a card, accept/reject individually, then commit.
 - **Workspace save / load.** Serialise the session (dataset, pins, transforms, visibility, sensors, lasso, registration, camera, settings) to JSON via the gear popover and reload it later. Hand-rolled JSON in `Persistence.fs`; in-memory otherwise.
+- **Panorama.** Top-bar `▦ Pano` opens a floating panel showing a cylindrical view from a synthetic viewpoint at the scene-bbox centre (no dataset ships real imagery, so one is generated per dataset on load). The meshes are rendered into a cubemap from that pose and reprojected cylindrically. **Photo / Render / Blend** modes (Photo = reference state, Render = live state, Blend = the disagreement between them), anchor markers projected into the view, click-to-place anchors via a server raycast through the pose, and a fly-to-pose button.
 
 ## Architecture
 
@@ -80,6 +81,7 @@ CardUpdate.fs / ScanPinUpdate.fs     sub-reducers
 Update.fs                            main reducer
 MeshView.fs                          mesh shader + per-mesh scene nodes
 FusionView.fs                        offscreen MRT fusion pass + composite
+PanoramaView.fs                      cubemap capture + cylindrical reproject
 ServerActions.fs                     init, loadDataset
 ScanPinScene.fs                      pin sg nodes
 SceneGraph.fs                        scene composition + coordinate cross
@@ -121,7 +123,9 @@ Pin geometry, lines, and text are drawn in the same pass with `DepthTest.LessOrE
 
 **Fusion mode adds an offscreen MRT pass** (`FusionView.fs`). When `◈ Fusion` is on, the normal meshes are suppressed and re-rendered into an offscreen framebuffer (its own colour + depth, sized adaptively to the viewport) where per-fragment depth encodes combined error; the lowest-error surface therefore wins `LessOrEqual` depth-testing. That colour target is composited back into the main pass as a fullscreen quad, with pins / cross / labels still drawn on top. FBOs are fine in this stack — the old ban only applied to the removed WBOIT code. `Sg.DepthMask` is still off-limits (see below).
 
-**Picking** uses Aardvark's pixel picker. `e.Location.Depth < 0.9999` gates valid hits (background misses leave depth at the clear value). Under fusion, picking instead raycasts every visible mesh server-side and keeps the lowest-error hit, matching the depth-test winner.
+**The panorama uses a separate offscreen cubemap pass** (`PanoramaView.fs`), in its own nested `renderControl`. The meshes are rendered into a colour cubemap (six 90°-FOV faces, via the same `CompileRender` path as fusion) from the panorama pose, then a fullscreen quad reprojects the cube **cylindrically** (vertical = height on the cylinder, so vertical lines stay straight). Two cubes are captured — reference state and live state — and blended for the Photo/Render/Blend modes. All panorama shaders are strictly `float32`: WebGL2 has no double precision, so `float`/`Constant.Pi`/`V3d` in a shader emit GLSL `double` and fail to compile in-browser (and neither `dotnet build` nor `fshadeaot` catch it).
+
+**Picking** uses Aardvark's pixel picker. `e.Location.Depth < 0.9999` gates valid hits (background misses leave depth at the clear value). Under fusion, picking instead raycasts every visible mesh server-side and keeps the lowest-error hit, matching the depth-test winner. Panorama click-to-place builds a world ray through the pose's cylindrical mapping and raycasts the visible meshes the same way.
 
 ## Server query performance
 
@@ -135,7 +139,7 @@ Costly queries scale with mesh count × angular density. Rules learned the hard 
 ## TODOs / known gaps
 
 - Workspace save / load is a JSON download / upload through the browser; there is no server-side store, so state is otherwise in-memory per session.
-- No panorama split view yet (planned: docked Photo / Render / Blend modes with anchor projection and fly-to-pose).
+- The panorama is a floating panel, not a docked split, and its viewpoints are synthetic (no dataset ships real imagery + poses). Photo/Render only differ once meshes are registered or hidden.
 - The mesh shader's `[<Depth>] depth : float32` output writes `gl_FragDepth = gl_FragCoord.z` for opaque fragments; this is a no-op on paper but the surrounding stack only behaves correctly *because* it's explicitly written. Don't simplify it back to standard depth.
 
 ## Style

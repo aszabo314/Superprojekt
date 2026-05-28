@@ -81,6 +81,25 @@ type RetargetState =
 module RetargetState =
     let initial = RetargetIdle
 
+// A synthetic panorama: a camera pose in metric world-space from which the
+// scene is rendered to a cubemap and reprojected cylindrically. No real
+// imagery exists for any dataset, so one is generated per dataset on load at
+// the scene bbox centre plus a couple of metres up.
+type Panorama = {
+    Name     : string
+    EyeWorld : V3d     // metric world-space eye position
+    Yaw      : float   // horizontal look offset (radians); 0 looks along +X
+}
+
+// Panorama panel display mode.
+//   PanoPhoto  — the captured synthetic image (meshes in reference state)
+//   PanoRender — live render of the current meshes from the pose
+//   PanoBlend  — slider mix of the two (photo-vs-mesh disagreement detector)
+type PanoramaMode =
+    | PanoPhoto
+    | PanoRender
+    | PanoBlend
+
 type ExploreMode =
     {
         Enabled            : bool
@@ -228,6 +247,12 @@ type Model =
 
         FusionMode            : bool
 
+        PanoramaOpen          : bool
+        Panoramas             : Panorama list
+        SelectedPanorama      : int
+        PanoramaMode          : PanoramaMode
+        PanoramaBlend         : float
+
         ScanPins              : ScanPinModel
         ReferenceAxis         : ReferenceAxisMode
         Explore               : ExploreMode
@@ -279,6 +304,11 @@ module Model =
             ProvenanceThreshold   = 0.01
             FalloffZoneOnly       = false
             FusionMode            = false
+            PanoramaOpen          = false
+            Panoramas             = []
+            SelectedPanorama      = 0
+            PanoramaMode          = PanoRender
+            PanoramaBlend         = 0.5
             ScanPins              = ScanPinModel.initial
             ReferenceAxis         = AlongWorldZ
             Explore               = ExploreMode.initial

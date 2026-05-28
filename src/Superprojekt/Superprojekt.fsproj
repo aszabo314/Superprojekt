@@ -37,6 +37,7 @@
     <Compile Include="Update.fs" />
     <Compile Include="MeshView.fs" />
     <Compile Include="FusionView.fs" />
+    <Compile Include="PanoramaView.fs" />
     <Compile Include="ServerActions.fs" />
     <Compile Include="ScanPinScene.fs" />
     <Compile Include="SceneGraph.fs" />

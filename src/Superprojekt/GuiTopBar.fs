@@ -97,6 +97,14 @@ module GuiTopBar =
             }
 
             button {
+                Class "tb-btn"
+                model.PanoramaOpen |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Panorama: cylindrical view from a synthetic viewpoint in the scene")
+                Dom.OnClick(fun _ -> env.Emit [TogglePanorama])
+                "▦ Pano"
+            }
+
+            button {
                 Class "tb-btn tb-btn-icon"
                 Attribute("title", "Reset camera")
                 Dom.OnClick(fun _ -> env.Emit [ResetCamera])

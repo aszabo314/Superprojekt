@@ -132,8 +132,9 @@ Primitives.fs                   ← compactToggle, inlineSlider, compactButtonBa
 Messages.fs                     ← Message DU
 CardUpdate.fs / ScanPinUpdate.fs
 Update.fs                       ← main reducer
-MeshView.fs                     ← LoadedMesh, MeshShader.shade, buildScene, buildFusionNode
+MeshView.fs                     ← LoadedMesh, MeshShader.shade, buildScene, buildFusionNode, buildPanoramaNode
 FusionView.fs                   ← offscreen MRT fusion pass + fullscreen composite
+PanoramaView.fs                 ← offscreen cubemap capture + cylindrical reproject
 ServerActions.fs                ← init + loadDataset (datasets list + centroids + bboxes)
 ScanPinScene.fs                 ← pin sg nodes
 SceneGraph.fs                   ← composes meshScene + pinScene + cross + labels
@@ -196,6 +197,7 @@ Top-level `Model` fields (see `Model.fs`):
 - `MeshTransforms`, `Registration` (mode + reference mesh + `LastResiduals` + running flag), `Retarget` (`RetargetIdle | RetargetProjecting | RetargetReviewing of RetargetCandidate[]`)
 - `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `ProvenanceHeatmap`, `ProvenanceThreshold`, `FalloffZoneOnly`
 - `FusionMode`
+- `PanoramaOpen`, `Panoramas` (`Panorama list` = `{ Name; EyeWorld; Yaw }`, synthetic, regenerated on dataset load), `SelectedPanorama`, `PanoramaMode` (`PanoPhoto | PanoRender | PanoBlend`), `PanoramaBlend`
 - `ScanPins`, `ReferenceAxis` (AlongWorldZ | AlongCameraView), `Explore`, `ColorMode`, `CardSystem`
 - `RenderingMode` (Textured | Shaded | SlopeColor), `MeshSolo`, `ExploreCardPos`, `LassoCardPos`, `GearPopoverOpen`
 
@@ -219,8 +221,8 @@ Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc
 
 ## Open TODOs
 
-- **No panorama split view yet** — the one unbuilt item from the scanpin completion work. Planned: docked Photo / Render / Blend modes, anchor markers in panorama space, click-to-project placement, fly-to-pose, and synthetic cylindrical panorama generation for Mars datasets. Needs in-browser iteration.
-- **Workspace persistence is download / upload only** (`Persistence.fs`): JSON round-trips through the browser via the gear-popover Save / Load. There is no server-side store, so state is otherwise in-memory per session.
+- **Panorama is a floating panel, not a docked split** (user's call), and viewpoints are synthetic — no dataset ships real imagery + poses, so one pose is generated per dataset on load. `PanoramaView.fs` captures the meshes into a colour cubemap from the pose (six 90° faces via the fusion `CompileRender` path) and reprojects cylindrically; two cubes (reference vs live state) feed Photo/Render/Blend. Click-to-place raycasts the pose ray server-side; markers are a forward projection of pins into cylindrical space. **All panorama shaders are float32-only** — WebGL2 has no double, and `dotnet build` / `fshadeaot` do NOT catch `double` GLSL (only the in-browser compile does). If real imagery + poses arrive, swap the synthetic pose generation in `Update.fs` (`SceneBoundsLoaded`) and add a Photo texture source.
+- **Workspace persistence is download / upload only** (`Persistence.fs`): JSON round-trips through the browser via the gear-popover Save / Load. There is no server-side store, so state is otherwise in-memory per session. Panoramas are not persisted (regenerated on load).
 - **Fusion picking is CPU-raycast**, not GPU winner-id readback — a per-tap server raycast over all visible meshes that keeps the lowest-error hit (identical winner). Revisit only if it gets slow.
 - **No real cut-plane mesh intersection rendering** in the pin diagram yet. The flyout sketches the prism/blob cross-section but it is not driven by a server intersection query.
 - **MeshIcp residual visualisation** is rudimentary. Residuals come back from `/query/icp` (`Registration.LastResiduals`) but the `GuiCards` histogram is basic.
@@ -243,6 +245,7 @@ Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc
 - `Sg.OnPointerDown(bool, handler)` — the bool is **capture-vs-bubble phase** for the Sg event bus, not pointer capture. For drag operations call `e.Context.SetPointerCapture(e.Target, e.PointerId)` inside the down handler and `ReleasePointerCapture(...)` in up.
 - `Dom.OnPointerDown((...), pointerCapture = true)` — browser-level `element.setPointerCapture`; use this on renderControl canvas drags so events keep flowing when the cursor leaves the canvas.
 - **`Sg.OnTap` / `Sg.OnDoubleTap` / `Sg.OnLongPress` fire on background misses too.** Always gate on `e.Location.Depth < 0.9999`.
+- **FShade shaders must be float32-only.** F# `float`, `Constant.Pi`, `V3d`/`V2d`, and `member _ : float` uniforms all emit GLSL `double`/`dvec3` + fp64 `#extension` directives, which WebGL2 (ESSL3) rejects at runtime (`'double' : Illegal use of reserved word`). Use `3.1415927f`, `V3f`/`V2f`, `: float32` uniforms, and bind `1.0f` not `1.0`. **`dotnet build` and the `fshadeaot` PostBuild step do NOT catch this** — only the in-browser compile does, so always verify shader changes in a browser. Porting desktop-GL examples is the high-risk case (desktop GL supports double; WebGL2 does not).
 
 ## CSS / design
 

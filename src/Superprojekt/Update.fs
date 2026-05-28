@@ -203,9 +203,20 @@ module Update =
                 let renderDiag = union.Size.Length * scale
                 let disagreementDefault = clamp 0.001 1.0 (renderDiag * 1e-3)
                 let perMesh = bboxes |> Array.fold (fun m (n, b) -> Map.add n b m) Map.empty
+                // Synthetic panorama: no dataset ships real imagery, so place one
+                // viewpoint at the scene-bbox centre a couple of metres up. The
+                // image itself is rendered live (cube → cylindrical reproject) by
+                // PanoramaView when the panel is open.
+                let panos =
+                    if union.IsValid then
+                        let name = model.ActiveDataset |> Option.defaultValue "scene"
+                        [ { Name = name; EyeWorld = union.Center + V3d(0.0, 0.0, 2.0); Yaw = 0.0 } ]
+                    else []
                 { model with
                     SceneBounds = padded
                     MeshBounds = perMesh
+                    Panoramas = panos
+                    SelectedPanorama = 0
                     Explore = { model.Explore with Disagreement = { model.Explore.Disagreement with Threshold = disagreementDefault } } }
         | DatasetsLoaded datasets ->
             { model with Datasets = datasets |> Array.toList }
@@ -217,6 +228,8 @@ module Update =
                     ScanPins = ScanPinModel.initial
                     MeshSolo = NoSolo
                     MeshBounds = Map.empty
+                    Panoramas = []
+                    SelectedPanorama = 0
                     ActivePickingLayer = None
                     LassoDrawing = None
                     LassoVolume = None
@@ -457,3 +470,29 @@ module Update =
             | _ -> model
         | CancelRetarget ->
             { model with Retarget = RetargetIdle }
+        | TogglePanorama ->
+            { model with PanoramaOpen = not model.PanoramaOpen }
+        | PanoramasGenerated ps ->
+            { model with Panoramas = ps; SelectedPanorama = 0 }
+        | SelectPanorama i ->
+            { model with SelectedPanorama = i }
+        | SetPanoramaMode m ->
+            { model with PanoramaMode = m }
+        | SetPanoramaBlend b ->
+            { model with PanoramaBlend = clamp 0.0 1.0 b }
+        | FlyToPanorama i ->
+            match List.tryItem i model.Panoramas with
+            | Some p ->
+                let scale =
+                    model.ActiveDataset
+                    |> Option.bind (fun d -> Map.tryFind d model.DatasetScales)
+                    |> Option.defaultValue 1.0
+                let eyeR = (p.EyeWorld - model.CommonCentroid) * scale
+                let r =
+                    if model.SceneBounds.IsInvalid then 5.0
+                    else max 1.0 (model.SceneBounds.Size.Length * scale * 0.12)
+                let fwd = V3d(cos p.Yaw, sin p.Yaw, 0.0)
+                let center = eyeR + fwd * r
+                env.Emit [CameraMessage (OrbitMessage.SetTarget(true, center, r, p.Yaw + Constant.Pi, 0.05))]
+                model
+            | None -> model

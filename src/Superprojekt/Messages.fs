@@ -60,6 +60,12 @@ type Message =
     | SetRetargetDecision of ScanPinId * RetargetDecision
     | CommitRetarget
     | CancelRetarget
+    | TogglePanorama
+    | PanoramasGenerated of Panorama list
+    | SelectPanorama of int
+    | SetPanoramaMode of PanoramaMode
+    | SetPanoramaBlend of float
+    | FlyToPanorama of int
 
 and ExploreSignal =
     | FeatureConfidenceSignal

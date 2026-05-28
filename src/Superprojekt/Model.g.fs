@@ -1,5 +1,5 @@
-//9869e593-e876-dcf5-c53c-9d95427cc26b
-//abe84f31-8c98-746f-125e-0b95e1bb2c96
+//d6dfd164-4982-ed03-d514-9a648ca12314
+//7884d215-529f-6bf3-a489-bdb887788217
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -47,6 +47,11 @@ type AdaptiveModel(value : Model) =
     let _ProvenanceThreshold_ = FSharp.Data.Adaptive.cval(value.ProvenanceThreshold)
     let _FalloffZoneOnly_ = FSharp.Data.Adaptive.cval(value.FalloffZoneOnly)
     let _FusionMode_ = FSharp.Data.Adaptive.cval(value.FusionMode)
+    let _PanoramaOpen_ = FSharp.Data.Adaptive.cval(value.PanoramaOpen)
+    let _Panoramas_ = FSharp.Data.Adaptive.cval(value.Panoramas)
+    let _SelectedPanorama_ = FSharp.Data.Adaptive.cval(value.SelectedPanorama)
+    let _PanoramaMode_ = FSharp.Data.Adaptive.cval(value.PanoramaMode)
+    let _PanoramaBlend_ = FSharp.Data.Adaptive.cval(value.PanoramaBlend)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _ReferenceAxis_ = FSharp.Data.Adaptive.cval(value.ReferenceAxis)
     let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
@@ -100,6 +105,11 @@ type AdaptiveModel(value : Model) =
             _ProvenanceThreshold_.Value <- value.ProvenanceThreshold
             _FalloffZoneOnly_.Value <- value.FalloffZoneOnly
             _FusionMode_.Value <- value.FusionMode
+            _PanoramaOpen_.Value <- value.PanoramaOpen
+            _Panoramas_.Value <- value.Panoramas
+            _SelectedPanorama_.Value <- value.SelectedPanorama
+            _PanoramaMode_.Value <- value.PanoramaMode
+            _PanoramaBlend_.Value <- value.PanoramaBlend
             _ScanPins_.Update(value.ScanPins)
             _ReferenceAxis_.Value <- value.ReferenceAxis
             _Explore_.Value <- value.Explore
@@ -146,6 +156,11 @@ type AdaptiveModel(value : Model) =
     member __.ProvenanceThreshold = _ProvenanceThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.FalloffZoneOnly = _FalloffZoneOnly_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.FusionMode = _FusionMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.PanoramaOpen = _PanoramaOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.Panoramas = _Panoramas_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Panorama>>
+    member __.SelectedPanorama = _SelectedPanorama_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.int>
+    member __.PanoramaMode = _PanoramaMode_ :> FSharp.Data.Adaptive.aval<PanoramaMode>
+    member __.PanoramaBlend = _PanoramaBlend_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ScanPins = _ScanPins_
     member __.ReferenceAxis = _ReferenceAxis_ :> FSharp.Data.Adaptive.aval<ReferenceAxisMode>
     member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>

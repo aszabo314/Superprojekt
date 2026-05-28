@@ -413,6 +413,7 @@ module View =
             GuiCards.registrationCard env model registrationOpen
             GuiCards.registrationToggleButton registrationOpen
             GuiCards.retargetCard env model
+            GuiCards.panoramaCard env model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.fusionNotice model
             GuiOverlays.provenanceHoverOverlay model (hoverCoord :> aval<_>) (cursorScreen :> aval<_>)

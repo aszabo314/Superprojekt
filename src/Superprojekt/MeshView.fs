@@ -664,8 +664,15 @@ module MeshView =
                 let meshT =
                     model.MeshTransforms |> AVal.map (fun m ->
                         Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
+                // Before registration show only the reference mesh — UNLESS no
+                // reference is set, in which case fall back to all visible
+                // meshes (restricting to a nonexistent reference would render
+                // nothing → black). Once any mesh is registered, show all.
                 let regGate =
-                    (hasRegistered, refMesh) ||> AVal.map2 (fun reg rm -> reg || rm = Some name)
+                    (hasRegistered, refMesh) ||> AVal.map2 (fun reg rm ->
+                        match rm with
+                        | Some r -> reg || r = name
+                        | None   -> true)
                 let renderEnabled =
                     (loaded.fvc, isActive, regGate) |||> AVal.map3 (fun c a g -> c > 3 && a && g)
                 let meshDatasetErr =

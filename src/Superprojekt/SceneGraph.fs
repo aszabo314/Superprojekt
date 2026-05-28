@@ -161,6 +161,7 @@ module SceneGraph =
         // combination that actually renders correctly here.
 
         let meshScene  = MeshView.buildScene loadFinished model
+        let fusionScene = FusionView.build info model view proj
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
 
         let notFullscreen = AVal.map not fullscreenActive
@@ -175,6 +176,7 @@ module SceneGraph =
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Uniform("ViewportSize", info.ViewportSize)
                 meshScene
+                fusionScene
                 cross
                 pinScene
                 labels

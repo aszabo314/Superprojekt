@@ -456,8 +456,10 @@ module MeshView =
                     Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
             // Inactive meshes still render as ghost outline, so the only reason
             // to gate Sg.Active is the load-not-yet-arrived case (fvc <= 3).
+            // When fusion mode is on the normal mesh pass is suppressed — the
+            // composite of the offscreen fusion pass takes over (FusionView).
             let renderEnabled =
-                loaded.fvc |> AVal.map (fun c -> c > 3)
+                (loaded.fvc, model.FusionMode) ||> AVal.map2 (fun c f -> c > 3 && not f)
             let meshColor =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
@@ -512,5 +514,48 @@ module MeshView =
                 Sg.Render loaded.fvc
             }
         ) |> AList.toASet
+
+    // Fusion offscreen scene: only the currently-visible meshes, textured,
+    // with view/proj baked in. Rendered to an offscreen MRT framebuffer by
+    // FusionView and composited back. Reuses the same LoadedMesh cache as
+    // buildScene (loadMeshAsync is idempotent per name). Increment 1 uses the
+    // plain textured surface + natural depth; the error-as-depth + winner-id
+    // MRT shader is layered on in a later step.
+    let buildFusionNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+        let nodes =
+            model.MeshNames |> AList.map (fun name ->
+                let loaded = loadMeshAsync (fun () -> ()) name
+                let isActive =
+                    model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+                let scale = scaleFor model name
+                let meshT =
+                    model.MeshTransforms |> AVal.map (fun m ->
+                        Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
+                let renderEnabled =
+                    (loaded.fvc, isActive) ||> AVal.map2 (fun c a -> c > 3 && a)
+                sg {
+                    Sg.Active renderEnabled
+                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                    Sg.Shader {
+                        DefaultSurfaces.trafo
+                        DefaultSurfaces.diffuseTexture
+                    }
+                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
+                            string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
+                            string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
+                        ]
+                    )
+                    Sg.Index(BufferView(loaded.idx, typeof<int>))
+                    Sg.Render loaded.fvc
+                }
+            ) |> AList.toASet
+        sg {
+            Sg.View view
+            Sg.Proj proj
+            nodes
+        }
 
 

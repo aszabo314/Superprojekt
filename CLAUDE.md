@@ -14,9 +14,11 @@ See `README.md` for what the app does and how to run it.
 - No comments unless the logic is non-obvious.
 - Concise code, no unnecessary abstractions, no premature helpers.
 
-## Render pipeline (single forward pass)
+## Render pipeline (forward pass + optional fusion MRT pass)
 
-There is **one render pass** into the main framebuffer. There is no OIT, no compose pass, no FBO. The earlier hybrid-forward + WBOIT pipeline was removed (see commit history if you really need it).
+The default path is **one forward pass** into the main framebuffer (meshes → pins → cross/labels). The earlier hybrid-forward + WBOIT pipeline was removed (see commit history if you really need it).
+
+**FBOs are allowed.** The old ban existed only because the removed WBOIT code was fragile; the Aardworx WebGL backend handles ordinary multi-target / multi-pass pipelines fine (it uses MRT + a pick buffer internally). When **Fusion mode** is on, meshes are rendered in a separate offscreen MRT pass (colour + winner-id/position + its own depth, depth = combined error) whose colour output is composited as a fullscreen quad into the main pass; pins/cross/labels still render normally on top. Fusion needs its own depth buffer because writing error-as-depth into the shared buffer would corrupt depth-testing for everything else.
 
 ```
 [ passZero ]

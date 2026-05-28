@@ -2,7 +2,7 @@
 
 Research prototype for interactive 3D mesh/pointcloud visualisation. Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, plane intersections, cylinder evaluation, ICP). Runs on `http://localhost:5000` and also hosts the WASM client.
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, closest-point, multi-mesh raycasts, isolines, curvature ridges, surface patches, ICP). Runs on `http://localhost:5000` and also hosts the WASM client.
 - **Superprojekt** — Blazor WASM client. Aardvark.Dom Elm-style architecture, WebGL2 rendering. Must work on desktop and mobile; the client stays thin and pushes heavy compute to the server.
 
 See `README.md` for what the app does and how to run it.
@@ -18,7 +18,7 @@ See `README.md` for what the app does and how to run it.
 
 The default path is **one forward pass** into the main framebuffer (meshes → pins → cross/labels). The earlier hybrid-forward + WBOIT pipeline was removed (see commit history if you really need it).
 
-**FBOs are allowed.** The old ban existed only because the removed WBOIT code was fragile; the Aardworx WebGL backend handles ordinary multi-target / multi-pass pipelines fine (it uses MRT + a pick buffer internally). When **Fusion mode** is on, meshes are rendered in a separate offscreen MRT pass (colour + winner-id/position + its own depth, depth = combined error) whose colour output is composited as a fullscreen quad into the main pass; pins/cross/labels still render normally on top. Fusion needs its own depth buffer because writing error-as-depth into the shared buffer would corrupt depth-testing for everything else.
+**FBOs are allowed.** The old ban existed only because the removed WBOIT code was fragile; the Aardworx WebGL backend handles ordinary multi-target / multi-pass pipelines fine (it uses MRT + a pick buffer internally). When **Fusion mode** is on, the normal meshes are suppressed and re-rendered in a separate offscreen pass (`FusionView.fs`) with its own colour + depth buffer where per-fragment depth = combined error, so the lowest-error surface wins `LessOrEqual` depth-testing; that colour output is composited as a fullscreen quad into the main pass and pins/cross/labels still render normally on top. Fusion needs its own depth buffer because writing error-as-depth into the shared buffer would corrupt depth-testing for everything else. The offscreen target is just colour + depth — there is **no winner-id MRT target**; picking under fusion is a CPU raycast over the visible meshes (see Picking).
 
 ```
 [ passZero ]
@@ -80,6 +80,8 @@ Background misses leave depth at the clear value (1.0); the gate is required. Th
 
 Note: `Sg.OnTap`/`OnDoubleTap`/`OnLongPress` fire on background misses too. Any handler that creates state from `e.WorldPosition` MUST gate on the depth check. Without it you get pins placed at infinity, cameras flying to empty space, and (in placement mode) an unbounded loop of bogus entries.
 
+Under **Fusion mode** the pixel pick is bypassed: `View.fs` raycasts every visible mesh server-side and keeps the lowest combined-error hit, which matches the depth-test winner shown on screen.
+
 ## Adaptive performance (critical)
 
 In the scene graph, **never depend on an entire record when you only need a subset of its fields**. The Elm-style model replaces entire records on every update, so an `AVal.map` over a full `ScanPin` (or similar) will fire on *any* field change — even fields the computation doesn't use.
@@ -103,11 +105,11 @@ For scene graph nodes (`Sg.Text`, `sg { ... }`), this matters even more: rebuild
 
 ## Server query performance
 
-Costly spatial queries (`cylinder-eval`, `plane-intersection`) scale with mesh count and ring/angle density. Rules of thumb:
+Costly spatial queries (`ray-batch`, `isoline`, `curvature-ridge`, `icp`) scale with mesh count and sample density. Rules of thumb:
 
 - **Never issue per-mesh requests in a `for` loop.** Use the batched endpoints; the server fans out with `Parallel.For`. One HTTP roundtrip with N-way server parallelism beats N sequential roundtrips by an order of magnitude even on localhost.
 - **Parallelise the heavy inner loop server-side** when inputs are independent. Embree `Scene.Intersect` is thread-safe.
-- **Cap density rather than grow linearly.** Log-spaced ring ladders; angular resolution defaults to 180, not 360.
+- **Cap density rather than grow linearly.** Bound point counts with `maxPoints` / sample strides; don't let resolution scale unbounded with region size.
 - **Keep heavy post-processing off the Elm update thread.** Union-find over band caches, ICP residuals, etc. run in the background task that issued the query; only the final result message crosses into the update loop.
 - **Debounce user-driven triggers.** Use a `CancellationTokenSource` ref so the next event cancels the previous.
 - **Mesh caches are warmed at dataset load** by `bboxesHandler` — it calls `MeshCache.get` for every mesh + part, so the first interactive query never pays the lazy-load cost.
@@ -123,13 +125,15 @@ OrbitController.fs
 ScanPinModel.fs / .g.fs
 PinGeometry.fs
 Model.fs / .g.fs                ← [<ModelType>], Adaptify-generated .g.fs
+Persistence.fs                  ← workspace JSON serialise / apply
 Shader.fs                       ← Shader.flatColor + helpers
 LineShader.fs                   ← Lines.render (pixel-constant 3D lines)
 Primitives.fs                   ← compactToggle, inlineSlider, compactButtonBar, etc.
 Messages.fs                     ← Message DU
 CardUpdate.fs / ScanPinUpdate.fs
 Update.fs                       ← main reducer
-MeshView.fs                     ← LoadedMesh, MeshShader.shade, buildScene
+MeshView.fs                     ← LoadedMesh, MeshShader.shade, buildScene, buildFusionNode
+FusionView.fs                   ← offscreen MRT fusion pass + fullscreen composite
 ServerActions.fs                ← init + loadDataset (datasets list + centroids + bboxes)
 ScanPinScene.fs                 ← pin sg nodes
 SceneGraph.fs                   ← composes meshScene + pinScene + cross + labels
@@ -146,7 +150,7 @@ ShaderCache.fs / Program.fs
 ```
 MeshLoader.fs          OBJ parse, centroid file, atlas paths
 MeshCache.fs           Embree scene + BbTree cache (lazy, permanent)
-MeshAnalysis.fs        cylinder evaluation, patch sampling, ridge tracing
+MeshAnalysis.fs        isoline + curvature-ridge tracing, patch sampling
 MeshIcp.fs             ICP solver
 QueryHandlers.fs       per-mesh HTTP handlers
 BatchHandlers.fs       multi-mesh HTTP handlers (Parallel.For fan-out)
@@ -189,7 +193,7 @@ Top-level `Model` fields (see `Model.fs`):
 - `SceneBounds`, `MeshBounds`
 - `ActivePickingLayer`
 - `LassoDrawing`, `LassoVolume`, `LassoEnabled` (filter on/off, polygon kept)
-- `MeshTransforms`, `Registration` (mode + reference mesh + residuals + convergence + running flag)
+- `MeshTransforms`, `Registration` (mode + reference mesh + `LastResiduals` + running flag), `Retarget` (`RetargetIdle | RetargetProjecting | RetargetReviewing of RetargetCandidate[]`)
 - `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `ProvenanceHeatmap`, `ProvenanceThreshold`, `FalloffZoneOnly`
 - `FusionMode`
 - `ScanPins`, `ReferenceAxis` (AlongWorldZ | AlongCameraView), `Explore`, `ColorMode`, `CardSystem`
@@ -215,11 +219,14 @@ Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc
 
 ## Open TODOs
 
-- **Dead toggles to either re-wire or remove**: `ProvenanceHeatmap`, `FalloffZoneOnly`, `FusionMode`, `MeshAlgorithmResidual`, `CardSystem`-driven visuals. Their model fields and GUI controls survived the OIT removal but their render-time consumers were in shader paths that no longer exist.
-- **`ActivePickingLayer`** is still toggled by wheel-zoom in `View.fs` but no longer restricts picking — pick happens against whatever is in the depth buffer.
-- **No JSON / workspace persistence**: removed. Pins, lasso, transforms are all in-memory per session.
-- **No real cut-plane mesh intersection rendering** in the pin diagram yet. The flyout shows the prism/blob but the cross-section profile is sketched out, not driven by `/query/plane-intersection-batch`.
-- **Ranking / BspTree / MeshIcp residual visualisation** is partial. Residuals come back from `/query/icp` but the chart in `GuiPanels` is rudimentary.
+- **No panorama split view yet** — the one unbuilt item from the scanpin completion work. Planned: docked Photo / Render / Blend modes, anchor markers in panorama space, click-to-project placement, fly-to-pose, and synthetic cylindrical panorama generation for Mars datasets. Needs in-browser iteration.
+- **Workspace persistence is download / upload only** (`Persistence.fs`): JSON round-trips through the browser via the gear-popover Save / Load. There is no server-side store, so state is otherwise in-memory per session.
+- **Fusion picking is CPU-raycast**, not GPU winner-id readback — a per-tap server raycast over all visible meshes that keeps the lowest-error hit (identical winner). Revisit only if it gets slow.
+- **No real cut-plane mesh intersection rendering** in the pin diagram yet. The flyout sketches the prism/blob cross-section but it is not driven by a server intersection query.
+- **MeshIcp residual visualisation** is rudimentary. Residuals come back from `/query/icp` (`Registration.LastResiduals`) but the `GuiCards` histogram is basic.
+- **Part 4 partials**: the Explore signal renderer is missing, the ghost-mode selector and lasso→registration scoping are partial, and the patch 2D↔3D hover coupling is partial.
+
+`ProvenanceHeatmap` / `FalloffZoneOnly` / `MeshAlgorithmResidual` (provenance overlay), `FusionMode` (fusion pass), and `ActivePickingLayer` (fusion + layer-restricted picking) are no longer dead — they were re-wired during the scanpin completion work. `CardSystem`-driven visuals are still vestigial.
 
 ## Aardvark.Dom gotchas
 

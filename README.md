@@ -2,7 +2,7 @@
 
 Research prototype for interactive 3D inspection of geological mesh and pointcloud datasets. Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, multi-mesh raycasts, plane intersections, cylinder evaluation, ICP).
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, closest-point, multi-mesh raycasts, isolines, curvature ridges, surface patches, ICP).
 - **Superprojekt** — Blazor WebAssembly client. Aardvark.Dom Elm-style architecture, WebGL rendering. Runs on desktop and mobile browsers; thin client by design — heavy compute lives on the server.
 
 ## Run it
@@ -51,8 +51,11 @@ The first request for a mesh parses OBJ + builds an Embree scene + BbTree; the r
 - **ScanPins (annotations).** Place a 3D anchor on a surface. Each pin has an **Inner radius** (hard truth: α = 1 and full evaluation weight inside) and a **Falloff radius** (exponential decay beyond inner). Both stored in metric world-metres; the falloff slider is relative to the inner radius. Pin Point / Line / Patch payloads carry derived analysis.
 - **Filter chain.** Visibility is the conjunction of three filters: MeshActive toggle → lasso region → pin blob field. Both lasso and blob must agree for a fragment to be fully opaque; inside-lasso-outside-blob fragments fall to ghost level.
 - **Mesh registration.** Reference-based ICP (traditional, region-restricted, point-pair + refinement). Pin centres + falloff radii feed the region-restricted variant.
-- **Error provenance overlay.** Per-mesh sensor type + dataset-error override, with a tunable heatmap.
+- **Error provenance overlay.** Per-mesh sensor type + dataset-error override, combined with ICP algorithm residual and a local-conditioning heuristic over the anchors into a tunable heatmap.
 - **Explore mode.** Highlights regions of high disagreement or steep slope; tunable in its own card.
+- **Fusion mode.** Top-bar `◈ Fusion` renders all visible meshes into an offscreen MRT pass where per-fragment depth carries combined error, so the lowest-error surface wins the depth test; the composite is drawn back as a fullscreen quad. Picking raycasts every visible mesh and keeps the same lowest-error winner.
+- **Retarget.** Re-project the existing pins' anchors onto a chosen target mesh (server closest-point per pin), review the per-pin projection distances in a card, accept/reject individually, then commit.
+- **Workspace save / load.** Serialise the session (dataset, pins, transforms, visibility, sensors, lasso, registration, camera, settings) to JSON via the gear popover and reload it later. Hand-rolled JSON in `Persistence.fs`; in-memory otherwise.
 
 ## Architecture
 
@@ -68,6 +71,7 @@ OrbitTypes.fs / OrbitController.fs   orbit camera
 ScanPinModel.fs / .g.fs              ScanPin types
 PinGeometry.fs                       icosphere + footprint geometry
 Model.fs / .g.fs                     application Model [<ModelType>]
+Persistence.fs                       workspace JSON serialise / apply
 Shader.fs                            FlatColor + helpers
 LineShader.fs                        pixel-constant 3D lines
 Primitives.fs                        compact GUI widgets
@@ -75,6 +79,7 @@ Messages.fs                          Message DU
 CardUpdate.fs / ScanPinUpdate.fs     sub-reducers
 Update.fs                            main reducer
 MeshView.fs                          mesh shader + per-mesh scene nodes
+FusionView.fs                        offscreen MRT fusion pass + composite
 ServerActions.fs                     init, loadDataset
 ScanPinScene.fs                      pin sg nodes
 SceneGraph.fs                        scene composition + coordinate cross
@@ -101,7 +106,7 @@ Program.fs                           ASP.NET startup
 
 ## Render pipeline
 
-**Single forward pass into the main framebuffer.** The mesh shader (`MeshView.MeshShader.shade`) is the only thing that writes depth per fragment:
+**Default path: one forward pass into the main framebuffer.** The mesh shader (`MeshView.MeshShader.shade`) is the only thing that writes depth per fragment:
 
 - Per-fragment α = `lerp(GhostOpacity, 1, mask)` with `mask = lassoComponent * blobComponent` — conjunctive: both filters must agree. Inactive meshes get `GhostOpacity` everywhere.
 - Lasso component is 1 inside the half-space polytope, 0 outside (or 1 if no lasso).
@@ -114,7 +119,9 @@ Pin geometry, lines, and text are drawn in the same pass with `DepthTest.LessOrE
 
 **`Sg.DepthMask` is never used.** It is buggy in this Aardvark / Aardworx WebGL build and silently breaks the depth pipeline. Ordering is steered with `Sg.DepthTest` + `Sg.Pass` alone. This violates the textbook "translucent should not write depth" rule but is the only configuration that actually renders correctly in this stack.
 
-**Picking** uses Aardvark's pixel picker. `e.Location.Depth < 0.9999` gates valid hits (background misses leave depth at the clear value).
+**Fusion mode adds an offscreen MRT pass** (`FusionView.fs`). When `◈ Fusion` is on, the normal meshes are suppressed and re-rendered into an offscreen framebuffer (its own colour + depth, sized adaptively to the viewport) where per-fragment depth encodes combined error; the lowest-error surface therefore wins `LessOrEqual` depth-testing. That colour target is composited back into the main pass as a fullscreen quad, with pins / cross / labels still drawn on top. FBOs are fine in this stack — the old ban only applied to the removed WBOIT code. `Sg.DepthMask` is still off-limits (see below).
+
+**Picking** uses Aardvark's pixel picker. `e.Location.Depth < 0.9999` gates valid hits (background misses leave depth at the clear value). Under fusion, picking instead raycasts every visible mesh server-side and keeps the lowest-error hit, matching the depth-test winner.
 
 ## Server query performance
 
@@ -127,7 +134,8 @@ Costly queries scale with mesh count × angular density. Rules learned the hard 
 
 ## TODOs / known gaps
 
-- No JSON serialisation of the workspace; everything is in-memory per session.
+- Workspace save / load is a JSON download / upload through the browser; there is no server-side store, so state is otherwise in-memory per session.
+- No panorama split view yet (planned: docked Photo / Render / Blend modes with anchor projection and fly-to-pose).
 - The mesh shader's `[<Depth>] depth : float32` output writes `gl_FragDepth = gl_FragCoord.z` for opaque fragments; this is a no-op on paper but the surrounding stack only behaves correctly *because* it's explicitly written. Don't simplify it back to standard depth.
 
 ## Style

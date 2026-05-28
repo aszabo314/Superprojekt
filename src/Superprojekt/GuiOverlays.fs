@@ -117,6 +117,17 @@ module GuiOverlays =
             div { Class "prov-hover-nums"; nums }
         }
 
+    // Shown while fusion mode is on but no registration has run yet — fusing
+    // unaligned meshes is meaningless, so the fusion pass shows the reference
+    // mesh alone and this banner tells the user to register.
+    let fusionNotice (model : AdaptiveModel) =
+        div {
+            Class "fusion-notice"
+            (model.FusionMode, model.MeshTransforms) ||> AVal.map2 (fun f m ->
+                if f && Map.isEmpty m then None else Some (Style [Display "none"]))
+            "◈ Fusion shows the reference mesh until you register. Run a registration to fuse the visible meshes by lowest error."
+        }
+
     let lassoOverlay (env : Env<Message>) (model : AdaptiveModel) (cursorScreen : aval<V2d option>) =
         let stateJson =
             (model.LassoDrawing, cursorScreen) ||> AVal.map2 (fun drawing cursor ->

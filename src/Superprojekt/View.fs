@@ -174,6 +174,67 @@ module View =
                                     | None -> return frontmost
                                 }
 
+                // Fusion picking. The composite is a flat textured quad, so the
+                // GPU pick can't see the underlying meshes. We resolve the
+                // winner the same way the offscreen shader does — lowest
+                // combined provenance error — but on the CPU: raycast every
+                // visible mesh server-side and pick the lowest-error hit.
+                // Returns the render-space hit point plus the winning mesh.
+                let resolveFusionPick () : Async<(V3d * string) option> =
+                    match cursorScreen.Value with
+                    | None -> async.Return None
+                    | Some cursorPx ->
+                        let visible = AVal.force model.MeshVisible
+                        let names =
+                            model.MeshNames |> AList.toAVal |> AVal.force |> IndexList.toList
+                            |> List.filter (fun n -> Map.tryFind n visible |> Option.defaultValue true)
+                        if List.isEmpty names then async.Return None
+                        else
+                            let vpSize = AVal.force size
+                            let v = AVal.force view
+                            let p = AVal.force proj
+                            let ray = pickRay cursorPx vpSize v p
+                            let cc = AVal.force model.CommonCentroid
+                            let scales = AVal.force model.DatasetScales
+                            let sensors = AVal.force model.MeshSensorTypes
+                            let overrides = AVal.force model.MeshDatasetErrors
+                            let algo = AVal.force model.MeshAlgorithmResidual
+                            let pinsMap = AVal.force (model.ScanPins.Pins |> AMap.toAVal)
+                            let anchors =
+                                pinsMap |> HashMap.toSeq
+                                |> Seq.choose (fun (_, pn) ->
+                                    if pn.Phase = PinPhase.Committed then Some (pn.Centre, pn.FalloffRadius) else None)
+                                |> Array.ofSeq
+                            async {
+                                let! hits =
+                                    names
+                                    |> List.map (fun name ->
+                                        async {
+                                            let dataset =
+                                                let s = name.IndexOf('/')
+                                                if s >= 0 then name.[..s-1] else ""
+                                            let scale = Map.tryFind dataset scales |> Option.defaultValue 1.0
+                                            let originW = ray.Origin / scale + cc
+                                            let dirW = ray.Direction
+                                            let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 originW dirW
+                                            match hit with
+                                            | Some h ->
+                                                let d, a, c = Provenance.sourcesAt name overrides sensors algo h.point anchors
+                                                let combined = d + a + c * 0.01
+                                                return Some (name, h.point, scale, combined)
+                                            | None -> return None
+                                        })
+                                    |> Async.Parallel
+                                let best =
+                                    hits |> Array.choose id
+                                    |> Array.sortBy (fun (_, _, _, e) -> e)
+                                    |> Array.tryHead
+                                match best with
+                                | Some (name, worldPt, scale, _) ->
+                                    return Some ((worldPt - cc) * scale, name)
+                                | None -> return None
+                            }
+
                 Sg.View view
                 Sg.Proj proj
 
@@ -240,15 +301,24 @@ module View =
                         env.Emit [LassoCommit(AVal.force view, AVal.force proj, AVal.force size)]
                         false
                     | None ->
-                        let frontmost =
-                            if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                        async {
-                            let! resolved = resolveLayerPick frontmost
-                            match resolved with
-                            | Some renderPos ->
-                                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
-                            | None -> ()
-                        } |> Async.Start
+                        if AVal.force model.FusionMode then
+                            async {
+                                let! resolved = resolveFusionPick ()
+                                match resolved with
+                                | Some (renderPos, _) ->
+                                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
+                                | None -> ()
+                            } |> Async.Start
+                        else
+                            let frontmost =
+                                if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                            async {
+                                let! resolved = resolveLayerPick frontmost
+                                match resolved with
+                                | Some renderPos ->
+                                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
+                                | None -> ()
+                            } |> Async.Start
                         false
                 )
 
@@ -261,20 +331,38 @@ module View =
                         false
                     | None ->
                         let placement = AVal.force model.ScanPins.Placement
-                        let frontmost =
-                            if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                        async {
-                            let! resolved = resolveLayerPick frontmost
-                            match placement, resolved with
-                            | AnchorPlacement, Some renderPos ->
-                                let worldPos = worldFromRender model renderPos
-                                env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
-                            | AnchorPlacement, None -> ()
-                            | _, Some renderPos ->
-                                let worldPos = worldFromRender model renderPos
-                                transact (fun () -> hoverCoord.Value <- Some worldPos)
-                            | _, None -> ()
-                        } |> Async.Start
+                        if AVal.force model.FusionMode then
+                            // Fusion: resolve the winner mesh + point on the CPU,
+                            // set it as the active layer so a placed pin inherits
+                            // it as host, then place / focus.
+                            async {
+                                let! resolved = resolveFusionPick ()
+                                match placement, resolved with
+                                | AnchorPlacement, Some (renderPos, mesh) ->
+                                    let worldPos = worldFromRender model renderPos
+                                    env.Emit [SetActivePickingLayer (Some mesh); ScanPinMsg (PlaceAnchor worldPos)]
+                                | AnchorPlacement, None -> ()
+                                | _, Some (renderPos, mesh) ->
+                                    let worldPos = worldFromRender model renderPos
+                                    env.Emit [SetActivePickingLayer (Some mesh)]
+                                    transact (fun () -> hoverCoord.Value <- Some worldPos)
+                                | _, None -> ()
+                            } |> Async.Start
+                        else
+                            let frontmost =
+                                if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                            async {
+                                let! resolved = resolveLayerPick frontmost
+                                match placement, resolved with
+                                | AnchorPlacement, Some renderPos ->
+                                    let worldPos = worldFromRender model renderPos
+                                    env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
+                                | AnchorPlacement, None -> ()
+                                | _, Some renderPos ->
+                                    let worldPos = worldFromRender model renderPos
+                                    transact (fun () -> hoverCoord.Value <- Some worldPos)
+                                | _, None -> ()
+                            } |> Async.Start
                         true
                 )
 
@@ -326,6 +414,7 @@ module View =
             GuiCards.registrationToggleButton registrationOpen
             GuiCards.retargetCard env model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
+            GuiOverlays.fusionNotice model
             GuiOverlays.provenanceHoverOverlay model (hoverCoord :> aval<_>) (cursorScreen :> aval<_>)
             GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)
             Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)

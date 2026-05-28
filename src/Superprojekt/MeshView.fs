@@ -648,6 +648,13 @@ module MeshView =
         let blobCount    = blobsArr |> AVal.map (fun (n, _, _) -> n)
         let blobs        = blobsArr |> AVal.map (fun (_, c, _) -> c)
         let blobFalloffs = blobsArr |> AVal.map (fun (_, _, f) -> f)
+        // Before any registration the meshes aren't aligned, so fusing them is
+        // meaningless: show only the reference mesh (a notice overlay tells the
+        // user to register). "Registered" = at least one mesh has a transform.
+        let hasRegistered =
+            model.MeshTransforms |> AVal.map (fun m -> not (Map.isEmpty m))
+        let refMesh =
+            model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let nodes =
             model.MeshNames |> AList.map (fun name ->
                 let loaded = loadMeshAsync (fun () -> ()) name
@@ -657,8 +664,10 @@ module MeshView =
                 let meshT =
                     model.MeshTransforms |> AVal.map (fun m ->
                         Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
+                let regGate =
+                    (hasRegistered, refMesh) ||> AVal.map2 (fun reg rm -> reg || rm = Some name)
                 let renderEnabled =
-                    (loaded.fvc, isActive) ||> AVal.map2 (fun c a -> c > 3 && a)
+                    (loaded.fvc, isActive, regGate) |||> AVal.map3 (fun c a g -> c > 3 && a && g)
                 let meshDatasetErr =
                     (model.MeshSensorTypes, model.MeshDatasetErrors)
                     ||> AVal.map2 (fun sensors overrides ->

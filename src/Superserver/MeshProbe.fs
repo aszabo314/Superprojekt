@@ -86,7 +86,7 @@ let private eigenvectorFor (m00 : float) m01 m02 m11 m12 m22 (lambda : float) =
     if c2.LengthSquared > best.LengthSquared then best <- c2
     if best.Length > 1e-12 then best.Normalized else V3d.OOI
 
-// PCA normal of the reference-mesh vertices inside the pin sphere (spec §4.1).
+// PCA normal of the reference-mesh vertices inside the pin sphere.
 let private estimateNormal (mi : ProbeMeshInput) (centre : V3d) (radius : float) =
     let pm = mi.Lm.parsed
     let inv = mi.Transform.Inverse
@@ -126,7 +126,7 @@ let private estimateNormal (mi : ProbeMeshInput) (centre : V3d) (radius : float)
         let planarity = if l1 > 1e-30 then l0 / l1 else 1.0
         Some (nWorld, planarity)
 
-// Max extent of the union of all (transformed) mesh bboxes projected onto the axis (spec §4.2).
+// Max extent of the union of all (transformed) mesh bboxes projected onto the axis.
 let private autoLengthAlong (meshes : ProbeMeshInput[]) (axis : V3d) =
     let mutable lo = infinity
     let mutable hi = -infinity
@@ -146,7 +146,7 @@ let private autoLengthAlong (meshes : ProbeMeshInput[]) (axis : V3d) =
 
 // Signed axial coordinates of cylinder hits. Deterministic barycentric-lattice
 // sampling of triangle interiors so low-res meshes still produce distributions
-// (spec §4.3); the lattice density targets maxPoints over the candidate area.
+// the lattice density targets maxPoints over the candidate area.
 let private sampleAlongAxis (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (radius : float) (halfLen : float) (maxPoints : int) =
     let pm = mi.Lm.parsed
     let inv = mi.Transform.Inverse
@@ -218,7 +218,7 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
             let raw =
                 args.Meshes
                 |> Array.Parallel.map (fun mi -> sampleAlongAxis mi args.Centre normal args.Radius halfLen maxPts)
-            // Re-centre so 0 = the reference mesh's median (spec §4.4).
+            // Re-centre so 0 = the reference mesh's median.
             let refMedian =
                 let r = Array.sort raw.[refIdx]
                 quantile r 0.5
@@ -248,7 +248,7 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
                         let h = 0.9 * sigma * (float a.Length ** -0.2)
                         if h > 1e-9 then h else 0.0)
             // Chart auto range = union of median ± 3·IQR, floored to ±0.1 m;
-            // fit range = data extent padded by 3·bandwidth (spec §4.5).
+            // fit range = data extent padded by 3·bandwidth.
             let mutable aLo = infinity
             let mutable aHi = -infinity
             let mutable fLo = infinity
@@ -291,7 +291,7 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
                     { Name = args.Meshes.[i].Name; Count = a.Length
                       Median = med; Q1 = q1; Q3 = q3; Std = std
                       Bandwidth = h; Kde = kde })
-            // Three-source decomposition (spec §5): dataset = IQR of the union,
+            // Three-source decomposition: dataset = IQR of the union,
             // algorithm = RMS of non-reference median offsets, conditioning =
             // c_scale / (n_present · mean points) with c_scale = 1.
             let union =

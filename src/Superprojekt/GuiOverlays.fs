@@ -23,7 +23,7 @@ module GuiOverlays =
                 | None -> "")
         }
 
-    // Ctrl-click hover probe (spec §7.4): compressed ridgeline at the cursor,
+    // Ctrl-click hover probe: compressed ridgeline at the cursor,
     // kept inside the viewport; dismissed by Escape / click / timeout.
     let hoverProbeTooltip (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let posStyle =

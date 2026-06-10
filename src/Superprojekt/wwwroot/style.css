@@ -534,7 +534,7 @@ body.loaded { background: #f4f6f8; }
 
 .pc-reliability { margin-top: 2px; }
 
-/* ── M3C2 probe block (Core 2 slice §7.1–7.3) ─────────────────────── */
+/* ── M3C2 probe block ─────────────────────────────────────────────── */
 .pc-probe { display: flex; flex-direction: column; gap: 4px; }
 .pc-probe-head { display: flex; align-items: baseline; justify-content: space-between; }
 .pc-planarity {

@@ -295,7 +295,7 @@ module View =
                         | None -> ()
                         false
                     | None when e.Ctrl ->
-                        // Ctrl-click = transient hover probe (spec §7.4).
+                        // Ctrl-click = transient hover probe.
                         let screenPx = cursorScreen.Value |> Option.defaultValue V2d.Zero
                         if AVal.force model.FusionMode then
                             async {

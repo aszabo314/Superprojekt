@@ -148,7 +148,7 @@ module GuiPanels =
                     | None -> ())
             }
 
-            // Probe cylinder length (spec §7.5): manual override 1–100 m, or
+            // Probe cylinder length: manual override 1–100 m, or
             // server auto-length (1.1 × union bbox extent along the normal).
             let probeLen =
                 activePin |> AVal.map (fun po ->

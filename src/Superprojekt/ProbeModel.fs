@@ -3,7 +3,7 @@ namespace Superprojekt
 open System
 open Aardvark.Base
 
-// N-mesh M3C2 probe results (see scanpin_core2_slice_spec.md). All lengths in
+// N-mesh M3C2 probe results. All lengths in
 // metric world-space metres; the signed-distance axis is re-centred so 0 = the
 // reference mesh's median. Raw axis samples stay server-side — the client only
 // receives stats + the KDE curve evaluated over XFit.
@@ -59,7 +59,7 @@ type ProbeXRange =
     | ProbeXTen
     | ProbeXFit
 
-// Transient Ctrl-click probe (spec §3.3 / §7.4): one global slot, never
+// Transient Ctrl-click probe: one global slot, never
 // cached, cleared on Escape / click elsewhere / timeout.
 type HoverProbeState = {
     ScreenPos : V2d

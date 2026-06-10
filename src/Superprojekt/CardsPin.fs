@@ -20,8 +20,8 @@ module CardsPin =
     let c4bToHex (c : C4b) =
         sprintf "#%02x%02x%02x" c.R c.G c.B
 
-    // Ridgeline chart (spec §7.2) for a data-ridge JSON attribute. d.mini
-    // renders the compressed hover-probe variant (§7.4): colour squares
+    // Ridgeline chart for a data-ridge JSON attribute. d.mini
+    // renders the compressed hover-probe variant: colour squares
     // instead of labels, no count badges, no click-to-expand detail.
     let ridgelineJs = [
         "  function placeholder(t){ var p = document.createElement('div'); p.className = 'pin-card-empty'; p.textContent = t; el.appendChild(p); }"
@@ -136,7 +136,7 @@ module CardsPin =
         "  }"
     ]
 
-    // Three-source stacked bar (spec §7.3) for a data-srcs = [d,a,c] attribute.
+    // Three-source stacked bar for a data-srcs = [d,a,c] attribute.
     let probeBarJs = [
         "  if(!d || d.length < 3) return;"
         "  var labels = ['Dataset error','Algorithm residual','Local conditioning'];"
@@ -235,7 +235,7 @@ module CardsPin =
                         span { Class "pc-val"; falloffText }
                     }
                 }
-                // M3C2 probe (spec §7.1–7.3): planarity badge, ridgeline,
+                // M3C2 probe: planarity badge, ridgeline,
                 // x-range / lock-order controls, three-source stacked bar.
                 let probe =
                     selectedPin |> AVal.map (function

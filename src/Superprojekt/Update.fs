@@ -448,7 +448,7 @@ module Update =
             | _ -> model
         | CancelRetarget ->
             { model with Retarget = RetargetIdle }
-        // Transient hover probe (spec §7.4): radius = 5% of the scene bbox
+        // Transient hover probe: radius = 5% of the scene bbox
         // diagonal, auto length, declared reference mesh (or active picking
         // layer / first visible). Not cached; superseded by the next
         // Ctrl-click via the CancellationTokenSource.

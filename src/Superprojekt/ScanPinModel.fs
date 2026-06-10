@@ -134,7 +134,7 @@ module ScanPinModel =
         | PlacementIdle -> false
         | _ -> true
 
-    // Probe invalidation (spec §6): identical pins are returned as-is so the
+    // Probe invalidation: identical pins are returned as-is so the
     // adaptive map diff sees no change.
     let invalidateProbes (sp : ScanPinModel) =
         let pins =

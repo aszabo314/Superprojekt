@@ -9,37 +9,6 @@ module Cards =
 
     let shortName = CardsPin.shortName
 
-    let c4bToHex = CardsPin.c4bToHex
-
-    let parseFloat (s : string) =
-        match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-        | true, v -> Some v
-        | _ -> None
-
-    let checkedIf (v : aval<bool>) =
-        v |> AVal.map (fun on -> if on then Some (Attribute("checked", "checked")) else None)
-
-    let niceTicks (lo : float) (hi : float) (targetCount : int) : float[] * float =
-        let range = hi - lo
-        if range <= 1e-12 || targetCount < 1 then [||], 1.0
-        else
-            let rough = range / float targetCount
-            let mag = 10.0 ** floor (log10 rough)
-            let norm = rough / mag
-            let nice =
-                if norm < 1.5 then 1.0
-                elif norm < 3.0 then 2.0
-                elif norm < 7.0 then 5.0
-                else 10.0
-            let step = nice * mag
-            let start = ceil (lo / step) * step
-            let ticks = ResizeArray<float>()
-            let mutable v = start
-            while v <= hi + 0.5 * step do
-                if v >= lo - 1e-9 && v <= hi + 1e-9 then ticks.Add v
-                v <- v + step
-            ticks.ToArray(), step
-
     // Shared chrome for every floating card. A drag is held in a local
     // cval<(cardPos, grabOffset) option>; `pos` is the card's current position
     // (grab offset is computed from it on pointer-down) and `onCommit` gets
@@ -222,7 +191,7 @@ module Cards =
                         button {
                             Class "card-btn-reattach"
                             Attribute("title", "Reattach to pin")
-                            isDetached |> AVal.map (fun d -> if d then None else Some (Style [Display "none"]))
+                            Primitives.showWhen isDetached
                             Dom.OnClick(fun _ -> env.Emit [CardMsg (RedockCard cardId)])
                             "\U0001F4CC"
                         }
@@ -246,8 +215,7 @@ module Cards =
 
                     div {
                         Class "card-body"
-                        isCollapsed |> AVal.map (fun c ->
-                            if c then Some (Style [Display "none"]) else None)
+                        Primitives.showWhenNot isCollapsed
                         CardsPin.pinCardBody env model selectedPin
                     }
                 }

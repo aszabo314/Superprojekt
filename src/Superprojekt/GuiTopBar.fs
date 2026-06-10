@@ -33,8 +33,7 @@ module GuiTopBar =
                 }
                 div {
                     Class "tb-dataset-menu"
-                    (datasetOpen :> aval<_>) |> AVal.map (fun o ->
-                        if o then None else Some (Style [Display "none"]))
+                    showWhen (datasetOpen :> aval<_>)
                     model.Datasets |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun dataset ->
                         let isActive = model.ActiveDataset |> AVal.map (fun a -> a = Some dataset)
                         button {
@@ -120,7 +119,7 @@ module GuiTopBar =
                     }
                     div {
                         Class "tb-gear-popover"
-                        model.GearPopoverOpen |> AVal.map (fun o -> if o then None else Some (Style [Display "none"]))
+                        showWhen model.GearPopoverOpen
                         div {
                             Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Retarget" }

@@ -64,27 +64,26 @@ Elm-style: `Model` → `Update.update` → `View.view` → `Boot.run`.
 The client compiles in this order (`src/Superprojekt/Superprojekt.fsproj`):
 
 ```
-MeshData.fs                          mesh fetch / parse
+MeshData.fs                          mesh fetch / parse, shared HttpClient
 Query.fs                             server query wrappers (Async)
 CameraModel.fs / .g.fs               OrbitState [<ModelType>]
-OrbitTypes.fs / OrbitController.fs   orbit camera
-ScanPinModel.fs / .g.fs              ScanPin types
+OrbitController.fs                   orbit camera + messages
+ScanPinModel.fs / .g.fs              ScanPin + card types
 PinGeometry.fs                       icosphere + footprint geometry
 Model.fs / .g.fs                     application Model [<ModelType>]
 Persistence.fs                       workspace JSON serialise / apply
-Shader.fs                            FlatColor + helpers
-LineShader.fs                        pixel-constant 3D lines
-Primitives.fs                        compact GUI widgets
+LineShader.fs                        flat colour + pixel-constant 3D lines
+Primitives.fs                        compact GUI widgets + shared helpers
 Messages.fs                          Message DU
 CardUpdate.fs / ScanPinUpdate.fs     sub-reducers
-Update.fs                            main reducer
-MeshView.fs                          mesh shader + per-mesh scene nodes
-FusionView.fs                        offscreen MRT fusion pass + composite
+Update.fs                            server actions + main reducer
+MeshShaders.fs                       mesh / fusion / panorama shaders
+MeshView.fs                          per-mesh scene nodes
+FusionView.fs                        offscreen fusion pass + composite
 PanoramaView.fs                      cubemap capture + cylindrical reproject
-ServerActions.fs                     init, loadDataset
 ScanPinScene.fs                      pin sg nodes
 SceneGraph.fs                        scene composition + coordinate cross
-CardsPin.fs / Cards.fs               floating pin diagrams
+CardsPin.fs / Cards.fs               floating pin diagrams + card chrome
 GuiTopBar.fs / GuiPanels.fs          top bar + left panel
 GuiOverlays.fs / GuiCards.fs         overlays + cards
 View.fs                              view function + App module
@@ -97,17 +96,16 @@ The server is much smaller (`src/Superserver/`):
 ```
 MeshLoader.fs                        OBJ parse + centroid file + atlas paths
 MeshCache.fs                         lazy Embree scene + BbTree cache
-MeshAnalysis.fs                      cylinder evaluation, patch sampling
+MeshAnalysis.fs                      isoline / ridge tracing, patch sampling
 MeshIcp.fs                           ICP solver
-QueryHandlers.fs                     per-mesh HTTP handlers
-BatchHandlers.fs                     multi-mesh HTTP handlers
+QueryHandlers.fs                     HTTP query handlers
 Handlers.fs                          routing
 Program.fs                           ASP.NET startup
 ```
 
 ## Render pipeline
 
-**Default path: one forward pass into the main framebuffer.** The mesh shader (`MeshView.MeshShader.shade`) is the only thing that writes depth per fragment:
+**Default path: one forward pass into the main framebuffer.** The mesh shader (`MeshShaders.fs`) is the only thing that writes depth per fragment:
 
 - Per-fragment α = `lerp(GhostOpacity, 1, mask)` with `mask = lassoComponent * blobComponent` — conjunctive: both filters must agree. Inactive meshes get `GhostOpacity` everywhere.
 - Lasso component is 1 inside the half-space polytope, 0 outside (or 1 if no lasso).
@@ -134,13 +132,6 @@ Costly queries scale with mesh count × angular density. Rules learned the hard 
 - **Embree `Scene.Intersect` is thread-safe** — outer loops use `Parallel.For` with per-thread `ResizeArray` hit buffers.
 - **Debounce user-driven triggers** with a `CancellationTokenSource` so only the final drag position hits the server.
 - **Mesh caches are warmed at dataset load** by the bbox handler.
-
-## TODOs / known gaps
-
-- The registration card's Run button is disabled (todo) — the ICP solve pipeline is wired end-to-end but gated off until the registration feature ships.
-- Workspace save / load is a JSON download / upload through the browser; there is no server-side store, so state is otherwise in-memory per session.
-- The panorama is a floating panel, not a docked split, and its viewpoints are synthetic (no dataset ships real imagery + poses). Photo/Render only differ once meshes are registered or hidden.
-- The mesh shader's `[<Depth>] depth : float32` output writes `gl_FragDepth = gl_FragCoord.z` for opaque fragments; this is a no-op on paper but the surrounding stack only behaves correctly *because* it's explicitly written. Don't simplify it back to standard depth.
 
 ## Style
 

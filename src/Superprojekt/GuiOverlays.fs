@@ -23,11 +23,8 @@ module GuiOverlays =
                 | None -> "")
         }
 
-    // Surface-probe readout for error provenance. Visible only when the
-    // ProvenanceHeatmap toggle is on and the cursor is on a surface. Reuses
-    // Provenance.sourcesAt — the same routine that paints the per-pin card
-    // and the global heatmap — so the three numbers and the stacked bar
-    // agree with what the user sees in the viewport.
+    // Provenance probe under the cursor; reuses Provenance.sourcesAt so the
+    // numbers agree with the heatmap.
     let provenanceHoverOverlay
             (model : AdaptiveModel)
             (hoverWorld : aval<V3d option>)
@@ -90,41 +87,15 @@ module GuiOverlays =
             div {
                 Class "pc-bar prov-hover-bar"
                 barAttr
-                OnBoot [
-                    "(function(){"
-                    "var el = __THIS__;"
-                    "var last = '';"
-                    "function render(){"
-                    "  var raw = el.getAttribute('data-prov') || '[]';"
-                    "  if(raw === last) return; last = raw;"
-                    "  try { var arr = JSON.parse(raw); } catch(e) { return; }"
-                    "  el.innerHTML = '';"
-                    "  if(!arr || arr.length < 3) return;"
-                    "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
-                    "  arr.forEach(function(p, i){"
-                    "    var d = document.createElement('div');"
-                    "    d.style.width = p + '%';"
-                    "    d.style.background = colours[i];"
-                    "    d.style.height = '100%';"
-                    "    el.appendChild(d);"
-                    "  });"
-                    "}"
-                    "render();"
-                    "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-prov']});"
-                    "})();"
-                ]
+                Primitives.observedRender "data-prov" "[]" Primitives.provBarJs
             }
             div { Class "prov-hover-nums"; nums }
         }
 
-    // Shown while fusion mode is on but no registration has run yet — fusing
-    // unaligned meshes is meaningless, so the fusion pass shows the reference
-    // mesh alone and this banner tells the user to register.
     let fusionNotice (model : AdaptiveModel) =
         div {
             Class "fusion-notice"
-            (model.FusionMode, model.MeshTransforms) ||> AVal.map2 (fun f m ->
-                if f && Map.isEmpty m then None else Some (Style [Display "none"]))
+            Primitives.showWhen ((model.FusionMode, model.MeshTransforms) ||> AVal.map2 (fun f m -> f && Map.isEmpty m))
             "◈ Fusion shows the reference mesh until you register. Run a registration to fuse the visible meshes by lowest error."
         }
 
@@ -146,22 +117,13 @@ module GuiOverlays =
         div {
             Class "lasso-overlay"
             stateJson |> AVal.map (fun j -> Some (Attribute("data-lasso", j)))
-            OnBoot [
-                "(function(){"
-                "var el = __THIS__;"
-                "var last = '';"
-                "var ns = 'http://www.w3.org/2000/svg';"
-                "function poly(points, attrs){"
-                "  var p = document.createElementNS(ns, 'polyline');"
-                "  p.setAttribute('points', points.map(function(pt){return pt[0]+','+pt[1];}).join(' '));"
-                "  for(var k in attrs) p.setAttribute(k, attrs[k]);"
-                "  return p;"
-                "}"
-                "function render(){"
-                "  var raw = el.getAttribute('data-lasso') || '{}';"
-                "  if(raw === last) return; last = raw;"
-                "  try { var d = JSON.parse(raw); } catch(e) { return; }"
-                "  el.innerHTML = '';"
+            Primitives.observedRender "data-lasso" "{}" [
+                "  function poly(points, attrs){"
+                "    var p = document.createElementNS(ns, 'polyline');"
+                "    p.setAttribute('points', points.map(function(pt){return pt[0]+','+pt[1];}).join(' '));"
+                "    for(var k in attrs) p.setAttribute(k, attrs[k]);"
+                "    return p;"
+                "  }"
                 "  var svg = document.createElementNS(ns, 'svg');"
                 "  svg.setAttribute('class','lasso-svg');"
                 "  var rect = el.getBoundingClientRect();"
@@ -178,19 +140,15 @@ module GuiOverlays =
                 "      svg.appendChild(c);"
                 "    });"
                 "    if(d.c && d.c.length > 0){"
-                "      var last = d.d[d.d.length-1];"
+                "      var lastPt = d.d[d.d.length-1];"
                 "      var line = document.createElementNS(ns, 'line');"
-                "      line.setAttribute('x1', last[0]); line.setAttribute('y1', last[1]);"
+                "      line.setAttribute('x1', lastPt[0]); line.setAttribute('y1', lastPt[1]);"
                 "      line.setAttribute('x2', d.c[0][0]); line.setAttribute('y2', d.c[0][1]);"
                 "      line.setAttribute('stroke','#0f172a'); line.setAttribute('stroke-width','1');"
                 "      line.setAttribute('stroke-dasharray','4,4');"
                 "      svg.appendChild(line);"
                 "    }"
                 "  }"
-                "}"
-                "render();"
-                "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-lasso']});"
-                "})();"
             ]
         }
 
@@ -267,22 +225,13 @@ module GuiOverlays =
         div {
             Class "orient-indicator"
             axisJson |> AVal.map (fun json -> Some (Attribute("data-axes", json)))
-            OnBoot [
-                "(function(){"
-                "var el = __THIS__;"
-                "var last = '';"
-                "var ns = 'http://www.w3.org/2000/svg';"
-                "var W = 60, H = 60, L = 22, cx = W/2, cy = H/2;"
-                "function render() {"
-                "  var raw = el.getAttribute('data-axes') || '[]';"
-                "  if(raw === last) return; last = raw;"
-                "  try { var arr = JSON.parse(raw); } catch(e) { return; }"
-                "  el.innerHTML = '';"
+            Primitives.observedRender "data-axes" "[]" [
+                "  var W = 60, H = 60, L = 22, cx = W/2, cy = H/2;"
                 "  var svg = document.createElementNS(ns, 'svg');"
                 "  svg.setAttribute('width', W); svg.setAttribute('height', H);"
                 "  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);"
-                "  arr.sort(function(a,b){return a.z - b.z;});"
-                "  arr.forEach(function(a){"
+                "  d.sort(function(a,b){return a.z - b.z;});"
+                "  d.forEach(function(a){"
                 "    var ex = cx + a.x * L, ey = cy - a.y * L;"
                 "    var ln = document.createElementNS(ns, 'line');"
                 "    ln.setAttribute('x1', cx); ln.setAttribute('y1', cy);"
@@ -303,18 +252,13 @@ module GuiOverlays =
                 "    }"
                 "  });"
                 "  el.appendChild(svg);"
-                "}"
-                "render();"
-                "new MutationObserver(render).observe(el, {attributes:true,attributeFilter:['data-axes']});"
-                "})();"
             ]
         }
 
     let fullscreenInfo (model : AdaptiveModel) =
         div {
             Class "fullscreen-info"
-            model.FullscreenOn |> AVal.map (fun on ->
-                if not on then Some (Style [Display "none"]) else None)
+            Primitives.showWhen model.FullscreenOn
             model.ActiveDataset |> AVal.map (fun ds ->
                 match ds with
                 | Some d -> div { Class "fullscreen-info-title"; d }

@@ -29,7 +29,7 @@ The default path is **one forward pass** into the main framebuffer (meshes → p
     DepthTest.None — always on top.
 ```
 
-### Mesh shader (`MeshView.MeshShader.shade`)
+### Mesh shader (`MeshShaders.fs`, `MeshShader.shade`)
 
 Inputs (custom record):
 - `[<Color>] c : V4f` (from `DefaultSurfaces.diffuseTexture`)
@@ -53,7 +53,7 @@ Every mesh fragment ends up in exactly one of three states: **opaque** (α = 1),
 
 Consequences the rest of the stack relies on:
 
-- **α-gated depth**: fragments with `α ≥ 0.99` write their natural window-space depth (`v.fc.Z`); everything else writes `1.0` (far plane) so ghost/falloff fragments never occlude and never produce pixel-picks. A `fullySolid` clamp pins non-hard-core fragments below the threshold so the depth-write branch can't flip mid-falloff (would create an occlusion ring).
+- **α-gated depth**: fragments with `α ≥ 0.99` write their natural window-space depth (`v.fc.Z`); everything else writes `1.0` (far plane) so ghost/falloff fragments never occlude and never produce pixel-picks. A `fullySolid` clamp pins non-hard-core fragments below the threshold so the depth-write branch can't flip mid-falloff (would create an occlusion ring). The explicit `gl_FragDepth = gl_FragCoord.z` write looks like a no-op but the stack only behaves correctly because of it — don't simplify it away.
 - **Ghost colour is uniform**: fragments at ghost level always use the solid per-mesh palette colour, regardless of `RenderingMode`, so the silhouette reads as one shape.
 - The provenance heatmap only paints **above-ghost** fragments; `FalloffZoneOnly` further restricts it to fragments inside at least one pin's falloff zone. The blob uniform arrays stay uploaded even when "Isolate pins" is off, because the conditioning term loops over them.
 
@@ -104,9 +104,9 @@ For scene graph nodes (`Sg.Text`, `sg { ... }`), this matters even more: rebuild
 
 ## Server query performance
 
-Costly spatial queries (`ray-batch`, `isoline`, `curvature-ridge`, `icp`) scale with mesh count and sample density. Rules of thumb:
+Costly spatial queries (`isoline`, `curvature-ridge`, `icp`) scale with mesh count and sample density. Rules of thumb:
 
-- **Never issue per-mesh requests in a `for` loop.** Use the batched endpoints; the server fans out with `Parallel.For`. One HTTP roundtrip with N-way server parallelism beats N sequential roundtrips by an order of magnitude even on localhost.
+- **Never issue per-mesh requests sequentially.** Use `Query.rayHitMany` (parallel fan-out) for multi-mesh raycasts; if a multi-mesh operation becomes hot, add a batched server endpoint with `Parallel.For` fan-out instead.
 - **Parallelise the heavy inner loop server-side** when inputs are independent. Embree `Scene.Intersect` is thread-safe.
 - **Cap density rather than grow linearly.** Bound point counts with `maxPoints` / sample strides; don't let resolution scale unbounded with region size.
 - **Keep heavy post-processing off the Elm update thread.** Union-find over band caches, ICP residuals, etc. run in the background task that issued the query; only the final result message crosses into the update loop.
@@ -116,28 +116,26 @@ Costly spatial queries (`ray-batch`, `isoline`, `curvature-ridge`, `icp`) scale 
 ## Client compile order (`Superprojekt.fsproj`)
 
 ```
-MeshData.fs
-Query.fs
-CameraModel.fs / .g.fs
-OrbitTypes.fs
-OrbitController.fs
-ScanPinModel.fs / .g.fs
-PinGeometry.fs
-Model.fs / .g.fs                ← [<ModelType>], Adaptify-generated .g.fs
+MeshData.fs                     ← mesh fetch/parse, ApiConfig, shared Http.client
+Query.fs                        ← server query wrappers (Async), rayHitMany fan-out
+CameraModel.fs / .g.fs          ← OrbitState [<ModelType>]
+OrbitController.fs              ← OrbitMessage DU + orbit camera
+ScanPinModel.fs / .g.fs         ← ScanPin + Card types
+PinGeometry.fs                  ← icosphere, sphere outline, patch footprint
+Model.fs / .g.fs                ← [<ModelType>] Model + DatasetScale helpers
 Persistence.fs                  ← workspace JSON serialise / apply
-Shader.fs                       ← Shader.flatColor + helpers
-LineShader.fs                   ← Lines.render (pixel-constant 3D lines)
-Primitives.fs                   ← compactToggle, inlineSlider, compactButtonBar, etc.
+LineShader.fs                   ← Shader.flatColor + Lines (pixel-constant 3D lines)
+Primitives.fs                   ← widgets, showWhen/showWhenNot, observedRender, provBarJs
 Messages.fs                     ← Message DU
 CardUpdate.fs / ScanPinUpdate.fs
-Update.fs                       ← main reducer
-MeshView.fs                     ← LoadedMesh, MeshShader.shade, buildScene, buildFusionNode, buildPanoramaNode
-FusionView.fs                   ← offscreen MRT fusion pass + fullscreen composite
+Update.fs                       ← ServerActions (init/loadDataset) + main reducer
+MeshShaders.fs                  ← RenderPass + MeshShader / FusionShader / PanoramaShader
+MeshView.fs                     ← LoadedMesh, visibleMeshNames, buildScene/buildFusionNode/buildPanoramaNode
+FusionView.fs                   ← offscreen fusion pass + fullscreen composite
 PanoramaView.fs                 ← offscreen cubemap capture + cylindrical reproject
-ServerActions.fs                ← init + loadDataset (datasets list + centroids + bboxes)
 ScanPinScene.fs                 ← pin sg nodes
 SceneGraph.fs                   ← composes meshScene + pinScene + cross + labels
-CardsPin.fs / Cards.fs
+CardsPin.fs / Cards.fs          ← pin card body; shared card chrome (cardDragHandle/cardPos/cardStyle)
 GuiTopBar.fs / GuiPanels.fs / GuiOverlays.fs / GuiCards.fs
 View.fs                         ← App module wires Boot.run
 ShaderCache.fs / Program.fs
@@ -152,8 +150,7 @@ MeshLoader.fs          OBJ parse, centroid file, atlas paths
 MeshCache.fs           Embree scene + BbTree cache (lazy, permanent)
 MeshAnalysis.fs        isoline + curvature-ridge tracing, patch sampling
 MeshIcp.fs             ICP solver
-QueryHandlers.fs       per-mesh HTTP handlers
-BatchHandlers.fs       multi-mesh HTTP handlers (Parallel.For fan-out)
+QueryHandlers.fs       HTTP query handlers
 Handlers.fs            routing
 Program.fs             ASP.NET startup
 ```
@@ -170,8 +167,6 @@ GET  /api/datasets/{dataset}/mesh/{name}/{i}    → binary mesh
 GET  /api/datasets/{dataset}/mesh/{name}/{i}/atlas → JPEG
 POST /api/query/ray                             → { hit, t, point, triangleId }   Name = "dataset/mesh"
 POST /api/query/closest                         → { found, point, distanceSquared, triangleId }
-POST /api/query/ray-batch                       → binary closest-hit per ray across N meshes
-POST /api/query/grid-eval                       → per-cell stats inside a prism region
 POST /api/query/isoline                         → polyline at a given elevation
 POST /api/query/curvature-ridge                 → polyline along a curvature ridge
 POST /api/query/patch                           → tangent + normal at a point, plus neighbour sample
@@ -180,7 +175,7 @@ POST /api/query/icp                             → ICP transform + convergence 
 
 All query coordinates are **absolute world space**. The server converts: `localPos = V3f(worldPos - meshCentroid)`.
 
-The sphere / box / sphere-batch endpoints used by the old per-vertex filter feature were removed along with the `Filtered` model field — don't re-add them without a clear consumer.
+Removed for lack of consumers (don't re-add without one): sphere / box / sphere-batch (old per-vertex filter), ray-batch, grid-eval. Multi-mesh raycasts go through `Query.rayHitMany` (client-side `Async.Parallel` over `/query/ray`).
 
 ## Client Model snapshot
 
@@ -220,22 +215,14 @@ Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc
 
 ## Registration
 
-Two solve modes, both served by `POST /api/query/icp` (`MeshIcp.runIcp` — Gauss-Newton point-to-surface ICP, Embree closest-point correspondences):
+Two solve modes, both served by `POST /api/query/icp` (`MeshIcp.runIcp` — Gauss-Newton point-to-surface ICP, Embree closest-point correspondences): **Traditional** (no anchors) and **Region-restricted** (committed pins become Gaussian anchor weights — centre, sigma = FalloffRadius, multiplier = Point `ReliabilityWeight`; `RegionEps` 0.05 gates samples). The card's Run button is disabled; the solve pipeline (`RunRegistration` → `Query.runIcp` → `MeshTransforms` + per-mesh RMS → provenance overlay) is fully wired and verified. The lasso never affects registration — it is purely visual. There is no point-pair solver; don't re-add that mode without a server implementation.
 
-- **Traditional ICP** — no anchors, uniform weights.
-- **Region-restricted ICP** — committed pins become Gaussian anchor weights (`centre = pin.Centre`, `sigma = FalloffRadius`, multiplier = Point payload `ReliabilityWeight`); samples whose total weight falls below `RegionEps` (0.05) are excluded from the solve.
+## Notes
 
-A third "point-pair correspondence" mode existed as a client-side stub (no server implementation, no-op button) and was **removed** — re-add it only together with a real server solver. The **Run button in the registration card is disabled** (`▶ Run (todo)`): the solve pipeline (`RunRegistration` → `Query.runIcp` → `RegistrationComplete` → `MeshTransforms` + per-mesh RMS into `MeshAlgorithmResidual`) is fully wired and the server solver is verified, but the UI is gated off until the registration feature ships. Residual *visualisation* (histogram + stats, `Registration.LastResiduals`) was removed — only the per-mesh RMS that feeds the provenance overlay is kept. The lasso never affects registration — it is purely a visual cut-away (by design, not a TODO).
-
-## Open TODOs
-
-- **Registration UI is gated off** — the Run button is disabled until the upcoming registration feature lands (see Registration above).
-- **Panorama is a floating panel, not a docked split** (user's call), and viewpoints are synthetic — no dataset ships real imagery + poses, so one pose is generated per dataset on load. `PanoramaView.fs` captures the meshes into a colour cubemap from the pose (six 90° faces via the fusion `CompileRender` path) and reprojects cylindrically; two cubes (reference vs live state) feed Photo/Render/Blend. Click-to-place raycasts the pose ray server-side; markers are a forward projection of pins into cylindrical space. **All panorama shaders are float32-only** — WebGL2 has no double, and `dotnet build` / `fshadeaot` do NOT catch `double` GLSL (only the in-browser compile does). If real imagery + poses arrive, swap the synthetic pose generation in `Update.fs` (`SceneBoundsLoaded`) and add a Photo texture source.
-- **Workspace persistence is download / upload only** (`Persistence.fs`): JSON round-trips through the browser via the gear-popover Save / Load. There is no server-side store, so state is otherwise in-memory per session. Panoramas are not persisted (regenerated on load).
-- **Fusion picking is CPU-raycast**, not GPU winner-id readback — a per-tap server raycast over all visible meshes that keeps the lowest-error hit (identical winner). Revisit only if it gets slow.
-- **No real cut-plane mesh intersection rendering** in the pin diagram yet. The flyout sketches the prism/blob cross-section but it is not driven by a server intersection query.
-
-Not TODOs (accepted as-is): lasso does not scope registration (visual-only by design); the patch card's 2D↔3D hover coupling stays as it is. **Explore mode was removed entirely** (model, messages, card, top-bar button, CSS) — don't resurrect it from old branches.
+- **Panorama viewpoints are synthetic** — one pose per dataset at the scene-bbox centre (`Update.fs`, `SceneBoundsLoaded`); the panel renders live cubemap captures reprojected cylindrically. If real imagery + poses arrive, swap the pose generation and add a Photo texture source.
+- **Workspace persistence is a JSON download / upload** through the browser (`Persistence.fs`); no server-side store. Panoramas are not persisted.
+- **Fusion picking is a CPU raycast** over visible meshes keeping the lowest-error hit (matches the depth-test winner).
+- **Removed features — don't resurrect from old branches**: Explore mode, point-pair registration, residual histogram, per-vertex filter endpoints.
 
 ## Aardvark.Dom gotchas
 
@@ -258,8 +245,8 @@ Not TODOs (accepted as-is): lasso does not scope registration (visual-only by de
 
 - Light theme, `'Segoe UI'`/`'Inter'`, accent `#1a56db`.
 - Body bg `#f4f6f8`, panel bg `#ffffff`, text `#0f172a`.
-- Render canvas (`.render-control`): `linear-gradient(to top, #d0dce8, #eaf1f8)`.
-- All styles in `wwwroot/style.css`; no inline styles except model-dependent ones (e.g. cursor).
+- All styles in `wwwroot/style.css`; no inline styles except model-dependent ones (positions, data-driven colours, cursor).
+- Conditional visibility uses `Primitives.showWhen` / `showWhenNot` → `.hidden` class (`display: none !important`), not inline display styles.
 - `.btn-active`: darker blue with inset shadow for toggle buttons.
 
 ## fsproj notes

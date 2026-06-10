@@ -84,13 +84,8 @@ module PayloadType =
                 NormalWorld     = V3d.OOI
             }
 
-// All ScanPin geometry is METRIC (world-space):
-//   • Centre        : V3d  — anchor point in absolute world coordinates (metres)
-//   • InnerRadius   : float — hard-truth core; α = 1 and full evaluation weight inside (metres)
-//   • FalloffRadius : float — exponential decay beyond InnerRadius; α/weight → 0 by FalloffRadius (metres)
-// InnerRadius and FalloffRadius are independent; changing one (or the global
-// GhostOpacity) must not move the other. Render-space conversions happen at
-// pipeline boundaries via ((wp - centroid) * datasetScale).
+// All ScanPin geometry is metric world-space; InnerRadius and FalloffRadius
+// are independent. Render-space conversion happens at pipeline boundaries.
 type ScanPin = {
     Id                   : ScanPinId
     Phase                : PinPhase

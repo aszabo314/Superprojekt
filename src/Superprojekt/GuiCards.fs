@@ -16,11 +16,6 @@ module GuiCards =
         let committed = model.LassoVolume  |> AVal.map Option.isSome
         let enabled   = model.LassoEnabled
         let visible   = (drawing, committed) ||> AVal.map2 (||)
-        // Show only when this button's predicate is true.
-        let showWhen (a : aval<bool>) =
-            a |> AVal.map (fun on -> if on then None else Some (Style [Display "none"]))
-        let showWhenNot (a : aval<bool>) =
-            a |> AVal.map (fun on -> if on then Some (Style [Display "none"]) else None)
         div {
             Class "card lasso-card"
             Cards.cardStyle visible pos
@@ -140,18 +135,16 @@ module GuiCards =
             }
         }
 
-    // Panorama panel. The card chrome is always mounted (hidden when closed);
-    // the nested renderControl — which drives the expensive cube capture — is
-    // mounted only while open, via an alist gated on PanoramaOpen, so it
-    // allocates and renders nothing when the panel is hidden.
+    // The nested renderControl (expensive cube capture) is mounted only while
+    // the panel is open, via an alist gated on PanoramaOpen.
     let panoramaCard (env : Env<Message>) (model : AdaptiveModel) =
         let dragState : cval<(V2d * V2d) option> = cval None
         let committedPos = cval (V2d(360.0, 80.0))
         let pos = Cards.cardPos (committedPos :> aval<_>) dragState
         let mode = model.PanoramaMode
 
-        // Selected panorama pose (world eye + yaw), matching PanoramaView's
-        // fallback so markers and click-to-place agree with what is rendered.
+        // Pose must match PanoramaView's fallback so markers and click-to-place
+        // agree with what is rendered.
         let poseW =
             (model.Panoramas, model.SelectedPanorama, model.SceneBounds)
             |||> AVal.map3 (fun ps i sb ->
@@ -172,10 +165,8 @@ module GuiCards =
                 let! size = RenderControl.ViewportSize
                 Sg.View (AVal.constant Trafo3d.Identity)
                 Sg.Proj (AVal.constant Trafo3d.Identity)
-                // Click-to-place: in anchor-placement mode, turn the click into a
-                // world ray through the cylindrical pose and raycast every
-                // visible mesh server-side; the nearest hit becomes the anchor
-                // (and its mesh the active layer / host).
+                // Click-to-place: ray through the cylindrical pose, nearest
+                // server-side hit becomes the anchor.
                 Dom.OnPointerDown(fun e ->
                     if e.Button = Button.Left then
                         match AVal.force model.ScanPins.Placement with
@@ -188,27 +179,17 @@ module GuiCards =
                                 let eyeW, yaw = AVal.force poseW
                                 let phi = yaw + ndcX * Constant.Pi
                                 let dirW = V3d(cos phi, sin phi, ndcY * vScale).Normalized
-                                let visible = AVal.force model.MeshVisible
-                                let names =
-                                    model.MeshNames |> AList.toAVal |> AVal.force |> IndexList.toList
-                                    |> List.filter (fun n -> Map.tryFind n visible |> Option.defaultValue true)
+                                let names = MeshView.visibleMeshNames model
                                 if not (List.isEmpty names) then
                                     async {
-                                        let! hits =
-                                            names
-                                            |> List.map (fun name ->
-                                                async {
-                                                    let! h = Query.rayHit ApiConfig.apiBase.Value name 0 eyeW dirW
-                                                    return h |> Option.map (fun hit -> hit.t, hit.point, name)
-                                                })
-                                            |> Async.Parallel
+                                        let! hits = Query.rayHitMany ApiConfig.apiBase.Value names (fun _ -> eyeW, dirW)
                                         let best =
                                             hits |> Array.choose id
-                                            |> Array.sortBy (fun (t, _, _) -> t)
+                                            |> Array.sortBy (fun (_, h) -> h.t)
                                             |> Array.tryHead
                                         match best with
-                                        | Some (_, pt, name) ->
-                                            env.Emit [SetActivePickingLayer (Some name); ScanPinMsg (PlaceAnchor pt)]
+                                        | Some (name, h) ->
+                                            env.Emit [SetActivePickingLayer (Some name); ScanPinMsg (PlaceAnchor h.point)]
                                         | None -> ()
                                     } |> Async.Start
                         | _ -> ())
@@ -219,9 +200,7 @@ module GuiCards =
             |> AVal.map (fun o -> if o then IndexList.single rc else IndexList.empty)
             |> AList.ofAVal
 
-        // Committed pins projected into cylindrical panorama space as overlay
-        // markers (percentage-positioned, so resolution-independent). Only pins
-        // inside the panel's FOV are emitted.
+        // Committed pins projected into cylindrical space as overlay markers.
         let markers =
             (model.ScanPins.Pins |> AMap.toAVal, poseW) ||> AVal.map2 (fun pins (eyeW, yaw) ->
                 pins
@@ -272,7 +251,7 @@ module GuiCards =
                 }
                 div {
                     Class "pano-blend-row"
-                    mode |> AVal.map (fun m -> if m = PanoBlend then None else Some (Style [Display "none"]))
+                    showWhen (mode |> AVal.map ((=) PanoBlend))
                     inlineSlider "Blend" 0.0 1.0 0.01 (sprintf "%.2f") model.PanoramaBlend (fun v ->
                         env.Emit [SetPanoramaBlend v])
                 }
@@ -329,9 +308,7 @@ module GuiCards =
                 | _ -> "")
         div {
             Class "card retarget-card"
-            model.Retarget |> AVal.map (function
-                | RetargetIdle -> Some (Style [Display "none"])
-                | _ -> None)
+            showWhen (model.Retarget |> AVal.map (function RetargetIdle -> false | _ -> true))
             div {
                 Class "card-titlebar"
                 span { Class "card-title"; title }
@@ -386,9 +363,7 @@ module GuiCards =
                 }
                 div {
                     Class "retarget-commit-row"
-                    model.Retarget |> AVal.map (function
-                        | RetargetReviewing _ -> None
-                        | _ -> Some (Style [Display "none"]))
+                    showWhen (model.Retarget |> AVal.map (function RetargetReviewing _ -> true | _ -> false))
                     button {
                         Class "lp-commit"
                         Attribute("title", "Apply accepted projections")

@@ -11,6 +11,15 @@ type RenderingMode =
     | Shaded
     | SlopeColor
 
+module DatasetScale =
+    let forMesh (scales : Map<string, float>) (meshName : string) =
+        let i = meshName.IndexOf '/'
+        let ds = if i >= 0 then meshName.[.. i - 1] else meshName
+        Map.tryFind ds scales |> Option.defaultValue 1.0
+
+    let active (activeDataset : string option) (scales : Map<string, float>) =
+        activeDataset |> Option.bind (fun d -> Map.tryFind d scales) |> Option.defaultValue 1.0
+
 type MeshSoloState =
     | NoSolo
     | Solo of name:string * restore:Map<string,bool>

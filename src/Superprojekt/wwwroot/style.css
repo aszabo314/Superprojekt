@@ -61,8 +61,10 @@ body.loaded { background: #f4f6f8; }
 .render-control {
     width: 100%;
     height: 100%;
-    background: linear-gradient(to top, #d0dce8, #eaf1f8);
+    background: rgb(244, 246, 248);
 }
+
+.hidden { display: none !important; }
 
 /* ── Top bar ────────────────────────────────────────────────────────── */
 
@@ -331,67 +333,6 @@ body.loaded { background: #f4f6f8; }
 .cs-tri { color: #64748b; width: 14px; text-align: center; font-size: 10px; }
 .cs-body { padding: 3px 2px 3px 14px; display: flex; flex-direction: column; gap: 3px; }
 
-/* ── Primitives: InlineRangeSlider ─────────────────────────────────── */
-
-.irs {
-    display: flex; align-items: center; gap: 6px;
-    padding: 1px 2px;
-    font-size: 11px;
-    line-height: 18px;
-}
-.irs-label {
-    color: #475569; min-width: 12px; flex-shrink: 0;
-    font-weight: 600;
-}
-.irs-tracks { position: relative; flex: 1; height: 14px; min-width: 0; }
-.irs-track-line {
-    position: absolute; left: 6px; right: 6px; top: 6px;
-    height: 2px; background: #cbd5e1; border-radius: 1px;
-    pointer-events: none;
-}
-.irs-range {
-    position: absolute; left: 0; right: 0; top: 0;
-    width: 100%; height: 14px;
-    -webkit-appearance: none; appearance: none;
-    background: transparent;
-    pointer-events: none;
-    accent-color: #1a56db;
-}
-.irs-range::-webkit-slider-runnable-track {
-    -webkit-appearance: none;
-    height: 14px; background: transparent; border: none;
-}
-.irs-range::-moz-range-track {
-    height: 14px; background: transparent; border: none;
-}
-.irs-range::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    pointer-events: auto;
-    width: 12px; height: 12px; margin-top: 1px;
-    border-radius: 50%;
-    background: #1a56db;
-    border: 2px solid #ffffff;
-    box-shadow: 0 0 0 1px #1a56db;
-    cursor: pointer;
-}
-.irs-range::-moz-range-thumb {
-    pointer-events: auto;
-    width: 12px; height: 12px;
-    border-radius: 50%;
-    background: #1a56db;
-    border: 2px solid #ffffff;
-    box-shadow: 0 0 0 1px #1a56db;
-    cursor: pointer;
-}
-.irs-min { z-index: 1; }
-.irs-max { z-index: 2; }
-.irs-readout {
-    font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 10px; color: #475569;
-    min-width: 72px; text-align: right;
-    flex-shrink: 0;
-}
-
 /* ── Placement flyout (separate from left panel) ────────────────────── */
 
 .placement-flyout {
@@ -430,7 +371,6 @@ body.loaded { background: #f4f6f8; }
 /* ── Vis techniques ────────────────────────────────────────────────── */
 
 .lp-vis-body { display: flex; flex-direction: column; gap: 2px; }
-.lp-clip-body { display: flex; flex-direction: column; gap: 2px; }
 
 /* ── Top bar: right-side cluster, coord, gear flyout ─────────────── */
 
@@ -569,7 +509,6 @@ body.loaded { background: #f4f6f8; }
     display: flex; height: 8px;
     border: 1px solid #c5cdd8; border-radius: 2px; overflow: hidden;
 }
-.pc-bar-seg { height: 100%; }
 .pc-bar-dataset { background: #60a5fa; }
 .pc-bar-algorithm { background: #f59e0b; }
 .pc-bar-conditioning { background: #a78bfa; }
@@ -652,12 +591,6 @@ body.loaded { background: #f4f6f8; }
     font-family: 'SF Mono', 'Monaco', monospace;
 }
 .lp-mesh-btn:hover { background: #e2e8f0; }
-
-/* V6 §D.13 Persistence row in the gear popover */
-.tb-gear-persist {
-    display: flex; gap: 6px; align-items: center;
-}
-.persistence-bridge { display: none !important; }
 
 /* V6 §D.9 Error provenance */
 .pc-bar { display: flex; height: 8px;
@@ -819,24 +752,6 @@ body.loaded { background: #f4f6f8; }
     font-size: 10px; color: #64748b; margin: 2px 0;
     line-height: 1.3;
 }
-
-/* ── Ranking (existing) ───────────────────────────────────────────── */
-
-.rank-section { margin-top: 10px; padding-top: 8px; border-top: 1px solid #e2e8f0; }
-.rank-controls { display: flex; align-items: center; gap: 12px; font-size: 11px; color: #475569; margin-bottom: 6px; }
-.rank-controls label { display: flex; align-items: center; gap: 4px; cursor: pointer; }
-.rank-list { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto; }
-.rank-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; background: #f8fafc; border-radius: 3px; font-size: 11px; }
-.rank-row.hidden { opacity: 0.35; }
-.rank-row.out-of-topk { background: #eef2f6; opacity: 0.55; }
-.rank-badge { flex: 0 0 22px; font-family: monospace; color: #1a56db; font-weight: 600; }
-.rank-row.out-of-topk .rank-badge { color: #94a3b8; }
-.rank-row.hidden .rank-badge { color: #cbd5e1; }
-.rank-name { font-family: monospace; color: #0f172a; flex: 1 1 auto; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rank-variance { flex: 0 0 56px; font-family: monospace; color: #475569; text-align: right; }
-.rank-buttons { display: flex; gap: 2px; flex: 0 0 auto; }
-.rank-buttons button { padding: 1px 5px; font-size: 10px; background: #e2e8f0; color: #334155; border: none; border-radius: 2px; cursor: pointer; }
-.rank-buttons button:hover { background: #cbd5e1; }
 
 /* ── Fullscreen info ──────────────────────────────────────────────── */
 

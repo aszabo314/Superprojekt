@@ -15,12 +15,6 @@ type RayRequest     = { Name: string; Index: int; Origin: float[]; Direction: fl
 type ClosestRequest = { Name: string; Index: int; Point: float[] }
 
 [<CLIMutable>]
-type RayBatchRequest = { Names: string[]; Origins: float[]; Directions: float[] }
-
-[<CLIMutable>]
-type GridEvalRequest = { Dataset: string; Anchor: float[]; Axis: float[]; Radius: float; Resolution: int; ExtentForward: float; ExtentBackward: float }
-
-[<CLIMutable>]
 type IsolineRequest = { Name: string; Elevation: float; Seed: float[]; MaxPoints: int }
 
 [<CLIMutable>]
@@ -50,12 +44,15 @@ let splitName (fullName : string) =
     if parts.Length = 2 then parts.[0], parts.[1]
     else "", fullName
 
+let loadMesh (fullName : string) (index : int) =
+    let dataset, name = splitName fullName
+    MeshCache.get dataset name index
+
 let rayHandler : HttpHandler =
     fun next ctx -> task {
         try
             let! req = ctx.BindJsonAsync<RayRequest>()
-            let dataset, name = splitName req.Name
-            let lm   = MeshCache.get dataset name req.Index
+            let lm   = loadMesh req.Name req.Index
             let c    = lm.parsed.centroid
             let orig = V3f(toV3d req.Origin - c)
             let dir  = V3f(toV3d req.Direction)
@@ -73,8 +70,7 @@ let closestHandler : HttpHandler =
     fun next ctx -> task {
         try
             let! req = ctx.BindJsonAsync<ClosestRequest>()
-            let dataset, name = splitName req.Name
-            let lm   = MeshCache.get dataset name req.Index
+            let lm   = loadMesh req.Name req.Index
             let c    = lm.parsed.centroid
             let res  = lm.scene.GetClosestPoint(V3f(toV3d req.Point - c))
             if res.IsValid then
@@ -90,8 +86,7 @@ let isolineHandler : HttpHandler =
         let log = ctx.GetLogger "Superserver"
         try
             let! req = ctx.BindJsonAsync<IsolineRequest>()
-            let dataset, name = splitName req.Name
-            let lm = MeshCache.get dataset name 0
+            let lm = loadMesh req.Name 0
             let seed = toV3d req.Seed
             let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
             let flat = MeshAnalysis.isoline lm req.Elevation seed maxPoints
@@ -109,8 +104,7 @@ let curvatureRidgeHandler : HttpHandler =
         let log = ctx.GetLogger "Superserver"
         try
             let! req = ctx.BindJsonAsync<RidgeRequest>()
-            let dataset, name = splitName req.Name
-            let lm = MeshCache.get dataset name 0
+            let lm = loadMesh req.Name 0
             let seed = toV3d req.Seed
             let threshold = if req.ThresholdRad <= 0.0 then 0.4 else req.ThresholdRad
             let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
@@ -129,8 +123,7 @@ let patchHandler : HttpHandler =
         let log = ctx.GetLogger "Superserver"
         try
             let! req = ctx.BindJsonAsync<PatchRequest>()
-            let dataset, name = splitName req.Name
-            let lm = MeshCache.get dataset name 0
+            let lm = loadMesh req.Name 0
             let centre = toV3d req.Centre
             let radius = if req.Radius <= 0.0 then 1.0 else req.Radius
             let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
@@ -148,10 +141,8 @@ let icpHandler : HttpHandler =
         let log = ctx.GetLogger "Superserver"
         try
             let! req = ctx.BindJsonAsync<IcpRequest>()
-            let refDataset, refName = splitName req.ReferenceName
-            let movDataset, movName = splitName req.MovingName
-            let lmRef = MeshCache.get refDataset refName 0
-            let lmMov = MeshCache.get movDataset movName 0
+            let lmRef = loadMesh req.ReferenceName 0
+            let lmMov = loadMesh req.MovingName 0
 
             let initial =
                 if req.InitialTransform <> null && req.InitialTransform.Length = 16 then

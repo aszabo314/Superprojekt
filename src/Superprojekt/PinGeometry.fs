@@ -4,12 +4,6 @@ open Aardvark.Base
 
 module PinGeometry =
 
-    let axisFrame (axis : V3d) =
-        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-        let right = Vec.cross axis up |> Vec.normalize
-        let fwd = Vec.cross right axis |> Vec.normalize
-        right, fwd
-
     let buildIcosphere (subdivisions : int) : V3f[] * int[] =
         let phi = (1.0 + sqrt 5.0) * 0.5
         let a = 1.0 / sqrt (1.0 + phi * phi)
@@ -58,15 +52,6 @@ module PinGeometry =
                 arr.[3 * fi + 2] <- c
             arr
         positions, indices
-
-    let appendPolylineSegments
-            (segs : ResizeArray<V3d * V3d * V4d * float>)
-            (pts : V3d[]) (color : V4d) (widthPx : float) =
-        for i in 0 .. pts.Length - 2 do
-            let a = pts.[i]
-            let b = pts.[i + 1]
-            if (b - a).LengthSquared > 1e-20 then
-                segs.Add((a, b, color, widthPx))
 
     let buildSphereOutline (centre : V3d) (radius : float) (color : V4d) (widthPx : float) =
         let n = 64

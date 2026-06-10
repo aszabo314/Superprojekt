@@ -5,6 +5,9 @@ open Microsoft.FSharp.NativeInterop
 
 #nowarn "9"
 
+module Http =
+    let client = new System.Net.Http.HttpClient()
+
 type MeshData =
     {
         centroid  : V3d
@@ -65,25 +68,22 @@ module MeshData =
 
     let fetchDatasets (serverUrl : string) : Async<string[]> =
         async {
-            use client = new System.Net.Http.HttpClient()
-            let! json = client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets") |> Async.AwaitTask
+            let! json = Http.client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets") |> Async.AwaitTask
             let doc = System.Text.Json.JsonDocument.Parse(json)
             return doc.RootElement.EnumerateArray() |> Seq.map (fun e -> e.GetString()) |> Seq.toArray
         }
 
     let fetchDefaultDataset (serverUrl : string) : Async<string> =
         async {
-            use client = new System.Net.Http.HttpClient()
-            let! json = client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets/default") |> Async.AwaitTask
+            let! json = Http.client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets/default") |> Async.AwaitTask
             let doc = System.Text.Json.JsonDocument.Parse(json)
             return doc.RootElement.GetString()
         }
 
     let fetchCentroids (serverUrl : string) (dataset : string) : Async<(string * V3d)[]> =
         async {
-            use client = new System.Net.Http.HttpClient()
             let url = sprintf "%s/datasets/%s/centroids" (serverUrl.TrimEnd('/')) dataset
-            let! json = client.GetStringAsync(url) |> Async.AwaitTask
+            let! json = Http.client.GetStringAsync(url) |> Async.AwaitTask
             let doc = System.Text.Json.JsonDocument.Parse(json)
             return
                 doc.RootElement.EnumerateObject()
@@ -94,40 +94,10 @@ module MeshData =
                 |> Seq.toArray
         }
 
-    let filterByTriangles (triangleIds : int[]) (mesh : MeshData) : MeshData =
-        let indices = Array.zeroCreate (triangleIds.Length * 3)
-        for i = 0 to triangleIds.Length - 1 do
-            let src = triangleIds.[i] * 3
-            let dst = i * 3
-            indices.[dst]     <- mesh.indices.[src]
-            indices.[dst + 1] <- mesh.indices.[src + 1]
-            indices.[dst + 2] <- mesh.indices.[src + 2]
-        { mesh with indices = indices }
-
-    let compact (mesh : MeshData) : MeshData =
-        let remap = System.Collections.Generic.Dictionary<int, int>()
-        let positions = System.Collections.Generic.List<V3f>()
-        let uvs       = System.Collections.Generic.List<V2f>()
-        let normals   = System.Collections.Generic.List<V3f>()
-        let hasNormals = mesh.normals.Length = mesh.positions.Length
-        let newIndices = Array.zeroCreate mesh.indices.Length
-        for i = 0 to mesh.indices.Length - 1 do
-            let oldIdx = mesh.indices.[i]
-            let mutable newIdx = 0
-            if not (remap.TryGetValue(oldIdx, &newIdx)) then
-                newIdx <- positions.Count
-                remap.[oldIdx] <- newIdx
-                positions.Add(mesh.positions.[oldIdx])
-                uvs.Add(mesh.uvs.[oldIdx])
-                if hasNormals then normals.Add(mesh.normals.[oldIdx])
-            newIndices.[i] <- newIdx
-        { mesh with positions = positions.ToArray(); uvs = uvs.ToArray(); normals = normals.ToArray(); indices = newIndices }
-
     let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d)[]> =
         async {
-            use client = new System.Net.Http.HttpClient()
             let url = sprintf "%s/datasets/%s/bboxes" (serverUrl.TrimEnd('/')) dataset
-            let! json = client.GetStringAsync(url) |> Async.AwaitTask
+            let! json = Http.client.GetStringAsync(url) |> Async.AwaitTask
             let doc = System.Text.Json.JsonDocument.Parse(json)
             return
                 doc.RootElement.EnumerateObject()
@@ -144,11 +114,10 @@ module MeshData =
             let parts    = name.Split([|'/'|], 2)
             let dataset  = parts.[0]
             let meshName = parts.[1]
-            use client = new System.Net.Http.HttpClient()
             let base' = serverUrl.TrimEnd('/')
             let meshUrl  = sprintf "%s/datasets/%s/mesh/%s/%d"       base' dataset meshName index
             let atlasUrl = sprintf "%s/datasets/%s/mesh/%s/%d/atlas" base' dataset meshName index
-            let! bytes = client.GetByteArrayAsync(meshUrl) |> Async.AwaitTask
+            let! bytes = Http.client.GetByteArrayAsync(meshUrl) |> Async.AwaitTask
             return decode atlasUrl bytes
         }
 

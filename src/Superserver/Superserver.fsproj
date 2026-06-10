@@ -11,7 +11,6 @@
     <Compile Include="MeshAnalysis.fs" />
     <Compile Include="MeshIcp.fs" />
     <Compile Include="QueryHandlers.fs" />
-    <Compile Include="BatchHandlers.fs" />
     <Compile Include="Handlers.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

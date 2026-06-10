@@ -28,8 +28,7 @@ module CardsPin =
         let isPoint = payloadKind |> AVal.map ((=) (Some PointKind))
         let isLine  = payloadKind |> AVal.map ((=) (Some LineKind))
         let isPatch = payloadKind |> AVal.map ((=) (Some PatchKind))
-        let showOnly (v : aval<bool>) =
-            v |> AVal.map (fun on -> if on then None else Some (Style [Display "none"]))
+        let showOnly = Primitives.showWhen
 
         let centreText = selectedPin |> AVal.map (function
             | Some p -> sprintf "(%.2f, %.2f, %.2f) m" p.Centre.X p.Centre.Y p.Centre.Z
@@ -91,7 +90,6 @@ module CardsPin =
                                 match pin.HostMeshName with
                                 | None -> (Provenance.defaultDatasetError UnknownSensor, 0.0, 1e6)
                                 | Some host ->
-                                    // pin.Centre / FalloffRadius are already metric.
                                     let worldP = pin.Centre
                                     let anchors =
                                         pins |> HashMap.toSeq
@@ -116,29 +114,7 @@ module CardsPin =
                             let pa = a / total * 100.0
                             let pc = cM / total * 100.0
                             Some (Attribute("data-prov", sprintf "[%.1f,%.1f,%.1f]" pd pa pc)))
-                        OnBoot [
-                            "(function(){"
-                            "var el = __THIS__;"
-                            "var last = '';"
-                            "function render(){"
-                            "  var raw = el.getAttribute('data-prov') || '[]';"
-                            "  if(raw === last) return; last = raw;"
-                            "  try { var arr = JSON.parse(raw); } catch(e) { return; }"
-                            "  el.innerHTML = '';"
-                            "  if(!arr || arr.length < 3) return;"
-                            "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
-                            "  arr.forEach(function(p, i){"
-                            "    var d = document.createElement('div');"
-                            "    d.style.width = p + '%';"
-                            "    d.style.background = colours[i];"
-                            "    d.style.height = '100%';"
-                            "    el.appendChild(d);"
-                            "  });"
-                            "}"
-                            "render();"
-                            "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-prov']});"
-                            "})();"
-                        ]
+                        Primitives.observedRender "data-prov" "[]" Primitives.provBarJs
                     }
                     div {
                         Class "pc-bar-legend"
@@ -216,16 +192,7 @@ module CardsPin =
                 Class "pin-card-section pin-card-line"
                 showOnly isLine
                 lineStateJson |> AVal.map (fun j -> Some (Attribute("data-line", j)))
-                OnBoot [
-                    "(function(){"
-                    "var el = __THIS__;"
-                    "var last = '';"
-                    "var ns = 'http://www.w3.org/2000/svg';"
-                    "function render(){"
-                    "  var raw = el.getAttribute('data-line') || '{}';"
-                    "  if(raw === last) return; last = raw;"
-                    "  try { var d = JSON.parse(raw); } catch(e) { return; }"
-                    "  el.innerHTML = '';"
+                Primitives.observedRender "data-line" "{}" [
                     "  if(!d.traces || d.traces.length === 0){"
                     "    var p = document.createElement('div');"
                     "    p.className = 'pin-card-empty';"
@@ -280,7 +247,6 @@ module CardsPin =
                     "  svg.appendChild(txt(padL, padT + ih + 10, '0m', 'start'));"
                     "  svg.appendChild(txt(w - padR, padT + ih + 10, xMax.toFixed(1) + 'm', 'end'));"
                     "  svg.appendChild(txt((padL + w - padR)/2, padT + ih + 10, d.mode, 'middle'));"
-                    "  // Legend: mesh names with their colours, two-per-row max."
                     "  var lyBase = padT + ih + 22;"
                     "  d.traces.forEach(function(tr, i){"
                     "    var col = i % 2;"
@@ -294,10 +260,6 @@ module CardsPin =
                     "    svg.appendChild(txt(lx + 10, ly, tr.mesh + (tr.host ? ' ★' : ''), 'start', tr.color));"
                     "  });"
                     "  el.appendChild(svg);"
-                    "}"
-                    "render();"
-                    "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-line']});"
-                    "})();"
                 ]
             }
 
@@ -348,16 +310,7 @@ module CardsPin =
                 Class "pin-card-section pin-card-patch"
                 showOnly isPatch
                 patchStateJson |> AVal.map (fun j -> Some (Attribute("data-patch", j)))
-                OnBoot [
-                    "(function(){"
-                    "var el = __THIS__;"
-                    "var last = '';"
-                    "var ns = 'http://www.w3.org/2000/svg';"
-                    "function render(){"
-                    "  var raw = el.getAttribute('data-patch') || '{}';"
-                    "  if(raw === last) return; last = raw;"
-                    "  try { var d = JSON.parse(raw); } catch(e) { return; }"
-                    "  el.innerHTML = '';"
+                Primitives.observedRender "data-patch" "{}" [
                     "  if(d.empty || !d.pts || d.pts.length < 3){"
                     "    var p = document.createElement('div');"
                     "    p.className = 'pin-card-empty';"
@@ -396,7 +349,6 @@ module CardsPin =
                     "    c.setAttribute('opacity','0.85');"
                     "    svg.appendChild(c);"
                     "  });"
-                    "  // Compass rose: arrow from centre toward CompassNorth."
                     "  var nx = sx(d.north[0] * d.r * 0.9);"
                     "  var ny = sy(d.north[1] * d.r * 0.9);"
                     "  var arrow = document.createElementNS(ns,'line');"
@@ -419,10 +371,6 @@ module CardsPin =
                     "  caption.className = 'pin-card-caption';"
                     "  caption.textContent = d.mesh + ' • r=' + d.r.toFixed(1) + 'm • ' + d.pts.length + ' pts';"
                     "  el.appendChild(caption);"
-                    "}"
-                    "render();"
-                    "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-patch']});"
-                    "})();"
                 ]
             }
         }

@@ -7,6 +7,32 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Superprojekt
 
+module ServerActions =
+
+    let loadDataset (env : Env<Message>) (dataset : string) =
+        task {
+            try
+                let! cs = MeshData.fetchCentroids ApiConfig.apiBase.Value dataset
+                env.Emit [CentroidsLoaded cs]
+            with _ -> ()
+            try
+                let! bboxes = MeshData.fetchBboxes ApiConfig.apiBase.Value dataset
+                env.Emit [SceneBoundsLoaded bboxes]
+            with _ -> ()
+        } |> ignore
+
+    let init (env : Env<Message>) =
+        task {
+            try
+                let! datasets = MeshData.fetchDatasets ApiConfig.apiBase.Value
+                env.Emit [DatasetsLoaded datasets]
+                let! autoLoad = MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
+                if not (System.String.IsNullOrEmpty autoLoad) && datasets |> Array.contains autoLoad then
+                    env.Emit [SetActiveDataset autoLoad]
+                    loadDataset env autoLoad
+            with _ -> ()
+        } |> ignore
+
 module Update =
 
     let private worldToRenderRigid (scale : float) (cc : V3d) (worldT : Trafo3d) =
@@ -107,10 +133,7 @@ module Update =
                     |> Array.ofSeq
                 if visibleMeshes.Length = 0 then model
                 else
-                    let scale =
-                        model.ActiveDataset
-                        |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
-                        |> Option.defaultValue 1.0
+                    let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
                     let cc = model.CommonCentroid
                     let anchors =
                         match reg.Mode with
@@ -149,9 +172,7 @@ module Update =
                         } |> ignore
                     { model with Registration = { reg with Running = true } }
         | RegistrationComplete(mesh, trafo, _conv, resi) ->
-            let meshScale =
-                let dataset = mesh.Split('/', 2).[0]
-                Map.tryFind dataset model.DatasetScales |> Option.defaultValue 1.0
+            let meshScale = DatasetScale.forMesh model.DatasetScales mesh
             let renderTrafo = worldToRenderRigid meshScale model.CommonCentroid trafo
             let mt = Map.add mesh renderTrafo model.MeshTransforms
             let meshRms =
@@ -194,10 +215,7 @@ module Update =
                         )) Box3d.Invalid
                 let padded = Box3d(union.Min - V3d.III, union.Max + V3d.III)
                 let perMesh = bboxes |> Array.fold (fun m (n, b) -> Map.add n b m) Map.empty
-                // Synthetic panorama: no dataset ships real imagery, so place one
-                // viewpoint at the scene-bbox centre a couple of metres up. The
-                // image itself is rendered live (cube → cylindrical reproject) by
-                // PanoramaView when the panel is open.
+                // Synthetic panorama pose: no dataset ships real imagery.
                 let panos =
                     if union.IsValid then
                         let name = model.ActiveDataset |> Option.defaultValue "scene"
@@ -230,7 +248,7 @@ module Update =
         | JumpToMesh meshName ->
             match Map.tryFind meshName model.DatasetCentroids with
             | Some centroid ->
-                let renderPos = (centroid - model.CommonCentroid) * (model.DatasetScales |> Map.tryFind (meshName.Split('/', 2).[0]) |> Option.defaultValue 1.0)
+                let renderPos = (centroid - model.CommonCentroid) * DatasetScale.forMesh model.DatasetScales meshName
                 let radius =
                     if model.SceneBounds.IsInvalid then 50.0
                     else model.SceneBounds.Size.Length * 0.6
@@ -444,10 +462,7 @@ module Update =
         | FlyToPanorama i ->
             match List.tryItem i model.Panoramas with
             | Some p ->
-                let scale =
-                    model.ActiveDataset
-                    |> Option.bind (fun d -> Map.tryFind d model.DatasetScales)
-                    |> Option.defaultValue 1.0
+                let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
                 let eyeR = (p.EyeWorld - model.CommonCentroid) * scale
                 let r =
                     if model.SceneBounds.IsInvalid then 5.0

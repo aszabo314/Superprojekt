@@ -101,10 +101,6 @@ module GuiPanels =
         div {
             flyoutClass |> AVal.map (fun c -> Some (Class c))
             div { Class "lp-section-title"; "Adjust Anchor" }
-            // Inner radius is the "hard truth" (full alpha inside). Falloff
-            // slider is *relative* to the inner radius — its value is the
-            // delta added to InnerRadius to get FalloffRadius. Moving the
-            // inner slider preserves that delta.
             let innerR =
                 activePin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 1.0)
             let falloffDelta =
@@ -145,8 +141,7 @@ module GuiPanels =
                     | None -> 1.0)
             div {
                 Class "lp-reliability-row"
-                isPoint |> AVal.map (fun v ->
-                    if v then None else Some (Style [Display "none"]))
+                showWhen isPoint
                 inlineSlider "Reliability" 0.0 1.0 0.01 (sprintf "%.2f") reliability (fun v ->
                     match AVal.force pinId with
                     | Some id -> env.Emit [ScanPinMsg (SetReliabilityWeight(id, v))]
@@ -176,8 +171,7 @@ module GuiPanels =
                     | None -> 0.0)
             div {
                 Class "lp-line-controls"
-                isLine |> AVal.map (fun v ->
-                    if v then None else Some (Style [Display "none"]))
+                showWhen isLine
                 div { Class "lp-sublabel"; "Line mode" }
                 compactButtonBar [
                     "Elevation", isIsoline,
@@ -190,8 +184,7 @@ module GuiPanels =
                 ]
                 div {
                     Class "lp-isoline-row"
-                    isIsoline |> AVal.map (fun v ->
-                        if v then None else Some (Style [Display "none"]))
+                    showWhen isIsoline
                     inlineSlider "Elevation" -10000.0 10000.0 0.1 (sprintf "%.1fm") isolineElev (fun v ->
                         match AVal.force pinId with
                         | Some id -> env.Emit [ScanPinMsg (SetLineMode(id, ElevationIsoline v))]
@@ -261,10 +254,7 @@ module GuiPanels =
                         }
                         button {
                             Class "mb"; Attribute("title", "Edit")
-                            pinVal |> AVal.map (fun po ->
-                                match po with
-                                | Some p when p.Phase = PinPhase.Committed -> None
-                                | _ -> Some (Style [Display "none"]))
+                            showWhen (pinVal |> AVal.map (function Some p -> p.Phase = PinPhase.Committed | None -> false))
                             Dom.OnClick(fun _ -> env.Emit [EditPin id])
                             "✎"
                         }
@@ -334,7 +324,7 @@ module GuiPanels =
                             if v < 0.01 then sprintf "%.1fmm" (v * 1000.0)
                             else sprintf "%.2fm" v) model.ProvenanceThreshold (fun v ->
                             env.Emit [SetProvenanceThreshold v])
-                        div { Class "lp-sublabel-hint"; "Red = dataset, green = algorithm, blue = conditioning." }
+                        div { Class "lp-sublabel-hint"; "Blue = dataset, orange = algorithm, purple = conditioning." }
                     })
 
             })

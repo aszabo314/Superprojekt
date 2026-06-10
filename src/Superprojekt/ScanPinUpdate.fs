@@ -15,13 +15,9 @@ module ScanPinUpdate =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
 
     let activeScale (model : Model) =
-        model.ActiveDataset
-        |> Option.bind (fun ds -> Map.tryFind ds model.DatasetScales)
-        |> Option.defaultValue 1.0
+        DatasetScale.active model.ActiveDataset model.DatasetScales
 
-    // Metric defaults: 5 m hard core, +1 m falloff delta (i.e. absolute
-    // FalloffRadius = 6 m). Constants — datasets in real-world metres get the
-    // same starting pin regardless of scene size.
+    // Metric defaults: 5 m hard core, +1 m falloff delta.
     let defaultInnerRadius (_ : Model) = 5.0
     let defaultFalloffRadius (model : Model) = defaultInnerRadius model + 1.0
 

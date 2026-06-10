@@ -20,7 +20,6 @@
     <Compile Include="Query.fs" />
     <Compile Include="CameraModel.fs" />
     <Compile Include="CameraModel.g.fs" />
-    <Compile Include="OrbitTypes.fs" />
     <Compile Include="OrbitController.fs" />
     <Compile Include="ScanPinModel.fs" />
     <Compile Include="ScanPinModel.g.fs" />
@@ -28,17 +27,16 @@
     <Compile Include="Model.fs" />
     <Compile Include="Model.g.fs" />
     <Compile Include="Persistence.fs" />
-    <Compile Include="Shader.fs" />
     <Compile Include="LineShader.fs" />
     <Compile Include="Primitives.fs" />
     <Compile Include="Messages.fs" />
     <Compile Include="CardUpdate.fs" />
     <Compile Include="ScanPinUpdate.fs" />
     <Compile Include="Update.fs" />
+    <Compile Include="MeshShaders.fs" />
     <Compile Include="MeshView.fs" />
     <Compile Include="FusionView.fs" />
     <Compile Include="PanoramaView.fs" />
-    <Compile Include="ServerActions.fs" />
     <Compile Include="ScanPinScene.fs" />
     <Compile Include="SceneGraph.fs" />
     <Compile Include="CardsPin.fs" />

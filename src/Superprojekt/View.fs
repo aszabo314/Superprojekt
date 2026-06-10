@@ -32,18 +32,14 @@ module View =
         Ray3d(p0, (p1 - p0) |> Vec.normalize)
 
     let private worldFromRender (model : AdaptiveModel) (renderPos : V3d) =
-        let scale =
-            AVal.force model.ActiveDataset
-            |> Option.bind (fun ds -> Map.tryFind ds (AVal.force model.DatasetScales))
-            |> Option.defaultValue 1.0
-        let cc = AVal.force model.CommonCentroid
-        renderPos / scale + cc
+        let scale = DatasetScale.active (AVal.force model.ActiveDataset) (AVal.force model.DatasetScales)
+        ScanPin.worldCentre (AVal.force model.CommonCentroid) scale renderPos
 
-    // Pixel picking is inline at each Sg event handler:
-    //   if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-    // The mesh shader writes z = 1.0 (far plane) for any α < 0.99 fragment,
-    // so ghost / transparent geometry produces no usable pick. Pin spheres /
-    // grid / cross don't write depth at all, so they also can't be picked.
+    let private renderBox (worldBox : Box3d) (cc : V3d) (scale : float) =
+        let lo = (worldBox.Min - cc) * scale
+        let hi = (worldBox.Max - cc) * scale
+        Box3d(V3d(min lo.X hi.X, min lo.Y hi.Y, min lo.Z hi.Z),
+              V3d(max lo.X hi.X, max lo.Y hi.Y, max lo.Z hi.Z))
 
     let view (env : Env<Message>) (model : AdaptiveModel) =
 
@@ -94,9 +90,6 @@ module View =
                 RenderControl.Samples 1
                 Class "render-control"
 
-                Dom.Style [
-                    Css.Background "rgb(244, 246, 248)"
-                ]
                 (model.ScanPins.Placement, lassoActive) ||> AVal.map2 (fun p lasso ->
                     match p, lasso with
                     | PlacementIdle, false -> None
@@ -146,92 +139,60 @@ module View =
                         | None -> async.Return frontmost
                         | Some worldBox ->
                             let cc = AVal.force model.CommonCentroid
-                            let scales = AVal.force model.DatasetScales
-                            let dataset =
-                                let s = layer.IndexOf('/')
-                                if s >= 0 then layer.[..s-1] else ""
-                            let scale = Map.tryFind dataset scales |> Option.defaultValue 1.0
-                            let lo = (worldBox.Min - cc) * scale
-                            let hi = (worldBox.Max - cc) * scale
-                            let renderBox =
-                                Box3d(V3d(min lo.X hi.X, min lo.Y hi.Y, min lo.Z hi.Z),
-                                      V3d(max lo.X hi.X, max lo.Y hi.Y, max lo.Z hi.Z))
+                            let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) layer
                             let vpSize = AVal.force size
                             let v = AVal.force view
                             let p = AVal.force proj
                             let ray = pickRay cursorPx vpSize v p
-                            match rayBoxT ray renderBox with
+                            match rayBoxT ray (renderBox worldBox cc scale) with
                             | None -> async.Return frontmost
                             | Some _ ->
                                 async {
-                                    let originW = ray.Origin / scale + cc
-                                    let dirW = ray.Direction
-                                    let! hit = Query.rayHit ApiConfig.apiBase.Value layer 0 originW dirW
+                                    let originW = ScanPin.worldCentre cc scale ray.Origin
+                                    let! hit = Query.rayHit ApiConfig.apiBase.Value layer 0 originW ray.Direction
                                     match hit with
-                                    | Some h ->
-                                        let renderPos = (h.point - cc) * scale
-                                        return Some renderPos
+                                    | Some h -> return Some (ScanPin.renderCentre cc scale h.point)
                                     | None -> return frontmost
                                 }
 
-                // Fusion picking. The composite is a flat textured quad, so the
-                // GPU pick can't see the underlying meshes. We resolve the
-                // winner the same way the offscreen shader does — lowest
-                // combined provenance error — but on the CPU: raycast every
-                // visible mesh server-side and pick the lowest-error hit.
-                // Returns the render-space hit point plus the winning mesh.
+                // Fusion picking: the composite is a flat quad, so the GPU pick
+                // can't see the meshes. Raycast every visible mesh server-side
+                // and keep the lowest combined-error hit (same winner as the
+                // offscreen depth test).
                 let resolveFusionPick () : Async<(V3d * string) option> =
                     match cursorScreen.Value with
                     | None -> async.Return None
                     | Some cursorPx ->
-                        let visible = AVal.force model.MeshVisible
-                        let names =
-                            model.MeshNames |> AList.toAVal |> AVal.force |> IndexList.toList
-                            |> List.filter (fun n -> Map.tryFind n visible |> Option.defaultValue true)
+                        let names = MeshView.visibleMeshNames model
                         if List.isEmpty names then async.Return None
                         else
-                            let vpSize = AVal.force size
-                            let v = AVal.force view
-                            let p = AVal.force proj
-                            let ray = pickRay cursorPx vpSize v p
+                            let ray = pickRay cursorPx (AVal.force size) (AVal.force view) (AVal.force proj)
                             let cc = AVal.force model.CommonCentroid
                             let scales = AVal.force model.DatasetScales
                             let sensors = AVal.force model.MeshSensorTypes
                             let overrides = AVal.force model.MeshDatasetErrors
                             let algo = AVal.force model.MeshAlgorithmResidual
-                            let pinsMap = AVal.force (model.ScanPins.Pins |> AMap.toAVal)
                             let anchors =
-                                pinsMap |> HashMap.toSeq
+                                AVal.force (model.ScanPins.Pins |> AMap.toAVal) |> HashMap.toSeq
                                 |> Seq.choose (fun (_, pn) ->
                                     if pn.Phase = PinPhase.Committed then Some (pn.Centre, pn.FalloffRadius) else None)
                                 |> Array.ofSeq
                             async {
                                 let! hits =
-                                    names
-                                    |> List.map (fun name ->
-                                        async {
-                                            let dataset =
-                                                let s = name.IndexOf('/')
-                                                if s >= 0 then name.[..s-1] else ""
-                                            let scale = Map.tryFind dataset scales |> Option.defaultValue 1.0
-                                            let originW = ray.Origin / scale + cc
-                                            let dirW = ray.Direction
-                                            let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 originW dirW
-                                            match hit with
-                                            | Some h ->
-                                                let d, a, c = Provenance.sourcesAt name overrides sensors algo h.point anchors
-                                                let combined = d + a + c * 0.01
-                                                return Some (name, h.point, scale, combined)
-                                            | None -> return None
-                                        })
-                                    |> Async.Parallel
+                                    Query.rayHitMany ApiConfig.apiBase.Value names (fun name ->
+                                        let scale = DatasetScale.forMesh scales name
+                                        ScanPin.worldCentre cc scale ray.Origin, ray.Direction)
                                 let best =
                                     hits |> Array.choose id
-                                    |> Array.sortBy (fun (_, _, _, e) -> e)
+                                    |> Array.map (fun (name, h) ->
+                                        let d, a, c = Provenance.sourcesAt name overrides sensors algo h.point anchors
+                                        name, h.point, d + a + c * 0.01)
+                                    |> Array.sortBy (fun (_, _, e) -> e)
                                     |> Array.tryHead
                                 match best with
-                                | Some (name, worldPt, scale, _) ->
-                                    return Some ((worldPt - cc) * scale, name)
+                                | Some (name, worldPt, _) ->
+                                    let scale = DatasetScale.forMesh scales name
+                                    return Some (ScanPin.renderCentre cc scale worldPt, name)
                                 | None -> return None
                             }
 
@@ -266,15 +227,8 @@ module View =
                             bounds |> Map.toSeq
                             |> Seq.choose (fun (name, world) ->
                                 if Map.tryFind name visible |> Option.defaultValue true then
-                                    let dataset =
-                                        let s = name.IndexOf('/')
-                                        if s >= 0 then name.[..s-1] else ""
-                                    let scale = Map.tryFind dataset scales |> Option.defaultValue 1.0
-                                    let lo = (world.Min - cc) * scale
-                                    let hi = (world.Max - cc) * scale
-                                    let box = Box3d(V3d(min lo.X hi.X, min lo.Y hi.Y, min lo.Z hi.Z),
-                                                    V3d(max lo.X hi.X, max lo.Y hi.Y, max lo.Z hi.Z))
-                                    rayBoxT ray box |> Option.map (fun t -> t, name)
+                                    let scale = DatasetScale.forMesh scales name
+                                    rayBoxT ray (renderBox world cc scale) |> Option.map (fun t -> t, name)
                                 else None)
                             |> Seq.sortBy fst
                             |> Seq.map snd

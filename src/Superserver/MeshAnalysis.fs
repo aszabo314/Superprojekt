@@ -275,10 +275,6 @@ let curvatureRidgeWithScalars (lm : LoadedMesh) (seed : V3d) (thresholdRad : flo
                 outSc.[i] <- chosenSc.[i]
             outPts, outSc
 
-let curvatureRidge (lm : LoadedMesh) (seed : V3d) (thresholdRad : float) (maxPoints : int) : float[] =
-    let pts, _ = curvatureRidgeWithScalars lm seed thresholdRad maxPoints
-    pts
-
 type PatchPoint = { Px : float; Py : float; Wx : float; Wy : float; Wz : float }
 type PatchResult = { Points : PatchPoint[]; RefDirWorld : V3d; NormalWorld : V3d }
 

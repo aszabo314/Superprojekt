@@ -146,6 +146,91 @@ module Query =
             return pts, scalars
         }
 
+    // length <= 0.0 → server auto-computes from the union bbox extent along the normal.
+    let probe
+            (serverUrl : string)
+            (meshes : (string * M44d) list)
+            (referenceName : string)
+            (centre : V3d) (radius : float) (length : float)
+            (maxPointsPerMesh : int)
+            : Async<Result<ProbeResult, string>> =
+        async {
+            let m44 (m : M44d) =
+                System.String.Join(",",
+                    [| m.M00; m.M01; m.M02; m.M03
+                       m.M10; m.M11; m.M12; m.M13
+                       m.M20; m.M21; m.M22; m.M23
+                       m.M30; m.M31; m.M32; m.M33 |]
+                    |> Array.map (sprintf "%.17g"))
+            let meshesJson =
+                meshes
+                |> List.map (fun (n, t) -> sprintf """{"name":"%s","transform":[%s]}""" n (m44 t))
+                |> String.concat ","
+            let json =
+                sprintf """{"meshes":[%s],"referenceName":"%s","centre":%s,"radius":%.17g,"length":%.17g,"maxPointsPerMesh":%d}"""
+                    meshesJson referenceName (v3 centre) radius length maxPointsPerMesh
+            let! r = post serverUrl "/query/probe" json
+            if not (r.GetProperty("ok").GetBoolean()) then
+                return Result.Error (r.GetProperty("reason").GetString())
+            else
+                let readVec (prop : string) =
+                    let a = r.GetProperty(prop).EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                    V3d(a.[0], a.[1], a.[2])
+                let readRange (prop : string) =
+                    let a = r.GetProperty(prop).EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                    Range1d(a.[0], a.[1])
+                let dists =
+                    r.GetProperty("distributions").EnumerateArray()
+                    |> Seq.map (fun d ->
+                        {
+                            MeshName  = d.GetProperty("name").GetString()
+                            Count     = d.GetProperty("count").GetInt32()
+                            Median    = d.GetProperty("median").GetDouble()
+                            Q1        = d.GetProperty("q1").GetDouble()
+                            Q3        = d.GetProperty("q3").GetDouble()
+                            Std       = d.GetProperty("std").GetDouble()
+                            Bandwidth = d.GetProperty("bandwidth").GetDouble()
+                            Kde       =
+                                d.GetProperty("kde").EnumerateArray()
+                                |> Seq.map (fun p ->
+                                    let a = p.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                                    a.[0], a.[1])
+                                |> Seq.toArray
+                        })
+                    |> Seq.toArray
+                let s = r.GetProperty("sources")
+                let perMesh =
+                    s.GetProperty("perMesh").EnumerateArray()
+                    |> Seq.map (fun p ->
+                        {
+                            MeshName     = p.GetProperty("name").GetString()
+                            IqrMetres    = p.GetProperty("iqr").GetDouble()
+                            MedianOffset = p.GetProperty("medianOffset").GetDouble()
+                            PointCount   = p.GetProperty("count").GetInt32()
+                        })
+                    |> Seq.toArray
+                let planarity = r.GetProperty("planarity").GetDouble()
+                return Result.Ok {
+                    ReferenceMesh = referenceName
+                    Normal        = readVec "normal"
+                    Planarity     = planarity
+                    Planar        = planarity <= 0.5
+                    Length        = r.GetProperty("length").GetDouble()
+                    AutoLength    = r.GetProperty("autoLength").GetDouble()
+                    XAuto         = readRange "xAuto"
+                    XFit          = readRange "xFit"
+                    Distributions = dists
+                    Sources       =
+                        {
+                            DatasetError      = s.GetProperty("dataset").GetDouble()
+                            AlgorithmResid    = s.GetProperty("algorithm").GetDouble()
+                            LocalConditioning = s.GetProperty("conditioning").GetDouble()
+                            PerMesh           = perMesh
+                        }
+                    ComputedAt    = System.DateTime.UtcNow
+                }
+        }
+
     let rayHitMany (serverUrl : string) (names : string list) (rayFor : string -> V3d * V3d) =
         names
         |> List.map (fun name ->

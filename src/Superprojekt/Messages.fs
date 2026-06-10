@@ -57,6 +57,9 @@ type Message =
     | SetRetargetDecision of ScanPinId * RetargetDecision
     | CommitRetarget
     | CancelRetarget
+    | HoverProbeAt of screenPx:V2d * world:V3d
+    | HoverProbeResult of ProbeState
+    | ClearHoverProbe
     | TogglePanorama
     | PanoramasGenerated of Panorama list
     | SelectPanorama of int
@@ -89,3 +92,8 @@ and ScanPinMessage =
     | RidgeComputed of ScanPinId * V3d[] * scalars:float[]
     | LineCrossMeshComputed of ScanPinId * meshName:string * V3d[] * scalars:float[]
     | PatchComputed of ScanPinId * (V2d * V3d)[] * refDir:V3d * normal:V3d
+    | ProbeComputed of ScanPinId * ProbeResult
+    | ProbeFailed of ScanPinId * string
+    | SetProbeLength of ScanPinId * float option
+    | ToggleProbeLockOrder of ScanPinId
+    | SetProbeXRange of ScanPinId * ProbeXRange

@@ -86,6 +86,8 @@ module PayloadType =
 
 // All ScanPin geometry is metric world-space; InnerRadius and FalloffRadius
 // are independent. Render-space conversion happens at pipeline boundaries.
+// Probe: cached M3C2 probe result for Point payloads, recomputed lazily after
+// invalidation (ProbeNone). ProbeLengthOverride None = server auto-length.
 type ScanPin = {
     Id                   : ScanPinId
     Phase                : PinPhase
@@ -97,6 +99,10 @@ type ScanPin = {
     CreationCameraState  : CameraSnapshot
     CreatedAt            : DateTime
     DatasetColors        : Map<string, C4b>
+    Probe                : ProbeState
+    ProbeLengthOverride  : float option
+    ProbeLockOrder       : bool
+    ProbeXRange          : ProbeXRange
 }
 
 type PlacementState =
@@ -127,6 +133,16 @@ module ScanPinModel =
         match sp.Placement with
         | PlacementIdle -> false
         | _ -> true
+
+    // Probe invalidation (spec §6): identical pins are returned as-is so the
+    // adaptive map diff sees no change.
+    let invalidateProbes (sp : ScanPinModel) =
+        let pins =
+            sp.Pins |> HashMap.map (fun _ p ->
+                match p.Probe with
+                | ProbeNone -> p
+                | _ -> { p with Probe = ProbeNone })
+        { sp with Pins = pins }
 
 module ScanPin =
     // World-space (metric) → render-space (post centroid translate, post scale).

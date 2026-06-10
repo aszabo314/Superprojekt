@@ -99,11 +99,13 @@ module Persistence =
             p.DatasetColors |> Map.toSeq
             |> Seq.map (fun (k, v) -> sprintf "%s:%s" (q k) (c4bJ v))
             |> String.concat ","
-        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"payload\":%s,\"host\":%s,\"colors\":{%s},\"camera\":%s,\"createdAt\":%s}"
+        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"payload\":%s,\"host\":%s,\"colors\":{%s},\"camera\":%s,\"createdAt\":%s,\"probeLen\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
             (q (guid.ToString())) (pinPhaseTag p.Phase) (v3 p.Centre)
             (f p.InnerRadius) (f p.FalloffRadius) (payloadJ p.Payload)
             (match p.HostMeshName with Some n -> q n | None -> "null")
             colors (camSnapJ p.CreationCameraState) (q (p.CreatedAt.ToString("O")))
+            (match p.ProbeLengthOverride with Some l -> f l | None -> "null")
+            p.ProbeLockOrder (ProbeXRange.tag p.ProbeXRange)
 
     let serialize (model : Model) : string =
         let sb = StringBuilder()
@@ -239,6 +241,18 @@ module Persistence =
             match e.GetProperty("createdAt").GetString() |> DateTime.TryParse with
             | true, dt -> dt
             | _ -> DateTime.UtcNow
+        let probeLen =
+            match tryProp "probeLen" e with
+            | Some v when v.ValueKind <> JsonValueKind.Null -> Some (v.GetDouble())
+            | _ -> None
+        let probeLock =
+            match tryProp "probeLock" e with
+            | Some v -> v.GetBoolean()
+            | None -> false
+        let probeRange =
+            match tryProp "probeRange" e with
+            | Some v -> ProbeXRange.ofTag (v.GetString())
+            | None -> ProbeXAuto
         {
             Id = id
             Phase = pinPhaseOf (e.GetProperty("phase").GetString())
@@ -250,6 +264,10 @@ module Persistence =
             CreationCameraState = cam
             CreatedAt = createdAt
             DatasetColors = colors
+            Probe = ProbeNone
+            ProbeLengthOverride = probeLen
+            ProbeLockOrder = probeLock
+            ProbeXRange = probeRange
         }
 
     type ParseError = string

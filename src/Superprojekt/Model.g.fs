@@ -1,5 +1,5 @@
-//18178819-50c1-15e2-e2b8-523b36baac05
-//3038835d-69b9-bc42-3d8a-a56f878a7ae7
+//28d7c404-38b8-09ad-dff8-e8924f734ced
+//b2d52175-8e42-9e51-2327-70398e9d14a8
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -54,6 +54,7 @@ type AdaptiveModel(value : Model) =
     let _PanoramaBlend_ = FSharp.Data.Adaptive.cval(value.PanoramaBlend)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _CardSystem_ = AdaptiveCardSystemModel(value.CardSystem)
+    let _HoverProbe_ = FSharp.Data.Adaptive.cval(value.HoverProbe)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _LassoCardPos_ = FSharp.Data.Adaptive.cval(value.LassoCardPos)
@@ -108,6 +109,7 @@ type AdaptiveModel(value : Model) =
             _PanoramaBlend_.Value <- value.PanoramaBlend
             _ScanPins_.Update(value.ScanPins)
             _CardSystem_.Update(value.CardSystem)
+            _HoverProbe_.Value <- value.HoverProbe
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
             _LassoCardPos_.Value <- value.LassoCardPos
@@ -155,6 +157,7 @@ type AdaptiveModel(value : Model) =
     member __.PanoramaBlend = _PanoramaBlend_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ScanPins = _ScanPins_
     member __.CardSystem = _CardSystem_
+    member __.HoverProbe = _HoverProbe_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<HoverProbeState>>
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.LassoCardPos = _LassoCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>

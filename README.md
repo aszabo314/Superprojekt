@@ -49,8 +49,10 @@ The first request for a mesh parses OBJ + builds an Embree scene + BbTree; the r
 - **Ghost silhouette.** Inactive meshes render as a faint translucent shell so you keep spatial context. Toggle + opacity in the gear popover; default on.
 - **Lasso clip.** Top-level `◌ Lasso` button opens a floating card; draw a polygon in the viewport, outside-lasso fragments fade to ghost level. The card has a symbol toolbar (`◉/○` enable, `✎` redraw, `⊘` cancel, `✕` clear) — toggling the filter off keeps the polygon so you can re-enable without redrawing.
 - **ScanPins (annotations).** Place a 3D anchor on a surface. Each pin has an **Inner radius** (hard truth: α = 1 and full evaluation weight inside) and a **Falloff radius** (exponential decay beyond inner). Both stored in metric world-metres; the falloff slider is relative to the inner radius. Pin Point / Line / Patch payloads carry derived analysis.
+- **N-mesh distance probe (M3C2).** Every Point-payload pin runs a server-side probe: a cylinder along the locally-estimated surface normal (PCA over the reference mesh inside the pin sphere) samples **all visible meshes** and returns one signed-distance distribution per mesh, re-centred so 0 = the reference mesh's median. The pin card shows a **ridgeline chart** (KDE per mesh, median tick, IQR whisker, count badge, planarity badge, x-range presets, lock-order toggle, click a row for its numbers) and a **three-source stacked bar** decomposing the error into dataset spread / algorithm offset / local conditioning. Probes recompute lazily and invalidate on radius/centre/reference/transform/visibility changes. Cylinder length is auto (1.1 × scene extent along the normal, capped at 100 m) or manual via the adjustment flyout.
+- **Hover probe.** Ctrl-click any surface for a transient mini-ridgeline at the cursor (radius = 5% of the scene bbox diagonal). Dismissed by Escape, clicking elsewhere, or after a few seconds.
 - **Filter chain.** Visibility is the conjunction of three filters: MeshActive toggle → lasso region → pin blob field. Both lasso and blob must agree for a fragment to be fully opaque; inside-lasso-outside-blob fragments fall to ghost level. The pin blob filter is gated by the **Isolate pins** toggle in the gear popover; the lasso filter by the `◉/○` button on its card.
-- **Mesh registration (gated).** Reference-based ICP (traditional, or region-restricted where pin centres + falloff radii weight the solve). The server solver is implemented and verified, but the Run button is currently disabled — the registration workflow is part of the upcoming feature work.
+- **Mesh registration.** Reference-based ICP (traditional, or region-restricted where pin centres + falloff radii weight the solve). Gauss-Newton point-to-surface with centroid-recentred linearization and trimmed correspondences (3× median gate). Running a solve re-transforms the moving meshes and invalidates all probes, so pin charts show the offset change immediately.
 - **Error provenance overlay.** Per-mesh sensor type + dataset-error override, combined with ICP algorithm residual and a local-conditioning heuristic over the anchors into a tunable heatmap.
 - **Fusion mode.** Top-bar `◈ Fusion` renders all visible meshes into an offscreen pass (own colour + depth target) where per-fragment depth carries combined error, so the lowest-error surface wins the depth test; the composite is drawn back as a fullscreen quad. Picking raycasts every visible mesh and keeps the same lowest-error winner.
 - **Retarget.** Re-project the existing pins' anchors onto a chosen target mesh (server closest-point per pin), review the per-pin projection distances in a card, accept/reject individually, then commit.
@@ -65,6 +67,7 @@ The client compiles in this order (`src/Superprojekt/Superprojekt.fsproj`):
 
 ```
 MeshData.fs                          mesh fetch / parse, shared HttpClient
+ProbeModel.fs                        M3C2 probe result / state types
 Query.fs                             server query wrappers (Async)
 CameraModel.fs / .g.fs               OrbitState [<ModelType>]
 OrbitController.fs                   orbit camera + messages
@@ -97,6 +100,7 @@ The server is much smaller (`src/Superserver/`):
 MeshLoader.fs                        OBJ parse + centroid file + atlas paths
 MeshCache.fs                         lazy Embree scene + BbTree cache
 MeshAnalysis.fs                      isoline / ridge tracing, patch sampling
+MeshProbe.fs                         N-mesh M3C2 probe
 MeshIcp.fs                           ICP solver
 QueryHandlers.fs                     HTTP query handlers
 Handlers.fs                          routing

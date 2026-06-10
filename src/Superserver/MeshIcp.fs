@@ -62,7 +62,18 @@ module private IcpMath =
             let K = skew k
             M33d.Identity + K * sin theta + K * K * (1.0 - cos theta)
 
+    // Linearizes the rotation around the weighted correspondence centroid:
+    // with raw UTM-scale world coordinates the lever arm is ~5e6 m, the
+    // normal matrix is hopelessly ill-conditioned, and the small-angle step
+    // diverges. Solved in the recentred frame, recomposed to a world map.
     let icpStep (pairs : ResizeArray<struct (V3d * V3d * float)>) =
+        let mutable cSum = V3d.Zero
+        let mutable cW = 0.0
+        for i in 0 .. pairs.Count - 1 do
+            let struct (ai, _, wi) = pairs.[i]
+            cSum <- cSum + ai * wi
+            cW <- cW + wi
+        let c = if cW > 0.0 then cSum / cW else V3d.Zero
         let A = Array2D.zeroCreate<float> 6 6
         let B = Array.zeroCreate<float> 6
         let mutable rmsSum = 0.0
@@ -70,13 +81,14 @@ module private IcpMath =
         let J = Array2D.zeroCreate<float> 3 6
         for i in 0 .. pairs.Count - 1 do
             let struct (ai, bi, wi) = pairs.[i]
+            let al = ai - c
             let r0 = ai.X - bi.X
             let r1 = ai.Y - bi.Y
             let r2 = ai.Z - bi.Z
 
-            J.[0, 0] <- 0.0;     J.[0, 1] <- ai.Z;   J.[0, 2] <- -ai.Y; J.[0, 3] <- 1.0; J.[0, 4] <- 0.0; J.[0, 5] <- 0.0
-            J.[1, 0] <- -ai.Z;   J.[1, 1] <- 0.0;    J.[1, 2] <-  ai.X; J.[1, 3] <- 0.0; J.[1, 4] <- 1.0; J.[1, 5] <- 0.0
-            J.[2, 0] <-  ai.Y;   J.[2, 1] <- -ai.X;  J.[2, 2] <-  0.0;  J.[2, 3] <- 0.0; J.[2, 4] <- 0.0; J.[2, 5] <- 1.0
+            J.[0, 0] <- 0.0;     J.[0, 1] <- al.Z;   J.[0, 2] <- -al.Y; J.[0, 3] <- 1.0; J.[0, 4] <- 0.0; J.[0, 5] <- 0.0
+            J.[1, 0] <- -al.Z;   J.[1, 1] <- 0.0;    J.[1, 2] <-  al.X; J.[1, 3] <- 0.0; J.[1, 4] <- 1.0; J.[1, 5] <- 0.0
+            J.[2, 0] <-  al.Y;   J.[2, 1] <- -al.X;  J.[2, 2] <-  0.0;  J.[2, 3] <- 0.0; J.[2, 4] <- 0.0; J.[2, 5] <- 1.0
             for a in 0 .. 5 do
                 for b in 0 .. 5 do
                     A.[a, b] <- A.[a, b] + wi * (J.[0, a] * J.[0, b] + J.[1, a] * J.[1, b] + J.[2, a] * J.[2, b])
@@ -90,7 +102,9 @@ module private IcpMath =
         let omega = V3d(x.[0], x.[1], x.[2])
         let t = V3d(x.[3], x.[4], x.[5])
         let R = rotFromOmega omega
-        R, t, sqrt (rmsSum / max 1.0 wSum)
+        // p ↦ R(p − c) + c + t, expressed as a world map p ↦ R·p + tWorld.
+        let tWorld = c - R * c + t
+        R, tWorld, sqrt (rmsSum / max 1.0 wSum)
 
 let runIcp
         (lmRef : LoadedMesh) (lmMov : LoadedMesh)
@@ -135,6 +149,20 @@ let runIcp
         if pairs.Count < 6 then
             iter <- maxIter
         else
+            // Trimmed correspondences: with partial overlap, closest-point
+            // pairs from non-overlapping regions bias the solve — gate at
+            // 3× the median pair distance.
+            let pairs =
+                if pairs.Count < 12 then pairs
+                else
+                    let dists = pairs |> Seq.map (fun (struct (a, b, _)) -> (a - b).Length) |> Array.ofSeq
+                    let sorted = Array.copy dists
+                    Array.sortInPlace sorted
+                    let gate = max (3.0 * sorted.[sorted.Length / 2]) 1e-6
+                    let filtered = ResizeArray<struct (V3d * V3d * float)>(pairs.Count)
+                    for i in 0 .. pairs.Count - 1 do
+                        if dists.[i] <= gate then filtered.Add pairs.[i]
+                    if filtered.Count >= 6 then filtered else pairs
             let Rd, td, rms = icpStep pairs
             convergence.Add rms
             currR <- Rd * currR

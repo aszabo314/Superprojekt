@@ -24,6 +24,19 @@ type RidgeRequest = { Name: string; Seed: float[]; ThresholdRad: float; MaxPoint
 type PatchRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
 
 [<CLIMutable>]
+type ProbeMeshDto = { Name: string; Transform: float[] }
+
+[<CLIMutable>]
+type ProbeRequest = {
+    Meshes           : ProbeMeshDto[]
+    ReferenceName    : string
+    Centre           : float[]
+    Radius           : float
+    Length           : float
+    MaxPointsPerMesh : int
+}
+
+[<CLIMutable>]
 type IcpRequest = {
     ReferenceName    : string
     MovingName       : string
@@ -133,6 +146,65 @@ let patchHandler : HttpHandler =
             return! json {| points = pts; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx
         with ex ->
             log.LogError(ex, "patch failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+let probeHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<ProbeRequest>()
+            let meshes =
+                req.Meshes |> Array.map (fun m ->
+                    let trafo =
+                        if m.Transform <> null && m.Transform.Length = 16 then
+                            let t = m.Transform
+                            M44d(t.[0],  t.[1],  t.[2],  t.[3],
+                                 t.[4],  t.[5],  t.[6],  t.[7],
+                                 t.[8],  t.[9],  t.[10], t.[11],
+                                 t.[12], t.[13], t.[14], t.[15])
+                        else M44d.Identity
+                    { MeshProbe.Name = m.Name; MeshProbe.Lm = loadMesh m.Name 0; MeshProbe.Transform = trafo })
+            let args : MeshProbe.ProbeArgs = {
+                Meshes           = meshes
+                ReferenceName    = req.ReferenceName
+                Centre           = toV3d req.Centre
+                Radius           = if req.Radius <= 0.0 then 1.0 else req.Radius
+                Length           = req.Length
+                MaxPointsPerMesh = if req.MaxPointsPerMesh <= 0 then 8192 else req.MaxPointsPerMesh
+            }
+            match MeshProbe.run args with
+            | Result.Error reason ->
+                log.LogInformation("probe ref={Ref}: rejected ({Reason})", req.ReferenceName, reason)
+                return! json {| ok = false; reason = reason |} next ctx
+            | Result.Ok r ->
+                let dists =
+                    r.Distributions |> Array.map (fun d ->
+                        {| name = d.Name; count = d.Count
+                           median = d.Median; q1 = d.Q1; q3 = d.Q3; std = d.Std
+                           bandwidth = d.Bandwidth; kde = d.Kde |})
+                let perMesh =
+                    r.PerMesh |> Array.map (fun p ->
+                        {| name = p.Name; iqr = p.Iqr; medianOffset = p.MedianOffset; count = p.Count |})
+                log.LogInformation("probe ref={Ref} r={Radius:F2} L={Length:F1}: {Meshes} meshes, {Points} pts",
+                    req.ReferenceName, args.Radius, r.Length,
+                    r.Distributions.Length, (r.Distributions |> Array.sumBy (fun d -> d.Count)))
+                return! json {|
+                    ok = true
+                    normal = fromV3d r.Normal
+                    planarity = r.Planarity
+                    length = r.Length
+                    autoLength = r.AutoLength
+                    xAuto = [| fst r.XAuto; snd r.XAuto |]
+                    xFit = [| fst r.XFit; snd r.XFit |]
+                    distributions = dists
+                    sources = {| dataset = r.DatasetError
+                                 algorithm = r.AlgorithmResid
+                                 conditioning = r.LocalConditioning
+                                 perMesh = perMesh |}
+                |} next ctx
+        with ex ->
+            log.LogError(ex, "probe failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 

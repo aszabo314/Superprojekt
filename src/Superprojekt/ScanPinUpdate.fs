@@ -11,6 +11,10 @@ module ScanPinUpdate =
     let mutable lineQueryCts : System.Threading.CancellationTokenSource =
         new System.Threading.CancellationTokenSource()
 
+    let mutable probeCts : System.Threading.CancellationTokenSource =
+        new System.Threading.CancellationTokenSource()
+    let mutable private probeOwner : ScanPinId option = None
+
     let private assignColors (meshNames : IndexList<string>) =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
 
@@ -37,6 +41,10 @@ module ScanPinUpdate =
             CreationCameraState  = cam
             CreatedAt            = System.DateTime.UtcNow
             DatasetColors        = assignColors model.MeshNames
+            Probe                = ProbeNone
+            ProbeLengthOverride  = None
+            ProbeLockOrder       = false
+            ProbeXRange          = ProbeXAuto
         }
 
     let private updatePin (id : ScanPinId) (f : ScanPin -> ScanPin) (sp : ScanPinModel) =
@@ -83,7 +91,7 @@ module ScanPinUpdate =
                 if pin.Phase = PinPhase.Placement then
                     let r' = max 0.01 r
                     let delta = max 0.0 (pin.FalloffRadius - pin.InnerRadius)
-                    { pin with InnerRadius = r'; FalloffRadius = r' + delta }
+                    { pin with InnerRadius = r'; FalloffRadius = r' + delta; Probe = ProbeNone }
                 else pin)
             | None -> sp
 
@@ -125,7 +133,7 @@ module ScanPinUpdate =
                     let payloadRadiusRender = ScanPin.renderLength scale pin.FalloffRadius
                     let renderCentre = ScanPin.renderCentre model.CommonCentroid scale pin.Centre
                     let payload = PayloadType.defaultFor payloadRadiusRender renderCentre pin.HostMeshName kind
-                    { pin with Payload = payload })
+                    { pin with Payload = payload; Probe = ProbeNone })
 
         | SetReliabilityWeight(id, w) ->
             sp |> updatePin id (fun pin ->
@@ -179,6 +187,28 @@ module ScanPinUpdate =
                             NormalWorld     = normal }
                     { pin with Payload = Patch pp' }
                 | _ -> pin)
+
+        // Stale guard: results only land while the pin is still ProbeRunning;
+        // anything that invalidated the probe in the meantime wins.
+        | ProbeComputed(id, result) ->
+            sp |> updatePin id (fun pin ->
+                if pin.Probe = ProbeRunning then { pin with Probe = ProbeReady result } else pin)
+
+        | ProbeFailed(id, reason) ->
+            sp |> updatePin id (fun pin ->
+                if pin.Probe = ProbeRunning then { pin with Probe = ProbeError reason } else pin)
+
+        | SetProbeLength(id, len) ->
+            sp |> updatePin id (fun pin ->
+                let len = len |> Option.map (fun l -> clamp 1.0 100.0 l)
+                if pin.ProbeLengthOverride = len then pin
+                else { pin with ProbeLengthOverride = len; Probe = ProbeNone })
+
+        | ToggleProbeLockOrder id ->
+            sp |> updatePin id (fun pin -> { pin with ProbeLockOrder = not pin.ProbeLockOrder })
+
+        | SetProbeXRange(id, r) ->
+            sp |> updatePin id (fun pin -> { pin with ProbeXRange = r })
 
     let handleMsg (env : Env<Message>) (model : Model) (msg : ScanPinMessage) =
         let sp = model.ScanPins
@@ -348,3 +378,74 @@ module ScanPinUpdate =
                     { model with CardSystem = { cs with Cards = cards } }
                 | None -> model
             | None -> model
+
+    // Lazy probe trigger, run as a postlude after every reducer step: the
+    // effective pin (selected or being adjusted — i.e. its card is open) with
+    // a Point payload and an invalidated probe gets one debounced server
+    // query. Slider drags coalesce; stale responses are dropped by the
+    // ProbeRunning guard above.
+    let ensureProbe (env : Env<Message>) (model : Model) : Model =
+        let sp = model.ScanPins
+        let effective =
+            ScanPinModel.activePlacementId sp
+            |> Option.orElse sp.SelectedPin
+            |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
+        match effective with
+        | Some pin when (match pin.Payload, pin.Probe with Point _, ProbeNone -> true | _ -> false) ->
+            let visible =
+                model.MeshNames |> IndexList.toList
+                |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
+            let setProbe state =
+                { model with ScanPins = { sp with Pins = HashMap.add pin.Id { pin with Probe = state } sp.Pins } }
+            match visible with
+            | [] -> setProbe (ProbeError "no visible meshes")
+            | _ ->
+                let refMesh =
+                    model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
+                    |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h visible))
+                    |> Option.defaultValue (List.head visible)
+                let cc = model.CommonCentroid
+                let meshes =
+                    visible |> List.map (fun n ->
+                        let t =
+                            match Map.tryFind n model.MeshTransforms with
+                            | Some rt -> (RigidTransform.renderToWorld (DatasetScale.forMesh model.DatasetScales n) cc rt).Forward
+                            | None -> M44d.Identity
+                        n, t)
+                let id = pin.Id
+                let centre = pin.Centre
+                let radius = pin.InnerRadius
+                let length = pin.ProbeLengthOverride |> Option.defaultValue 0.0
+                probeCts.Cancel()
+                probeCts <- new System.Threading.CancellationTokenSource()
+                // The cancelled task never emits, so a different pin whose
+                // probe was in flight would stay ProbeRunning forever — reset
+                // it to ProbeNone so it lazily recomputes when reselected.
+                let sp =
+                    match probeOwner with
+                    | Some prev when prev <> id ->
+                        match HashMap.tryFind prev sp.Pins with
+                        | Some p when p.Probe = ProbeRunning ->
+                            { sp with Pins = HashMap.add prev { p with Probe = ProbeNone } sp.Pins }
+                        | _ -> sp
+                    | _ -> sp
+                probeOwner <- Some id
+                let token = probeCts.Token
+                task {
+                    try
+                        do! System.Threading.Tasks.Task.Delay(250, token)
+                        let! res =
+                            Query.probe ApiConfig.apiBase.Value meshes refMesh centre radius length 8192
+                            |> Async.StartAsTask
+                        if not token.IsCancellationRequested then
+                            match res with
+                            | Result.Ok r -> env.Emit [ScanPinMsg (ProbeComputed(id, r))]
+                            | Result.Error e -> env.Emit [ScanPinMsg (ProbeFailed(id, e))]
+                    with
+                    | :? System.OperationCanceledException -> ()
+                    | ex ->
+                        if not token.IsCancellationRequested then
+                            env.Emit [ScanPinMsg (ProbeFailed(id, ex.Message))]
+                } |> ignore
+                { model with ScanPins = { sp with Pins = HashMap.add id { pin with Probe = ProbeRunning } sp.Pins } }
+        | _ -> model

@@ -148,6 +148,41 @@ module GuiPanels =
                     | None -> ())
             }
 
+            // Probe cylinder length (spec §7.5): manual override 1–100 m, or
+            // server auto-length (1.1 × union bbox extent along the normal).
+            let probeLen =
+                activePin |> AVal.map (fun po ->
+                    match po with
+                    | Some p ->
+                        match p.ProbeLengthOverride with
+                        | Some l -> l
+                        | None ->
+                            match p.Probe with
+                            | ProbeReady r -> r.Length
+                            | _ -> 10.0
+                    | None -> 10.0)
+            let lenIsAuto =
+                activePin |> AVal.map (function
+                    | Some p -> p.ProbeLengthOverride.IsNone
+                    | None -> true)
+            div {
+                Class "lp-probelen-row"
+                showWhen isPoint
+                inlineLogSlider "Cyl. length" 1.0 100.0 (sprintf "%.1f m") probeLen (fun v ->
+                    match AVal.force pinId with
+                    | Some id -> env.Emit [ScanPinMsg (SetProbeLength(id, Some v))]
+                    | None -> ())
+                button {
+                    Class "lp-probelen-auto"
+                    lenIsAuto |> AVal.map (fun a -> if a then Some (Class "btn-active") else None)
+                    Dom.OnClick(fun _ ->
+                        match AVal.force pinId with
+                        | Some id -> env.Emit [ScanPinMsg (SetProbeLength(id, None))]
+                        | None -> ())
+                    "auto"
+                }
+            }
+
             let isLine = payloadKind |> AVal.map ((=) LineKind)
             let isIsoline =
                 activePin |> AVal.map (fun po ->

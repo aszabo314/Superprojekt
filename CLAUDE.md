@@ -117,7 +117,8 @@ Costly spatial queries (`isoline`, `curvature-ridge`, `icp`) scale with mesh cou
 
 ```
 MeshData.fs                     ← mesh fetch/parse, ApiConfig, shared Http.client
-Query.fs                        ← server query wrappers (Async), rayHitMany fan-out
+ProbeModel.fs                   ← M3C2 probe DTOs (ProbeResult/ProbeState/ProbeXRange/HoverProbeState)
+Query.fs                        ← server query wrappers (Async), rayHitMany fan-out, probe
 CameraModel.fs / .g.fs          ← OrbitState [<ModelType>]
 OrbitController.fs              ← OrbitMessage DU + orbit camera
 ScanPinModel.fs / .g.fs         ← ScanPin + Card types
@@ -149,7 +150,8 @@ ShaderCache.fs / Program.fs
 MeshLoader.fs          OBJ parse, centroid file, atlas paths
 MeshCache.fs           Embree scene + BbTree cache (lazy, permanent)
 MeshAnalysis.fs        isoline + curvature-ridge tracing, patch sampling
-MeshIcp.fs             ICP solver
+MeshProbe.fs           N-mesh M3C2 probe (normal PCA, cylinder sampling, KDE, three sources)
+MeshIcp.fs             ICP solver (recentred Gauss-Newton, trimmed correspondences)
 QueryHandlers.fs       HTTP query handlers
 Handlers.fs            routing
 Program.fs             ASP.NET startup
@@ -171,6 +173,7 @@ POST /api/query/isoline                         → polyline at a given elevatio
 POST /api/query/curvature-ridge                 → polyline along a curvature ridge
 POST /api/query/patch                           → tangent + normal at a point, plus neighbour sample
 POST /api/query/icp                             → ICP transform + convergence + residuals
+POST /api/query/probe                           → N-mesh M3C2 probe (per-mesh distributions + KDE + three sources)
 ```
 
 All query coordinates are **absolute world space**. The server converts: `localPos = V3f(worldPos - meshCentroid)`.
@@ -192,7 +195,7 @@ Top-level `Model` fields (see `Model.fs`):
 - `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `ProvenanceHeatmap`, `ProvenanceThreshold`, `FalloffZoneOnly`
 - `FusionMode`
 - `PanoramaOpen`, `Panoramas` (`Panorama list` = `{ Name; EyeWorld; Yaw }`, synthetic, regenerated on dataset load), `SelectedPanorama`, `PanoramaMode` (`PanoPhoto | PanoRender | PanoBlend`), `PanoramaBlend`
-- `ScanPins`, `CardSystem`
+- `ScanPins`, `CardSystem`, `HoverProbe` (transient Ctrl-click probe, one global slot)
 - `RenderingMode` (Textured | Shaded | SlopeColor), `MeshSolo`, `LassoCardPos`, `GearPopoverOpen`
 
 GUI placement:
@@ -211,11 +214,13 @@ Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc
 
 **State:** `Placement : PlacementState` single DU on `ScanPinModel` — `PlacementIdle | AnchorPlacement | AdjustingPin of ScanPinId`. Helpers: `ScanPinModel.activePlacementId sp`, `ScanPinModel.isPlacing sp`.
 
+**M3C2 probe** (Core 2 slice, see `scanpin_core2_slice_spec.md` + `scanpin_core2_progress.md`): every Point-payload pin owns `Probe : ProbeState` (`ProbeNone | ProbeRunning | ProbeReady of ProbeResult | ProbeError`), plus `ProbeLengthOverride` (None = server auto-length), `ProbeLockOrder`, `ProbeXRange`. The probe samples all visible meshes inside a cylinder (radius = InnerRadius, axis = PCA normal of the reference mesh inside the pin sphere) on the server (`POST /api/query/probe`, one batched round-trip carrying world-space registration transforms) and returns per-mesh signed-distance distributions (median/IQR/std/KDE, re-centred so 0 = reference median) plus the dataset/algorithm/conditioning decomposition. Computation is **lazy + debounced**: `ScanPinUpdate.ensureProbe` runs as a postlude after every reducer step and launches one 250 ms-debounced query for the effective (card-open) pin when its state is `ProbeNone`; invalidation just resets to `ProbeNone` (radius change, centre move, payload change, reference change, transforms, visibility, length override). Stale responses are dropped by the `ProbeRunning` guard. The pin card renders the ridgeline chart + planarity badge + three-source stacked bar from `ProbeReady` data (`CardsPin.ridgelineJs`, shared with the Ctrl-click hover-probe tooltip via the `d.mini` flag).
+
 **3D rendering** (`ScanPinScene.fs`): `pinDots` clickable markers, `pinSpheres` shows two translucent shells (outer = FalloffRadius, inner = InnerRadius) + selected-outline, `pinLines` for Line payloads, `pinPatchRings` for Patch payloads, `ghostPreview` for the placement hover.
 
 ## Registration
 
-Two solve modes, both served by `POST /api/query/icp` (`MeshIcp.runIcp` — Gauss-Newton point-to-surface ICP, Embree closest-point correspondences): **Traditional** (no anchors) and **Region-restricted** (committed pins become Gaussian anchor weights — centre, sigma = FalloffRadius, multiplier = Point `ReliabilityWeight`; `RegionEps` 0.05 gates samples). The card's Run button is disabled; the solve pipeline (`RunRegistration` → `Query.runIcp` → `MeshTransforms` + per-mesh RMS → provenance overlay) is fully wired and verified. The lasso never affects registration — it is purely visual. There is no point-pair solver; don't re-add that mode without a server implementation.
+Two solve modes, both served by `POST /api/query/icp` (`MeshIcp.runIcp` — Gauss-Newton point-to-surface ICP, Embree closest-point correspondences): **Traditional** (no anchors) and **Region-restricted** (committed pins become Gaussian anchor weights — centre, sigma = FalloffRadius, multiplier = Point `ReliabilityWeight`; `RegionEps` 0.05 gates samples). The Run button is enabled (needs a reference mesh); the solve pipeline is `RunRegistration` → `Query.runIcp` → `MeshTransforms` + per-mesh RMS → provenance overlay + probe invalidation. Two solver hardening details (don't remove): the Gauss-Newton step is **linearized around the weighted correspondence centroid** (raw UTM-scale coordinates give a ~5e6 m rotation lever arm and the step diverges — 428 km translations), and correspondences are **gated at 3× the median pair distance** per iteration (partial overlap otherwise biases the fit). The lasso never affects registration — it is purely visual. There is no point-pair solver; don't re-add that mode without a server implementation.
 
 ## Notes
 

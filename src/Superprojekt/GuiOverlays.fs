@@ -23,6 +23,37 @@ module GuiOverlays =
                 | None -> "")
         }
 
+    // Ctrl-click hover probe (spec §7.4): compressed ridgeline at the cursor,
+    // kept inside the viewport; dismissed by Escape / click / timeout.
+    let hoverProbeTooltip (model : AdaptiveModel) (viewportSize : aval<V2i>) =
+        let posStyle =
+            (model.HoverProbe, viewportSize) ||> AVal.map2 (fun hp vp ->
+                match hp with
+                | Some h ->
+                    let x = max 0.0 (min (h.ScreenPos.X + 14.0) (float vp.X - 256.0))
+                    let y = max 0.0 (min (h.ScreenPos.Y + 14.0) (float vp.Y - 190.0))
+                    Some (Style [
+                        Left (sprintf "%.0fpx" x)
+                        Top  (sprintf "%.0fpx" y)
+                    ])
+                | None -> Some (Style [Display "none"]))
+        let colors =
+            model.MeshOrder |> AMap.toAVal |> AVal.map (fun order ->
+                order |> HashMap.toSeq
+                |> Seq.map (fun (n, i) -> n, Primitives.meshColor i)
+                |> Map.ofSeq)
+        let json =
+            (model.HoverProbe, colors) ||> AVal.map2 (fun hp cols ->
+                match hp with
+                | Some h -> CardsPin.probeStateJson true false ProbeXAuto cols h.Probe
+                | None -> "{\"status\":\"none\"}")
+        div {
+            Class "hover-probe-tip"
+            posStyle
+            json |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
+            Primitives.observedRender "data-ridge" "{}" CardsPin.ridgelineJs
+        }
+
     // Provenance probe under the cursor; reuses Provenance.sourcesAt so the
     // numbers agree with the heatmap.
     let provenanceHoverOverlay

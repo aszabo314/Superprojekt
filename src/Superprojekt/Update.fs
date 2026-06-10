@@ -35,21 +35,15 @@ module ServerActions =
 
 module Update =
 
-    let private worldToRenderRigid (scale : float) (cc : V3d) (worldT : Trafo3d) =
-        Trafo3d.Scale(1.0 / scale)
-        * Trafo3d.Translation(cc)
-        * worldT
-        * Trafo3d.Translation(-cc)
-        * Trafo3d.Scale(scale)
+    let mutable private hoverProbeCts : System.Threading.CancellationTokenSource =
+        new System.Threading.CancellationTokenSource()
 
-    let private renderToWorldRigid (scale : float) (cc : V3d) (renderT : Trafo3d) =
-        Trafo3d.Translation(-cc)
-        * Trafo3d.Scale(scale)
-        * renderT
-        * Trafo3d.Scale(1.0 / scale)
-        * Trafo3d.Translation(cc)
+    let private invalidateProbes (model : Model) =
+        { model with
+            ScanPins = ScanPinModel.invalidateProbes model.ScanPins
+            HoverProbe = None }
 
-    let update (env : Env<Message>) (model : Model) (msg : Message) =
+    let private updateCore (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
         | CameraMessage msg ->
             { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
@@ -76,9 +70,10 @@ module Update =
             let activePickingLayer =
                 if not v && model.ActivePickingLayer = Some name then None
                 else model.ActivePickingLayer
-            { model with
-                MeshVisible = Map.add name v model.MeshVisible
-                ActivePickingLayer = activePickingLayer }
+            invalidateProbes
+                { model with
+                    MeshVisible = Map.add name v model.MeshVisible
+                    ActivePickingLayer = activePickingLayer }
         | ToggleMenu ->
             let sp = model.ScanPins
             if ScanPinModel.isPlacing sp then model
@@ -115,11 +110,12 @@ module Update =
         | SetRegistrationMode m ->
             { model with Registration = { model.Registration with Mode = m } }
         | SetReferenceMesh mesh ->
-            { model with Registration = { model.Registration with ReferenceMesh = mesh } }
+            invalidateProbes { model with Registration = { model.Registration with ReferenceMesh = mesh } }
         | ResetMeshTransforms ->
-            { model with
-                MeshTransforms = Map.empty
-                Registration = { model.Registration with Running = false } }
+            invalidateProbes
+                { model with
+                    MeshTransforms = Map.empty
+                    Registration = { model.Registration with Running = false } }
         | RunRegistration ->
             let reg = model.Registration
             match reg.ReferenceMesh with
@@ -158,7 +154,7 @@ module Update =
                     for mov in visibleMeshes do
                         let initial =
                             Map.tryFind mov model.MeshTransforms
-                            |> Option.map (fun t -> (renderToWorldRigid scale cc t).Forward)
+                            |> Option.map (fun t -> (RigidTransform.renderToWorld scale cc t).Forward)
                             |> Option.defaultValue M44d.Identity
                         let movName = mov
                         task {
@@ -173,16 +169,17 @@ module Update =
                     { model with Registration = { reg with Running = true } }
         | RegistrationComplete(mesh, trafo, _conv, resi) ->
             let meshScale = DatasetScale.forMesh model.DatasetScales mesh
-            let renderTrafo = worldToRenderRigid meshScale model.CommonCentroid trafo
+            let renderTrafo = RigidTransform.worldToRender meshScale model.CommonCentroid trafo
             let mt = Map.add mesh renderTrafo model.MeshTransforms
             let meshRms =
                 if resi.Length = 0 then 0.0
                 else sqrt ((resi |> Array.sumBy (fun x -> x * x)) / float resi.Length)
             let algoMap = Map.add mesh meshRms model.MeshAlgorithmResidual
-            { model with
-                MeshTransforms = mt
-                MeshAlgorithmResidual = algoMap
-                Registration = { model.Registration with Running = false } }
+            invalidateProbes
+                { model with
+                    MeshTransforms = mt
+                    MeshAlgorithmResidual = algoMap
+                    Registration = { model.Registration with Running = false } }
         | RegistrationFailed err ->
             let log = model.DebugLog.InsertAt(0, sprintf "registration failed: %s" err)
             { model with
@@ -259,24 +256,25 @@ module Update =
         | SetRenderingMode m ->
             { model with RenderingMode = m }
         | ToggleMeshSolo name ->
-            match model.MeshSolo with
-            | Solo(soloName, restore) when soloName = name ->
-                { model with MeshVisible = restore; MeshSolo = NoSolo }
-            | Solo(_, restore) ->
-                let vis = restore |> Map.map (fun k _ -> k = name)
-                { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
-            | NoSolo ->
-                let restore = model.MeshVisible
-                let vis =
-                    model.MeshNames |> IndexList.toSeq
-                    |> Seq.map (fun n -> n, n = name) |> Map.ofSeq
-                { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
+            invalidateProbes (
+                match model.MeshSolo with
+                | Solo(soloName, restore) when soloName = name ->
+                    { model with MeshVisible = restore; MeshSolo = NoSolo }
+                | Solo(_, restore) ->
+                    let vis = restore |> Map.map (fun k _ -> k = name)
+                    { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
+                | NoSolo ->
+                    let restore = model.MeshVisible
+                    let vis =
+                        model.MeshNames |> IndexList.toSeq
+                        |> Seq.map (fun n -> n, n = name) |> Map.ofSeq
+                    { model with MeshVisible = vis; MeshSolo = Solo(name, restore) })
         | ShowAllMeshes ->
             let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, true) |> Map.ofSeq
-            { model with MeshVisible = vis; MeshSolo = NoSolo }
+            invalidateProbes { model with MeshVisible = vis; MeshSolo = NoSolo }
         | HideAllMeshes ->
             let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, false) |> Map.ofSeq
-            { model with MeshVisible = vis; MeshSolo = NoSolo }
+            invalidateProbes { model with MeshVisible = vis; MeshSolo = NoSolo }
         | ResetCamera ->
             let center, radius =
                 if model.SceneBounds.IsInvalid then V3d.Zero, 50.0
@@ -440,7 +438,8 @@ module Update =
                             let p' =
                                 { p with
                                     Centre = c.ProjectedCentre
-                                    HostMeshName = Some c.TargetMesh }
+                                    HostMeshName = Some c.TargetMesh
+                                    Probe = ProbeNone }
                             pins <- HashMap.add c.PinId p' pins
                         | None -> ()
                 { model with
@@ -449,6 +448,61 @@ module Update =
             | _ -> model
         | CancelRetarget ->
             { model with Retarget = RetargetIdle }
+        // Transient hover probe (spec §7.4): radius = 5% of the scene bbox
+        // diagonal, auto length, declared reference mesh (or active picking
+        // layer / first visible). Not cached; superseded by the next
+        // Ctrl-click via the CancellationTokenSource.
+        | HoverProbeAt(screenPx, world) ->
+            let visible =
+                model.MeshNames |> IndexList.toList
+                |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
+            match visible with
+            | [] -> model
+            | _ ->
+                let refMesh =
+                    model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
+                    |> Option.orElse (model.ActivePickingLayer |> Option.filter (fun l -> List.contains l visible))
+                    |> Option.defaultValue (List.head visible)
+                let radius =
+                    if model.SceneBounds.IsInvalid then 5.0
+                    else max 0.5 (model.SceneBounds.Size.Length * 0.05)
+                let cc = model.CommonCentroid
+                let meshes =
+                    visible |> List.map (fun n ->
+                        let t =
+                            match Map.tryFind n model.MeshTransforms with
+                            | Some rt -> (RigidTransform.renderToWorld (DatasetScale.forMesh model.DatasetScales n) cc rt).Forward
+                            | None -> M44d.Identity
+                        n, t)
+                hoverProbeCts.Cancel()
+                hoverProbeCts <- new System.Threading.CancellationTokenSource()
+                let token = hoverProbeCts.Token
+                task {
+                    try
+                        let! res =
+                            Query.probe ApiConfig.apiBase.Value meshes refMesh world radius 0.0 4096
+                            |> Async.StartAsTask
+                        if not token.IsCancellationRequested then
+                            match res with
+                            | Result.Ok r -> env.Emit [HoverProbeResult (ProbeReady r)]
+                            | Result.Error e -> env.Emit [HoverProbeResult (ProbeError e)]
+                        do! System.Threading.Tasks.Task.Delay(8000, token)
+                        if not token.IsCancellationRequested then
+                            env.Emit [ClearHoverProbe]
+                    with
+                    | :? System.OperationCanceledException -> ()
+                    | ex ->
+                        if not token.IsCancellationRequested then
+                            env.Emit [HoverProbeResult (ProbeError ex.Message)]
+                } |> ignore
+                { model with HoverProbe = Some { ScreenPos = screenPx; Anchor = world; Probe = ProbeRunning } }
+        | HoverProbeResult st ->
+            match model.HoverProbe with
+            | Some h when h.Probe = ProbeRunning -> { model with HoverProbe = Some { h with Probe = st } }
+            | _ -> model
+        | ClearHoverProbe ->
+            hoverProbeCts.Cancel()
+            if model.HoverProbe.IsNone then model else { model with HoverProbe = None }
         | TogglePanorama ->
             { model with PanoramaOpen = not model.PanoramaOpen }
         | PanoramasGenerated ps ->
@@ -472,3 +526,6 @@ module Update =
                 env.Emit [CameraMessage (OrbitMessage.SetTarget(true, center, r, p.Yaw + Constant.Pi, 0.05))]
                 model
             | None -> model
+
+    let update (env : Env<Message>) (model : Model) (msg : Message) =
+        updateCore env model msg |> ScanPinUpdate.ensureProbe env

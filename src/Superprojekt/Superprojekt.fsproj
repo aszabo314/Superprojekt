@@ -17,6 +17,7 @@
   <ItemGroup>
     <None Include="paket.references" />
     <Compile Include="MeshData.fs" />
+    <Compile Include="ProbeModel.fs" />
     <Compile Include="Query.fs" />
     <Compile Include="CameraModel.fs" />
     <Compile Include="CameraModel.g.fs" />

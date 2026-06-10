@@ -20,6 +20,23 @@ module DatasetScale =
     let active (activeDataset : string option) (scales : Map<string, float>) =
         activeDataset |> Option.bind (fun d -> Map.tryFind d scales) |> Option.defaultValue 1.0
 
+// MeshTransforms stores render-space trafos; world-space rigid transforms
+// (server queries, persistence of ICP results) convert through these.
+module RigidTransform =
+    let worldToRender (scale : float) (cc : V3d) (worldT : Trafo3d) =
+        Trafo3d.Scale(1.0 / scale)
+        * Trafo3d.Translation(cc)
+        * worldT
+        * Trafo3d.Translation(-cc)
+        * Trafo3d.Scale(scale)
+
+    let renderToWorld (scale : float) (cc : V3d) (renderT : Trafo3d) =
+        Trafo3d.Translation(-cc)
+        * Trafo3d.Scale(scale)
+        * renderT
+        * Trafo3d.Scale(1.0 / scale)
+        * Trafo3d.Translation(cc)
+
 type MeshSoloState =
     | NoSolo
     | Solo of name:string * restore:Map<string,bool>
@@ -219,6 +236,7 @@ type Model =
 
         ScanPins              : ScanPinModel
         CardSystem            : CardSystemModel
+        HoverProbe            : HoverProbeState option
 
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
@@ -271,6 +289,7 @@ module Model =
             PanoramaBlend         = 0.5
             ScanPins              = ScanPinModel.initial
             CardSystem            = CardSystemModel.initial
+            HoverProbe            = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             LassoCardPos        = None

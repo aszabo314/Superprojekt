@@ -97,6 +97,17 @@ module View =
 
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
+                let! client = RenderControl.ClientSize
+
+                // CSS-pixel canvas size for everything that mixes with DOM
+                // coordinates (cursor positions, HTML overlay placement).
+                // ViewportSize is framebuffer pixels = CSS × devicePixelRatio,
+                // so using it for overlay math pushes cards off-screen on
+                // hi-dpi displays. ClientSize is V2i.II until the first DOM
+                // event arrives — fall back to the framebuffer size until then.
+                let overlaySize =
+                    (client, size) ||> AVal.map2 (fun c v ->
+                        if c.X > 1 && c.Y > 1 then c else v)
 
                 let mutable eHandler = None
 
@@ -111,7 +122,7 @@ module View =
                 RenderControl.OnRendered(fun _ ->
                     if initial then
                         initial <- false
-                    let s = AVal.force size
+                    let s = AVal.force overlaySize
                     if viewportSize.Value <> s then
                         transact (fun () -> viewportSize.Value <- s)
                     env.Emit [CameraMessage OrbitMessage.Rendered]
@@ -140,7 +151,7 @@ module View =
                         | Some worldBox ->
                             let cc = AVal.force model.CommonCentroid
                             let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) layer
-                            let vpSize = AVal.force size
+                            let vpSize = AVal.force overlaySize
                             let v = AVal.force view
                             let p = AVal.force proj
                             let ray = pickRay cursorPx vpSize v p
@@ -166,7 +177,7 @@ module View =
                         let names = MeshView.visibleMeshNames model
                         if List.isEmpty names then async.Return None
                         else
-                            let ray = pickRay cursorPx (AVal.force size) (AVal.force view) (AVal.force proj)
+                            let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
                             let cc = AVal.force model.CommonCentroid
                             let scales = AVal.force model.DatasetScales
                             let sensors = AVal.force model.MeshSensorTypes
@@ -215,7 +226,7 @@ module View =
                         forwardZoom ()
                     else
                         let cursorPx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
-                        let vpSize = AVal.force size
+                        let vpSize = AVal.force overlaySize
                         let v = AVal.force view
                         let p = AVal.force proj
                         let ray = pickRay cursorPx vpSize v p
@@ -252,7 +263,7 @@ module View =
                 Sg.OnDoubleTap(fun e ->
                     match AVal.force model.LassoDrawing with
                     | Some _ ->
-                        env.Emit [LassoCommit(AVal.force view, AVal.force proj, AVal.force size)]
+                        env.Emit [LassoCommit(AVal.force view, AVal.force proj, AVal.force overlaySize)]
                         false
                     | None ->
                         if AVal.force model.FusionMode then
@@ -283,7 +294,31 @@ module View =
                         | Some px -> env.Emit [LassoAddVertex px]
                         | None -> ()
                         false
+                    | None when e.Ctrl ->
+                        // Ctrl-click = transient hover probe (spec §7.4).
+                        let screenPx = cursorScreen.Value |> Option.defaultValue V2d.Zero
+                        if AVal.force model.FusionMode then
+                            async {
+                                let! resolved = resolveFusionPick ()
+                                match resolved with
+                                | Some (renderPos, _) ->
+                                    env.Emit [HoverProbeAt(screenPx, worldFromRender model renderPos)]
+                                | None -> ()
+                            } |> Async.Start
+                        else
+                            let frontmost =
+                                if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                            async {
+                                let! resolved = resolveLayerPick frontmost
+                                match resolved with
+                                | Some renderPos ->
+                                    env.Emit [HoverProbeAt(screenPx, worldFromRender model renderPos)]
+                                | None -> ()
+                            } |> Async.Start
+                        true
                     | None ->
+                        if Option.isSome (AVal.force model.HoverProbe) then
+                            env.Emit [ClearHoverProbe]
                         let placement = AVal.force model.ScanPins.Placement
                         if AVal.force model.FusionMode then
                             // Fusion: resolve the winner mesh + point on the CPU,
@@ -348,9 +383,12 @@ module View =
                 match e.Key with
                 | " "      -> transact (fun () -> spaceHeld.Value <- true)
                 | "Escape" ->
-                    match AVal.force model.LassoDrawing with
-                    | Some _ -> env.Emit [LassoCancel]
-                    | None -> env.Emit [ScanPinMsg CancelPlacement]
+                    if Option.isSome (AVal.force model.HoverProbe) then
+                        env.Emit [ClearHoverProbe]
+                    else
+                        match AVal.force model.LassoDrawing with
+                        | Some _ -> env.Emit [LassoCancel]
+                        | None -> env.Emit [ScanPinMsg CancelPlacement]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
@@ -368,6 +406,7 @@ module View =
             GuiCards.retargetCard env model
             GuiCards.panoramaCard env model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
+            GuiOverlays.hoverProbeTooltip model (viewportSize :> aval<V2i>)
             GuiOverlays.fusionNotice model
             GuiOverlays.provenanceHoverOverlay model (hoverCoord :> aval<_>) (cursorScreen :> aval<_>)
             GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)

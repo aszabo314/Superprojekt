@@ -20,6 +20,167 @@ module CardsPin =
     let c4bToHex (c : C4b) =
         sprintf "#%02x%02x%02x" c.R c.G c.B
 
+    // Ridgeline chart (spec §7.2) for a data-ridge JSON attribute. d.mini
+    // renders the compressed hover-probe variant (§7.4): colour squares
+    // instead of labels, no count badges, no click-to-expand detail.
+    let ridgelineJs = [
+        "  function placeholder(t){ var p = document.createElement('div'); p.className = 'pin-card-empty'; p.textContent = t; el.appendChild(p); }"
+        "  if(!d.status || d.status === 'none'){ placeholder('No probe for this payload.'); return; }"
+        "  if(d.status === 'running'){ placeholder('Probing…'); return; }"
+        "  if(d.status === 'error'){ placeholder('Probe failed: ' + (d.reason || '')); return; }"
+        "  var mini = !!d.mini;"
+        "  var rows = d.rows || [];"
+        "  var n = rows.length;"
+        "  if(n === 0){ placeholder('No meshes.'); return; }"
+        "  var w = mini ? 240 : 300;"
+        "  var labelW = mini ? 16 : 80;"
+        "  var badgeW = mini ? 6 : 46;"
+        "  var maxH = mini ? 150 : 400;"
+        "  var rowH = Math.min(30, Math.max(13, (maxH - 60) / n));"
+        "  var padT = 6, padB = mini ? 14 : 26;"
+        "  var h = Math.round(rowH * n + padT + padB);"
+        "  var iw = w - labelW - badgeW;"
+        "  var x0 = d.xmin, x1 = d.xmax;"
+        "  if(!(x1 > x0)){ x0 = -0.1; x1 = 0.1; }"
+        "  var sx = function(v){ return labelW + (v - x0) / (x1 - x0) * iw; };"
+        "  var maxY = 0;"
+        "  rows.forEach(function(r){ (r.kde || []).forEach(function(p){ if(p[0] >= x0 && p[0] <= x1 && p[1] > maxY) maxY = p[1]; }); });"
+        "  var svg = document.createElementNS(ns,'svg');"
+        "  svg.setAttribute('class','ridge-plot');"
+        "  svg.setAttribute('width', w); svg.setAttribute('height', h);"
+        "  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);"
+        "  var frame = document.createElementNS(ns,'rect');"
+        "  frame.setAttribute('x', labelW); frame.setAttribute('y', padT);"
+        "  frame.setAttribute('width', iw); frame.setAttribute('height', h - padT - padB);"
+        "  frame.setAttribute('fill','#f8fafc'); frame.setAttribute('stroke','#cbd5e1'); frame.setAttribute('stroke-width','1');"
+        "  svg.appendChild(frame);"
+        "  function ln(xa,ya,xb,yb,stroke,sw,dash,op){"
+        "    var l = document.createElementNS(ns,'line');"
+        "    l.setAttribute('x1',xa); l.setAttribute('y1',ya); l.setAttribute('x2',xb); l.setAttribute('y2',yb);"
+        "    l.setAttribute('stroke',stroke); l.setAttribute('stroke-width',sw);"
+        "    if(dash) l.setAttribute('stroke-dasharray',dash);"
+        "    if(op) l.setAttribute('stroke-opacity',op);"
+        "    svg.appendChild(l);"
+        "  }"
+        "  function txt(x,y,s,anchor,fill,size){"
+        "    var t = document.createElementNS(ns,'text');"
+        "    t.setAttribute('x',x); t.setAttribute('y',y);"
+        "    t.setAttribute('text-anchor', anchor || 'middle');"
+        "    t.setAttribute('font-family','SF Mono, Monaco, monospace');"
+        "    t.setAttribute('font-size', size || '9');"
+        "    t.setAttribute('fill', fill || '#475569');"
+        "    t.textContent = s; svg.appendChild(t);"
+        "  }"
+        "  if(0 >= x0 && 0 <= x1) ln(sx(0), padT, sx(0), h - padB, '#64748b', '1', '3,3', '0.7');"
+        "  var rawStep = (x1 - x0) / 4;"
+        "  var pow = Math.pow(10, Math.floor(Math.log(rawStep) / Math.LN10));"
+        "  var ms = rawStep / pow;"
+        "  var step = (ms >= 5 ? 5 : ms >= 2 ? 2 : 1) * pow;"
+        "  var dec = Math.max(0, -Math.floor(Math.log(step) / Math.LN10 + 1e-9));"
+        "  for(var tx = Math.ceil(x0 / step) * step; tx <= x1 + step * 0.001; tx += step){"
+        "    ln(sx(tx), h - padB, sx(tx), h - padB + 3, '#94a3b8', '1');"
+        "    if(!mini) txt(sx(tx), h - padB + 12, tx.toFixed(dec), 'middle');"
+        "  }"
+        "  if(!mini) txt(labelW + iw / 2, h - 2, 'signed distance (m)', 'middle', '#64748b');"
+        "  var detail = null;"
+        "  rows.forEach(function(r, i){"
+        "    var by = padT + (i + 1) * rowH;"
+        "    var ch = rowH * 0.82;"
+        "    var grey = r.count === 0;"
+        "    if(mini){"
+        "      var swr = document.createElementNS(ns,'rect');"
+        "      swr.setAttribute('x', 3); swr.setAttribute('y', by - 7);"
+        "      swr.setAttribute('width', 7); swr.setAttribute('height', 7);"
+        "      swr.setAttribute('fill', grey ? '#cbd5e1' : r.color);"
+        "      svg.appendChild(swr);"
+        "    } else {"
+        "      var nm = r.name.length > 11 ? r.name.slice(0, 10) + '…' : r.name;"
+        "      txt(labelW - 5, by - rowH * 0.3, nm, 'end', grey ? '#94a3b8' : '#0f172a');"
+        "      txt(w - 3, by - rowH * 0.3, grey ? '–' : 'n=' + r.count, 'end', grey ? '#94a3b8' : '#475569', '8');"
+        "    }"
+        "    if(!grey){"
+        "      var kde = (r.kde || []).filter(function(p){ return p[0] >= x0 && p[0] <= x1; });"
+        "      if(kde.length > 1 && maxY > 0){"
+        "        var path = 'M' + sx(kde[0][0]).toFixed(1) + ',' + by.toFixed(1);"
+        "        kde.forEach(function(p){ path += 'L' + sx(p[0]).toFixed(1) + ',' + (by - p[1] / maxY * ch).toFixed(1); });"
+        "        path += 'L' + sx(kde[kde.length - 1][0]).toFixed(1) + ',' + by.toFixed(1) + 'Z';"
+        "        var area = document.createElementNS(ns,'path');"
+        "        area.setAttribute('d', path);"
+        "        area.setAttribute('fill', r.color); area.setAttribute('fill-opacity','0.4');"
+        "        area.setAttribute('stroke', r.color); area.setAttribute('stroke-width','1');"
+        "        svg.appendChild(area);"
+        "      }"
+        "      if(r.median >= x0 && r.median <= x1) ln(sx(r.median), by, sx(r.median), by - ch, r.color, '1.5');"
+        "      var qa = Math.max(r.q1, x0), qb = Math.min(r.q3, x1);"
+        "      if(qb > qa) ln(sx(qa), by, sx(qb), by, r.color, '2.5', null, '0.9');"
+        "    }"
+        "    if(!mini){"
+        "      var hit = document.createElementNS(ns,'rect');"
+        "      hit.setAttribute('x', 0); hit.setAttribute('y', by - rowH);"
+        "      hit.setAttribute('width', w); hit.setAttribute('height', rowH);"
+        "      hit.setAttribute('fill','transparent'); hit.style.cursor = 'pointer';"
+        "      hit.addEventListener('click', function(){"
+        "        if(!detail) return;"
+        "        var iqr = r.q3 - r.q1;"
+        "        var line = r.name + ' — offset ' + (r.median >= 0 ? '+' : '') + r.median.toFixed(3) + ' m · IQR ' + iqr.toFixed(3) + ' m · n=' + r.count;"
+        "        detail.textContent = (detail.textContent === line) ? '' : line;"
+        "      });"
+        "      svg.appendChild(hit);"
+        "    }"
+        "  });"
+        "  el.appendChild(svg);"
+        "  if(!mini){"
+        "    detail = document.createElement('div');"
+        "    detail.className = 'ridge-detail';"
+        "    el.appendChild(detail);"
+        "  }"
+    ]
+
+    // Three-source stacked bar (spec §7.3) for a data-srcs = [d,a,c] attribute.
+    let probeBarJs = [
+        "  if(!d || d.length < 3) return;"
+        "  var labels = ['Dataset error','Algorithm residual','Local conditioning'];"
+        "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
+        "  var total = d[0] + d[1] + d[2];"
+        "  if(total <= 0) return;"
+        "  d.forEach(function(v, i){"
+        "    var s = document.createElement('div');"
+        "    s.style.width = (v / total * 100) + '%';"
+        "    s.style.background = colours[i];"
+        "    s.style.height = '100%';"
+        "    s.title = labels[i] + ': ' + v.toFixed(4) + ' m';"
+        "    el.appendChild(s);"
+        "  });"
+    ]
+
+    let probeRidgeJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (colors : Map<string, C4b>) (r : ProbeResult) =
+        let win = ProbeXRange.window r xRange
+        let colorHex name =
+            match Map.tryFind name colors with
+            | Some c -> c4bToHex c
+            | None -> "#1a56db"
+        let rows =
+            if lockOrder then r.Distributions
+            else r.Distributions |> Array.sortBy (fun d -> (if d.Count = 0 then 1 else 0), abs d.Median)
+        let sb = System.Text.StringBuilder()
+        sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"xmin\":%.5g,\"xmax\":%.5g,\"rows\":[" mini win.Min win.Max) |> ignore
+        rows |> Array.iteri (fun i d ->
+            if i > 0 then sb.Append(',') |> ignore
+            sb.Append(sprintf "{\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"kde\":["
+                        (shortName d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3) |> ignore
+            d.Kde |> Array.iteri (fun j (x, y) ->
+                if j > 0 then sb.Append(',') |> ignore
+                sb.Append(sprintf "[%.4g,%.4g]" x y) |> ignore)
+            sb.Append("]}") |> ignore)
+        sb.Append("]}") |> ignore
+        sb.ToString()
+
+    let probeStateJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (colors : Map<string, C4b>) (probe : ProbeState) =
+        match probe with
+        | ProbeReady r -> probeRidgeJson mini lockOrder xRange colors r
+        | ProbeError e -> sprintf "{\"status\":\"error\",\"reason\":\"%s\"}" (e.Replace("\\", "/").Replace("\"", "'"))
+        | ProbeNone | ProbeRunning -> "{\"status\":\"running\"}"
+
     let pinCardBody (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
         let payloadKind =
             selectedPin |> AVal.map (function
@@ -74,47 +235,80 @@ module CardsPin =
                         span { Class "pc-val"; falloffText }
                     }
                 }
-                let provenance =
-                    (selectedPin, model.MeshSensorTypes, model.MeshDatasetErrors,
-                     model.MeshAlgorithmResidual, model.ScanPins.Pins |> AMap.toAVal)
-                    |> fun (a, b, c, d, e) ->
-                        AVal.custom (fun tok ->
-                            let pinOpt = a.GetValue tok
-                            let sensors = b.GetValue tok
-                            let overrides = c.GetValue tok
-                            let algo = d.GetValue tok
-                            let pins = e.GetValue tok
-                            match pinOpt with
-                            | None -> (0.0, 0.0, 0.0)
-                            | Some pin ->
-                                match pin.HostMeshName with
-                                | None -> (Provenance.defaultDatasetError UnknownSensor, 0.0, 1e6)
-                                | Some host ->
-                                    let worldP = pin.Centre
-                                    let anchors =
-                                        pins |> HashMap.toSeq
-                                        |> Seq.choose (fun (_, p) ->
-                                            if p.Phase = PinPhase.Committed then
-                                                Some (p.Centre, p.FalloffRadius)
-                                            else None)
-                                        |> Array.ofSeq
-                                    Provenance.sourcesAt host overrides sensors algo worldP anchors)
-                let provText =
-                    provenance |> AVal.map (fun (d, a, c) ->
-                        sprintf "D %.3fm • A %.3fm • C %.0f" d a c)
+                // M3C2 probe (spec §7.1–7.3): planarity badge, ridgeline,
+                // x-range / lock-order controls, three-source stacked bar.
+                let probe =
+                    selectedPin |> AVal.map (function
+                        | Some p -> (match p.Payload with Point _ -> Some p.Probe | _ -> None)
+                        | None -> None)
+                let probeResult =
+                    probe |> AVal.map (function
+                        | Some (ProbeReady r) -> Some r
+                        | _ -> None)
+                let probeJson =
+                    selectedPin |> AVal.map (function
+                        | Some pin ->
+                            match pin.Payload with
+                            | Point _ -> probeStateJson false pin.ProbeLockOrder pin.ProbeXRange pin.DatasetColors pin.Probe
+                            | _ -> "{\"status\":\"none\"}"
+                        | None -> "{\"status\":\"none\"}")
+                let planarBadge =
+                    probeResult |> AVal.map (Option.map (fun r -> r.Planar))
+                let sources =
+                    probeResult |> AVal.map (Option.map (fun r -> r.Sources))
+                let srcText =
+                    sources |> AVal.map (function
+                        | Some s -> sprintf "Data: %.3f m | Algo: %.3f m | Cond: %.4f m" s.DatasetError s.AlgorithmResid s.LocalConditioning
+                        | None -> "")
+                let emitForPin (mk : ScanPinId -> ScanPinMessage) =
+                    match AVal.force selectedPin with
+                    | Some p -> env.Emit [ScanPinMsg (mk p.Id)]
+                    | None -> ()
                 div {
-                    Class "pc-provenance"
-                    div { Class "pc-section-title"; "Error provenance" }
+                    Class "pc-probe"
+                    div {
+                        Class "pc-probe-head"
+                        span { Class "pc-section-title"; "Distance probe" }
+                        span {
+                            Class "pc-planarity"
+                            planarBadge |> AVal.map (function
+                                | Some true -> Some (Class "pc-planar-ok")
+                                | Some false -> Some (Class "pc-planar-warn")
+                                | None -> Some (Class "hidden"))
+                            planarBadge |> AVal.map (function
+                                | Some false -> "not planar"
+                                | _ -> "planar")
+                        }
+                    }
+                    div {
+                        Class "pc-ridge"
+                        probeJson |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
+                        Primitives.observedRender "data-ridge" "{}" ridgelineJs
+                    }
+                    div {
+                        Class "pc-probe-controls"
+                        showOnly (probeResult |> AVal.map Option.isSome)
+                        Primitives.compactButtonBar
+                            (ProbeXRange.all |> List.map (fun xr ->
+                                ProbeXRange.label xr,
+                                (selectedPin |> AVal.map (function Some p -> p.ProbeXRange = xr | None -> false)),
+                                (fun () -> emitForPin (fun id -> SetProbeXRange(id, xr)))))
+                        Primitives.compactToggle "Lock order"
+                            (selectedPin |> AVal.map (function Some p -> p.ProbeLockOrder | None -> false))
+                            (fun () -> emitForPin ToggleProbeLockOrder)
+                    }
+                    div {
+                        Class "pc-probe-caption"
+                        probeResult |> AVal.map (function
+                            | Some r -> sprintf "ref %s · cylinder L %.1f m" (shortName r.ReferenceMesh) r.Length
+                            | None -> "")
+                    }
                     div {
                         Class "pc-bar"
-                        provenance |> AVal.map (fun (d, a, c) ->
-                            let cM = c * 0.01
-                            let total = max 1e-6 (d + a + cM)
-                            let pd = d / total * 100.0
-                            let pa = a / total * 100.0
-                            let pc = cM / total * 100.0
-                            Some (Attribute("data-prov", sprintf "[%.1f,%.1f,%.1f]" pd pa pc)))
-                        Primitives.observedRender "data-prov" "[]" Primitives.provBarJs
+                        sources |> AVal.map (function
+                            | Some s -> Some (Attribute("data-srcs", sprintf "[%.6g,%.6g,%.6g]" s.DatasetError s.AlgorithmResid s.LocalConditioning))
+                            | None -> Some (Attribute("data-srcs", "[]")))
+                        Primitives.observedRender "data-srcs" "[]" probeBarJs
                     }
                     div {
                         Class "pc-bar-legend"
@@ -122,7 +316,7 @@ module CardsPin =
                         span { Class "pc-legend-item pc-bar-algorithm"; "Algorithm" }
                         span { Class "pc-legend-item pc-bar-conditioning"; "Conditioning" }
                     }
-                    div { Class "pc-provenance-readout"; provText }
+                    div { Class "pc-provenance-readout"; srcText }
                 }
                 div {
                     Class "pc-reliability"

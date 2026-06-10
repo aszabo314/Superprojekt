@@ -119,11 +119,17 @@ module GuiCards =
                 }
                 div {
                     Class "lp-commit-row"
+                    let running = model.Registration |> AVal.map (fun r -> r.Running)
+                    let canRun =
+                        model.Registration |> AVal.map (fun r ->
+                            r.ReferenceMesh.IsSome && not r.Running)
                     button {
                         Class "lp-commit"
-                        Attribute("disabled", "disabled")
-                        Attribute("title", "Registration solve is not available yet (TODO)")
-                        "▶ Run (todo)"
+                        canRun |> AVal.map (fun ok ->
+                            if ok then None else Some (Attribute("disabled", "disabled")))
+                        Attribute("title", "Solve ICP for every visible mesh against the reference")
+                        Dom.OnClick(fun _ -> env.Emit [RunRegistration])
+                        running |> AVal.map (fun r -> if r then "⏳ Running…" else "▶ Run")
                     }
                     button {
                         Class "lp-discard"

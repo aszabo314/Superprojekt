@@ -114,4 +114,5 @@ let webApp : HttpHandler =
         route  "/api/query/curvature-ridge"                     >=> curvatureRidgeHandler
         route  "/api/query/patch"                               >=> patchHandler
         route  "/api/query/icp"                                 >=> icpHandler
+        route  "/api/query/probe"                               >=> probeHandler
     ]

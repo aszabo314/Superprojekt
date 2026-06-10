@@ -93,7 +93,7 @@ module Update =
         | ResetMeshTransforms ->
             { model with
                 MeshTransforms = Map.empty
-                Registration = { model.Registration with LastResiduals = [||]; Running = false } }
+                Registration = { model.Registration with Running = false } }
         | RunRegistration ->
             let reg = model.Registration
             match reg.ReferenceMesh with
@@ -115,8 +115,7 @@ module Update =
                     let anchors =
                         match reg.Mode with
                         | TraditionalIcp -> [||]
-                        | RegionRestrictedIcp
-                        | PointPairPlusRefinement ->
+                        | RegionRestrictedIcp ->
                             model.ScanPins.Pins |> HashMap.toSeq
                             |> Seq.choose (fun (_, pin) ->
                                 if pin.Phase = PinPhase.Committed then
@@ -132,7 +131,7 @@ module Update =
                     let eps =
                         match reg.Mode with
                         | TraditionalIcp -> 0.0
-                        | _ -> 0.05
+                        | RegionRestrictedIcp -> 0.05
                     for mov in visibleMeshes do
                         let initial =
                             Map.tryFind mov model.MeshTransforms
@@ -148,7 +147,7 @@ module Update =
                             with ex ->
                                 env.Emit [RegistrationFailed (sprintf "%s: %s" movName ex.Message)]
                         } |> ignore
-                    { model with Registration = { reg with Running = true; LastResiduals = [||] } }
+                    { model with Registration = { reg with Running = true } }
         | RegistrationComplete(mesh, trafo, _conv, resi) ->
             let meshScale =
                 let dataset = mesh.Split('/', 2).[0]
@@ -162,9 +161,7 @@ module Update =
             { model with
                 MeshTransforms = mt
                 MeshAlgorithmResidual = algoMap
-                Registration = { model.Registration with
-                                    LastResiduals = resi
-                                    Running = false } }
+                Registration = { model.Registration with Running = false } }
         | RegistrationFailed err ->
             let log = model.DebugLog.InsertAt(0, sprintf "registration failed: %s" err)
             { model with
@@ -196,12 +193,6 @@ module Update =
                             V3d(max acc.Max.X b.Max.X, max acc.Max.Y b.Max.Y, max acc.Max.Z b.Max.Z)
                         )) Box3d.Invalid
                 let padded = Box3d(union.Min - V3d.III, union.Max + V3d.III)
-                let scale =
-                    match model.ActiveDataset with
-                    | Some d -> Map.tryFind d model.DatasetScales |> Option.defaultValue 1.0
-                    | None -> 1.0
-                let renderDiag = union.Size.Length * scale
-                let disagreementDefault = clamp 0.001 1.0 (renderDiag * 1e-3)
                 let perMesh = bboxes |> Array.fold (fun m (n, b) -> Map.add n b m) Map.empty
                 // Synthetic panorama: no dataset ships real imagery, so place one
                 // viewpoint at the scene-bbox centre a couple of metres up. The
@@ -216,8 +207,7 @@ module Update =
                     SceneBounds = padded
                     MeshBounds = perMesh
                     Panoramas = panos
-                    SelectedPanorama = 0
-                    Explore = { model.Explore with Disagreement = { model.Explore.Disagreement with Threshold = disagreementDefault } } }
+                    SelectedPanorama = 0 }
         | DatasetsLoaded datasets ->
             { model with Datasets = datasets |> Array.toList }
         | SetActiveDataset dataset ->
@@ -234,7 +224,6 @@ module Update =
                     LassoDrawing = None
                     LassoVolume = None
                     LassoEnabled = true
-                    Explore = { model.Explore with Enabled = false }
                     CardSystem = { model.CardSystem with Cards = model.CardSystem.Cards |> HashMap.map (fun _ c -> { c with Visible = false }) } }
         | SetDatasetScale(dataset, scale) ->
             { model with DatasetScales = Map.add dataset scale model.DatasetScales }
@@ -249,10 +238,8 @@ module Update =
                 env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
             | None -> ()
             model
-        | ToggleColorMode ->
-            { model with ColorMode = not model.ColorMode }
         | SetRenderingMode m ->
-            { model with RenderingMode = m; ColorMode = (m = Shaded) }
+            { model with RenderingMode = m }
         | ToggleMeshSolo name ->
             match model.MeshSolo with
             | Solo(soloName, restore) when soloName = name ->
@@ -279,8 +266,6 @@ module Update =
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, center))]
             env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
             model
-        | SetExploreCardPos pos ->
-            { model with ExploreCardPos = Some pos }
         | SetLassoCardPos pos ->
             { model with LassoCardPos = Some pos }
         | ToggleGearPopover ->
@@ -353,30 +338,6 @@ module Update =
             { model with LassoDrawing = None; LassoVolume = None; LassoEnabled = true }
         | CardMsg msg ->
             { model with CardSystem = CardUpdate.update msg model.CardSystem }
-        | ExploreMsg msg ->
-            let e = model.Explore
-            match msg with
-            | SetExploreEnabled v -> { model with Explore = { e with Enabled = v } }
-            | SetSignalEnabled(sig_, on) ->
-                let next =
-                    match sig_ with
-                    | FeatureConfidenceSignal -> { e with FeatureConfidence = { e.FeatureConfidence with Enabled = on } }
-                    | DisagreementSignal      -> { e with Disagreement      = { e.Disagreement with Enabled = on } }
-                { model with Explore = next }
-            | SetSignalThreshold(sig_, v) ->
-                let next =
-                    match sig_ with
-                    | FeatureConfidenceSignal -> { e with FeatureConfidence = { e.FeatureConfidence with Threshold = v } }
-                    | DisagreementSignal      -> { e with Disagreement      = { e.Disagreement with Threshold = v } }
-                { model with Explore = next }
-            | SetSignalColor(sig_, c) ->
-                let next =
-                    match sig_ with
-                    | FeatureConfidenceSignal -> { e with FeatureConfidence = { e.FeatureConfidence with Color = c } }
-                    | DisagreementSignal      -> { e with Disagreement      = { e.Disagreement with Color = c } }
-                { model with Explore = next }
-            | SetMixMode m -> { model with Explore = { e with MixMode = m } }
-            | SetReferenceAxisMode m -> { model with ReferenceAxis = m }
         | ScanPinMsg msg ->
             ScanPinUpdate.handleMsg env model msg
         | SaveWorkspace ->

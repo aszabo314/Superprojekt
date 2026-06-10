@@ -408,7 +408,6 @@ module View =
             GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
             GuiPanels.leftPanel env model
             GuiPanels.placementFlyout env model
-            GuiCards.exploreCard env model
             GuiCards.lassoCard env model
             GuiCards.registrationCard env model registrationOpen
             GuiCards.registrationToggleButton registrationOpen

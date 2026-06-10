@@ -50,19 +50,13 @@ module Persistence =
     let private regModeTag = function
         | TraditionalIcp -> "traditional"
         | RegionRestrictedIcp -> "region"
-        | PointPairPlusRefinement -> "point-pair"
     let private regModeOf = function
         | "region" -> RegionRestrictedIcp
-        | "point-pair" -> PointPairPlusRefinement
         | _ -> TraditionalIcp
     let private renderModeTag = function
         | Textured -> "textured" | Shaded -> "shaded" | SlopeColor -> "slope"
     let private renderModeOf = function
         | "shaded" -> Shaded | "slope" -> SlopeColor | _ -> Textured
-    let private refAxisTag = function
-        | AlongWorldZ -> "world-z" | AlongCameraView -> "camera"
-    let private refAxisOf = function
-        | "camera" -> AlongCameraView | _ -> AlongWorldZ
 
     let private lineModeJ = function
         | ElevationIsoline e -> sprintf "{\"k\":\"elev\",\"e\":%s}" (f e)
@@ -149,11 +143,11 @@ module Persistence =
         sb.Append(regModeTag model.Registration.Mode) |> ignore
         sb.Append("\",\"refMesh\":") |> ignore
         sb.Append(match model.Registration.ReferenceMesh with Some m -> q m | None -> "null") |> ignore
-        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"provHeatmap\":%b,\"provThreshold\":%s,\"falloffZoneOnly\":%b,\"fusion\":%b,\"renderMode\":\"%s\",\"refAxis\":\"%s\",\"color\":%b}"
+        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"provHeatmap\":%b,\"provThreshold\":%s,\"falloffZoneOnly\":%b,\"fusion\":%b,\"renderMode\":\"%s\"}"
             model.GhostSilhouette (f model.GhostOpacity) (f model.ShadingStrength)
             (f model.SlopeThresholdDeg) model.AnchorGhostMode model.ProvenanceHeatmap
             (f model.ProvenanceThreshold) model.FalloffZoneOnly model.FusionMode
-            (renderModeTag model.RenderingMode) (refAxisTag model.ReferenceAxis) model.ColorMode) |> ignore
+            (renderModeTag model.RenderingMode)) |> ignore
         sb.Append(",\"camera\":{") |> ignore
         let cam = model.Camera
         sb.Append(sprintf "\"center\":%s,\"phi\":%s,\"theta\":%s,\"radius\":%s,\"sky\":%s"
@@ -253,7 +247,6 @@ module Persistence =
             FalloffRadius = e.GetProperty("falloff").GetDouble()
             Payload = rPayload (e.GetProperty("payload"))
             HostMeshName = host
-            CorrespondenceLinkId = None
             CreationCameraState = cam
             CreatedAt = createdAt
             DatasetColors = colors
@@ -355,8 +348,6 @@ module Persistence =
                 | None -> fallback
             let renderMode =
                 renderModeOf (sOrElseS "renderMode" (renderModeTag model.RenderingMode))
-            let refAxis =
-                refAxisOf (sOrElseS "refAxis" (refAxisTag model.ReferenceAxis))
             let cam =
                 match tryProp "camera" r with
                 | Some ce ->
@@ -398,8 +389,6 @@ module Persistence =
                     FalloffZoneOnly = sOrElseB "falloffZoneOnly" model.FalloffZoneOnly
                     FusionMode = sOrElseB "fusion" model.FusionMode
                     RenderingMode = renderMode
-                    ReferenceAxis = refAxis
-                    ColorMode = sOrElseB "color" model.ColorMode
                     Camera = cam
             }
         with ex -> Result.Error ex.Message

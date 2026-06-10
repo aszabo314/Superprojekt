@@ -38,7 +38,6 @@ module ScanPinUpdate =
             FalloffRadius        = falloff
             Payload              = Point { ReliabilityWeight = 1.0 }
             HostMeshName         = model.ActivePickingLayer
-            CorrespondenceLinkId = None
             CreationCameraState  = cam
             CreatedAt            = System.DateTime.UtcNow
             DatasetColors        = assignColors model.MeshNames

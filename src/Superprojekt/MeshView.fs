@@ -35,11 +35,12 @@ module MeshShader =
     //   2. Lasso: if defined, fragments inside the world-space half-space
     //      polytope get lassoComponent = 1.0, outside get 0.0. Undefined →
     //      treated as 1.0 (no restriction).
-    //   3. Falloff blob: each pin has an InnerRadius (hard core, weight = 1)
-    //      and a larger FalloffRadius (exp(-3·(d-inner)/(outer-inner)) decay
-    //      to ~0.05 at FalloffRadius). blobComponent is the max weight across
-    //      all pins (0 if the fragment is outside every pin's FalloffRadius).
-    //      No blobs → blobComponent = 1.0 (no restriction). InnerRadius and
+    //   3. Falloff blob ("Isolate pins", gated by AnchorGhost): each pin has
+    //      an InnerRadius (hard core, weight = 1) and a larger FalloffRadius
+    //      (exp(-3·(d-inner)/(outer-inner)) decay to ~0.05 at FalloffRadius).
+    //      blobComponent is the max weight across all pins (0 if the fragment
+    //      is outside every pin's FalloffRadius). No blobs, or AnchorGhost
+    //      off → blobComponent = 1.0 (no restriction). InnerRadius and
     //      FalloffRadius are independent — GhostOpacity and FalloffRadius
     //      changes never move InnerRadius.
     //
@@ -87,6 +88,10 @@ module MeshShader =
         member x.BlobCount       : int     = x?BlobCount
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
         member x.BlobFalloffs    : Arr<N<32>, V4f> = x?BlobFalloffs
+        // "Isolate pins" toggle: 0 disables the blob alpha filter (pins don't
+        // ghost the mesh). The blob arrays stay uploaded either way — the
+        // provenance heatmap's conditioning term still loops over them.
+        member x.AnchorGhost     : int     = x?AnchorGhost
         // Error-provenance heatmap. When ProvenanceHeatmap = 1 fragments above
         // ghost level are painted by the dominant error source (dataset
         // sensor, algorithm residual, or local conditioning) provided the
@@ -164,7 +169,7 @@ module MeshShader =
             // mask = lasso * blob — outside-lasso → 0, inside-lasso-outside-blob → 0,
             // both inside → blob's weight.
             let lassoActive  = lc > 0
-            let blobsActive  = bc > 0
+            let blobsActive  = bc > 0 && uniform.AnchorGhost <> 0
             let lassoComponent =
                 if lassoActive then lassoMask else 1.0f
             let blobComponent =
@@ -190,7 +195,7 @@ module MeshShader =
             // BOTH filters are at full strength: lasso is satisfied (no lasso,
             // or inside it) AND blob is satisfied (no blobs, or hard core).
             let lassoFull = (lc = 0) || lassoMask >= 1.0f
-            let blobFull  = (bc = 0) || inHardCore
+            let blobFull  = (not blobsActive) || inHardCore
             let fullySolid = lassoFull && blobFull
             if uniform.MeshActive && not fullySolid then
                 alpha <- min alpha (opaqueThreshold - 0.01f)
@@ -498,6 +503,37 @@ module MeshView =
         let dataset = name.Split('/', 2).[0]
         model.DatasetScales |> AVal.map (fun m -> Map.tryFind dataset m |> Option.defaultValue 1.0)
 
+    // Pin anchor blobs as 32-slot uniform arrays. Pins are stored in metric
+    // world-space; the shaders work in render space, so convert here:
+    //   centreRender = (centreWorld - commonCentroid) * datasetScale
+    //   radiusRender = radiusMetric * datasetScale
+    // Blobs        : V4f(cx, cy, cz, innerRadiusRender)
+    // BlobFalloffs : V4f(falloffRadiusRender, 0, 0, 0)
+    // Used by the mesh shader (isolation ghosting + provenance conditioning)
+    // and the fusion shader (conditioning term). Hard-capped at MaxBlobs.
+    let private pinBlobUniforms (model : AdaptiveModel) =
+        let datasetScale =
+            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun dsOpt scales ->
+                dsOpt |> Option.bind (fun ds -> Map.tryFind ds scales) |> Option.defaultValue 1.0)
+        let blobsArr =
+            (model.ScanPins.Pins |> AMap.toAVal, model.CommonCentroid, datasetScale)
+            |||> AVal.map3 (fun pinsMap cc scale ->
+                let pins  = HashMap.toArray pinsMap |> Array.map snd
+                let n     = min pins.Length MeshShader.MaxBlobs
+                let centres  = Array.zeroCreate<V4f> MeshShader.MaxBlobs
+                let falloffs = Array.zeroCreate<V4f> MeshShader.MaxBlobs
+                for i in 0 .. n - 1 do
+                    let p  = pins.[i]
+                    let cr = (p.Centre - cc) * scale
+                    let ir = float32 (p.InnerRadius   * scale)
+                    let fr = float32 (p.FalloffRadius * scale)
+                    centres.[i]  <- V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, ir)
+                    falloffs.[i] <- V4f(fr, 0.0f, 0.0f, 0.0f)
+                n, centres, falloffs)
+        blobsArr |> AVal.map (fun (n, _, _) -> n),
+        blobsArr |> AVal.map (fun (_, c, _) -> c),
+        blobsArr |> AVal.map (fun (_, _, f) -> f)
+
     // Forward mesh scene: one draw call per mesh, plain alpha blending plus
     // shader-driven custom depth (α-gated). Every mesh is always rendered —
     // active meshes resolve their alpha from the lasso/blob rules, inactive
@@ -534,37 +570,9 @@ module MeshView =
                 | None -> ()
                 arr)
 
-        // ---- Blob uniforms.
-        // Pins are stored in metric world-space (Centre, InnerRadius,
-        // FalloffRadius all in metres). The mesh shader works in render space
-        // (where v.wp.XYZ lives after meshTrafo applies the dataset scale), so
-        // we convert here:
-        //   centreRender = (centreWorld - commonCentroid) * datasetScale
-        //   radiusRender = radiusMetric * datasetScale
-        // Blobs        : V4f(cx, cy, cz, innerRadiusRender)
-        // BlobFalloffs : V4f(falloffRadiusRender, 0, 0, 0)
-        // Hard-capped at MeshShader.MaxBlobs.
-        let datasetScale =
-            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun dsOpt scales ->
-                dsOpt |> Option.bind (fun ds -> Map.tryFind ds scales) |> Option.defaultValue 1.0)
-        let blobsArr =
-            (model.ScanPins.Pins |> AMap.toAVal, model.CommonCentroid, datasetScale)
-            |||> AVal.map3 (fun pinsMap cc scale ->
-                let pins  = HashMap.toArray pinsMap |> Array.map snd
-                let n     = min pins.Length MeshShader.MaxBlobs
-                let centres  = Array.zeroCreate<V4f> MeshShader.MaxBlobs
-                let falloffs = Array.zeroCreate<V4f> MeshShader.MaxBlobs
-                for i in 0 .. n - 1 do
-                    let p  = pins.[i]
-                    let cr = (p.Centre - cc) * scale
-                    let ir = float32 (p.InnerRadius   * scale)
-                    let fr = float32 (p.FalloffRadius * scale)
-                    centres.[i]  <- V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, ir)
-                    falloffs.[i] <- V4f(fr, 0.0f, 0.0f, 0.0f)
-                n, centres, falloffs)
-        let blobCount    = blobsArr |> AVal.map (fun (n, _, _) -> n)
-        let blobs        = blobsArr |> AVal.map (fun (_, c, _) -> c)
-        let blobFalloffs = blobsArr |> AVal.map (fun (_, _, f) -> f)
+        let blobCount, blobs, blobFalloffs = pinBlobUniforms model
+        let anchorGhost =
+            model.AnchorGhostMode |> AVal.map (fun on -> if on then 1 else 0)
         let provenanceOn =
             model.ProvenanceHeatmap |> AVal.map (fun on -> if on then 1 else 0)
         let provThreshold =
@@ -623,6 +631,7 @@ module MeshView =
                 Sg.Uniform("BlobCount",       blobCount)
                 Sg.Uniform("Blobs",           blobs)
                 Sg.Uniform("BlobFalloffs",    blobFalloffs)
+                Sg.Uniform("AnchorGhost",     anchorGhost)
                 Sg.Uniform("ProvenanceHeatmap", provenanceOn)
                 Sg.Uniform("ProvThreshold",     provThreshold)
                 Sg.Uniform("FalloffZoneOnly",   falloffZoneOnly)
@@ -647,29 +656,7 @@ module MeshView =
     // plain textured surface + natural depth; the error-as-depth + winner-id
     // MRT shader is layered on in a later step.
     let buildFusionNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
-        // Anchor blobs (render-space) for the conditioning term — same
-        // derivation as buildScene's heatmap path.
-        let datasetScale =
-            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun dsOpt scales ->
-                dsOpt |> Option.bind (fun ds -> Map.tryFind ds scales) |> Option.defaultValue 1.0)
-        let blobsArr =
-            (model.ScanPins.Pins |> AMap.toAVal, model.CommonCentroid, datasetScale)
-            |||> AVal.map3 (fun pinsMap cc scale ->
-                let pins  = HashMap.toArray pinsMap |> Array.map snd
-                let n     = min pins.Length MeshShader.MaxBlobs
-                let centres  = Array.zeroCreate<V4f> MeshShader.MaxBlobs
-                let falloffs = Array.zeroCreate<V4f> MeshShader.MaxBlobs
-                for i in 0 .. n - 1 do
-                    let p  = pins.[i]
-                    let cr = (p.Centre - cc) * scale
-                    let ir = float32 (p.InnerRadius   * scale)
-                    let fr = float32 (p.FalloffRadius * scale)
-                    centres.[i]  <- V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, ir)
-                    falloffs.[i] <- V4f(fr, 0.0f, 0.0f, 0.0f)
-                n, centres, falloffs)
-        let blobCount    = blobsArr |> AVal.map (fun (n, _, _) -> n)
-        let blobs        = blobsArr |> AVal.map (fun (_, c, _) -> c)
-        let blobFalloffs = blobsArr |> AVal.map (fun (_, _, f) -> f)
+        let blobCount, blobs, blobFalloffs = pinBlobUniforms model
         // Before any registration the meshes aren't aligned, so fusing them is
         // meaningless: show only the reference mesh (a notice overlay tells the
         // user to register). "Registered" = at least one mesh has a transform.

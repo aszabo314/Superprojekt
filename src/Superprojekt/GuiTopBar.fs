@@ -49,17 +49,6 @@ module GuiTopBar =
                 }
             }
 
-            let exploreEnabled = model.Explore |> AVal.map (fun e -> e.Enabled)
-            button {
-                Class "tb-btn"
-                exploreEnabled |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Toggle explore heatmap")
-                Dom.OnClick(fun _ ->
-                    let cur = AVal.force exploreEnabled
-                    env.Emit [ExploreMsg (SetExploreEnabled (not cur))])
-                "◉ Explore"
-            }
-
             let lassoActive =
                 (model.LassoDrawing, model.LassoVolume)
                 ||> AVal.map2 (fun d v -> d.IsSome || v.IsSome)
@@ -180,18 +169,6 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
-                            span { Class "lp-sublabel"; "Reference axis" }
-                            compactButtonBar [
-                                "World Z",
-                                    (model.ReferenceAxis |> AVal.map (fun m -> m = AlongWorldZ)),
-                                    (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongWorldZ)])
-                                "Camera",
-                                    (model.ReferenceAxis |> AVal.map (fun m -> m = AlongCameraView)),
-                                    (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongCameraView)])
-                            ]
-                        }
-                        div {
-                            Class "tb-gear-row"
                             inlineSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v ->
                                 env.Emit [CameraMessage (OrbitMessage.SetSpeed v)])
                         }
@@ -204,7 +181,8 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
-                            compactToggle "Anchor-blob ghost" model.AnchorGhostMode (fun () ->
+                            // Isolate pins: ghost everything outside the pins' falloff regions.
+                            compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
                                 env.Emit [ToggleAnchorGhostMode])
                         }
                         div {

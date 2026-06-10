@@ -139,9 +139,6 @@ body.loaded { background: #f4f6f8; }
 }
 .tb-btn-tiny:hover { background: #edf0f4; color: #0f172a; }
 
-.explore-card { z-index: 950; min-width: 240px; }
-.explore-card-body { display: flex; flex-direction: column; gap: 4px; padding: 6px 8px; }
-
 .lasso-card { z-index: 950; min-width: 240px; }
 .lasso-card-body { display: flex; flex-direction: column; gap: 6px; padding: 6px 8px; }
 
@@ -629,23 +626,6 @@ body.loaded { background: #f4f6f8; }
     border-top-right-radius: 4px;
 }
 
-/* V6 §D.4 dual-signal Explore card */
-.explore-signal-row {
-    display: flex; flex-direction: column;
-    gap: 2px; padding: 4px 0;
-    border-bottom: 1px solid #e2e8f0;
-}
-.explore-signal-row:last-of-type { border-bottom: none; }
-.explore-signal-controls { padding-left: 16px; }
-.explore-mix-row {
-    display: flex; align-items: center; gap: 6px;
-    padding: 4px 0;
-}
-.explore-mix-row .lp-sublabel { flex-shrink: 0; }
-
-/* V6 §D.2 ghost detail selector */
-.lp-ghost-detail { padding-left: 16px; margin-top: 2px; }
-
 /* V6 §D.8 Registration card */
 .registration-card {
     position: fixed;
@@ -672,23 +652,6 @@ body.loaded { background: #f4f6f8; }
     font-family: 'SF Mono', 'Monaco', monospace;
 }
 .lp-mesh-btn:hover { background: #e2e8f0; }
-.reg-residual-stats {
-    font-size: 11px; color: #475569;
-    font-family: 'SF Mono', 'Monaco', monospace;
-}
-.reg-residual-histogram {
-    display: block; min-height: 50px;
-    background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 2px;
-    padding: 2px;
-}
-.reg-convergence-log {
-    font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 10px; color: #475569;
-    max-height: 120px; overflow-y: auto;
-    white-space: pre; background: #f8fafc;
-    border: 1px solid #cbd5e1; border-radius: 2px;
-    padding: 4px;
-}
 
 /* V6 §D.13 Persistence row in the gear popover */
 .tb-gear-persist {
@@ -960,7 +923,6 @@ body.loaded { background: #f4f6f8; }
 
 @media (max-width: 600px) {
     .left-panel { width: 85vw; }
-    .explore-card { min-width: 200px; }
     .lasso-card { min-width: 200px; }
     .panorama-card { width: calc(100vw - 16px); }
     .tb-gear-popover { width: calc(100vw - 16px); }

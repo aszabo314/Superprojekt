@@ -6,21 +6,6 @@ open Adaptify
 open Aardvark.Dom
 open FSharp.Data.Adaptive
 
-type ReferenceAxisMode =
-    | AlongWorldZ
-    | AlongCameraView
-
-type SignalState = {
-    Enabled   : bool
-    Threshold : float
-    Color     : C4f
-}
-
-type MixMode =
-    | SideBySide
-    | Blended
-    | Alternating
-
 type RenderingMode =
     | Textured
     | Shaded
@@ -40,12 +25,10 @@ type SensorType =
 type RegistrationMode =
     | TraditionalIcp
     | RegionRestrictedIcp
-    | PointPairPlusRefinement
 
 type RegistrationState = {
     Mode             : RegistrationMode
     ReferenceMesh    : string option
-    LastResiduals    : float[]
     Running          : bool
 }
 
@@ -53,7 +36,6 @@ module RegistrationState =
     let initial = {
         Mode           = TraditionalIcp
         ReferenceMesh  = None
-        LastResiduals  = [||]
         Running        = false
     }
 
@@ -99,15 +81,6 @@ type PanoramaMode =
     | PanoPhoto
     | PanoRender
     | PanoBlend
-
-type ExploreMode =
-    {
-        Enabled            : bool
-        FeatureConfidence  : SignalState
-        Disagreement       : SignalState
-        MixMode            : MixMode
-        HighlightAlpha     : float
-    }
 
 type LassoDraft =
     { Vertices : V2d[] }
@@ -181,24 +154,6 @@ module Provenance =
         elif a >= cScaled then 1
         else 2
 
-module ExploreMode =
-    let initial =
-        {
-            Enabled = false
-            FeatureConfidence = {
-                Enabled   = true
-                Threshold = 0.3
-                Color     = C4f(1.0f, 0.55f, 0.10f, 1.0f)
-            }
-            Disagreement = {
-                Enabled   = true
-                Threshold = 0.05
-                Color     = C4f(0.15f, 0.55f, 1.0f, 1.0f)
-            }
-            MixMode        = Blended
-            HighlightAlpha = 0.9
-        }
-
 [<ModelType>]
 type Model =
     {
@@ -254,14 +209,10 @@ type Model =
         PanoramaBlend         : float
 
         ScanPins              : ScanPinModel
-        ReferenceAxis         : ReferenceAxisMode
-        Explore               : ExploreMode
-        ColorMode             : bool
         CardSystem            : CardSystemModel
 
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
-        ExploreCardPos      : V2d option
         LassoCardPos        : V2d option
         GearPopoverOpen     : bool
     }
@@ -310,13 +261,9 @@ module Model =
             PanoramaMode          = PanoRender
             PanoramaBlend         = 0.5
             ScanPins              = ScanPinModel.initial
-            ReferenceAxis         = AlongWorldZ
-            Explore               = ExploreMode.initial
-            ColorMode             = false
             CardSystem            = CardSystemModel.initial
             RenderingMode       = Textured
             MeshSolo            = NoSolo
-            ExploreCardPos      = None
             LassoCardPos        = None
             GearPopoverOpen     = false
         }

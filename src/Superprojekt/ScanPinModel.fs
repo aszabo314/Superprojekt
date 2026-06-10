@@ -84,9 +84,6 @@ module PayloadType =
                 NormalWorld     = V3d.OOI
             }
 
-[<RequireQualifiedAccess>]
-type CorrespondenceLinkId = CorrespondenceLinkId of Guid
-
 // All ScanPin geometry is METRIC (world-space):
 //   • Centre        : V3d  — anchor point in absolute world coordinates (metres)
 //   • InnerRadius   : float — hard-truth core; α = 1 and full evaluation weight inside (metres)
@@ -102,7 +99,6 @@ type ScanPin = {
     FalloffRadius        : float
     Payload              : PayloadType
     HostMeshName         : string option
-    CorrespondenceLinkId : CorrespondenceLinkId option
     CreationCameraState  : CameraSnapshot
     CreatedAt            : DateTime
     DatasetColors        : Map<string, C4b>
@@ -158,7 +154,6 @@ type CardAnchor =
 type CardAttachment =
     | CardAttached
     | CardDetached of screenPos:V2d
-    | CardDragging of cardPos:V2d * grabOffset:V2d
 
 type CardContent =
     | PinCard of ScanPinId
@@ -176,13 +171,11 @@ type Card = {
 [<ModelType>]
 type CardSystemModel = {
     Cards       : HashMap<CardId, Card>
-    DraggedCard : CardId option
     NextZOrder  : int
 }
 
 module CardSystemModel =
     let initial = {
         Cards       = HashMap.empty
-        DraggedCard = None
         NextZOrder  = 1
     }

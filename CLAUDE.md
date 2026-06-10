@@ -14,7 +14,7 @@ See `README.md` for what the app does and how to run it.
 - No comments unless the logic is non-obvious.
 - Concise code, no unnecessary abstractions, no premature helpers.
 
-## Render pipeline (forward pass + optional fusion MRT pass)
+## Render pipeline (forward pass + optional fusion offscreen pass)
 
 The default path is **one forward pass** into the main framebuffer (meshes → pins → cross/labels). The earlier hybrid-forward + WBOIT pipeline was removed (see commit history if you really need it).
 
@@ -41,27 +41,26 @@ Outputs (custom record):
 - `[<Color>] color : V4f`
 - `[<Depth>] depth : float32`
 
-Per-fragment α — three-stage filter chain (each filter can only RESTRICT):
+### Ghosting rules
 
-1. **MeshActive**: `false` → α = `GhostOpacity` (whole mesh ghosted, next filters skipped).
-2. **Lasso**: outward-facing half-space planes packed as `V4f(nx, ny, nz, d)`. `lassoComponent = 1.0` iff `dot(plane.xyz, p) + plane.w ≤ 0` for **all** active planes; else `0.0`. No lasso → `1.0` (no restriction). `Model.LassoEnabled = false` zeroes `LassoPlaneCount` on upload so the filter is skipped while the polygon is kept (the user can re-enable it from the card).
-3. **Falloff blob**: each pin has an `InnerRadius` (hard core, weight = 1.0) and a larger `FalloffRadius` (exponential decay `exp(-3·(d-inner)/(outer-inner))` to ≈0.05 at `FalloffRadius`). `blobComponent` = max weight across all pins, or `0.0` if the fragment is outside every pin's `FalloffRadius`. No blobs → `1.0`.
+Every mesh fragment ends up in exactly one of three states: **opaque** (α = 1), **ghost** (α = effective ghost level), or **invisible** (discarded). The rules, in evaluation order:
 
-`mask = lassoComponent * blobComponent` — conjunctive. Both filters must say "include me at full strength" for α = 1; otherwise α drops toward `GhostOpacity`. Final α = `lerp(GhostOpacity, 1.0, mask)`.
+1. **Effective ghost level**: `ghost = GhostOpacity` if `GhostSilhouette` is on, else `0`. With the silhouette off, everything that would render as ghost is *discarded* instead (`α < 1e-4` → discard) — "no ghost" means invisible, not translucent.
+2. **MeshActive** (mesh visibility toggle): `false` → α = `ghost` for the *whole mesh*, uniformly. The lasso/pin filters below are skipped — a hidden mesh's silhouette deliberately ignores them.
+3. **Lasso** (only when a polygon is committed *and* `LassoEnabled`; disabling uploads `LassoPlaneCount = 0` while keeping the polygon): `lassoComponent = 1` iff `dot(plane.xyz, p) + plane.w ≤ 0` for **all** outward-facing half-space planes `V4f(nx, ny, nz, d)`, else `0`. No active lasso → `1`.
+4. **Pin isolation** (only when pins exist *and* the "Isolate pins" toggle / `AnchorGhost` uniform is on): each pin has an `InnerRadius` (hard core, weight 1) and a `FalloffRadius` (exponential decay `exp(-3·(d-inner)/(outer-inner))` to ≈0.05). `blobComponent` = max weight across all pins, `0` outside every pin's `FalloffRadius`. No pins or toggle off → `1`.
+5. **Conjunctive mask**: `mask = lassoComponent * blobComponent`; final `α = lerp(ghost, 1.0, mask)`. Both filters must agree for full opacity — inside-lasso-outside-pins fragments are ghosted exactly like outside-lasso fragments. The pins carve the visible region *within* the lasso.
 
-Implication: inside-lasso-outside-blob fragments are **ghosted**, the same as outside-lasso fragments. The pins carve the visible region inside the lasso.
+Consequences the rest of the stack relies on:
 
-α-gated depth output:
-- Hard-core fragments (α reaches 1 via inHardCore + lasso satisfied) → write `v.fc.Z` (window-space depth, identical to the rasterizer's natural depth).
-- Falloff / outside fragments → write `1.0f` (far plane) so the fragment never occludes anything.
-- A `fullySolid` flag also clamps non-hard-core fragments below `opaqueThreshold - 0.01` after the ghost-lerp, so the depth-write branch can't flip mid-falloff (which would otherwise produce a thin occlusion ring inside the falloff zone).
-
-Discard at `α < 1e-4f` so the gated path doesn't bother with truly invisible fragments.
+- **α-gated depth**: fragments with `α ≥ 0.99` write their natural window-space depth (`v.fc.Z`); everything else writes `1.0` (far plane) so ghost/falloff fragments never occlude and never produce pixel-picks. A `fullySolid` clamp pins non-hard-core fragments below the threshold so the depth-write branch can't flip mid-falloff (would create an occlusion ring).
+- **Ghost colour is uniform**: fragments at ghost level always use the solid per-mesh palette colour, regardless of `RenderingMode`, so the silhouette reads as one shape.
+- The provenance heatmap only paints **above-ghost** fragments; `FalloffZoneOnly` further restricts it to fragments inside at least one pin's falloff zone. The blob uniform arrays stay uploaded even when "Isolate pins" is off, because the conditioning term loops over them.
 
 Uniforms set per draw call:
-- `MeshActive`, `GhostOpacity`, `RenderingMode`, `MeshColor`, `ShadingStrength`, `SlopeThreshold`
-- `LassoPlaneCount` + `LassoPlanes : Arr<N<32>, V4f>` — half-space planes (see filter 2).
-- `BlobCount` + `Blobs : Arr<N<32>, V4f>` = `(cx, cy, cz, innerRadiusRender)` + `BlobFalloffs : Arr<N<32>, V4f>` = `(falloffRadiusRender, 0, 0, 0)`. Pin centres and radii are stored in **metric world-space** on the model and converted to render-space (`* datasetScale`) on upload. Hard cap = 32.
+- `MeshActive`, `GhostOpacity` (pre-gated by `GhostSilhouette` on upload), `RenderingMode`, `MeshColor`, `ShadingStrength`, `SlopeThreshold`
+- `LassoPlaneCount` + `LassoPlanes : Arr<N<32>, V4f>` — half-space planes (rule 3).
+- `BlobCount` + `Blobs : Arr<N<32>, V4f>` = `(cx, cy, cz, innerRadiusRender)` + `BlobFalloffs : Arr<N<32>, V4f>` = `(falloffRadiusRender, 0, 0, 0)` + `AnchorGhost : int` (rule 4). Pin centres and radii are stored in **metric world-space** on the model and converted to render-space (`* datasetScale`) by `MeshView.pinBlobUniforms` — the single helper shared by the mesh and fusion scenes. Hard cap = 32.
 
 ### `Sg.DepthMask` is forbidden
 
@@ -190,22 +189,22 @@ Top-level `Model` fields (see `Model.fs`):
 - `Camera`, `MeshOrder`, `MeshNames`, `MeshVisible`, `MeshesLoaded`, `CommonCentroid`, `MenuOpen`, `SavedMenuOpen`
 - `DebugLog`
 - `Datasets`, `ActiveDataset`, `DatasetScales` (`{"SETSM_glacier" → 0.01}`), `DatasetCentroids`
-- `FullscreenOn`, `GhostSilhouette` (default **on**), `GhostOpacity` (0.5), `ShadingStrength` (0.5), `SlopeThresholdDeg` (30°), `AnchorGhostMode` (default **on**)
+- `FullscreenOn`, `GhostSilhouette` (default **on**), `GhostOpacity` (0.12), `ShadingStrength` (0.15), `SlopeThresholdDeg` (15°), `AnchorGhostMode` (default **on**; "Isolate pins" in the UI — gates the pin blob filter, see Ghosting rules)
 - `SceneBounds`, `MeshBounds`
 - `ActivePickingLayer`
 - `LassoDrawing`, `LassoVolume`, `LassoEnabled` (filter on/off, polygon kept)
-- `MeshTransforms`, `Registration` (mode + reference mesh + `LastResiduals` + running flag), `Retarget` (`RetargetIdle | RetargetProjecting | RetargetReviewing of RetargetCandidate[]`)
+- `MeshTransforms`, `Registration` (mode + reference mesh + running flag), `Retarget` (`RetargetIdle | RetargetProjecting | RetargetReviewing of RetargetCandidate[]`)
 - `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `ProvenanceHeatmap`, `ProvenanceThreshold`, `FalloffZoneOnly`
 - `FusionMode`
 - `PanoramaOpen`, `Panoramas` (`Panorama list` = `{ Name; EyeWorld; Yaw }`, synthetic, regenerated on dataset load), `SelectedPanorama`, `PanoramaMode` (`PanoPhoto | PanoRender | PanoBlend`), `PanoramaBlend`
-- `ScanPins`, `ReferenceAxis` (AlongWorldZ | AlongCameraView), `Explore`, `ColorMode`, `CardSystem`
-- `RenderingMode` (Textured | Shaded | SlopeColor), `MeshSolo`, `ExploreCardPos`, `LassoCardPos`, `GearPopoverOpen`
+- `ScanPins`, `CardSystem`
+- `RenderingMode` (Textured | Shaded | SlopeColor), `MeshSolo`, `LassoCardPos`, `GearPopoverOpen`
 
 GUI placement:
 - Left panel (`GuiPanels.leftPanel`): mesh list, pin list, error metadata, error provenance card.
-- Top bar (`GuiTopBar.topBar`): hamburger, dataset selector, **◉ Explore**, **◌ Lasso**, **○ Pin** placement, **◈ Fusion**, camera reset, world coordinate readout, gear popover.
-- Floating cards (`GuiCards.fs`): `exploreCard`, `lassoCard`, `registrationCard` — draggable, persisted positions via `ExploreCardPos` / `LassoCardPos` / no-persist for registration. `lassoCard` is symbol-only: `◉/○` (enable/disable, polygon kept), `✎` (redraw), `⊘` (cancel drawing), `✕` (clear).
-- Gear popover (debug flyout, end of `GuiTopBar.fs`): reference axis, camera speed, **Ghost silhouette toggle**, **Ghost opacity slider**, **Anchor-blob ghost toggle**, shading strength, slope threshold, dataset info, mesh centroids, debug log.
+- Top bar (`GuiTopBar.topBar`): hamburger, dataset selector, **◌ Lasso**, **○ Pin** placement, **◈ Fusion**, **▦ Pano**, camera reset, world coordinate readout, gear popover.
+- Floating cards: pin cards are managed by `CardSystem` (`Cards.renderCards` — 3D-anchored, detachable, z-ordered); `lassoCard`, `registrationCard`, `panoramaCard` (`GuiCards.fs`) hold their position locally (`LassoCardPos` is the only persisted one). **All draggable cards share one chrome**: `Cards.cardDragHandle` / `Cards.cardPos` / `Cards.cardStyle` — don't hand-roll pointer-drag code for new cards. `lassoCard` is symbol-only: `◉/○` (enable/disable, polygon kept), `✎` (redraw), `⊘` (cancel drawing), `✕` (clear). `retargetCard` is a CSS-centered modal, not draggable.
+- Gear popover (debug flyout, end of `GuiTopBar.fs`): retarget, workspace save/load, camera speed, **Ghost silhouette toggle**, **Ghost opacity slider**, **Isolate pins toggle**, shading strength, slope threshold, dataset info, mesh centroids, debug log.
 
 ## ScanPin system
 
@@ -219,16 +218,24 @@ Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc
 
 **3D rendering** (`ScanPinScene.fs`): `pinDots` clickable markers, `pinSpheres` shows two translucent shells (outer = FalloffRadius, inner = InnerRadius) + selected-outline, `pinLines` for Line payloads, `pinPatchRings` for Patch payloads, `ghostPreview` for the placement hover.
 
+## Registration
+
+Two solve modes, both served by `POST /api/query/icp` (`MeshIcp.runIcp` — Gauss-Newton point-to-surface ICP, Embree closest-point correspondences):
+
+- **Traditional ICP** — no anchors, uniform weights.
+- **Region-restricted ICP** — committed pins become Gaussian anchor weights (`centre = pin.Centre`, `sigma = FalloffRadius`, multiplier = Point payload `ReliabilityWeight`); samples whose total weight falls below `RegionEps` (0.05) are excluded from the solve.
+
+A third "point-pair correspondence" mode existed as a client-side stub (no server implementation, no-op button) and was **removed** — re-add it only together with a real server solver. The **Run button in the registration card is disabled** (`▶ Run (todo)`): the solve pipeline (`RunRegistration` → `Query.runIcp` → `RegistrationComplete` → `MeshTransforms` + per-mesh RMS into `MeshAlgorithmResidual`) is fully wired and the server solver is verified, but the UI is gated off until the registration feature ships. Residual *visualisation* (histogram + stats, `Registration.LastResiduals`) was removed — only the per-mesh RMS that feeds the provenance overlay is kept. The lasso never affects registration — it is purely a visual cut-away (by design, not a TODO).
+
 ## Open TODOs
 
+- **Registration UI is gated off** — the Run button is disabled until the upcoming registration feature lands (see Registration above).
 - **Panorama is a floating panel, not a docked split** (user's call), and viewpoints are synthetic — no dataset ships real imagery + poses, so one pose is generated per dataset on load. `PanoramaView.fs` captures the meshes into a colour cubemap from the pose (six 90° faces via the fusion `CompileRender` path) and reprojects cylindrically; two cubes (reference vs live state) feed Photo/Render/Blend. Click-to-place raycasts the pose ray server-side; markers are a forward projection of pins into cylindrical space. **All panorama shaders are float32-only** — WebGL2 has no double, and `dotnet build` / `fshadeaot` do NOT catch `double` GLSL (only the in-browser compile does). If real imagery + poses arrive, swap the synthetic pose generation in `Update.fs` (`SceneBoundsLoaded`) and add a Photo texture source.
 - **Workspace persistence is download / upload only** (`Persistence.fs`): JSON round-trips through the browser via the gear-popover Save / Load. There is no server-side store, so state is otherwise in-memory per session. Panoramas are not persisted (regenerated on load).
 - **Fusion picking is CPU-raycast**, not GPU winner-id readback — a per-tap server raycast over all visible meshes that keeps the lowest-error hit (identical winner). Revisit only if it gets slow.
 - **No real cut-plane mesh intersection rendering** in the pin diagram yet. The flyout sketches the prism/blob cross-section but it is not driven by a server intersection query.
-- **MeshIcp residual visualisation** is rudimentary. Residuals come back from `/query/icp` (`Registration.LastResiduals`) but the `GuiCards` histogram is basic.
-- **Part 4 partials**: the Explore signal renderer is missing, the ghost-mode selector and lasso→registration scoping are partial, and the patch 2D↔3D hover coupling is partial.
 
-`ProvenanceHeatmap` / `FalloffZoneOnly` / `MeshAlgorithmResidual` (provenance overlay), `FusionMode` (fusion pass), and `ActivePickingLayer` (fusion + layer-restricted picking) are no longer dead — they were re-wired during the scanpin completion work. `CardSystem`-driven visuals are still vestigial.
+Not TODOs (accepted as-is): lasso does not scope registration (visual-only by design); the patch card's 2D↔3D hover coupling stays as it is. **Explore mode was removed entirely** (model, messages, card, top-bar button, CSS) — don't resurrect it from old branches.
 
 ## Aardvark.Dom gotchas
 

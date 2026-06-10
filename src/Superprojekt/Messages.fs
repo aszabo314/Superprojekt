@@ -34,15 +34,12 @@ type Message =
     | SetDatasetScale    of string * float
     | ScanPinMsg              of ScanPinMessage
     | JumpToMesh of string
-    | ToggleColorMode
     | CardMsg of CardMessage
-    | ExploreMsg of ExploreModeMessage
     | SetRenderingMode of RenderingMode
     | ToggleMeshSolo of string
     | ShowAllMeshes
     | HideAllMeshes
     | ResetCamera
-    | SetExploreCardPos of V2d
     | SetLassoCardPos of V2d
     | ToggleGearPopover
     | EditPin of ScanPinId
@@ -66,18 +63,6 @@ type Message =
     | SetPanoramaMode of PanoramaMode
     | SetPanoramaBlend of float
     | FlyToPanorama of int
-
-and ExploreSignal =
-    | FeatureConfidenceSignal
-    | DisagreementSignal
-
-and ExploreModeMessage =
-    | SetExploreEnabled of bool
-    | SetReferenceAxisMode of ReferenceAxisMode
-    | SetSignalEnabled of ExploreSignal * bool
-    | SetSignalThreshold of ExploreSignal * float
-    | SetSignalColor of ExploreSignal * C4f
-    | SetMixMode of MixMode
 
 and CardMessage =
     | BringToFront of CardId

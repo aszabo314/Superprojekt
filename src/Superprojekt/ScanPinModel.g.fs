@@ -1,5 +1,5 @@
-//b4eaa548-6eb3-ef42-747a-80141b3d7908
-//fe82b959-9b27-79be-e0b0-ec3ad0990786
+//a30dee39-ef2e-eb33-2378-f28b08913a86
+//c98545e1-8134-45ad-d869-2ee87a661c91
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -33,7 +33,6 @@ type AdaptiveScanPinModel(value : ScanPinModel) =
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveCardSystemModel(value : CardSystemModel) =
     let _Cards_ = FSharp.Data.Adaptive.cmap(value.Cards)
-    let _DraggedCard_ = FSharp.Data.Adaptive.cval(value.DraggedCard)
     let _NextZOrder_ = FSharp.Data.Adaptive.cval(value.NextZOrder)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
@@ -44,10 +43,8 @@ type AdaptiveCardSystemModel(value : CardSystemModel) =
             __value <- value
             __adaptive.MarkOutdated()
             _Cards_.Value <- value.Cards
-            _DraggedCard_.Value <- value.DraggedCard
             _NextZOrder_.Value <- value.NextZOrder
     member __.Current = __adaptive
     member __.Cards = _Cards_ :> FSharp.Data.Adaptive.amap<CardId, Card>
-    member __.DraggedCard = _DraggedCard_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<CardId>>
     member __.NextZOrder = _NextZOrder_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.int>
 

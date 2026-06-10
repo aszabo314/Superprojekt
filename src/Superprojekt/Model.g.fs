@@ -1,5 +1,5 @@
-//d6dfd164-4982-ed03-d514-9a648ca12314
-//7884d215-529f-6bf3-a489-bdb887788217
+//d7a86298-f9f6-2a6e-5fd3-787b9f6392bd
+//3038835d-69b9-bc42-3d8a-a56f878a7ae7
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -53,13 +53,9 @@ type AdaptiveModel(value : Model) =
     let _PanoramaMode_ = FSharp.Data.Adaptive.cval(value.PanoramaMode)
     let _PanoramaBlend_ = FSharp.Data.Adaptive.cval(value.PanoramaBlend)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
-    let _ReferenceAxis_ = FSharp.Data.Adaptive.cval(value.ReferenceAxis)
-    let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
-    let _ColorMode_ = FSharp.Data.Adaptive.cval(value.ColorMode)
     let _CardSystem_ = AdaptiveCardSystemModel(value.CardSystem)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
-    let _ExploreCardPos_ = FSharp.Data.Adaptive.cval(value.ExploreCardPos)
     let _LassoCardPos_ = FSharp.Data.Adaptive.cval(value.LassoCardPos)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let mutable __value = value
@@ -111,13 +107,9 @@ type AdaptiveModel(value : Model) =
             _PanoramaMode_.Value <- value.PanoramaMode
             _PanoramaBlend_.Value <- value.PanoramaBlend
             _ScanPins_.Update(value.ScanPins)
-            _ReferenceAxis_.Value <- value.ReferenceAxis
-            _Explore_.Value <- value.Explore
-            _ColorMode_.Value <- value.ColorMode
             _CardSystem_.Update(value.CardSystem)
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
-            _ExploreCardPos_.Value <- value.ExploreCardPos
             _LassoCardPos_.Value <- value.LassoCardPos
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
     member __.Current = __adaptive
@@ -162,13 +154,9 @@ type AdaptiveModel(value : Model) =
     member __.PanoramaMode = _PanoramaMode_ :> FSharp.Data.Adaptive.aval<PanoramaMode>
     member __.PanoramaBlend = _PanoramaBlend_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ScanPins = _ScanPins_
-    member __.ReferenceAxis = _ReferenceAxis_ :> FSharp.Data.Adaptive.aval<ReferenceAxisMode>
-    member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>
-    member __.ColorMode = _ColorMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CardSystem = _CardSystem_
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
-    member __.ExploreCardPos = _ExploreCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>
     member __.LassoCardPos = _LassoCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

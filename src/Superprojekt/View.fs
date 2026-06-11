@@ -69,10 +69,13 @@ module View =
                     | AdjustingPin id -> Some id
                     | _ -> sel)
             AVal.custom (fun t ->
+                let pv = PendingRegistration.isPreview (model.PendingReg.GetValue t)
                 let probeOf pid =
                     HashMap.tryFind pid (pinsVal.GetValue t)
                     |> Option.bind (fun pin ->
-                        match pin.Probe with
+                        // Preview-pose probe while a solve preview is pending,
+                        // so the slicing plane matches the rendered meshes.
+                        match ScanPin.effectiveProbe pv pin with
                         | ProbeReady r -> Some (pin, r)
                         | _ -> None)
                 match model.ChartCursor.GetValue t with

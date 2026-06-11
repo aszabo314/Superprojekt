@@ -55,7 +55,16 @@ module CardsPin =
         "  function sy(v){ return plotY0 + (y1 - v) / (y1 - y0) * ih; }"
         "  function fromY(py){ return y1 - (py - plotY0) / ih * (y1 - y0); }"
         "  var maxDen = 0;"
-        "  rows.forEach(function(r){ (r.kde || []).forEach(function(p){ if(p[0] >= y0 && p[0] <= y1 && p[1] > maxDen) maxDen = p[1]; }); });"
+        "  rows.forEach(function(r){"
+        "    (r.kde || []).forEach(function(p){ if(p[0] >= y0 && p[0] <= y1 && p[1] > maxDen) maxDen = p[1]; });"
+        "    (r.kde2 || []).forEach(function(p){ if(p[0] >= y0 && p[0] <= y1 && p[1] > maxDen) maxDen = p[1]; });"
+        "  });"
+        "  function desat(hex){"
+        "    var n = parseInt(hex.slice(1), 16);"
+        "    var r0 = (n >> 16) & 255, g0 = (n >> 8) & 255, b0 = n & 255;"
+        "    var m = (r0 + g0 + b0) / 3, f = 0.65;"
+        "    return 'rgb(' + Math.round(r0 + (m - r0) * f) + ',' + Math.round(g0 + (m - g0) * f) + ',' + Math.round(b0 + (m - b0) * f) + ')';"
+        "  }"
         "  var svg = document.createElementNS(ns,'svg');"
         "  svg.setAttribute('class','ridge-plot');"
         "  svg.setAttribute('width', svgW); svg.setAttribute('height', H);"
@@ -122,26 +131,64 @@ module CardsPin =
         "      txt(sx0 + 11, 15, nm, 'start', grey ? '#94a3b8' : '#0f172a');"
         "    }"
         "    if(!grey){"
-        "      var kde = (r.kde || []).filter(function(p){ return p[0] >= y0 && p[0] <= y1; });"
-        "      if(kde.length > 1 && maxDen > 0){"
-        "        var hw = colW * 0.42;"
+        "      var hw = colW * 0.42;"
+        "      var split = !!(r.kde2 && r.kde2.length > 1);"
+        "      function halfArea(kdeRaw, sign, colour){"
+        "        var kd = (kdeRaw || []).filter(function(p){ return p[0] >= y0 && p[0] <= y1; });"
+        "        if(kd.length < 2 || maxDen <= 0) return;"
         "        var path = '';"
-        "        kde.forEach(function(p, k){"
-        "          path += (k === 0 ? 'M' : 'L') + (cx + p[1] / maxDen * hw).toFixed(1) + ',' + sy(p[0]).toFixed(1);"
+        "        kd.forEach(function(p, k){"
+        "          path += (k === 0 ? 'M' : 'L') + (cx + sign * p[1] / maxDen * hw).toFixed(1) + ',' + sy(p[0]).toFixed(1);"
         "        });"
-        "        for(var k = kde.length - 1; k >= 0; k--){"
-        "          path += 'L' + (cx - kde[k][1] / maxDen * hw).toFixed(1) + ',' + sy(kde[k][0]).toFixed(1);"
-        "        }"
-        "        path += 'Z';"
+        "        path += 'L' + cx + ',' + sy(kd[kd.length - 1][0]).toFixed(1);"
+        "        path += 'L' + cx + ',' + sy(kd[0][0]).toFixed(1) + 'Z';"
         "        var area = document.createElementNS(ns,'path');"
         "        area.setAttribute('d', path);"
-        "        area.setAttribute('fill', r.color); area.setAttribute('fill-opacity','0.4');"
-        "        area.setAttribute('stroke', r.color); area.setAttribute('stroke-width','1');"
+        "        area.setAttribute('fill', colour); area.setAttribute('fill-opacity','0.4');"
+        "        area.setAttribute('stroke', colour); area.setAttribute('stroke-width','1');"
         "        svg.appendChild(area);"
         "      }"
-        "      if(r.median >= y0 && r.median <= y1) ln(cx - colW * 0.3, sy(r.median), cx + colW * 0.3, sy(r.median), r.color, '1.5');"
-        "      var qa = Math.max(r.q1, y0), qb = Math.min(r.q3, y1);"
-        "      if(qb > qa) ln(cx, sy(qa), cx, sy(qb), r.color, '2.5', null, '0.9');"
+        "      if(split){"
+        "        var dcol = desat(r.color);"
+        "        halfArea(r.kde, -1, dcol);"
+        "        halfArea(r.kde2, 1, r.color);"
+        "        if(r.median >= y0 && r.median <= y1) ln(cx - colW * 0.3, sy(r.median), cx, sy(r.median), dcol, '1.5');"
+        "        if(r.median2 >= y0 && r.median2 <= y1) ln(cx, sy(r.median2), cx + colW * 0.3, sy(r.median2), r.color, '1.5');"
+        "        var qa1 = Math.max(r.q1, y0), qb1 = Math.min(r.q3, y1);"
+        "        if(qb1 > qa1) ln(cx - 2, sy(qa1), cx - 2, sy(qb1), dcol, '2', null, '0.9');"
+        "        var qa2 = Math.max(r.q12, y0), qb2 = Math.min(r.q32, y1);"
+        "        if(qb2 > qa2) ln(cx + 2, sy(qa2), cx + 2, sy(qb2), r.color, '2', null, '0.9');"
+        "        var ym1 = sy(Math.max(y0, Math.min(y1, r.median)));"
+        "        var ym2 = sy(Math.max(y0, Math.min(y1, r.median2)));"
+        "        if(Math.abs(ym2 - ym1) > 0.5){"
+        "          ln(cx, ym1, cx, ym2, '#0f172a', '1');"
+        "          var adir = ym2 > ym1 ? 1 : -1;"
+        "          ln(cx, ym2, cx - 3, ym2 - adir * 4, '#0f172a', '1');"
+        "          ln(cx, ym2, cx + 3, ym2 - adir * 4, '#0f172a', '1');"
+        "        }"
+        "        var dvv = r.median2 - r.median;"
+        "        txt(cx + 5, (ym1 + ym2) / 2 + 3, 'Δ' + (dvv >= 0 ? '+' : '') + dvv.toFixed(3), 'start', '#0f172a', '8');"
+        "      } else {"
+        "        var kde = (r.kde || []).filter(function(p){ return p[0] >= y0 && p[0] <= y1; });"
+        "        if(kde.length > 1 && maxDen > 0){"
+        "          var path = '';"
+        "          kde.forEach(function(p, k){"
+        "            path += (k === 0 ? 'M' : 'L') + (cx + p[1] / maxDen * hw).toFixed(1) + ',' + sy(p[0]).toFixed(1);"
+        "          });"
+        "          for(var k = kde.length - 1; k >= 0; k--){"
+        "            path += 'L' + (cx - kde[k][1] / maxDen * hw).toFixed(1) + ',' + sy(kde[k][0]).toFixed(1);"
+        "          }"
+        "          path += 'Z';"
+        "          var area = document.createElementNS(ns,'path');"
+        "          area.setAttribute('d', path);"
+        "          area.setAttribute('fill', r.color); area.setAttribute('fill-opacity','0.4');"
+        "          area.setAttribute('stroke', r.color); area.setAttribute('stroke-width','1');"
+        "          svg.appendChild(area);"
+        "        }"
+        "        if(r.median >= y0 && r.median <= y1) ln(cx - colW * 0.3, sy(r.median), cx + colW * 0.3, sy(r.median), r.color, '1.5');"
+        "        var qa = Math.max(r.q1, y0), qb = Math.min(r.q3, y1);"
+        "        if(qb > qa) ln(cx, sy(qa), cx, sy(qb), r.color, '2.5', null, '0.9');"
+        "      }"
         "    }"
         "    if(!mini) txt(cx, H - 4, grey ? '–' : 'n=' + r.count, 'middle', grey ? '#94a3b8' : '#475569', '8');"
         "    if(!mini && d.sticky && d.sticky === r.id){"
@@ -241,8 +288,17 @@ module CardsPin =
         "  });"
     ]
 
-    let probeRidgeJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (r : ProbeResult) =
+    // preview: the probe under the effective preview transforms while a
+    // registration solve is pending — rows become paired half-violins
+    // (committed left, preview right) with a median-shift arrow.
+    let probeRidgeJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (preview : ProbeResult option) (r : ProbeResult) =
         let win = ProbeXRange.window r xRange
+        let win =
+            match preview with
+            | Some p ->
+                let w2 = ProbeXRange.window p xRange
+                Range1d(min win.Min w2.Min, max win.Max w2.Max)
+            | None -> win
         let colorHex name =
             match Map.tryFind name colors with
             | Some c -> c4bToHex c
@@ -250,6 +306,10 @@ module CardsPin =
         let rows =
             if lockOrder then r.Distributions
             else r.Distributions |> Array.sortBy (fun d -> (if d.Count = 0 then 1 else 0), abs d.Median)
+        let appendKde (sb : System.Text.StringBuilder) (kde : (float * float)[]) =
+            kde |> Array.iteri (fun j (x, y) ->
+                if j > 0 then sb.Append(',') |> ignore
+                sb.Append(sprintf "[%.4g,%.4g]" x y) |> ignore)
         let sb = System.Text.StringBuilder()
         sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"ymin\":%.5g,\"ymax\":%.5g,\"sticky\":\"%s\",\"rows\":["
                     mini win.Min win.Max (sticky |> Option.defaultValue "")) |> ignore
@@ -257,16 +317,22 @@ module CardsPin =
             if i > 0 then sb.Append(',') |> ignore
             sb.Append(sprintf "{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"kde\":["
                         d.MeshName (shortName d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3) |> ignore
-            d.Kde |> Array.iteri (fun j (x, y) ->
-                if j > 0 then sb.Append(',') |> ignore
-                sb.Append(sprintf "[%.4g,%.4g]" x y) |> ignore)
-            sb.Append("]}") |> ignore)
+            appendKde sb d.Kde
+            sb.Append("]") |> ignore
+            match preview |> Option.bind (fun p -> p.Distributions |> Array.tryFind (fun pd -> pd.MeshName = d.MeshName)) with
+            | Some pd when pd.Count > 0 ->
+                sb.Append(sprintf ",\"count2\":%d,\"median2\":%.5g,\"q12\":%.5g,\"q32\":%.5g,\"kde2\":["
+                            pd.Count pd.Median pd.Q1 pd.Q3) |> ignore
+                appendKde sb pd.Kde
+                sb.Append("]") |> ignore
+            | _ -> ()
+            sb.Append("}") |> ignore)
         sb.Append("]}") |> ignore
         sb.ToString()
 
-    let probeStateJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (probe : ProbeState) =
+    let probeStateJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (preview : ProbeResult option) (probe : ProbeState) =
         match probe with
-        | ProbeReady r -> probeRidgeJson mini lockOrder xRange sticky colors r
+        | ProbeReady r -> probeRidgeJson mini lockOrder xRange sticky colors preview r
         | ProbeError e -> sprintf "{\"status\":\"error\",\"reason\":\"%s\"}" (e.Replace("\\", "/").Replace("\"", "'"))
         | ProbeNone | ProbeRunning -> "{\"status\":\"running\"}"
 
@@ -339,22 +405,34 @@ module CardsPin =
                     probe |> AVal.map (function
                         | Some (ProbeReady r) -> Some r
                         | _ -> None)
+                let previewActive = model.PendingReg |> AVal.map PendingRegistration.isPreview
                 let probeJson =
-                    (selectedPin, model.ChartStickyMesh) ||> AVal.map2 (fun po sticky ->
+                    (selectedPin, model.ChartStickyMesh, previewActive) |||> AVal.map3 (fun po sticky pv ->
                         match po with
                         | Some pin ->
                             match pin.Payload with
-                            | Point _ -> probeStateJson false pin.ProbeLockOrder pin.ProbeXRange sticky pin.DatasetColors pin.Probe
+                            | Point _ ->
+                                // Split violin while a solve preview is
+                                // pending and the preview probe is in.
+                                let preview =
+                                    if pv then
+                                        match pin.ProbePreview with
+                                        | ProbeReady r -> Some r
+                                        | _ -> None
+                                    else None
+                                probeStateJson false pin.ProbeLockOrder pin.ProbeXRange sticky pin.DatasetColors preview pin.Probe
                             | _ -> "{\"status\":\"none\"}"
                         | None -> "{\"status\":\"none\"}")
                 // 3D → chart: the elevation cursor line at the 3D hover
                 // point's signed distance along the probe axis, shown only
                 // while the hover point sits inside the probe cylinder.
+                // Under a pending preview the preview-pose probe wins, so the
+                // linking matches the on-screen geometry.
                 let cursor3d =
-                    (hoverWorld, selectedPin) ||> AVal.map2 (fun hw po ->
+                    (hoverWorld, selectedPin, previewActive) |||> AVal.map3 (fun hw po pv ->
                         match hw, po with
                         | Some q, Some pin ->
-                            match pin.Probe with
+                            match ScanPin.effectiveProbe pv pin with
                             | ProbeReady r ->
                                 let v = q - pin.Centre
                                 let dAx = Vec.dot v r.Normal

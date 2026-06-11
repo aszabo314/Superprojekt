@@ -447,7 +447,8 @@ module ScanPinScene =
                         else
                             match HashMap.tryFind cur.PinId (pinsVal.GetValue t) with
                             | Some pin ->
-                                match pin.Probe with
+                                let pv = PendingRegistration.isPreview (model.PendingReg.GetValue t)
+                                match ScanPin.effectiveProbe pv pin with
                                 | ProbeReady r ->
                                     let cc = model.CommonCentroid.GetValue t
                                     let scale = datasetScale.GetValue t

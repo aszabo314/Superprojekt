@@ -9,6 +9,7 @@
     <None Include="paket.references" />
     <!-- Pure modules under test, compiled directly (no WASM / web hosts). -->
     <Compile Include="..\Superprojekt\RegistrationModel.fs" Link="RegistrationModel.fs" />
+    <Compile Include="..\Superprojekt\StudyModel.fs" Link="StudyModel.fs" />
     <Compile Include="..\Superserver\RegMath.fs" Link="RegMath.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>

@@ -268,6 +268,7 @@ module Persistence =
             ProbeLengthOverride = probeLen
             ProbeLockOrder = probeLock
             ProbeXRange = probeRange
+            ContactRings = RingsNone
         }
 
     type ParseError = string

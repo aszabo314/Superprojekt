@@ -98,6 +98,7 @@ and ScanPinMessage =
     | PatchComputed of ScanPinId * (V2d * V3d)[] * refDir:V3d * normal:V3d
     | ProbeComputed of ScanPinId * ProbeResult
     | ProbeFailed of ScanPinId * string
+    | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>
     | SetProbeLength of ScanPinId * float option
     | ToggleProbeLockOrder of ScanPinId
     | SetProbeXRange of ScanPinId * ProbeXRange

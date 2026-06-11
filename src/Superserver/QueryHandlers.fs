@@ -24,6 +24,9 @@ type RidgeRequest = { Name: string; Seed: float[]; ThresholdRad: float; MaxPoint
 type PatchRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
 
 [<CLIMutable>]
+type ContactRingsRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
+
+[<CLIMutable>]
 type ProbeMeshDto = { Name: string; Transform: float[] }
 
 [<CLIMutable>]
@@ -146,6 +149,24 @@ let patchHandler : HttpHandler =
             return! json {| points = pts; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx
         with ex ->
             log.LogError(ex, "patch failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+let contactRingsHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<ContactRingsRequest>()
+            let lm = loadMesh req.Name 0
+            let radius = if req.Radius <= 0.0 then 1.0 else req.Radius
+            let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
+            let rings = MeshAnalysis.contactRings lm (toV3d req.Centre) radius maxPoints
+            let out = rings |> Array.map (Array.map fromV3d)
+            log.LogInformation("contact-rings {Name} r={Radius:F2}: {Rings} rings, {Points} pts",
+                req.Name, radius, rings.Length, (rings |> Array.sumBy Array.length))
+            return! json {| rings = out |} next ctx
+        with ex ->
+            log.LogError(ex, "contact-rings failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 

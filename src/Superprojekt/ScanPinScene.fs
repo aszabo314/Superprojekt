@@ -150,59 +150,92 @@ module ScanPinScene =
                 }
             )
 
-        let pinSpheres =
+        // Pin influence visuals: a thin equator ring (⊥ the pin's probe axis,
+        // radius = InnerRadius) plus the sphere–surface contact rings per
+        // visible mesh, all in the pin's categorical colour (host-mesh palette
+        // colour — the same one on the card's colour bar). Unselected pins
+        // draw at α 0.6 / 1.5 px, the selected pin at α 1.0 / 2.5 px. Normal
+        // depth testing on purpose: foreground geometry occludes the curves,
+        // which is the spatial cue. The old filled translucent shells are gone;
+        // the white falloff-radius outline only shows while the radius sliders
+        // are live (AdjustingPin) so the falloff slider still has feedback.
+        let pinRings =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
-                let active = (notFullscreen, isSelected) ||> AVal.map2 (&&)
-                // All three values projected from metric to render-space.
-                let centreVal =
-                    (pinVal, renderCentreOpt) ||> AVal.map2 (fun po f ->
-                        po |> Option.map (fun p -> f p.Centre))
-                let outerRadius =
-                    (pinVal, renderLength) ||> AVal.map2 (fun po f ->
-                        po |> Option.map (fun p -> f p.FalloffRadius) |> Option.defaultValue 0.0)
-                let innerRadius =
-                    (pinVal, renderLength) ||> AVal.map2 (fun po f ->
-                        po |> Option.map (fun p -> f p.InnerRadius) |> Option.defaultValue 0.0)
-                let phaseVal = pinVal |> AVal.map (Option.map (fun p -> p.Phase))
-                let outerTrafo =
-                    (centreVal, outerRadius) ||> AVal.map2 (fun co r ->
-                        match co with
-                        | Some c -> Trafo3d.Scale r * Trafo3d.Translation c
-                        | None -> Trafo3d.Scale 0.0)
-                let innerTrafo =
-                    (centreVal, innerRadius) ||> AVal.map2 (fun co s ->
-                        match co with
-                        | Some c -> Trafo3d.Scale s * Trafo3d.Translation c
-                        | None -> Trafo3d.Scale 0.0)
-                let baseColor =
-                    (isSelected, phaseVal) ||> AVal.map2 (fun sel phaseOpt ->
-                        if sel then V3d(1.0, 0.9, 0.0)
+                let isAdjusting =
+                    model.ScanPins.Placement |> AVal.map (fun pl -> pl = AdjustingPin id)
+                let ringData =
+                    pinVal |> AVal.map (fun po ->
+                        po |> Option.map (fun p ->
+                            let colour =
+                                match p.HostMeshName |> Option.bind (fun h -> Map.tryFind h p.DatasetColors) with
+                                | Some c -> V3d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0)
+                                | None -> V3d(0.102, 0.337, 0.859)
+                            let rings = match p.ContactRings with RingsReady m -> m | _ -> Map.empty
+                            p.Centre, p.InnerRadius, ScanPin.axis p, colour, rings))
+                let segs =
+                    AVal.custom (fun t ->
+                        match ringData.GetValue t with
+                        | None -> [||]
+                        | Some (centre, radius, axis, colour, rings) ->
+                            let sel = isSelected.GetValue t
+                            let cc = model.CommonCentroid.GetValue t
+                            let scale = datasetScale.GetValue t
+                            let vis = model.MeshVisible.GetValue t
+                            let col = V4d(colour, (if sel then 1.0 else 0.6))
+                            let width = if sel then 2.5 else 1.5
+                            let out = ResizeArray<V3d * V3d * V4d * float>()
+                            let cR = ScanPin.renderCentre cc scale centre
+                            let rR = ScanPin.renderLength scale radius
+                            let nN = if axis.Length > 1e-9 then axis.Normalized else V3d.OOI
+                            let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
+                            let v = Vec.cross nN u
+                            let segsN = 64
+                            for i in 0 .. segsN - 1 do
+                                let a0 = float i / float segsN * Constant.PiTimesTwo
+                                let a1 = float (i + 1) / float segsN * Constant.PiTimesTwo
+                                out.Add(cR + (u * cos a0 + v * sin a0) * rR,
+                                        cR + (u * cos a1 + v * sin a1) * rR, col, width)
+                            for KeyValue(mesh, meshRings) in rings do
+                                if Map.tryFind mesh vis |> Option.defaultValue true then
+                                    for ring in meshRings do
+                                        if ring.Length >= 2 then
+                                            let rp = ring |> Array.map (ScanPin.renderCentre cc scale)
+                                            for i in 0 .. rp.Length - 2 do
+                                                out.Add(rp.[i], rp.[i + 1], col, width)
+                            out.ToArray())
+                let falloffSegs =
+                    AVal.custom (fun t ->
+                        if not (isAdjusting.GetValue t) then [||]
                         else
-                            match phaseOpt with
-                            | Some PinPhase.Placement -> V3d(0.2, 1.0, 0.3)
-                            | Some PinPhase.Committed -> V3d(1.0, 0.5, 0.5)
-                            | None -> V3d.Zero)
-                let outerColor = baseColor |> AVal.map (fun c -> V4d(c.X, c.Y, c.Z, 0.10))
-                let innerColor = baseColor |> AVal.map (fun c -> V4d(c.X, c.Y, c.Z, 0.30))
-                let outlineSegs =
-                    (centreVal, outerRadius, isSelected) |||> AVal.map3 (fun co r sel ->
-                        if sel then
-                            match co with
-                            | Some c -> PinGeometry.buildSphereOutline c r (V4d(1.0, 1.0, 1.0, 0.55)) 1.0
-                            | None -> [||]
-                        else [||])
+                            match pinsVal.GetValue t |> HashMap.tryFind id with
+                            | Some p ->
+                                let cc = model.CommonCentroid.GetValue t
+                                let scale = datasetScale.GetValue t
+                                PinGeometry.buildSphereOutline
+                                    (ScanPin.renderCentre cc scale p.Centre)
+                                    (ScanPin.renderLength scale p.FalloffRadius)
+                                    (V4d(1.0, 1.0, 1.0, 0.55)) 1.0
+                            | None -> [||])
                 ASet.ofList [
-                    sphereShell view proj active outerTrafo outerColor
-                    sphereShell view proj active innerTrafo innerColor
                     sg {
-                        Sg.Active active
+                        Sg.Active notFullscreen
                         Sg.View view
                         Sg.Proj proj
                         Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                         Sg.BlendMode (AVal.constant BlendMode.Blend)
-                        Lines.render outlineSegs
+                        Sg.NoEvents
+                        Lines.render segs
+                    }
+                    sg {
+                        Sg.Active notFullscreen
+                        Sg.View view
+                        Sg.Proj proj
+                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                        Sg.BlendMode (AVal.constant BlendMode.Blend)
+                        Sg.NoEvents
+                        Lines.render falloffSegs
                     }
                 ])
 
@@ -400,4 +433,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinSpheres; pinLines; pinPatchRings; ghostPreview; cursorPlane])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane])

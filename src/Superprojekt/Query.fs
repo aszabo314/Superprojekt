@@ -146,6 +146,24 @@ module Query =
             return pts, scalars
         }
 
+    // Sphere–surface contact rings; centre is in the mesh's own (untransformed)
+    // world frame, points come back in the same frame.
+    let contactRings (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int) : Async<V3d[][]> =
+        async {
+            let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d}"""
+                        name (v3 centre) radius maxPoints
+            let! r = post serverUrl "/query/contact-rings" json
+            return
+                r.GetProperty("rings").EnumerateArray()
+                |> Seq.map (fun ring ->
+                    ring.EnumerateArray()
+                    |> Seq.map (fun p ->
+                        let a = p.EnumerateArray() |> Seq.map (fun v -> v.GetDouble()) |> Seq.toArray
+                        V3d(a.[0], a.[1], a.[2]))
+                    |> Seq.toArray)
+                |> Seq.toArray
+        }
+
     // length <= 0.0 → server auto-computes from the union bbox extent along the normal.
     let probe
             (serverUrl : string)

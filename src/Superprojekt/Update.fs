@@ -43,6 +43,12 @@ module Update =
             ScanPins = ScanPinModel.invalidateProbes model.ScanPins
             HoverProbe = None }
 
+    // Contact rings only depend on pin geometry + registration transforms —
+    // NOT on visibility (which gates rendering only), so this is applied on
+    // transform changes alone, not everywhere invalidateProbes is.
+    let private invalidateRings (model : Model) =
+        { model with ScanPins = ScanPinModel.invalidateRings model.ScanPins }
+
     let private updateCore (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
         | CameraMessage msg ->
@@ -112,10 +118,10 @@ module Update =
         | SetReferenceMesh mesh ->
             invalidateProbes { model with Registration = { model.Registration with ReferenceMesh = mesh } }
         | ResetMeshTransforms ->
-            invalidateProbes
+            invalidateProbes (invalidateRings
                 { model with
                     MeshTransforms = Map.empty
-                    Registration = { model.Registration with Running = false } }
+                    Registration = { model.Registration with Running = false } })
         | RunRegistration ->
             let reg = model.Registration
             match reg.ReferenceMesh with
@@ -175,11 +181,11 @@ module Update =
                 if resi.Length = 0 then 0.0
                 else sqrt ((resi |> Array.sumBy (fun x -> x * x)) / float resi.Length)
             let algoMap = Map.add mesh meshRms model.MeshAlgorithmResidual
-            invalidateProbes
+            invalidateProbes (invalidateRings
                 { model with
                     MeshTransforms = mt
                     MeshAlgorithmResidual = algoMap
-                    Registration = { model.Registration with Running = false } }
+                    Registration = { model.Registration with Running = false } })
         | RegistrationFailed err ->
             let log = model.DebugLog.InsertAt(0, sprintf "registration failed: %s" err)
             { model with
@@ -442,7 +448,8 @@ module Update =
                                 { p with
                                     Centre = c.ProjectedCentre
                                     HostMeshName = Some c.TargetMesh
-                                    Probe = ProbeNone }
+                                    Probe = ProbeNone
+                                    ContactRings = RingsNone }
                             pins <- HashMap.add c.PinId p' pins
                         | None -> ()
                 { model with
@@ -543,4 +550,6 @@ module Update =
             | None -> model
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =
-        updateCore env model msg |> ScanPinUpdate.ensureProbe env
+        updateCore env model msg
+        |> ScanPinUpdate.ensureProbe env
+        |> ScanPinUpdate.ensureRings env

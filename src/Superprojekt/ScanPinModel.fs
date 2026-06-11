@@ -84,6 +84,15 @@ module PayloadType =
                 NormalWorld     = V3d.OOI
             }
 
+// Sphere–surface contact rings (per mesh, registered world-space metres),
+// computed server-side and cached on the pin. Invalidated (→ RingsNone, lazy
+// recompute) by radius / centre / registration-transform changes; mesh
+// visibility only gates rendering, never the cache.
+type ContactRingState =
+    | RingsNone
+    | RingsRunning
+    | RingsReady of Map<string, V3d[][]>
+
 // All ScanPin geometry is metric world-space; InnerRadius and FalloffRadius
 // are independent. Render-space conversion happens at pipeline boundaries.
 // Probe: cached M3C2 probe result for Point payloads, recomputed lazily after
@@ -103,6 +112,7 @@ type ScanPin = {
     ProbeLengthOverride  : float option
     ProbeLockOrder       : bool
     ProbeXRange          : ProbeXRange
+    ContactRings         : ContactRingState
 }
 
 type PlacementState =
@@ -144,6 +154,14 @@ module ScanPinModel =
                 | _ -> { p with Probe = ProbeNone })
         { sp with Pins = pins }
 
+    let invalidateRings (sp : ScanPinModel) =
+        let pins =
+            sp.Pins |> HashMap.map (fun _ p ->
+                match p.ContactRings with
+                | RingsNone -> p
+                | _ -> { p with ContactRings = RingsNone })
+        { sp with Pins = pins }
+
 module ScanPin =
     // World-space (metric) → render-space (post centroid translate, post scale).
     let renderCentre (commonCentroid : V3d) (datasetScale : float) (worldCentre : V3d) =
@@ -154,6 +172,16 @@ module ScanPin =
     // Metric distance/radius → render-space.
     let renderLength (datasetScale : float) (metricLength : float) =
         metricLength * datasetScale
+
+    // The pin's reference axis: probe normal when available, Patch normal as
+    // a fallback, world-up otherwise (correct for heightfields).
+    let axis (p : ScanPin) =
+        match p.Probe with
+        | ProbeReady r -> r.Normal
+        | _ ->
+            match p.Payload with
+            | Patch pp when pp.NormalWorld.Length > 1e-9 -> pp.NormalWorld.Normalized
+            | _ -> V3d.OOI
 
 // Elevation cursor driven by hovering a pin card's violin chart: a signed
 // distance (metres) along the pin's probe axis. Extended = Alt held, the 3D

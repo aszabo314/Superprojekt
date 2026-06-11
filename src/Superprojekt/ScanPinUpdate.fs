@@ -15,6 +15,11 @@ module ScanPinUpdate =
         new System.Threading.CancellationTokenSource()
     let mutable private probeOwner : ScanPinId option = None
 
+    // Contact-ring queries run per pin (several pins can recompute at once
+    // after a registration), so each pin gets its own debounce token.
+    let private ringsCts =
+        System.Collections.Generic.Dictionary<ScanPinId, System.Threading.CancellationTokenSource>()
+
     let private assignColors (meshNames : IndexList<string>) =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
 
@@ -45,6 +50,7 @@ module ScanPinUpdate =
             ProbeLengthOverride  = None
             ProbeLockOrder       = false
             ProbeXRange          = ProbeXAuto
+            ContactRings         = RingsNone
         }
 
     let private updatePin (id : ScanPinId) (f : ScanPin -> ScanPin) (sp : ScanPinModel) =
@@ -91,7 +97,7 @@ module ScanPinUpdate =
                 if pin.Phase = PinPhase.Placement then
                     let r' = max 0.01 r
                     let delta = max 0.0 (pin.FalloffRadius - pin.InnerRadius)
-                    { pin with InnerRadius = r'; FalloffRadius = r' + delta; Probe = ProbeNone }
+                    { pin with InnerRadius = r'; FalloffRadius = r' + delta; Probe = ProbeNone; ContactRings = RingsNone }
                 else pin)
             | None -> sp
 
@@ -197,6 +203,10 @@ module ScanPinUpdate =
         | ProbeFailed(id, reason) ->
             sp |> updatePin id (fun pin ->
                 if pin.Probe = ProbeRunning then { pin with Probe = ProbeError reason } else pin)
+
+        | ContactRingsComputed(id, rings) ->
+            sp |> updatePin id (fun pin ->
+                if pin.ContactRings = RingsRunning then { pin with ContactRings = RingsReady rings } else pin)
 
         | SetProbeLength(id, len) ->
             sp |> updatePin id (fun pin ->
@@ -449,3 +459,58 @@ module ScanPinUpdate =
                 } |> ignore
                 { model with ScanPins = { sp with Pins = HashMap.add id { pin with Probe = ProbeRunning } sp.Pins } }
         | _ -> model
+
+    // Lazy contact-ring trigger, run as a postlude after every reducer step:
+    // every pin whose rings were invalidated (RingsNone) gets one debounced
+    // server fan-out over ALL meshes — visibility only gates rendering, so
+    // toggling a mesh never recomputes. Registration transforms are rigid:
+    // the sphere is intersected in each mesh's own frame (inverse-transformed
+    // centre) and the rings mapped back to registered world space.
+    let ensureRings (env : Env<Message>) (model : Model) : Model =
+        let sp = model.ScanPins
+        let pending =
+            sp.Pins |> HashMap.toList
+            |> List.filter (fun (_, p) -> p.ContactRings = RingsNone)
+        if List.isEmpty pending || model.MeshNames.Count = 0 then model
+        else
+            let cc = model.CommonCentroid
+            let meshes =
+                model.MeshNames |> IndexList.toList |> List.map (fun n ->
+                    let tw =
+                        match Map.tryFind n model.MeshTransforms with
+                        | Some rt -> RigidTransform.renderToWorld (DatasetScale.forMesh model.DatasetScales n) cc rt
+                        | None -> Trafo3d.Identity
+                    n, tw)
+            let mutable pins = sp.Pins
+            for (pinId, pin) in pending do
+                match ringsCts.TryGetValue pinId with
+                | true, cts -> cts.Cancel()
+                | _ -> ()
+                let cts = new System.Threading.CancellationTokenSource()
+                ringsCts.[pinId] <- cts
+                let token = cts.Token
+                let centre = pin.Centre
+                let radius = pin.InnerRadius
+                task {
+                    try
+                        do! System.Threading.Tasks.Task.Delay(250, token)
+                        let! results =
+                            meshes
+                            |> List.map (fun (n, tw) -> async {
+                                try
+                                    let cOwn = tw.Backward.TransformPos centre
+                                    let! rings = Query.contactRings ApiConfig.apiBase.Value n cOwn radius 4096
+                                    let ringsWorld = rings |> Array.map (Array.map tw.Forward.TransformPos)
+                                    return if ringsWorld.Length = 0 then None else Some (n, ringsWorld)
+                                with _ -> return None })
+                            |> Async.Parallel
+                            |> Async.StartAsTask
+                        if not token.IsCancellationRequested then
+                            let map = results |> Array.choose (fun r -> r) |> Map.ofArray
+                            env.Emit [ScanPinMsg (ContactRingsComputed(pinId, map))]
+                    with
+                    | :? System.OperationCanceledException -> ()
+                    | _ -> ()
+                } |> ignore
+                pins <- HashMap.add pinId { pin with ContactRings = RingsRunning } pins
+            { model with ScanPins = { sp with Pins = pins } }

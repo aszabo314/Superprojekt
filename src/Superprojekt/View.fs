@@ -56,6 +56,51 @@ module View =
 
         let lassoActive = model.LassoDrawing |> AVal.map Option.isSome
 
+        // Slicing-plane highlight for the mesh shader. The chart-hover cursor
+        // wins (Alt-extended → unclipped, scene-wide); otherwise the 3D hover
+        // point drives it while inside the effective pin's probe cylinder
+        // (always clipped). Only the effective (card-open) pin contributes —
+        // one plane at a time, matching the chart cursor's single slot.
+        let cursorHighlight =
+            let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+            let effectiveId =
+                (model.ScanPins.Placement, model.ScanPins.SelectedPin) ||> AVal.map2 (fun pl sel ->
+                    match pl with
+                    | AdjustingPin id -> Some id
+                    | _ -> sel)
+            AVal.custom (fun t ->
+                let probeOf pid =
+                    HashMap.tryFind pid (pinsVal.GetValue t)
+                    |> Option.bind (fun pin ->
+                        match pin.Probe with
+                        | ProbeReady r -> Some (pin, r)
+                        | _ -> None)
+                match model.ChartCursor.GetValue t with
+                | Some cur when effectiveId.GetValue t = Some cur.PinId ->
+                    probeOf cur.PinId |> Option.map (fun (pin, r) ->
+                        { Origin    = pin.Centre + r.Normal * cur.Distance
+                          Normal    = r.Normal
+                          Clip      = not cur.Extended
+                          PinCentre = pin.Centre
+                          PinRadius = pin.InnerRadius
+                          CylLength = r.Length })
+                | _ ->
+                    match hoverCoord.GetValue t, effectiveId.GetValue t with
+                    | Some q, Some pid ->
+                        probeOf pid |> Option.bind (fun (pin, r) ->
+                            let v = q - pin.Centre
+                            let dAx = Vec.dot v r.Normal
+                            let radial = (v - r.Normal * dAx).Length
+                            if radial <= pin.InnerRadius && abs dAx <= r.Length * 0.5 then
+                                Some { Origin    = pin.Centre + r.Normal * dAx
+                                       Normal    = r.Normal
+                                       Clip      = true
+                                       PinCentre = pin.Centre
+                                       PinRadius = pin.InnerRadius
+                                       CylLength = r.Length }
+                            else None)
+                    | _ -> None)
+
         body {
             OnBoot [
                 "const l = document.getElementById('loader');"
@@ -384,7 +429,7 @@ module View =
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) cursorHighlight model
             }
 
             Dom.OnKeyDown(fun e ->

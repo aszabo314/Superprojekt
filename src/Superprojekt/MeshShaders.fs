@@ -48,6 +48,19 @@ module MeshShader =
         member x.FalloffZoneOnly   : int     = x?FalloffZoneOnly
         member x.MeshDatasetError  : float32 = x?MeshDatasetError
         member x.MeshAlgoResidual  : float32 = x?MeshAlgoResidual
+        // Contact-line highlight at the elevation-cursor slicing plane, all
+        // in render space. CursorActive is per-mesh (bbox-vs-plane gate);
+        // CursorClip restricts the band to the probe cylinder (off while the
+        // chart cursor is Alt-extended scene-wide).
+        member x.CursorActive         : int     = x?CursorActive
+        member x.CursorPlaneOrigin    : V3f     = x?CursorPlaneOrigin
+        member x.CursorPlaneNormal    : V3f     = x?CursorPlaneNormal
+        member x.CursorHighlightWidth : float32 = x?CursorHighlightWidth
+        member x.CursorDarken         : float32 = x?CursorDarken
+        member x.CursorClip           : int     = x?CursorClip
+        member x.CursorPinCentre      : V3f     = x?CursorPinCentre
+        member x.CursorPinRadius      : float32 = x?CursorPinRadius
+        member x.CursorCylLength      : float32 = x?CursorCylLength
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -224,6 +237,34 @@ module MeshShader =
                             elif a >= cScaled then algoCol
                             else condCol
                         baseRgb <- domCol
+            // Contact-line highlight at the active slicing plane: darken the
+            // intersected mesh, brighten a smoothstep band within
+            // CursorHighlightWidth of the plane (accent #0891b2 — the slicing
+            // plane's colour), optionally clipped to the probe cylinder.
+            // Ghost-level fragments are skipped so the silhouette colour
+            // stays uniform.
+            if uniform.CursorActive <> 0 && aboveGhost then
+                let co = uniform.CursorPlaneOrigin
+                let cn = uniform.CursorPlaneNormal
+                let sd = (wp.X - co.X) * cn.X + (wp.Y - co.Y) * cn.Y + (wp.Z - co.Z) * cn.Z
+                let ad = abs sd
+                let hw = uniform.CursorHighlightWidth
+                let mutable amount = 0.0f
+                if hw > 1e-9f && ad < hw then
+                    let tt = clamp 0.0f 1.0f (ad / hw)
+                    amount <- 1.0f - tt * tt * (3.0f - 2.0f * tt)
+                if uniform.CursorClip <> 0 then
+                    let pc = uniform.CursorPinCentre
+                    let axial = (wp.X - pc.X) * cn.X + (wp.Y - pc.Y) * cn.Y + (wp.Z - pc.Z) * cn.Z
+                    let rx = wp.X - pc.X - axial * cn.X
+                    let ry = wp.Y - pc.Y - axial * cn.Y
+                    let rz = wp.Z - pc.Z - axial * cn.Z
+                    let radial = sqrt (rx*rx + ry*ry + rz*rz)
+                    if radial > uniform.CursorPinRadius || abs axial > uniform.CursorCylLength * 0.5f then
+                        amount <- 0.0f
+                let hiCol = V3f(0.031f, 0.569f, 0.698f)
+                let darkened = baseRgb * uniform.CursorDarken
+                baseRgb <- darkened * (1.0f - amount) + hiCol * amount
             let depth =
                 if alpha >= opaqueThreshold then v.fc.Z
                 else 1.0f

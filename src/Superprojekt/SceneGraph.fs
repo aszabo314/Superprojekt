@@ -137,6 +137,7 @@ module SceneGraph =
         (proj : aval<Trafo3d>)
         (fullscreenActive : aval<bool>)
         (placementHover : aval<V3d option>)
+        (cursorHighlight : aval<CursorHighlight option>)
         (model : AdaptiveModel) =
 
         let loadFinished (name : string) =
@@ -160,7 +161,7 @@ module SceneGraph =
         // "translucent should not write depth" rule but is the only
         // combination that actually renders correctly here.
 
-        let meshScene  = MeshView.buildScene loadFinished model
+        let meshScene  = MeshView.buildScene loadFinished cursorHighlight model
         let fusionScene = FusionView.build info model view proj
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
 

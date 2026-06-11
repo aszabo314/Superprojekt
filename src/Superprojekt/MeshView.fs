@@ -18,6 +18,19 @@ type LoadedMesh =
         mesh : MeshData option ref
     }
 
+// Elevation-cursor slicing-plane highlight parameters, world-space metres.
+// Built in View.fs from the chart cursor (priority) or the 3D hover point
+// inside the effective pin's probe cylinder; None = highlight off.
+type CursorHighlight =
+    {
+        Origin    : V3d
+        Normal    : V3d
+        Clip      : bool
+        PinCentre : V3d
+        PinRadius : float
+        CylLength : float
+    }
+
 module MeshView =
 
     let apiBase = ApiConfig.apiBase
@@ -103,7 +116,14 @@ module MeshView =
         blobsArr |> AVal.map (fun (_, c, _) -> c),
         blobsArr |> AVal.map (fun (_, _, f) -> f)
 
-    let buildScene (loadFinished : string -> unit) (model : AdaptiveModel) : aset<ISceneNode> =
+    // Smoothstep half-width of the contact-line highlight band (metres) and
+    // the darkening applied to the rest of an intersected mesh.
+    [<Literal>]
+    let private cursorHighlightWidth = 0.2
+    [<Literal>]
+    let private cursorDarken = 0.85f
+
+    let buildScene (loadFinished : string -> unit) (cursor : aval<CursorHighlight option>) (model : AdaptiveModel) : aset<ISceneNode> =
         let renderingModeInt =
             model.RenderingMode |> AVal.map (function
                 | Textured     -> 0
@@ -134,6 +154,29 @@ module MeshView =
                 arr)
 
         let blobCount, blobs, blobFalloffs = pinBlobUniforms model
+        // Cursor-plane uniforms shared by every mesh, converted metric →
+        // render space once. CursorActive is the only per-mesh one (below).
+        let cursorRender =
+            let datasetScaleA =
+                (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
+            (cursor, model.CommonCentroid, datasetScaleA) |||> AVal.map3 (fun cOpt cc s ->
+                match cOpt with
+                | Some c ->
+                    V3f (ScanPin.renderCentre cc s c.Origin),
+                    V3f c.Normal,
+                    (if c.Clip then 1 else 0),
+                    V3f (ScanPin.renderCentre cc s c.PinCentre),
+                    float32 (ScanPin.renderLength s c.PinRadius),
+                    float32 (ScanPin.renderLength s c.CylLength),
+                    float32 (ScanPin.renderLength s cursorHighlightWidth)
+                | None -> V3f.Zero, V3f.OOI, 0, V3f.Zero, 0.0f, 0.0f, 0.0f)
+        let cursorOrigin = cursorRender |> AVal.map (fun (o, _, _, _, _, _, _) -> o)
+        let cursorNormal = cursorRender |> AVal.map (fun (_, n, _, _, _, _, _) -> n)
+        let cursorClip   = cursorRender |> AVal.map (fun (_, _, c, _, _, _, _) -> c)
+        let cursorPinC   = cursorRender |> AVal.map (fun (_, _, _, p, _, _, _) -> p)
+        let cursorPinR   = cursorRender |> AVal.map (fun (_, _, _, _, r, _, _) -> r)
+        let cursorCylLen = cursorRender |> AVal.map (fun (_, _, _, _, _, l, _) -> l)
+        let cursorWidth  = cursorRender |> AVal.map (fun (_, _, _, _, _, _, w) -> w)
         // Chart column highlight (hover wins over sticky): the highlighted
         // mesh renders normally, every other mesh drops to the shader's
         // uniform-ghost path (MeshActive=false) at a fixed 0.2 alpha —
@@ -178,6 +221,54 @@ module MeshView =
                 model.MeshAlgorithmResidual
                 |> AVal.map (fun m ->
                     Map.tryFind name m |> Option.defaultValue 0.0 |> float32)
+            // "All meshes the plane intersects": the cursor effect (darken +
+            // band) only activates on meshes whose registered-world bbox
+            // touches the highlight slab — and, when clipped, the cylinder's
+            // bounding sphere. World-metric math; conservative on rotation.
+            let cursorActive =
+                AVal.custom (fun t ->
+                    match cursor.GetValue t with
+                    | None -> 0
+                    | Some c ->
+                        match Map.tryFind name (model.MeshBounds.GetValue t) with
+                        | None -> 1
+                        | Some box ->
+                            let tw =
+                                match Map.tryFind name (model.MeshTransforms.GetValue t) with
+                                | Some rt ->
+                                    RigidTransform.renderToWorld
+                                        (DatasetScale.forMesh (model.DatasetScales.GetValue t) name)
+                                        (model.CommonCentroid.GetValue t) rt
+                                | None -> Trafo3d.Identity
+                            let mutable dMin = infinity
+                            let mutable dMax = -infinity
+                            let mutable bMin = V3d(infinity, infinity, infinity)
+                            let mutable bMax = V3d(-infinity, -infinity, -infinity)
+                            for ix in 0 .. 1 do
+                                for iy in 0 .. 1 do
+                                    for iz in 0 .. 1 do
+                                        let corner =
+                                            V3d((if ix = 0 then box.Min.X else box.Max.X),
+                                                (if iy = 0 then box.Min.Y else box.Max.Y),
+                                                (if iz = 0 then box.Min.Z else box.Max.Z))
+                                        let p = tw.Forward.TransformPos corner
+                                        let d = Vec.dot (p - c.Origin) c.Normal
+                                        if d < dMin then dMin <- d
+                                        if d > dMax then dMax <- d
+                                        bMin <- V3d(min bMin.X p.X, min bMin.Y p.Y, min bMin.Z p.Z)
+                                        bMax <- V3d(max bMax.X p.X, max bMax.Y p.Y, max bMax.Z p.Z)
+                            let slabHit = dMin <= cursorHighlightWidth && dMax >= -cursorHighlightWidth
+                            let cylHit =
+                                if not c.Clip then true
+                                else
+                                    let q = c.PinCentre
+                                    let cl =
+                                        V3d(clamp bMin.X bMax.X q.X,
+                                            clamp bMin.Y bMax.Y q.Y,
+                                            clamp bMin.Z bMax.Z q.Z)
+                                    let bound = sqrt (c.PinRadius * c.PinRadius + 0.25 * c.CylLength * c.CylLength)
+                                    (cl - q).Length <= bound
+                            if slabHit && cylHit then 1 else 0)
             sg {
                 Sg.Active renderEnabled
                 Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
@@ -212,6 +303,15 @@ module MeshView =
                 Sg.Uniform("FalloffZoneOnly",   falloffZoneOnly)
                 Sg.Uniform("MeshDatasetError",  meshDatasetErr)
                 Sg.Uniform("MeshAlgoResidual",  meshAlgoRes)
+                Sg.Uniform("CursorActive",         cursorActive)
+                Sg.Uniform("CursorPlaneOrigin",    cursorOrigin)
+                Sg.Uniform("CursorPlaneNormal",    cursorNormal)
+                Sg.Uniform("CursorHighlightWidth", cursorWidth)
+                Sg.Uniform("CursorDarken",         AVal.constant cursorDarken)
+                Sg.Uniform("CursorClip",           cursorClip)
+                Sg.Uniform("CursorPinCentre",      cursorPinC)
+                Sg.Uniform("CursorPinRadius",      cursorPinR)
+                Sg.Uniform("CursorCylLength",      cursorCylLen)
                 Sg.VertexAttributes(
                     HashMap.ofList [
                         string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)

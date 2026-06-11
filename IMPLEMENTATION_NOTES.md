@@ -63,4 +63,16 @@ Key conventions confirmed:
 - **WP10** ✅ one-shot 3D pick (shader-level solo, depth-gated, Esc, auto-advance), Shift+click violin axial pick.
 - **WP8** ✅ heatmap Diff mode (signed Δ combined error, LoD mask → ghost, diverging blue/red, hover Δ+LoD tooltip, auto-revert).
 - **WP11/12** ✅ rollback newest / reset-all with anchor un-baking, collinearity badges, guard tooltips.
-- **WP13** ✅ `src/Supertests` console runner (Umeyama: recovery n=3/4/50, det+1 on planar, weight=duplication, collinearity flag, <3-pairs client-guard; reg-log commit/discard/rollback; correspondence/log JSON round-trip incl. missing-fields defaults) + `tools/integration.mjs` HTTP flow. Results recorded at the bottom.
+- **WP13** ✅ `src/Supertests` console runner (Umeyama: recovery n=3/4/50, det+1 on planar, weight=duplication, collinearity flag, <3-pairs client-guard; reg-log commit/discard/rollback; correspondence/log JSON round-trip incl. missing-fields defaults) + `tools/integration.mjs` HTTP flow. Results below.
+
+## Verification results (2026-06-11)
+
+- **Builds**: `dotnet build Superprojekt.sln` — 0 errors (56 warnings, all pre-existing: FusionView `GetOutputView` deprecations + FShade AOT infos).
+- **Unit tests** (`dotnet run --project src/Supertests`): **38/38 passed**. Umeyama recovers random rigid transforms at n=3/4/50 to ≤5e-15 residual (UTM-offset variant ≤3e-9), reflection-prone mirrored sets yield det(R)=+1 to 1e-16, weight-2 ≡ duplicated pair to 9e-16, collinear sets flag the warning, <3 pairs → None; RegLog commit/rollback restores transforms and residuals exactly; RegJson round-trips correspondence + a two-step log (coarse and fine inputs) and defaults cleanly on missing fields.
+- **Integration** (`node tools/integration.mjs`, server on :8002, Hessigheim): **19/19 passed**. lsq-pairs recovers T⁻¹ to 1.9e-9 m (action-on-points metric — raw matrix entries amplify the ~5e5 m UTM lever arm), residuals ≤1e-9, <3 pairs → HTTP 400, collinear pairs flag the warning; ICP from the corrected transform decreases RMS 4.293 → 3.403 over 12 iterations; the probe's moving-mesh median error vs the unperturbed baseline shrinks 0.580 → 0.000 m after the lsq correction (absolute medians are confounded by genuine inter-epoch change in Hessigheim, hence baseline-relative assertions); patch returns UV-carrying points and echoes the requested frame exactly.
+- **In-browser** (puppeteer against the served WASM client, since `dotnet build` cannot catch ESSL3 shader errors): meshes render with the modified `MeshShader` (HeatmapMode + diff branch — 337k mesh pixels, no shader compile errors), registration card shows Stage 1 / Stage 2 / History with "Solve coarse" correctly disabled, mesh-panel ★ toggles and mirrors into the card ("★ Reference: Hess-201803"), heatmap radio shows Off/Sources/Diff.
+
+## Observed pre-existing issues (not in spec scope, untouched)
+
+- `View.resolveFusionPick` raycasts meshes in their **untransformed** frames — fusion picking is slightly wrong for registered meshes (it predates this work; fusion is blocked during previews, so the new workflow never hits it).
+- `Update.RegistrationFailed` used to flip `Running = false` on the **first** per-mesh failure even with other solves in flight; the new Expected-countdown replaces that.

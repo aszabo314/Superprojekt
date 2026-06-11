@@ -121,6 +121,7 @@ ProbeModel.fs                   ← M3C2 probe DTOs (ProbeResult/ProbeState/Prob
 Query.fs                        ← server query wrappers (Async), rayHitMany fan-out, probe
 CameraModel.fs / .g.fs          ← OrbitState [<ModelType>]
 OrbitController.fs              ← OrbitMessage DU + orbit camera
+RegistrationModel.fs            ← ScanPinId, correspondence anchors, RegStep/RegLog, PendingRegistration, HeatmapMode, RegJson (WASM-free, shared with Supertests)
 ScanPinModel.fs / .g.fs         ← ScanPin + Card types
 PinGeometry.fs                  ← icosphere, sphere outline, patch footprint
 Model.fs / .g.fs                ← [<ModelType>] Model + DatasetScale helpers
@@ -152,6 +153,7 @@ MeshCache.fs           Embree scene + BbTree cache (lazy, permanent)
 MeshAnalysis.fs        isoline + curvature-ridge tracing, patch sampling
 MeshProbe.fs           N-mesh M3C2 probe (normal PCA, cylinder sampling, KDE, three sources)
 MeshIcp.fs             ICP solver (recentred Gauss-Newton, trimmed correspondences)
+RegMath.fs             weighted Umeyama rigid landmark solve (Jacobi SVD, conditioning)
 QueryHandlers.fs       HTTP query handlers
 Handlers.fs            routing
 Program.fs             ASP.NET startup
@@ -171,9 +173,10 @@ POST /api/query/ray                             → { hit, t, point, triangleId 
 POST /api/query/closest                         → { found, point, distanceSquared, triangleId }
 POST /api/query/isoline                         → polyline at a given elevation
 POST /api/query/curvature-ridge                 → polyline along a curvature ridge
-POST /api/query/patch                           → tangent + normal at a point, plus neighbour sample
+POST /api/query/patch                           → tangent + normal at a point, plus neighbour sample (optional frameNormal/frameRefDir override skips the plane fit; points carry per-vertex atlas UVs)
 POST /api/query/contact-rings                   → sphere–surface intersection polylines (all rings, closed rings repeat the first point)
 POST /api/query/icp                             → ICP transform + convergence + residuals
+POST /api/query/lsq-pairs                       → weighted rigid landmark solve (delta onto reference + per-pair residuals + conditioning; 400 on <3 pairs)
 POST /api/query/probe                           → N-mesh M3C2 probe (per-mesh distributions + KDE + three sources)
 ```
 
@@ -192,8 +195,9 @@ Top-level `Model` fields (see `Model.fs`):
 - `SceneBounds`, `MeshBounds`
 - `ActivePickingLayer`
 - `LassoDrawing`, `LassoVolume`, `LassoEnabled` (filter on/off, polygon kept)
-- `MeshTransforms`, `Registration` (mode + reference mesh + running flag), `Retarget` (`RetargetIdle | RetargetProjecting | RetargetReviewing of RetargetCandidate[]`)
-- `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `ProvenanceHeatmap`, `ProvenanceThreshold`, `FalloffZoneOnly`
+- `MeshTransforms` (committed render-space trafos), `Registration` (mode + reference mesh + running flag), `Retarget` (`RetargetIdle | RetargetProjecting | RetargetReviewing of RetargetCandidate[]`)
+- `PendingReg` (uncommitted solve preview — deltas + rms/convergence/collinearity; “preview active” ⇔ results non-empty), `RegistrationLog` (committed `RegStep` history, newest first), `AnchorReview` (auto-seed review modal state), `AnchorPick` (one-shot 3D anchor pick), `PatchPicker` (small-multiples picker state), `Toast`
+- `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `HeatmapMode` (`HeatOff | HeatProvenance | HeatDiff`) + `HeatmapPrev` (Diff auto-revert), `ProvenanceThreshold`, `FalloffZoneOnly`
 - `FusionMode`
 - `PanoramaOpen`, `Panoramas` (`Panorama list` = `{ Name; EyeWorld; Yaw }`, synthetic, regenerated on dataset load), `SelectedPanorama`, `PanoramaMode` (`PanoPhoto | PanoRender | PanoBlend`), `PanoramaBlend`
 - `ScanPins`, `CardSystem`, `HoverProbe` (transient Ctrl-click probe, one global slot)
@@ -229,9 +233,22 @@ Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc
 
 **Contact rings**: every pin caches `ContactRings : ContactRingState` (`RingsNone | RingsRunning | RingsReady of Map<mesh, V3d[][]>`, registered world-space metres). `ScanPinUpdate.ensureRings` runs as a postlude after every reducer step (next to `ensureProbe`) and launches one 250 ms-debounced per-pin fan-out of `POST /api/query/contact-rings` over **all** meshes (visibility only gates rendering, so toggling a mesh never recomputes); per-pin `CancellationTokenSource`s let several pins recompute concurrently after a registration. Registration transforms are rigid, so the client inverse-transforms the sphere centre into each mesh's own frame and maps the returned rings back. Invalidation → `RingsNone`: radius change, retarget centre move, `RegistrationComplete` / `ResetMeshTransforms` (`ScanPinModel.invalidateRings` — deliberately *not* applied on visibility changes, unlike `invalidateProbes`). The server (`MeshAnalysis.contactRings`) marches the level set of `|p − c| − r` over BVH-candidate triangles with the same edge-key linking as the isoline tracer (exact quadratic edge–sphere roots; closed rings repeat their first point so there is no gap).
 
-## Registration
+## Registration (ensemble workflow)
 
-Two solve modes, both served by `POST /api/query/icp` (`MeshIcp.runIcp` — Gauss-Newton point-to-surface ICP, Embree closest-point correspondences): **Traditional** (no anchors) and **Region-restricted** (committed pins become Gaussian anchor weights — centre, sigma = FalloffRadius, multiplier = Point `ReliabilityWeight`; `RegionEps` 0.05 gates samples). The Run button is enabled (needs a reference mesh); the solve pipeline is `RunRegistration` → `Query.runIcp` → `MeshTransforms` + per-mesh RMS → provenance overlay + probe invalidation. Two solver hardening details (don't remove): the Gauss-Newton step is **linearized around the weighted correspondence centroid** (raw UTM-scale coordinates give a ~5e6 m rotation lever arm and the step diverges — 428 km translations), and correspondences are **gated at 3× the median pair distance** per iteration (partial overlap otherwise biases the fit). The lasso never affects registration — it is purely visual. There is no point-pair solver; don't re-add that mode without a server implementation.
+Two **stages**, both landing in `PendingReg` (an uncommitted preview), with an explicit Commit/Discard and a rollback-able history (`RegistrationLog`). The registration card (floating, ⚙ toggle button) hosts the whole flow; the reference mesh is the ★ toggle (mesh panel ↔ card, single selection).
+
+- **Stage 1 · Coarse (landmarks)** — `SolveCoarse` → `POST /api/query/lsq-pairs` per visible moving mesh with ≥3 accepted anchor pairs (parallel). Pairs come from pin **correspondence anchors** (below); weights = Point `ReliabilityWeight`. Server: `RegMath.solveRigid`, weighted Umeyama/Arun with Jacobi SVD, right-handed completion + det(V·Uᵀ) flip so planar/collinear sets never yield reflections; response carries per-pair residuals + covariance eigenvalues + `collinearityWarning` (amber badge).
+- **Stage 2 · Fine (ICP)** — the pre-existing `POST /api/query/icp` (`MeshIcp.runIcp`), math unchanged: **Traditional** (no anchors) and **Region-restricted** (committed pins become Gaussian anchor weights — centre, sigma = FalloffRadius, multiplier = `ReliabilityWeight`; `RegionEps` 0.05). `initialTransform` = current **committed** transform; the result is stored as a delta vs committed. Two solver hardening details (don't remove): the Gauss-Newton step is **linearized around the weighted correspondence centroid** (raw UTM-scale coordinates give a ~5e6 m rotation lever arm and the step diverges — 428 km translations), and correspondences are **gated at 3× the median pair distance** per iteration (partial overlap otherwise biases the fit).
+
+**Pending preview** (`PendingReg.Results` non-empty): meshes render at `committed * delta` (`ModelTransforms.effectiveRender` — Trafo3d composition is **postfix**, committed first); the committed pose re-renders as a slate-tinted ghost; a banner shows; pin placement / retarget / fusion / dataset switch are blocked (reducer guard + disabled buttons); probes get a second `ProbePreview` per pin (split violin: committed left desaturated, preview right, Δ-median arrow); contact rings + hover probe use effective transforms; heatmap gains a **Diff** mode (signed combined-error change vs the 1.96·√(σ_ref²+σ_M²) detection limit, blue improved / red degraded, masked → ghost; auto-reverts on commit/discard). **Commit** appends a `RegStep` (before/after transforms + rms + algo-residual before), applies transforms, re-bases anchors by the world delta, fires the full invalidation cascade. **Discard** drops the preview (probes stay, rings recompute back). **↩** rolls back the newest step only; **Reset** rolls back everything to identity + empty log.
+
+**Correspondence anchors** (extends the Point payload, `PointPayload.Correspondence`): per pin an optional `{ Enabled; RefAnchor (projection of the centre onto the reference); Anchors : Map<mesh, {Point; Source; Accepted}>; Residuals }`. Anchor points are **world-space at committed poses** — commit/rollback re-base them (`bakeAnchors`), and all pickers are blocked during a preview so an anchor can never be captured at a preview pose. Auto-seed (enabling the toggle, reference change, retarget move) projects via parallel `/query/closest` and opens a review modal (Δ > 2× falloff flagged); accepted non-Auto anchors are never overwritten. Fallback picks: **▦ patch small-multiples** (shared reference frame via the patch `frameNormal/frameRefDir` override, atlas-textured, click → ray → `Patch2D` anchor), **⊕ one-shot 3D pick** (shader-level solo, depth-gated, Esc, auto-advance), **Shift+click violin column** (`ViolinAxial`, refAnchor + d·axis). Accepted anchors render as wireframe tetra glyphs + a line to the refAnchor (follow preview deltas).
+
+The lasso never affects registration — it is purely visual. Workspace JSON v2 persists `corr` per pin + `regLog`; `PendingReg` is never persisted; v1 workspaces load with empty defaults.
+
+## Tests
+
+`src/Supertests` (console runner, paket-managed, no extra packages) compiles `RegistrationModel.fs` + `RegMath.fs` directly and covers the Umeyama solver (recovery, reflections, weights, collinearity), the RegLog commit/rollback machine and the RegJson round-trips — `dotnet run --project src/Supertests`. `tools/integration.mjs` runs the HTTP flow (closest → perturb → lsq-pairs → icp → probe, patch frame echo) against a running server: `ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver`, then `node tools/integration.mjs`.
 
 ## Notes
 

@@ -231,6 +231,9 @@ module Update =
                 { model with
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
+                    ChartCursor = None
+                    ChartHoverMesh = None
+                    ChartStickyMesh = None
                     MeshSolo = NoSolo
                     MeshBounds = Map.empty
                     Panoramas = []
@@ -503,6 +506,18 @@ module Update =
         | ClearHoverProbe ->
             hoverProbeCts.Cancel()
             if model.HoverProbe.IsNone then model else { model with HoverProbe = None }
+        // Chart 2D-3D linking. The hover messages fire per pointer-move over
+        // the violin chart; the no-change guards keep that churn out of the
+        // adaptive graph.
+        | SetChartCursor c ->
+            if model.ChartCursor = c then model else { model with ChartCursor = c }
+        | SetChartHoverMesh m ->
+            if model.ChartHoverMesh = m then model else { model with ChartHoverMesh = m }
+        | ChartColumnClick mesh ->
+            let sticky = if model.ChartStickyMesh = Some mesh then None else Some mesh
+            { model with ChartStickyMesh = sticky }
+        | ClearChartSticky ->
+            if model.ChartStickyMesh.IsNone then model else { model with ChartStickyMesh = None }
         | TogglePanorama ->
             { model with PanoramaOpen = not model.PanoramaOpen }
         | PanoramasGenerated ps ->

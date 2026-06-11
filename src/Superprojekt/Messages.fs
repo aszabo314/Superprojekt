@@ -60,6 +60,10 @@ type Message =
     | HoverProbeAt of screenPx:V2d * world:V3d
     | HoverProbeResult of ProbeState
     | ClearHoverProbe
+    | SetChartCursor of ChartCursor option
+    | SetChartHoverMesh of string option
+    | ChartColumnClick of meshName:string
+    | ClearChartSticky
     | TogglePanorama
     | PanoramasGenerated of Panorama list
     | SelectPanorama of int

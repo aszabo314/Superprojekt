@@ -20,9 +20,16 @@ module CardsPin =
     let c4bToHex (c : C4b) =
         sprintf "#%02x%02x%02x" c.R c.G c.B
 
-    // Ridgeline chart for a data-ridge JSON attribute. d.mini
-    // renders the compressed hover-probe variant: colour squares
-    // instead of labels, no count badges, no click-to-expand detail.
+    // Vertical violin chart for a data-ridge JSON attribute: signed distance
+    // on the y axis (positive up, 0 = reference median), one column per mesh.
+    // d.mini renders the compressed hover-probe variant (colour squares, no
+    // badges, no interaction). The full variant is interactive:
+    //   • pointer in the plot area → elevation cursor line + 'mv|d|alt|mesh'
+    //     events to the .pc-ridge-bus input (picked up by Dom.OnInput)
+    //   • column click → 'click|mesh' (sticky highlight, toggles)
+    //   • document-level click outside the chart → 'clickout'
+    //   • the data-cursor attribute ({"d":…}, driven from 3D hover) moves the
+    //     same cursor line without re-rendering the chart.
     let ridgelineJs = [
         "  function placeholder(t){ var p = document.createElement('div'); p.className = 'pin-card-empty'; p.textContent = t; el.appendChild(p); }"
         "  if(!d.status || d.status === 'none'){ placeholder('No probe for this payload.'); return; }"
@@ -32,35 +39,34 @@ module CardsPin =
         "  var rows = d.rows || [];"
         "  var n = rows.length;"
         "  if(n === 0){ placeholder('No meshes.'); return; }"
-        "  var w = mini ? 240 : 300;"
-        "  var labelW = mini ? 16 : 80;"
-        "  var badgeW = mini ? 6 : 46;"
-        "  var maxH = mini ? 150 : 400;"
-        "  var rowH = Math.min(30, Math.max(13, (maxH - 60) / n));"
-        "  var padT = 6, padB = mini ? 14 : 26;"
-        "  var h = Math.round(rowH * n + padT + padB);"
-        "  var iw = w - labelW - badgeW;"
-        "  var x0 = d.xmin, x1 = d.xmax;"
-        "  if(!(x1 > x0)){ x0 = -0.1; x1 = 0.1; }"
-        "  var sx = function(v){ return labelW + (v - x0) / (x1 - x0) * iw; };"
-        "  var maxY = 0;"
-        "  rows.forEach(function(r){ (r.kde || []).forEach(function(p){ if(p[0] >= x0 && p[0] <= x1 && p[1] > maxY) maxY = p[1]; }); });"
+        "  var accent = '#0891b2';"
+        "  var w = mini ? 240 : Math.max(220, el.clientWidth || 296);"
+        "  var axisW = mini ? 34 : 80;"
+        "  var headerH = mini ? 16 : 24;"
+        "  var badgeH = mini ? 10 : 16;"
+        "  var H = mini ? 150 : 280;"
+        "  var minCol = mini ? 24 : 40;"
+        "  var colW = Math.max(minCol, (w - axisW) / n);"
+        "  var svgW = Math.ceil(axisW + colW * n);"
+        "  var y0 = d.ymin, y1 = d.ymax;"
+        "  if(!(y1 > y0)){ y0 = -0.1; y1 = 0.1; }"
+        "  var plotY0 = headerH, plotY1 = H - badgeH;"
+        "  var ih = plotY1 - plotY0;"
+        "  function sy(v){ return plotY0 + (y1 - v) / (y1 - y0) * ih; }"
+        "  function fromY(py){ return y1 - (py - plotY0) / ih * (y1 - y0); }"
+        "  var maxDen = 0;"
+        "  rows.forEach(function(r){ (r.kde || []).forEach(function(p){ if(p[0] >= y0 && p[0] <= y1 && p[1] > maxDen) maxDen = p[1]; }); });"
         "  var svg = document.createElementNS(ns,'svg');"
         "  svg.setAttribute('class','ridge-plot');"
-        "  svg.setAttribute('width', w); svg.setAttribute('height', h);"
-        "  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);"
-        "  var frame = document.createElementNS(ns,'rect');"
-        "  frame.setAttribute('x', labelW); frame.setAttribute('y', padT);"
-        "  frame.setAttribute('width', iw); frame.setAttribute('height', h - padT - padB);"
-        "  frame.setAttribute('fill','#f8fafc'); frame.setAttribute('stroke','#cbd5e1'); frame.setAttribute('stroke-width','1');"
-        "  svg.appendChild(frame);"
+        "  svg.setAttribute('width', svgW); svg.setAttribute('height', H);"
+        "  svg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + H);"
         "  function ln(xa,ya,xb,yb,stroke,sw,dash,op){"
         "    var l = document.createElementNS(ns,'line');"
         "    l.setAttribute('x1',xa); l.setAttribute('y1',ya); l.setAttribute('x2',xb); l.setAttribute('y2',yb);"
         "    l.setAttribute('stroke',stroke); l.setAttribute('stroke-width',sw);"
         "    if(dash) l.setAttribute('stroke-dasharray',dash);"
         "    if(op) l.setAttribute('stroke-opacity',op);"
-        "    svg.appendChild(l);"
+        "    svg.appendChild(l); return l;"
         "  }"
         "  function txt(x,y,s,anchor,fill,size){"
         "    var t = document.createElementNS(ns,'text');"
@@ -69,71 +75,153 @@ module CardsPin =
         "    t.setAttribute('font-family','SF Mono, Monaco, monospace');"
         "    t.setAttribute('font-size', size || '9');"
         "    t.setAttribute('fill', fill || '#475569');"
-        "    t.textContent = s; svg.appendChild(t);"
+        "    t.textContent = s; svg.appendChild(t); return t;"
         "  }"
-        "  if(0 >= x0 && 0 <= x1) ln(sx(0), padT, sx(0), h - padB, '#64748b', '1', '3,3', '0.7');"
-        "  var rawStep = (x1 - x0) / 4;"
+        "  var frame = document.createElementNS(ns,'rect');"
+        "  frame.setAttribute('x', axisW); frame.setAttribute('y', plotY0);"
+        "  frame.setAttribute('width', svgW - axisW); frame.setAttribute('height', ih);"
+        "  frame.setAttribute('fill','#f8fafc'); frame.setAttribute('stroke','#cbd5e1'); frame.setAttribute('stroke-width','1');"
+        "  svg.appendChild(frame);"
+        "  var hoverRect = document.createElementNS(ns,'rect');"
+        "  hoverRect.setAttribute('y', plotY0); hoverRect.setAttribute('height', ih);"
+        "  hoverRect.setAttribute('fill', accent); hoverRect.setAttribute('fill-opacity','0.08');"
+        "  hoverRect.style.display = 'none';"
+        "  svg.appendChild(hoverRect);"
+        "  var rawStep = (y1 - y0) / 4;"
         "  var pow = Math.pow(10, Math.floor(Math.log(rawStep) / Math.LN10));"
         "  var ms = rawStep / pow;"
         "  var step = (ms >= 5 ? 5 : ms >= 2 ? 2 : 1) * pow;"
         "  var dec = Math.max(0, -Math.floor(Math.log(step) / Math.LN10 + 1e-9));"
-        "  for(var tx = Math.ceil(x0 / step) * step; tx <= x1 + step * 0.001; tx += step){"
-        "    ln(sx(tx), h - padB, sx(tx), h - padB + 3, '#94a3b8', '1');"
-        "    if(!mini) txt(sx(tx), h - padB + 12, tx.toFixed(dec), 'middle');"
+        "  for(var tv = Math.ceil(y0 / step) * step; tv <= y1 + step * 0.001; tv += step){"
+        "    ln(axisW - 3, sy(tv), axisW, sy(tv), '#94a3b8', '1');"
+        "    txt(axisW - 5, sy(tv) + 3, tv.toFixed(dec), 'end', '#475569', mini ? '8' : '9');"
         "  }"
-        "  if(!mini) txt(labelW + iw / 2, h - 2, 'signed distance (m)', 'middle', '#64748b');"
-        "  var detail = null;"
+        "  if(0 >= y0 && 0 <= y1) ln(axisW, sy(0), svgW, sy(0), '#64748b', '1', '3,3', '0.7');"
+        "  if(!mini){"
+        "    var at = txt(10, plotY0 + ih / 2, 'offset (m)', 'middle', '#64748b');"
+        "    at.setAttribute('transform', 'rotate(-90 10 ' + (plotY0 + ih / 2) + ')');"
+        "  }"
         "  rows.forEach(function(r, i){"
-        "    var by = padT + (i + 1) * rowH;"
-        "    var ch = rowH * 0.82;"
+        "    var x0 = axisW + i * colW, cx = x0 + colW / 2;"
         "    var grey = r.count === 0;"
         "    if(mini){"
+        "      var swm = document.createElementNS(ns,'rect');"
+        "      swm.setAttribute('x', cx - 2.5); swm.setAttribute('y', 4);"
+        "      swm.setAttribute('width', 5); swm.setAttribute('height', 5);"
+        "      swm.setAttribute('fill', grey ? '#cbd5e1' : r.color);"
+        "      svg.appendChild(swm);"
+        "    } else {"
+        "      var maxChars = Math.max(3, Math.floor((colW - 16) / 5.4));"
+        "      var nm = r.name.length > maxChars ? r.name.slice(0, maxChars - 1) + '…' : r.name;"
+        "      var sx0 = cx - (nm.length * 5.4 + 11) / 2;"
         "      var swr = document.createElementNS(ns,'rect');"
-        "      swr.setAttribute('x', 3); swr.setAttribute('y', by - 7);"
+        "      swr.setAttribute('x', sx0); swr.setAttribute('y', 8);"
         "      swr.setAttribute('width', 7); swr.setAttribute('height', 7);"
         "      swr.setAttribute('fill', grey ? '#cbd5e1' : r.color);"
         "      svg.appendChild(swr);"
-        "    } else {"
-        "      var nm = r.name.length > 11 ? r.name.slice(0, 10) + '…' : r.name;"
-        "      txt(labelW - 5, by - rowH * 0.3, nm, 'end', grey ? '#94a3b8' : '#0f172a');"
-        "      txt(w - 3, by - rowH * 0.3, grey ? '–' : 'n=' + r.count, 'end', grey ? '#94a3b8' : '#475569', '8');"
+        "      txt(sx0 + 11, 15, nm, 'start', grey ? '#94a3b8' : '#0f172a');"
         "    }"
         "    if(!grey){"
-        "      var kde = (r.kde || []).filter(function(p){ return p[0] >= x0 && p[0] <= x1; });"
-        "      if(kde.length > 1 && maxY > 0){"
-        "        var path = 'M' + sx(kde[0][0]).toFixed(1) + ',' + by.toFixed(1);"
-        "        kde.forEach(function(p){ path += 'L' + sx(p[0]).toFixed(1) + ',' + (by - p[1] / maxY * ch).toFixed(1); });"
-        "        path += 'L' + sx(kde[kde.length - 1][0]).toFixed(1) + ',' + by.toFixed(1) + 'Z';"
+        "      var kde = (r.kde || []).filter(function(p){ return p[0] >= y0 && p[0] <= y1; });"
+        "      if(kde.length > 1 && maxDen > 0){"
+        "        var hw = colW * 0.42;"
+        "        var path = '';"
+        "        kde.forEach(function(p, k){"
+        "          path += (k === 0 ? 'M' : 'L') + (cx + p[1] / maxDen * hw).toFixed(1) + ',' + sy(p[0]).toFixed(1);"
+        "        });"
+        "        for(var k = kde.length - 1; k >= 0; k--){"
+        "          path += 'L' + (cx - kde[k][1] / maxDen * hw).toFixed(1) + ',' + sy(kde[k][0]).toFixed(1);"
+        "        }"
+        "        path += 'Z';"
         "        var area = document.createElementNS(ns,'path');"
         "        area.setAttribute('d', path);"
         "        area.setAttribute('fill', r.color); area.setAttribute('fill-opacity','0.4');"
         "        area.setAttribute('stroke', r.color); area.setAttribute('stroke-width','1');"
         "        svg.appendChild(area);"
         "      }"
-        "      if(r.median >= x0 && r.median <= x1) ln(sx(r.median), by, sx(r.median), by - ch, r.color, '1.5');"
-        "      var qa = Math.max(r.q1, x0), qb = Math.min(r.q3, x1);"
-        "      if(qb > qa) ln(sx(qa), by, sx(qb), by, r.color, '2.5', null, '0.9');"
+        "      if(r.median >= y0 && r.median <= y1) ln(cx - colW * 0.3, sy(r.median), cx + colW * 0.3, sy(r.median), r.color, '1.5');"
+        "      var qa = Math.max(r.q1, y0), qb = Math.min(r.q3, y1);"
+        "      if(qb > qa) ln(cx, sy(qa), cx, sy(qb), r.color, '2.5', null, '0.9');"
         "    }"
-        "    if(!mini){"
-        "      var hit = document.createElementNS(ns,'rect');"
-        "      hit.setAttribute('x', 0); hit.setAttribute('y', by - rowH);"
-        "      hit.setAttribute('width', w); hit.setAttribute('height', rowH);"
-        "      hit.setAttribute('fill','transparent'); hit.style.cursor = 'pointer';"
-        "      hit.addEventListener('click', function(){"
-        "        if(!detail) return;"
-        "        var iqr = r.q3 - r.q1;"
-        "        var line = r.name + ' — offset ' + (r.median >= 0 ? '+' : '') + r.median.toFixed(3) + ' m · IQR ' + iqr.toFixed(3) + ' m · n=' + r.count;"
-        "        detail.textContent = (detail.textContent === line) ? '' : line;"
-        "      });"
-        "      svg.appendChild(hit);"
+        "    if(!mini) txt(cx, H - 4, grey ? '–' : 'n=' + r.count, 'middle', grey ? '#94a3b8' : '#475569', '8');"
+        "    if(!mini && d.sticky && d.sticky === r.id){"
+        "      var st = document.createElementNS(ns,'rect');"
+        "      st.setAttribute('x', x0 + 1.5); st.setAttribute('y', plotY0 + 1.5);"
+        "      st.setAttribute('width', colW - 3); st.setAttribute('height', ih - 3);"
+        "      st.setAttribute('fill','none'); st.setAttribute('stroke','#0f172a'); st.setAttribute('stroke-width','2');"
+        "      svg.appendChild(st);"
         "    }"
         "  });"
-        "  el.appendChild(svg);"
-        "  if(!mini){"
-        "    detail = document.createElement('div');"
-        "    detail.className = 'ridge-detail';"
-        "    el.appendChild(detail);"
+        "  var cursor = ln(axisW, plotY0, svgW, plotY0, accent, '1.5');"
+        "  cursor.style.display = 'none';"
+        "  var cursorLabel = txt(svgW - 3, plotY0, '', 'end', accent, '8');"
+        "  cursorLabel.style.display = 'none';"
+        "  function setCursor(dv){"
+        "    if(dv === null || dv < y0 || dv > y1){ cursor.style.display = 'none'; cursorLabel.style.display = 'none'; return; }"
+        "    var y = sy(dv);"
+        "    cursor.setAttribute('y1', y); cursor.setAttribute('y2', y);"
+        "    cursor.style.display = '';"
+        "    cursorLabel.setAttribute('y', y - 3);"
+        "    cursorLabel.textContent = (dv >= 0 ? '+' : '') + dv.toFixed(2) + ' m';"
+        "    cursorLabel.style.display = '';"
         "  }"
+        "  el._hovering = false;"
+        "  function applyCursorAttr(){"
+        "    if(el._hovering) return;"
+        "    var raw = el.getAttribute('data-cursor') || '{}';"
+        "    var c; try { c = JSON.parse(raw); } catch(e) { return; }"
+        "    setCursor(typeof c.d === 'number' ? c.d : null);"
+        "  }"
+        "  el._applyCursorAttr = applyCursorAttr;"
+        "  if(!el._cursorObs){"
+        "    el._cursorObs = new MutationObserver(function(){ if(el._applyCursorAttr) el._applyCursorAttr(); });"
+        "    el._cursorObs.observe(el, {attributes:true, attributeFilter:['data-cursor']});"
+        "  }"
+        "  applyCursorAttr();"
+        "  if(!mini){"
+        "    var send = function(s){"
+        "      var pr = el.closest('.pc-probe');"
+        "      var b = pr ? pr.querySelector('.pc-ridge-bus') : null;"
+        "      if(b){ b.value = s; b.dispatchEvent(new Event('input', {bubbles:true})); }"
+        "    };"
+        "    var lastSent = '', pend = null, raf = 0;"
+        "    var flush = function(){ raf = 0; if(pend !== null && pend !== lastSent){ lastSent = pend; send(pend); } };"
+        "    var queue = function(s){ pend = s; if(!raf) raf = requestAnimationFrame(flush); };"
+        "    function colAt(x){ var i = Math.floor((x - axisW) / colW); return (i >= 0 && i < n) ? i : -1; }"
+        "    svg.addEventListener('pointerenter', function(){ el._hovering = true; });"
+        "    svg.addEventListener('pointermove', function(ev){"
+        "      el._hovering = true;"
+        "      var rc = svg.getBoundingClientRect();"
+        "      var x = ev.clientX - rc.left, y = ev.clientY - rc.top;"
+        "      if(y < plotY0 || y > plotY1 || x < axisW){"
+        "        setCursor(null); hoverRect.style.display = 'none'; queue('out'); return;"
+        "      }"
+        "      var dv = fromY(y);"
+        "      var ci = colAt(x);"
+        "      setCursor(dv);"
+        "      if(ci >= 0){ hoverRect.setAttribute('x', axisW + ci * colW); hoverRect.setAttribute('width', colW); hoverRect.style.display = ''; }"
+        "      else hoverRect.style.display = 'none';"
+        "      queue('mv|' + dv.toFixed(4) + '|' + (ev.altKey ? '1' : '0') + '|' + (ci >= 0 ? rows[ci].id : ''));"
+        "    });"
+        "    svg.addEventListener('pointerleave', function(){"
+        "      el._hovering = false; hoverRect.style.display = 'none';"
+        "      applyCursorAttr(); queue('out');"
+        "    });"
+        "    svg.addEventListener('click', function(ev){"
+        "      var rc = svg.getBoundingClientRect();"
+        "      var x = ev.clientX - rc.left, y = ev.clientY - rc.top;"
+        "      var ci = colAt(x);"
+        "      if(y >= plotY0 && y <= plotY1 && ci >= 0){ lastSent = ''; send('click|' + rows[ci].id); }"
+        "    });"
+        "    if(!el._docClick){"
+        "      el._docClick = function(ev){"
+        "        if(!document.contains(el)){ document.removeEventListener('click', el._docClick); el._docClick = null; return; }"
+        "        if(!el.contains(ev.target)) send('clickout');"
+        "      };"
+        "      document.addEventListener('click', el._docClick);"
+        "    }"
+        "  }"
+        "  el.appendChild(svg);"
     ]
 
     // Three-source stacked bar for a data-srcs = [d,a,c] attribute.
@@ -153,7 +241,7 @@ module CardsPin =
         "  });"
     ]
 
-    let probeRidgeJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (colors : Map<string, C4b>) (r : ProbeResult) =
+    let probeRidgeJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (r : ProbeResult) =
         let win = ProbeXRange.window r xRange
         let colorHex name =
             match Map.tryFind name colors with
@@ -163,11 +251,12 @@ module CardsPin =
             if lockOrder then r.Distributions
             else r.Distributions |> Array.sortBy (fun d -> (if d.Count = 0 then 1 else 0), abs d.Median)
         let sb = System.Text.StringBuilder()
-        sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"xmin\":%.5g,\"xmax\":%.5g,\"rows\":[" mini win.Min win.Max) |> ignore
+        sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"ymin\":%.5g,\"ymax\":%.5g,\"sticky\":\"%s\",\"rows\":["
+                    mini win.Min win.Max (sticky |> Option.defaultValue "")) |> ignore
         rows |> Array.iteri (fun i d ->
             if i > 0 then sb.Append(',') |> ignore
-            sb.Append(sprintf "{\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"kde\":["
-                        (shortName d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3) |> ignore
+            sb.Append(sprintf "{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"kde\":["
+                        d.MeshName (shortName d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3) |> ignore
             d.Kde |> Array.iteri (fun j (x, y) ->
                 if j > 0 then sb.Append(',') |> ignore
                 sb.Append(sprintf "[%.4g,%.4g]" x y) |> ignore)
@@ -175,13 +264,18 @@ module CardsPin =
         sb.Append("]}") |> ignore
         sb.ToString()
 
-    let probeStateJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (colors : Map<string, C4b>) (probe : ProbeState) =
+    let probeStateJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (probe : ProbeState) =
         match probe with
-        | ProbeReady r -> probeRidgeJson mini lockOrder xRange colors r
+        | ProbeReady r -> probeRidgeJson mini lockOrder xRange sticky colors r
         | ProbeError e -> sprintf "{\"status\":\"error\",\"reason\":\"%s\"}" (e.Replace("\\", "/").Replace("\"", "'"))
         | ProbeNone | ProbeRunning -> "{\"status\":\"running\"}"
 
-    let pinCardBody (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
+    let private parseInvariant (s : string) =
+        match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+        | true, v -> Some v
+        | _ -> None
+
+    let pinCardBody (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) (hoverWorld : aval<V3d option>) =
         let payloadKind =
             selectedPin |> AVal.map (function
                 | Some p -> Some (PayloadType.kind p.Payload)
@@ -246,12 +340,49 @@ module CardsPin =
                         | Some (ProbeReady r) -> Some r
                         | _ -> None)
                 let probeJson =
-                    selectedPin |> AVal.map (function
+                    (selectedPin, model.ChartStickyMesh) ||> AVal.map2 (fun po sticky ->
+                        match po with
                         | Some pin ->
                             match pin.Payload with
-                            | Point _ -> probeStateJson false pin.ProbeLockOrder pin.ProbeXRange pin.DatasetColors pin.Probe
+                            | Point _ -> probeStateJson false pin.ProbeLockOrder pin.ProbeXRange sticky pin.DatasetColors pin.Probe
                             | _ -> "{\"status\":\"none\"}"
                         | None -> "{\"status\":\"none\"}")
+                // 3D → chart: the elevation cursor line at the 3D hover
+                // point's signed distance along the probe axis, shown only
+                // while the hover point sits inside the probe cylinder.
+                let cursor3d =
+                    (hoverWorld, selectedPin) ||> AVal.map2 (fun hw po ->
+                        match hw, po with
+                        | Some q, Some pin ->
+                            match pin.Probe with
+                            | ProbeReady r ->
+                                let v = q - pin.Centre
+                                let dAx = Vec.dot v r.Normal
+                                let radial = (v - r.Normal * dAx).Length
+                                if radial <= pin.InnerRadius && abs dAx <= r.Length * 0.5
+                                then sprintf "{\"d\":%.4f}" dAx
+                                else "{}"
+                            | _ -> "{}"
+                        | _ -> "{}")
+                // Chart → model: the chart JS posts pointer interactions to
+                // this hidden input (synthetic 'input' events).
+                let onChartEvent (v : string) =
+                    let parts = v.Split('|')
+                    match parts.[0] with
+                    | "mv" when parts.Length >= 4 ->
+                        match AVal.force selectedPin, parseInvariant parts.[1] with
+                        | Some pin, Some dv ->
+                            let cursor = { PinId = pin.Id; Distance = dv; Extended = parts.[2] = "1" }
+                            let mesh = if parts.[3] = "" then None else Some parts.[3]
+                            env.Emit [SetChartCursor (Some cursor); SetChartHoverMesh mesh]
+                        | _ -> ()
+                    | "out" ->
+                        env.Emit [SetChartCursor None; SetChartHoverMesh None]
+                    | "click" when parts.Length >= 2 ->
+                        env.Emit [ChartColumnClick parts.[1]]
+                    | "clickout" ->
+                        env.Emit [ClearChartSticky]
+                    | _ -> ()
                 let planarBadge =
                     probeResult |> AVal.map (Option.map (fun r -> r.Planar))
                 let sources =
@@ -280,9 +411,15 @@ module CardsPin =
                                 | _ -> "planar")
                         }
                     }
+                    input {
+                        Class "pc-ridge-bus"
+                        Attribute("type", "text")
+                        Dom.OnInput(fun e -> onChartEvent e.Value)
+                    }
                     div {
                         Class "pc-ridge"
                         probeJson |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
+                        cursor3d |> AVal.map (fun j -> Some (Attribute("data-cursor", j)))
                         Primitives.observedRender "data-ridge" "{}" ridgelineJs
                     }
                     div {

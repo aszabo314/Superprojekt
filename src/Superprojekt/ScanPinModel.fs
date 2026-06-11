@@ -155,6 +155,15 @@ module ScanPin =
     let renderLength (datasetScale : float) (metricLength : float) =
         metricLength * datasetScale
 
+// Elevation cursor driven by hovering a pin card's violin chart: a signed
+// distance (metres) along the pin's probe axis. Extended = Alt held, the 3D
+// slicing plane grows from pin-radius disk to scene-wide.
+type ChartCursor = {
+    PinId    : ScanPinId
+    Distance : float
+    Extended : bool
+}
+
 [<RequireQualifiedAccess>]
 type CardId = CardId of Guid with
     static member create () = CardId (Guid.NewGuid())

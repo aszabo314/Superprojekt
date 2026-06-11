@@ -134,6 +134,14 @@ module MeshView =
                 arr)
 
         let blobCount, blobs, blobFalloffs = pinBlobUniforms model
+        // Chart column highlight (hover wins over sticky): the highlighted
+        // mesh renders normally, every other mesh drops to the shader's
+        // uniform-ghost path (MeshActive=false) at a fixed 0.2 alpha —
+        // independent of the GhostSilhouette toggle, because this is an
+        // explicit user gesture.
+        let chartHighlight =
+            (model.ChartHoverMesh, model.ChartStickyMesh)
+            ||> AVal.map2 (fun hov sticky -> hov |> Option.orElse sticky)
         let anchorGhost =
             model.AnchorGhostMode |> AVal.map (fun on -> if on then 1 else 0)
         let provenanceOn =
@@ -145,7 +153,11 @@ module MeshView =
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             let isActive =
-                model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+                (model.MeshVisible, chartHighlight) ||> AVal.map2 (fun m h ->
+                    let vis = Map.tryFind name m |> Option.defaultValue true
+                    match h with
+                    | Some hm -> vis && hm = name
+                    | None -> vis)
             let scale = scaleFor model name
             let meshT =
                 model.MeshTransforms |> AVal.map (fun m ->
@@ -178,8 +190,11 @@ module MeshView =
                 Sg.Uniform("MeshActive",      isActive)
                 // GhostSilhouette off → 0 → the shader's ghost path discards.
                 Sg.Uniform("GhostOpacity",
-                    (model.GhostSilhouette, model.GhostOpacity)
-                    ||> AVal.map2 (fun on op -> if on then float32 op else 0.0f))
+                    (model.GhostSilhouette, model.GhostOpacity, chartHighlight)
+                    |||> AVal.map3 (fun on op h ->
+                        match h with
+                        | Some hm when hm <> name -> 0.2f
+                        | _ -> if on then float32 op else 0.0f))
                 Sg.Uniform("RenderingMode",   renderingModeInt)
                 Sg.Uniform("MeshColor",       meshColor)
                 Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)

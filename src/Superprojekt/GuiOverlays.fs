@@ -45,7 +45,7 @@ module GuiOverlays =
         let json =
             (model.HoverProbe, colors) ||> AVal.map2 (fun hp cols ->
                 match hp with
-                | Some h -> CardsPin.probeStateJson true false ProbeXAuto cols h.Probe
+                | Some h -> CardsPin.probeStateJson true false ProbeXAuto None cols h.Probe
                 | None -> "{\"status\":\"none\"}")
         div {
             Class "hover-probe-tip"

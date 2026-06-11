@@ -543,11 +543,10 @@ body.loaded { background: #f4f6f8; }
 }
 .pc-planar-ok { background: #dcfce7; color: #15803d; }
 .pc-planar-warn { background: #fef9c3; color: #a16207; }
-.pc-ridge .ridge-plot { display: block; }
-.ridge-detail {
-    font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 10px; color: #475569; min-height: 12px;
-}
+.pc-ridge { overflow-x: auto; }
+.pc-ridge .ridge-plot { display: block; cursor: crosshair; }
+/* JS→Elm event bus for the violin chart (synthetic input events). */
+.pc-ridge-bus { display: none !important; }
 .pc-probe-controls {
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
 }

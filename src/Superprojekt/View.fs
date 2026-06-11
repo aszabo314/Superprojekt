@@ -218,6 +218,14 @@ module View =
                         transact (fun () -> cursorScreen.Value <- Some cursorPx)
                 )
 
+                // hoverCoord would otherwise keep its last on-canvas value
+                // while the pointer sits over an HTML overlay (cards), which
+                // freezes a stale 3D→chart elevation-cursor line.
+                Dom.OnMouseLeave(fun _ ->
+                    if hoverCoord.Value.IsSome then
+                        transact (fun () -> hoverCoord.Value <- None)
+                )
+
                 Dom.OnMouseWheel(fun e ->
                     let delta = V2d(e.DeltaX, e.DeltaY) / 120.0
                     let forwardZoom () =
@@ -410,7 +418,7 @@ module View =
             GuiOverlays.fusionNotice model
             GuiOverlays.provenanceHoverOverlay model (hoverCoord :> aval<_>) (cursorScreen :> aval<_>)
             GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)
-            Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
+            Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>)
             GuiOverlays.fullscreenInfo model
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.orientationIndicator model

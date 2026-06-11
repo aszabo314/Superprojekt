@@ -34,6 +34,28 @@ module ScanPinScene =
     let private markerIdxBuf = AVal.constant (ArrayBuffer pinMarkerIdx :> IBuffer)
     let private markerIdxCnt = AVal.constant pinMarkerIdx.Length
 
+    // Unit disk in the XY plane for the elevation-cursor slicing plane.
+    let private diskPos, diskIdx =
+        let segs = 64
+        let pos = Array.init (segs + 1) (fun i ->
+            if i = 0 then V3f.Zero
+            else
+                let a = float (i - 1) / float segs * Constant.PiTimesTwo
+                V3f(float32 (cos a), float32 (sin a), 0.0f))
+        let idx = ResizeArray<int>(segs * 3)
+        for i in 1 .. segs do
+            idx.Add 0; idx.Add i; idx.Add (if i = segs then 1 else i + 1)
+        pos, idx.ToArray()
+
+    let private diskPosBuf = AVal.constant (ArrayBuffer diskPos :> IBuffer)
+    let private diskIdxBuf = AVal.constant (ArrayBuffer diskIdx :> IBuffer)
+    let private diskIdxCnt = AVal.constant diskIdx.Length
+
+    // Accent colour for the 2D-3D elevation cursor (#0891b2) — deliberately
+    // distinct from every entry of the categorical mesh palette.
+    let private cursorPlaneFill = V4f(0.031f, 0.569f, 0.698f, 0.28f)
+    let private cursorPlaneRim  = V4d(0.031, 0.569, 0.698, 0.85)
+
     let private sphereShell
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (active : aval<bool>) (trafo : aval<Trafo3d>) (color : aval<V4d>) =
@@ -298,4 +320,84 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinSpheres; pinLines; pinPatchRings; ghostPreview])
+        // Chart-hover elevation cursor: a translucent disk orthogonal to the
+        // pin's probe axis (NOT world-up — they only coincide for
+        // heightfields) at the hovered signed distance. Alt extends it to
+        // scene-wide bounds. Gated on the cursor pin's card being open.
+        let cursorPlane =
+            let effectiveId =
+                (model.ScanPins.Placement, selectedId) ||> AVal.map2 (fun pl sel ->
+                    match pl with
+                    | AdjustingPin id -> Some id
+                    | _ -> sel)
+            let planeParams =
+                AVal.custom (fun t ->
+                    match model.ChartCursor.GetValue t with
+                    | None -> None
+                    | Some cur ->
+                        if effectiveId.GetValue t <> Some cur.PinId then None
+                        else
+                            match HashMap.tryFind cur.PinId (pinsVal.GetValue t) with
+                            | Some pin ->
+                                match pin.Probe with
+                                | ProbeReady r ->
+                                    let cc = model.CommonCentroid.GetValue t
+                                    let scale = datasetScale.GetValue t
+                                    let centre = ScanPin.renderCentre cc scale (pin.Centre + r.Normal * cur.Distance)
+                                    let radiusWorld =
+                                        if cur.Extended then
+                                            let sb = model.SceneBounds.GetValue t
+                                            if sb.IsInvalid then pin.InnerRadius * 50.0
+                                            else sb.Size.Length * 0.75
+                                        else pin.InnerRadius
+                                    Some (centre, r.Normal, ScanPin.renderLength scale radiusWorld)
+                                | _ -> None
+                            | None -> None)
+            let active =
+                (notFullscreen, planeParams) ||> AVal.map2 (fun nf p -> nf && Option.isSome p)
+            let trafo =
+                planeParams |> AVal.map (function
+                    | Some (c, n, r) -> Trafo3d.Scale r * Trafo3d.RotateInto(V3d.OOI, n) * Trafo3d.Translation c
+                    | None -> Trafo3d.Scale 0.0)
+            let rimSegs =
+                planeParams |> AVal.map (function
+                    | Some (c, n, r) ->
+                        let nN = n.Normalized
+                        let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
+                        let v = Vec.cross nN u
+                        let segs = 64
+                        Array.init segs (fun i ->
+                            let a0 = float i / float segs * Constant.PiTimesTwo
+                            let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
+                            (c + (u * cos a0 + v * sin a0) * r,
+                             c + (u * cos a1 + v * sin a1) * r,
+                             cursorPlaneRim, 1.5))
+                    | None -> [||])
+            ASet.ofList [
+                sg {
+                    Sg.Active active
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.Trafo trafo
+                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                    Sg.Uniform("FlatColor", AVal.constant cursorPlaneFill)
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Sg.VertexAttributes(
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(diskPosBuf, typeof<V3f>) ])
+                    Sg.Index(BufferView(diskIdxBuf, typeof<int>))
+                    Sg.Render diskIdxCnt
+                }
+                sg {
+                    Sg.Active active
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render rimSegs
+                }
+            ]
+
+        ASet.unionMany (ASet.ofList [pinDots; pinSpheres; pinLines; pinPatchRings; ghostPreview; cursorPlane])

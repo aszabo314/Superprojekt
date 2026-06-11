@@ -238,6 +238,13 @@ type Model =
         CardSystem            : CardSystemModel
         HoverProbe            : HoverProbeState option
 
+        // 2D-3D linking of the pin-card violin chart: chart-hover elevation
+        // cursor (drives the 3D slicing plane) and mesh-column highlight
+        // (hover = transient, sticky = until clicked elsewhere).
+        ChartCursor           : ChartCursor option
+        ChartHoverMesh        : string option
+        ChartStickyMesh       : string option
+
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
         LassoCardPos        : V2d option
@@ -290,6 +297,9 @@ module Model =
             ScanPins              = ScanPinModel.initial
             CardSystem            = CardSystemModel.initial
             HoverProbe            = None
+            ChartCursor           = None
+            ChartHoverMesh        = None
+            ChartStickyMesh       = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             LassoCardPos        = None

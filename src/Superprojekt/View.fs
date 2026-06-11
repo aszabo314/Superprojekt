@@ -459,6 +459,7 @@ module View =
             GuiCards.retargetCard env model
             GuiCards.anchorReviewCard env model
             GuiCards.panoramaCard env model
+            GuiOverlays.previewBanner model
             GuiOverlays.toast model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.hoverProbeTooltip model (viewportSize :> aval<V2i>)

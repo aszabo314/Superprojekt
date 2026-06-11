@@ -123,6 +123,14 @@ module GuiOverlays =
             div { Class "prov-hover-nums"; nums }
         }
 
+    // Thin banner while a registration solve preview is pending (spec §6).
+    let previewBanner (model : AdaptiveModel) =
+        div {
+            Class "preview-banner"
+            Primitives.showWhen (model.PendingReg |> AVal.map PendingRegistration.isPreview)
+            "Previewing unregistered result — commit or discard"
+        }
+
     // Transient feedback for blocked/failed actions (auto-clears).
     let toast (model : AdaptiveModel) =
         div {

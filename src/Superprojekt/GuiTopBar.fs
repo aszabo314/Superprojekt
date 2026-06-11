@@ -10,6 +10,12 @@ module GuiTopBar =
     open Primitives
 
     let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) =
+        // §6 guards: these actions are blocked while a registration preview
+        // is pending (the reducer also rejects them; this is the affordance).
+        let previewOn = model.PendingReg |> AVal.map PendingRegistration.isPreview
+        let previewDisabled =
+            previewOn |> AVal.map (fun p ->
+                if p then Some (Attribute("disabled", "disabled")) else None)
         div {
             Class "top-bar"
             button {
@@ -39,10 +45,15 @@ module GuiTopBar =
                         button {
                             Class "tb-dataset-item"
                             isActive |> AVal.map (fun on -> if on then Some (Class "active") else None)
+                            previewDisabled
+                            previewOn |> AVal.map (fun p ->
+                                if p then Some (Attribute("title", "Dataset switch is blocked while previewing a registration result"))
+                                else None)
                             Dom.OnClick(fun _ ->
-                                transact (fun () -> datasetOpen.Value <- false)
-                                env.Emit [SetActiveDataset dataset]
-                                ServerActions.loadDataset env dataset)
+                                if not (AVal.force previewOn) then
+                                    transact (fun () -> datasetOpen.Value <- false)
+                                    env.Emit [SetActiveDataset dataset]
+                                    ServerActions.loadDataset env dataset)
                             dataset
                         })
                 }
@@ -68,7 +79,11 @@ module GuiTopBar =
             button {
                 Class "tb-btn"
                 placementActive |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Place anchor — click on a surface (Esc cancels)")
+                previewDisabled
+                previewOn |> AVal.map (fun p ->
+                    Some (Attribute("title",
+                        if p then "Pin placement is blocked while previewing a registration result"
+                        else "Place anchor — click on a surface (Esc cancels)")))
                 Dom.OnClick(fun _ ->
                     let active = AVal.force placementActive
                     if active then env.Emit [ScanPinMsg CancelPlacement]
@@ -79,7 +94,11 @@ module GuiTopBar =
             button {
                 Class "tb-btn"
                 model.FusionMode |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Fusion mesh: per-pixel best mesh from the registered ensemble")
+                previewDisabled
+                previewOn |> AVal.map (fun p ->
+                    Some (Attribute("title",
+                        if p then "Fusion is blocked while previewing a registration result"
+                        else "Fusion mesh: per-pixel best mesh from the registered ensemble")))
                 Dom.OnClick(fun _ -> env.Emit [ToggleFusionMode])
                 "◈ Fusion"
             }
@@ -127,10 +146,12 @@ module GuiTopBar =
                                 Class "tb-gear-btn-row"
                                 button {
                                     Class "tb-gear-btn"
-                                    Attribute("title", "Project all pins onto the active picking layer (use wheel-zoom to pick the target mesh first)")
-                                    model.ActivePickingLayer |> AVal.map (function
-                                        | Some _ -> None
-                                        | None -> Some (Attribute("disabled", "disabled")))
+                                    previewOn |> AVal.map (fun p ->
+                                        Some (Attribute("title",
+                                            if p then "Retarget is blocked while previewing a registration result"
+                                            else "Project all pins onto the active picking layer (use wheel-zoom to pick the target mesh first)")))
+                                    (model.ActivePickingLayer, previewOn) ||> AVal.map2 (fun l p ->
+                                        if l.IsNone || p then Some (Attribute("disabled", "disabled")) else None)
                                     Dom.OnClick(fun _ ->
                                         match AVal.force model.ActivePickingLayer with
                                         | Some target -> env.Emit [StartRetarget target]

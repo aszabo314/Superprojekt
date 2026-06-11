@@ -239,6 +239,81 @@ module ScanPinScene =
                     }
                 ])
 
+        // Correspondence visuals (always, not only during preview): accepted
+        // anchors as small wireframe tetrahedra in the mesh palette colour
+        // plus a thin line to the pin's reference anchor. Both follow the
+        // effective preview transforms while a solve preview is pending.
+        let anchorGlyphs =
+            let tetra =
+                let s = 1.0 / sqrt 3.0
+                [| V3d(s, s, s); V3d(s, -s, -s); V3d(-s, s, -s); V3d(-s, -s, s) |]
+            let tetraEdges = [| 0, 1; 0, 2; 0, 3; 1, 2; 1, 3; 2, 3 |]
+            let segs =
+                AVal.custom (fun t ->
+                    let pins = pinsVal.GetValue t
+                    let pending = model.PendingReg.GetValue t
+                    let transforms = model.MeshTransforms.GetValue t
+                    let scales = model.DatasetScales.GetValue t
+                    let cc = model.CommonCentroid.GetValue t
+                    let sel = selectedId.GetValue t
+                    let scaleActive = datasetScale.GetValue t
+                    let deltaCache = System.Collections.Generic.Dictionary<string, Trafo3d option>()
+                    let worldDeltaOf (mesh : string) =
+                        match deltaCache.TryGetValue mesh with
+                        | true, v -> v
+                        | _ ->
+                            let v =
+                                match PendingRegistration.delta mesh pending with
+                                | Some d ->
+                                    let scale = DatasetScale.forMesh scales mesh
+                                    let c = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
+                                    let wb = RigidTransform.renderToWorld scale cc c
+                                    let wa = RigidTransform.renderToWorld scale cc (RegLog.effective c d)
+                                    Some (wb.Inverse * wa)
+                                | None -> None
+                            deltaCache.[mesh] <- v
+                            v
+                    let out = ResizeArray<V3d * V3d * V4d * float>()
+                    for (_, pin) in HashMap.toSeq pins do
+                        match ScanPin.correspondence pin with
+                        | Some corr when corr.Enabled ->
+                            let isSel = sel = Some pin.Id
+                            let alpha = if isSel then 1.0 else 0.6
+                            let width = if isSel then 1.5 else 1.0
+                            let refR =
+                                corr.RefAnchor |> Option.map (ScanPin.renderCentre cc scaleActive)
+                            let glyphR =
+                                ScanPin.renderLength scaleActive (max 0.05 (pin.InnerRadius * 0.12))
+                            for KeyValue(mesh, a) in corr.Anchors do
+                                if a.Accepted then
+                                    let pWorld =
+                                        match worldDeltaOf mesh with
+                                        | Some d -> d.Forward.TransformPos a.Point
+                                        | None -> a.Point
+                                    let p = ScanPin.renderCentre cc scaleActive pWorld
+                                    let colour =
+                                        match Map.tryFind mesh pin.DatasetColors with
+                                        | Some c -> V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, alpha)
+                                        | None -> V4d(0.102, 0.337, 0.859, alpha)
+                                    for (i, j) in tetraEdges do
+                                        out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, colour, width)
+                                    match refR with
+                                    | Some r -> out.Add(p, r, colour, width)
+                                    | None -> ()
+                        | _ -> ()
+                    out.ToArray())
+            ASet.ofList [
+                sg {
+                    Sg.Active notFullscreen
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render segs
+                }
+            ]
+
         let inline colorForMesh (mesh : string) (palette : Map<string, C4b>) (selected : bool) (isHost : bool) =
             if selected && isHost then V4d(1.0, 0.9, 0.0, 0.98)
             else
@@ -433,4 +508,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; anchorGlyphs])

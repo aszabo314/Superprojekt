@@ -81,10 +81,30 @@ module MeshView =
         let base_ =
             (commonCentroid, loaded.centroid, meshScale) |||> AVal.map3 (fun common mesh scale ->
                 Trafo3d.Translation(mesh - common) * Trafo3d.Scale(scale))
-        (base_, meshTransform) ||> AVal.map2 (fun b t -> t * b)
+        // Trafo composition is postfix (a * b applies a first): base maps
+        // mesh-local → render space, THEN the registration trafo (a
+        // render-space map, see RigidTransform) applies. The previous `t * b`
+        // order applied the render-space map to mesh-local coordinates —
+        // invisible for translations at dataset scale 1, but wrong for
+        // scaled datasets and large landmark rotations, and inconsistent
+        // with every renderToWorld-based query path.
+        (base_, meshTransform) ||> AVal.map2 (fun b t -> b * t)
 
     let private scaleFor (model : AdaptiveModel) (name : string) =
         model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
+
+    // Committed render trafo, and the effective one (committed ∘ pending
+    // preview delta) every mesh renders with while a solve preview is open.
+    let committedMeshT (model : AdaptiveModel) (name : string) =
+        model.MeshTransforms |> AVal.map (fun m ->
+            Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
+
+    let effectiveMeshT (model : AdaptiveModel) (name : string) =
+        (model.MeshTransforms, model.PendingReg) ||> AVal.map2 (fun m pending ->
+            let c = Map.tryFind name m |> Option.defaultValue Trafo3d.Identity
+            match PendingRegistration.delta name pending with
+            | Some d -> RegLog.effective c d
+            | None -> c)
 
     let visibleMeshNames (model : AdaptiveModel) =
         let visible = AVal.force model.MeshVisible
@@ -202,9 +222,8 @@ module MeshView =
                     | Some hm -> vis && hm = name
                     | None -> vis)
             let scale = scaleFor model name
-            let meshT =
-                model.MeshTransforms |> AVal.map (fun m ->
-                    Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
+            // Effective pose: committed ∘ pending preview delta.
+            let meshT = effectiveMeshT model name
             // Inactive meshes still render (as ghost); gate only on load state
             // and fusion mode (the fusion composite replaces the normal pass).
             let renderEnabled =
@@ -234,12 +253,16 @@ module MeshView =
                         | None -> 1
                         | Some box ->
                             let tw =
-                                match Map.tryFind name (model.MeshTransforms.GetValue t) with
-                                | Some rt ->
-                                    RigidTransform.renderToWorld
-                                        (DatasetScale.forMesh (model.DatasetScales.GetValue t) name)
-                                        (model.CommonCentroid.GetValue t) rt
-                                | None -> Trafo3d.Identity
+                                let committed =
+                                    Map.tryFind name (model.MeshTransforms.GetValue t)
+                                    |> Option.defaultValue Trafo3d.Identity
+                                let eff =
+                                    match PendingRegistration.delta name (model.PendingReg.GetValue t) with
+                                    | Some d -> RegLog.effective committed d
+                                    | None -> committed
+                                RigidTransform.renderToWorld
+                                    (DatasetScale.forMesh (model.DatasetScales.GetValue t) name)
+                                    (model.CommonCentroid.GetValue t) eff
                             let mutable dMin = infinity
                             let mutable dMax = -infinity
                             let mutable bMin = V3d(infinity, infinity, infinity)
@@ -269,59 +292,115 @@ module MeshView =
                                     let bound = sqrt (c.PinRadius * c.PinRadius + 0.25 * c.CylLength * c.CylLength)
                                     (cl - q).Length <= bound
                             if slabHit && cylHit then 1 else 0)
-            sg {
-                Sg.Active renderEnabled
-                Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
-                Sg.Shader {
-                    DefaultSurfaces.trafo
-                    DefaultSurfaces.diffuseTexture
-                    MeshShader.shade
+            let surface =
+                sg {
+                    Sg.Active renderEnabled
+                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                    Sg.Shader {
+                        DefaultSurfaces.trafo
+                        DefaultSurfaces.diffuseTexture
+                        MeshShader.shade
+                    }
+                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                    Sg.Uniform("MeshActive",      isActive)
+                    // GhostSilhouette off → 0 → the shader's ghost path discards.
+                    Sg.Uniform("GhostOpacity",
+                        (model.GhostSilhouette, model.GhostOpacity, chartHighlight)
+                        |||> AVal.map3 (fun on op h ->
+                            match h with
+                            | Some hm when hm <> name -> 0.2f
+                            | _ -> if on then float32 op else 0.0f))
+                    Sg.Uniform("RenderingMode",   renderingModeInt)
+                    Sg.Uniform("MeshColor",       meshColor)
+                    Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)
+                    Sg.Uniform("SlopeThreshold",
+                        model.SlopeThresholdDeg |> AVal.map (fun d ->
+                            sin (d * System.Math.PI / 180.0) |> float32))
+                    Sg.Uniform("LassoPlaneCount", lassoPlaneCount)
+                    Sg.Uniform("LassoPlanes",     lassoPlanes)
+                    Sg.Uniform("BlobCount",       blobCount)
+                    Sg.Uniform("Blobs",           blobs)
+                    Sg.Uniform("BlobFalloffs",    blobFalloffs)
+                    Sg.Uniform("AnchorGhost",     anchorGhost)
+                    Sg.Uniform("ProvenanceHeatmap", provenanceOn)
+                    Sg.Uniform("ProvThreshold",     provThreshold)
+                    Sg.Uniform("FalloffZoneOnly",   falloffZoneOnly)
+                    Sg.Uniform("MeshDatasetError",  meshDatasetErr)
+                    Sg.Uniform("MeshAlgoResidual",  meshAlgoRes)
+                    Sg.Uniform("CursorActive",         cursorActive)
+                    Sg.Uniform("CursorPlaneOrigin",    cursorOrigin)
+                    Sg.Uniform("CursorPlaneNormal",    cursorNormal)
+                    Sg.Uniform("CursorHighlightWidth", cursorWidth)
+                    Sg.Uniform("CursorDarken",         AVal.constant cursorDarken)
+                    Sg.Uniform("CursorClip",           cursorClip)
+                    Sg.Uniform("CursorPinCentre",      cursorPinC)
+                    Sg.Uniform("CursorPinRadius",      cursorPinR)
+                    Sg.Uniform("CursorCylLength",      cursorCylLen)
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
+                            string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
+                            string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
+                        ]
+                    )
+                    Sg.Index(BufferView(loaded.idx, typeof<int>))
+                    Sg.Render loaded.fvc
                 }
-                Sg.Uniform("DiffuseColorTexture", loaded.tex)
-                Sg.Uniform("MeshActive",      isActive)
-                // GhostSilhouette off → 0 → the shader's ghost path discards.
-                Sg.Uniform("GhostOpacity",
-                    (model.GhostSilhouette, model.GhostOpacity, chartHighlight)
-                    |||> AVal.map3 (fun on op h ->
-                        match h with
-                        | Some hm when hm <> name -> 0.2f
-                        | _ -> if on then float32 op else 0.0f))
-                Sg.Uniform("RenderingMode",   renderingModeInt)
-                Sg.Uniform("MeshColor",       meshColor)
-                Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)
-                Sg.Uniform("SlopeThreshold",
-                    model.SlopeThresholdDeg |> AVal.map (fun d ->
-                        sin (d * System.Math.PI / 180.0) |> float32))
-                Sg.Uniform("LassoPlaneCount", lassoPlaneCount)
-                Sg.Uniform("LassoPlanes",     lassoPlanes)
-                Sg.Uniform("BlobCount",       blobCount)
-                Sg.Uniform("Blobs",           blobs)
-                Sg.Uniform("BlobFalloffs",    blobFalloffs)
-                Sg.Uniform("AnchorGhost",     anchorGhost)
-                Sg.Uniform("ProvenanceHeatmap", provenanceOn)
-                Sg.Uniform("ProvThreshold",     provThreshold)
-                Sg.Uniform("FalloffZoneOnly",   falloffZoneOnly)
-                Sg.Uniform("MeshDatasetError",  meshDatasetErr)
-                Sg.Uniform("MeshAlgoResidual",  meshAlgoRes)
-                Sg.Uniform("CursorActive",         cursorActive)
-                Sg.Uniform("CursorPlaneOrigin",    cursorOrigin)
-                Sg.Uniform("CursorPlaneNormal",    cursorNormal)
-                Sg.Uniform("CursorHighlightWidth", cursorWidth)
-                Sg.Uniform("CursorDarken",         AVal.constant cursorDarken)
-                Sg.Uniform("CursorClip",           cursorClip)
-                Sg.Uniform("CursorPinCentre",      cursorPinC)
-                Sg.Uniform("CursorPinRadius",      cursorPinR)
-                Sg.Uniform("CursorCylLength",      cursorCylLen)
-                Sg.VertexAttributes(
-                    HashMap.ofList [
-                        string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
-                        string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
-                        string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
-                    ]
-                )
-                Sg.Index(BufferView(loaded.idx, typeof<int>))
-                Sg.Render loaded.fvc
-            }
+            // While this mesh has a pending preview delta, additionally show
+            // its committed pose through the shader's uniform-ghost path with
+            // a distinct slate tint. Ghost fragments write far depth, so
+            // picks pass through to the previewed surface.
+            let ghostActive =
+                (renderEnabled, model.PendingReg) ||> AVal.map2 (fun r pending ->
+                    r && (PendingRegistration.delta name pending |> Option.isSome))
+            let committedGhost =
+                sg {
+                    Sg.Active ghostActive
+                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale (committedMeshT model name))
+                    Sg.Shader {
+                        DefaultSurfaces.trafo
+                        DefaultSurfaces.diffuseTexture
+                        MeshShader.shade
+                    }
+                    Sg.NoEvents
+                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                    Sg.Uniform("MeshActive",      AVal.constant false)
+                    Sg.Uniform("GhostOpacity",    AVal.constant 0.2f)
+                    Sg.Uniform("RenderingMode",   AVal.constant 1)
+                    Sg.Uniform("MeshColor",       AVal.constant (V4f(0.45f, 0.49f, 0.55f, 1.0f)))
+                    Sg.Uniform("ShadingStrength", AVal.constant 0.0f)
+                    Sg.Uniform("SlopeThreshold",  AVal.constant 0.5f)
+                    Sg.Uniform("LassoPlaneCount", AVal.constant 0)
+                    Sg.Uniform("LassoPlanes",     lassoPlanes)
+                    Sg.Uniform("BlobCount",       AVal.constant 0)
+                    Sg.Uniform("Blobs",           blobs)
+                    Sg.Uniform("BlobFalloffs",    blobFalloffs)
+                    Sg.Uniform("AnchorGhost",     AVal.constant 0)
+                    Sg.Uniform("ProvenanceHeatmap", AVal.constant 0)
+                    Sg.Uniform("ProvThreshold",     AVal.constant 1.0f)
+                    Sg.Uniform("FalloffZoneOnly",   AVal.constant 0)
+                    Sg.Uniform("MeshDatasetError",  AVal.constant 0.0f)
+                    Sg.Uniform("MeshAlgoResidual",  AVal.constant 0.0f)
+                    Sg.Uniform("CursorActive",         AVal.constant 0)
+                    Sg.Uniform("CursorPlaneOrigin",    cursorOrigin)
+                    Sg.Uniform("CursorPlaneNormal",    cursorNormal)
+                    Sg.Uniform("CursorHighlightWidth", cursorWidth)
+                    Sg.Uniform("CursorDarken",         AVal.constant cursorDarken)
+                    Sg.Uniform("CursorClip",           cursorClip)
+                    Sg.Uniform("CursorPinCentre",      cursorPinC)
+                    Sg.Uniform("CursorPinRadius",      cursorPinR)
+                    Sg.Uniform("CursorCylLength",      cursorCylLen)
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
+                            string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
+                            string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
+                        ]
+                    )
+                    Sg.Index(BufferView(loaded.idx, typeof<int>))
+                    Sg.Render loaded.fvc
+                }
+            sg { surface; committedGhost }
         ) |> AList.toASet
 
     let buildFusionNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
@@ -338,9 +417,7 @@ module MeshView =
                 let isActive =
                     model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
                 let scale = scaleFor model name
-                let meshT =
-                    model.MeshTransforms |> AVal.map (fun m ->
-                        Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
+                let meshT = effectiveMeshT model name
                 let regGate =
                     (hasRegistered, refMesh) ||> AVal.map2 (fun reg rm ->
                         match rm with
@@ -398,9 +475,7 @@ module MeshView =
                     else AVal.constant true
                 let scale = scaleFor model name
                 let meshT =
-                    if useTransforms then
-                        model.MeshTransforms |> AVal.map (fun m ->
-                            Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
+                    if useTransforms then effectiveMeshT model name
                     else AVal.constant Trafo3d.Identity
                 let renderEnabled =
                     (loaded.fvc, isActive) ||> AVal.map2 (fun c a -> c > 3 && a)

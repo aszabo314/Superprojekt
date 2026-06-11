@@ -76,3 +76,45 @@ Key conventions confirmed:
 
 - `View.resolveFusionPick` raycasts meshes in their **untransformed** frames — fusion picking is slightly wrong for registered meshes (it predates this work; fusion is blocked during previews, so the new workflow never hits it).
 - `Update.RegistrationFailed` used to flip `Running = false` on the **first** per-mesh failure even with other solves in flight; the new Expected-countdown replaces that.
+
+---
+
+# User Study Mode — implementation notes
+
+Working notes for `ScanPin_study_mode_implementation_spec.md`. Updated per work package (`SWP<n>` commits).
+
+## SWP0 — repo map (verified 2026-06-11)
+
+| Spec concern | Location |
+|---|---|
+| App root view / boot | `src/Superprojekt/View.fs` (`View.view` builds the whole DOM in one `body { }`; `App.app` record) + `Program.fs` (`Boot.run gl App.app`). **No router exists** — the server serves `index.html` for every non-API path via `MapFallbackToFile`, so `/s/{token}` already reaches the client; the path is readable via `Window.Location.Path` (verified against Aardworx.WebAssembly 1.2.8: `Location` has `Protocol/Host/HostName/Port/Path/Href/Search` + `GetQuery()`). |
+| Top bar | `GuiTopBar.topBar` (hamburger, dataset dropdown, Lasso/Pin/Fusion/Pano buttons, camera reset, coord readout, gear) |
+| Gear popover | end of `GuiTopBar.fs` (inside `topBar`, `.tb-gear-popover`, gated by `Model.GearPopoverOpen`) |
+| Mesh panel | `GuiPanels.leftPanel` (mesh rows incl. ★ reference toggle, pin list, error metadata, provenance/heatmap radio Off/Sources/Diff) |
+| Registration card | `GuiCards.registrationCard` — opened by a **local `cval`** (`registrationOpen` in `View.view`), not a Message; "Set as final" button goes here |
+| Pin card + violin chart | `CardsPin.pinCardBody` + `ridgelineJs`/`probeRidgeJson` (violin), three-source stacked bar in the same file; card chrome `Cards.fs` (`cardDragHandle/cardPos/cardStyle`), 3D-anchored card system `Cards.renderCards` |
+| Provenance heatmap mode state | `Model.HeatmapMode` (`HeatOff\|HeatProvenance\|HeatDiff` in `RegistrationModel.fs`) + `HeatmapPrev`; radio UI in `GuiPanels.fs`; shader uniform in `MeshView.buildScene` |
+| Split-violin preview | `ScanPin.ProbePreview` + `preview` param of `CardsPin.probeRidgeJson` (kde2/median2/q12/q32 rows) |
+| Message/update loop | `Messages.fs` (`Message`/`ScanPinMessage`/`CardMessage`) → `Update.updateCore` + postludes (`ensureProbe`/`ensureProbePreview`/`ensureRings`); module-level `CancellationTokenSource` refs for debounce |
+| Workspace (de)serializer | `Persistence.fs` (hand-rolled JSON v2, `serialize : Model -> string`, `apply : string -> Model -> Result<Model,string>`) |
+| Server routing | `Handlers.webApp` (Giraffe `choose`), JSON binding via `ctx.BindJsonAsync<CLIMutable DTO>` (case-insensitive), responses via `json {\| … \|}`; startup `Program.fs` (CORS, Blazor static files, Giraffe, `MapFallbackToFile "index.html"`) |
+| Server data root | `MeshLoader.findDataRoot` walks up from `AppContext.BaseDirectory` looking for `data/` → **`studies/` is resolved the same way as a sibling of `data/`** |
+| Datasets on disk | `Hessigheim` (3 epochs), `SETSM_glacier` (9 epochs, scale 0.01), `VictoriaCrater` → glacier-v1 uses tutorial=`Hessigheim`, main=`SETSM_glacier` |
+| Tests | `src/Supertests` console runner compiles WASM-free client/server files directly (`RegistrationModel.fs`, `RegMath.fs`); integration `tools/integration.mjs` against :8002 |
+
+New-file plan (compile-order positions):
+
+- Client `StudyModel.fs` (after `RegistrationModel.fs`, before `ScanPinModel.fs`): WASM-free — feature ids, `StudyCondition`, config DTOs + `configPublic` JSON parser, `Predicate` + incremental evaluation state, `StudyState`/runtime types, answer drafts. Compiled into Supertests.
+- Client `StudyApi.fs` (after `Query.fs`): HTTP wrappers for `/api/study/*`.
+- Client `StudyTelemetry.fs` (after `Messages.fs`): mutable event queue + batcher (5 s / 50 events / immediate flush triggers), throttle state — module-level mutables like the existing CTS refs.
+- Client `GuiStudy.fs` (after `GuiCards.fs`): study bar, instruction overlay / anchored tooltip, task pane, question widgets.
+- Server `StudyConfig.fs` (before `QueryHandlers.fs`): config + secret parsing, startup validation — WASM/Giraffe-free, compiled into Supertests.
+- Server `StudyStore.fs` (after `StudyConfig.fs`): JSONL stores with per-sid locks, balanced assignment, TRE scoring, HMAC completion code — Giraffe-free, compiled into Supertests (store root parameterised for temp-dir tests).
+- Server `StudyHandlers.fs` (after `QueryHandlers.fs`): HTTP handlers, wired into `Handlers.webApp`.
+
+## Spec ↔ codebase reconciliations (study mode, running list)
+
+1. **`AppMode = Full | Study of StudySession`** → implemented as `Model.Study : StudyState option` (`None` ⇔ Full). Equivalent semantics; keeps the adaptify model flat and every existing view/update path untouched in Full mode.
+2. **Condition DU** named `CondFull | CondNum` (JSON tags `"FULL"`/`"NUM"`) to avoid clashing with the ubiquitous `Full` identifier.
+3. **"Phase F"** (§8, transforms post trigger) read as the **exit phase** (P6): question ids letter phases A=P1 … E=P5, F=P6, consistent with §10's "auto-upload workspace at final (P5→P6 transition)" and §3's completion requirement. `final` transforms + workspace upload happen on entering the exit phase; the P4 "Set as final" button posts the same label.
+4. **Study bar hosts a tool strip** for gated action buttons (Pin etc.) — real sessions have no top bar, but `pinPlace` is an allowed feature in several phases and the existing button lives in the top bar; the study bar exposes exactly the allowed subset, reusing the existing emit paths.

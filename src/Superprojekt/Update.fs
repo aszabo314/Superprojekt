@@ -605,9 +605,10 @@ module Update =
                 ScanPins = sp
                 AnchorReview = if candidates.Length > 0 then AnchorReviewing candidates else AnchorReviewIdle }
         | AnchorSeedFailed reason ->
-            { model with
-                AnchorReview = AnchorReviewIdle
-                DebugLog = model.DebugLog.InsertAt(0, sprintf "anchor seeding failed: %s" reason) }
+            showToast env "Anchor seeding failed — see debug log"
+                { model with
+                    AnchorReview = AnchorReviewIdle
+                    DebugLog = model.DebugLog.InsertAt(0, sprintf "anchor seeding failed: %s" reason) }
         | SetAnchorDecision(pinId, mesh, decision) ->
             match model.AnchorReview with
             | AnchorReviewing cs ->

@@ -467,19 +467,26 @@ module CardsPin =
                     // accepted). Only with correspondence enabled, never on
                     // the reference column.
                     | "apick" when parts.Length >= 3 ->
-                        match AVal.force selectedPin, parseInvariant parts.[1] with
-                        | Some pin, Some dv when parts.[2] <> "" ->
-                            match ScanPin.correspondence pin with
-                            | Some c when c.Enabled
-                                          && (AVal.force model.Registration).ReferenceMesh <> Some parts.[2] ->
-                                let refA = c.RefAnchor |> Option.defaultValue pin.Centre
-                                let axis =
-                                    match ScanPin.effectiveProbe (AVal.force previewActive) pin with
-                                    | ProbeReady r -> r.Normal
-                                    | _ -> ScanPin.axis pin
-                                env.Emit [SetAnchor(pin.Id, parts.[2], refA + axis * dv, AnchorViolinAxial)]
+                        // Anchors are committed-pose world points — picking
+                        // one against previewed geometry would get
+                        // double-transformed on commit, so block like the
+                        // other pickers.
+                        if AVal.force previewActive then
+                            env.Emit [ShowToast "Anchor picking is disabled while a solve preview is pending"]
+                        else
+                            match AVal.force selectedPin, parseInvariant parts.[1] with
+                            | Some pin, Some dv when parts.[2] <> "" ->
+                                match ScanPin.correspondence pin with
+                                | Some c when c.Enabled
+                                              && (AVal.force model.Registration).ReferenceMesh <> Some parts.[2] ->
+                                    let refA = c.RefAnchor |> Option.defaultValue pin.Centre
+                                    let axis =
+                                        match pin.Probe with
+                                        | ProbeReady r -> r.Normal
+                                        | _ -> ScanPin.axis pin
+                                    env.Emit [SetAnchor(pin.Id, parts.[2], refA + axis * dv, AnchorViolinAxial)]
+                                | _ -> ()
                             | _ -> ()
-                        | _ -> ()
                     | "clickout" ->
                         env.Emit [ClearChartSticky]
                     | _ -> ()

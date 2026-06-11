@@ -288,6 +288,25 @@ body.loaded { background: #f4f6f8; }
 .pc-corr-res { width: 64px; text-align: right; font-family: 'SF Mono', 'Monaco', monospace; color: #475569; }
 .pc-corr-actions { margin-top: 4px; display: flex; gap: 6px; }
 
+/* ── Patch small-multiples picker ──────────────────────────────────── */
+
+.pc-patchpicker { margin-top: 6px; border-top: 1px solid #e2e8f0; padding-top: 4px; }
+.pc-patch-bus { display: none !important; }
+.pc-patch-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.pc-patch-cell {
+    display: flex; flex-direction: column; align-items: center;
+    border: 1px solid #e2e8f0; border-radius: 4px; padding: 3px;
+    background: #ffffff;
+}
+.pc-patch-cell-ref { border-color: #b45309; }
+.pc-patch-head {
+    display: flex; align-items: center; gap: 4px;
+    font-size: 10px; color: #334155; max-width: 124px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: 'SF Mono', 'Monaco', monospace;
+}
+.pc-patch-swatch { width: 7px; height: 7px; flex-shrink: 0; display: inline-block; }
+
 /* ── Registration card: staged workflow ────────────────────────────── */
 
 .registration-card-body { max-height: 70vh; overflow-y: auto; }

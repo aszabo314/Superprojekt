@@ -631,6 +631,174 @@ module CardsPin =
                                 "▦ Pick in patches"
                             }
                         }
+                        // Patch small-multiples picker: one orthographic
+                        // footprint per visible mesh in the shared reference
+                        // frame; clicking sets that mesh's anchor.
+                        let pickerOpen =
+                            (model.PatchPicker, selectedPin) ||> AVal.map2 (fun pp po ->
+                                match pp, po with
+                                | Some p, Some pin -> p.PinId = pin.Id
+                                | _ -> false)
+                        let pickerShaded =
+                            model.PatchPicker |> AVal.map (function
+                                | Some p -> p.Shaded
+                                | None -> false)
+                        let pickerJson =
+                            (model.PatchPicker, selectedPin, model.Registration) |||> AVal.map3 (fun pp po reg ->
+                                match pp, po with
+                                | Some p, Some pin when p.PinId = pin.Id ->
+                                    if p.Running then "{\"status\":\"running\"}"
+                                    elif List.isEmpty p.Entries then "{\"status\":\"none\"}"
+                                    else
+                                        let colorHex name =
+                                            match Map.tryFind name pin.DatasetColors with
+                                            | Some c -> c4bToHex c
+                                            | None -> "#1a56db"
+                                        let sb = System.Text.StringBuilder()
+                                        sb.Append(sprintf "{\"status\":\"ready\",\"r\":%.4g,\"shaded\":%b,\"entries\":["
+                                                    p.Radius p.Shaded) |> ignore
+                                        p.Entries |> List.iteri (fun i e ->
+                                            if i > 0 then sb.Append(',') |> ignore
+                                            let isRef = reg.ReferenceMesh = Some e.Mesh
+                                            sb.Append(sprintf "{\"id\":\"%s\",\"mesh\":\"%s\",\"color\":\"%s\",\"ref\":%b,\"atlas\":\"%s\",\"cross\":[%.4g,%.4g],\"pts\":["
+                                                        e.Mesh (shortName e.Mesh) (colorHex e.Mesh) isRef e.AtlasUrl
+                                                        e.Crosshair.X e.Crosshair.Y) |> ignore
+                                            e.Points |> Array.iteri (fun j (uv, h, atlasUv) ->
+                                                if j > 0 then sb.Append(',') |> ignore
+                                                sb.Append(sprintf "[%.4g,%.4g,%.4g,%.4g,%.4g]"
+                                                            uv.X uv.Y h atlasUv.X atlasUv.Y) |> ignore)
+                                            sb.Append("]}") |> ignore)
+                                        sb.Append("]}") |> ignore
+                                        sb.ToString()
+                                | _ -> "{\"status\":\"none\"}")
+                        let onPatchEvent (v : string) =
+                            let parts = v.Split('|')
+                            if parts.Length >= 4 && parts.[0] = "pk" then
+                                match parseInvariant parts.[2], parseInvariant parts.[3] with
+                                | Some u, Some vv -> env.Emit [PatchPickerClick(parts.[1], u, vv)]
+                                | _ -> ()
+                        div {
+                            Class "pc-patchpicker"
+                            showOnly pickerOpen
+                            div {
+                                Class "pc-probe-head"
+                                span { Class "pc-section-title"; "Patch picker" }
+                                button {
+                                    Class "mb"
+                                    Attribute("title", "Toggle textured / shaded-height rendering")
+                                    Dom.OnClick(fun _ -> env.Emit [TogglePatchShaded])
+                                    pickerShaded |> AVal.map (fun s -> if s then "height" else "texture")
+                                }
+                                button {
+                                    Class "mb"
+                                    Attribute("title", "Close patch picker")
+                                    Dom.OnClick(fun _ -> env.Emit [ClosePatchPicker])
+                                    "✕"
+                                }
+                            }
+                            input {
+                                Class "pc-patch-bus"
+                                Attribute("type", "text")
+                                Dom.OnInput(fun e -> onPatchEvent e.Value)
+                            }
+                            div {
+                                Class "pc-patch-grid"
+                                pickerJson |> AVal.map (fun j -> Some (Attribute("data-patches", j)))
+                                Primitives.observedRender "data-patches" "{}" [
+                                    "  function placeholder(t){ var p = document.createElement('div'); p.className = 'pin-card-empty'; p.textContent = t; el.appendChild(p); }"
+                                    "  if(!d.status || d.status === 'none'){ return; }"
+                                    "  if(d.status === 'running'){ placeholder('Sampling patches…'); return; }"
+                                    "  var entries = d.entries || [];"
+                                    "  if(entries.length === 0){ placeholder('No patches.'); return; }"
+                                    "  var hmin = Infinity, hmax = -Infinity;"
+                                    "  entries.forEach(function(e){ e.pts.forEach(function(p){ if(p[2] < hmin) hmin = p[2]; if(p[2] > hmax) hmax = p[2]; }); });"
+                                    "  if(!(hmax > hmin)){ hmin = -0.5; hmax = 0.5; }"
+                                    "  function hcol(h){"
+                                    "    var t = Math.max(0, Math.min(1, (h - hmin) / (hmax - hmin)));"
+                                    "    return 'rgb(' + Math.round(255 * t) + ',' + (60 + Math.round(120 * t)) + ',' + Math.round(255 * (1 - t)) + ')';"
+                                    "  }"
+                                    "  var send = function(s){"
+                                    "    var pr = el.closest('.pc-patchpicker');"
+                                    "    var b = pr ? pr.querySelector('.pc-patch-bus') : null;"
+                                    "    if(b){ b.value = s; b.dispatchEvent(new Event('input', {bubbles:true})); }"
+                                    "  };"
+                                    "  entries.forEach(function(e){"
+                                    "    var wrap = document.createElement('div');"
+                                    "    wrap.className = 'pc-patch-cell' + (e.ref ? ' pc-patch-cell-ref' : '');"
+                                    "    var head = document.createElement('div');"
+                                    "    head.className = 'pc-patch-head';"
+                                    "    var sw = document.createElement('span');"
+                                    "    sw.className = 'pc-patch-swatch'; sw.style.background = e.color;"
+                                    "    head.appendChild(sw);"
+                                    "    var nm = document.createElement('span');"
+                                    "    nm.textContent = e.mesh + (e.ref ? ' ★' : '');"
+                                    "    head.appendChild(nm);"
+                                    "    wrap.appendChild(head);"
+                                    "    var size = 124, pad = 6, maxR = size / 2 - pad, cx = size / 2, cy = size / 2;"
+                                    "    var svg = document.createElementNS(ns, 'svg');"
+                                    "    svg.setAttribute('width', size); svg.setAttribute('height', size);"
+                                    "    svg.setAttribute('viewBox', '0 0 ' + size + ' ' + size);"
+                                    "    var ring = document.createElementNS(ns, 'circle');"
+                                    "    ring.setAttribute('cx', cx); ring.setAttribute('cy', cy); ring.setAttribute('r', maxR);"
+                                    "    ring.setAttribute('fill', '#f8fafc');"
+                                    "    ring.setAttribute('stroke', e.ref ? '#b45309' : '#cbd5e1');"
+                                    "    ring.setAttribute('stroke-width', e.ref ? '2' : '1');"
+                                    "    svg.appendChild(ring);"
+                                    "    var sx = function(u){ return cx + u / d.r * maxR; };"
+                                    "    var sy = function(v){ return cy - v / d.r * maxR; };"
+                                    "    var dots = [];"
+                                    "    e.pts.forEach(function(p){"
+                                    "      var c = document.createElementNS(ns, 'circle');"
+                                    "      c.setAttribute('cx', sx(p[0])); c.setAttribute('cy', sy(p[1]));"
+                                    "      c.setAttribute('r', '1.7');"
+                                    "      c.setAttribute('fill', hcol(p[2]));"
+                                    "      c.setAttribute('opacity', '0.9');"
+                                    "      svg.appendChild(c); dots.push(c);"
+                                    "    });"
+                                    "    if(!d.shaded && e.atlas){"
+                                    "      var img = new Image();"
+                                    "      img.onload = function(){"
+                                    "        try{"
+                                    "          var cv = document.createElement('canvas');"
+                                    "          cv.width = img.width; cv.height = img.height;"
+                                    "          var g = cv.getContext('2d');"
+                                    "          g.drawImage(img, 0, 0);"
+                                    "          var data = g.getImageData(0, 0, cv.width, cv.height).data;"
+                                    "          e.pts.forEach(function(p, i){"
+                                    "            var u = Math.max(0, Math.min(1, p[3])), v = Math.max(0, Math.min(1, p[4]));"
+                                    "            var x = Math.min(cv.width - 1, Math.round(u * (cv.width - 1)));"
+                                    "            var y = Math.min(cv.height - 1, Math.round((1 - v) * (cv.height - 1)));"
+                                    "            var o = (y * cv.width + x) * 4;"
+                                    "            dots[i].setAttribute('fill', 'rgb(' + data[o] + ',' + data[o+1] + ',' + data[o+2] + ')');"
+                                    "          });"
+                                    "        } catch(err){}"
+                                    "      };"
+                                    "      img.src = e.atlas;"
+                                    "    }"
+                                    "    var chx = sx(e.cross[0]), chy = sy(e.cross[1]);"
+                                    "    [[chx - 6, chy, chx + 6, chy], [chx, chy - 6, chx, chy + 6]].forEach(function(l){"
+                                    "      var lel = document.createElementNS(ns, 'line');"
+                                    "      lel.setAttribute('x1', l[0]); lel.setAttribute('y1', l[1]);"
+                                    "      lel.setAttribute('x2', l[2]); lel.setAttribute('y2', l[3]);"
+                                    "      lel.setAttribute('stroke', '#0f172a'); lel.setAttribute('stroke-width', '1.2');"
+                                    "      svg.appendChild(lel);"
+                                    "    });"
+                                    "    if(!e.ref){"
+                                    "      svg.style.cursor = 'crosshair';"
+                                    "      svg.addEventListener('click', function(ev){"
+                                    "        var rc = svg.getBoundingClientRect();"
+                                    "        var px = ev.clientX - rc.left, py = ev.clientY - rc.top;"
+                                    "        var u = (px - cx) / maxR * d.r;"
+                                    "        var v = (cy - py) / maxR * d.r;"
+                                    "        if(u * u + v * v <= d.r * d.r * 1.02) send('pk|' + e.id + '|' + u.toFixed(4) + '|' + v.toFixed(4));"
+                                    "      });"
+                                    "    }"
+                                    "    wrap.appendChild(svg);"
+                                    "    el.appendChild(wrap);"
+                                    "  });"
+                                ]
+                            }
+                        }
                     }
                 }
             }

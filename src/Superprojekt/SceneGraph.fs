@@ -130,6 +130,47 @@ module SceneGraph =
             @ labelNodes yColor V3d.OIO V3d.IOO textTrafoY
             @ labelNodes zColor V3d.OOI V3d.IOO textTrafoZ)
 
+    // Persistent subtle marker of the reference mesh (★): its bbox edges in
+    // the accent colour, normally depth-tested so it stays unobtrusive.
+    let private referenceOutline (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (model : AdaptiveModel) =
+        let col = V4d(0.102, 0.337, 0.859, 0.5)
+        let segs =
+            AVal.custom (fun t ->
+                match (model.Registration.GetValue t).ReferenceMesh with
+                | None -> [||]
+                | Some name ->
+                    match Map.tryFind name (model.MeshBounds.GetValue t) with
+                    | None -> [||]
+                    | Some box ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
+                        let tr =
+                            Map.tryFind name (model.MeshTransforms.GetValue t)
+                            |> Option.defaultValue Trafo3d.Identity
+                        let corner (ix : int) (iy : int) (iz : int) =
+                            let w =
+                                V3d((if ix = 0 then box.Min.X else box.Max.X),
+                                    (if iy = 0 then box.Min.Y else box.Max.Y),
+                                    (if iz = 0 then box.Min.Z else box.Max.Z))
+                            tr.Forward.TransformPos ((w - cc) * scale)
+                        let edges =
+                            [|
+                                (0,0,0),(1,0,0); (0,1,0),(1,1,0); (0,0,1),(1,0,1); (0,1,1),(1,1,1)
+                                (0,0,0),(0,1,0); (1,0,0),(1,1,0); (0,0,1),(0,1,1); (1,0,1),(1,1,1)
+                                (0,0,0),(0,0,1); (1,0,0),(1,0,1); (0,1,0),(0,1,1); (1,1,0),(1,1,1)
+                            |]
+                        edges |> Array.map (fun ((ax, ay, az), (bx, by, bz)) ->
+                            corner ax ay az, corner bx by bz, col, 1.5))
+        sg {
+            Sg.Active active
+            Sg.View view
+            Sg.Proj proj
+            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+            Sg.BlendMode (AVal.constant BlendMode.Blend)
+            Sg.NoEvents
+            Lines.render segs
+        }
+
     let build
         (env : Env<Message>)
         (info : Aardvark.Dom.RenderControlInfo)
@@ -168,6 +209,7 @@ module SceneGraph =
         let notFullscreen = AVal.map not fullscreenActive
         let cross         = originIndicator view proj notFullscreen
         let labels        = originLabels    view proj notFullscreen
+        let refOutline    = referenceOutline view proj notFullscreen model
 
         let viewportUni =
             sg {
@@ -180,6 +222,7 @@ module SceneGraph =
                 fusionScene
                 cross
                 pinScene
+                refOutline
                 labels
             }
 

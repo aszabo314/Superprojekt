@@ -212,7 +212,7 @@ A ScanPin is a 3D annotation in **metric world-space**: `Centre : V3d` (world me
 
 Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc scale` and `ScanPin.renderLength scale` in `ScanPinModel.fs`. `MeshView.buildScene` projects centres/radii to render-space on upload; `ScanPinScene.fs` does the same for marker dots, spheres, outline, patch footprint. The `Cards.projectToScreen` anchor is stashed in render-space by `ScanPinUpdate.handleMsg`. Camera focus (`OrbitMessage.SetTargetCenter`) takes render-space coords too.
 
-**Placement workflow:** Top-bar segmented mode-selector (Profile / Plan / Auto) chooses a mode. After click-placement the pin enters `AdjustingPin` state with a flyout for radius / sigma / payload-type fine-tuning. Commit / Discard / Escape end placement.
+**Placement workflow:** Top-bar **○ Pin** toggles placement. After click-placement the pin enters `AdjustingPin` state with a flyout for radius / sigma / payload-type fine-tuning. Commit / Discard / Escape end placement.
 
 **State:** `Placement : PlacementState` single DU on `ScanPinModel` — `PlacementIdle | AnchorPlacement | AdjustingPin of ScanPinId`. Helpers: `ScanPinModel.activePlacementId sp`, `ScanPinModel.isPlacing sp`.
 

@@ -12,6 +12,7 @@ module GuiPanels =
         let isVis = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
         let isSolo = model.MeshSolo |> AVal.map (fun s ->
             match s with Solo(n, _) -> n = name | _ -> false)
+        let isRef = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some name)
         let colorVal =
             model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0 >> meshColor)
         div {
@@ -22,6 +23,17 @@ module GuiPanels =
                     Some (Style [Css.Background (sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B))]))
             }
             span { Class "mesh-name"; Cards.shortName name }
+            // Single-selection reference toggle, two-way bound to the
+            // registration card's reference selector.
+            button {
+                Class "mb mb-ref"
+                isRef |> AVal.map (fun r -> if r then Some (Class "mb-on") else None)
+                Attribute("title", "All error metrics are relative to this mesh (no absolute ground truth).")
+                Dom.OnClick(fun _ ->
+                    let cur = AVal.force model.Registration
+                    env.Emit [SetReferenceMesh (if cur.ReferenceMesh = Some name then None else Some name)])
+                isRef |> AVal.map (fun r -> if r then "★" else "☆")
+            }
             button {
                 Class "mb"
                 isVis |> AVal.map (fun v -> if v then Some (Class "mb-on") else None)

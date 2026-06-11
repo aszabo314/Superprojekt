@@ -297,6 +297,8 @@ module GuiOverlays =
             model.MeshNames |> AList.map (fun name ->
                 let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                 div {
-                    order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (Cards.shortName name))
+                    (order, model.Registration) ||> AVal.map2 (fun o reg ->
+                        let star = if reg.ReferenceMesh = Some name then " ★" else ""
+                        sprintf "%d  %s%s" (o + 1) (Cards.shortName name) star)
                 })
         }

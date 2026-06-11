@@ -291,6 +291,102 @@ module GuiCards =
             "⚙ Registration"
         }
 
+    // Anchor auto-seed review modal (clone of the retarget review): one row
+    // per (pin × mesh) seeded anchor with the projection distance; rows with
+    // Δ > 2× falloff or no projection are flagged. Apply marks accepted.
+    let anchorReviewCard (env : Env<Message>) (model : AdaptiveModel) =
+        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let candidatesAList =
+            model.AnchorReview
+            |> AVal.map (function
+                | AnchorReviewing cs -> IndexList.ofArray cs
+                | _ -> IndexList.empty)
+            |> AList.ofAVal
+        let title =
+            model.AnchorReview |> AVal.map (function
+                | AnchorReviewSeeding -> "Seeding correspondence anchors…"
+                | AnchorReviewing cs -> sprintf "Anchor review (%d anchors)" cs.Length
+                | _ -> "Anchor review")
+        let progressNote =
+            model.AnchorReview |> AVal.map (function
+                | AnchorReviewSeeding -> "Projecting reference anchors onto the other meshes…"
+                | _ -> "")
+        div {
+            Class "card retarget-card anchor-review-card"
+            showWhen (model.AnchorReview |> AVal.map (function AnchorReviewIdle -> false | _ -> true))
+            div {
+                Class "card-titlebar"
+                span { Class "card-title"; title }
+                button {
+                    Class "card-btn-close"
+                    Attribute("title", "Close (anchors stay unaccepted)")
+                    Dom.OnClick(fun _ -> env.Emit [CancelAnchorReview])
+                    "×"
+                }
+            }
+            div {
+                Class "card-body retarget-card-body"
+                div { Class "retarget-empty"; progressNote }
+                div {
+                    Class "retarget-list"
+                    candidatesAList |> AList.map (fun c ->
+                        let infinite = System.Double.IsInfinity c.ProjectionDistance
+                        let highRisk = infinite || c.ProjectionDistance > 2.0 * c.FalloffRadius
+                        let distLabel =
+                            if infinite then "no projection"
+                            else sprintf "Δ %.3fm" c.ProjectionDistance
+                        let pinLabel =
+                            pinsVal |> AVal.map (fun pins ->
+                                match HashMap.tryFind c.PinId pins with
+                                | Some p -> sprintf "(%.1f, %.1f, %.1f)" p.Centre.X p.Centre.Y p.Centre.Z
+                                | None -> "(removed)")
+                        let baseClass =
+                            "retarget-row" +
+                            (if highRisk then " retarget-row-risk" else "") +
+                            (match c.Decision with
+                             | AnchorAccept -> " retarget-row-accepted"
+                             | AnchorReject -> " retarget-row-rejected"
+                             | _ -> "")
+                        div {
+                            Class baseClass
+                            span { Class "retarget-pin"; pinLabel }
+                            span { Class "retarget-pin"; Cards.shortName c.Mesh }
+                            span { Class "retarget-dist"; distLabel }
+                            div {
+                                Class "retarget-actions"
+                                button {
+                                    Class "retarget-btn-accept"
+                                    Attribute("title", "Accept this anchor")
+                                    Dom.OnClick(fun _ -> env.Emit [SetAnchorDecision(c.PinId, c.Mesh, AnchorAccept)])
+                                    "✓"
+                                }
+                                button {
+                                    Class "retarget-btn-reject"
+                                    Attribute("title", "Reject (stays unaccepted; pick later in patches / 3D / violin)")
+                                    Dom.OnClick(fun _ -> env.Emit [SetAnchorDecision(c.PinId, c.Mesh, AnchorReject)])
+                                    "✕"
+                                }
+                            }
+                        })
+                }
+                div {
+                    Class "retarget-commit-row"
+                    showWhen (model.AnchorReview |> AVal.map (function AnchorReviewing _ -> true | _ -> false))
+                    button {
+                        Class "lp-commit"
+                        Attribute("title", "Mark accepted anchors as usable for the coarse solve")
+                        Dom.OnClick(fun _ -> env.Emit [ApplyAnchorReview])
+                        "Apply"
+                    }
+                    button {
+                        Class "lp-discard"
+                        Dom.OnClick(fun _ -> env.Emit [CancelAnchorReview])
+                        "Cancel"
+                    }
+                }
+            }
+        }
+
     // Retarget review card. Shown while RetargetState is RetargetProjecting
     // (waiting on server) or RetargetReviewing (user picks accept/reject per
     // pin). Hidden on RetargetIdle.

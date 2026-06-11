@@ -123,6 +123,14 @@ module GuiOverlays =
             div { Class "prov-hover-nums"; nums }
         }
 
+    // Transient feedback for blocked/failed actions (auto-clears).
+    let toast (model : AdaptiveModel) =
+        div {
+            Class "app-toast"
+            Primitives.showWhen (model.Toast |> AVal.map Option.isSome)
+            model.Toast |> AVal.map (Option.defaultValue "")
+        }
+
     let fusionNotice (model : AdaptiveModel) =
         div {
             Class "fusion-notice"

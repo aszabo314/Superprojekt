@@ -464,6 +464,97 @@ module CardsPin =
                         reliability
                         onReliabilityChange
                 }
+                // Ensemble-registration correspondence: anchor status per
+                // mesh, residuals of the last coarse solve, fallback picks.
+                let corr =
+                    selectedPin |> AVal.map (fun po -> po |> Option.bind ScanPin.correspondence)
+                let corrEnabled = corr |> AVal.map (function Some c -> c.Enabled | None -> false)
+                let refMeshOpt = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
+                let emitForPinTop (mk : ScanPinId -> Message) =
+                    match AVal.force selectedPin with
+                    | Some p -> env.Emit [mk p.Id]
+                    | None -> ()
+                div {
+                    Class "pc-corr"
+                    div {
+                        Class "pc-probe-head"
+                        span { Class "pc-section-title"; "Correspondence" }
+                    }
+                    // The one-click exclude/include toggle (sets enabled).
+                    Primitives.compactToggle "Use as registration landmark" corrEnabled (fun () ->
+                        emitForPinTop ToggleCorrespondence)
+                    div {
+                        Class "pc-corr-body"
+                        showOnly corrEnabled
+                        div {
+                            Class "pc-corr-ref"
+                            (corr, selectedPin) ||> AVal.map2 (fun cOpt po ->
+                                match cOpt, po with
+                                | Some c, Some pin ->
+                                    match c.RefAnchor with
+                                    | Some _ when c.RefDistance > 2.0 * pin.FalloffRadius ->
+                                        sprintf "⚠ reference anchor %.2f m off the pin (> 2× falloff)" c.RefDistance
+                                    | Some _ when c.RefDistance > 0.0 ->
+                                        sprintf "reference anchor projected, Δ %.3f m" c.RefDistance
+                                    | Some _ -> "reference anchor = pin centre"
+                                    | None -> "no reference anchor yet — designate a ★ reference mesh"
+                                | _ -> "")
+                            (corr, selectedPin) ||> AVal.map2 (fun cOpt po ->
+                                match cOpt, po with
+                                | Some c, Some pin when c.RefAnchor.IsSome && c.RefDistance > 2.0 * pin.FalloffRadius ->
+                                    Some (Class "pc-corr-ref-warn")
+                                | _ -> None)
+                        }
+                        div {
+                            Class "pc-corr-rows"
+                            model.MeshNames |> AList.map (fun mesh ->
+                                let isMoving = refMeshOpt |> AVal.map (fun r -> r <> Some mesh)
+                                let anchor =
+                                    corr |> AVal.map (Option.bind (fun c -> Map.tryFind mesh c.Anchors))
+                                let residual =
+                                    corr |> AVal.map (Option.bind (fun c -> Map.tryFind mesh c.Residuals))
+                                div {
+                                    Class "pc-corr-row"
+                                    Primitives.showWhen isMoving
+                                    span { Class "pc-corr-mesh"; shortName mesh }
+                                    span {
+                                        Class "pc-corr-acc"
+                                        anchor |> AVal.map (function
+                                            | Some a when a.Accepted -> Some (Class "pc-corr-acc-on")
+                                            | _ -> None)
+                                        anchor |> AVal.map (function
+                                            | Some a when a.Accepted -> sprintf "✓ %s" (AnchorSource.label a.Source)
+                                            | Some a -> sprintf "○ %s" (AnchorSource.label a.Source)
+                                            | None -> "—")
+                                    }
+                                    span {
+                                        Class "pc-corr-res"
+                                        residual |> AVal.map (function
+                                            | Some r -> sprintf "%.3f m" r
+                                            | None -> "")
+                                    }
+                                    button {
+                                        Class "mb"
+                                        Attribute("title", "Pick this anchor in 3D — one click on this mesh (Esc cancels)")
+                                        Dom.OnClick(fun _ ->
+                                            match AVal.force selectedPin with
+                                            | Some p -> env.Emit [StartAnchorPick(p.Id, mesh)]
+                                            | None -> ())
+                                        "⊕"
+                                    }
+                                })
+                        }
+                        div {
+                            Class "pc-corr-actions"
+                            button {
+                                Class "tb-gear-btn"
+                                Attribute("title", "Pick anchors in co-oriented surface patches")
+                                Dom.OnClick(fun _ -> emitForPinTop OpenPatchPicker)
+                                "▦ Pick in patches"
+                            }
+                        }
+                    }
+                }
             }
 
             let lineStateJson =

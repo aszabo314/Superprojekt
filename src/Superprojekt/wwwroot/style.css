@@ -243,6 +243,39 @@ body.loaded { background: #f4f6f8; }
 .mb-on { color: #1a56db; }
 .mb-ref.mb-on { color: #b45309; }
 
+/* ── Toast ─────────────────────────────────────────────────────────── */
+
+.app-toast {
+    position: fixed; bottom: 56px; left: 50%;
+    transform: translateX(-50%);
+    background: #0f172a; color: #f8fafc;
+    font-size: 12px; padding: 6px 14px;
+    border-radius: 4px; z-index: 260;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(15, 23, 42, 0.35);
+}
+
+/* ── Pin card: correspondence section ──────────────────────────────── */
+
+.pc-corr { margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 6px; }
+.pc-corr-body { margin-top: 4px; }
+.pc-corr-ref { font-size: 11px; color: #475569; padding: 2px 0; }
+.pc-corr-ref-warn { color: #b45309; }
+.pc-corr-rows { display: flex; flex-direction: column; gap: 1px; }
+.pc-corr-row {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; line-height: 18px; color: #334155;
+}
+.pc-corr-mesh {
+    flex: 1; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-family: 'SF Mono', 'Monaco', monospace;
+}
+.pc-corr-acc { color: #94a3b8; width: 64px; }
+.pc-corr-acc-on { color: #15803d; }
+.pc-corr-res { width: 64px; text-align: right; font-family: 'SF Mono', 'Monaco', monospace; color: #475569; }
+.pc-corr-actions { margin-top: 4px; display: flex; gap: 6px; }
+
 /* ── Primitives: CompactToggle ─────────────────────────────────────── */
 
 .ct {

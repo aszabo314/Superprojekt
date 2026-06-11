@@ -41,12 +41,13 @@ module ScanPinUpdate =
             Centre               = worldCentre
             InnerRadius          = inner
             FalloffRadius        = falloff
-            Payload              = Point { ReliabilityWeight = 1.0 }
+            Payload              = Point { ReliabilityWeight = 1.0; Correspondence = None }
             HostMeshName         = model.ActivePickingLayer
             CreationCameraState  = cam
             CreatedAt            = System.DateTime.UtcNow
             DatasetColors        = assignColors model.MeshNames
             Probe                = ProbeNone
+            ProbePreview         = ProbeNone
             ProbeLengthOverride  = None
             ProbeLockOrder       = false
             ProbeXRange          = ProbeXAuto
@@ -144,9 +145,9 @@ module ScanPinUpdate =
         | SetReliabilityWeight(id, w) ->
             sp |> updatePin id (fun pin ->
                 match pin.Payload with
-                | Point _ ->
+                | Point pp ->
                     let w = clamp 0.0 1.0 w
-                    { pin with Payload = Point { ReliabilityWeight = w } }
+                    { pin with Payload = Point { pp with ReliabilityWeight = w } }
                 | _ -> pin)
 
         | SetLineMode(id, mode) ->
@@ -203,6 +204,14 @@ module ScanPinUpdate =
         | ProbeFailed(id, reason) ->
             sp |> updatePin id (fun pin ->
                 if pin.Probe = ProbeRunning then { pin with Probe = ProbeError reason } else pin)
+
+        | ProbePreviewComputed(id, result) ->
+            sp |> updatePin id (fun pin ->
+                if pin.ProbePreview = ProbeRunning then { pin with ProbePreview = ProbeReady result } else pin)
+
+        | ProbePreviewFailed(id, reason) ->
+            sp |> updatePin id (fun pin ->
+                if pin.ProbePreview = ProbeRunning then { pin with ProbePreview = ProbeError reason } else pin)
 
         | ContactRingsComputed(id, rings) ->
             sp |> updatePin id (fun pin ->
@@ -414,14 +423,10 @@ module ScanPinUpdate =
                     model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
                     |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h visible))
                     |> Option.defaultValue (List.head visible)
-                let cc = model.CommonCentroid
+                // pin.Probe is always the committed-pose probe; the preview
+                // pose gets its own ProbePreview via ensureProbePreview.
                 let meshes =
-                    visible |> List.map (fun n ->
-                        let t =
-                            match Map.tryFind n model.MeshTransforms with
-                            | Some rt -> (RigidTransform.renderToWorld (DatasetScale.forMesh model.DatasetScales n) cc rt).Forward
-                            | None -> M44d.Identity
-                        n, t)
+                    visible |> List.map (fun n -> n, (ModelTransforms.committedWorld model n).Forward)
                 let id = pin.Id
                 let centre = pin.Centre
                 let radius = pin.InnerRadius
@@ -460,12 +465,79 @@ module ScanPinUpdate =
                 { model with ScanPins = { sp with Pins = HashMap.add id { pin with Probe = ProbeRunning } sp.Pins } }
         | _ -> model
 
+    // Lazy preview-probe trigger (split violin): while a registration preview
+    // is pending, the effective pin additionally gets a probe under the
+    // effective (committed ∘ pending-delta) transforms. Same debounce and
+    // stale-guard discipline as ensureProbe, separate token.
+    let mutable previewProbeCts : System.Threading.CancellationTokenSource =
+        new System.Threading.CancellationTokenSource()
+    let mutable private previewProbeOwner : ScanPinId option = None
+
+    let ensureProbePreview (env : Env<Message>) (model : Model) : Model =
+        if not (PendingRegistration.isPreview model.PendingReg) then model
+        else
+            let sp = model.ScanPins
+            let effective =
+                ScanPinModel.activePlacementId sp
+                |> Option.orElse sp.SelectedPin
+                |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
+            match effective with
+            | Some pin when (match pin.Payload, pin.ProbePreview with Point _, ProbeNone -> true | _ -> false) ->
+                let visible =
+                    model.MeshNames |> IndexList.toList
+                    |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
+                match visible with
+                | [] -> model
+                | _ ->
+                    let refMesh =
+                        model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
+                        |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h visible))
+                        |> Option.defaultValue (List.head visible)
+                    let meshes =
+                        visible |> List.map (fun n -> n, (ModelTransforms.effectiveWorld model n).Forward)
+                    let id = pin.Id
+                    let centre = pin.Centre
+                    let radius = pin.InnerRadius
+                    let length = pin.ProbeLengthOverride |> Option.defaultValue 0.0
+                    previewProbeCts.Cancel()
+                    previewProbeCts <- new System.Threading.CancellationTokenSource()
+                    let sp =
+                        match previewProbeOwner with
+                        | Some prev when prev <> id ->
+                            match HashMap.tryFind prev sp.Pins with
+                            | Some p when p.ProbePreview = ProbeRunning ->
+                                { sp with Pins = HashMap.add prev { p with ProbePreview = ProbeNone } sp.Pins }
+                            | _ -> sp
+                        | _ -> sp
+                    previewProbeOwner <- Some id
+                    let token = previewProbeCts.Token
+                    task {
+                        try
+                            do! System.Threading.Tasks.Task.Delay(250, token)
+                            let! res =
+                                Query.probe ApiConfig.apiBase.Value meshes refMesh centre radius length 8192
+                                |> Async.StartAsTask
+                            if not token.IsCancellationRequested then
+                                match res with
+                                | Result.Ok r -> env.Emit [ScanPinMsg (ProbePreviewComputed(id, r))]
+                                | Result.Error e -> env.Emit [ScanPinMsg (ProbePreviewFailed(id, e))]
+                        with
+                        | :? System.OperationCanceledException -> ()
+                        | ex ->
+                            if not token.IsCancellationRequested then
+                                env.Emit [ScanPinMsg (ProbePreviewFailed(id, ex.Message))]
+                    } |> ignore
+                    { model with ScanPins = { sp with Pins = HashMap.add id { pin with ProbePreview = ProbeRunning } sp.Pins } }
+            | _ -> model
+
     // Lazy contact-ring trigger, run as a postlude after every reducer step:
     // every pin whose rings were invalidated (RingsNone) gets one debounced
     // server fan-out over ALL meshes — visibility only gates rendering, so
     // toggling a mesh never recomputes. Registration transforms are rigid:
     // the sphere is intersected in each mesh's own frame (inverse-transformed
-    // centre) and the rings mapped back to registered world space.
+    // centre) and the rings mapped back to registered world space. Effective
+    // transforms: while a solve preview is pending the rings follow it
+    // (invalidation on pending changes recomputes them).
     let ensureRings (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
         let pending =
@@ -473,14 +545,9 @@ module ScanPinUpdate =
             |> List.filter (fun (_, p) -> p.ContactRings = RingsNone)
         if List.isEmpty pending || model.MeshNames.Count = 0 then model
         else
-            let cc = model.CommonCentroid
             let meshes =
                 model.MeshNames |> IndexList.toList |> List.map (fun n ->
-                    let tw =
-                        match Map.tryFind n model.MeshTransforms with
-                        | Some rt -> RigidTransform.renderToWorld (DatasetScale.forMesh model.DatasetScales n) cc rt
-                        | None -> Trafo3d.Identity
-                    n, tw)
+                    n, ModelTransforms.effectiveWorld model n)
             let mutable pins = sp.Pins
             for (pinId, pin) in pending do
                 match ringsCts.TryGetValue pinId with

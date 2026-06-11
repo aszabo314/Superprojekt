@@ -18,13 +18,42 @@ type Message =
     | ToggleAnchorGhostMode
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
+    // Stage 2 · Fine (ICP). Solves land in PendingReg, not MeshTransforms.
     | RunRegistration
-    | RegistrationComplete of string * Trafo3d * float[] * float[]
-    | RegistrationFailed of string
-    | ResetMeshTransforms
+    | FineSolved of mesh:string * world:Trafo3d * convergence:float[] * residuals:float[]
+    | FineFailed of mesh:string * reason:string
+    // Stage 1 · Coarse (landmarks via /query/lsq-pairs).
+    | SolveCoarse
+    | CoarseSolved of mesh:string * worldDelta:M44d * pairResiduals:(ScanPinId * float)[] * rmsBefore:float * collinear:bool
+    | CoarseFailed of mesh:string * reason:string
+    // Pending-preview lifecycle + history.
+    | CommitRegistration
+    | DiscardRegistration
+    | RollbackRegStep
+    | ResetRegistration
+    // Correspondence anchors.
+    | ToggleCorrespondence of ScanPinId
+    | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * candidates:AnchorCandidate[]
+    | AnchorSeedFailed of string
+    | SetAnchorDecision of ScanPinId * mesh:string * AnchorDecision
+    | ApplyAnchorReview
+    | CancelAnchorReview
+    | SetAnchor of ScanPinId * mesh:string * point:V3d * source:AnchorSource
+    | StartAnchorPick of ScanPinId * mesh:string
+    | CancelAnchorPick
+    | AnchorPickHit of world:V3d
+    // Patch small-multiples picker.
+    | OpenPatchPicker of ScanPinId
+    | ClosePatchPicker
+    | TogglePatchShaded
+    | PatchPickerReady of pinId:ScanPinId * normal:V3d * refDir:V3d * radius:float * entries:PatchPickerEntry list
+    | PatchPickerFailed of string
+    | PatchPickerClick of mesh:string * u:float * v:float
+    | ShowToast of string
+    | ClearToast
     | SetMeshSensorType of string * SensorType
     | SetMeshDatasetError of string * float option
-    | ToggleProvenanceHeatmap
+    | SetHeatmapMode of HeatmapMode
     | SetProvenanceThreshold of float
     | ToggleFalloffZoneOnly
     | ToggleFusionMode
@@ -98,6 +127,8 @@ and ScanPinMessage =
     | PatchComputed of ScanPinId * (V2d * V3d)[] * refDir:V3d * normal:V3d
     | ProbeComputed of ScanPinId * ProbeResult
     | ProbeFailed of ScanPinId * string
+    | ProbePreviewComputed of ScanPinId * ProbeResult
+    | ProbePreviewFailed of ScanPinId * string
     | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>
     | SetProbeLength of ScanPinId * float option
     | ToggleProbeLockOrder of ScanPinId

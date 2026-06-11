@@ -188,7 +188,7 @@ module MeshView =
         let anchorGhost =
             model.AnchorGhostMode |> AVal.map (fun on -> if on then 1 else 0)
         let provenanceOn =
-            model.ProvenanceHeatmap |> AVal.map (fun on -> if on then 1 else 0)
+            model.HeatmapMode |> AVal.map (fun m -> if m = HeatProvenance then 1 else 0)
         let provThreshold =
             model.ProvenanceThreshold |> AVal.map float32
         let falloffZoneOnly =

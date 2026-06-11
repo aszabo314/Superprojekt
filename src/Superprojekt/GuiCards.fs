@@ -133,8 +133,8 @@ module GuiCards =
                     }
                     button {
                         Class "lp-discard"
-                        Attribute("title", "Reset all mesh transforms to identity")
-                        Dom.OnClick(fun _ -> env.Emit [ResetMeshTransforms])
+                        Attribute("title", "Roll back every registration step (identity transforms, empty history)")
+                        Dom.OnClick(fun _ -> env.Emit [ResetRegistration])
                         "↺ Reset"
                     }
                 }

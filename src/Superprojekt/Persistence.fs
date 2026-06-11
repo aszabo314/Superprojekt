@@ -62,7 +62,10 @@ module Persistence =
         | ElevationIsoline e -> sprintf "{\"k\":\"elev\",\"e\":%s}" (f e)
         | CurvatureRidge -> "{\"k\":\"ridge\"}"
     let private payloadJ = function
-        | Point p -> sprintf "{\"k\":\"point\",\"rel\":%s}" (f p.ReliabilityWeight)
+        | Point p ->
+            sprintf "{\"k\":\"point\",\"rel\":%s,\"corr\":%s}"
+                (f p.ReliabilityWeight)
+                (match p.Correspondence with Some c -> RegJson.correspondenceJ c | None -> "null")
         | Line l ->
             let pts = l.Points |> Array.map v3 |> String.concat ","
             let scs = l.ScalarVals |> Array.map f |> String.concat ","
@@ -110,7 +113,7 @@ module Persistence =
     let serialize (model : Model) : string =
         let sb = StringBuilder()
         sb.Append("{") |> ignore
-        sb.Append("\"version\":1,") |> ignore
+        sb.Append("\"version\":2,") |> ignore
         sb.Append("\"dataset\":") |> ignore
         sb.Append(match model.ActiveDataset with Some d -> q d | None -> "null") |> ignore
         sb.Append(",\"pins\":[") |> ignore
@@ -145,9 +148,19 @@ module Persistence =
         sb.Append(regModeTag model.Registration.Mode) |> ignore
         sb.Append("\",\"refMesh\":") |> ignore
         sb.Append(match model.Registration.ReferenceMesh with Some m -> q m | None -> "null") |> ignore
-        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"provHeatmap\":%b,\"provThreshold\":%s,\"falloffZoneOnly\":%b,\"fusion\":%b,\"renderMode\":\"%s\"}"
+        // PendingReg is deliberately NOT persisted — a preview never survives
+        // a save/load cycle, only committed steps do.
+        sb.Append(",\"regLog\":") |> ignore
+        sb.Append(RegJson.regLogJ model.RegistrationLog) |> ignore
+        // Diff mode only exists while a preview is pending; persist the mode
+        // it would revert to instead.
+        let persistedHeatmap =
+            match model.HeatmapMode with
+            | HeatDiff -> model.HeatmapPrev
+            | m -> m
+        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"heatmapMode\":\"%s\",\"provThreshold\":%s,\"falloffZoneOnly\":%b,\"fusion\":%b,\"renderMode\":\"%s\"}"
             model.GhostSilhouette (f model.GhostOpacity) (f model.ShadingStrength)
-            (f model.SlopeThresholdDeg) model.AnchorGhostMode model.ProvenanceHeatmap
+            (f model.SlopeThresholdDeg) model.AnchorGhostMode (HeatmapMode.tag persistedHeatmap)
             (f model.ProvenanceThreshold) model.FalloffZoneOnly model.FusionMode
             (renderModeTag model.RenderingMode)) |> ignore
         sb.Append(",\"camera\":{") |> ignore
@@ -192,7 +205,11 @@ module Persistence =
     let private rPayload (e : JsonElement) =
         match e.GetProperty("k").GetString() with
         | "point" ->
-            Point { ReliabilityWeight = e.GetProperty("rel").GetDouble() }
+            let corr =
+                match tryProp "corr" e with
+                | Some v when v.ValueKind <> JsonValueKind.Null -> Some (RegJson.readCorrespondence v)
+                | _ -> None
+            Point { ReliabilityWeight = e.GetProperty("rel").GetDouble(); Correspondence = corr }
         | "line" ->
             let mode = rLineMode (e.GetProperty("mode"))
             let pts = e.GetProperty("pts").EnumerateArray() |> Seq.map rV3 |> Array.ofSeq
@@ -265,6 +282,7 @@ module Persistence =
             CreatedAt = createdAt
             DatasetColors = colors
             Probe = ProbeNone
+            ProbePreview = ProbeNone
             ProbeLengthOverride = probeLen
             ProbeLockOrder = probeLock
             ProbeXRange = probeRange
@@ -348,6 +366,10 @@ module Persistence =
                 | Some e when e.ValueKind = JsonValueKind.Null -> None
                 | Some e -> Some (e.GetString())
                 | None -> model.Registration.ReferenceMesh
+            let regLog =
+                match tryProp "regLog" r with
+                | Some e -> RegJson.readRegLog e
+                | None -> []
             let settings =
                 match tryProp "settings" r with
                 | Some e -> e
@@ -367,6 +389,14 @@ module Persistence =
                 | None -> fallback
             let renderMode =
                 renderModeOf (sOrElseS "renderMode" (renderModeTag model.RenderingMode))
+            // Version 2 writes heatmapMode; version 1 wrote a provHeatmap bool.
+            let heatmapMode =
+                match tryProp "heatmapMode" settings with
+                | Some v -> HeatmapMode.ofTag (v.GetString())
+                | None ->
+                    match tryProp "provHeatmap" settings with
+                    | Some v -> if v.GetBoolean() then HeatProvenance else HeatOff
+                    | None -> model.HeatmapMode
             let cam =
                 match tryProp "camera" r with
                 | Some ce ->
@@ -397,13 +427,20 @@ module Persistence =
                     MeshDatasetErrors = datasetErrors
                     LassoEnabled = lassoEnabled
                     LassoVolume = lassoVolume
-                    Registration = { model.Registration with Mode = regMode; ReferenceMesh = refMesh }
+                    Registration = { model.Registration with Mode = regMode; ReferenceMesh = refMesh; Running = false }
+                    RegistrationLog = regLog
+                    // Transient registration state never survives a load.
+                    PendingReg = None
+                    AnchorReview = AnchorReviewIdle
+                    AnchorPick = None
+                    PatchPicker = None
                     GhostSilhouette = sOrElseB "ghostSilhouette" model.GhostSilhouette
                     GhostOpacity = sOrElseF "ghostOpacity" model.GhostOpacity
                     ShadingStrength = sOrElseF "shading" model.ShadingStrength
                     SlopeThresholdDeg = sOrElseF "slopeDeg" model.SlopeThresholdDeg
                     AnchorGhostMode = sOrElseB "anchorGhost" model.AnchorGhostMode
-                    ProvenanceHeatmap = sOrElseB "provHeatmap" model.ProvenanceHeatmap
+                    HeatmapMode = heatmapMode
+                    HeatmapPrev = (match heatmapMode with HeatDiff -> HeatOff | m -> m)
                     ProvenanceThreshold = sOrElseF "provThreshold" model.ProvenanceThreshold
                     FalloffZoneOnly = sOrElseB "falloffZoneOnly" model.FalloffZoneOnly
                     FusionMode = sOrElseB "fusion" model.FusionMode

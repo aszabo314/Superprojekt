@@ -219,10 +219,22 @@ type Model =
         Registration          : RegistrationState
         Retarget              : RetargetState
 
+        // Ensemble registration: uncommitted solve preview, committed history,
+        // correspondence-anchor flows (auto-seed review, one-shot 3D pick,
+        // patch small-multiples picker).
+        PendingReg            : PendingRegistration option
+        RegistrationLog       : RegStep list
+        AnchorReview          : AnchorReviewState
+        AnchorPick            : AnchorPickState option
+        PatchPicker           : PatchPickerState option
+        Toast                 : string option
+
         MeshSensorTypes       : Map<string, SensorType>
         MeshDatasetErrors     : Map<string, float>
         MeshAlgorithmResidual : Map<string, float>
-        ProvenanceHeatmap     : bool
+        HeatmapMode           : HeatmapMode
+        // Mode to restore when HeatDiff auto-reverts on commit/discard.
+        HeatmapPrev           : HeatmapMode
         ProvenanceThreshold   : float
         FalloffZoneOnly       : bool
 
@@ -250,6 +262,35 @@ type Model =
         LassoCardPos        : V2d option
         GearPopoverOpen     : bool
     }
+
+// Committed vs effective (committed ∘ pending-delta) transforms, in render and
+// world space. Every server query and scene-graph consumer goes through these
+// so the preview pose is consistent everywhere.
+module ModelTransforms =
+    let committedRender (model : Model) (mesh : string) =
+        Map.tryFind mesh model.MeshTransforms |> Option.defaultValue Trafo3d.Identity
+
+    let effectiveRender (model : Model) (mesh : string) =
+        let c = committedRender model mesh
+        match PendingRegistration.delta mesh model.PendingReg with
+        | Some d -> RegLog.effective c d
+        | None -> c
+
+    let private toWorld (model : Model) (mesh : string) (renderT : Trafo3d) =
+        RigidTransform.renderToWorld
+            (DatasetScale.forMesh model.DatasetScales mesh) model.CommonCentroid renderT
+
+    let committedWorld (model : Model) (mesh : string) =
+        toWorld model mesh (committedRender model mesh)
+
+    let effectiveWorld (model : Model) (mesh : string) =
+        toWorld model mesh (effectiveRender model mesh)
+
+    // World-space delta a commit (before → after, render space) applies to a
+    // mesh — used to re-base correspondence anchors so they stay on the
+    // surface across commit and rollback.
+    let worldDelta (model : Model) (mesh : string) (before : Trafo3d) (after : Trafo3d) =
+        (toWorld model mesh before).Inverse * toWorld model mesh after
 
 module Model =
     let initial =
@@ -282,10 +323,17 @@ module Model =
             MeshTransforms        = Map.empty
             Registration          = RegistrationState.initial
             Retarget              = RetargetState.initial
+            PendingReg            = None
+            RegistrationLog       = []
+            AnchorReview          = AnchorReviewIdle
+            AnchorPick            = None
+            PatchPicker           = None
+            Toast                 = None
             MeshSensorTypes       = Map.empty
             MeshDatasetErrors     = Map.empty
             MeshAlgorithmResidual = Map.empty
-            ProvenanceHeatmap     = false
+            HeatmapMode           = HeatOff
+            HeatmapPrev           = HeatOff
             ProvenanceThreshold   = 0.01
             FalloffZoneOnly       = false
             FusionMode            = false

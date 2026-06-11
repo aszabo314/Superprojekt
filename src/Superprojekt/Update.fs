@@ -37,6 +37,10 @@ module Update =
 
     let mutable private hoverProbeCts : System.Threading.CancellationTokenSource =
         new System.Threading.CancellationTokenSource()
+    let mutable private toastCts : System.Threading.CancellationTokenSource =
+        new System.Threading.CancellationTokenSource()
+    let mutable private patchPickerCts : System.Threading.CancellationTokenSource =
+        new System.Threading.CancellationTokenSource()
 
     let private invalidateProbes (model : Model) =
         { model with
@@ -49,7 +53,175 @@ module Update =
     let private invalidateRings (model : Model) =
         { model with ScanPins = ScanPinModel.invalidateRings model.ScanPins }
 
+    let private clearPreviewProbes (model : Model) =
+        { model with ScanPins = ScanPinModel.invalidatePreviewProbes model.ScanPins }
+
+    // Leaving the pending preview (commit / discard / rollback / reference
+    // change): drop preview probes, recompute rings at whatever pose is now
+    // current, restore the heatmap mode Diff replaced.
+    let private exitPreview (model : Model) =
+        let heatmap = match model.HeatmapMode with HeatDiff -> model.HeatmapPrev | m -> m
+        clearPreviewProbes (invalidateRings { model with PendingReg = None; HeatmapMode = heatmap })
+
+    let private showToast (env : Env<Message>) (text : string) (model : Model) =
+        toastCts.Cancel()
+        toastCts <- new System.Threading.CancellationTokenSource()
+        let token = toastCts.Token
+        task {
+            try
+                do! System.Threading.Tasks.Task.Delay(3000, token)
+                if not token.IsCancellationRequested then env.Emit [ClearToast]
+            with _ -> ()
+        } |> ignore
+        { model with Toast = Some text }
+
+    let private updateCorr (id : ScanPinId) (f : Correspondence -> Correspondence) (sp : ScanPinModel) =
+        match HashMap.tryFind id sp.Pins with
+        | Some pin when (match pin.Payload with Point _ -> true | _ -> false) ->
+            let cur = ScanPin.correspondence pin |> Option.defaultValue Correspondence.empty
+            { sp with Pins = HashMap.add id (ScanPin.withCorrespondence (Some (f cur)) pin) sp.Pins }
+        | _ -> sp
+
+    let private setAnchor (id : ScanPinId) (mesh : string) (point : V3d) (source : AnchorSource) (sp : ScanPinModel) =
+        sp |> updateCorr id (fun c ->
+            { c with Anchors = Map.add mesh { Point = point; Source = source; Accepted = true } c.Anchors })
+
+    // Anchors are stored world-space at current committed poses; committing or
+    // rolling back a step re-bases every anchor on a moved mesh by the
+    // applied world delta so it stays on the surface.
+    let private bakeAnchors (deltas : Map<string, Trafo3d>) (sp : ScanPinModel) =
+        if Map.isEmpty deltas then sp
+        else
+            let pins =
+                sp.Pins |> HashMap.map (fun _ p ->
+                    match ScanPin.correspondence p with
+                    | Some c when not (Map.isEmpty c.Anchors) ->
+                        let anchors =
+                            c.Anchors |> Map.map (fun mesh a ->
+                                match Map.tryFind mesh deltas with
+                                | Some d -> { a with Point = d.Forward.TransformPos a.Point }
+                                | None -> a)
+                        ScanPin.withCorrespondence (Some { c with Anchors = anchors }) p
+                    | _ -> p)
+            { sp with Pins = pins }
+
+    let private regState (model : Model) : RegTransformState =
+        {
+            Transforms    = model.MeshTransforms
+            AlgoResiduals = model.MeshAlgorithmResidual
+            Log           = model.RegistrationLog
+        }
+
+    let private correspondenceEnabledIds (model : Model) =
+        model.ScanPins.Pins |> HashMap.toList
+        |> List.choose (fun (id, p) ->
+            match ScanPin.correspondence p with
+            | Some c when c.Enabled -> Some id
+            | _ -> None)
+
+    // §4 anchor auto-seed. refAnchor = pin centre (host = reference) or its
+    // closest-point projection onto the reference; per other loaded mesh, the
+    // closest point to the refAnchor. Accepted non-Auto anchors are never
+    // overwritten. One parallel fan-out; results land via AnchorsSeeded and
+    // open the review modal.
+    let private seedAnchors (env : Env<Message>) (model : Model) (pinIds : ScanPinId list) : Model =
+        match model.Registration.ReferenceMesh with
+        | None -> model
+        | Some refMesh ->
+            let pins =
+                pinIds
+                |> List.choose (fun id -> HashMap.tryFind id model.ScanPins.Pins)
+                |> List.filter (fun p ->
+                    ScanPin.correspondence p |> Option.map (fun c -> c.Enabled) |> Option.defaultValue false)
+            if List.isEmpty pins then model
+            else
+                let meshes = model.MeshNames |> IndexList.toList
+                let trafos =
+                    meshes |> List.map (fun m -> m, ModelTransforms.committedWorld model m) |> Map.ofList
+                let refT = Map.tryFind refMesh trafos |> Option.defaultValue Trafo3d.Identity
+                let jobs =
+                    pins |> List.map (fun pin ->
+                        let keep =
+                            match ScanPin.correspondence pin with
+                            | Some c ->
+                                c.Anchors |> Map.filter (fun _ a -> a.Accepted && a.Source <> AnchorAuto)
+                            | None -> Map.empty
+                        pin.Id, pin.Centre, pin.FalloffRadius, pin.HostMeshName, keep)
+                task {
+                    try
+                        let! perPin =
+                            jobs
+                            |> List.map (fun (pinId, centre, falloff, host, keep) -> async {
+                                let! refAnchor =
+                                    if host = Some refMesh then async.Return (Some (centre, 0.0))
+                                    else async {
+                                        try
+                                            let cOwn = refT.Backward.TransformPos centre
+                                            let! res = Query.closestPoint ApiConfig.apiBase.Value refMesh 0 cOwn
+                                            return res |> Option.map (fun r ->
+                                                let world = refT.Forward.TransformPos r.point
+                                                world, (world - centre).Length)
+                                        with _ -> return None
+                                    }
+                                match refAnchor with
+                                | None -> return (pinId, None, [||])
+                                | Some (ra, dist) ->
+                                    let targets =
+                                        meshes |> List.filter (fun m ->
+                                            m <> refMesh && not (Map.containsKey m keep))
+                                    let! candidates =
+                                        targets
+                                        |> List.map (fun mesh -> async {
+                                            let noProjection = {
+                                                PinId = pinId; Mesh = mesh; Point = ra
+                                                ProjectionDistance = System.Double.PositiveInfinity
+                                                FalloffRadius = falloff
+                                                Decision = AnchorReject
+                                            }
+                                            try
+                                                let t = Map.tryFind mesh trafos |> Option.defaultValue Trafo3d.Identity
+                                                let cOwn = t.Backward.TransformPos ra
+                                                let! res = Query.closestPoint ApiConfig.apiBase.Value mesh 0 cOwn
+                                                return
+                                                    match res with
+                                                    | Some r ->
+                                                        let world = t.Forward.TransformPos r.point
+                                                        {
+                                                            PinId = pinId; Mesh = mesh; Point = world
+                                                            ProjectionDistance = (world - ra).Length
+                                                            FalloffRadius = falloff
+                                                            Decision = AnchorUndecided
+                                                        }
+                                                    | None -> noProjection
+                                            with _ -> return noProjection
+                                        })
+                                        |> Async.Parallel
+                                    return (pinId, Some (ra, dist), candidates)
+                            })
+                            |> Async.Parallel
+                            |> Async.StartAsTask
+                        let refUpdates =
+                            perPin |> Array.choose (fun (pinId, raOpt, _) ->
+                                raOpt |> Option.map (fun (ra, d) -> pinId, ra, d))
+                        let candidates = perPin |> Array.collect (fun (_, _, cs) -> cs)
+                        env.Emit [AnchorsSeeded(refUpdates, candidates)]
+                    with ex ->
+                        env.Emit [AnchorSeedFailed ex.Message]
+                } |> ignore
+                { model with AnchorReview = AnchorReviewSeeding }
+
     let private updateCore (env : Env<Message>) (model : Model) (msg : Message) =
+        // §6 state guards: while a solve preview is pending, actions that
+        // would change what the preview is relative to are blocked.
+        let previewBlocked =
+            match msg with
+            | SetActiveDataset _ | ToggleFusionMode | StartRetarget _
+            | ScanPinMsg EnterAnchorPlacement ->
+                PendingRegistration.isPreview model.PendingReg
+            | _ -> false
+        if previewBlocked then
+            showToast env "Blocked while previewing a registration result — commit or discard it first" model
+        else
         match msg with
         | CameraMessage msg ->
             { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
@@ -116,12 +288,124 @@ module Update =
         | SetRegistrationMode m ->
             { model with Registration = { model.Registration with Mode = m } }
         | SetReferenceMesh mesh ->
-            invalidateProbes { model with Registration = { model.Registration with ReferenceMesh = mesh } }
-        | ResetMeshTransforms ->
-            invalidateProbes (invalidateRings
+            // §3: existing probe invalidation, plus clear any pending preview
+            // and re-run the auto-seed for all correspondence-enabled pins.
+            let model = exitPreview model
+            let model =
+                invalidateProbes { model with Registration = { model.Registration with ReferenceMesh = mesh } }
+            match mesh with
+            | Some _ -> seedAnchors env model (correspondenceEnabledIds model)
+            | None -> { model with AnchorReview = AnchorReviewIdle }
+
+        // Stage 1 · Coarse: weighted landmark solve per visible moving mesh
+        // with ≥3 accepted pairs, in parallel; results land in PendingReg.
+        | SolveCoarse ->
+            let reg = model.Registration
+            match reg.ReferenceMesh with
+            | None -> model
+            | Some refMesh ->
+                let visibleMoving =
+                    model.MeshNames |> IndexList.toList
+                    |> List.filter (fun n ->
+                        n <> refMesh
+                        && Map.tryFind n model.MeshVisible |> Option.defaultValue true)
+                let enabledPins =
+                    model.ScanPins.Pins |> HashMap.toList
+                    |> List.choose (fun (_, p) ->
+                        match ScanPin.correspondence p with
+                        | Some c when c.Enabled && c.RefAnchor.IsSome && p.Phase = PinPhase.Committed ->
+                            let rel =
+                                match p.Payload with
+                                | Point pp -> pp.ReliabilityWeight
+                                | _ -> 1.0
+                            Some (p.Id, c.RefAnchor.Value, rel, c.Anchors)
+                        | _ -> None)
+                let pairsFor mesh =
+                    enabledPins
+                    |> List.choose (fun (pinId, ra, rel, anchors) ->
+                        match Map.tryFind mesh anchors with
+                        | Some a when a.Accepted -> Some (pinId, ra, a.Point, rel)
+                        | _ -> None)
+                    |> Array.ofList
+                let solvable, unsolved =
+                    visibleMoving |> List.partition (fun m -> (pairsFor m).Length >= 3)
+                if List.isEmpty solvable then model
+                else
+                    let inputs =
+                        CoarseInputs (
+                            enabledPins
+                            |> List.map (fun (pinId, _, rel, anchors) ->
+                                pinId, rel, anchors |> Map.filter (fun _ a -> a.Accepted) |> Map.map (fun _ a -> a.Source))
+                            |> Array.ofList)
+                    for mesh in solvable do
+                        let pairs = pairsFor mesh
+                        let pinIds = pairs |> Array.map (fun (pinId, _, _, _) -> pinId)
+                        let wSum = pairs |> Array.sumBy (fun (_, _, _, w) -> max 0.0 w)
+                        let rmsBefore =
+                            if wSum <= 1e-12 then
+                                sqrt ((pairs |> Array.sumBy (fun (_, ra, mp, _) -> (mp - ra).LengthSquared)) / float pairs.Length)
+                            else
+                                sqrt ((pairs |> Array.sumBy (fun (_, ra, mp, w) -> max 0.0 w * (mp - ra).LengthSquared)) / wSum)
+                        let queryPairs = pairs |> Array.map (fun (_, ra, mp, w) -> ra, mp, w)
+                        task {
+                            try
+                                let! delta, residuals, _eigen, collinear =
+                                    Query.lsqPairs ApiConfig.apiBase.Value mesh queryPairs
+                                    |> Async.StartAsTask
+                                let pairResiduals = Array.zip pinIds residuals
+                                env.Emit [CoarseSolved(mesh, delta, pairResiduals, rmsBefore, collinear)]
+                            with ex ->
+                                env.Emit [CoarseFailed(mesh, ex.Message)]
+                        } |> ignore
+                    { model with
+                        PendingReg = Some {
+                            Stage    = StageCoarse
+                            Mode     = "landmarks"
+                            Inputs   = inputs
+                            Results  = Map.empty
+                            Unsolved = unsolved
+                            Expected = List.length solvable }
+                        Registration = { reg with Running = true } }
+        | CoarseSolved(mesh, worldDelta, pairResiduals, rmsBefore, collinear) ->
+            match model.PendingReg with
+            | Some pr when pr.Stage = StageCoarse ->
+                let scale = DatasetScale.forMesh model.DatasetScales mesh
+                let deltaRender =
+                    RigidTransform.worldToRender scale model.CommonCentroid (Trafo3d(worldDelta, worldDelta.Inverse))
+                let rmsAfter =
+                    if pairResiduals.Length = 0 then 0.0
+                    else sqrt ((pairResiduals |> Array.sumBy (fun (_, r) -> r * r)) / float pairResiduals.Length)
+                let result = {
+                    Delta         = deltaRender
+                    RmsBefore     = rmsBefore
+                    RmsAfter      = rmsAfter
+                    Convergence   = [||]
+                    Collinear     = collinear
+                    PairResiduals = pairResiduals
+                }
+                let pr' = { pr with Results = Map.add mesh result pr.Results; Expected = max 0 (pr.Expected - 1) }
+                let sp =
+                    pairResiduals |> Array.fold (fun sp (pinId, r) ->
+                        updateCorr pinId (fun c -> { c with Residuals = Map.add mesh r c.Residuals }) sp)
+                        model.ScanPins
+                clearPreviewProbes (invalidateRings
+                    { model with
+                        PendingReg = Some pr'
+                        ScanPins = sp
+                        Registration = { model.Registration with Running = pr'.Expected > 0 } })
+            | _ -> model
+        | CoarseFailed(mesh, reason) ->
+            match model.PendingReg with
+            | Some pr when pr.Stage = StageCoarse ->
+                let pr' = { pr with Unsolved = mesh :: pr.Unsolved; Expected = max 0 (pr.Expected - 1) }
                 { model with
-                    MeshTransforms = Map.empty
-                    Registration = { model.Registration with Running = false } })
+                    PendingReg = Some pr'
+                    DebugLog = model.DebugLog.InsertAt(0, sprintf "coarse solve failed (%s): %s" mesh reason)
+                    Registration = { model.Registration with Running = pr'.Expected > 0 } }
+            | _ -> model
+
+        // Stage 2 · Fine: the existing ICP, unchanged math, but solves land in
+        // PendingReg as a delta relative to the committed transform.
         | RunRegistration ->
             let reg = model.Registration
             match reg.ReferenceMesh with
@@ -135,62 +419,418 @@ module Update =
                     |> Array.ofSeq
                 if visibleMeshes.Length = 0 then model
                 else
-                    let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
-                    let cc = model.CommonCentroid
+                    let anchorPins =
+                        model.ScanPins.Pins |> HashMap.toSeq
+                        |> Seq.choose (fun (_, pin) ->
+                            if pin.Phase = PinPhase.Committed then
+                                // pin.Centre and pin.FalloffRadius are
+                                // already world-space metres.
+                                let w =
+                                    match pin.Payload with
+                                    | Point pp -> pp.ReliabilityWeight
+                                    | _ -> 1.0
+                                Some (pin.Id, (pin.Centre, pin.FalloffRadius, w))
+                            else None)
+                        |> Array.ofSeq
                     let anchors =
                         match reg.Mode with
                         | TraditionalIcp -> [||]
-                        | RegionRestrictedIcp ->
-                            model.ScanPins.Pins |> HashMap.toSeq
-                            |> Seq.choose (fun (_, pin) ->
-                                if pin.Phase = PinPhase.Committed then
-                                    // pin.Centre and pin.FalloffRadius are
-                                    // already world-space metres.
-                                    let w =
-                                        match pin.Payload with
-                                        | Point pp -> pp.ReliabilityWeight
-                                        | _ -> 1.0
-                                    Some (pin.Centre, pin.FalloffRadius, w)
-                                else None)
-                            |> Array.ofSeq
+                        | RegionRestrictedIcp -> anchorPins |> Array.map snd
                     let eps =
                         match reg.Mode with
                         | TraditionalIcp -> 0.0
                         | RegionRestrictedIcp -> 0.05
+                    let modeTag =
+                        match reg.Mode with
+                        | TraditionalIcp -> "traditional-icp"
+                        | RegionRestrictedIcp -> "region-icp"
                     for mov in visibleMeshes do
-                        let initial =
-                            Map.tryFind mov model.MeshTransforms
-                            |> Option.map (fun t -> (RigidTransform.renderToWorld scale cc t).Forward)
-                            |> Option.defaultValue M44d.Identity
+                        let initial = (ModelTransforms.committedWorld model mov).Forward
                         let movName = mov
                         task {
                             try
                                 let! trafo, conv, resi =
                                     Query.runIcp ApiConfig.apiBase.Value refMesh movName initial 50 30 anchors eps
                                     |> Async.StartAsTask
-                                env.Emit [RegistrationComplete(movName, trafo, conv, resi)]
+                                env.Emit [FineSolved(movName, trafo, conv, resi)]
                             with ex ->
-                                env.Emit [RegistrationFailed (sprintf "%s: %s" movName ex.Message)]
+                                env.Emit [FineFailed(movName, ex.Message)]
                         } |> ignore
-                    { model with Registration = { reg with Running = true } }
-        | RegistrationComplete(mesh, trafo, _conv, resi) ->
-            let meshScale = DatasetScale.forMesh model.DatasetScales mesh
-            let renderTrafo = RigidTransform.worldToRender meshScale model.CommonCentroid trafo
-            let mt = Map.add mesh renderTrafo model.MeshTransforms
-            let meshRms =
-                if resi.Length = 0 then 0.0
-                else sqrt ((resi |> Array.sumBy (fun x -> x * x)) / float resi.Length)
-            let algoMap = Map.add mesh meshRms model.MeshAlgorithmResidual
-            invalidateProbes (invalidateRings
+                    { model with
+                        PendingReg = Some {
+                            Stage    = StageFine
+                            Mode     = modeTag
+                            Inputs   = FineInputs(modeTag, (match reg.Mode with
+                                                            | RegionRestrictedIcp -> anchorPins |> Array.map fst
+                                                            | TraditionalIcp -> [||]))
+                            Results  = Map.empty
+                            Unsolved = []
+                            Expected = visibleMeshes.Length }
+                        Registration = { reg with Running = true } }
+        | FineSolved(mesh, world, conv, resi) ->
+            match model.PendingReg with
+            | Some pr when pr.Stage = StageFine ->
+                // ICP returns the full world transform (it iterates from the
+                // committed initial); the pending entry stores the delta.
+                let committedW = ModelTransforms.committedWorld model mesh
+                let deltaW = committedW.Inverse * world
+                let scale = DatasetScale.forMesh model.DatasetScales mesh
+                let deltaRender = RigidTransform.worldToRender scale model.CommonCentroid deltaW
+                let rmsAfter =
+                    if resi.Length = 0 then 0.0
+                    else sqrt ((resi |> Array.sumBy (fun x -> x * x)) / float resi.Length)
+                let rmsBefore = if conv.Length > 0 then conv.[0] else rmsAfter
+                let result = {
+                    Delta         = deltaRender
+                    RmsBefore     = rmsBefore
+                    RmsAfter      = rmsAfter
+                    Convergence   = conv
+                    Collinear     = false
+                    PairResiduals = [||]
+                }
+                let pr' = { pr with Results = Map.add mesh result pr.Results; Expected = max 0 (pr.Expected - 1) }
+                clearPreviewProbes (invalidateRings
+                    { model with
+                        PendingReg = Some pr'
+                        Registration = { model.Registration with Running = pr'.Expected > 0 } })
+            | _ -> model
+        | FineFailed(mesh, reason) ->
+            match model.PendingReg with
+            | Some pr when pr.Stage = StageFine ->
+                let pr' = { pr with Unsolved = mesh :: pr.Unsolved; Expected = max 0 (pr.Expected - 1) }
                 { model with
-                    MeshTransforms = mt
-                    MeshAlgorithmResidual = algoMap
+                    PendingReg = Some pr'
+                    DebugLog = model.DebugLog.InsertAt(0, sprintf "fine solve failed (%s): %s" mesh reason)
+                    Registration = { model.Registration with Running = pr'.Expected > 0 } }
+            | _ -> model
+
+        | CommitRegistration ->
+            match model.PendingReg with
+            | Some pr when not (Map.isEmpty pr.Results) ->
+                let refMesh = model.Registration.ReferenceMesh |> Option.defaultValue ""
+                let step = RegLog.buildStep System.DateTime.UtcNow refMesh pr (regState model)
+                let st' = RegLog.commit step (regState model)
+                let worldDeltas =
+                    step.Outputs |> Map.map (fun mesh o ->
+                        ModelTransforms.worldDelta model mesh o.TransformBefore o.TransformAfter)
+                let model =
+                    { model with
+                        MeshTransforms = st'.Transforms
+                        MeshAlgorithmResidual = st'.AlgoResiduals
+                        RegistrationLog = st'.Log
+                        ScanPins = bakeAnchors worldDeltas model.ScanPins
+                        Registration = { model.Registration with Running = false } }
+                // Registration-complete cascade: all probes + contact rings +
+                // algorithm RMS (already swapped in above).
+                invalidateProbes (exitPreview model)
+            | _ -> model
+        | DiscardRegistration ->
+            // Spec §1: discard clears the pending delta only — committed
+            // probes stay valid; rings recompute back at the committed pose.
+            { exitPreview model with Registration = { model.Registration with Running = false } }
+        | RollbackRegStep ->
+            match RegLog.rollback (regState model) with
+            | Some (st', step) ->
+                let worldDeltas =
+                    step.Outputs |> Map.map (fun mesh o ->
+                        // inverse of the committed delta: after → before
+                        ModelTransforms.worldDelta model mesh o.TransformAfter o.TransformBefore)
+                let model =
+                    { model with
+                        MeshTransforms = st'.Transforms
+                        MeshAlgorithmResidual = st'.AlgoResiduals
+                        RegistrationLog = st'.Log
+                        ScanPins = bakeAnchors worldDeltas model.ScanPins }
+                invalidateProbes (exitPreview model)
+            | None -> model
+        | ResetRegistration ->
+            // Roll back every logged step (un-baking anchors step by step),
+            // then drop any unlogged leftovers (legacy workspaces) so the end
+            // state is identity transforms + empty log, per spec §8.4.
+            let rec rollAll (model : Model) =
+                match RegLog.rollback (regState model) with
+                | Some (st', step) ->
+                    let worldDeltas =
+                        step.Outputs |> Map.map (fun mesh o ->
+                            ModelTransforms.worldDelta model mesh o.TransformAfter o.TransformBefore)
+                    rollAll
+                        { model with
+                            MeshTransforms = st'.Transforms
+                            MeshAlgorithmResidual = st'.AlgoResiduals
+                            RegistrationLog = st'.Log
+                            ScanPins = bakeAnchors worldDeltas model.ScanPins }
+                | None -> model
+            let model = rollAll model
+            invalidateProbes (exitPreview
+                { model with
+                    MeshTransforms = Map.empty
+                    MeshAlgorithmResidual = Map.empty
                     Registration = { model.Registration with Running = false } })
-        | RegistrationFailed err ->
-            let log = model.DebugLog.InsertAt(0, sprintf "registration failed: %s" err)
+
+        // Correspondence anchors (spec §4) + fallback picks (§8.1/§8.2).
+        | ToggleCorrespondence pinId ->
+            match HashMap.tryFind pinId model.ScanPins.Pins with
+            | Some pin ->
+                match pin.Payload with
+                | Point pp ->
+                    let next =
+                        match pp.Correspondence with
+                        | Some c -> { c with Enabled = not c.Enabled }
+                        | None -> Correspondence.empty
+                    let sp =
+                        { model.ScanPins with
+                            Pins = HashMap.add pinId { pin with Payload = Point { pp with Correspondence = Some next } } model.ScanPins.Pins }
+                    let model = { model with ScanPins = sp }
+                    if next.Enabled then
+                        if model.Registration.ReferenceMesh.IsSome then seedAnchors env model [pinId]
+                        else showToast env "Designate a reference mesh (★) to seed anchors" model
+                    else model
+                | _ -> model
+            | None -> model
+        | AnchorsSeeded(refUpdates, candidates) ->
+            let sp =
+                refUpdates |> Array.fold (fun sp (pinId, ra, dist) ->
+                    updateCorr pinId (fun c -> { c with RefAnchor = Some ra; RefDistance = dist }) sp)
+                    model.ScanPins
+            // Seeded anchors land immediately (Auto, unaccepted); the review
+            // modal then flips `accepted` per decision.
+            let sp =
+                candidates |> Array.fold (fun sp c ->
+                    if System.Double.IsInfinity c.ProjectionDistance then sp
+                    else
+                        updateCorr c.PinId (fun corr ->
+                            { corr with Anchors = Map.add c.Mesh { Point = c.Point; Source = AnchorAuto; Accepted = false } corr.Anchors }) sp)
+                    sp
             { model with
-                DebugLog = log
-                Registration = { model.Registration with Running = false } }
+                ScanPins = sp
+                AnchorReview = if candidates.Length > 0 then AnchorReviewing candidates else AnchorReviewIdle }
+        | AnchorSeedFailed reason ->
+            { model with
+                AnchorReview = AnchorReviewIdle
+                DebugLog = model.DebugLog.InsertAt(0, sprintf "anchor seeding failed: %s" reason) }
+        | SetAnchorDecision(pinId, mesh, decision) ->
+            match model.AnchorReview with
+            | AnchorReviewing cs ->
+                let updated =
+                    cs |> Array.map (fun c ->
+                        if c.PinId = pinId && c.Mesh = mesh then { c with Decision = decision } else c)
+                { model with AnchorReview = AnchorReviewing updated }
+            | _ -> model
+        | ApplyAnchorReview ->
+            match model.AnchorReview with
+            | AnchorReviewing cs ->
+                let sp =
+                    cs |> Array.fold (fun sp c ->
+                        if c.Decision = AnchorAccept && not (System.Double.IsInfinity c.ProjectionDistance) then
+                            setAnchor c.PinId c.Mesh c.Point AnchorAuto sp
+                        else sp)
+                        model.ScanPins
+                { model with ScanPins = sp; AnchorReview = AnchorReviewIdle }
+            | _ -> model
+        | CancelAnchorReview ->
+            { model with AnchorReview = AnchorReviewIdle }
+        | SetAnchor(pinId, mesh, point, source) ->
+            { model with ScanPins = setAnchor pinId mesh point source model.ScanPins }
+        | StartAnchorPick(pinId, mesh) ->
+            if PendingRegistration.isPreview model.PendingReg then
+                showToast env "Anchor picking is disabled while a solve preview is pending" model
+            else
+                { model with AnchorPick = Some { PinId = pinId; Mesh = mesh } }
+        | CancelAnchorPick ->
+            { model with AnchorPick = None }
+        | AnchorPickHit world ->
+            match model.AnchorPick with
+            | Some ap ->
+                let sp = setAnchor ap.PinId ap.Mesh world AnchorPick3D model.ScanPins
+                // Auto-advance to the next mesh (panel order, continuing after
+                // the current one) with an unaccepted anchor for this pin.
+                let next =
+                    match HashMap.tryFind ap.PinId sp.Pins |> Option.bind ScanPin.correspondence with
+                    | Some corr ->
+                        let refMesh = model.Registration.ReferenceMesh
+                        let meshes = model.MeshNames |> IndexList.toList
+                        let candidates =
+                            match List.tryFindIndex ((=) ap.Mesh) meshes with
+                            | Some i -> List.skip (i + 1) meshes @ List.truncate i meshes
+                            | None -> meshes
+                        candidates
+                        |> List.tryFind (fun m ->
+                            Some m <> refMesh && m <> ap.Mesh
+                            && (match Map.tryFind m corr.Anchors with
+                                | Some a -> not a.Accepted
+                                | None -> false))
+                    | None -> None
+                { model with
+                    ScanPins = sp
+                    AnchorPick = next |> Option.map (fun m -> { ap with Mesh = m }) }
+            | None -> model
+
+        // Patch small-multiples picker (spec §7.2).
+        | OpenPatchPicker pinId ->
+            if PendingRegistration.isPreview model.PendingReg then
+                showToast env "Patch picking is disabled while a solve preview is pending" model
+            else
+                let pinOpt = HashMap.tryFind pinId model.ScanPins.Pins
+                let refMeshOpt = model.Registration.ReferenceMesh
+                match pinOpt, refMeshOpt with
+                | Some pin, Some refMesh ->
+                    let refAnchor =
+                        ScanPin.correspondence pin
+                        |> Option.bind (fun c -> c.RefAnchor)
+                        |> Option.defaultValue pin.Centre
+                    let radius = pin.InnerRadius
+                    let visible =
+                        model.MeshNames |> IndexList.toList
+                        |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
+                    let trafos =
+                        (model.MeshNames |> IndexList.toList)
+                        |> List.map (fun m -> m, ModelTransforms.committedWorld model m)
+                        |> Map.ofList
+                    let anchorOf mesh =
+                        ScanPin.correspondence pin
+                        |> Option.bind (fun c -> Map.tryFind mesh c.Anchors)
+                        |> Option.map (fun a -> a.Point)
+                    let atlasUrl (mesh : string) =
+                        let i = mesh.IndexOf '/'
+                        if i < 0 then ""
+                        else
+                            sprintf "%s/datasets/%s/mesh/%s/0/atlas"
+                                (ApiConfig.apiBase.Value.TrimEnd('/')) (mesh.[.. i - 1]) (mesh.[i + 1 ..])
+                    patchPickerCts.Cancel()
+                    patchPickerCts <- new System.Threading.CancellationTokenSource()
+                    let token = patchPickerCts.Token
+                    task {
+                        try
+                            do! System.Threading.Tasks.Task.Delay(250, token)
+                            // Reference patch first — its fitted frame becomes
+                            // the shared frame for every other mesh.
+                            let refT = Map.tryFind refMesh trafos |> Option.defaultValue Trafo3d.Identity
+                            let cRef = refT.Backward.TransformPos refAnchor
+                            let! refPts, refDirM, normalM =
+                                Query.patchInFrame ApiConfig.apiBase.Value refMesh cRef radius 800 None
+                                |> Async.StartAsTask
+                            let normalW = (refT.Forward.TransformDir normalM).Normalized
+                            let refDirW =
+                                let r = refT.Forward.TransformDir refDirM
+                                let proj = r - normalW * Vec.dot r normalW
+                                if proj.Length > 1e-9 then proj.Normalized else V3d.OIO
+                            let leftW = Vec.cross normalW refDirW
+                            let refEntry = {
+                                Mesh      = refMesh
+                                Centre    = refAnchor
+                                Points    =
+                                    refPts |> Array.map (fun (uv2, wp, atlasUv) ->
+                                        let world = refT.Forward.TransformPos wp
+                                        uv2, Vec.dot (world - refAnchor) normalW, atlasUv)
+                                Crosshair = V2d.Zero
+                                AtlasUrl  = atlasUrl refMesh
+                            }
+                            let! moving =
+                                visible
+                                |> List.filter ((<>) refMesh)
+                                |> List.map (fun mesh -> async {
+                                    try
+                                        let t = Map.tryFind mesh trafos |> Option.defaultValue Trafo3d.Identity
+                                        let! centreW =
+                                            match anchorOf mesh with
+                                            | Some p -> async.Return (Some p)
+                                            | None -> async {
+                                                // Auto seed if no anchor yet.
+                                                let! res =
+                                                    Query.closestPoint ApiConfig.apiBase.Value mesh 0
+                                                        (t.Backward.TransformPos refAnchor)
+                                                return res |> Option.map (fun r -> t.Forward.TransformPos r.point)
+                                              }
+                                        match centreW with
+                                        | None -> return None
+                                        | Some cw ->
+                                            let frame =
+                                                (t.Backward.TransformDir normalW),
+                                                (t.Backward.TransformDir refDirW)
+                                            let! pts, _, _ =
+                                                Query.patchInFrame ApiConfig.apiBase.Value mesh
+                                                    (t.Backward.TransformPos cw) radius 800 (Some frame)
+                                            let points =
+                                                pts |> Array.map (fun (uv2, wp, atlasUv) ->
+                                                    let world = t.Forward.TransformPos wp
+                                                    uv2, Vec.dot (world - cw) normalW, atlasUv)
+                                            let cross =
+                                                V2d(Vec.dot (refAnchor - cw) refDirW,
+                                                    Vec.dot (refAnchor - cw) leftW)
+                                            return Some {
+                                                Mesh = mesh; Centre = cw; Points = points
+                                                Crosshair = cross; AtlasUrl = atlasUrl mesh
+                                            }
+                                    with _ -> return None
+                                })
+                                |> Async.Parallel
+                                |> Async.StartAsTask
+                            if not token.IsCancellationRequested then
+                                let entries = refEntry :: (moving |> Array.choose id |> List.ofArray)
+                                env.Emit [PatchPickerReady(pinId, normalW, refDirW, radius, entries)]
+                        with
+                        | :? System.OperationCanceledException -> ()
+                        | ex ->
+                            if not token.IsCancellationRequested then
+                                env.Emit [PatchPickerFailed ex.Message]
+                    } |> ignore
+                    { model with
+                        PatchPicker = Some {
+                            PinId = pinId; Normal = V3d.OOI; RefDir = V3d.OIO
+                            Radius = radius; Entries = []; Running = true
+                            Shaded = (model.PatchPicker |> Option.map (fun p -> p.Shaded) |> Option.defaultValue false) } }
+                | _ -> showToast env "Patch picking needs a reference mesh (★)" model
+        | ClosePatchPicker ->
+            patchPickerCts.Cancel()
+            { model with PatchPicker = None }
+        | TogglePatchShaded ->
+            match model.PatchPicker with
+            | Some pp -> { model with PatchPicker = Some { pp with Shaded = not pp.Shaded } }
+            | None -> model
+        | PatchPickerReady(pinId, normal, refDir, radius, entries) ->
+            match model.PatchPicker with
+            | Some pp when pp.PinId = pinId ->
+                { model with
+                    PatchPicker = Some { pp with Normal = normal; RefDir = refDir; Radius = radius; Entries = entries; Running = false } }
+            | _ -> model
+        | PatchPickerFailed reason ->
+            match model.PatchPicker with
+            | Some pp ->
+                showToast env (sprintf "Patch sampling failed: %s" reason)
+                    { model with PatchPicker = Some { pp with Running = false } }
+            | None -> model
+        | PatchPickerClick(mesh, u, v) ->
+            match model.PatchPicker with
+            | Some pp ->
+                match pp.Entries |> List.tryFind (fun e -> e.Mesh = mesh) with
+                | Some entry when Some mesh <> model.Registration.ReferenceMesh ->
+                    // (u,v) → world ray from above the patch, straight down
+                    // the shared frame normal, against this mesh only.
+                    let left = Vec.cross pp.Normal pp.RefDir
+                    let origin = entry.Centre + pp.RefDir * u + left * v + pp.Normal * pp.Radius
+                    let direction = -pp.Normal
+                    let t = ModelTransforms.committedWorld model mesh
+                    let oM = t.Backward.TransformPos origin
+                    let dM = t.Backward.TransformDir direction
+                    let pinId = pp.PinId
+                    task {
+                        try
+                            let! hit = Query.rayHit ApiConfig.apiBase.Value mesh 0 oM dM |> Async.StartAsTask
+                            match hit with
+                            | Some h ->
+                                env.Emit [SetAnchor(pinId, mesh, t.Forward.TransformPos h.point, AnchorPatch2D)]
+                            | None ->
+                                env.Emit [ShowToast "No surface under that patch point"]
+                        with ex ->
+                            env.Emit [ShowToast (sprintf "Patch pick failed: %s" ex.Message)]
+                    } |> ignore
+                    model
+                | _ -> model
+            | None -> model
+        | ShowToast text ->
+            showToast env text model
+        | ClearToast ->
+            if model.Toast.IsNone then model else { model with Toast = None }
 
         | SetMeshSensorType(name, sensor) ->
             { model with MeshSensorTypes = Map.add name sensor model.MeshSensorTypes }
@@ -198,8 +838,15 @@ module Update =
             match valueOpt with
             | Some v -> { model with MeshDatasetErrors = Map.add name v model.MeshDatasetErrors }
             | None -> { model with MeshDatasetErrors = Map.remove name model.MeshDatasetErrors }
-        | ToggleProvenanceHeatmap ->
-            { model with ProvenanceHeatmap = not model.ProvenanceHeatmap }
+        | SetHeatmapMode m ->
+            match m with
+            | HeatDiff when not (PendingRegistration.isPreview model.PendingReg) ->
+                model
+            | HeatDiff ->
+                let prev = match model.HeatmapMode with HeatDiff -> model.HeatmapPrev | cur -> cur
+                { model with HeatmapMode = HeatDiff; HeatmapPrev = prev }
+            | m ->
+                { model with HeatmapMode = m; HeatmapPrev = m }
         | SetProvenanceThreshold v ->
             { model with ProvenanceThreshold = v }
         | ToggleFalloffZoneOnly ->
@@ -248,6 +895,12 @@ module Update =
                     LassoDrawing = None
                     LassoVolume = None
                     LassoEnabled = true
+                    PendingReg = None
+                    AnchorReview = AnchorReviewIdle
+                    AnchorPick = None
+                    PatchPicker = None
+                    Toast = None
+                    HeatmapMode = (match model.HeatmapMode with HeatDiff -> model.HeatmapPrev | m -> m)
                     CardSystem = { model.CardSystem with Cards = model.CardSystem.Cards |> HashMap.map (fun _ c -> { c with Visible = false }) } }
         | SetDatasetScale(dataset, scale) ->
             { model with DatasetScales = Map.add dataset scale model.DatasetScales }
@@ -440,6 +1093,7 @@ module Update =
             match model.Retarget with
             | RetargetReviewing cs ->
                 let mutable pins = model.ScanPins.Pins
+                let mutable moved = []
                 for c in cs do
                     if c.Decision = RetargetAccept then
                         match HashMap.tryFind c.PinId pins with
@@ -451,10 +1105,15 @@ module Update =
                                     Probe = ProbeNone
                                     ContactRings = RingsNone }
                             pins <- HashMap.add c.PinId p' pins
+                            moved <- c.PinId :: moved
                         | None -> ()
-                { model with
-                    ScanPins = { model.ScanPins with Pins = pins }
-                    Retarget = RetargetIdle }
+                let model =
+                    { model with
+                        ScanPins = { model.ScanPins with Pins = pins }
+                        Retarget = RetargetIdle }
+                // §4 re-seed trigger: a moved pin re-seeds its refAnchor and
+                // its Auto/unaccepted anchors (accepted manual picks survive).
+                seedAnchors env model moved
             | _ -> model
         | CancelRetarget ->
             { model with Retarget = RetargetIdle }
@@ -476,14 +1135,10 @@ module Update =
                 let radius =
                     if model.SceneBounds.IsInvalid then 5.0
                     else max 0.5 (model.SceneBounds.Size.Length * 0.05)
-                let cc = model.CommonCentroid
+                // Effective transforms: under a pending preview the hover
+                // probe reflects what is on screen.
                 let meshes =
-                    visible |> List.map (fun n ->
-                        let t =
-                            match Map.tryFind n model.MeshTransforms with
-                            | Some rt -> (RigidTransform.renderToWorld (DatasetScale.forMesh model.DatasetScales n) cc rt).Forward
-                            | None -> M44d.Identity
-                        n, t)
+                    visible |> List.map (fun n -> n, (ModelTransforms.effectiveWorld model n).Forward)
                 hoverProbeCts.Cancel()
                 hoverProbeCts <- new System.Threading.CancellationTokenSource()
                 let token = hoverProbeCts.Token
@@ -552,4 +1207,5 @@ module Update =
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
         |> ScanPinUpdate.ensureProbe env
+        |> ScanPinUpdate.ensureProbePreview env
         |> ScanPinUpdate.ensureRings env

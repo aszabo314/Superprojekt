@@ -5,9 +5,8 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Adaptify
 
-[<RequireQualifiedAccess>]
-type ScanPinId = ScanPinId of Guid with
-    static member create () = ScanPinId (Guid.NewGuid())
+// ScanPinId moved to RegistrationModel.fs (shared with the registration
+// types so the pure registration state machine stays WASM-free for tests).
 
 [<RequireQualifiedAccess>]
 type PinPhase =
@@ -23,6 +22,9 @@ type CameraSnapshot = {
 
 type PointPayload = {
     ReliabilityWeight : float
+    // Ensemble-registration correspondence (spec: extends the Point payload,
+    // not a new payload type). None = never enabled.
+    Correspondence    : Correspondence option
 }
 
 type LineMode =
@@ -65,7 +67,7 @@ module PayloadType =
     let defaultFor (radius : float) (centre : V3d) (host : string option) (kind : PayloadKind) =
         match kind with
         | PointKind ->
-            Point { ReliabilityWeight = 1.0 }
+            Point { ReliabilityWeight = 1.0; Correspondence = None }
         | LineKind ->
             Line {
                 Mode            = ElevationIsoline centre.Z
@@ -109,6 +111,9 @@ type ScanPin = {
     CreatedAt            : DateTime
     DatasetColors        : Map<string, C4b>
     Probe                : ProbeState
+    // Second probe under the effective preview transforms while a
+    // registration solve is pending (split violin). Never persisted.
+    ProbePreview         : ProbeState
     ProbeLengthOverride  : float option
     ProbeLockOrder       : bool
     ProbeXRange          : ProbeXRange
@@ -162,6 +167,14 @@ module ScanPinModel =
                 | _ -> { p with ContactRings = RingsNone })
         { sp with Pins = pins }
 
+    let invalidatePreviewProbes (sp : ScanPinModel) =
+        let pins =
+            sp.Pins |> HashMap.map (fun _ p ->
+                match p.ProbePreview with
+                | ProbeNone -> p
+                | _ -> { p with ProbePreview = ProbeNone })
+        { sp with Pins = pins }
+
 module ScanPin =
     // World-space (metric) → render-space (post centroid translate, post scale).
     let renderCentre (commonCentroid : V3d) (datasetScale : float) (worldCentre : V3d) =
@@ -182,6 +195,25 @@ module ScanPin =
             match p.Payload with
             | Patch pp when pp.NormalWorld.Length > 1e-9 -> pp.NormalWorld.Normalized
             | _ -> V3d.OOI
+
+    let correspondence (p : ScanPin) =
+        match p.Payload with
+        | Point pp -> pp.Correspondence
+        | _ -> None
+
+    let withCorrespondence (c : Correspondence option) (p : ScanPin) =
+        match p.Payload with
+        | Point pp -> { p with Payload = Point { pp with Correspondence = c } }
+        | _ -> p
+
+    // The probe that matches what's on screen: the preview probe while a
+    // registration preview is pending (and ready), the committed one otherwise.
+    let effectiveProbe (previewPending : bool) (p : ScanPin) =
+        if previewPending then
+            match p.ProbePreview with
+            | ProbeReady _ -> p.ProbePreview
+            | _ -> p.Probe
+        else p.Probe
 
 // Elevation cursor driven by hovering a pin card's violin chart: a signed
 // distance (metres) along the pin's probe axis. Extended = Alt held, the 3D

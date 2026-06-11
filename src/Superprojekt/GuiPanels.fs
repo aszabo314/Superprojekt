@@ -351,8 +351,23 @@ module GuiPanels =
                 collapsibleSection "Error provenance" false (
                     div {
                         Class "lp-prov-body"
-                        compactToggle "Show heatmap" model.ProvenanceHeatmap (fun () ->
-                            env.Emit [ToggleProvenanceHeatmap])
+                        let mode = model.HeatmapMode
+                        let previewOn = model.PendingReg |> AVal.map PendingRegistration.isPreview
+                        compactButtonBar [
+                            "Off",     mode |> AVal.map ((=) HeatOff),
+                                (fun () -> env.Emit [SetHeatmapMode HeatOff])
+                            "Sources", mode |> AVal.map ((=) HeatProvenance),
+                                (fun () -> env.Emit [SetHeatmapMode HeatProvenance])
+                            // Diff needs a pending solve preview to diff against.
+                            "Diff",    mode |> AVal.map ((=) HeatDiff),
+                                (fun () ->
+                                    if AVal.force previewOn then env.Emit [SetHeatmapMode HeatDiff])
+                        ]
+                        div {
+                            Class "lp-sublabel-hint"
+                            showWhenNot previewOn
+                            "Diff needs a pending registration preview."
+                        }
                         compactToggle "Falloff zones only" model.FalloffZoneOnly (fun () ->
                             env.Emit [ToggleFalloffZoneOnly])
                         inlineLogSlider "Threshold" 0.0001 10.0 (fun v ->

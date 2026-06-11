@@ -114,6 +114,65 @@ module Query =
             return trafo, conv, resi
         }
 
+    // Weighted rigid landmark solve (coarse registration). pairs =
+    // (refPoint, movingPoint, weight) in world space at current poses.
+    // Returns (worldDelta, perPairResiduals, covEigenvalues, collinearityWarning).
+    let lsqPairs (serverUrl : string) (movingName : string) (pairs : (V3d * V3d * float)[])
+            : Async<M44d * float[] * float[] * bool> =
+        async {
+            let pairJson =
+                pairs
+                |> Array.map (fun (r, m, w) ->
+                    sprintf """{"refPoint":%s,"movingPoint":%s,"weight":%.17g}""" (v3 r) (v3 m) w)
+                |> String.concat ","
+            let json = sprintf """{"movingName":"%s","pairs":[%s]}""" movingName pairJson
+            let! r = post serverUrl "/query/lsq-pairs" json
+            let tf =
+                r.GetProperty("transform").EnumerateArray()
+                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+            let delta =
+                M44d(tf.[0],  tf.[1],  tf.[2],  tf.[3],
+                     tf.[4],  tf.[5],  tf.[6],  tf.[7],
+                     tf.[8],  tf.[9],  tf.[10], tf.[11],
+                     tf.[12], tf.[13], tf.[14], tf.[15])
+            let residuals =
+                r.GetProperty("perPairResiduals").EnumerateArray()
+                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+            let cond = r.GetProperty("conditioning")
+            let eigen =
+                cond.GetProperty("eigenvalues").EnumerateArray()
+                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+            let collinear = cond.GetProperty("collinearityWarning").GetBoolean()
+            return delta, residuals, eigen, collinear
+        }
+
+    // Patch sampler with the shared-frame override and per-point atlas UVs
+    // (patch small-multiples picker). frame directions are in the mesh's own
+    // frame; pass None for the reference patch (local plane fit).
+    let patchInFrame
+            (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int)
+            (frame : (V3d * V3d) option)
+            : Async<(V2d * V3d * V2d)[] * V3d * V3d> =
+        async {
+            let frameJson =
+                match frame with
+                | Some (n, r) -> sprintf ""","frameNormal":%s,"frameRefDir":%s""" (v3 n) (v3 r)
+                | None -> ""
+            let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d%s}"""
+                        name (v3 centre) radius maxPoints frameJson
+            let! r = post serverUrl "/query/patch" json
+            let pts =
+                r.GetProperty("points").EnumerateArray() |> Seq.map (fun e ->
+                    let a = e.EnumerateArray() |> Seq.map (fun v -> v.GetDouble()) |> Seq.toArray
+                    let uv = if a.Length >= 7 then V2d(a.[5], a.[6]) else V2d.Zero
+                    V2d(a.[0], a.[1]), V3d(a.[2], a.[3], a.[4]), uv
+                ) |> Seq.toArray
+            let readVec (prop : string) =
+                let a = r.GetProperty(prop).EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                V3d(a.[0], a.[1], a.[2])
+            return pts, readVec "refDir", readVec "normal"
+        }
+
     let patch (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int) : Async<(V2d * V3d)[] * V3d * V3d> =
         async {
             let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d}"""

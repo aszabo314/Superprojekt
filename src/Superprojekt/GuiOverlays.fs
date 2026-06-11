@@ -62,7 +62,7 @@ module GuiOverlays =
             (cursorScreen : aval<V2d option>) =
         let payload =
             AVal.custom (fun t ->
-                let on = model.ProvenanceHeatmap.GetValue t
+                let on = model.HeatmapMode.GetValue t <> HeatOff
                 let cOpt = cursorScreen.GetValue t
                 let wOpt = hoverWorld.GetValue t
                 let layer = model.ActivePickingLayer.GetValue t

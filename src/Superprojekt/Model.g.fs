@@ -1,5 +1,5 @@
-//d19bc9eb-9c03-d7d7-3e22-068025e47a62
-//8b26fe7c-8ae6-a216-522d-dd0f31926c9f
+//8437ae6f-e8ee-cc53-b10c-f869716fc55f
+//3a0a3c34-41a8-ce9e-84f0-a3065b8308c2
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -40,10 +40,17 @@ type AdaptiveModel(value : Model) =
     let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _Retarget_ = FSharp.Data.Adaptive.cval(value.Retarget)
+    let _PendingReg_ = FSharp.Data.Adaptive.cval(value.PendingReg)
+    let _RegistrationLog_ = FSharp.Data.Adaptive.cval(value.RegistrationLog)
+    let _AnchorReview_ = FSharp.Data.Adaptive.cval(value.AnchorReview)
+    let _AnchorPick_ = FSharp.Data.Adaptive.cval(value.AnchorPick)
+    let _PatchPicker_ = FSharp.Data.Adaptive.cval(value.PatchPicker)
+    let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
     let _MeshSensorTypes_ = FSharp.Data.Adaptive.cval(value.MeshSensorTypes)
     let _MeshDatasetErrors_ = FSharp.Data.Adaptive.cval(value.MeshDatasetErrors)
     let _MeshAlgorithmResidual_ = FSharp.Data.Adaptive.cval(value.MeshAlgorithmResidual)
-    let _ProvenanceHeatmap_ = FSharp.Data.Adaptive.cval(value.ProvenanceHeatmap)
+    let _HeatmapMode_ = FSharp.Data.Adaptive.cval(value.HeatmapMode)
+    let _HeatmapPrev_ = FSharp.Data.Adaptive.cval(value.HeatmapPrev)
     let _ProvenanceThreshold_ = FSharp.Data.Adaptive.cval(value.ProvenanceThreshold)
     let _FalloffZoneOnly_ = FSharp.Data.Adaptive.cval(value.FalloffZoneOnly)
     let _FusionMode_ = FSharp.Data.Adaptive.cval(value.FusionMode)
@@ -98,10 +105,17 @@ type AdaptiveModel(value : Model) =
             _MeshTransforms_.Value <- value.MeshTransforms
             _Registration_.Value <- value.Registration
             _Retarget_.Value <- value.Retarget
+            _PendingReg_.Value <- value.PendingReg
+            _RegistrationLog_.Value <- value.RegistrationLog
+            _AnchorReview_.Value <- value.AnchorReview
+            _AnchorPick_.Value <- value.AnchorPick
+            _PatchPicker_.Value <- value.PatchPicker
+            _Toast_.Value <- value.Toast
             _MeshSensorTypes_.Value <- value.MeshSensorTypes
             _MeshDatasetErrors_.Value <- value.MeshDatasetErrors
             _MeshAlgorithmResidual_.Value <- value.MeshAlgorithmResidual
-            _ProvenanceHeatmap_.Value <- value.ProvenanceHeatmap
+            _HeatmapMode_.Value <- value.HeatmapMode
+            _HeatmapPrev_.Value <- value.HeatmapPrev
             _ProvenanceThreshold_.Value <- value.ProvenanceThreshold
             _FalloffZoneOnly_.Value <- value.FalloffZoneOnly
             _FusionMode_.Value <- value.FusionMode
@@ -149,10 +163,17 @@ type AdaptiveModel(value : Model) =
     member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.Retarget = _Retarget_ :> FSharp.Data.Adaptive.aval<RetargetState>
+    member __.PendingReg = _PendingReg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PendingRegistration>>
+    member __.RegistrationLog = _RegistrationLog_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<RegStep>>
+    member __.AnchorReview = _AnchorReview_ :> FSharp.Data.Adaptive.aval<AnchorReviewState>
+    member __.AnchorPick = _AnchorPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<AnchorPickState>>
+    member __.PatchPicker = _PatchPicker_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PatchPickerState>>
+    member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MeshSensorTypes = _MeshSensorTypes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, SensorType>>
     member __.MeshDatasetErrors = _MeshDatasetErrors_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
     member __.MeshAlgorithmResidual = _MeshAlgorithmResidual_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
-    member __.ProvenanceHeatmap = _ProvenanceHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.HeatmapMode = _HeatmapMode_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
+    member __.HeatmapPrev = _HeatmapPrev_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
     member __.ProvenanceThreshold = _ProvenanceThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.FalloffZoneOnly = _FalloffZoneOnly_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.FusionMode = _FusionMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>

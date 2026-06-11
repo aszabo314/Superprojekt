@@ -276,6 +276,59 @@ body.loaded { background: #f4f6f8; }
 .pc-corr-res { width: 64px; text-align: right; font-family: 'SF Mono', 'Monaco', monospace; color: #475569; }
 .pc-corr-actions { margin-top: 4px; display: flex; gap: 6px; }
 
+/* ── Registration card: staged workflow ────────────────────────────── */
+
+.registration-card-body { max-height: 70vh; overflow-y: auto; }
+.reg-readiness { font-size: 11px; color: #475569; padding: 2px 0; }
+.reg-readiness-line { font-family: 'SF Mono', 'Monaco', monospace; }
+.reg-cond-badge {
+    display: inline-block; margin-top: 2px;
+    font-size: 10px; padding: 1px 6px; border-radius: 8px;
+}
+.reg-cond-ok   { background: #dcfce7; color: #15803d; }
+.reg-cond-warn { background: #fef3c7; color: #b45309; }
+.reg-cond-bad  { background: #fee2e2; color: #b91c1c; }
+.reg-cond-na   { background: #f1f5f9; color: #64748b; }
+.reg-pin-list { margin-top: 3px; display: flex; flex-direction: column; gap: 1px; }
+.reg-pin-row {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; line-height: 18px; color: #334155;
+}
+.reg-pin-label { flex: 1; font-family: 'SF Mono', 'Monaco', monospace; }
+.reg-fine-warn {
+    display: flex; align-items: center; gap: 6px;
+    background: #fef3c7; color: #92400e;
+    font-size: 11px; padding: 3px 6px; border-radius: 3px;
+    margin: 3px 0;
+}
+.reg-pending {
+    border: 1px solid #bae6fd; background: #f0f9ff;
+    border-radius: 4px; padding: 4px 6px; margin-top: 6px;
+}
+.reg-pending-table { display: flex; flex-direction: column; gap: 1px; }
+.reg-pending-row {
+    display: flex; align-items: center; gap: 8px;
+    font-size: 11px; line-height: 18px; color: #0f172a;
+}
+.reg-pending-mesh {
+    width: 84px; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; font-family: 'SF Mono', 'Monaco', monospace;
+}
+.reg-pending-rms { font-family: 'SF Mono', 'Monaco', monospace; }
+.reg-spark { color: #0369a1; letter-spacing: -1px; font-size: 11px; }
+.reg-collinear-badge {
+    font-size: 10px; background: #fef3c7; color: #b45309;
+    padding: 0 5px; border-radius: 8px;
+}
+.reg-unsolved { font-size: 10px; color: #64748b; padding: 2px 0; }
+.reg-history { margin-top: 6px; }
+.reg-history-list { display: flex; flex-direction: column; gap: 1px; }
+.reg-history-row {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; line-height: 18px; color: #334155;
+}
+.reg-history-label { flex: 1; font-family: 'SF Mono', 'Monaco', monospace; }
+
 /* ── Primitives: CompactToggle ─────────────────────────────────────── */
 
 .ct {

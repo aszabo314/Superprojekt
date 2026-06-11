@@ -71,10 +71,97 @@ module GuiCards =
             }
         }
 
+    // Unicode sparkline of an ICP convergence series (print-appropriate, no
+    // extra JS / GPU resources).
+    let private spark (xs : float[]) =
+        if xs.Length < 2 then ""
+        else
+            let xs = if xs.Length > 24 then xs.[xs.Length - 24 ..] else xs
+            let mn = Array.min xs
+            let mx = Array.max xs
+            let blocks = [| '▁'; '▂'; '▃'; '▄'; '▅'; '▆'; '▇'; '█' |]
+            xs
+            |> Array.map (fun v ->
+                let t = if mx - mn < 1e-12 then 0.0 else (v - mn) / (mx - mn)
+                blocks.[min 7 (int (t * 7.999))])
+            |> System.String
+
     let registrationCard (env : Env<Message>) (model : AdaptiveModel) (openCval : cval<bool>) =
         let dragState : cval<(V2d * V2d) option> = cval None
-        let committedPos = cval (V2d(200.0, 280.0))
+        let committedPos = cval (V2d(200.0, 180.0))
         let pos = Cards.cardPos (committedPos :> aval<_>) dragState
+        let fineWarnDismissed = cval false
+
+        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let refMeshOpt = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
+        let running = model.Registration |> AVal.map (fun r -> r.Running)
+        let mode = model.Registration |> AVal.map (fun r -> r.Mode)
+
+        // Correspondence-enabled pins → accepted pairs per visible moving mesh
+        // plus the client-side conditioning pre-check (λ2/λ1 of the accepted
+        // ref-anchor spread; the authoritative number comes from the solve).
+        let meshNamesVal = model.MeshNames |> AList.toAVal
+        let readiness =
+            AVal.custom (fun t ->
+                let pins = pinsVal.GetValue t
+                let refOpt = (model.Registration.GetValue t).ReferenceMesh
+                let names = meshNamesVal.GetValue t |> IndexList.toList
+                let visible = model.MeshVisible.GetValue t
+                let corrPins =
+                    pins |> HashMap.toList
+                    |> List.choose (fun (id, p) ->
+                        match ScanPin.correspondence p with
+                        | Some c when c.Enabled && p.Phase = PinPhase.Committed ->
+                            let rel = match p.Payload with Point pp -> pp.ReliabilityWeight | _ -> 1.0
+                            Some (id, p, c, rel)
+                        | _ -> None)
+                let movingVisible =
+                    match refOpt with
+                    | Some r ->
+                        names |> List.filter (fun n ->
+                            n <> r && (Map.tryFind n visible |> Option.defaultValue true))
+                    | None -> []
+                let pairCounts =
+                    movingVisible |> List.map (fun mesh ->
+                        let n =
+                            corrPins |> List.sumBy (fun (_, _, c, _) ->
+                                if c.RefAnchor.IsSome
+                                   && (match Map.tryFind mesh c.Anchors with Some a -> a.Accepted | None -> false)
+                                then 1 else 0)
+                        mesh, n)
+                let eigen =
+                    corrPins
+                    |> List.choose (fun (_, _, c, rel) -> c.RefAnchor |> Option.map (fun ra -> ra, max 0.01 rel))
+                    |> Array.ofList
+                    |> RegConditioning.spreadEigenvalues
+                let pinSummaries =
+                    corrPins |> List.map (fun (id, p, c, _) ->
+                        let accepted = c.Anchors |> Map.toList |> List.filter (fun (_, a) -> a.Accepted) |> List.length
+                        id, p.Centre, accepted)
+                refOpt, pairCounts, RegConditioning.lambdaRatio eigen, pinSummaries)
+
+        let canSolveCoarse =
+            readiness |> AVal.map (fun (refOpt, pairCounts, _, _) ->
+                refOpt.IsSome && pairCounts |> List.exists (fun (_, n) -> n >= 3))
+        let coarseTooltip =
+            (readiness, running) ||> AVal.map2 (fun (refOpt, pairCounts, _, _) busy ->
+                if busy then "Solving…"
+                elif refOpt.IsNone then "Designate a reference mesh (★) first"
+                elif not (pairCounts |> List.exists (fun (_, n) -> n >= 3)) then
+                    "Needs ≥3 accepted anchor pairs on at least one visible moving mesh"
+                else "Solve landmark alignment for every visible moving mesh with ≥3 accepted pairs")
+
+        let pendingResults =
+            model.PendingReg |> AVal.map (function
+                | Some pr -> pr.Results |> Map.toList |> IndexList.ofList
+                | None -> IndexList.empty)
+            |> AList.ofAVal
+        let isPreview = model.PendingReg |> AVal.map PendingRegistration.isPreview
+        let logList =
+            model.RegistrationLog
+            |> AVal.map (fun log -> log |> List.mapi (fun i s -> i, s) |> IndexList.ofList)
+            |> AList.ofAVal
+
         div {
             Class "card registration-card"
             Cards.cardStyle (openCval :> aval<_>) pos
@@ -91,18 +178,14 @@ module GuiCards =
             }
             div {
                 Class "card-body registration-card-body"
-                let mode       = model.Registration |> AVal.map (fun r -> r.Mode)
-                let refMeshOpt = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
-                div { Class "lp-sublabel"; "Solve mode" }
-                compactButtonBar [
-                    "Traditional ICP",
-                        mode |> AVal.map (fun m -> m = TraditionalIcp),
-                        (fun () -> env.Emit [SetRegistrationMode TraditionalIcp])
-                    "Region-restricted",
-                        mode |> AVal.map (fun m -> m = RegionRestrictedIcp),
-                        (fun () -> env.Emit [SetRegistrationMode RegionRestrictedIcp])
-                ]
-                div { Class "lp-sublabel"; "Reference mesh" }
+
+                // 1 · Reference (mirror of the mesh panel's ★ toggle).
+                div {
+                    Class "lp-sublabel"
+                    refMeshOpt |> AVal.map (function
+                        | Some r -> sprintf "★ Reference: %s" (Cards.shortName r)
+                        | None -> "★ Reference: — none —")
+                }
                 div {
                     Class "lp-mesh-list"
                     model.MeshNames |> AList.map (fun n ->
@@ -117,25 +200,200 @@ module GuiCards =
                             Cards.shortName n
                         })
                 }
+
+                // 2 · Stage 1: coarse landmark solve.
+                div { Class "lp-sublabel"; "Stage 1 · Coarse (landmarks)" }
+                div {
+                    Class "reg-readiness"
+                    div {
+                        Class "reg-readiness-line"
+                        readiness |> AVal.map (fun (_, pairCounts, ratio, pinSummaries) ->
+                            let pairsTxt =
+                                if List.isEmpty pairCounts then "no visible moving meshes"
+                                else
+                                    pairCounts
+                                    |> List.map (fun (m, n) -> sprintf "%s:%d" (Cards.shortName m) n)
+                                    |> String.concat "  "
+                            sprintf "%d enabled pins · pairs %s" (List.length pinSummaries) pairsTxt)
+                    }
+                    div {
+                        Class "reg-cond-badge"
+                        readiness |> AVal.map (fun (_, _, ratio, pins) ->
+                            if List.length pins < 3 then Some (Class "reg-cond-na")
+                            elif ratio < 1e-3 then Some (Class "reg-cond-bad")
+                            elif ratio < 0.05 then Some (Class "reg-cond-warn")
+                            else Some (Class "reg-cond-ok"))
+                        readiness |> AVal.map (fun (_, _, ratio, pins) ->
+                            if List.length pins < 3 then "conditioning: n/a"
+                            elif ratio < 1e-3 then sprintf "conditioning: collinear (λ2/λ1 %.1e)" ratio
+                            elif ratio < 0.05 then sprintf "conditioning: weak (λ2/λ1 %.3f)" ratio
+                            else sprintf "conditioning: ok (λ2/λ1 %.2f)" ratio)
+                    }
+                    div {
+                        Class "reg-pin-list"
+                        (readiness |> AVal.map (fun (_, _, _, pins) -> IndexList.ofList pins) |> AList.ofAVal)
+                        |> AList.map (fun (id, centre, accepted) ->
+                            div {
+                                Class "reg-pin-row"
+                                span {
+                                    Class "reg-pin-label"
+                                    sprintf "(%.1f, %.1f, %.1f) · %d accepted" centre.X centre.Y centre.Z accepted
+                                }
+                                button {
+                                    Class "mb"
+                                    Attribute("title", "Exclude this pin from the correspondence solve")
+                                    Dom.OnClick(fun _ -> env.Emit [ToggleCorrespondence id])
+                                    "⊘"
+                                }
+                            })
+                    }
+                }
                 div {
                     Class "lp-commit-row"
-                    let running = model.Registration |> AVal.map (fun r -> r.Running)
+                    button {
+                        Class "lp-commit"
+                        (canSolveCoarse, running) ||> AVal.map2 (fun ok busy ->
+                            if ok && not busy then None else Some (Attribute("disabled", "disabled")))
+                        coarseTooltip |> AVal.map (fun tt -> Some (Attribute("title", tt)))
+                        Dom.OnClick(fun _ -> env.Emit [SolveCoarse])
+                        running |> AVal.map (fun r -> if r then "⏳ Solving…" else "▶ Solve coarse")
+                    }
+                }
+
+                // 3 · Stage 2: fine ICP (existing math, unchanged).
+                div { Class "lp-sublabel"; "Stage 2 · Fine (ICP)" }
+                compactButtonBar [
+                    "Traditional ICP",
+                        mode |> AVal.map (fun m -> m = TraditionalIcp),
+                        (fun () -> env.Emit [SetRegistrationMode TraditionalIcp])
+                    "Region-restricted",
+                        mode |> AVal.map (fun m -> m = RegionRestrictedIcp),
+                        (fun () -> env.Emit [SetRegistrationMode RegionRestrictedIcp])
+                ]
+                div {
+                    Class "reg-fine-warn"
+                    let noCoarse =
+                        model.RegistrationLog |> AVal.map (fun log ->
+                            not (log |> List.exists (fun s -> s.Stage = StageCoarse)))
+                    showWhen ((noCoarse, fineWarnDismissed :> aval<_>) ||> AVal.map2 (fun nc d -> nc && not d))
+                    span { "No committed coarse step yet — ICP may settle in a local minimum." }
+                    button {
+                        Class "mb"
+                        Attribute("title", "Dismiss")
+                        Dom.OnClick(fun _ -> transact (fun () -> fineWarnDismissed.Value <- true))
+                        "✕"
+                    }
+                }
+                div {
+                    Class "lp-commit-row"
                     let canRun =
-                        model.Registration |> AVal.map (fun r ->
-                            r.ReferenceMesh.IsSome && not r.Running)
+                        (refMeshOpt, running) ||> AVal.map2 (fun r busy -> r.IsSome && not busy)
                     button {
                         Class "lp-commit"
                         canRun |> AVal.map (fun ok ->
                             if ok then None else Some (Attribute("disabled", "disabled")))
-                        Attribute("title", "Solve ICP for every visible mesh against the reference")
+                        (refMeshOpt, running) ||> AVal.map2 (fun r busy ->
+                            let tt =
+                                if busy then "Solving…"
+                                elif r.IsNone then "Designate a reference mesh (★) first"
+                                else "Solve ICP for every visible mesh against the reference (starts from committed transforms)"
+                            Some (Attribute("title", tt)))
                         Dom.OnClick(fun _ -> env.Emit [RunRegistration])
-                        running |> AVal.map (fun r -> if r then "⏳ Running…" else "▶ Run")
+                        running |> AVal.map (fun r -> if r then "⏳ Running…" else "▶ Solve fine")
                     }
-                    button {
-                        Class "lp-discard"
-                        Attribute("title", "Roll back every registration step (identity transforms, empty history)")
-                        Dom.OnClick(fun _ -> env.Emit [ResetRegistration])
-                        "↺ Reset"
+                }
+
+                // 4 · Pending result (uncommitted preview).
+                div {
+                    Class "reg-pending"
+                    showWhen isPreview
+                    div { Class "lp-sublabel"; "Pending result — previewing" }
+                    div {
+                        Class "reg-pending-table"
+                        pendingResults |> AList.map (fun (mesh, r) ->
+                            let dPct =
+                                if abs r.RmsBefore < 1e-12 then 0.0
+                                else (r.RmsAfter - r.RmsBefore) / r.RmsBefore * 100.0
+                            div {
+                                Class "reg-pending-row"
+                                span { Class "reg-pending-mesh"; Cards.shortName mesh }
+                                span {
+                                    Class "reg-pending-rms"
+                                    sprintf "%.3f → %.3f m (%+.1f%%)" r.RmsBefore r.RmsAfter dPct
+                                }
+                                span { Class "reg-spark"; spark r.Convergence }
+                                span {
+                                    Class (if r.Collinear then "reg-collinear-badge" else "reg-collinear-badge hidden")
+                                    Attribute("title", "Anchor pairs are nearly collinear — rotation poorly constrained")
+                                    "⚠ collinear"
+                                }
+                            })
+                    }
+                    div {
+                        Class "reg-unsolved"
+                        model.PendingReg |> AVal.map (function
+                            | Some pr when not (List.isEmpty pr.Unsolved) ->
+                                sprintf "unsolved: %s"
+                                    (pr.Unsolved |> List.map Cards.shortName |> String.concat ", ")
+                            | _ -> "")
+                    }
+                    div {
+                        Class "lp-commit-row"
+                        button {
+                            Class "lp-commit"
+                            Attribute("title", "Apply the previewed transforms and append a history step")
+                            Dom.OnClick(fun _ -> env.Emit [CommitRegistration])
+                            "✓ Commit"
+                        }
+                        button {
+                            Class "lp-discard"
+                            Attribute("title", "Drop the preview; nothing changes")
+                            Dom.OnClick(fun _ -> env.Emit [DiscardRegistration])
+                            "✕ Discard"
+                        }
+                    }
+                }
+
+                // 5 · History (newest first, only the newest step rolls back).
+                div {
+                    Class "reg-history"
+                    div { Class "lp-sublabel"; "History" }
+                    div {
+                        Class "reg-history-list"
+                        logList |> AList.map (fun (idx, step) ->
+                            let rms =
+                                let outs = step.Outputs |> Map.toList |> List.map snd
+                                if List.isEmpty outs then "—"
+                                else
+                                    let b = outs |> List.averageBy (fun o -> o.RmsBefore)
+                                    let a = outs |> List.averageBy (fun o -> o.RmsAfter)
+                                    sprintf "%.3f → %.3f m" b a
+                            let stage = match step.Stage with StageCoarse -> "coarse" | StageFine -> "fine"
+                            div {
+                                Class "reg-history-row"
+                                span {
+                                    Class "reg-history-label"
+                                    sprintf "#%d %s %s · RMS %s" step.Step stage step.Mode rms
+                                }
+                                button {
+                                    Class "mb"
+                                    if idx <> 0 then Attribute("disabled", "disabled")
+                                    Attribute("title",
+                                        (if idx = 0 then "Roll this step back"
+                                         else "Only the newest step can be rolled back"))
+                                    Dom.OnClick(fun _ -> env.Emit [RollbackRegStep])
+                                    "↩"
+                                }
+                            })
+                    }
+                    div {
+                        Class "lp-commit-row"
+                        button {
+                            Class "lp-discard"
+                            Attribute("title", "Roll back every registration step (identity transforms, empty history)")
+                            Dom.OnClick(fun _ -> env.Emit [ResetRegistration])
+                            "↺ Reset"
+                        }
                     }
                 }
             }

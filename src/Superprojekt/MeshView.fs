@@ -207,8 +207,17 @@ module MeshView =
             ||> AVal.map2 (fun hov sticky -> hov |> Option.orElse sticky)
         let anchorGhost =
             model.AnchorGhostMode |> AVal.map (fun on -> if on then 1 else 0)
-        let provenanceOn =
-            model.HeatmapMode |> AVal.map (fun m -> if m = HeatProvenance then 1 else 0)
+        let heatmapModeInt =
+            model.HeatmapMode |> AVal.map (function
+                | HeatOff -> 0
+                | HeatProvenance -> 1
+                | HeatDiff -> 2)
+        let diffSigmaRef =
+            (model.Registration, model.MeshSensorTypes, model.MeshDatasetErrors)
+            |||> AVal.map3 (fun reg sensors overrides ->
+                match reg.ReferenceMesh with
+                | Some r -> Provenance.datasetError overrides sensors r |> float32
+                | None -> 0.0f)
         let provThreshold =
             model.ProvenanceThreshold |> AVal.map float32
         let falloffZoneOnly =
@@ -246,6 +255,16 @@ module MeshView =
                 model.MeshAlgorithmResidual
                 |> AVal.map (fun m ->
                     Map.tryFind name m |> Option.defaultValue 0.0 |> float32)
+            // Diff-mode inputs: per-mesh algo residual before/after the
+            // pending solve, and the inverse preview delta that maps a
+            // preview-pose fragment back to its committed-pose position.
+            // Meshes without a pending delta diff to zero (→ masked).
+            let diffData =
+                (model.PendingReg, model.MeshAlgorithmResidual) ||> AVal.map2 (fun pending algo ->
+                    let before = Map.tryFind name algo |> Option.defaultValue 0.0 |> float32
+                    match pending |> Option.bind (fun pr -> Map.tryFind name pr.Results) with
+                    | Some r -> float32 r.RmsAfter, before, M44f r.Delta.Backward
+                    | None -> before, before, M44f.Identity)
             // "All meshes the plane intersects": the cursor effect (darken +
             // band) only activates on meshes whose registered-world bbox
             // touches the highlight slab — and, when clipped, the cylinder's
@@ -338,11 +357,15 @@ module MeshView =
                     Sg.Uniform("Blobs",           blobs)
                     Sg.Uniform("BlobFalloffs",    blobFalloffs)
                     Sg.Uniform("AnchorGhost",     anchorGhost)
-                    Sg.Uniform("ProvenanceHeatmap", provenanceOn)
+                    Sg.Uniform("HeatmapMode",       heatmapModeInt)
                     Sg.Uniform("ProvThreshold",     provThreshold)
                     Sg.Uniform("FalloffZoneOnly",   falloffZoneOnly)
                     Sg.Uniform("MeshDatasetError",  meshDatasetErr)
                     Sg.Uniform("MeshAlgoResidual",  meshAlgoRes)
+                    Sg.Uniform("DiffAlgoAfter",     diffData |> AVal.map (fun (a, _, _) -> a))
+                    Sg.Uniform("DiffAlgoBefore",    diffData |> AVal.map (fun (_, b, _) -> b))
+                    Sg.Uniform("DiffInvDelta",      diffData |> AVal.map (fun (_, _, m) -> m))
+                    Sg.Uniform("DiffSigmaRef",      diffSigmaRef)
                     Sg.Uniform("CursorActive",         cursorActive)
                     Sg.Uniform("CursorPlaneOrigin",    cursorOrigin)
                     Sg.Uniform("CursorPlaneNormal",    cursorNormal)
@@ -392,11 +415,15 @@ module MeshView =
                     Sg.Uniform("Blobs",           blobs)
                     Sg.Uniform("BlobFalloffs",    blobFalloffs)
                     Sg.Uniform("AnchorGhost",     AVal.constant 0)
-                    Sg.Uniform("ProvenanceHeatmap", AVal.constant 0)
+                    Sg.Uniform("HeatmapMode",       AVal.constant 0)
                     Sg.Uniform("ProvThreshold",     AVal.constant 1.0f)
                     Sg.Uniform("FalloffZoneOnly",   AVal.constant 0)
                     Sg.Uniform("MeshDatasetError",  AVal.constant 0.0f)
                     Sg.Uniform("MeshAlgoResidual",  AVal.constant 0.0f)
+                    Sg.Uniform("DiffAlgoAfter",     AVal.constant 0.0f)
+                    Sg.Uniform("DiffAlgoBefore",    AVal.constant 0.0f)
+                    Sg.Uniform("DiffInvDelta",      AVal.constant M44f.Identity)
+                    Sg.Uniform("DiffSigmaRef",      AVal.constant 0.0f)
                     Sg.Uniform("CursorActive",         AVal.constant 0)
                     Sg.Uniform("CursorPlaneOrigin",    cursorOrigin)
                     Sg.Uniform("CursorPlaneNormal",    cursorNormal)

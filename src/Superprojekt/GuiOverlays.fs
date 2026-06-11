@@ -54,20 +54,23 @@ module GuiOverlays =
             Primitives.observedRender "data-ridge" "{}" CardsPin.ridgelineJs
         }
 
-    // Provenance probe under the cursor; reuses Provenance.sourcesAt so the
-    // numbers agree with the heatmap.
+    // Heatmap probe under the cursor. Sources mode reuses
+    // Provenance.sourcesAt so the numbers agree with the shader; Diff mode
+    // shows the signed combined-error change and the detection limit (LoD).
     let provenanceHoverOverlay
             (model : AdaptiveModel)
             (hoverWorld : aval<V3d option>)
             (cursorScreen : aval<V2d option>) =
+        // (cursor px, mesh label, numbers line, bar json)
         let payload =
             AVal.custom (fun t ->
-                let on = model.HeatmapMode.GetValue t <> HeatOff
+                let mode = model.HeatmapMode.GetValue t
                 let cOpt = cursorScreen.GetValue t
                 let wOpt = hoverWorld.GetValue t
                 let layer = model.ActivePickingLayer.GetValue t
-                match on, cOpt, wOpt with
-                | true, Some px, Some w ->
+                match mode, cOpt, wOpt with
+                | HeatOff, _, _ | _, None, _ | _, _, None -> None
+                | HeatProvenance, Some px, Some w ->
                     let sensors   = model.MeshSensorTypes.GetValue t
                     let overrides = model.MeshDatasetErrors.GetValue t
                     let algo      = model.MeshAlgorithmResidual.GetValue t
@@ -80,12 +83,68 @@ module GuiOverlays =
                         |> Array.ofSeq
                     let mesh = layer |> Option.defaultValue ""
                     let d, a, c = Provenance.sourcesAt mesh overrides sensors algo w anchors
-                    Some (px, d, a, c, layer)
+                    let label =
+                        match layer with
+                        | Some name -> Cards.shortName name
+                        | None -> "— no layer —"
+                    let cM = c * 0.01
+                    let total = max 1e-6 (d + a + cM)
+                    let bar =
+                        sprintf "[%.1f,%.1f,%.1f]"
+                            (d / total * 100.0) (a / total * 100.0) (cM / total * 100.0)
+                    Some (px, label, sprintf "D %.3fm • A %.3fm • C %.0f" d a c, bar)
+                | HeatDiff, Some px, Some w ->
+                    match layer with
+                    | None -> Some (px, "— no layer —", "wheel-cycle onto a mesh layer for Δ", "[]")
+                    | Some mesh ->
+                        let pending = model.PendingReg.GetValue t
+                        match pending |> Option.bind (fun pr -> Map.tryFind mesh pr.Results) with
+                        | None -> Some (px, Cards.shortName mesh, "no pending delta for this mesh", "[]")
+                        | Some res ->
+                            let sensors   = model.MeshSensorTypes.GetValue t
+                            let overrides = model.MeshDatasetErrors.GetValue t
+                            let pinsMap   = (model.ScanPins.Pins |> AMap.toAVal).GetValue t
+                            let anchors =
+                                pinsMap |> HashMap.toSeq
+                                |> Seq.choose (fun (_, p) ->
+                                    if p.Phase = PinPhase.Committed then Some (p.Centre, p.FalloffRadius)
+                                    else None)
+                                |> Array.ofSeq
+                            // committed-pose position of the hovered point
+                            let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
+                            let cc = model.CommonCentroid.GetValue t
+                            let committed =
+                                Map.tryFind mesh (model.MeshTransforms.GetValue t)
+                                |> Option.defaultValue Trafo3d.Identity
+                            let wb = RigidTransform.renderToWorld scale cc committed
+                            let wa = RigidTransform.renderToWorld scale cc (RegLog.effective committed res.Delta)
+                            let deltaW = wb.Inverse * wa
+                            let wc = deltaW.Backward.TransformPos w
+                            let condP = Provenance.localConditioning w anchors
+                            let condC = Provenance.localConditioning wc anchors
+                            let algoBefore =
+                                Map.tryFind mesh (model.MeshAlgorithmResidual.GetValue t)
+                                |> Option.defaultValue 0.0
+                            let combinedP = res.RmsAfter + 0.01 * min (condP * 0.01) 50.0
+                            let combinedC = algoBefore + 0.01 * min (condC * 0.01) 50.0
+                            let dd = combinedP - combinedC
+                            let sigmaRef =
+                                match (model.Registration.GetValue t).ReferenceMesh with
+                                | Some r -> Provenance.datasetError overrides sensors r
+                                | None -> 0.0
+                            let sigmaM = Provenance.datasetError overrides sensors mesh
+                            let lod = 1.96 * sqrt (sigmaRef * sigmaRef + sigmaM * sigmaM)
+                            let verdict =
+                                if abs dd < lod then "below detection"
+                                elif dd < 0.0 then "improved"
+                                else "degraded"
+                            Some (px, Cards.shortName mesh,
+                                  sprintf "Δ %+.4f m • LoD %.4f m • %s" dd lod verdict, "[]")
                 | _ -> None)
         let visStyle =
             payload |> AVal.map (fun p ->
                 match p with
-                | Some (px, _, _, _, _) ->
+                | Some (px, _, _, _) ->
                     Some (Style [
                         Left (sprintf "%.0fpx" (px.X + 16.0))
                         Top  (sprintf "%.0fpx" (px.Y + 18.0))
@@ -93,23 +152,15 @@ module GuiOverlays =
                 | None -> Some (Style [Display "none"]))
         let label =
             payload |> AVal.map (function
-                | Some (_, _, _, _, Some name) -> Cards.shortName name
-                | Some (_, _, _, _, None)      -> "— no layer —"
-                | None                          -> "")
+                | Some (_, l, _, _) -> l
+                | None -> "")
         let nums =
             payload |> AVal.map (function
-                | Some (_, d, a, c, _) ->
-                    sprintf "D %.3fm • A %.3fm • C %.0f" d a c
+                | Some (_, _, n, _) -> n
                 | None -> "")
         let barAttr =
             payload |> AVal.map (function
-                | Some (_, d, a, c, _) ->
-                    let cM = c * 0.01
-                    let total = max 1e-6 (d + a + cM)
-                    let pd = d / total * 100.0
-                    let pa = a / total * 100.0
-                    let pc = cM / total * 100.0
-                    Some (Attribute("data-prov", sprintf "[%.1f,%.1f,%.1f]" pd pa pc))
+                | Some (_, _, _, bar) -> Some (Attribute("data-prov", bar))
                 | None -> Some (Attribute("data-prov", "[]")))
         div {
             Class "prov-hover"

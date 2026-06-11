@@ -43,11 +43,21 @@ module MeshShader =
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
         member x.BlobFalloffs    : Arr<N<32>, V4f> = x?BlobFalloffs
         member x.AnchorGhost     : int     = x?AnchorGhost
-        member x.ProvenanceHeatmap : int     = x?ProvenanceHeatmap
+        // 0 = off, 1 = provenance sources, 2 = registration diff.
+        member x.HeatmapMode       : int     = x?HeatmapMode
         member x.ProvThreshold     : float32 = x?ProvThreshold
         member x.FalloffZoneOnly   : int     = x?FalloffZoneOnly
         member x.MeshDatasetError  : float32 = x?MeshDatasetError
         member x.MeshAlgoResidual  : float32 = x?MeshAlgoResidual
+        // Registration diff mode (HeatmapMode = 2): signed change of the
+        // combined error between the committed and the previewed pose.
+        // DiffInvDelta maps a preview-pose render position back to its
+        // committed-pose position; algo residuals come per mesh from the
+        // pending solve; DiffSigmaRef is the reference's dataset error.
+        member x.DiffAlgoBefore    : float32 = x?DiffAlgoBefore
+        member x.DiffAlgoAfter     : float32 = x?DiffAlgoAfter
+        member x.DiffInvDelta      : M44f    = x?DiffInvDelta
+        member x.DiffSigmaRef      : float32 = x?DiffSigmaRef
         // Contact-line highlight at the elevation-cursor slicing plane, all
         // in render space. CursorActive is per-mesh (bbox-vs-plane gate);
         // CursorClip restricts the band to the probe cylinder (off while the
@@ -164,7 +174,7 @@ module MeshShader =
                 elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
-            if uniform.ProvenanceHeatmap <> 0 && aboveGhost then
+            if uniform.HeatmapMode = 1 && aboveGhost then
                 let zoneOk = uniform.FalloffZoneOnly = 0 || inAnyBlob
                 if zoneOk then
                     let mutable wSum = 0.0f
@@ -237,6 +247,108 @@ module MeshShader =
                             elif a >= cScaled then algoCol
                             else condCol
                         baseRgb <- domCol
+            // Registration diff (HeatmapMode = 2, only meaningful while a
+            // solve preview is pending): per-fragment signed change of the
+            // combined error (preview − committed). Dataset error cancels;
+            // algorithm residual changes per mesh, conditioning changes with
+            // the fragment's pose. Fragments below the detection limit
+            // 1.96·√(σ_ref² + σ_M²) drop to context/ghost level; the rest get
+            // a diverging blue (improved) / red (degraded) map.
+            if uniform.HeatmapMode = 2 && aboveGhost then
+                let wpc4 = uniform.DiffInvDelta * V4f(wp.X, wp.Y, wp.Z, 1.0f)
+                let wpcx = wpc4.X
+                let wpcy = wpc4.Y
+                let wpcz = wpc4.Z
+                // conditioning at the preview-pose position
+                let mutable wSumP = 0.0f
+                let mutable validP = 0
+                let mutable maxCosP = 0.0f
+                let mutable wSumC = 0.0f
+                let mutable validC = 0
+                let mutable maxCosC = 0.0f
+                for i in 0 .. MaxBlobs - 1 do
+                    if i < bc then
+                        let bi = uniform.Blobs.[i]
+                        let sigma = uniform.BlobFalloffs.[i].X
+                        if sigma > 1e-6f then
+                            let dxP = wp.X - bi.X
+                            let dyP = wp.Y - bi.Y
+                            let dzP = wp.Z - bi.Z
+                            let d2P = dxP*dxP + dyP*dyP + dzP*dzP
+                            let wP = exp (-d2P / (2.0f * sigma * sigma))
+                            if wP > 0.05f then
+                                wSumP <- wSumP + wP
+                                validP <- validP + 1
+                            let dxC = wpcx - bi.X
+                            let dyC = wpcy - bi.Y
+                            let dzC = wpcz - bi.Z
+                            let d2C = dxC*dxC + dyC*dyC + dzC*dzC
+                            let wC = exp (-d2C / (2.0f * sigma * sigma))
+                            if wC > 0.05f then
+                                wSumC <- wSumC + wC
+                                validC <- validC + 1
+                for i in 0 .. MaxBlobs - 1 do
+                    if i < bc then
+                        let bi = uniform.Blobs.[i]
+                        let sigmaI = uniform.BlobFalloffs.[i].X
+                        if sigmaI > 1e-6f then
+                            for j in 0 .. MaxBlobs - 1 do
+                                if j > i && j < bc then
+                                    let bj = uniform.Blobs.[j]
+                                    let sigmaJ = uniform.BlobFalloffs.[j].X
+                                    if sigmaJ > 1e-6f then
+                                        if validP >= 2 then
+                                            let dI2 = (wp.X-bi.X)*(wp.X-bi.X) + (wp.Y-bi.Y)*(wp.Y-bi.Y) + (wp.Z-bi.Z)*(wp.Z-bi.Z)
+                                            let dJ2 = (wp.X-bj.X)*(wp.X-bj.X) + (wp.Y-bj.Y)*(wp.Y-bj.Y) + (wp.Z-bj.Z)*(wp.Z-bj.Z)
+                                            let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
+                                            let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
+                                            if wI > 0.05f && wJ > 0.05f then
+                                                let lI = sqrt dI2
+                                                let lJ = sqrt dJ2
+                                                if lI > 1e-9f && lJ > 1e-9f then
+                                                    let dotV =
+                                                        ((bi.X-wp.X)*(bj.X-wp.X) + (bi.Y-wp.Y)*(bj.Y-wp.Y) + (bi.Z-wp.Z)*(bj.Z-wp.Z)) / (lI * lJ)
+                                                    let cAbs = abs dotV
+                                                    if cAbs > maxCosP then maxCosP <- cAbs
+                                        if validC >= 2 then
+                                            let dI2 = (wpcx-bi.X)*(wpcx-bi.X) + (wpcy-bi.Y)*(wpcy-bi.Y) + (wpcz-bi.Z)*(wpcz-bi.Z)
+                                            let dJ2 = (wpcx-bj.X)*(wpcx-bj.X) + (wpcy-bj.Y)*(wpcy-bj.Y) + (wpcz-bj.Z)*(wpcz-bj.Z)
+                                            let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
+                                            let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
+                                            if wI > 0.05f && wJ > 0.05f then
+                                                let lI = sqrt dI2
+                                                let lJ = sqrt dJ2
+                                                if lI > 1e-9f && lJ > 1e-9f then
+                                                    let dotV =
+                                                        ((bi.X-wpcx)*(bj.X-wpcx) + (bi.Y-wpcy)*(bj.Y-wpcy) + (bi.Z-wpcz)*(bj.Z-wpcz)) / (lI * lJ)
+                                                    let cAbs = abs dotV
+                                                    if cAbs > maxCosC then maxCosC <- cAbs
+                let mutable condP = 1e6f
+                if validP >= 2 then
+                    let raw = 1.0f / (wSumP * (1.0f - maxCosP) + 1e-3f)
+                    condP <- if raw > 1e6f then 1e6f else raw
+                let mutable condC = 1e6f
+                if validC >= 2 then
+                    let raw = 1.0f / (wSumC * (1.0f - maxCosC) + 1e-3f)
+                    condC <- if raw > 1e6f then 1e6f else raw
+                let combinedP = uniform.DiffAlgoAfter  + 0.01f * (min (condP * 0.01f) 50.0f)
+                let combinedC = uniform.DiffAlgoBefore + 0.01f * (min (condC * 0.01f) 50.0f)
+                let dd = combinedP - combinedC
+                let lod =
+                    max 1e-6f
+                        (1.96f * sqrt (uniform.DiffSigmaRef * uniform.DiffSigmaRef
+                                       + uniform.MeshDatasetError * uniform.MeshDatasetError))
+                if abs dd < lod then
+                    baseRgb <- uniform.MeshColor.XYZ
+                    alpha <- min (max ghost 0.12f) 0.5f
+                else
+                    let tt = clamp -1.0f 1.0f (dd / (3.0f * lod))
+                    let blueCol2 = V3f(0.149f, 0.388f, 0.922f) // #2563eb improved
+                    let redCol2  = V3f(0.863f, 0.149f, 0.149f) // #dc2626 degraded
+                    let midCol2  = V3f(0.945f, 0.961f, 0.976f) // #f1f5f9 neutral
+                    baseRgb <-
+                        if tt >= 0.0f then midCol2 * (1.0f - tt) + redCol2 * tt
+                        else midCol2 * (1.0f + tt) + blueCol2 * (-tt)
             // Contact-line highlight at the active slicing plane: darken the
             // intersected mesh, brighten a smoothstep band within
             // CursorHighlightWidth of the plane (accent #0891b2 — the slicing

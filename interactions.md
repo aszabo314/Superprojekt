@@ -9,8 +9,8 @@ inspect them, quantify their disagreement, align them, and fuse them.
 Architecture in one sentence: a thin Blazor-WASM client (Elm-style
 Model → Update → View, WebGL2 rendering) talks to an ASP.NET/Giraffe server
 that owns the heavy geometry (Embree BVH raycasts, closest-point, M3C2
-probes, isolines, ridges, sphere contact rings, ICP) at
-`http://localhost:5000`.
+probes, isolines, ridges, sphere contact rings, weighted landmark solves,
+ICP) at `http://localhost:5000`.
 
 ---
 
@@ -22,31 +22,46 @@ The individual interactions below compose into one overarching analysis loop:
 load dataset ──► navigate / inspect meshes ──► declare per-mesh error metadata
      │                                                  │
      ▼                                                  ▼
-place ScanPins on regions of interest ◄────── provenance heatmap shows
-     │  (probe quantifies per-mesh                where error budgets are
-     │   disagreement at each pin)                exceeded
+designate a ★ reference mesh ◄──────────────── provenance heatmap shows
+     │  (all error metrics are relative            where error budgets are
+     ▼   to it — no absolute ground truth)         exceeded
+place ScanPins on regions of interest
+     │  (probe quantifies per-mesh disagreement at each pin)
      ▼
-pins double as registration anchors ──► run ICP (traditional or
-     │                                   region-restricted by the pins)
+promote pins to correspondence landmarks ──► auto-seeded anchors, refined in
+     │                                        patches / 3D / violin picks
      ▼
-mesh transforms update ──► probes & contact rings recompute automatically
-     │                      (everything pin-derived is invalidated + lazily
-     ▼                       re-queried)
+Stage 1 · coarse landmark solve ──► Stage 2 · fine ICP (traditional or
+     │                                region-restricted by the pins)
+     ▼
+PENDING PREVIEW — split violins, diff heatmap, committed ghost, RMS table
+     │
+     ├── ✕ discard (nothing changes)
+     ▼
+✓ commit ──► transforms apply + history step ──► probes & rings recompute
+     │        (↩ rollback / ↺ reset available)     automatically
+     ▼
 fusion mode composites the registered ensemble per-pixel by lowest error
      │
      ▼
-save workspace (JSON download) — pins, transforms, settings survive reload
+save workspace (JSON download) — pins, anchors, transforms, history survive
 ```
 
 Key feedback loops:
 
 - **Pins → registration → pins.** A pin's probe shows how far apart the
-  meshes are; running a registration moves the meshes, which invalidates all
-  probes and contact rings; they recompute lazily and show the improvement.
+  meshes are; its correspondence anchors feed the coarse solve; committing a
+  solve moves the meshes, which invalidates all probes and contact rings;
+  they recompute lazily and show the improvement.
+- **Preview before commit.** Every solve (coarse or fine) lands in a pending
+  preview first: the meshes render at the previewed pose, the charts and the
+  diff heatmap quantify the change, and only an explicit commit makes it
+  permanent (and roll-backable). Discard costs nothing.
 - **Error metadata → probe / provenance / fusion.** The per-mesh dataset
   error (sensor type or manual override) feeds the probe's three-source
-  error decomposition, the provenance heatmap threshold test, and the
-  fusion pass's per-pixel "lowest combined error wins" depth.
+  error decomposition, the provenance heatmap threshold test, the diff
+  mode's detection limit, and the fusion pass's per-pixel "lowest combined
+  error wins" depth.
 - **Lasso / isolate-pins / solo** are purely visual focus tools — they never
   change what is computed, only what is shown (the lasso explicitly does
   *not* affect registration).
@@ -91,8 +106,8 @@ All canvas input, with exact bindings:
 | Two-finger touch | Pinch-zoom + rotate (mobile) |
 | Right-click | Suppressed (no context menu) |
 | **Ctrl + click** | Transient hover probe (§8.6) |
-| Click | Mode-dependent: add lasso vertex / place pin / select; otherwise idle |
-| **Esc** | Clears, in priority order: hover probe → lasso drawing → pin placement |
+| Click | Mode-dependent: anchor pick / add lasso vertex / place pin / select; otherwise idle |
+| **Esc** | Clears, in priority order: 3D anchor pick → hover probe → lasso drawing → pin placement |
 | **Hold Space** | Temporary fullscreen view (panels hidden, dataset name + mesh legend overlaid); release to return |
 | ⟲ top-bar button | Reset camera to the default framing |
 
@@ -119,8 +134,14 @@ workflow (§10) and the preferred reference for the hover probe.
 
 Open with the top-bar hamburger (☰). Per-mesh row: colour swatch (the mesh's
 categorical palette colour, used consistently in charts, rings, and cards),
-shortened name, and three buttons:
+shortened name, and four buttons:
 
+- **★/☆ reference** — designate this mesh as the registration reference
+  (single selection, two-way bound to the registration card's selector;
+  tooltip: all error metrics are relative to it, there is no absolute ground
+  truth). The reference shows a subtle accent bbox outline in 3D and a ★ in
+  the fullscreen legend. Changing it invalidates all probes, discards any
+  pending solve preview, and re-seeds the correspondence anchors.
 - **●/○ visible** — toggle the mesh. Hidden meshes render as a uniform ghost
   silhouette (if the silhouette is enabled) instead of disappearing.
 - **◐ solo** — isolate this mesh (saves and restores the previous visibility
@@ -154,12 +175,19 @@ probes, the heatmap, and fusion.
 - **Error metadata**: per mesh, pick a sensor type (Rover / Sat / Photo /
   LiDAR — each with a default accuracy) or override the dataset error with a
   log slider (sub-mm to 10 m); ↺ reverts to the sensor default.
-- **Error provenance**: *Show heatmap* paints fragments whose combined error
-  exceeds the *Threshold* slider, colour-coded by dominant source — blue =
-  dataset (sensor), orange = algorithm (registration residual), purple =
-  conditioning (local geometry). *Falloff zones only* restricts painting to
-  pin falloff regions. While the heatmap is on, hovering a surface shows a
-  per-mesh provenance breakdown tooltip (D/A/C bar + numbers).
+- **Error provenance**: a three-way radio — **Off / Sources / Diff**.
+  *Sources* paints fragments whose combined error exceeds the *Threshold*
+  slider, colour-coded by dominant source — blue = dataset (sensor), orange
+  = algorithm (registration residual), purple = conditioning (local
+  geometry). *Diff* is only available while a registration preview is
+  pending (§9): it paints the per-fragment **signed change of combined
+  error** (preview − committed) on a diverging map — blue = improved, red =
+  degraded — and drops everything below the detection limit
+  `1.96·√(σ_ref² + σ_M²)` to ghost level, so only statistically meaningful
+  change stands out; it auto-reverts to the previous mode on commit/discard.
+  *Falloff zones only* restricts the Sources painting to pin falloff
+  regions. While a heatmap is on, hovering a surface shows a tooltip — the
+  D/A/C breakdown in Sources mode, `Δ / LoD / verdict` in Diff mode.
 
 The algorithm component is populated by running a registration (per-mesh
 RMS); conditioning comes from probe results. So the heatmap becomes more
@@ -256,8 +284,12 @@ Card body (Point payload): centre / radii readouts, planarity badge
 (planar ✓ / not planar ⚠ from the probe's PCA), the **violin chart** (8.3),
 y-range presets (auto / ±0.5 / ±2 / ±10 / fit), lock-order toggle, the
 **three-source stacked error bar** (blue dataset / orange algorithm / purple
-conditioning) with numeric breakdown, probe-length override, and the
-reliability slider.
+conditioning) with numeric breakdown, probe-length override, the
+reliability slider, and the **correspondence section** (§9.2): a "use as
+registration landmark" toggle, the reference-anchor status (⚠ when the
+projection is > 2× the falloff radius), one row per other mesh (anchor
+source + accepted state + last coarse-solve residual + ⊕ pick-in-3D), and
+the ▦ patch-picker entry point.
 
 ### 8.3 The M3C2 probe & violin chart
 
@@ -274,6 +306,12 @@ decomposition.
 The chart is **vertical**: signed distance on the y-axis (positive up,
 0 = reference median), one column per mesh in mesh colours, with median
 tick, IQR whisker, KDE violin, and an `n=…` count badge.
+
+While a registration preview is pending (§9), each column **splits into
+paired half-violins** — committed pose on the left (desaturated), previewed
+pose on the right (full colour) — with split median ticks/whiskers and an
+arrow from the old to the new median labelled with the Δ. The single-violin
+layout returns on commit/discard.
 
 Computation is **lazy and debounced**: nothing runs until the pin's card is
 open; any invalidation (radius, centre, payload, length, reference change,
@@ -320,30 +358,120 @@ click dismisses it; it auto-clears 8 s after the result arrives.
 
 ---
 
-## 9. Registration (ICP)
+## 9. Ensemble registration (two-stage, preview-first)
 
-**Input:** a reference mesh + visible moving meshes (+ optionally pins as
-anchors). **Output:** rigid per-mesh transforms + per-mesh RMS residuals.
+**Input:** a ★ reference mesh + visible moving meshes (+ pins as landmarks
+and/or region anchors). **Output:** rigid per-mesh transforms, per-mesh RMS,
+and a roll-backable history of committed steps.
 
-Opened with the floating **⚙ Registration** toggle button. The card:
+Opened with the floating **⚙ Registration** toggle button. The card, top to
+bottom: **★ Reference** (mirrors the mesh panel's ★) → **Stage 1 · Coarse**
+→ **Stage 2 · Fine** → **Pending result** (only while previewing) →
+**History**.
 
-1. **Solve mode** — *Traditional ICP* (uniform correspondence weights) or
-   *Region-restricted* (each committed pin becomes a Gaussian anchor:
-   centre = pin centre, sigma = FalloffRadius, weight multiplier = the
-   Point payload's reliability slider — so registration trusts the surface
-   where you placed trusted pins).
-2. **Reference mesh** — pick one (toggle buttons, single selection).
-3. **▶ Run** (disabled until a reference is chosen; shows ⏳ while running)
-   — solves `POST /api/query/icp` for every visible non-reference mesh in
-   parallel (Gauss-Newton point-to-surface, Embree closest-point
-   correspondences, trimmed at 3× the median pair distance).
-4. **↺ Reset** — clears all transforms back to identity.
+### 9.1 The pending preview (shared by both stages)
 
-On completion, each mesh's transform and RMS land in the model; the RMS
-feeds the provenance heatmap's *algorithm* component, and **all pin probes
-and contact rings are invalidated** and lazily recompute — so the violin
-charts immediately reflect the post-alignment disagreement. The lasso has no
-effect on registration.
+Every solve lands in an **uncommitted preview** first — nothing is permanent
+until you commit:
+
+- Moving meshes render at the previewed pose; their **committed pose stays
+  visible as a slate-tinted ghost** underneath (picks pass through it).
+- A banner reads *"Previewing unregistered result — commit or discard"*.
+- The card shows a per-mesh table — `RMS before → after (Δ%)`, a unicode
+  convergence sparkline for ICP steps, an amber **⚠ collinear** badge when
+  the landmark geometry under-constrains rotation — plus any unsolved
+  meshes.
+- Open pin cards get a second probe under the preview transforms → **split
+  half-violins** (§8.3); contact rings and the hover probe follow the
+  preview pose; the heatmap's **Diff** mode (§5) becomes available.
+- **Blocked while previewing** (greyed with explanatory tooltips, and
+  rejected by the reducer with a toast): pin placement, retarget, fusion
+  toggle, dataset switch, and all anchor picking (anchors are
+  committed-pose points — picking one at a preview pose would
+  double-transform on commit).
+- **✓ Commit** applies the transforms, appends a history step (before/after
+  transforms + RMS), re-bases all correspondence anchors by the applied
+  world delta, and fires the full invalidation cascade (all probes + rings
+  + algorithm RMS). **✕ Discard** drops the preview; probes stay valid,
+  rings recompute back. Starting a new solve replaces the current preview.
+
+### 9.2 Stage 1 · Coarse (landmark solve)
+
+**Input:** correspondence anchors on Point pins. **Output:** one rigid
+delta per moving mesh with per-pair residuals + conditioning diagnostics.
+
+**Correspondence anchors.** In a pin's card, toggle *"use as registration
+landmark"*. This computes the pin's **reference anchor** (its centre if it
+sits on the reference mesh, else the closest-point projection onto the
+reference — flagged ⚠ when the projection is > 2× the falloff radius) and
+**auto-seeds one anchor per other loaded mesh** (closest point to the
+reference anchor, parallel `/query/closest`). A review modal — one row per
+pin × mesh with the projection distance Δ, red-flagged when Δ > 2× falloff
+or no projection exists — lets you accept ✓ / reject ✕ each; *Apply* marks
+the accepted ones usable. Rejected anchors stay unaccepted and can be set
+later by hand:
+
+- **▦ Pick in patches** — the patch small-multiples picker. The reference
+  patch is sampled first and its tangent frame becomes the shared frame for
+  every visible mesh (`/query/patch` with the frame override), so all
+  patches are co-oriented and directly comparable. The card shows one
+  orthographic footprint per mesh — reference first with a distinct border,
+  mesh-colour header swatch, **atlas-textured points** (toggle to a
+  height-colour rendering), and a crosshair at the reference anchor's (u,v)
+  in every patch. Clicking inside a moving mesh's patch shoots a ray down
+  the shared normal against that mesh and sets the anchor (`patch` source);
+  a miss shows a toast.
+- **⊕ Pick in 3D** (per anchor row) — a one-shot mode: the target mesh
+  renders solid (forced visible), the reference at ≈30 % opacity for
+  context, everything else ghosted; crosshair cursor; **one depth-gated
+  click** on the target surface sets the anchor (`3D` source), then the
+  mode auto-advances to the next mesh with an unaccepted anchor for the
+  same pin. **Esc** cancels.
+- **Shift+click a violin column** — sets that mesh's anchor at
+  `refAnchor + d·probeAxis` for the clicked signed distance d (`violin`
+  source). Available when the pin's correspondence is enabled.
+
+Accepted anchors render in 3D as small wireframe **tetrahedron glyphs** in
+the mesh's palette colour, each connected by a thin line to the pin's
+reference anchor (brighter for the selected pin); they follow the preview
+pose while a solve is pending. Auto-seeding **re-runs** (only overwriting
+auto/unaccepted anchors — manual picks survive) when the reference changes
+or a pin is retargeted.
+
+**Solving.** The card's coarse section shows a readiness line (enabled
+pins; accepted pairs per visible moving mesh), a client-side conditioning
+badge (λ2/λ1 of the accepted reference-anchor spread: ok / weak /
+collinear), and the enabled-pin list with a one-click **⊘ exclude** per
+pin. **▶ Solve coarse** (enabled when ≥1 visible moving mesh has ≥3
+accepted pairs; disabled states explain themselves in the tooltip) POSTs
+`/query/lsq-pairs` per qualifying mesh in parallel — a weighted rigid
+Umeyama/Arun solve (weights = pin reliability) that returns the delta,
+per-pair residuals (shown in each pin's correspondence rows), and a
+collinearity warning. Meshes with <3 pairs are listed as unsolved. Hidden
+meshes are never solved, but their anchors persist.
+
+### 9.3 Stage 2 · Fine (ICP)
+
+Unchanged math: *Traditional ICP* (uniform weights) or *Region-restricted*
+(each committed pin becomes a Gaussian anchor: centre, sigma =
+FalloffRadius, multiplier = reliability). `POST /api/query/icp` per visible
+moving mesh in parallel (Gauss-Newton point-to-surface, Embree
+closest-point correspondences, trimmed at 3× the median pair distance),
+starting from the **committed** transforms — so the intended flow is
+commit-coarse-then-fine, and a one-time dismissible warning appears if no
+coarse step has been committed yet. Results land in the same pending
+preview as deltas relative to the committed pose.
+
+### 9.4 History, rollback, reset
+
+Committed steps are listed newest-first: `#n stage mode · RMS a→b`. Only
+the **newest** step can be rolled back (**↩** — restores the recorded
+before-transforms and algorithm residuals, un-bases the anchors, fires the
+invalidation cascade); older rows show the button disabled. **↺ Reset**
+rolls back every step to identity transforms + an empty history. Steps
+record which reference mesh they were solved against; changing the
+reference later never rewrites history. The lasso has no effect on
+registration.
 
 ---
 
@@ -360,7 +488,10 @@ another (e.g. after loading a better reconstruction):
    are flagged red.
 4. Accept (✓) / reject (✕) per pin, then **Apply** — accepted pins move to
    their projected centre, re-host to the target mesh, and their probes and
-   rings invalidate/recompute. **Cancel** discards everything.
+   rings invalidate/recompute. Moved pins with correspondence enabled also
+   **re-seed their anchors** (auto/unaccepted only — manual picks survive).
+   **Cancel** discards everything. Retarget is blocked while a registration
+   preview is pending.
 
 ---
 
@@ -389,16 +520,22 @@ clicking the panorama raycasts into the scene and places a pin there.
 Gear popover → **💾 Save** downloads a JSON file through the browser;
 **📂 Load** opens a file picker and applies one. No server-side store.
 
-**Persisted:** active dataset name, camera pose, all pins (centre, radii,
-phase, payload incl. line traces and patch data, host mesh, colours,
-creation camera, probe length/lock/range settings), mesh transforms, mesh
-visibility, sensor types, dataset-error overrides, the lasso (polygon,
-planes, enabled flag), registration mode + reference mesh, and all
-view settings (ghost, shading, slope, provenance, fusion, rendering mode).
+**Persisted (workspace JSON v2):** active dataset name, camera pose, all
+pins (centre, radii, phase, payload incl. line traces, patch data and the
+**correspondence anchors** with source + accepted state, host mesh,
+colours, creation camera, probe length/lock/range settings), mesh
+transforms, the **registration history** (full steps with before/after
+transforms), mesh visibility, sensor types, dataset-error overrides, the
+lasso (polygon, planes, enabled flag), registration mode + reference mesh,
+and all view settings (ghost, shading, slope, heatmap mode, fusion,
+rendering mode). Version-1 workspaces still load (new fields default
+empty).
 
 **Not persisted (recomputed or transient):** probe results and contact
-rings (recompute lazily after load), hover probe, panoramas, chart-link
-state, solo state, ICP residuals, open/closed UI state, debug log.
+rings (recompute lazily after load), the **pending solve preview** (a
+preview never survives a save/load cycle — only committed steps do), hover
+probe, panoramas, chart-link state, solo state, anchor review / pick /
+patch-picker state, open/closed UI state, debug log.
 
 ---
 
@@ -424,13 +561,14 @@ GET /api/datasets/{ds}/mesh/{name}/{i}/atlas     → JPEG
 | Endpoint | Request | Response | Used by |
 |---|---|---|---|
 | `/api/query/ray` | name, origin, direction | hit, t, point, triangleId | picking under fusion, panorama placement (client fans out over meshes via `rayHitMany`) |
-| `/api/query/closest` | name, point | found, point, distanceSquared | retarget projection |
+| `/api/query/closest` | name, point | found, point, distanceSquared | retarget projection, anchor auto-seeding, patch-picker centre seeding |
 | `/api/query/isoline` | name, elevation, seed, maxPoints | polyline | Line payload (elevation mode) |
 | `/api/query/curvature-ridge` | name, seed, maxPoints | polyline + scalars | Line payload (ridge mode) |
-| `/api/query/patch` | name, centre, radius, maxPoints | projected points, refDir, normal | Patch payload |
+| `/api/query/patch` | name, centre, radius, maxPoints, optional frameNormal + frameRefDir (skips the local plane fit) | projected points (incl. per-point atlas UVs), refDir, normal (echoes a supplied frame) | Patch payload, patch small-multiples picker |
 | `/api/query/contact-rings` | name, centre, radius, maxPoints | rings: [[x,y,z]…]… (closed rings repeat the first point) | pin contact rings |
 | `/api/query/probe` | meshes [name + world transform], referenceName, centre, radius, length (0 = auto), maxPointsPerMesh | normal, planarity, length, per-mesh distributions (count/median/IQR/std/KDE), three-source decomposition | pin probe + hover probe |
-| `/api/query/icp` | referenceName, movingName, initialTransform, anchor centres/sigmas/weights, regionEps | transform (4×4), convergence per iteration, residuals | registration |
+| `/api/query/icp` | referenceName, movingName, initialTransform, anchor centres/sigmas/weights, regionEps | transform (4×4), convergence per iteration, residuals | fine registration (Stage 2) |
+| `/api/query/lsq-pairs` | movingName, pairs [{refPoint, movingPoint, weight}] (world space, current poses) | delta transform (maps current-world moving points onto the reference), perPairResiduals, conditioning {eigenvalues, collinearityWarning}; HTTP 400 on <3 pairs | coarse registration (Stage 1) |
 
 Performance contracts the client relies on: per-mesh requests are issued in
 parallel (never sequentially), densities are capped via `maxPoints`, heavy
@@ -446,10 +584,15 @@ What invalidates what (the glue between workflows):
 | Action | Invalidates / triggers |
 |---|---|
 | Pin radius / centre / payload / probe-length change | that pin's probe + contact rings → lazy recompute |
-| Mesh visibility toggle | all probes (sample set changed); **not** contact rings (display-only) |
-| Registration complete / reset | all probes + all contact rings + algorithm RMS overlay |
-| Retarget apply | moved pins' probes + rings; pin host mesh |
-| Reference mesh change | all probes |
-| Dataset switch | pins, lasso, panoramas, chart state, picking layer — all cleared |
-| Sensor type / error override | probe error decomposition, provenance heatmap, fusion winner |
+| Mesh visibility toggle | all probes (sample set changed); **not** contact rings (display-only); never the correspondence anchors (hidden meshes keep theirs, they're just not solved) |
+| Coarse / fine solve result arrives | pending preview fills in; rings + preview probes recompute under the effective (previewed) transforms |
+| Registration **commit** / **rollback** / **reset** | transforms + history; all probes + all contact rings + algorithm RMS; correspondence anchors re-based by the applied world delta; Diff heatmap reverts |
+| Registration **discard** | pending preview dropped; rings recompute back at the committed pose; committed probes stay valid |
+| Pending preview active | blocks pin placement, retarget, fusion, dataset switch, anchor picking (tooltips + toast explain) |
+| Enable correspondence / reference change / retarget apply | (re-)seed reference anchor + per-mesh anchors (auto/unaccepted only) → review modal |
+| Setting an anchor (patch / 3D / violin pick, review apply) | readiness display only — anchors never touch probes |
+| Retarget apply | moved pins' probes + rings; pin host mesh; anchor re-seed |
+| Reference mesh change | all probes; pending preview discarded; anchor re-seed |
+| Dataset switch | pins, lasso, panoramas, chart state, picking layer, pending preview, anchor flows — all cleared (registration history is kept, like the transforms) |
+| Sensor type / error override | probe error decomposition, provenance heatmap + diff detection limit, fusion winner |
 | Lasso, solo, ghost settings, isolate pins | rendering only — no recomputation anywhere |

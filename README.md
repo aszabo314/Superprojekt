@@ -2,7 +2,7 @@
 
 Research prototype for interactive 3D inspection of geological mesh and pointcloud datasets. Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, closest-point, multi-mesh raycasts, isolines, curvature ridges, surface patches, ICP).
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, closest-point, multi-mesh raycasts, isolines, curvature ridges, surface patches, weighted landmark solves, ICP).
 - **Superprojekt** — Blazor WebAssembly client. Aardvark.Dom Elm-style architecture, WebGL rendering. Runs on desktop and mobile browsers; thin client by design — heavy compute lives on the server.
 
 ## Run it
@@ -53,8 +53,8 @@ The first request for a mesh parses OBJ + builds an Embree scene + BbTree; the r
 - **Chart ↔ 3D linking.** Hovering the violin chart drives a cyan **slicing plane** in 3D, orthogonal to the probe axis at the hovered signed distance (clipped to the probe cylinder; hold **Alt** to extend it scene-wide). While the cursor is active, intersected meshes darken slightly and a bright **contact-line band** (~±20 cm, same cyan) traces where the plane meets each surface — scene-wide under Alt, cylinder-clipped otherwise. Hovering the 3D surface inside the probe cylinder draws the matching **elevation cursor line** on the chart and the same contact-line band at the hovered elevation. Hovering a chart column highlights that mesh in 3D (all others ghost to α 0.2); clicking a column makes the highlight **sticky** (thick border) until you click it again, another column, or anywhere outside the chart.
 - **Hover probe.** Ctrl-click any surface for a transient mini-violin chart at the cursor (radius = 5% of the scene bbox diagonal). Dismissed by Escape, clicking elsewhere, or after a few seconds.
 - **Filter chain.** Visibility is the conjunction of three filters: MeshActive toggle → lasso region → pin blob field. Both lasso and blob must agree for a fragment to be fully opaque; inside-lasso-outside-blob fragments fall to ghost level. The pin blob filter is gated by the **Isolate pins** toggle in the gear popover; the lasso filter by the `◉/○` button on its card.
-- **Mesh registration.** Reference-based ICP (traditional, or region-restricted where pin centres + falloff radii weight the solve). Gauss-Newton point-to-surface with centroid-recentred linearization and trimmed correspondences (3× median gate). Running a solve re-transforms the moving meshes and invalidates all probes, so pin charts show the offset change immediately.
-- **Error provenance overlay.** Per-mesh sensor type + dataset-error override, combined with ICP algorithm residual and a local-conditioning heuristic over the anchors into a tunable heatmap.
+- **Ensemble registration (two-stage, preview-first).** Designate a reference mesh (★ in the mesh panel or registration card — every error metric is relative to it; there is no absolute ground truth). **Stage 1 · Coarse:** Point pins can be promoted to **correspondence landmarks** — enabling correspondence auto-seeds one anchor per other mesh (closest-point projection of the pin's reference anchor, reviewed in an accept/reject modal), refinable three ways: co-oriented **patch small-multiples** (orthographic, atlas-textured footprints of every mesh in a shared frame; click to set the anchor), a **one-shot 3D pick** (target mesh solid, reference at 30 %, everything else ghosted; one depth-gated click), or **Shift+click on a violin column** (anchor at that signed distance along the probe axis). With ≥3 accepted pairs per moving mesh, *Solve coarse* runs a weighted rigid landmark solve (Umeyama/Arun, server-side) per mesh in parallel. **Stage 2 · Fine:** the established ICP (traditional, or region-restricted where pin centres + falloff radii weight the solve), Gauss-Newton point-to-surface with centroid-recentred linearization and trimmed correspondences (3× median gate), starting from the committed transforms. **Both stages land in a pending preview** — meshes render at the previewed pose with their committed pose as a slate ghost, the violin charts split into committed/preview half-violins with a Δ-median arrow, an RMS before → after table with convergence sparklines and collinearity badges sits in the card — until you **Commit** (appends a roll-backable history step) or **Discard**. The newest history step can be rolled back; Reset rolls back everything. Destructive actions (pin placement, retarget, fusion, dataset switch, anchor picking) are blocked while a preview is pending.
+- **Error provenance overlay.** Per-mesh sensor type + dataset-error override, combined with ICP algorithm residual and a local-conditioning heuristic over the anchors into a tunable heatmap. While a registration preview is pending, a third **Diff** mode paints the signed change of combined error (blue = improved, red = degraded) and masks everything below the 1.96·√(σ_ref²+σ_M²) detection limit to ghost level; it auto-reverts on commit/discard.
 - **Fusion mode.** Top-bar `◈ Fusion` renders all visible meshes into an offscreen pass (own colour + depth target) where per-fragment depth carries combined error, so the lowest-error surface wins the depth test; the composite is drawn back as a fullscreen quad. Picking raycasts every visible mesh and keeps the same lowest-error winner.
 - **Retarget.** Re-project the existing pins' anchors onto a chosen target mesh (server closest-point per pin), review the per-pin projection distances in a card, accept/reject individually, then commit.
 - **Workspace save / load.** Serialise the session (dataset, pins, transforms, visibility, sensors, lasso, registration, camera, settings) to JSON via the gear popover and reload it later. Hand-rolled JSON in `Persistence.fs`; in-memory otherwise.
@@ -72,6 +72,7 @@ ProbeModel.fs                        M3C2 probe result / state types
 Query.fs                             server query wrappers (Async)
 CameraModel.fs / .g.fs               OrbitState [<ModelType>]
 OrbitController.fs                   orbit camera + messages
+RegistrationModel.fs                 correspondence anchors, RegStep log, pending preview, RegJson
 ScanPinModel.fs / .g.fs              ScanPin + card types
 PinGeometry.fs                       icosphere + footprint geometry
 Model.fs / .g.fs                     application Model [<ModelType>]
@@ -103,9 +104,25 @@ MeshCache.fs                         lazy Embree scene + BbTree cache
 MeshAnalysis.fs                      isoline / ridge tracing, patch sampling
 MeshProbe.fs                         N-mesh M3C2 probe
 MeshIcp.fs                           ICP solver
+RegMath.fs                           weighted Umeyama landmark solve
 QueryHandlers.fs                     HTTP query handlers
 Handlers.fs                          routing
 Program.fs                           ASP.NET startup
+```
+
+## Tests
+
+`src/Supertests` is a plain console runner (no test-framework packages) that compiles the pure registration modules directly — the weighted Umeyama solver, the commit/rollback registration log, and the workspace JSON round-trips:
+
+```bash
+dotnet run --project src/Supertests        # exit code = number of failures
+```
+
+`tools/integration.mjs` exercises the HTTP flow end-to-end (closest-point seeding → known rigid perturbation → `/query/lsq-pairs` recovers its inverse → `/query/icp` reduces RMS → `/query/probe` median error shrinks → patch frame override echo) against a running server:
+
+```bash
+ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver   # terminal 1
+node tools/integration.mjs                                                   # terminal 2
 ```
 
 ## Render pipeline
@@ -133,7 +150,7 @@ Pin geometry, lines, and text are drawn in the same pass with `DepthTest.LessOrE
 
 Costly queries scale with mesh count × angular density. Rules learned the hard way:
 
-- **Never per-mesh loops over HTTP.** Use the batch endpoints (`ray-batch`, `grid-eval`) and let the server fan out with `Parallel.For`.
+- **Never per-mesh loops over HTTP issued sequentially.** Multi-mesh raycasts go through the client-side parallel fan-out (`Query.rayHitMany`); if a multi-mesh operation gets hot, add a batched server endpoint with `Parallel.For` instead.
 - **Embree `Scene.Intersect` is thread-safe** — outer loops use `Parallel.For` with per-thread `ResizeArray` hit buffers.
 - **Debounce user-driven triggers** with a `CancellationTokenSource` so only the final drag position hits the server.
 - **Mesh caches are warmed at dataset load** by the bbox handler.

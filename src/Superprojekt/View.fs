@@ -138,9 +138,9 @@ module View =
                 RenderControl.Samples 1
                 Class "render-control"
 
-                (model.ScanPins.Placement, lassoActive) ||> AVal.map2 (fun p lasso ->
-                    match p, lasso with
-                    | PlacementIdle, false -> None
+                (model.ScanPins.Placement, lassoActive, model.AnchorPick) |||> AVal.map3 (fun p lasso ap ->
+                    match p, lasso, ap with
+                    | PlacementIdle, false, None -> None
                     | _ -> Some (Dom.Style [Css.Cursor "crosshair"]))
 
                 let! info = RenderControl.Info
@@ -344,6 +344,15 @@ module View =
                 )
 
                 Sg.OnTap(fun e ->
+                    match AVal.force model.AnchorPick with
+                    | Some _ ->
+                        // One-shot anchor pick: only the target mesh writes
+                        // depth (everything else is ghosted), so a depth-gated
+                        // hit IS the target surface. Bypasses layer-resolve.
+                        if e.Location.Depth < 0.9999 then
+                            env.Emit [AnchorPickHit (worldFromRender model e.WorldPosition)]
+                        true
+                    | None ->
                     match AVal.force model.LassoDrawing with
                     | Some _ ->
                         match cursorScreen.Value with
@@ -439,7 +448,9 @@ module View =
                 match e.Key with
                 | " "      -> transact (fun () -> spaceHeld.Value <- true)
                 | "Escape" ->
-                    if Option.isSome (AVal.force model.HoverProbe) then
+                    if Option.isSome (AVal.force model.AnchorPick) then
+                        env.Emit [CancelAnchorPick]
+                    elif Option.isSome (AVal.force model.HoverProbe) then
                         env.Emit [ClearHoverProbe]
                     else
                         match AVal.force model.LassoDrawing with

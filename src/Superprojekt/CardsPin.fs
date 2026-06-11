@@ -258,7 +258,11 @@ module CardsPin =
         "      var rc = svg.getBoundingClientRect();"
         "      var x = ev.clientX - rc.left, y = ev.clientY - rc.top;"
         "      var ci = colAt(x);"
-        "      if(y >= plotY0 && y <= plotY1 && ci >= 0){ lastSent = ''; send('click|' + rows[ci].id); }"
+        "      if(y >= plotY0 && y <= plotY1 && ci >= 0){"
+        "        lastSent = '';"
+        "        if(ev.shiftKey) send('apick|' + fromY(y).toFixed(4) + '|' + rows[ci].id);"
+        "        else send('click|' + rows[ci].id);"
+        "      }"
         "    });"
         "    if(!el._docClick){"
         "      el._docClick = function(ev){"
@@ -458,6 +462,24 @@ module CardsPin =
                         env.Emit [SetChartCursor None; SetChartHoverMesh None]
                     | "click" when parts.Length >= 2 ->
                         env.Emit [ChartColumnClick parts.[1]]
+                    // Shift+click on mesh M's column at signed distance d:
+                    // anchors[M] = refAnchor + d·probeAxis (ViolinAxial,
+                    // accepted). Only with correspondence enabled, never on
+                    // the reference column.
+                    | "apick" when parts.Length >= 3 ->
+                        match AVal.force selectedPin, parseInvariant parts.[1] with
+                        | Some pin, Some dv when parts.[2] <> "" ->
+                            match ScanPin.correspondence pin with
+                            | Some c when c.Enabled
+                                          && (AVal.force model.Registration).ReferenceMesh <> Some parts.[2] ->
+                                let refA = c.RefAnchor |> Option.defaultValue pin.Centre
+                                let axis =
+                                    match ScanPin.effectiveProbe (AVal.force previewActive) pin with
+                                    | ProbeReady r -> r.Normal
+                                    | _ -> ScanPin.axis pin
+                                env.Emit [SetAnchor(pin.Id, parts.[2], refA + axis * dv, AnchorViolinAxial)]
+                            | _ -> ()
+                        | _ -> ()
                     | "clickout" ->
                         env.Emit [ClearChartSticky]
                     | _ -> ()

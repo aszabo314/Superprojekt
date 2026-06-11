@@ -215,12 +215,18 @@ module MeshView =
             model.FalloffZoneOnly |> AVal.map (fun on -> if on then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
+            // One-shot 3D anchor pick: the target mesh is the only solid one
+            // (forced visible), the reference shows at α 0.3, everything else
+            // ghosts — all shader-level, so nothing needs restoring after.
             let isActive =
-                (model.MeshVisible, chartHighlight) ||> AVal.map2 (fun m h ->
-                    let vis = Map.tryFind name m |> Option.defaultValue true
-                    match h with
-                    | Some hm -> vis && hm = name
-                    | None -> vis)
+                (model.MeshVisible, chartHighlight, model.AnchorPick) |||> AVal.map3 (fun m h ap ->
+                    match ap with
+                    | Some pick -> pick.Mesh = name
+                    | None ->
+                        let vis = Map.tryFind name m |> Option.defaultValue true
+                        match h with
+                        | Some hm -> vis && hm = name
+                        | None -> vis)
             let scale = scaleFor model name
             // Effective pose: committed ∘ pending preview delta.
             let meshT = effectiveMeshT model name
@@ -303,13 +309,23 @@ module MeshView =
                     }
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
                     Sg.Uniform("MeshActive",      isActive)
-                    // GhostSilhouette off → 0 → the shader's ghost path discards.
+                    // GhostSilhouette off → 0 → the shader's ghost path
+                    // discards. Anchor-pick mode wins over the chart-column
+                    // highlight; both are explicit user gestures with fixed
+                    // alphas independent of the silhouette toggle.
                     Sg.Uniform("GhostOpacity",
-                        (model.GhostSilhouette, model.GhostOpacity, chartHighlight)
-                        |||> AVal.map3 (fun on op h ->
-                            match h with
-                            | Some hm when hm <> name -> 0.2f
-                            | _ -> if on then float32 op else 0.0f))
+                        AVal.custom (fun t ->
+                            match model.AnchorPick.GetValue t with
+                            | Some pick when pick.Mesh <> name ->
+                                if (model.Registration.GetValue t).ReferenceMesh = Some name
+                                then 0.3f else 0.08f
+                            | _ ->
+                                match chartHighlight.GetValue t with
+                                | Some hm when hm <> name -> 0.2f
+                                | _ ->
+                                    if model.GhostSilhouette.GetValue t
+                                    then float32 (model.GhostOpacity.GetValue t)
+                                    else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
                     Sg.Uniform("MeshColor",       meshColor)
                     Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)

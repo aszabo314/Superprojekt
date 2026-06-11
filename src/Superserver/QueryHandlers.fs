@@ -21,7 +21,18 @@ type IsolineRequest = { Name: string; Elevation: float; Seed: float[]; MaxPoints
 type RidgeRequest = { Name: string; Seed: float[]; ThresholdRad: float; MaxPoints: int }
 
 [<CLIMutable>]
-type PatchRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
+type PatchRequest = {
+    Name: string; Centre: float[]; Radius: float; MaxPoints: int
+    // Optional shared-frame override (mesh-frame directions); both must be
+    // present to take effect. Absent fields bind to null → local plane fit.
+    FrameNormal: float[]; FrameRefDir: float[]
+}
+
+[<CLIMutable>]
+type LsqPairDto = { RefPoint: float[]; MovingPoint: float[]; Weight: float }
+
+[<CLIMutable>]
+type LsqPairsRequest = { MovingName: string; Pairs: LsqPairDto[] }
 
 [<CLIMutable>]
 type ContactRingsRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
@@ -143,8 +154,13 @@ let patchHandler : HttpHandler =
             let centre = toV3d req.Centre
             let radius = if req.Radius <= 0.0 then 1.0 else req.Radius
             let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
-            let result = MeshAnalysis.patch lm centre radius maxPoints
-            let pts = result.Points |> Array.map (fun p -> [| p.Px; p.Py; p.Wx; p.Wy; p.Wz |])
+            let frame =
+                if not (isNull req.FrameNormal) && req.FrameNormal.Length = 3
+                   && not (isNull req.FrameRefDir) && req.FrameRefDir.Length = 3 then
+                    Some (toV3d req.FrameNormal, toV3d req.FrameRefDir)
+                else None
+            let result = MeshAnalysis.patch lm centre radius maxPoints frame
+            let pts = result.Points |> Array.map (fun p -> [| p.Px; p.Py; p.Wx; p.Wy; p.Wz; p.U; p.V |])
             log.LogInformation("patch {Name} r={Radius:F2}: {Count} pts", req.Name, radius, pts.Length)
             return! json {| points = pts; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx
         with ex ->
@@ -227,6 +243,48 @@ let probeHandler : HttpHandler =
         with ex ->
             log.LogError(ex, "probe failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+// Weighted rigid landmark solve for the coarse registration stage.
+// Points arrive in world space at current poses; the returned transform is a
+// delta mapping current-world moving points onto the reference.
+let lsqPairsHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<LsqPairsRequest>()
+            let pairs =
+                if isNull (box req.Pairs) then [||]
+                else
+                    req.Pairs |> Array.map (fun p ->
+                        toV3d p.MovingPoint, toV3d p.RefPoint, p.Weight)
+            match RegMath.solveRigid pairs with
+            | None ->
+                return! RequestErrors.badRequest
+                            (text (sprintf "lsq-pairs needs at least 3 pairs (got %d)" pairs.Length)) next ctx
+            | Some r ->
+                let m = r.Transform
+                let flat = [|
+                    m.M00; m.M01; m.M02; m.M03
+                    m.M10; m.M11; m.M12; m.M13
+                    m.M20; m.M21; m.M22; m.M23
+                    m.M30; m.M31; m.M32; m.M33
+                |]
+                log.LogInformation("lsq-pairs mov={Mov}: {Pairs} pairs, rms={Rms:F4}, collinear={Coll}",
+                    req.MovingName, pairs.Length,
+                    sqrt ((r.PerPairResiduals |> Array.sumBy (fun x -> x * x)) / float (max 1 r.PerPairResiduals.Length)),
+                    r.CollinearityWarning)
+                return! json {|
+                    transform = flat
+                    perPairResiduals = r.PerPairResiduals
+                    conditioning = {|
+                        eigenvalues = r.Eigenvalues
+                        collinearityWarning = r.CollinearityWarning
+                    |}
+                |} next ctx
+        with ex ->
+            log.LogError(ex, "lsq-pairs failed")
+            return! RequestErrors.badRequest (text ex.Message) next ctx
     }
 
 let icpHandler : HttpHandler =

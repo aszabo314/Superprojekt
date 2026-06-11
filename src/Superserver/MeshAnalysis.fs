@@ -423,37 +423,55 @@ let curvatureRidgeWithScalars (lm : LoadedMesh) (seed : V3d) (thresholdRad : flo
                 outSc.[i] <- chosenSc.[i]
             outPts, outSc
 
-type PatchPoint = { Px : float; Py : float; Wx : float; Wy : float; Wz : float }
+type PatchPoint = { Px : float; Py : float; Wx : float; Wy : float; Wz : float; U : float; V : float }
 type PatchResult = { Points : PatchPoint[]; RefDirWorld : V3d; NormalWorld : V3d }
 
-let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) : PatchResult =
+// frame: optional (normal, refDir) override in the mesh's own frame — when
+// present the local plane fit is skipped and points are projected into the
+// supplied frame (origin = centre). Used by the patch small-multiples picker
+// so every mesh shares one co-oriented projection.
+let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (frame : (V3d * V3d) option) : PatchResult =
     let positions = lm.parsed.positions
+    let uvs = lm.parsed.uvs
     let centroid = lm.parsed.centroid
     let centreLocal = centre - centroid
+
+    let orthoRef (normal : V3d) (cand : V3d) =
+        let proj = cand - normal * Vec.dot cand normal
+        if proj.Length > 1e-9 then Vec.normalize proj
+        else
+            let projX = V3d.IOO - normal * Vec.dot V3d.IOO normal
+            if projX.Length > 1e-9 then Vec.normalize projX else V3d.IOO
 
     let triBuf =
         trianglesInSphere lm (V3f centreLocal) (float32 (radius * 1.2))
 
     if triBuf.Length = 0 then
-        { Points = [||]; RefDirWorld = V3d.OIO; NormalWorld = V3d.OOI }
+        let n, r =
+            match frame with
+            | Some (n, r) ->
+                let nn = if n.Length > 1e-9 then n.Normalized else V3d.OOI
+                nn, orthoRef nn r
+            | None -> V3d.OOI, V3d.OIO
+        { Points = [||]; RefDirWorld = r; NormalWorld = n }
     else
         let triCount = triBuf.Length / 3
 
-        let mutable nSum = V3d.Zero
-        for ti in 0 .. triCount - 1 do
-            let p0 = V3d positions.[triBuf.[ti * 3]]
-            let p1 = V3d positions.[triBuf.[ti * 3 + 1]]
-            let p2 = V3d positions.[triBuf.[ti * 3 + 2]]
-            nSum <- nSum + Vec.cross (p1 - p0) (p2 - p0)
-        let normal =
-            if nSum.Length > 1e-9 then Vec.normalize nSum else V3d.OOI
-        let worldNorth = V3d.OIO
-        let projN = worldNorth - normal * Vec.dot worldNorth normal
-        let refDir =
-            if projN.Length > 1e-9 then Vec.normalize projN
-            else
-                let projX = V3d.IOO - normal * Vec.dot V3d.IOO normal
-                if projX.Length > 1e-9 then Vec.normalize projX else V3d.IOO
+        let normal, refDir =
+            match frame with
+            | Some (n, r) ->
+                let nn = if n.Length > 1e-9 then n.Normalized else V3d.OOI
+                nn, orthoRef nn r
+            | None ->
+                let mutable nSum = V3d.Zero
+                for ti in 0 .. triCount - 1 do
+                    let p0 = V3d positions.[triBuf.[ti * 3]]
+                    let p1 = V3d positions.[triBuf.[ti * 3 + 1]]
+                    let p2 = V3d positions.[triBuf.[ti * 3 + 2]]
+                    nSum <- nSum + Vec.cross (p1 - p0) (p2 - p0)
+                let normal =
+                    if nSum.Length > 1e-9 then Vec.normalize nSum else V3d.OOI
+                normal, orthoRef normal V3d.OIO
         let leftDir = Vec.cross normal refDir
 
         let adj = System.Collections.Generic.Dictionary<int, ResizeArray<int>>()
@@ -519,7 +537,8 @@ let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) : 
                 let bearing = atan2 y x
                 let px = d * cos bearing
                 let py = d * sin bearing
-                out.Add { Px = px; Py = py; Wx = world.X; Wy = world.Y; Wz = world.Z }
+                let uv = if v < uvs.Length then V2d uvs.[v] else V2d.Zero
+                out.Add { Px = px; Py = py; Wx = world.X; Wy = world.Y; Wz = world.Z; U = uv.X; V = uv.Y }
 
             let pts = out.ToArray()
 

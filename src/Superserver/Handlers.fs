@@ -115,5 +115,6 @@ let webApp : HttpHandler =
         route  "/api/query/patch"                               >=> patchHandler
         route  "/api/query/contact-rings"                       >=> contactRingsHandler
         route  "/api/query/icp"                                 >=> icpHandler
+        route  "/api/query/lsq-pairs"                           >=> lsqPairsHandler
         route  "/api/query/probe"                               >=> probeHandler
     ]

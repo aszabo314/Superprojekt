@@ -570,6 +570,23 @@ GET /api/datasets/{ds}/mesh/{name}/{i}/atlas     → JPEG
 | `/api/query/icp` | referenceName, movingName, initialTransform, anchor centres/sigmas/weights, regionEps | transform (4×4), convergence per iteration, residuals | fine registration (Stage 2) |
 | `/api/query/lsq-pairs` | movingName, pairs [{refPoint, movingPoint, weight}] (world space, current poses) | delta transform (maps current-world moving points onto the reference), perPairResiduals, conditioning {eigenvalues, collinearityWarning}; HTTP 400 on <3 pairs | coarse registration (Stage 1) |
 
+**Study mode (POST unless noted):**
+
+| Endpoint | Request | Response | Notes |
+|---|---|---|---|
+| `/api/study/session` | { token } or { demo, studyId, condition } | sessionId, condition, demo, resumed (+ lastPhaseId/lastStepId), configPublic | token sessions: balanced FULL/NUM assignment; same token resumes an active session, refuses completed (409) / screened |
+| `/api/study/list` (GET) | — | string[] of valid study ids | gear-popover demo picker |
+| `/api/study/{sid}/events` | { events: [{t, type, payload}] } | 204 | batched telemetry append |
+| `/api/study/{sid}/answers` | { questionId, value, confidence? } | { screened } (+ correct, **tutorial gold only**) | idempotent upsert; 3rd wrong tutorial-gold submission screens out |
+| `/api/study/{sid}/transforms` | { label, perMesh: { mesh: [16] } } | 204 | world-space row-major 4×4; TRE vs secret check points scored server-side, **never returned** |
+| `/api/study/{sid}/workspace` | { workspaceJson } | 204 | auto-uploaded on entering the exit phase |
+| `/api/study/{sid}/advance` | { phaseId, stepId } | 204 / 409 | order-validated progress mirror; repeats of recorded steps are accepted (tutorial retry) |
+| `/api/study/{sid}/complete` (GET) | — | { code } / 409 | HMAC code once all non-optional steps advanced + a `final` transforms post exists |
+| `/api/study/{studyId}/tokens` | { n } | string[] | **localhost only** |
+
+`secret.json` and the score files are reachable through no route; the
+public config is served verbatim and validated to contain no answer keys.
+
 Performance contracts the client relies on: per-mesh requests are issued in
 parallel (never sequentially), densities are capped via `maxPoints`, heavy
 post-processing stays off the UI update loop, and user-driven triggers are
@@ -596,3 +613,84 @@ What invalidates what (the glue between workflows):
 | Dataset switch | pins, lasso, panoramas, chart state, picking layer, pending preview, anchor flows — all cleared (registration history is kept, like the transforms) |
 | Sensor type / error override | probe error decomposition, provenance heatmap + diff detection limit, fusion winner |
 | Lasso, solo, ghost settings, isolate pins | rendering only — no recomputation anywhere |
+| Study: any reducer step | telemetry events derived (before/after diff) → predicate counts + Seq milestones → Next gating refreshed |
+| Study: Next | advance posted (idempotent); answer re-posted; phase boundary may switch dataset (scene + registration state reset, predicate counts cleared) |
+| Study: registration commit | `commit#n` transforms posted (TRE scored server-side) |
+| Study: entering the exit phase | `final` transforms + workspace auto-upload; completion code fetched on the last step |
+| Study: tutorial gold wrong ×2 / ×3 | retry step re-shown / screened-out page (server decides) |
+
+---
+
+## 15. User-study mode
+
+The whole app can run as a guided study session. Entry points:
+
+- **Real session:** open `/s/{token}` (tokens are minted per study via the
+  localhost-only endpoint). The client posts the token, gets a balanced
+  condition (FULL or NUM) and the public study config, resets the scene and
+  starts at phase 0 — or resumes an interrupted session at the step after
+  its last recorded advance ("progress kept, scene reset" notice). Real
+  sessions render **no navigation back** to the full app: no top bar, no
+  gear, no dataset switcher, no save/load.
+- **Demo preview:** gear popover → *Preview study mode* (condition picker +
+  study picker). Identical behaviour, but flagged `demo` everywhere,
+  excluded from condition balancing, and an **Exit study** button returns
+  to the full app with a reset scene.
+
+**The study bar** (replaces the top bar): progress dots (one per phase),
+phase title, the phase's **goal line** (always visible), a tool strip
+exposing only the features the current phase allows (layer-panel toggle,
+pin placement), a demo badge + exit (demo only), `?` (re-opens the current
+step's instructions) and **Next** — enabled only when the current step is
+complete (instruction: immediately; guided action: its predicate fires;
+question: answered incl. confidence where required, tutorial gold answers
+must also be confirmed correct; questionnaire: every item answered).
+
+**Steps** render as either a dim-background **instruction overlay**
+("Got it" to dismiss, "Continue →" mirrors Next) or, for guided actions
+with an anchor, a **non-blocking tooltip card** pointing at the anchored
+UI element with a live ○/✓ checkmark. Questions dock in a right-hand
+**task pane**: single choice, scene-click ("Mark in scene" arms a one-shot
+depth-gated 3D pick that drops a flag marker; Esc cancels, re-click
+replaces), numeric + unit, free text with a minimum length, and Likert
+grids (SUS 5-pt, Raw-TLX 0–100 sliders, ICE-T 7-pt), each with an optional
+7-point confidence row. Answers post immediately on change and again on
+Next (the final value wins server-side).
+
+**Feature gating** is two-layered: views consult
+`phase.allowedFeatures ∩ ¬condition.disabledFeatures`, and the reducer
+no-ops any gated or Full-only message with a "Not available in this step"
+toast (silently for pointer-frequency messages). The **NUM condition**
+hides the violin chart (the pin card shows a numeric median/IQR table plus
+registration RMS before → after instead), the heatmaps, the three-source
+bar and the split-violin preview — the solver mechanics are untouched.
+
+**Progress predicates** consume the telemetry event stream (one central
+diff of model-before/model-after per reducer step). Event counts accumulate
+per dataset epoch (they reset when a phase switches tutorial → main);
+ordered `Seq` milestones advance monotonically and survive step re-entry,
+so the tutorial retry path never un-completes prior work.
+
+**Tutorial gold checks** are the single place server correctness reaches
+the client: a wrong answer shows "not quite", the second wrong answer
+re-opens the relevant tutorial step, the third screens the participant out
+politely (status `screened`, token dead). Main-phase gold answers are
+stored and scored offline only.
+
+**Accuracy scoring** happens server-side on every transforms post
+(`commit#n` on each registration commit, `final` on entering the exit
+phase or via the study-only **★ Set as final** button in the registration
+card): TRE against secret check-point pairs, stable and moving terrain
+separately, appended to a per-session score file that no route serves.
+
+**Completion**: entering the exit phase also auto-uploads the workspace;
+the final step fetches the completion code (HMAC over the session id),
+which the server only issues once every non-optional step has an advance
+record and a `final` transforms post exists.
+
+Authoring lives in `src/Superserver/studies/{studyId}/`: `config.json`
+(public — phases, steps, predicates, questionnaires, feature lists, a
+coarse moving-region polygon for the soft pin warning) and `secret.json`
+(planted answers, gold thresholds, TRE check points). Invalid studies are
+refused at startup with logged reasons. Session data accumulates under
+`studies/{studyId}/data/` as append-only JSONL (gitignored).

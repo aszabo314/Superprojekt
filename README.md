@@ -57,6 +57,7 @@ The first request for a mesh parses OBJ + builds an Embree scene + BbTree; the r
 - **Error provenance overlay.** Per-mesh sensor type + dataset-error override, combined with ICP algorithm residual and a local-conditioning heuristic over the anchors into a tunable heatmap. While a registration preview is pending, a third **Diff** mode paints the signed change of combined error (blue = improved, red = degraded) and masks everything below the 1.96·√(σ_ref²+σ_M²) detection limit to ghost level; it auto-reverts on commit/discard.
 - **Fusion mode.** Top-bar `◈ Fusion` renders all visible meshes into an offscreen pass (own colour + depth target) where per-fragment depth carries combined error, so the lowest-error surface wins the depth test; the composite is drawn back as a fullscreen quad. Picking raycasts every visible mesh and keeps the same lowest-error winner.
 - **Retarget.** Re-project the existing pins' anchors onto a chosen target mesh (server closest-point per pin), review the per-pin projection distances in a card, accept/reject individually, then commit.
+- **User-study mode.** A token link (`/s/{token}`) turns the app into a guided study session: chrome is replaced by a study bar (progress dots, an always-visible goal line, a Next button gated on step completion), instructions appear as overlays or anchored tooltips with a live done-checkmark, and questions (choice / scene-click / numeric / free-text / SUS / Raw-TLX / ICE-T grids) dock in a task pane. Features are whitelisted per phase and filtered per condition (FULL vs NUM — NUM swaps the violin chart for a numeric table and hides the heatmaps). Studies are defined in `src/Superserver/studies/{id}/config.json` (+ a never-served `secret.json` with planted answers and TRE check points); the server stores sessions, telemetry, answers and registration-accuracy scores as per-session JSONL, assigns conditions balanced, and issues an HMAC completion code once every required step is done. A demo preview (token-free, flagged, exitable) lives in the gear popover.
 - **Workspace save / load.** Serialise the session (dataset, pins, transforms, visibility, sensors, lasso, registration, camera, settings) to JSON via the gear popover and reload it later. Hand-rolled JSON in `Persistence.fs`; in-memory otherwise.
 - **Panorama.** Top-bar `▦ Pano` opens a floating panel showing a cylindrical view from a synthetic viewpoint at the scene-bbox centre (no dataset ships real imagery, so one is generated per dataset on load). The meshes are rendered into a cubemap from that pose and reprojected cylindrically. **Photo / Render / Blend** modes (Photo = reference state, Render = live state, Blend = the disagreement between them), anchor markers projected into the view, click-to-place anchors via a server raycast through the pose, and a fly-to-pose button.
 
@@ -73,15 +74,19 @@ Query.fs                             server query wrappers (Async)
 CameraModel.fs / .g.fs               OrbitState [<ModelType>]
 OrbitController.fs                   orbit camera + messages
 RegistrationModel.fs                 correspondence anchors, RegStep log, pending preview, RegJson
+StudyModel.fs                        study config DTOs + parser, predicate engine, runtime types
+StudyApi.fs                          /api/study/* wrappers + entry-token boot flag
+StudyTelemetry.fs                    telemetry batcher (flush/backoff/throttle)
 ScanPinModel.fs / .g.fs              ScanPin + card types
 PinGeometry.fs                       icosphere + footprint geometry
 Model.fs / .g.fs                     application Model [<ModelType>]
 Persistence.fs                       workspace JSON serialise / apply
 LineShader.fs                        flat colour + pixel-constant 3D lines
 Primitives.fs                        compact GUI widgets + shared helpers
-Messages.fs                          Message DU
+Messages.fs                          Message DU (incl. StudyMessage)
+StudyUpdate.fs                       server actions + study reducer / event derivation / gate
 CardUpdate.fs / ScanPinUpdate.fs     sub-reducers
-Update.fs                            server actions + main reducer
+Update.fs                            main reducer
 MeshShaders.fs                       mesh / fusion / panorama shaders
 MeshView.fs                          per-mesh scene nodes
 FusionView.fs                        offscreen fusion pass + composite
@@ -91,6 +96,7 @@ SceneGraph.fs                        scene composition + coordinate cross
 CardsPin.fs / Cards.fs               floating pin diagrams + card chrome
 GuiTopBar.fs / GuiPanels.fs          top bar + left panel
 GuiOverlays.fs / GuiCards.fs         overlays + cards
+GuiStudy.fs                          study bar, overlays, task pane, question widgets
 View.fs                              view function + App module
 ShaderCache.fs                       FShade AOT cache
 Program.fs                           Boot.run entry
@@ -105,14 +111,17 @@ MeshAnalysis.fs                      isoline / ridge tracing, patch sampling
 MeshProbe.fs                         N-mesh M3C2 probe
 MeshIcp.fs                           ICP solver
 RegMath.fs                           weighted Umeyama landmark solve
+StudyConfig.fs                       study config/secret parsing + validation
+StudyStore.fs                        session stores, balancing, TRE scoring, HMAC codes
 QueryHandlers.fs                     HTTP query handlers
+StudyHandlers.fs                     /api/study/* handlers
 Handlers.fs                          routing
 Program.fs                           ASP.NET startup
 ```
 
 ## Tests
 
-`src/Supertests` is a plain console runner (no test-framework packages) that compiles the pure registration modules directly — the weighted Umeyama solver, the commit/rollback registration log, and the workspace JSON round-trips:
+`src/Supertests` is a plain console runner (no test-framework packages) that compiles the pure registration and study modules directly — the weighted Umeyama solver, the commit/rollback registration log, the workspace JSON round-trips, the study predicate engine and step gating, study config validation, and the study stores (balanced assignment, TRE scoring, HMAC completion codes, gold screening):
 
 ```bash
 dotnet run --project src/Supertests        # exit code = number of failures
@@ -123,6 +132,7 @@ dotnet run --project src/Supertests        # exit code = number of failures
 ```bash
 ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver   # terminal 1
 node tools/integration.mjs                                                   # terminal 2
+node tools/study-integration.mjs                                             # full study walk: balance, route security, gold echo, resume, completion codes
 ```
 
 ## Render pipeline

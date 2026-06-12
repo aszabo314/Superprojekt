@@ -195,6 +195,12 @@ module Update =
             | _ -> false
         if previewBlocked then
             showToast env "Blocked while previewing a registration result — commit or discard it first" model
+        // §5 study-mode guard: gated-feature messages no-op with a toast
+        // (silently for high-frequency pointer/hover messages).
+        elif StudyUpdate.blocked model msg then
+            match msg with
+            | CameraMessage _ | SetChartCursor _ | SetChartHoverMesh _ -> model
+            | _ -> showToast env "Not available in this step" model
         else
         match msg with
         | CameraMessage msg ->

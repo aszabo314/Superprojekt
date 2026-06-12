@@ -159,6 +159,9 @@ module ScanPinScene =
         // which is the spatial cue. The old filled translucent shells are gone;
         // the white falloff-radius outline only shows while the radius sliders
         // are live (AdjustingPin) so the falloff slider still has feedback.
+        // Study gating: the sphere–surface contact rings are their own
+        // feature; the equator ring stays (it is the pin's footprint cue).
+        let contactRingsOn = model.Study |> AVal.map (fun s -> Study.featureVisible s "contactRings")
         let pinRings =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
@@ -198,7 +201,8 @@ module ScanPinScene =
                                 out.Add(cR + (u * cos a0 + v * sin a0) * rR,
                                         cR + (u * cos a1 + v * sin a1) * rR, col, width)
                             for KeyValue(mesh, meshRings) in rings do
-                                if Map.tryFind mesh vis |> Option.defaultValue true then
+                                if contactRingsOn.GetValue t
+                                   && (Map.tryFind mesh vis |> Option.defaultValue true) then
                                     for ring in meshRings do
                                         if ring.Length >= 2 then
                                             let rp = ring |> Array.map (ScanPin.renderCentre cc scale)

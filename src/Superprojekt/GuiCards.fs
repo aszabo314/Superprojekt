@@ -250,6 +250,7 @@ module GuiCards =
                 }
                 div {
                     Class "lp-commit-row"
+                    Primitives.showWhen (StudyGate.featureOn model "coarseSolve")
                     button {
                         Class "lp-commit"
                         (canSolveCoarse, running) ||> AVal.map2 (fun ok busy ->
@@ -261,6 +262,8 @@ module GuiCards =
                 }
 
                 // 3 · Stage 2: fine ICP (existing math, unchanged).
+                div {
+                Primitives.showWhen (StudyGate.featureOn model "fineSolve")
                 div { Class "lp-sublabel"; "Stage 2 · Fine (ICP)" }
                 compactButtonBar [
                     "Traditional ICP",
@@ -302,6 +305,7 @@ module GuiCards =
                         running |> AVal.map (fun r -> if r then "⏳ Running…" else "▶ Solve fine")
                     }
                 }
+                }
 
                 // 4 · Pending result (uncommitted preview).
                 div {
@@ -341,6 +345,7 @@ module GuiCards =
                         Class "lp-commit-row"
                         button {
                             Class "lp-commit"
+                            Primitives.showWhen (StudyGate.featureOn model "commit")
                             Attribute("title", "Apply the previewed transforms and append a history step")
                             Dom.OnClick(fun _ -> env.Emit [CommitRegistration])
                             "✓ Commit"
@@ -377,6 +382,7 @@ module GuiCards =
                                 }
                                 button {
                                     Class "mb"
+                                    Primitives.showWhen (StudyGate.featureOn model "rollback")
                                     if idx <> 0 then Attribute("disabled", "disabled")
                                     Attribute("title",
                                         (if idx = 0 then "Roll this step back"
@@ -390,9 +396,19 @@ module GuiCards =
                         Class "lp-commit-row"
                         button {
                             Class "lp-discard"
+                            Primitives.showWhen (StudyGate.featureOn model "rollback")
                             Attribute("title", "Roll back every registration step (identity transforms, empty history)")
                             Dom.OnClick(fun _ -> env.Emit [ResetRegistration])
                             "↺ Reset"
+                        }
+                        // Study mode only (§9 P4): declare the current
+                        // committed state the final answer.
+                        button {
+                            Class "lp-commit"
+                            Primitives.showWhen (StudyGate.studyActive model)
+                            Attribute("title", "Post the current committed transforms as your final result")
+                            Dom.OnClick(fun _ -> env.Emit [StudyMsg StudySetAsFinal])
+                            "★ Set as final"
                         }
                     }
                 }

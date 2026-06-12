@@ -154,3 +154,14 @@ module Primitives =
         "  s.style.height = '100%';"
         "  el.appendChild(s);"
         "});" ]
+
+// View-side feature gating for study mode (§5): in Full mode everything is
+// visible; in a study session visible = phase.allowedFeatures minus the
+// condition's disabledFeatures.
+module StudyGate =
+
+    let studyActive (model : AdaptiveModel) : aval<bool> =
+        model.Study |> AVal.map Study.isActive
+
+    let featureOn (model : AdaptiveModel) (featureId : string) : aval<bool> =
+        model.Study |> AVal.map (fun s -> Study.featureVisible s featureId)

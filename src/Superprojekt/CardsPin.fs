@@ -410,8 +410,14 @@ module CardsPin =
                         | Some (ProbeReady r) -> Some r
                         | _ -> None)
                 let previewActive = model.PendingReg |> AVal.map PendingRegistration.isPreview
+                // §5 NUM condition: violin chart replaced by an RMS table,
+                // split-violin preview and three-source bar hidden.
+                let violinOn = StudyGate.featureOn model "violinChart"
+                let barOn = StudyGate.featureOn model "threeSourceBar"
+                let previewSplit =
+                    (previewActive, StudyGate.featureOn model "splitViolinPreview") ||> AVal.map2 (&&)
                 let probeJson =
-                    (selectedPin, model.ChartStickyMesh, previewActive) |||> AVal.map3 (fun po sticky pv ->
+                    (selectedPin, model.ChartStickyMesh, previewSplit) |||> AVal.map3 (fun po sticky pv ->
                         match po with
                         | Some pin ->
                             match pin.Payload with
@@ -525,13 +531,66 @@ module CardsPin =
                     }
                     div {
                         Class "pc-ridge"
+                        showOnly violinOn
                         probeJson |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
                         cursor3d |> AVal.map (fun j -> Some (Attribute("data-cursor", j)))
                         Primitives.observedRender "data-ridge" "{}" ridgelineJs
                     }
+                    // NUM replacement: per-mesh signed-distance numbers from
+                    // the same probe, plus registration RMS before/after.
+                    div {
+                        Class "pc-rms-table"
+                        Primitives.showWhenNot violinOn
+                        div {
+                            Class "pc-rms-head"
+                            span { Class "pc-rms-cell pc-rms-mesh"; "mesh" }
+                            span { Class "pc-rms-cell"; "median" }
+                            span { Class "pc-rms-cell"; "IQR" }
+                            span { Class "pc-rms-cell"; "n" }
+                        }
+                        probeResult
+                        |> AVal.map (fun r ->
+                            match r with
+                            | Some r ->
+                                r.Distributions
+                                |> Array.map (fun d -> d.MeshName, d.Median, d.Q3 - d.Q1, d.Count)
+                                |> IndexList.ofArray
+                            | None -> IndexList.empty)
+                        |> AList.ofAVal
+                        |> AList.map (fun (name, median, iqr, count) ->
+                            div {
+                                Class "pc-rms-row"
+                                span { Class "pc-rms-cell pc-rms-mesh"; shortName name }
+                                span { Class "pc-rms-cell"; sprintf "%+.3f m" median }
+                                span { Class "pc-rms-cell"; sprintf "%.3f m" iqr }
+                                span { Class "pc-rms-cell"; string count }
+                            })
+                        div {
+                            Class "pc-rms-reg"
+                            (model.PendingReg, model.RegistrationLog) ||> AVal.map2 (fun pending log ->
+                                let rows =
+                                    match pending with
+                                    | Some pr when not (Map.isEmpty pr.Results) ->
+                                        pr.Results |> Map.toList
+                                        |> List.map (fun (m, r) -> m, r.RmsBefore, r.RmsAfter, "pending")
+                                    | _ ->
+                                        match log with
+                                        | step :: _ ->
+                                            step.Outputs |> Map.toList
+                                            |> List.map (fun (m, o) -> m, o.RmsBefore, o.RmsAfter, "committed")
+                                        | [] -> []
+                                match rows with
+                                | [] -> "no registration solve yet"
+                                | rows ->
+                                    rows
+                                    |> List.map (fun (m, b, a, tag) ->
+                                        sprintf "%s: RMS %.3f → %.3f m (%s)" (shortName m) b a tag)
+                                    |> String.concat " · ")
+                        }
+                    }
                     div {
                         Class "pc-probe-controls"
-                        showOnly (probeResult |> AVal.map Option.isSome)
+                        showOnly ((probeResult |> AVal.map Option.isSome, violinOn) ||> AVal.map2 (&&))
                         Primitives.compactButtonBar
                             (ProbeXRange.all |> List.map (fun xr ->
                                 ProbeXRange.label xr,
@@ -549,6 +608,7 @@ module CardsPin =
                     }
                     div {
                         Class "pc-bar"
+                        showOnly barOn
                         sources |> AVal.map (function
                             | Some s -> Some (Attribute("data-srcs", sprintf "[%.6g,%.6g,%.6g]" s.DatasetError s.AlgorithmResid s.LocalConditioning))
                             | None -> Some (Attribute("data-srcs", "[]")))
@@ -556,6 +616,7 @@ module CardsPin =
                     }
                     div {
                         Class "pc-bar-legend"
+                        showOnly barOn
                         span { Class "pc-legend-item pc-bar-dataset"; "Dataset" }
                         span { Class "pc-legend-item pc-bar-algorithm"; "Algorithm" }
                         span { Class "pc-legend-item pc-bar-conditioning"; "Conditioning" }

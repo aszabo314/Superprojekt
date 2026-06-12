@@ -113,6 +113,10 @@ module GuiPanels =
         div {
             flyoutClass |> AVal.map (fun c -> Some (Class c))
             div { Class "lp-section-title"; "Adjust Anchor" }
+            // In study mode the fine-tuning controls need the pinEdit
+            // feature; placing + committing alone only needs pinPlace.
+            div {
+            showWhen (StudyGate.featureOn model "pinEdit")
             let innerR =
                 activePin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 1.0)
             let falloffDelta =
@@ -238,6 +242,7 @@ module GuiPanels =
                         | None -> ())
                 }
             }
+            }
 
             div {
                 Class "lp-commit-row"
@@ -319,6 +324,8 @@ module GuiPanels =
             div {
                 Class "lp-vis-body"
 
+                div {
+                showWhen (StudyGate.featureOn model "errorMetadata")
                 collapsibleSection "Error metadata" false (
                     div {
                         Class "lp-err-meta"
@@ -359,7 +366,10 @@ module GuiPanels =
                                 }
                             })
                     })
+                }
 
+                div {
+                showWhen (StudyGate.featureOn model "heatmap")
                 collapsibleSection "Error provenance" false (
                     div {
                         Class "lp-prov-body"
@@ -388,6 +398,7 @@ module GuiPanels =
                             env.Emit [SetProvenanceThreshold v])
                         div { Class "lp-sublabel-hint"; "Blue = dataset, orange = algorithm, purple = conditioning." }
                     })
+                }
 
             })
 

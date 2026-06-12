@@ -1099,3 +1099,90 @@ body.loaded { background: #f4f6f8; }
 .study-exit-btn:hover {
     background: #f1f5f9;
 }
+
+/* study bar extensions */
+
+.study-dots { display: flex; gap: 5px; align-items: center; }
+.study-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: #e2e8f0; border: 1px solid #cbd5e1;
+}
+.study-dot-done { background: #93c5fd; border-color: #60a5fa; }
+.study-dot-current { background: #1a56db; border-color: #1a56db; }
+
+.study-tools { display: flex; gap: 6px; align-items: center; }
+.study-tool { height: 28px; }
+
+.study-help-btn {
+    width: 26px; height: 26px; border-radius: 50%;
+    border: 1px solid #cbd5e1; background: #ffffff; color: #334155;
+    font-weight: 700; cursor: pointer;
+}
+.study-help-btn:hover { background: #f1f5f9; }
+
+.study-next-btn {
+    font-size: 13px; font-weight: 600;
+    padding: 5px 14px; border-radius: 6px; border: 1px solid #1a56db;
+    background: #1a56db; color: #ffffff; cursor: pointer;
+}
+.study-next-btn:disabled {
+    background: #e2e8f0; border-color: #cbd5e1; color: #94a3b8; cursor: default;
+}
+
+/* instruction overlay + guided tooltip */
+
+.study-overlay {
+    position: fixed; inset: 0; z-index: 3500;
+    background: rgba(15, 23, 42, 0.35);
+    display: flex; align-items: center; justify-content: center;
+}
+.study-overlay-card {
+    background: #ffffff; border: 1px solid #e2e8f0; border-radius: 10px;
+    box-shadow: 0 10px 32px rgba(15, 23, 42, 0.18);
+    max-width: 520px; max-height: 70vh; overflow-y: auto;
+    padding: 22px 26px;
+}
+.study-overlay-body { font-size: 13.5px; color: #0f172a; line-height: 1.6; }
+.study-para { margin-bottom: 10px; }
+.study-overlay-footer {
+    display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px;
+}
+
+.study-code-box {
+    margin-top: 14px; padding: 12px;
+    background: #f0f9ff; border: 1px solid #7dd3fc; border-radius: 8px;
+    display: flex; flex-direction: column; align-items: center; gap: 6px;
+}
+.study-code-label { font-size: 11px; color: #0369a1; letter-spacing: 0.05em; text-transform: uppercase; }
+.study-code { font-family: ui-monospace, monospace; font-size: 22px; font-weight: 700; color: #0c4a6e; letter-spacing: 0.12em; }
+
+.study-tip {
+    position: fixed; z-index: 3200;
+    max-width: 330px; padding: 12px 14px;
+    background: #ffffff; border: 1px solid #93c5fd; border-radius: 8px;
+    box-shadow: 0 6px 22px rgba(15, 23, 42, 0.14);
+    font-size: 12.5px; color: #0f172a;
+}
+.study-tip-viewport { top: 60px; left: 50%; transform: translateX(-50%); }
+.study-tip-pinButton { top: 54px; left: 50%; transform: translateX(-30%); }
+.study-tip-pinList { top: 120px; left: 300px; }
+.study-tip-meshPanel { top: 90px; left: 300px; }
+.study-tip-registrationCard { top: 120px; right: 70px; }
+.study-tip-check { font-size: 11.5px; font-weight: 600; color: #64748b; margin-bottom: 6px; }
+.study-tip-check-ok { color: #15803d; }
+.study-tip-body { line-height: 1.5; }
+.study-tip-close {
+    position: absolute; top: 6px; right: 6px;
+    width: 20px; height: 20px; border: none; background: none;
+    color: #94a3b8; cursor: pointer; font-size: 12px;
+}
+.study-tip-close:hover { color: #0f172a; }
+
+/* NUM condition: RMS table replacing the violin chart */
+
+.pc-rms-table { font-size: 11.5px; margin: 6px 0; }
+.pc-rms-head { display: flex; font-weight: 600; color: #64748b; border-bottom: 1px solid #e2e8f0; padding-bottom: 3px; }
+.pc-rms-row { display: flex; padding: 2px 0; border-bottom: 1px solid #f1f5f9; }
+.pc-rms-cell { flex: 1; text-align: right; font-variant-numeric: tabular-nums; }
+.pc-rms-cell.pc-rms-mesh { flex: 1.6; text-align: left; }
+.pc-rms-reg { margin-top: 6px; color: #475569; font-size: 11px; }

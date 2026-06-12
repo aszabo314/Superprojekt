@@ -209,6 +209,61 @@ module StudyEvents =
 
 module StudyUpdate =
 
+    // §5 update-level guard: a user-action message originating from a gated
+    // feature no-ops with a toast while a study runs. Result messages
+    // (solver callbacks, loads) and study/runtime messages always pass.
+    let private messageGate (msg : Message) : string option =
+        match msg with
+        | CameraMessage (OrbitMessage.PointerDown _ | OrbitMessage.PointerMove _
+                        | OrbitMessage.PointerUp _ | OrbitMessage.Wheel _) -> Some "navigation"
+        | SetActivePickingLayer (Some _) -> Some "layerCycle"
+        | ScanPinMsg (EnterAnchorPlacement | PlaceAnchor _ | CommitPin) -> Some "pinPlace"
+        | ScanPinMsg (SetInnerRadius _ | SetFalloffDelta _ | ChangePayloadType _
+                     | SetReliabilityWeight _ | SetLineMode _ | SetProbeLength _
+                     | ToggleProbeLockOrder _ | SetProbeXRange _ | DeletePin _) -> Some "pinEdit"
+        | EditPin _ -> Some "pinEdit"
+        | CardMsg (CreateCardsForPin _) -> Some "pinCard"
+        | HoverProbeAt _ -> Some "hoverProbe"
+        | SetHeatmapMode HeatProvenance -> Some "heatmap"
+        | SetHeatmapMode HeatDiff -> Some "heatmapDiff"
+        | SetChartCursor (Some _) | ChartColumnClick _ -> Some "violinChart"
+        | SolveCoarse -> Some "coarseSolve"
+        | RunRegistration | SetRegistrationMode _ -> Some "fineSolve"
+        | CommitRegistration -> Some "commit"
+        | RollbackRegStep | ResetRegistration -> Some "rollback"
+        | DiscardRegistration | SetReferenceMesh _ -> Some "registrationCard"
+        | ToggleCorrespondence _ | SetAnchorDecision _ | ApplyAnchorReview
+        | SetAnchor _ | StartAnchorPick _ | OpenPatchPicker _
+        | PatchPickerClick _ -> Some "coarseSolve"
+        | ToggleMenu | SetVisible _ | ToggleMeshSolo _ | ShowAllMeshes
+        | HideAllMeshes | JumpToMesh _ | SetRenderingMode _ -> Some "meshPanel"
+        | SetMeshSensorType _ | SetMeshDatasetError _
+        | SetProvenanceThreshold _ | ToggleFalloffZoneOnly -> Some "errorMetadata"
+        | _ -> None
+
+    // Whole subsystems with no feature id are Full-mode only (§5 hidden list).
+    let private fullOnly (msg : Message) =
+        match msg with
+        | ToggleFusionMode | TogglePanorama | SelectPanorama _ | SetPanoramaMode _
+        | SetPanoramaBlend _ | FlyToPanorama _
+        | LassoBegin | ToggleLassoEnabled
+        | SaveWorkspace | LoadWorkspaceJson _
+        | StartRetarget _ | SetRetargetDecision _ | CommitRetarget
+        | ToggleGearPopover | SetDatasetScale _
+        | ToggleFullscreen | ToggleGhostSilhouette | SetGhostOpacity _
+        | ToggleAnchorGhostMode | SetShadingStrength _ | SetSlopeThresholdDeg _ -> true
+        | _ -> false
+
+    // None = allowed; Some reason = blocked.
+    let blocked (model : Model) (msg : Message) : bool =
+        match model.Study with
+        | Some (StudyActive s) ->
+            fullOnly msg
+            || (match messageGate msg with
+                | Some fid -> not (Study.featureVisibleIn s fid)
+                | None -> false)
+        | _ -> false
+
     let private join (env : Env<Message>) (token : string option) (demo : (string * StudyCondition) option) =
         task {
             let! r = StudyApi.createSession ApiConfig.apiBase.Value token demo |> Async.StartAsTask

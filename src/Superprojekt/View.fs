@@ -448,7 +448,13 @@ module View =
                 match e.Key with
                 | " "      -> transact (fun () -> spaceHeld.Value <- true)
                 | "Escape" ->
-                    if Option.isSome (AVal.force model.AnchorPick) then
+                    let studyArmed =
+                        match AVal.force model.Study with
+                        | Some (StudyActive s) -> s.Runtime.SceneClickArm.IsSome
+                        | _ -> false
+                    if studyArmed then
+                        env.Emit [StudyMsg StudyCancelSceneClick]
+                    elif Option.isSome (AVal.force model.AnchorPick) then
                         env.Emit [CancelAnchorPick]
                     elif Option.isSome (AVal.force model.HoverProbe) then
                         env.Emit [ClearHoverProbe]
@@ -471,11 +477,18 @@ module View =
             }
             GuiStudy.studyBar env model
             GuiStudy.studyPages model
-            GuiPanels.leftPanel env model
+            GuiStudy.instructionOverlay env model
+            div {
+                Primitives.showWhen (StudyGate.featureOn model "meshPanel")
+                GuiPanels.leftPanel env model
+            }
             GuiPanels.placementFlyout env model
             GuiCards.lassoCard env model
-            GuiCards.registrationCard env model registrationOpen
-            GuiCards.registrationToggleButton registrationOpen
+            div {
+                Primitives.showWhen (StudyGate.featureOn model "registrationCard")
+                GuiCards.registrationCard env model registrationOpen
+                GuiCards.registrationToggleButton registrationOpen
+            }
             GuiCards.retargetCard env model
             GuiCards.anchorReviewCard env model
             GuiCards.panoramaCard env model
@@ -486,7 +499,10 @@ module View =
             GuiOverlays.fusionNotice model
             GuiOverlays.provenanceHoverOverlay model (hoverCoord :> aval<_>) (cursorScreen :> aval<_>)
             GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)
-            Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>)
+            div {
+                Primitives.showWhen (StudyGate.featureOn model "pinCard")
+                Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>)
+            }
             GuiOverlays.fullscreenInfo model
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.orientationIndicator model

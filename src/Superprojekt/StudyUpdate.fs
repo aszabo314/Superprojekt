@@ -43,6 +43,170 @@ module ServerActions =
             with _ -> ()
         } |> ignore
 
+// Telemetry-event derivation: one central diff over (model before, model
+// after, message) so the reducer branches stay clean. The same event stream
+// feeds the predicate engine and (SWP8) the telemetry batcher.
+module StudyEvents =
+
+    let private j (s : string) =
+        "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\""
+
+    let private obj' (kvs : (string * string) list) =
+        match kvs with
+        | [] -> "{}"
+        | _ -> "{" + (kvs |> List.map (fun (k, v) -> sprintf "%s:%s" (j k) v) |> String.concat ",") + "}"
+
+    let private lastFineMode (log : RegStep list) =
+        log |> List.tryPick (fun st ->
+            match st.Inputs with
+            | FineInputs (mode, _) -> Some mode
+            | _ -> None)
+
+    let private stageTag (inputs : RegInputs) =
+        match inputs with
+        | CoarseInputs _ -> "coarse"
+        | FineInputs _ -> "fine"
+
+    let private solveFinished (stage : RegStage) (before : Model) (after : Model) =
+        match before.PendingReg, after.PendingReg with
+        | Some b, Some a ->
+            b.Stage = stage && a.Stage = stage && b.Expected > 0 && a.Expected = 0
+            && not (Map.isEmpty a.Results)
+        | _ -> false
+
+    let private rmsPayload (pr : PendingRegistration) =
+        let perMesh =
+            pr.Results |> Map.toList
+            |> List.map (fun (mesh, r) ->
+                sprintf "%s:{\"rmsBefore\":%.6g,\"rmsAfter\":%.6g}" (j mesh) r.RmsBefore r.RmsAfter)
+            |> String.concat ","
+        sprintf "{\"perMesh\":{%s}}" perMesh
+
+    // Pin centre vs the coarse non-secret moving-region outline (§9 P2).
+    let private committedPinInMoving (before : Model) (after : Model) (cfg : StudyConfigPublic) =
+        if cfg.MovingPolygon.Length < 3 then false
+        else
+            match before.ScanPins.Placement with
+            | AdjustingPin id ->
+                match HashMap.tryFind id after.ScanPins.Pins with
+                | Some pin when pin.Phase = PinPhase.Committed ->
+                    StudyConfig.insidePolygon cfg.MovingPolygon pin.Centre.XY
+                | _ -> false
+            | _ -> false
+
+    let derive (before : Model) (after : Model) (msg : Message) : (string * string) list =
+        let session =
+            match after.Study with
+            | Some (StudyActive s) -> Some s
+            | _ -> None
+        match session with
+        | None -> []
+        | Some s ->
+            let events = ResizeArray<string * string>()
+            let add t p = events.Add(t, p)
+
+            // session / position transitions
+            let beforeActive =
+                match before.Study with
+                | Some (StudyActive b) -> Some b.Runtime
+                | _ -> None
+            match msg with
+            | StudyMsg (StudySessionStarted init) when beforeActive.IsNone ->
+                add (if init.Resumed then "sessionResumed" else "sessionStart")
+                    (obj' [ "condition", j (StudyCondition.tag s.Condition); "demo", string s.Demo ])
+            | _ -> ()
+            let posBefore = beforeActive |> Option.map (fun rt -> rt.PhaseIx, rt.StepIx)
+            let posAfter = s.Runtime.PhaseIx, s.Runtime.StepIx
+            if beforeActive.IsSome && posBefore <> Some posAfter then
+                match posBefore with
+                | Some (pb, sb) when fst posAfter > pb || (fst posAfter = pb && snd posAfter > sb) ->
+                    match Study.stepAt s.Config pb sb with
+                    | Some st -> add "stepComplete" (obj' [ "stepId", j st.Id ])
+                    | None -> ()
+                | _ -> ()
+                if Some (fst posAfter) <> (posBefore |> Option.map fst) then
+                    match Study.phaseAt s.Config (fst posAfter) with
+                    | Some ph -> add "phaseEnter" (obj' [ "phaseId", j ph.Id ])
+                    | None -> ()
+                match Study.currentStep s with
+                | Some st ->
+                    add "stepEnter" (obj' [ "stepId", j st.Id ])
+                    match st.Question with
+                    | Some qu -> add "questionShown" (obj' [ "questionId", j qu.Id ])
+                    | None -> ()
+                | None -> ()
+
+            // user actions
+            match msg with
+            | CameraMessage _ ->
+                let cb, ca = before.Camera, after.Camera
+                if ca.targetPhi <> cb.targetPhi || ca.targetTheta <> cb.targetTheta then add "orbit" "{}"
+                if ca.targetRadius <> cb.targetRadius then add "zoom" "{}"
+            | SetActivePickingLayer (Some l) when before.ActivePickingLayer <> Some l ->
+                add "layerCycled" (obj' [ "layer", j l ])
+            | ToggleMeshSolo m -> add "soloToggled" (obj' [ "mesh", j m ])
+            | SetVisible (m, v) -> add "meshVisToggled" (obj' [ "mesh", j m; "visible", string v ])
+            | ScanPinMsg (PlaceAnchor _) -> add "pinPlaced" "{}"
+            | ScanPinMsg CommitPin ->
+                add "pinCommitted" "{}"
+                if committedPinInMoving before after s.Config then add "pinInMoving" "{}"
+            | ScanPinMsg (DeletePin _) -> add "pinDeleted" "{}"
+            | SetAnchor (ScanPinId.ScanPinId pid, mesh, _, source) ->
+                add "anchorSet" (obj' [ "pinId", j (string pid); "mesh", j mesh
+                                        "source", j (string source) ])
+            | AnchorPickHit _ -> add "anchorSet" (obj' [ "source", j "pick3d" ])
+            | ApplyAnchorReview -> add "anchorAccepted" "{}"
+            | ToggleCorrespondence _ -> add "correspondenceToggled" "{}"
+            | RunRegistration ->
+                let cur =
+                    match before.Registration.Mode with
+                    | TraditionalIcp -> "traditional-icp"
+                    | RegionRestrictedIcp -> "region-icp"
+                match lastFineMode before.RegistrationLog with
+                | Some prev when prev <> cur -> add "solveAlternativeRun" (obj' [ "mode", j cur ])
+                | _ -> ()
+            | CommitRegistration ->
+                match before.PendingReg with
+                | Some pr when after.RegistrationLog.Length > before.RegistrationLog.Length ->
+                    add "committed" (obj' [ "stage", j (stageTag pr.Inputs)
+                                            "n", string after.RegistrationLog.Length ])
+                | _ -> ()
+            | RollbackRegStep when after.RegistrationLog.Length < before.RegistrationLog.Length ->
+                add "rolledBack" "{}"
+            | DiscardRegistration when PendingRegistration.isPreview before.PendingReg ->
+                add "discarded" "{}"
+            | SetHeatmapMode m when after.HeatmapMode = m && before.HeatmapMode <> m ->
+                add "heatmapMode" (obj' [ "mode", j (HeatmapMode.tag m) ])
+            | CardMsg (CreateCardsForPin (ScanPinId.ScanPinId pid, _)) ->
+                add "cardOpened" (obj' [ "pinId", j (string pid) ])
+            | CardMsg (RemoveCardsForPin _) -> add "cardClosed" "{}"
+            | SetChartCursor (Some _) -> add "chartHover" "{}"
+            | StudyMsg (StudySetChoice (qid, _))
+            | StudyMsg (StudySetNumber (qid, _))
+            | StudyMsg (StudySetText (qid, _))
+            | StudyMsg (StudySetGridItem (qid, _, _))
+            | StudyMsg (StudySetConfidence (qid, _)) ->
+                add "answerChanged" (obj' [ "questionId", j qid ])
+            | StudyMsg (StudySceneClickHit world) ->
+                match beforeActive |> Option.bind (fun rt -> rt.SceneClickArm) with
+                | Some qid ->
+                    add "flagMarked" (obj' [ "questionId", j qid
+                                             "point", sprintf "[%.3f,%.3f,%.3f]" world.X world.Y world.Z ])
+                | None -> ()
+            | StudyMsg StudySetAsFinal -> add "finalRestored" "{}"
+            | _ -> ()
+
+            // solver completion (the per-mesh result messages count down
+            // Expected; the milestone fires when the last one lands)
+            if solveFinished StageCoarse before after then
+                add "coarseSolved" (rmsPayload after.PendingReg.Value)
+                add "previewShown" "{}"
+            if solveFinished StageFine before after then
+                add "fineSolved" (rmsPayload after.PendingReg.Value)
+                add "previewShown" "{}"
+
+            List.ofSeq events
+
 module StudyUpdate =
 
     let private join (env : Env<Message>) (token : string option) (demo : (string * StudyCondition) option) =
@@ -103,6 +267,85 @@ module StudyUpdate =
             env.Emit [SetActiveDataset dataset]
             ServerActions.loadDataset env dataset
 
+    let private inv = System.Globalization.CultureInfo.InvariantCulture
+
+    let private valueJson (v : AnswerValue) =
+        match v with
+        | AChoice i -> string i
+        | ANumber x -> x.ToString("G17", inv)
+        | AText t -> System.Text.Json.JsonSerializer.Serialize(t : string)
+        | APoint p ->
+            sprintf "[%s,%s,%s]" (p.X.ToString("G17", inv)) (p.Y.ToString("G17", inv)) (p.Z.ToString("G17", inv))
+        | AGrid g ->
+            "{" + (g |> Map.toList |> List.map (fun (i, x) -> sprintf "\"%d\":%s" i (x.ToString("G17", inv))) |> String.concat ",") + "}"
+
+    // §7: answers post immediately on change (idempotent upsert by question
+    // id) and again on Next. Tutorial gold responses come back as
+    // StudyGoldResult — the single server→client correctness channel.
+    let private submitAnswer (env : Env<Message>) (sid : string) (qid : string) (draft : AnswerDraft) =
+        match draft.Value with
+        | None -> ()
+        | Some v ->
+            task {
+                let! r =
+                    StudyApi.postAnswer ApiConfig.apiBase.Value sid qid (valueJson v) draft.Confidence
+                    |> Async.StartAsTask
+                match r with
+                | Result.Ok (Some correct, screened) ->
+                    env.Emit [StudyMsg (StudyGoldResult(qid, correct, screened))]
+                | Result.Ok (None, true) ->
+                    env.Emit [StudyMsg (StudyGoldResult(qid, true, true))]
+                | _ -> ()
+            } |> ignore
+
+    let private updateRuntime (model : Model) (f : StudySession -> StudyRuntime) =
+        match model.Study with
+        | Some (StudyActive s) ->
+            let rt = f s
+            let rt = Study.reevaluate s.Config rt (Study.isTutorialPhase s.Config rt.PhaseIx)
+            { model with Study = Some (StudyActive { s with Runtime = rt }) }
+        | _ -> model
+
+    let private setDraft
+            (env : Env<Message>)
+            (model : Model)
+            (qid : string)
+            (f : AnswerDraft -> AnswerDraft) =
+        match model.Study with
+        | Some (StudyActive s) ->
+            let draft =
+                Map.tryFind qid s.Runtime.AnswersDraft
+                |> Option.defaultValue AnswerDraft.empty
+                |> f
+            submitAnswer env s.SessionId qid draft
+            updateRuntime model (fun s ->
+                { s.Runtime with AnswersDraft = Map.add qid draft s.Runtime.AnswersDraft })
+        | _ -> model
+
+    // World-space committed transforms of every loaded mesh — the payload of
+    // /transforms posts (labels commit#n / final).
+    let postTransforms (model : Model) (sid : string) (label : string) =
+        let perMesh =
+            model.MeshNames |> IndexList.toList
+            |> List.map (fun mesh -> mesh, (ModelTransforms.committedWorld model mesh).Forward)
+        if not (List.isEmpty perMesh) then
+            StudyApi.postTransforms ApiConfig.apiBase.Value sid label perMesh
+            |> Async.Ignore |> Async.Start
+
+    let private fetchCompletion (env : Env<Message>) (sid : string) =
+        task {
+            let! r = StudyApi.getComplete ApiConfig.apiBase.Value sid |> Async.StartAsTask
+            match r with
+            | Result.Ok code -> env.Emit [StudyMsg (StudyCompletionCode code)]
+            | Result.Error reason -> env.Emit [StudyMsg (StudyCompletionFailed reason)]
+        } |> ignore
+
+    let private isLastPosition (cfg : StudyConfigPublic) (phaseIx : int) (stepIx : int) =
+        Study.nextPosition cfg phaseIx stepIx |> Option.isNone
+
+    let private isExitPhase (cfg : StudyConfigPublic) (phaseIx : int) =
+        phaseIx = List.length cfg.Phases - 1
+
     let handleMsg (env : Env<Message>) (model : Model) (msg : StudyMessage) : Model =
         match msg with
         | StudyJoin token ->
@@ -145,3 +388,148 @@ module StudyUpdate =
                 } |> ignore
                 resetScene { model with Study = None }
             | _ -> model
+
+        // §4 Next: enabled iff StepSatisfied; posts the advance mirror, moves
+        // on, switches dataset on phase boundaries that declare one.
+        | StudyNext ->
+            match model.Study with
+            | Some (StudyActive s) when s.Runtime.StepSatisfied ->
+                let cfg = s.Config
+                let rt = s.Runtime
+                match Study.phaseAt cfg rt.PhaseIx, Study.stepAt cfg rt.PhaseIx rt.StepIx with
+                | Some phase, Some step ->
+                    StudyApi.postAdvance ApiConfig.apiBase.Value s.SessionId phase.Id step.Id
+                    |> Async.Ignore |> Async.Start
+                    // final value wins server-side by timestamp (§7)
+                    match step.Question with
+                    | Some qu ->
+                        match Map.tryFind qu.Id rt.AnswersDraft with
+                        | Some draft -> submitAnswer env s.SessionId qu.Id draft
+                        | None -> ()
+                    | None -> ()
+                    match Study.nextPosition cfg rt.PhaseIx rt.StepIx with
+                    | None -> model
+                    | Some (pIx, sIx) ->
+                        let dsBefore = Study.datasetAtPhase cfg rt.PhaseIx
+                        let dsAfter = Study.datasetAtPhase cfg pIx
+                        let datasetSwitch = pIx <> rt.PhaseIx && dsBefore <> dsAfter
+                        let rt' =
+                            { rt with
+                                PhaseIx = pIx
+                                StepIx = sIx
+                                OverlayOpen = true
+                                SceneClickArm = None
+                                AdvancePosted = Set.add (phase.Id + "/" + step.Id) rt.AdvancePosted
+                                // predicate counts are cumulative per
+                                // dataset epoch (see IMPLEMENTATION_NOTES)
+                                EventCounts = if datasetSwitch then Map.empty else rt.EventCounts }
+                        let rt' = Study.reevaluate cfg rt' (Study.isTutorialPhase cfg pIx)
+                        let model = { model with Study = Some (StudyActive { s with Runtime = rt' }) }
+                        if datasetSwitch then
+                            match dsAfter with
+                            | Some ds -> switchDataset env model ds
+                            | None -> ()
+                        // entering the exit phase = "final": post transforms
+                        // + auto-upload the workspace (§8/§10)
+                        if pIx <> rt.PhaseIx && isExitPhase cfg pIx then
+                            postTransforms model s.SessionId "final"
+                            StudyApi.postWorkspace ApiConfig.apiBase.Value s.SessionId (Persistence.serialize model)
+                            |> Async.Ignore |> Async.Start
+                        // the last step shows the completion code (§9 P6)
+                        if isLastPosition cfg pIx sIx && rt'.CompletionCode.IsNone then
+                            fetchCompletion env s.SessionId
+                        model
+                | _ -> model
+            | _ -> model
+
+        | StudyReopenOverlay ->
+            updateRuntime model (fun s -> { s.Runtime with OverlayOpen = true })
+        | StudyCloseOverlay ->
+            updateRuntime model (fun s -> { s.Runtime with OverlayOpen = false })
+
+        // §4 tutorial gold: correctness is server-evaluated; 2 fails on one
+        // check re-show the relevant tutorial step, the 3rd screens out.
+        | StudyGoldResult (qid, correct, screened) ->
+            match model.Study with
+            | Some (StudyActive s) ->
+                if screened then { model with Study = Some StudyScreened }
+                else
+                    let rt = s.Runtime
+                    let fails =
+                        if correct then rt.GoldFails
+                        else Map.add qid ((Map.tryFind qid rt.GoldFails |> Option.defaultValue 0) + 1) rt.GoldFails
+                    let failCount = Map.tryFind qid fails |> Option.defaultValue 0
+                    updateRuntime model (fun s ->
+                        let rt = { s.Runtime with GoldStatus = Map.add qid correct rt.GoldStatus; GoldFails = fails }
+                        if not correct && failCount >= 2 then
+                            { rt with
+                                StepIx = Study.retryStepIx s.Config rt.PhaseIx rt.StepIx
+                                OverlayOpen = true }
+                        else rt)
+            | _ -> model
+
+        | StudyCompletionCode code ->
+            updateRuntime model (fun s -> { s.Runtime with CompletionCode = Some code })
+        | StudyCompletionFailed reason ->
+            { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "completion refused: %s" reason) }
+
+        // §9 P4: "Set as final" exists only in study mode; posts final
+        // transforms and fires the finalRestored event (via StudyEvents).
+        | StudySetAsFinal ->
+            match model.Study with
+            | Some (StudyActive s) ->
+                postTransforms model s.SessionId "final"
+                { model with Toast = Some "Current state marked as final" }
+            | _ -> model
+
+        | StudySetChoice (qid, ix) ->
+            setDraft env model qid (fun d -> { d with Value = Some (AChoice ix) })
+        | StudySetNumber (qid, v) ->
+            setDraft env model qid (fun d -> { d with Value = Some (ANumber v) })
+        | StudySetText (qid, t) ->
+            setDraft env model qid (fun d -> { d with Value = Some (AText t) })
+        | StudySetGridItem (qid, item, v) ->
+            setDraft env model qid (fun d ->
+                let grid = match d.Value with Some (AGrid g) -> g | _ -> Map.empty
+                { d with Value = Some (AGrid (Map.add item v grid)) })
+        | StudySetConfidence (qid, c) ->
+            setDraft env model qid (fun d -> { d with Confidence = Some c })
+
+        | StudyArmSceneClick qid ->
+            updateRuntime model (fun s -> { s.Runtime with SceneClickArm = Some qid })
+        | StudyCancelSceneClick ->
+            updateRuntime model (fun s -> { s.Runtime with SceneClickArm = None })
+        | StudySceneClickHit world ->
+            match model.Study with
+            | Some (StudyActive s) ->
+                match s.Runtime.SceneClickArm with
+                | Some qid ->
+                    let model =
+                        updateRuntime model (fun s ->
+                            { s.Runtime with
+                                Flags = Map.add qid world s.Runtime.Flags
+                                SceneClickArm = None })
+                    setDraft env model qid (fun d -> { d with Value = Some (APoint world) })
+                | None -> model
+            | _ -> model
+
+    // Update-loop postlude (runs after every reducer step while a study is
+    // active): derive telemetry events, feed the predicate counts, advance
+    // Seq milestones, refresh StepSatisfied — and fire the transforms post
+    // that §8 ties to commits.
+    let postlude (env : Env<Message>) (before : Model) (after : Model) (msg : Message) : Model =
+        match after.Study with
+        | Some (StudyActive s) ->
+            let events = StudyEvents.derive before after msg
+            if List.isEmpty events then after
+            else
+                if events |> List.exists (fst >> (=) "pinInMoving") then
+                    env.Emit [ShowToast "Heads up: this pin sits on the moving region — stable terrain anchors registration better"]
+                match events |> List.tryFind (fst >> (=) "committed") with
+                | Some _ ->
+                    postTransforms after s.SessionId (sprintf "commit#%d" after.RegistrationLog.Length)
+                | None -> ()
+                let rt = Study.feedEvents (List.map fst events) s.Runtime
+                let rt = Study.reevaluate s.Config rt (Study.isTutorialPhase s.Config rt.PhaseIx)
+                { after with Study = Some (StudyActive { s with Runtime = rt }) }
+        | _ -> after

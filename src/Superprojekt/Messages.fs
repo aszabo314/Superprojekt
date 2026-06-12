@@ -110,6 +110,23 @@ and StudyMessage =
     | StudySessionStarted of StudySessionInit
     | StudySessionFailed of message:string
     | StudyExitDemo
+    // Runtime (§4): Next gating, instruction overlay, tutorial gold flow.
+    | StudyNext
+    | StudyReopenOverlay
+    | StudyCloseOverlay
+    | StudyGoldResult of questionId:string * correct:bool * screened:bool
+    | StudyCompletionCode of string
+    | StudyCompletionFailed of string
+    | StudySetAsFinal
+    // Answer drafts (§7): post immediately on change, again on Next.
+    | StudySetChoice of questionId:string * option_:int
+    | StudySetNumber of questionId:string * value:float
+    | StudySetText of questionId:string * text:string
+    | StudySetGridItem of questionId:string * item:int * value:float
+    | StudySetConfidence of questionId:string * confidence:int
+    | StudyArmSceneClick of questionId:string
+    | StudyCancelSceneClick
+    | StudySceneClickHit of world:V3d
 
 and CardMessage =
     | BringToFront of CardId

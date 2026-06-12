@@ -1184,7 +1184,9 @@ module Update =
             | None -> model
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =
-        updateCore env model msg
-        |> ScanPinUpdate.ensureProbe env
-        |> ScanPinUpdate.ensureProbePreview env
-        |> ScanPinUpdate.ensureRings env
+        let updated =
+            updateCore env model msg
+            |> ScanPinUpdate.ensureProbe env
+            |> ScanPinUpdate.ensureProbePreview env
+            |> ScanPinUpdate.ensureRings env
+        StudyUpdate.postlude env model updated msg

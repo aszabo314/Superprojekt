@@ -410,12 +410,14 @@ module StudyUpdate =
             join env None (Some (studyId, cond))
             { model with Study = Some StudyJoining; GearPopoverOpen = false }
         | StudySessionFailed message ->
-            { model with Study = Some (StudyFailed message) }
+            // A screened token gets its own polite page, not the error page.
+            if message = "screened" then { model with Study = Some StudyScreened }
+            else { model with Study = Some (StudyFailed message) }
         | StudySessionStarted init ->
             StudyTelemetry.start init.SessionId
             let phaseIx, stepIx = resumePosition init.Config init.LastStep
             let rt =
-                { StudyRuntime.initial with PhaseIx = phaseIx; StepIx = stepIx }
+                { StudyRuntime.initial with PhaseIx = phaseIx; StepIx = stepIx; ResumedNotice = init.Resumed }
                 |> fun rt -> Study.reevaluate init.Config rt (Study.isTutorialPhase init.Config phaseIx)
             let session = {
                 SessionId = init.SessionId
@@ -476,6 +478,7 @@ module StudyUpdate =
                                 StepIx = sIx
                                 OverlayOpen = true
                                 SceneClickArm = None
+                                ResumedNotice = false
                                 AdvancePosted = Set.add (phase.Id + "/" + step.Id) rt.AdvancePosted
                                 // predicate counts are cumulative per
                                 // dataset epoch (see IMPLEMENTATION_NOTES)

@@ -190,6 +190,12 @@ module GuiStudy =
                 div {
                     Class "study-overlay-card"
                     div {
+                        Class "study-resume-note"
+                        showWhen (session |> AVal.map (fun s ->
+                            s |> Option.map (fun x -> x.Runtime.ResumedNotice) |> Option.defaultValue false))
+                        "Welcome back — your progress was kept; the 3D scene was reset."
+                    }
+                    div {
                         Class "study-overlay-body"
                         paragraphs (modal |> AVal.map (fun m -> m |> Option.map (fun (_, st) -> st.Body) |> Option.defaultValue ""))
                     }

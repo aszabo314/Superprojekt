@@ -408,6 +408,8 @@ type StudyRuntime = {
     CompletionCode : string option
     CommitCount   : int                // labels commit#1, commit#2, …
     AdvancePosted : Set<string>        // "phaseId/stepId" already advanced
+    // §10 reload: progress kept, scene reset — shown until the next step.
+    ResumedNotice : bool
 }
 
 type StudySession = {
@@ -451,6 +453,7 @@ module StudyRuntime =
         CompletionCode = None
         CommitCount   = 0
         AdvancePosted = Set.empty
+        ResumedNotice = false
     }
 
 module Study =

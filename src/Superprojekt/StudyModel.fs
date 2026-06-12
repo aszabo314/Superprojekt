@@ -24,7 +24,7 @@ module StudyFeature =
           "violinChart"; "hoverProbe"; "heatmap"; "heatmapDiff"
           "threeSourceBar"; "splitViolinPreview"; "registrationCard"
           "coarseSolve"; "fineSolve"; "commit"; "rollback"
-          "meshPanel"; "errorMetadata"; "contactRings" ]
+          "meshPanel"; "errorMetadata"; "contactRings"; "workflowPanel" ]
 
     // Element ids guided-action tooltips may anchor to.
     let anchors =

@@ -112,6 +112,14 @@ module GuiTopBar =
             }
 
             button {
+                Class "tb-btn"
+                model.WorkflowPanelOpen |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Registration workflow: readiness, anchors, status and error stats in one panel")
+                Dom.OnClick(fun _ -> env.Emit [ToggleWorkflowPanel])
+                "⚲ Workflow"
+            }
+
+            button {
                 Class "tb-btn tb-btn-icon"
                 Attribute("title", "Reset camera")
                 Dom.OnClick(fun _ -> env.Emit [ResetCamera])

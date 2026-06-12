@@ -242,6 +242,7 @@ module StudyUpdate =
         | PatchPickerClick _ -> Some "coarseSolve"
         | ToggleMenu | SetVisible _ | ToggleMeshSolo _ | ShowAllMeshes
         | HideAllMeshes | JumpToMesh _ | SetRenderingMode _ -> Some "meshPanel"
+        | ToggleWorkflowPanel | NavTo _ | FlyTo _ -> Some "workflowPanel"
         | SetMeshSensorType _ | SetMeshDatasetError _
         | SetProvenanceThreshold _ | ToggleFalloffZoneOnly -> Some "errorMetadata"
         | _ -> None

@@ -121,7 +121,7 @@ ProbeModel.fs                   ← M3C2 probe DTOs (ProbeResult/ProbeState/Prob
 Query.fs                        ← server query wrappers (Async), rayHitMany fan-out, probe
 CameraModel.fs / .g.fs          ← OrbitState [<ModelType>]
 OrbitController.fs              ← OrbitMessage DU + orbit camera
-RegistrationModel.fs            ← ScanPinId, correspondence anchors, RegStep/RegLog, PendingRegistration, HeatmapMode, RegJson (WASM-free, shared with Supertests)
+RegistrationModel.fs            ← ScanPinId, correspondence anchors, RegStep/RegLog, PendingRegistration, LastSolveEntry, readiness engine (Readiness.compute), FlyToMath, NavAction, HeatmapMode, RegJson (WASM-free, shared with Supertests)
 StudyModel.fs                   ← study-mode shared types: config DTOs + parser, predicate engine, StudyRuntime/StudySession/StudyShell (WASM-free, compiled into server + Supertests too)
 StudyApi.fs                     ← /api/study/* HTTP wrappers + StudyBoot.entryToken
 StudyTelemetry.fs               ← telemetry batcher (module-level queue, 5 s/50-event flush, backoff, throttling)
@@ -130,7 +130,7 @@ PinGeometry.fs                  ← icosphere, sphere outline, patch footprint
 Model.fs / .g.fs                ← [<ModelType>] Model + DatasetScale helpers
 Persistence.fs                  ← workspace JSON serialise / apply
 LineShader.fs                   ← Shader.flatColor + Lines (pixel-constant 3D lines)
-Primitives.fs                   ← widgets, showWhen/showWhenNot, observedRender, provBarJs
+Primitives.fs                   ← widgets, showWhen/showWhenNot, observedRender, provBarJs, StudyGate, ReadinessView (readiness-engine adapter)
 Messages.fs                     ← Message DU (incl. StudyMessage)
 StudyUpdate.fs                  ← ServerActions (init/loadDataset), study reducer + StudyEvents.derive + update-postlude + feature-gate guard
 CardUpdate.fs / ScanPinUpdate.fs
@@ -142,7 +142,7 @@ PanoramaView.fs                 ← offscreen cubemap capture + cylindrical repr
 ScanPinScene.fs                 ← pin sg nodes
 SceneGraph.fs                   ← composes meshScene + pinScene + cross + labels
 CardsPin.fs / Cards.fs          ← pin card body; shared card chrome (cardDragHandle/cardPos/cardStyle)
-GuiTopBar.fs / GuiPanels.fs / GuiOverlays.fs / GuiCards.fs / GuiStudy.fs
+GuiTopBar.fs / GuiPanels.fs / GuiOverlays.fs / GuiCards.fs / GuiWorkflow.fs / GuiStudy.fs
 View.fs                         ← App module wires Boot.run
 ShaderCache.fs / Program.fs
 ```
@@ -214,11 +214,12 @@ Top-level `Model` fields (see `Model.fs`):
 - `ScanPins`, `CardSystem`, `HoverProbe` (transient Ctrl-click probe, one global slot)
 - `ChartCursor` (chart-hover elevation cursor: pin id + signed distance + Alt-extended), `ChartHoverMesh`, `ChartStickyMesh` (column highlight; hover wins over sticky)
 - `RenderingMode` (Textured | Shaded | SlopeColor), `MeshSolo`, `LassoCardPos`, `GearPopoverOpen`
+- `LastSolve` (per-mesh solve diagnostics, persisted in workspace v3, cleared per mesh on rollback), `WorkflowPanelOpen`, `RegistrationCardOpen`, `AnchorReviewFilter`
 - `Study` (`StudyShell option` — None = Full app; `StudyActive` carries the running study session), `StudiesAvailable`
 
 GUI placement:
 - Left panel (`GuiPanels.leftPanel`): mesh list, pin list, error metadata, error provenance card.
-- Top bar (`GuiTopBar.topBar`): hamburger, dataset selector, **◌ Lasso**, **○ Pin** placement, **◈ Fusion**, **▦ Pano**, camera reset, world coordinate readout, gear popover.
+- Top bar (`GuiTopBar.topBar`): hamburger, dataset selector, **◌ Lasso**, **○ Pin** placement, **◈ Fusion**, **▦ Pano**, **⚲ Workflow** (registration workflow panel — a pure view over the model: shared readiness diagnostics with nav actions, anchor-dot matrix, pending banner, error stats; never issues server queries), camera reset, world coordinate readout, gear popover.
 - Floating cards: pin cards are managed by `CardSystem` (`Cards.renderCards` — 3D-anchored, detachable, z-ordered); `lassoCard`, `registrationCard`, `panoramaCard` (`GuiCards.fs`) hold their position locally (`LassoCardPos` is the only persisted one). **All draggable cards share one chrome**: `Cards.cardDragHandle` / `Cards.cardPos` / `Cards.cardStyle` — don't hand-roll pointer-drag code for new cards. `lassoCard` is symbol-only: `◉/○` (enable/disable, polygon kept), `✎` (redraw), `⊘` (cancel drawing), `✕` (clear). `retargetCard` is a CSS-centered modal, not draggable.
 - Gear popover (debug flyout, end of `GuiTopBar.fs`): retarget, workspace save/load, camera speed, **Ghost silhouette toggle**, **Ghost opacity slider**, **Isolate pins toggle**, shading strength, slope threshold, dataset info, mesh centroids, debug log.
 

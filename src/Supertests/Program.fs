@@ -547,6 +547,151 @@ let storeTests () =
 
     try System.IO.Directory.Delete(tmp, true) with _ -> ()
 
+// ─────────────────── Workflow panel: readiness engine ─────────────────────
+
+let private mkRPin label refAnchor (accepted : string list) (total : int) : ReadinessPin =
+    { Id = ScanPinId.create ()
+      Label = label
+      RefAnchor = refAnchor
+      Accepted = Set.ofList accepted
+      AcceptedTotal = List.length accepted
+      Unresolved = total - List.length accepted }
+
+let readinessTests () =
+    let baseInput = {
+        ReferenceMesh       = Some "ref"
+        VisibleMovingMeshes = [ "A"; "B" ]
+        EnabledPins         = []
+        HasPending          = false
+        HasCommittedStep    = false
+        FineModeLabel       = "Traditional ICP"
+    }
+    let ready (d : Diagnostic list) = d |> List.filter (fun x -> x.Severity = Severity.Ready)
+    // non-collinear spread (parabola) with anchors accepted on both meshes
+    let pinsN n =
+        List.init n (fun i ->
+            mkRPin (sprintf "p%d" i)
+                (Some (V3d(float i * 3.0, float (i * i), 0.5), 1.0))
+                [ "A"; "B" ] 2)
+
+    let d = Readiness.compute { baseInput with ReferenceMesh = None }
+    check "no-ref blocker in both stages"
+        ((d.Coarse |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "reference"))
+         && (d.Fine |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "reference")))
+    check "no-ref highlight action"
+        (d.Coarse |> List.exists (fun x -> x.Action = Some HighlightReferenceColumn))
+    check "no-ref never ready" (ready d.Coarse |> List.isEmpty && ready d.Fine |> List.isEmpty)
+
+    let d = Readiness.compute baseInput
+    check "zero pins blocker" (d.Coarse |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "≥3 pins"))
+
+    let d = Readiness.compute { baseInput with EnabledPins = pinsN 2 }
+    check "pair deficit blocker per mesh"
+        (d.Coarse |> List.filter (fun x -> x.Severity = Blocker && x.Text.Contains "more accepted") |> List.length = 2)
+    check "deficit counts the gap" (d.Coarse |> List.exists (fun x -> x.Text.Contains "needs 1 more"))
+    check "deficit action opens filtered review"
+        (d.Coarse |> List.exists (fun x -> x.Action = Some (OpenAnchorReview (Some "A"))))
+    check "2 pins not ready" (ready d.Coarse |> List.isEmpty)
+
+    let d = Readiness.compute { baseInput with EnabledPins = pinsN 3 }
+    check "3 pins → exactly one coarse Ready" (ready d.Coarse |> List.length = 1)
+    check "coarse Ready action" ((ready d.Coarse |> List.head).Action = Some RunCoarse)
+    check "no coarse blockers when clear" (d.Coarse |> List.forall (fun x -> x.Severity <> Blocker))
+    check "fine info before any commit"
+        (d.Fine |> List.exists (fun x -> x.Severity = Severity.Info && x.Text.Contains "coarse first"))
+    check "fine not ready before commit" (ready d.Fine |> List.isEmpty)
+
+    let d = Readiness.compute { baseInput with EnabledPins = pinsN 3; HasCommittedStep = true }
+    check "fine → exactly one Ready after commit" (ready d.Fine |> List.length = 1)
+    check "fine Ready names the mode" ((ready d.Fine |> List.head).Text.Contains "Traditional ICP")
+    check "fine Ready action" ((ready d.Fine |> List.head).Action = Some RunFine)
+
+    let pinU = mkRPin "pu" (Some (V3d(9.0, 1.0, 2.0), 1.0)) [ "A" ] 2
+    let d = Readiness.compute { baseInput with EnabledPins = pinU :: pinsN 3 }
+    check "unresolved anchors → warning"
+        (d.Coarse |> List.exists (fun x -> x.Severity = Warning && x.Text.Contains "unresolved"))
+    check "unresolved action opens the pin card"
+        (d.Coarse |> List.exists (fun x -> x.Action = Some (SelectPinOpenCard pinU.Id)))
+
+    let colinear =
+        List.init 4 (fun i -> mkRPin (sprintf "c%d" i) (Some (V3d(float i, 0.0, 0.0), 1.0)) [ "A"; "B" ] 2)
+    let d = Readiness.compute { baseInput with EnabledPins = colinear }
+    check "collinear anchors → warning" (d.Coarse |> List.exists (fun x -> x.Text.Contains "near-collinear"))
+    let d = Readiness.compute { baseInput with EnabledPins = pinsN 4 }
+    check "spread anchors → no collinear warning"
+        (not (d.Coarse |> List.exists (fun x -> x.Text.Contains "near-collinear")))
+
+    let d = Readiness.compute { baseInput with EnabledPins = pinsN 3; HasPending = true; HasCommittedStep = true }
+    check "pending blocks coarse"
+        (d.Coarse |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "pending"))
+    check "pending blocks fine"
+        (d.Fine |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "pending"))
+    check "pending action focuses the pending block"
+        (d.Coarse |> List.exists (fun x -> x.Action = Some (FocusRegistrationCard SectionPending)))
+    check "pending kills both Ready entries" (ready d.Coarse @ ready d.Fine |> List.isEmpty)
+
+// ────────────────────── Workflow panel: fly-to math ────────────────────────
+
+let flyToTests () =
+    let aspect = 16.0 / 9.0
+    let fovY = FlyToMath.fovY 90.0 aspect
+    checkLe "fovY closed form" (abs (fovY - 2.0 * atan (tan (Math.PI / 4.0) / aspect))) 1e-12
+    let d = FlyToMath.distance fovY 5.0
+    checkLe "fly-to distance closed form" (abs (d - 5.0 / tan (fovY * 0.125))) 1e-12
+    check "distance grows with radius" (FlyToMath.distance fovY 10.0 > d)
+    let c, r = FlyToMath.boundingSphere (FlyToBounds (Box3d(V3d(-1.0, -2.0, -3.0), V3d(1.0, 2.0, 3.0))))
+    checkLe "bounds → sphere centre" (c - V3d.Zero).Length 1e-12
+    checkLe "bounds → sphere radius" (abs (r - V3d(2.0, 4.0, 6.0).Length * 0.5)) 1e-12
+    let c2, r2 = FlyToMath.boundingSphere (FlyToSphere(V3d(1.0, 2.0, 3.0), 4.0))
+    check "sphere passthrough" (c2 = V3d(1.0, 2.0, 3.0) && r2 = 4.0)
+    check "degenerate radius clamped" (snd (FlyToMath.boundingSphere (FlyToSphere(V3d.Zero, 0.0))) > 0.0)
+
+// ──────────────────── Workflow panel: lastSolve model ──────────────────────
+
+let lastSolveTests () =
+    let pid = ScanPinId.create ()
+    let entryCoarse = {
+        Stage           = StageCoarse
+        RmsBefore       = 1.25
+        RmsAfter        = 0.5
+        Conditioning    = Some { Eigenvalues = [| 3.0; 2.0; 0.125 |]; CollinearityWarning = false }
+        PerPinResiduals = Some (Map.ofList [ pid, 0.125 ])
+        Timestamp       = DateTime(2026, 6, 12, 10, 0, 0, DateTimeKind.Utc)
+    }
+    let entryFine = {
+        Stage           = StageFine
+        RmsBefore       = 0.5
+        RmsAfter        = 0.25
+        Conditioning    = None
+        PerPinResiduals = None
+        Timestamp       = DateTime(2026, 6, 12, 11, 0, 0, DateTimeKind.Utc)
+    }
+    let m = Map.ofList [ "ds/A", entryCoarse; "ds/B", entryFine ]
+    check "lastSolve round-trip" (RegJson.readLastSolve (parseRoot (RegJson.lastSolveJ m)) = m)
+    check "lastSolve empty round-trip"
+        (RegJson.readLastSolve (parseRoot (RegJson.lastSolveJ Map.empty)) = Map.empty)
+    // workspace without the field (old files) defaults handled by the caller;
+    // rollback clears exactly the producing step's meshes
+    let out = {
+        TransformBefore = Trafo3d.Identity
+        TransformAfter  = Trafo3d.Translation (V3d(1.0, 0.0, 0.0))
+        RmsBefore       = 1.0
+        RmsAfter        = 0.5
+        AlgoResidBefore = 0.0
+    }
+    let step = {
+        Step = 1; Stage = StageCoarse; Mode = "landmarks"
+        Timestamp = DateTime(2026, 6, 12, 12, 0, 0, DateTimeKind.Utc)
+        ReferenceMesh = "ds/ref"
+        Inputs = CoarseInputs [||]
+        Outputs = Map.ofList [ "ds/A", out ]
+    }
+    let after = LastSolve.afterRollback step m
+    check "rollback clears the producing mesh"
+        (not (Map.containsKey "ds/A" after) && Map.containsKey "ds/B" after)
+    check "rollback of unrelated step is a no-op"
+        (LastSolve.afterRollback { step with Outputs = Map.ofList [ "ds/C", out ] } m = m)
+
 [<EntryPoint>]
 let main _ =
     umeyamaTests ()
@@ -557,6 +702,9 @@ let main _ =
     gatingTests ()
     validationTests ()
     storeTests ()
+    readinessTests ()
+    flyToTests ()
+    lastSolveTests ()
     printfn ""
     printfn "%d/%d passed%s" (total - failures) total (if failures = 0 then "" else sprintf " — %d FAILED" failures)
     failures

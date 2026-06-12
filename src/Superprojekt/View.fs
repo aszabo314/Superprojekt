@@ -51,7 +51,6 @@ module View =
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
         let cursorScreen    = cval<V2d option> None
-        let registrationOpen = cval false
 
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
 
@@ -566,8 +565,8 @@ module View =
             GuiCards.lassoCard env model
             div {
                 Primitives.showWhen (StudyGate.featureOn model "registrationCard")
-                GuiCards.registrationCard env model registrationOpen
-                GuiCards.registrationToggleButton registrationOpen
+                GuiCards.registrationCard env model
+                GuiCards.registrationToggleButton env model
             }
             GuiCards.retargetCard env model
             GuiCards.anchorReviewCard env model

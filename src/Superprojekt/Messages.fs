@@ -24,7 +24,7 @@ type Message =
     | FineFailed of mesh:string * reason:string
     // Stage 1 · Coarse (landmarks via /query/lsq-pairs).
     | SolveCoarse
-    | CoarseSolved of mesh:string * worldDelta:M44d * pairResiduals:(ScanPinId * float)[] * rmsBefore:float * collinear:bool
+    | CoarseSolved of mesh:string * worldDelta:M44d * pairResiduals:(ScanPinId * float)[] * rmsBefore:float * eigenvalues:float[] * collinear:bool
     | CoarseFailed of mesh:string * reason:string
     // Pending-preview lifecycle + history.
     | CommitRegistration
@@ -100,6 +100,8 @@ type Message =
     | SetPanoramaBlend of float
     | FlyToPanorama of int
     | StudiesLoaded of string[]
+    | ToggleWorkflowPanel
+    | SetRegistrationCardOpen of bool
     | StudyMsg of StudyMessage
 
 and StudyMessage =

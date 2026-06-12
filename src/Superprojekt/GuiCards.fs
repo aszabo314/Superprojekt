@@ -86,7 +86,7 @@ module GuiCards =
                 blocks.[min 7 (int (t * 7.999))])
             |> System.String
 
-    let registrationCard (env : Env<Message>) (model : AdaptiveModel) (openCval : cval<bool>) =
+    let registrationCard (env : Env<Message>) (model : AdaptiveModel) =
         let dragState : cval<(V2d * V2d) option> = cval None
         let committedPos = cval (V2d(200.0, 180.0))
         let pos = Cards.cardPos (committedPos :> aval<_>) dragState
@@ -164,7 +164,7 @@ module GuiCards =
 
         div {
             Class "card registration-card"
-            Cards.cardStyle (openCval :> aval<_>) pos
+            Cards.cardStyle model.RegistrationCardOpen pos
             div {
                 Class "card-titlebar"
                 Cards.cardDragHandle (AVal.constant "Registration") pos dragState (fun p ->
@@ -172,7 +172,7 @@ module GuiCards =
                 button {
                     Class "card-btn-close"
                     Attribute("title", "Close")
-                    Dom.OnClick(fun _ -> transact (fun () -> openCval.Value <- false))
+                    Dom.OnClick(fun _ -> env.Emit [SetRegistrationCardOpen false])
                     "×"
                 }
             }
@@ -556,12 +556,12 @@ module GuiCards =
             }
         }
 
-    let registrationToggleButton (openCval : cval<bool>) =
+    let registrationToggleButton (env : Env<Message>) (model : AdaptiveModel) =
         button {
             Class "tb-btn"
             Attribute("title", "Registration solver")
             Dom.OnClick(fun _ ->
-                transact (fun () -> openCval.Value <- not openCval.Value))
+                env.Emit [SetRegistrationCardOpen (not (AVal.force model.RegistrationCardOpen))])
             "⚙ Registration"
         }
 

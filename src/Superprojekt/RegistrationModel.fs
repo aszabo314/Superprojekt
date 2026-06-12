@@ -230,6 +230,27 @@ module RegConditioning =
 
 // JSON (de)serialization of the new workspace pieces, kept here (instead of
 // Persistence.fs) so the round-trip is unit-testable outside the WASM project.
+// Last solve diagnostics per mesh (workflow panel §1) — set on every solve
+// response (pending or committed), survives commit, cleared for a mesh when
+// the step that produced it is rolled back.
+type SolveConditioning = {
+    Eigenvalues         : float[]
+    CollinearityWarning : bool
+}
+
+type LastSolveEntry = {
+    Stage           : RegStage
+    RmsBefore       : float
+    RmsAfter        : float
+    Conditioning    : SolveConditioning option
+    PerPinResiduals : Map<ScanPinId, float> option
+    Timestamp       : DateTime
+}
+
+module LastSolve =
+    let afterRollback (step : RegStep) (m : Map<string, LastSolveEntry>) =
+        step.Outputs |> Map.fold (fun acc mesh _ -> Map.remove mesh acc) m
+
 module RegJson =
     let private inv = System.Globalization.CultureInfo.InvariantCulture
     let private f (v : float) = v.ToString("G17", inv)
@@ -399,6 +420,60 @@ module RegJson =
 
     let readRegLog (e : JsonElement) : RegStep list =
         e.EnumerateArray() |> Seq.map readRegStep |> List.ofSeq
+
+    let lastSolveJ (m : Map<string, LastSolveEntry>) =
+        let entryJ (e : LastSolveEntry) =
+            let cond =
+                match e.Conditioning with
+                | Some c ->
+                    sprintf "{\"eigen\":[%s],\"collinear\":%b}"
+                        (c.Eigenvalues |> Array.map f |> String.concat ",") c.CollinearityWarning
+                | None -> "null"
+            let perPin =
+                match e.PerPinResiduals with
+                | Some r ->
+                    "{" + (r |> Map.toSeq
+                             |> Seq.map (fun (ScanPinId.ScanPinId g, v) -> sprintf "%s:%s" (q (g.ToString())) (f v))
+                             |> String.concat ",") + "}"
+                | None -> "null"
+            sprintf "{\"stage\":%s,\"rmsBefore\":%s,\"rmsAfter\":%s,\"cond\":%s,\"perPin\":%s,\"t\":%s}"
+                (q (stageTag e.Stage)) (f e.RmsBefore) (f e.RmsAfter) cond perPin
+                (q (e.Timestamp.ToString("O", inv)))
+        "{" + (m |> Map.toSeq |> Seq.map (fun (mesh, e) -> sprintf "%s:%s" (q mesh) (entryJ e)) |> String.concat ",") + "}"
+
+    let readLastSolve (e : JsonElement) : Map<string, LastSolveEntry> =
+        e.EnumerateObject()
+        |> Seq.map (fun p ->
+            let v = p.Value
+            let cond =
+                match tryProp "cond" v with
+                | Some c when c.ValueKind <> JsonValueKind.Null ->
+                    Some {
+                        Eigenvalues =
+                            c.GetProperty("eigen").EnumerateArray()
+                            |> Seq.map (fun x -> x.GetDouble()) |> Array.ofSeq
+                        CollinearityWarning = c.GetProperty("collinear").GetBoolean()
+                    }
+                | _ -> None
+            let perPin =
+                match tryProp "perPin" v with
+                | Some r when r.ValueKind <> JsonValueKind.Null ->
+                    Some (r.EnumerateObject()
+                          |> Seq.map (fun pr -> ScanPinId.ScanPinId (Guid.Parse pr.Name), pr.Value.GetDouble())
+                          |> Map.ofSeq)
+                | _ -> None
+            p.Name, {
+                Stage           = stageOf (v.GetProperty("stage").GetString())
+                RmsBefore       = v.GetProperty("rmsBefore").GetDouble()
+                RmsAfter        = v.GetProperty("rmsAfter").GetDouble()
+                Conditioning    = cond
+                PerPinResiduals = perPin
+                Timestamp       =
+                    match tryProp "t" v with
+                    | Some t -> DateTime.Parse(t.GetString(), inv, System.Globalization.DateTimeStyles.RoundtripKind)
+                    | None -> DateTime.MinValue
+            })
+        |> Map.ofSeq
 
 // Heatmap modes: the old boolean toggle plus the registration diff mode
 // (spec §8.3, only meaningful while a solve preview is pending).

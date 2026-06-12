@@ -113,7 +113,7 @@ module Persistence =
     let serialize (model : Model) : string =
         let sb = StringBuilder()
         sb.Append("{") |> ignore
-        sb.Append("\"version\":2,") |> ignore
+        sb.Append("\"version\":3,") |> ignore
         sb.Append("\"dataset\":") |> ignore
         sb.Append(match model.ActiveDataset with Some d -> q d | None -> "null") |> ignore
         sb.Append(",\"pins\":[") |> ignore
@@ -152,6 +152,8 @@ module Persistence =
         // a save/load cycle, only committed steps do.
         sb.Append(",\"regLog\":") |> ignore
         sb.Append(RegJson.regLogJ model.RegistrationLog) |> ignore
+        sb.Append(",\"lastSolve\":") |> ignore
+        sb.Append(RegJson.lastSolveJ model.LastSolve) |> ignore
         // Diff mode only exists while a preview is pending; persist the mode
         // it would revert to instead.
         let persistedHeatmap =
@@ -370,6 +372,11 @@ module Persistence =
                 match tryProp "regLog" r with
                 | Some e -> RegJson.readRegLog e
                 | None -> []
+            // version 3; older workspaces default to empty diagnostics
+            let lastSolve =
+                match tryProp "lastSolve" r with
+                | Some e -> RegJson.readLastSolve e
+                | None -> Map.empty
             let settings =
                 match tryProp "settings" r with
                 | Some e -> e
@@ -429,6 +436,7 @@ module Persistence =
                     LassoVolume = lassoVolume
                     Registration = { model.Registration with Mode = regMode; ReferenceMesh = refMesh; Running = false }
                     RegistrationLog = regLog
+                    LastSolve = lastSolve
                     // Transient registration state never survives a load.
                     PendingReg = None
                     AnchorReview = AnchorReviewIdle

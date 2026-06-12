@@ -329,11 +329,11 @@ module Update =
                         let queryPairs = pairs |> Array.map (fun (_, ra, mp, w) -> ra, mp, w)
                         task {
                             try
-                                let! delta, residuals, _eigen, collinear =
+                                let! delta, residuals, eigen, collinear =
                                     Query.lsqPairs ApiConfig.apiBase.Value mesh queryPairs
                                     |> Async.StartAsTask
                                 let pairResiduals = Array.zip pinIds residuals
-                                env.Emit [CoarseSolved(mesh, delta, pairResiduals, rmsBefore, collinear)]
+                                env.Emit [CoarseSolved(mesh, delta, pairResiduals, rmsBefore, eigen, collinear)]
                             with ex ->
                                 env.Emit [CoarseFailed(mesh, ex.Message)]
                         } |> ignore
@@ -346,7 +346,7 @@ module Update =
                             Unsolved = unsolved
                             Expected = List.length solvable }
                         Registration = { reg with Running = true } }
-        | CoarseSolved(mesh, worldDelta, pairResiduals, rmsBefore, collinear) ->
+        | CoarseSolved(mesh, worldDelta, pairResiduals, rmsBefore, eigenvalues, collinear) ->
             match model.PendingReg with
             | Some pr when pr.Stage = StageCoarse ->
                 let scale = DatasetScale.forMesh model.DatasetScales mesh
@@ -368,10 +368,19 @@ module Update =
                     pairResiduals |> Array.fold (fun sp (pinId, r) ->
                         updateCorr pinId (fun c -> { c with Residuals = Map.add mesh r c.Residuals }) sp)
                         model.ScanPins
+                let lastEntry = {
+                    Stage           = StageCoarse
+                    RmsBefore       = rmsBefore
+                    RmsAfter        = rmsAfter
+                    Conditioning    = Some { Eigenvalues = eigenvalues; CollinearityWarning = collinear }
+                    PerPinResiduals = Some (Map.ofArray pairResiduals)
+                    Timestamp       = System.DateTime.UtcNow
+                }
                 clearPreviewProbes (invalidateRings
                     { model with
                         PendingReg = Some pr'
                         ScanPins = sp
+                        LastSolve = Map.add mesh lastEntry model.LastSolve
                         Registration = { model.Registration with Running = pr'.Expected > 0 } })
             | _ -> model
         | CoarseFailed(mesh, reason) ->
@@ -469,9 +478,18 @@ module Update =
                     PairResiduals = [||]
                 }
                 let pr' = { pr with Results = Map.add mesh result pr.Results; Expected = max 0 (pr.Expected - 1) }
+                let lastEntry = {
+                    Stage           = StageFine
+                    RmsBefore       = rmsBefore
+                    RmsAfter        = rmsAfter
+                    Conditioning    = None
+                    PerPinResiduals = None
+                    Timestamp       = System.DateTime.UtcNow
+                }
                 clearPreviewProbes (invalidateRings
                     { model with
                         PendingReg = Some pr'
+                        LastSolve = Map.add mesh lastEntry model.LastSolve
                         Registration = { model.Registration with Running = pr'.Expected > 0 } })
             | _ -> model
         | FineFailed(mesh, reason) ->
@@ -520,6 +538,8 @@ module Update =
                         MeshTransforms = st'.Transforms
                         MeshAlgorithmResidual = st'.AlgoResiduals
                         RegistrationLog = st'.Log
+                        // diagnostics of the rolled-back step are stale now
+                        LastSolve = LastSolve.afterRollback step model.LastSolve
                         ScanPins = bakeAnchors worldDeltas model.ScanPins }
                 invalidateProbes (exitPreview model)
             | None -> model
@@ -545,6 +565,7 @@ module Update =
                 { model with
                     MeshTransforms = Map.empty
                     MeshAlgorithmResidual = Map.empty
+                    LastSolve = Map.empty
                     Registration = { model.Registration with Running = false } })
 
         // Correspondence anchors (spec §4) + fallback picks (§8.1/§8.2).
@@ -1173,6 +1194,10 @@ module Update =
             { model with PanoramaBlend = clamp 0.0 1.0 b }
         | StudiesLoaded studies ->
             { model with StudiesAvailable = studies |> Array.toList }
+        | ToggleWorkflowPanel ->
+            { model with WorkflowPanelOpen = not model.WorkflowPanelOpen }
+        | SetRegistrationCardOpen v ->
+            { model with RegistrationCardOpen = v }
         | StudyMsg smsg ->
             StudyUpdate.handleMsg env model smsg
         | FlyToPanorama i ->

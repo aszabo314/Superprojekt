@@ -1,5 +1,5 @@
-//5e26331a-1ce6-c385-0daf-fd49b1bb87e4
-//9b8d06e1-501d-25c0-a372-1a7f2f4c6cea
+//56b7b956-f3f3-6de3-3352-c8ca770f8a12
+//984bceb8-3494-4141-aa3d-fca45bc011dc
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -42,6 +42,7 @@ type AdaptiveModel(value : Model) =
     let _Retarget_ = FSharp.Data.Adaptive.cval(value.Retarget)
     let _PendingReg_ = FSharp.Data.Adaptive.cval(value.PendingReg)
     let _RegistrationLog_ = FSharp.Data.Adaptive.cval(value.RegistrationLog)
+    let _LastSolve_ = FSharp.Data.Adaptive.cval(value.LastSolve)
     let _AnchorReview_ = FSharp.Data.Adaptive.cval(value.AnchorReview)
     let _AnchorPick_ = FSharp.Data.Adaptive.cval(value.AnchorPick)
     let _PatchPicker_ = FSharp.Data.Adaptive.cval(value.PatchPicker)
@@ -71,6 +72,8 @@ type AdaptiveModel(value : Model) =
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let _Study_ = FSharp.Data.Adaptive.cval(value.Study)
     let _StudiesAvailable_ = FSharp.Data.Adaptive.cval(value.StudiesAvailable)
+    let _WorkflowPanelOpen_ = FSharp.Data.Adaptive.cval(value.WorkflowPanelOpen)
+    let _RegistrationCardOpen_ = FSharp.Data.Adaptive.cval(value.RegistrationCardOpen)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -109,6 +112,7 @@ type AdaptiveModel(value : Model) =
             _Retarget_.Value <- value.Retarget
             _PendingReg_.Value <- value.PendingReg
             _RegistrationLog_.Value <- value.RegistrationLog
+            _LastSolve_.Value <- value.LastSolve
             _AnchorReview_.Value <- value.AnchorReview
             _AnchorPick_.Value <- value.AnchorPick
             _PatchPicker_.Value <- value.PatchPicker
@@ -138,6 +142,8 @@ type AdaptiveModel(value : Model) =
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
             _Study_.Value <- value.Study
             _StudiesAvailable_.Value <- value.StudiesAvailable
+            _WorkflowPanelOpen_.Value <- value.WorkflowPanelOpen
+            _RegistrationCardOpen_.Value <- value.RegistrationCardOpen
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -169,6 +175,7 @@ type AdaptiveModel(value : Model) =
     member __.Retarget = _Retarget_ :> FSharp.Data.Adaptive.aval<RetargetState>
     member __.PendingReg = _PendingReg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PendingRegistration>>
     member __.RegistrationLog = _RegistrationLog_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<RegStep>>
+    member __.LastSolve = _LastSolve_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, LastSolveEntry>>
     member __.AnchorReview = _AnchorReview_ :> FSharp.Data.Adaptive.aval<AnchorReviewState>
     member __.AnchorPick = _AnchorPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<AnchorPickState>>
     member __.PatchPicker = _PatchPicker_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PatchPickerState>>
@@ -198,4 +205,6 @@ type AdaptiveModel(value : Model) =
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.Study = _Study_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<StudyShell>>
     member __.StudiesAvailable = _StudiesAvailable_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
+    member __.WorkflowPanelOpen = _WorkflowPanelOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.RegistrationCardOpen = _RegistrationCardOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

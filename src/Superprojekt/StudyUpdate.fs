@@ -322,6 +322,7 @@ module StudyUpdate =
             MeshAlgorithmResidual = Map.empty
             Registration = RegistrationState.initial
             RegistrationLog = []
+            LastSolve = Map.empty
             HeatmapMode = HeatOff
             HeatmapPrev = HeatOff
             CardSystem = { model.CardSystem with Cards = HashMap.map (fun _ c -> { c with Visible = false }) model.CardSystem.Cards } }

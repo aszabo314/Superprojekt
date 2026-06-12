@@ -224,6 +224,8 @@ type Model =
         // patch small-multiples picker).
         PendingReg            : PendingRegistration option
         RegistrationLog       : RegStep list
+        // Last solve diagnostics per mesh (workflow panel) — persisted.
+        LastSolve             : Map<string, LastSolveEntry>
         AnchorReview          : AnchorReviewState
         AnchorPick            : AnchorPickState option
         PatchPicker           : PatchPickerState option
@@ -266,6 +268,11 @@ type Model =
         // running session (chrome replaced, features gated).
         Study               : StudyShell option
         StudiesAvailable    : string list
+
+        // Registration workflow panel + registration card open state
+        // (model-side so navigation actions can open them; session-only).
+        WorkflowPanelOpen   : bool
+        RegistrationCardOpen : bool
     }
 
 // Committed vs effective (committed ∘ pending-delta) transforms, in render and
@@ -330,6 +337,7 @@ module Model =
             Retarget              = RetargetState.initial
             PendingReg            = None
             RegistrationLog       = []
+            LastSolve             = Map.empty
             AnchorReview          = AnchorReviewIdle
             AnchorPick            = None
             PatchPicker           = None
@@ -359,4 +367,6 @@ module Model =
             GearPopoverOpen     = false
             Study               = None
             StudiesAvailable    = []
+            WorkflowPanelOpen   = false
+            RegistrationCardOpen = false
         }

@@ -97,57 +97,19 @@ module GuiCards =
         let running = model.Registration |> AVal.map (fun r -> r.Running)
         let mode = model.Registration |> AVal.map (fun r -> r.Mode)
 
-        // Correspondence-enabled pins → accepted pairs per visible moving mesh
-        // plus the client-side conditioning pre-check (λ2/λ1 of the accepted
-        // ref-anchor spread; the authoritative number comes from the solve).
-        let meshNamesVal = model.MeshNames |> AList.toAVal
-        let readiness =
-            AVal.custom (fun t ->
-                let pins = pinsVal.GetValue t
-                let refOpt = (model.Registration.GetValue t).ReferenceMesh
-                let names = meshNamesVal.GetValue t |> IndexList.toList
-                let visible = model.MeshVisible.GetValue t
-                let corrPins =
-                    pins |> HashMap.toList
-                    |> List.choose (fun (id, p) ->
-                        match ScanPin.correspondence p with
-                        | Some c when c.Enabled && p.Phase = PinPhase.Committed ->
-                            let rel = match p.Payload with Point pp -> pp.ReliabilityWeight | _ -> 1.0
-                            Some (id, p, c, rel)
-                        | _ -> None)
-                let movingVisible =
-                    match refOpt with
-                    | Some r ->
-                        names |> List.filter (fun n ->
-                            n <> r && (Map.tryFind n visible |> Option.defaultValue true))
-                    | None -> []
-                let pairCounts =
-                    movingVisible |> List.map (fun mesh ->
-                        let n =
-                            corrPins |> List.sumBy (fun (_, _, c, _) ->
-                                if c.RefAnchor.IsSome
-                                   && (match Map.tryFind mesh c.Anchors with Some a -> a.Accepted | None -> false)
-                                then 1 else 0)
-                        mesh, n)
-                let eigen =
-                    corrPins
-                    |> List.choose (fun (_, _, c, rel) -> c.RefAnchor |> Option.map (fun ra -> ra, max 0.01 rel))
-                    |> Array.ofList
-                    |> RegConditioning.spreadEigenvalues
-                let pinSummaries =
-                    corrPins |> List.map (fun (id, p, c, _) ->
-                        let accepted = c.Anchors |> Map.toList |> List.filter (fun (_, a) -> a.Accepted) |> List.length
-                        id, p.Centre, accepted)
-                refOpt, pairCounts, RegConditioning.lambdaRatio eigen, pinSummaries)
+        // Shared readiness engine (workflow panel §2): the card renders its
+        // readiness line / badge / pin rows from the same input + diagnostics
+        // the panel uses — single source of truth.
+        let readiness = ReadinessView.input model
 
         let canSolveCoarse =
-            readiness |> AVal.map (fun (refOpt, pairCounts, _, _) ->
-                refOpt.IsSome && pairCounts |> List.exists (fun (_, n) -> n >= 3))
+            readiness |> AVal.map (fun i ->
+                (Readiness.compute i).Coarse |> List.exists (fun d -> d.Severity = Severity.Ready))
         let coarseTooltip =
-            (readiness, running) ||> AVal.map2 (fun (refOpt, pairCounts, _, _) busy ->
+            (readiness, running) ||> AVal.map2 (fun i busy ->
                 if busy then "Solving…"
-                elif refOpt.IsNone then "Designate a reference mesh (★) first"
-                elif not (pairCounts |> List.exists (fun (_, n) -> n >= 3)) then
+                elif i.ReferenceMesh.IsNone then "Designate a reference mesh (★) first"
+                elif not (Readiness.pairCounts i |> List.exists (fun (_, n) -> n >= 3)) then
                     "Needs ≥3 accepted anchor pairs on at least one visible moving mesh"
                 else "Solve landmark alignment for every visible moving mesh with ≥3 accepted pairs")
 
@@ -207,37 +169,42 @@ module GuiCards =
                     Class "reg-readiness"
                     div {
                         Class "reg-readiness-line"
-                        readiness |> AVal.map (fun (_, pairCounts, ratio, pinSummaries) ->
+                        readiness |> AVal.map (fun i ->
+                            let pairCounts = Readiness.pairCounts i
                             let pairsTxt =
                                 if List.isEmpty pairCounts then "no visible moving meshes"
                                 else
                                     pairCounts
                                     |> List.map (fun (m, n) -> sprintf "%s:%d" (Cards.shortName m) n)
                                     |> String.concat "  "
-                            sprintf "%d enabled pins · pairs %s" (List.length pinSummaries) pairsTxt)
+                            sprintf "%d enabled pins · pairs %s" (List.length i.EnabledPins) pairsTxt)
                     }
                     div {
                         Class "reg-cond-badge"
-                        readiness |> AVal.map (fun (_, _, ratio, pins) ->
-                            if List.length pins < 3 then Some (Class "reg-cond-na")
+                        readiness |> AVal.map (fun i ->
+                            let ratio = Readiness.lambdaRatioOf i
+                            if List.length i.EnabledPins < 3 then Some (Class "reg-cond-na")
                             elif ratio < 1e-3 then Some (Class "reg-cond-bad")
                             elif ratio < 0.05 then Some (Class "reg-cond-warn")
                             else Some (Class "reg-cond-ok"))
-                        readiness |> AVal.map (fun (_, _, ratio, pins) ->
-                            if List.length pins < 3 then "conditioning: n/a"
+                        readiness |> AVal.map (fun i ->
+                            let ratio = Readiness.lambdaRatioOf i
+                            if List.length i.EnabledPins < 3 then "conditioning: n/a"
                             elif ratio < 1e-3 then sprintf "conditioning: collinear (λ2/λ1 %.1e)" ratio
                             elif ratio < 0.05 then sprintf "conditioning: weak (λ2/λ1 %.3f)" ratio
                             else sprintf "conditioning: ok (λ2/λ1 %.2f)" ratio)
                     }
                     div {
                         Class "reg-pin-list"
-                        (readiness |> AVal.map (fun (_, _, _, pins) -> IndexList.ofList pins) |> AList.ofAVal)
-                        |> AList.map (fun (id, centre, accepted) ->
+                        (readiness |> AVal.map (fun i ->
+                            i.EnabledPins |> List.map (fun p -> p.Id, p.Label, p.AcceptedTotal) |> IndexList.ofList)
+                         |> AList.ofAVal)
+                        |> AList.map (fun (id, label, accepted) ->
                             div {
                                 Class "reg-pin-row"
                                 span {
                                     Class "reg-pin-label"
-                                    sprintf "(%.1f, %.1f, %.1f) · %d accepted" centre.X centre.Y centre.Z accepted
+                                    sprintf "%s · %d accepted" label accepted
                                 }
                                 button {
                                     Class "mb"

@@ -251,6 +251,138 @@ module LastSolve =
     let afterRollback (step : RegStep) (m : Map<string, LastSolveEntry>) =
         step.Outputs |> Map.fold (fun acc mesh _ -> Map.remove mesh acc) m
 
+// ───────────── readiness engine (workflow panel §2, shared) ─────────────
+// Pure over a dedicated input DTO so Supertests can table-drive it; the
+// adaptive adapter lives in Primitives.ReadinessView.
+
+type Severity =
+    | Blocker
+    | Warning
+    | Ready
+    | Info
+
+type RegCardSection =
+    | SectionStage
+    | SectionPending
+    | SectionHistory
+
+type NavAction =
+    | OpenAnchorReview of meshFilter : string option
+    | SelectPinOpenCard of ScanPinId
+    | FocusRegistrationCard of RegCardSection
+    | HighlightReferenceColumn
+    | RunCoarse
+    | RunFine
+    | CommitPending
+    | DiscardPending
+
+type Diagnostic = {
+    Severity : Severity
+    Text     : string
+    Action   : NavAction option
+}
+
+type ReadinessPin = {
+    Id            : ScanPinId
+    Label         : string
+    // accepted reference anchor position + reliability (collinearity input)
+    RefAnchor     : (V3d * float) option
+    // visible moving meshes with an accepted anchor for this pin
+    Accepted      : Set<string>
+    // accepted anchors over all meshes (the registration card's count)
+    AcceptedTotal : int
+    // visible moving meshes without an accepted anchor (missing/seeded/flagged)
+    Unresolved    : int
+}
+
+type ReadinessInput = {
+    ReferenceMesh       : string option
+    VisibleMovingMeshes : string list
+    EnabledPins         : ReadinessPin list
+    HasPending          : bool
+    HasCommittedStep    : bool
+    FineModeLabel       : string
+}
+
+type StageDiagnostics = {
+    Coarse : Diagnostic list
+    Fine   : Diagnostic list
+}
+
+module Readiness =
+
+    let pairCounts (input : ReadinessInput) =
+        input.VisibleMovingMeshes
+        |> List.map (fun mesh ->
+            mesh, (input.EnabledPins |> List.sumBy (fun p -> if Set.contains mesh p.Accepted then 1 else 0)))
+
+    let lambdaRatioOf (input : ReadinessInput) =
+        input.EnabledPins
+        |> List.choose (fun p -> p.RefAnchor)
+        |> Array.ofList
+        |> RegConditioning.spreadEigenvalues
+        |> RegConditioning.lambdaRatio
+
+    // Rules evaluated in order, all matching emitted (§2); display layers
+    // sort by severity.
+    let compute (input : ReadinessInput) : StageDiagnostics =
+        let coarse = ResizeArray<Diagnostic>()
+        let fine = ResizeArray<Diagnostic>()
+        let add (l : ResizeArray<_>) severity text action =
+            l.Add { Severity = severity; Text = text; Action = action }
+
+        if input.HasPending then
+            // blocks both stages — first so it leads either list
+            for l in [ coarse; fine ] do
+                add l Blocker "Commit or discard the pending result first"
+                    (Some (FocusRegistrationCard SectionPending))
+
+        if input.ReferenceMesh.IsNone then
+            add coarse Blocker "Designate a reference mesh (★)" (Some HighlightReferenceColumn)
+            add fine Blocker "Designate a reference mesh (★)" (Some HighlightReferenceColumn)
+
+        if List.isEmpty input.EnabledPins then
+            add coarse Blocker "Enable correspondence on ≥3 pins" None
+
+        let counts = pairCounts input
+        if input.ReferenceMesh.IsSome then
+            for mesh, n in counts do
+                if n < 3 then
+                    add coarse Blocker
+                        (sprintf "%s: needs %d more accepted anchor(s)" mesh (3 - n))
+                        (Some (OpenAnchorReview (Some mesh)))
+
+        for pin in input.EnabledPins do
+            if pin.Unresolved > 0 then
+                add coarse Warning
+                    (sprintf "Pin %s: %d anchor(s) unresolved" pin.Label pin.Unresolved)
+                    (Some (SelectPinOpenCard pin.Id))
+
+        if List.length input.EnabledPins >= 3 && lambdaRatioOf input < 1e-3 then
+            let affected =
+                counts |> List.filter (fun (_, n) -> n >= 3) |> List.map fst
+            let suffix =
+                if List.isEmpty affected then ""
+                else sprintf " (%s)" (String.concat ", " affected)
+            add coarse Warning
+                (sprintf "Pins near-collinear — rotation weakly constrained%s" suffix) None
+
+        if input.ReferenceMesh.IsSome && List.isEmpty input.VisibleMovingMeshes then
+            add coarse Info "No visible moving meshes to solve" None
+
+        let coarseBlocked = coarse |> Seq.exists (fun d -> d.Severity = Blocker)
+        if not coarseBlocked && counts |> List.exists (fun (_, n) -> n >= 3) then
+            add coarse Ready "Ready for coarse solve" (Some RunCoarse)
+
+        let fineBlocked = fine |> Seq.exists (fun d -> d.Severity = Blocker)
+        if not fineBlocked then
+            if not input.HasCommittedStep then
+                add fine Info "Run coarse first (recommended)" None
+            elif not (List.isEmpty input.VisibleMovingMeshes) then
+                add fine Ready (sprintf "Ready for fine ICP (%s)" input.FineModeLabel) (Some RunFine)
+
+        { Coarse = List.ofSeq coarse; Fine = List.ofSeq fine }
+
 module RegJson =
     let private inv = System.Globalization.CultureInfo.InvariantCulture
     let private f (v : float) = v.ToString("G17", inv)

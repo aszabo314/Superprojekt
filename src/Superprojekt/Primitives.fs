@@ -165,3 +165,65 @@ module StudyGate =
 
     let featureOn (model : AdaptiveModel) (featureId : string) : aval<bool> =
         model.Study |> AVal.map (fun s -> Study.featureVisible s featureId)
+
+// Readiness-engine adapter: builds the engine input from individual model
+// leaves (per the adaptive-performance rules — never the whole record), so
+// the registration card and the workflow panel share one source of truth.
+module ReadinessView =
+
+    open FSharp.Data.Adaptive
+
+    let input (model : AdaptiveModel) : aval<ReadinessInput> =
+        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let meshNamesVal = model.MeshNames |> AList.toAVal
+        AVal.custom (fun t ->
+            let pins = pinsVal.GetValue t
+            let reg = model.Registration.GetValue t
+            let names = meshNamesVal.GetValue t |> IndexList.toList
+            let visible = model.MeshVisible.GetValue t
+            let pending = PendingRegistration.isPreview (model.PendingReg.GetValue t)
+            let log = model.RegistrationLog.GetValue t
+            let movingVisible =
+                match reg.ReferenceMesh with
+                | Some r ->
+                    names |> List.filter (fun n ->
+                        n <> r && (Map.tryFind n visible |> Option.defaultValue true))
+                | None -> []
+            let enabledPins =
+                pins |> HashMap.toList
+                |> List.choose (fun (id, p) ->
+                    match ScanPin.correspondence p with
+                    | Some c when c.Enabled && p.Phase = PinPhase.Committed ->
+                        let rel = match p.Payload with Point pp -> pp.ReliabilityWeight | _ -> 1.0
+                        let accepted =
+                            movingVisible
+                            |> List.filter (fun m ->
+                                match Map.tryFind m c.Anchors with
+                                | Some a -> a.Accepted
+                                | None -> false)
+                            |> Set.ofList
+                        Some {
+                            Id            = id
+                            Label         = sprintf "(%.1f, %.1f, %.1f)" p.Centre.X p.Centre.Y p.Centre.Z
+                            RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, max 0.01 rel)
+                            Accepted      = accepted
+                            AcceptedTotal =
+                                c.Anchors |> Map.toList
+                                |> List.filter (fun (_, a) -> a.Accepted) |> List.length
+                            Unresolved    = List.length movingVisible - Set.count accepted
+                        }
+                    | _ -> None)
+            {
+                ReferenceMesh       = reg.ReferenceMesh
+                VisibleMovingMeshes = movingVisible
+                EnabledPins         = enabledPins
+                HasPending          = pending
+                HasCommittedStep    = not (List.isEmpty log)
+                FineModeLabel       =
+                    match reg.Mode with
+                    | TraditionalIcp -> "Traditional ICP"
+                    | RegionRestrictedIcp -> "Region-restricted"
+            })
+
+    let diagnostics (model : AdaptiveModel) : aval<ReadinessInput * StageDiagnostics> =
+        input model |> AVal.map (fun i -> i, Readiness.compute i)

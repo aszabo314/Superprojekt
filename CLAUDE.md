@@ -122,15 +122,19 @@ Query.fs                        ← server query wrappers (Async), rayHitMany fa
 CameraModel.fs / .g.fs          ← OrbitState [<ModelType>]
 OrbitController.fs              ← OrbitMessage DU + orbit camera
 RegistrationModel.fs            ← ScanPinId, correspondence anchors, RegStep/RegLog, PendingRegistration, HeatmapMode, RegJson (WASM-free, shared with Supertests)
+StudyModel.fs                   ← study-mode shared types: config DTOs + parser, predicate engine, StudyRuntime/StudySession/StudyShell (WASM-free, compiled into server + Supertests too)
+StudyApi.fs                     ← /api/study/* HTTP wrappers + StudyBoot.entryToken
+StudyTelemetry.fs               ← telemetry batcher (module-level queue, 5 s/50-event flush, backoff, throttling)
 ScanPinModel.fs / .g.fs         ← ScanPin + Card types
 PinGeometry.fs                  ← icosphere, sphere outline, patch footprint
 Model.fs / .g.fs                ← [<ModelType>] Model + DatasetScale helpers
 Persistence.fs                  ← workspace JSON serialise / apply
 LineShader.fs                   ← Shader.flatColor + Lines (pixel-constant 3D lines)
 Primitives.fs                   ← widgets, showWhen/showWhenNot, observedRender, provBarJs
-Messages.fs                     ← Message DU
+Messages.fs                     ← Message DU (incl. StudyMessage)
+StudyUpdate.fs                  ← ServerActions (init/loadDataset), study reducer + StudyEvents.derive + update-postlude + feature-gate guard
 CardUpdate.fs / ScanPinUpdate.fs
-Update.fs                       ← ServerActions (init/loadDataset) + main reducer
+Update.fs                       ← main reducer (ServerActions moved to StudyUpdate.fs)
 MeshShaders.fs                  ← RenderPass + MeshShader / FusionShader / PanoramaShader
 MeshView.fs                     ← LoadedMesh, visibleMeshNames, buildScene/buildFusionNode/buildPanoramaNode
 FusionView.fs                   ← offscreen fusion pass + fullscreen composite
@@ -138,7 +142,7 @@ PanoramaView.fs                 ← offscreen cubemap capture + cylindrical repr
 ScanPinScene.fs                 ← pin sg nodes
 SceneGraph.fs                   ← composes meshScene + pinScene + cross + labels
 CardsPin.fs / Cards.fs          ← pin card body; shared card chrome (cardDragHandle/cardPos/cardStyle)
-GuiTopBar.fs / GuiPanels.fs / GuiOverlays.fs / GuiCards.fs
+GuiTopBar.fs / GuiPanels.fs / GuiOverlays.fs / GuiCards.fs / GuiStudy.fs
 View.fs                         ← App module wires Boot.run
 ShaderCache.fs / Program.fs
 ```
@@ -154,7 +158,10 @@ MeshAnalysis.fs        isoline + curvature-ridge tracing, patch sampling
 MeshProbe.fs           N-mesh M3C2 probe (normal PCA, cylinder sampling, KDE, three sources)
 MeshIcp.fs             ICP solver (recentred Gauss-Newton, trimmed correspondences)
 RegMath.fs             weighted Umeyama rigid landmark solve (Jacobi SVD, conditioning)
+StudyConfig.fs         study config + secret parsing, startup validation (Giraffe-free, in Supertests)
+StudyStore.fs          JSONL session stores, balanced assignment, TRE scoring, HMAC codes (Giraffe-free, in Supertests)
 QueryHandlers.fs       HTTP query handlers
+StudyHandlers.fs       /api/study/* handlers + study discovery cache
 Handlers.fs            routing
 Program.fs             ASP.NET startup
 ```
@@ -178,6 +185,10 @@ POST /api/query/contact-rings                   → sphere–surface intersectio
 POST /api/query/icp                             → ICP transform + convergence + residuals
 POST /api/query/lsq-pairs                       → weighted rigid landmark solve (delta onto reference + per-pair residuals + conditioning; 400 on <3 pairs)
 POST /api/query/probe                           → N-mesh M3C2 probe (per-mesh distributions + KDE + three sources)
+POST /api/study/session                         → { token } or { demo, studyId, condition } → session + configPublic (verbatim config.json)
+GET  /api/study/list                            → valid study ids (gear-popover demo picker)
+POST /api/study/{sid}/events|answers|transforms|workspace|advance, GET /api/study/{sid}/complete
+POST /api/study/{studyId}/tokens                → localhost-only token generation
 ```
 
 All query coordinates are **absolute world space**. The server converts: `localPos = V3f(worldPos - meshCentroid)`.
@@ -203,6 +214,7 @@ Top-level `Model` fields (see `Model.fs`):
 - `ScanPins`, `CardSystem`, `HoverProbe` (transient Ctrl-click probe, one global slot)
 - `ChartCursor` (chart-hover elevation cursor: pin id + signed distance + Alt-extended), `ChartHoverMesh`, `ChartStickyMesh` (column highlight; hover wins over sticky)
 - `RenderingMode` (Textured | Shaded | SlopeColor), `MeshSolo`, `LassoCardPos`, `GearPopoverOpen`
+- `Study` (`StudyShell option` — None = Full app; `StudyActive` carries the running study session), `StudiesAvailable`
 
 GUI placement:
 - Left panel (`GuiPanels.leftPanel`): mesh list, pin list, error metadata, error provenance card.
@@ -246,9 +258,19 @@ Two **stages**, both landing in `PendingReg` (an uncommitted preview), with an e
 
 The lasso never affects registration — it is purely visual. Workspace JSON v2 persists `corr` per pin + `regLog`; `PendingReg` is never persisted; v1 workspaces load with empty defaults.
 
+## User study mode
+
+`/s/{token}` (server falls back to index.html; `<base href="/">` keeps assets at root) enters **study mode**: chrome replaced by a study bar (progress dots, goal line, gated tool strip, Next gated on step completion), instruction overlays / anchored guided tooltips, and a right-docked task pane with the question widgets. `Model.Study : StudyShell option` — `None` = Full app, everything else is study pages or the running session. Demo preview from the gear popover (condition picker FULL/NUM + study picker); only demo sessions can exit.
+
+- **Config**: `src/Superserver/studies/{id}/config.json` (public, served verbatim) + `secret.json` (planted answers, TRE check-point pairs, gold threshold — never served). Startup validation refuses invalid studies (log). `glacier-v1` is the authored default (tutorial = Hessigheim, main = SETSM_glacier; copy is placeholder English).
+- **Feature gating**: `Study.featureVisible` = `phase.allowedFeatures ∩ ¬condition.disabledFeatures`, consulted by views via `StudyGate.featureOn` and enforced again in `Update` (gated/Full-only messages no-op + toast; camera/hover messages silently). NUM hides violinChart/heatmap(Diff)/threeSourceBar/splitViolinPreview; the pin card shows a numeric median/IQR + registration-RMS table instead.
+- **Predicates** (`StudyModel.Predicate`): Event/And/Or/Seq/AnswerSubmitted; event counts are cumulative since the last dataset switch, Seq milestones monotone per step (see IMPLEMENTATION_NOTES for why). `StudyEvents.derive` diffs (model before, after, message) into the fixed telemetry event list — one stream feeds predicates and the batcher.
+- **Server stores**: per study `data/` with sessions/events/answers/advance/transforms JSONL + workspace/scores JSON, per-sid locks, balanced condition assignment, TRE scored on every transforms post (never returned; tutorial gold correctness is the single echo, 3 fails → screened), HMAC completion code gated on all non-optional advances + a `final` transforms post. One token = one session, resumable (scene resets, progress kept).
+- **Don't** put telemetry or batcher state in the Elm model; `StudyTelemetry` is module-level like the reducer's CTS refs.
+
 ## Tests
 
-`src/Supertests` (console runner, paket-managed, no extra packages) compiles `RegistrationModel.fs` + `RegMath.fs` directly and covers the Umeyama solver (recovery, reflections, weights, collinearity), the RegLog commit/rollback machine and the RegJson round-trips — `dotnet run --project src/Supertests`. `tools/integration.mjs` runs the HTTP flow (closest → perturb → lsq-pairs → icp → probe, patch frame echo) against a running server: `ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver`, then `node tools/integration.mjs`.
+`src/Supertests` (console runner, paket-managed, no extra packages) compiles `RegistrationModel.fs` + `StudyModel.fs` + `RegMath.fs` + `StudyConfig.fs` + `StudyStore.fs` directly and covers the Umeyama solver (recovery, reflections, weights, collinearity), the RegLog commit/rollback machine, the RegJson round-trips, the predicate engine, study reducer gating, config validation, balanced assignment / HMAC codes / TRE scoring / gold screening / advance ordering — `dotnet run --project src/Supertests`. Against a running server (`ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver`): `node tools/integration.mjs` (registration HTTP flow) and `node tools/study-integration.mjs` (full study walk: balance, route security, gold echo + screen-out, resume, completion codes).
 
 ## Notes
 

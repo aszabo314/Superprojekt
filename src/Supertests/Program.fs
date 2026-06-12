@@ -274,12 +274,289 @@ let conditioningTests () =
     let spread = Array.init 24 (fun _ -> randV3 10.0, 1.0)
     check "spread set not flagged" (not (RegConditioning.isCollinear (RegConditioning.spreadEigenvalues spread)))
 
+// ───────────────────────── Study: predicate engine ────────────────────────
+
+let predicateTests () =
+    let none (_ : string) = false
+    let c (xs : (string * int) list) = Map.ofList xs
+    check "event below threshold" (not (Predicate.satisfied (c []) none (PEvent("orbit", 1)) Map.empty))
+    check "event at threshold" (Predicate.satisfied (c ["orbit", 1]) none (PEvent("orbit", 1)) Map.empty)
+    let andP = PAnd [ PEvent("a", 1); PEvent("b", 1) ]
+    check "and needs both" (not (Predicate.satisfied (c ["a", 1]) none andP Map.empty))
+    check "and satisfied" (Predicate.satisfied (c ["a", 1; "b", 1]) none andP Map.empty)
+    check "or either side" (Predicate.satisfied (c ["b", 1]) none (POr [ PEvent("a", 1); PEvent("b", 1) ]) Map.empty)
+    check "answer predicate" (Predicate.satisfied Map.empty ((=) "Q1") (PAnswerSubmitted "Q1") Map.empty)
+    check "always" (Predicate.satisfied Map.empty none PAlways Map.empty)
+
+    // Seq: a later stage's events never complete it before earlier stages.
+    let seqP = PSeq [ PEvent("a", 1); PEvent("b", 2) ]
+    let prog1 = Predicate.advance (c ["b", 5]) none seqP Map.empty
+    check "seq gate holds out of order" (not (Predicate.satisfied (c ["b", 5]) none seqP prog1))
+    let counts2 = c ["b", 5; "a", 1]
+    let prog2 = Predicate.advance counts2 none seqP prog1
+    check "seq completes once ordered" (Predicate.satisfied counts2 none seqP prog2)
+    // monotone progress: counts reset (step re-entry) never un-completes
+    let prog3 = Predicate.advance Map.empty none seqP prog2
+    check "seq progress survives count reset" (Predicate.satisfied Map.empty none seqP prog3)
+    // multi-stage advance in one feed
+    let seq3 = PSeq [ PEvent("x", 1); PEvent("y", 1); PEvent("z", 1) ]
+    let all = c ["x", 1; "y", 1; "z", 1]
+    check "seq advances through all ready stages" (Predicate.satisfied all none seq3 (Predicate.advance all none seq3 Map.empty))
+
+    let parsed =
+        Predicate.parse (parseRoot """{"seq":[{"event":"pinCommitted","min":3},{"and":[{"event":"coarseSolved"},{"answer":"T1"}]}]}""")
+    check "predicate json parse"
+        (parsed = PSeq [ PEvent("pinCommitted", 3); PAnd [ PEvent("coarseSolved", 1); PAnswerSubmitted "T1" ] ])
+    let evs, ans = Predicate.references parsed
+    check "predicate references" (evs = [ "pinCommitted"; "coarseSolved" ] && ans = [ "T1" ])
+
+// ───────────────────────── Study: reducer gating (§4) ─────────────────────
+
+let private mkStep id kind completion question = {
+    Id = id; Kind = kind; Body = ""; Anchor = None
+    Completion = completion; Question = question; Optional = false; RetryStepId = None
+}
+
+let private mkQuestion id kind confidence gold : StudyQuestion =
+    { Id = id; Kind = kind; Confidence = confidence; Gold = gold; FlagPoint = None }
+
+let private mkCfg steps : StudyConfigPublic = {
+    StudyId = "t"; Title = "t"; DatasetTutorial = "tut"; DatasetMain = "main"
+    DisabledFeatures = Map.ofList [ "NUM", [ "violinChart" ] ]
+    Phases = [ { Id = "p"; Title = ""; GoalLine = ""; Dataset = Some "tutorial"; AllowedFeatures = [ "navigation" ]; Steps = steps } ]
+    Questionnaires = Map.ofList [ "sus", [| "i1"; "i2" |] ]
+    MovingPolygon = [||]
+}
+
+let gatingTests () =
+    let rtAt cfg rt = Study.reevaluate cfg rt true
+    // instruction: satisfied on render
+    let cfg = mkCfg [ mkStep "s" KInstruction PAlways None ]
+    check "instruction satisfied on render" (rtAt cfg StudyRuntime.initial).StepSatisfied
+    // guidedAction: predicate-gated
+    let cfg = mkCfg [ mkStep "s" KGuidedAction (PEvent("orbit", 1)) None ]
+    check "guidedAction blocked before event" (not (rtAt cfg StudyRuntime.initial).StepSatisfied)
+    let fed = Study.feedEvents [ "orbit" ] StudyRuntime.initial
+    check "guidedAction satisfied after event" (rtAt cfg fed).StepSatisfied
+    // question: answer + confidence required
+    let q = mkQuestion "Q1" (SingleChoice [| "a"; "b" |]) true false
+    let cfg = mkCfg [ mkStep "s" KQuestion (PAnswerSubmitted "Q1") (Some q) ]
+    let withDraft d = { StudyRuntime.initial with AnswersDraft = Map.ofList [ "Q1", d ] }
+    check "question blocked without answer" (not (rtAt cfg StudyRuntime.initial).StepSatisfied)
+    check "question blocked without confidence"
+        (not (rtAt cfg (withDraft { Value = Some (AChoice 0); Confidence = None })).StepSatisfied)
+    check "question satisfied with confidence"
+        (rtAt cfg (withDraft { Value = Some (AChoice 0); Confidence = Some 5 })).StepSatisfied
+    // tutorial gold gating: server-confirmed correctness required
+    let qg = mkQuestion "G1" (SingleChoice [| "a"; "b" |]) false true
+    let cfg = mkCfg [ mkStep "s" KQuestion (PAnswerSubmitted "G1") (Some qg) ]
+    let answered = { StudyRuntime.initial with AnswersDraft = Map.ofList [ "G1", { Value = Some (AChoice 0); Confidence = None } ] }
+    check "tutorial gold blocked until confirmed" (not (rtAt cfg answered).StepSatisfied)
+    check "tutorial gold passes when confirmed"
+        (rtAt cfg { answered with GoldStatus = Map.ofList [ "G1", true ] }).StepSatisfied
+    check "non-tutorial gold not gated" (Study.reevaluate cfg answered false).StepSatisfied
+    // questionnaire: every grid item answered
+    let cfg = mkCfg [ mkStep "s" (KQuestionnaire "sus") PAlways None ]
+    let grid items = { StudyRuntime.initial with AnswersDraft = Map.ofList [ "sus", { Value = Some (AGrid (Map.ofList items)); Confidence = None } ] }
+    check "questionnaire blocked when partial" (not (rtAt cfg (grid [ 0, 3.0 ])).StepSatisfied)
+    check "questionnaire satisfied when complete" (rtAt cfg (grid [ 0, 3.0; 1, 4.0 ])).StepSatisfied
+    // freeText min length
+    let qt = mkQuestion "F" (FreeTextQ 10) false false
+    let cfg = mkCfg [ mkStep "s" KQuestion (PAnswerSubmitted "F") (Some qt) ]
+    let withText t = { StudyRuntime.initial with AnswersDraft = Map.ofList [ "F", { Value = Some (AText t); Confidence = None } ] }
+    check "freeText below min length" (not (rtAt cfg (withText "short")).StepSatisfied)
+    check "freeText at min length" (rtAt cfg (withText "long enough text")).StepSatisfied
+    // retry step resolution
+    let steps = [
+        mkStep "a" KInstruction PAlways None
+        mkStep "g" KGuidedAction (PEvent("orbit", 1)) None
+        mkStep "q" KQuestion (PAnswerSubmitted "G1") (Some qg)
+        { mkStep "q2" KQuestion (PAnswerSubmitted "G1") (Some qg) with RetryStepId = Some "a" }
+    ]
+    let cfg = mkCfg steps
+    check "retry defaults to preceding guidedAction" (Study.retryStepIx cfg 0 2 = 1)
+    check "explicit retry step wins" (Study.retryStepIx cfg 0 3 = 0)
+    // feature gating
+    let session demo cond = {
+        SessionId = "x"; Condition = cond; Demo = demo; Config = cfg
+        Runtime = StudyRuntime.initial
+    }
+    check "feature visible in FULL when allowed" (Study.featureVisibleIn (session false CondFull) "navigation")
+    check "feature hidden when not allowed" (not (Study.featureVisibleIn (session false CondFull) "lasso-ish-unknown"))
+    check "full mode sees everything" (Study.featureVisible None "violinChart")
+    // condition filter: a phase allowing violinChart still hides it in NUM
+    let cfgV = { cfg with Phases = cfg.Phases |> List.map (fun p -> { p with AllowedFeatures = [ "violinChart" ] }) }
+    check "NUM filter removes starred feature"
+        (not (Study.featureVisibleIn { session false CondNum with Config = cfgV } "violinChart"))
+    check "FULL keeps starred feature"
+        (Study.featureVisibleIn { session false CondFull with Config = cfgV } "violinChart")
+    // point-in-polygon
+    let poly = [| V2d(0.0, 0.0); V2d(10.0, 0.0); V2d(10.0, 10.0); V2d(0.0, 10.0) |]
+    check "inside polygon" (StudyConfig.insidePolygon poly (V2d(5.0, 5.0)))
+    check "outside polygon" (not (StudyConfig.insidePolygon poly (V2d(15.0, 5.0))))
+
+// ───────────────────── Study: server config validation ────────────────────
+
+let private dsExists (d : string) = d = "tut" || d = "main"
+
+let validationTests () =
+    let secretEmpty : StudyConfig.StudySecret =
+        { Answers = Map.empty; CheckPoints = Map.empty; GoldFailThreshold = 3 }
+    let baseJson = """{"studyId":"t"}"""
+    let valid =
+        mkCfg [ mkStep "s" KInstruction PAlways None ]
+    check "valid config accepted" (StudyConfig.validate dsExists baseJson valid secretEmpty |> List.isEmpty)
+    // dangling question ref in a predicate
+    let dangling = mkCfg [ mkStep "s" KGuidedAction (PAnswerSubmitted "NOPE") None ]
+    check "dangling question ref rejected"
+        (StudyConfig.validate dsExists baseJson dangling secretEmpty
+         |> List.exists (fun e -> e.Contains "NOPE"))
+    // gold question without secret answer
+    let goldQ = mkQuestion "G9" (SingleChoice [| "a" |]) false true
+    let goldCfg = mkCfg [ mkStep "s" KQuestion (PAnswerSubmitted "G9") (Some goldQ) ]
+    check "gold without secret rejected"
+        (StudyConfig.validate dsExists baseJson goldCfg secretEmpty
+         |> List.exists (fun e -> e.Contains "G9"))
+    // unknown feature id
+    let badFeat =
+        { valid with Phases = valid.Phases |> List.map (fun p -> { p with AllowedFeatures = [ "warpDrive" ] }) }
+    check "unknown feature rejected"
+        (StudyConfig.validate dsExists baseJson badFeat secretEmpty
+         |> List.exists (fun e -> e.Contains "warpDrive"))
+    // unknown event in predicate
+    let badEvent = mkCfg [ mkStep "s" KGuidedAction (PEvent("teleported", 1)) None ]
+    check "unknown event rejected"
+        (StudyConfig.validate dsExists baseJson badEvent secretEmpty
+         |> List.exists (fun e -> e.Contains "teleported"))
+    // missing dataset
+    check "missing dataset rejected"
+        (StudyConfig.validate (fun _ -> false) baseJson valid secretEmpty
+         |> List.exists (fun e -> e.Contains "datasetTutorial"))
+    // forbidden key scan in the public file
+    check "secret key in public json rejected"
+        (StudyConfig.validate dsExists """{"studyId":"t","answers":{"T1":0}}""" valid secretEmpty
+         |> List.exists (fun e -> e.Contains "answers"))
+
+// ───────────── Study: store (balance, HMAC, advance, TRE, gold) ───────────
+
+let storeTests () =
+    let tmp = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "supertests-" + System.Guid.NewGuid().ToString "N")
+    System.IO.Directory.CreateDirectory tmp |> ignore
+    let dataDir = System.IO.Path.Combine(tmp, "data")
+    let tokensFile = System.IO.Path.Combine(tmp, "tokens.jsonl")
+    let now = DateTime.UtcNow
+
+    // balanced assignment under 100 concurrent creations (§12.1)
+    let tokens = StudyStore.generateTokens tokensFile now 100
+    check "tokens generated" (tokens.Length = 100 && (tokens |> Array.distinct |> Array.length) = 100)
+    let starts =
+        tokens
+        |> Array.map (fun tok -> async {
+            return StudyStore.createSession dataDir tokensFile now (Random.Shared) (Some tok) false None })
+        |> Async.Parallel
+        |> Async.RunSynchronously
+    let fresh =
+        starts |> Array.choose (function StudyStore.Fresh s -> Some s | _ -> None)
+    check "all 100 sessions created" (fresh.Length = 100)
+    let nFull = fresh |> Array.filter (fun s -> s.Condition = CondFull) |> Array.length
+    let nNum = fresh.Length - nFull
+    check (sprintf "balanced assignment (%d/%d)" nFull nNum) (abs (nFull - nNum) <= 1)
+    // resume: same token returns the same session
+    let tok0 = tokens.[0]
+    let sid0 = (fresh |> Array.find (fun s -> s.Token = Some tok0)).Sid
+    match StudyStore.createSession dataDir tokensFile now Random.Shared (Some tok0) false None with
+    | StudyStore.Resumed s -> check "same token resumes same sid" (s.Sid = sid0)
+    | _ -> check "same token resumes same sid" false
+    match StudyStore.createSession dataDir tokensFile now Random.Shared (Some "bogus") false None with
+    | StudyStore.Refused (403, _) -> check "unknown token refused 403" true
+    | _ -> check "unknown token refused 403" false
+
+    // HMAC completion code
+    let secret = StudyStore.serverSecret tmp
+    let code = StudyStore.completionCode secret "abc"
+    check "completion code 8 hex chars"
+        (code.Length = 8 && code |> Seq.forall (fun ch -> System.Uri.IsHexDigit ch))
+    check "completion code deterministic" (StudyStore.completionCode secret "abc" = code)
+    check "completion code sid-dependent" (StudyStore.completionCode secret "abd" <> code)
+
+    // study fixture: tutorial gold G1 (choice 0), two steps, TRE check points
+    let refPts = [| V3d(0.0, 0.0, 0.0); V3d(10.0, 0.0, 0.0); V3d(0.0, 10.0, 0.0); V3d(0.0, 0.0, 10.0) |]
+    let rot = rotation (V3d(0.3, 0.7, 0.2)) 0.4
+    let trans = V3d(5.0, -3.0, 2.0)
+    let t44 =
+        M44d(rot.M00, rot.M01, rot.M02, trans.X,
+             rot.M10, rot.M11, rot.M12, trans.Y,
+             rot.M20, rot.M21, rot.M22, trans.Z,
+             0.0, 0.0, 0.0, 1.0)
+    let movPts = refPts |> Array.map (fun p -> t44.Inverse.TransformPos p)
+    let pairs = Array.map2 (fun r m -> { StudyConfig.Ref = r; StudyConfig.Mov = m }) refPts movPts
+    checkLe "TRE zero at known transform" (StudyStore.treFor pairs t44) 1e-9
+    let treId = StudyStore.treFor pairs M44d.Identity
+    check "TRE positive at identity" (treId > 1.0)
+
+    let goldQ = mkQuestion "G1" (SingleChoice [| "right"; "wrong" |]) false true
+    let study : StudyConfig.LoadedStudy = {
+        Id = "t"; PublicJson = "{}"
+        Public =
+            mkCfg [
+                mkStep "s1" KQuestion (PAnswerSubmitted "G1") (Some goldQ)
+                mkStep "s2" KInstruction PAlways None
+            ]
+        Secret =
+            { Answers = Map.ofList [ "G1", StudyConfig.SecretChoice 0 ]
+              CheckPoints = Map.ofList [ "m1", (pairs, [||]) ]
+              GoldFailThreshold = 3 }
+    }
+    let sid = sid0
+
+    // gold flow: wrong ×3 → screened
+    let a1 = StudyStore.appendAnswer study dataDir sid now "G1" (parseRoot "1") None
+    check "gold wrong echoes false" (a1.Correct = Some false && not a1.Screened)
+    let a2 = StudyStore.appendAnswer study dataDir sid now "G1" (parseRoot "1") None
+    check "second fail not screened" (not a2.Screened)
+    let a3 = StudyStore.appendAnswer study dataDir sid now "G1" (parseRoot "1") None
+    check "third fail screens out" (a3.Screened)
+    check "session status screened" ((StudyStore.findSession dataDir sid).Value.Status = "screened")
+    let sid2 = (fresh |> Array.find (fun s -> s.Token = Some tokens.[1])).Sid
+    let aOk = StudyStore.appendAnswer study dataDir sid2 now "G1" (parseRoot "0") None
+    check "gold correct echoes true" (aOk.Correct = Some true && not aOk.Screened)
+
+    // advance ordering: out-of-order rejected, idempotent repeat accepted
+    check "out-of-order advance rejected"
+        (match StudyStore.recordAdvance study dataDir sid2 now "p" "s2" with Result.Error _ -> true | _ -> false)
+    check "in-order advance accepted"
+        (match StudyStore.recordAdvance study dataDir sid2 now "p" "s1" with Result.Ok () -> true | _ -> false)
+    check "idempotent repeat accepted"
+        (match StudyStore.recordAdvance study dataDir sid2 now "p" "s1" with Result.Ok () -> true | _ -> false)
+
+    // completion gating: refuse before final transforms + all advances
+    check "complete refused before requirements"
+        (match StudyStore.complete study dataDir secret sid2 with Result.Error _ -> true | _ -> false)
+    StudyStore.recordAdvance study dataDir sid2 now "p" "s2" |> ignore
+    check "complete still refused without final transforms"
+        (match StudyStore.complete study dataDir secret sid2 with Result.Error _ -> true | _ -> false)
+    StudyStore.postTransforms study dataDir sid2 now "final" (Map.ofList [ "m1", t44 ])
+    match StudyStore.complete study dataDir secret sid2 with
+    | Result.Ok c ->
+        check "complete issues the HMAC code" (c = StudyStore.completionCode secret sid2)
+        check "completion marks session completed" ((StudyStore.findSession dataDir sid2).Value.Status = "completed")
+    | Result.Error e -> check (sprintf "complete issues the HMAC code (%s)" e) false
+    // scores recorded with the label, never empty
+    let scores = System.IO.File.ReadAllText (StudyStore.scoresPath dataDir sid2)
+    check "scores recorded for final" (scores.Contains "\"final\"" && scores.Contains "m1")
+
+    try System.IO.Directory.Delete(tmp, true) with _ -> ()
+
 [<EntryPoint>]
 let main _ =
     umeyamaTests ()
     regLogTests ()
     regJsonTests ()
     conditioningTests ()
+    predicateTests ()
+    gatingTests ()
+    validationTests ()
+    storeTests ()
     printfn ""
     printfn "%d/%d passed%s" (total - failures) total (if failures = 0 then "" else sprintf " — %d FAILED" failures)
     failures

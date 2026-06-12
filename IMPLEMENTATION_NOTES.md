@@ -112,9 +112,49 @@ New-file plan (compile-order positions):
 - Server `StudyStore.fs` (after `StudyConfig.fs`): JSONL stores with per-sid locks, balanced assignment, TRE scoring, HMAC completion code — Giraffe-free, compiled into Supertests (store root parameterised for temp-dir tests).
 - Server `StudyHandlers.fs` (after `QueryHandlers.fs`): HTTP handlers, wired into `Handlers.webApp`.
 
-## Spec ↔ codebase reconciliations (study mode, running list)
+## Spec ↔ codebase reconciliations (study mode)
 
-1. **`AppMode = Full | Study of StudySession`** → implemented as `Model.Study : StudyState option` (`None` ⇔ Full). Equivalent semantics; keeps the adaptify model flat and every existing view/update path untouched in Full mode.
-2. **Condition DU** named `CondFull | CondNum` (JSON tags `"FULL"`/`"NUM"`) to avoid clashing with the ubiquitous `Full` identifier.
-3. **"Phase F"** (§8, transforms post trigger) read as the **exit phase** (P6): question ids letter phases A=P1 … E=P5, F=P6, consistent with §10's "auto-upload workspace at final (P5→P6 transition)" and §3's completion requirement. `final` transforms + workspace upload happen on entering the exit phase; the P4 "Set as final" button posts the same label.
-4. **Study bar hosts a tool strip** for gated action buttons (Pin etc.) — real sessions have no top bar, but `pinPlace` is an allowed feature in several phases and the existing button lives in the top bar; the study bar exposes exactly the allowed subset, reusing the existing emit paths.
+1. **`AppMode = Full | Study of StudySession`** → implemented as `Model.Study : StudyShell option` (`None` ⇔ Full; `StudyShell = StudyJoining | StudyFailed | StudyScreened | StudyActive of StudySession`). Equivalent semantics; keeps the adaptify model flat and every existing view/update path untouched in Full mode.
+2. **Condition DU** named `CondFull | CondNum` (JSON tags `"FULL"`/`"NUM"`) to avoid clashing with the ubiquitous `Full` identifier; predicate DU cases are P-prefixed (`PEvent`/`PAnd`/`POr`/`PSeq`/`PAnswerSubmitted`/`PAlways`) for the same reason.
+3. **"Phase F"** (§8, transforms post trigger) read as the **exit phase** (P6): question-id letters run A=P1 … E=P5, F=P6 (QA*↔P1, QC*↔P3, QD1↔P4, QE-final↔P5), consistent with §10's "auto-upload workspace at final (P5→P6 transition)" and §3's completion requirement. Entering the exit phase posts `final` transforms + uploads the workspace; the P4 "Set as final" button posts the same label.
+4. **Predicate event counts are cumulative since the last dataset switch**, not reset per step. The spec's parenthetical "(reset on step entry, except Seq progress)" contradicts its own §9 P4 predicate `And[Event(fineSolved,2); …]` (only one extra solve happens in P4 — the count must carry over from P2) and §9 P2's final `Seq` stage `Event(committed,2)` (which must NOT see the tutorial commit — hence reset at the tutorial→main switch). Cumulative-per-dataset-epoch satisfies every example in §6/§9; Seq milestones stay monotone per step and survive re-entry (the tutorial retry path).
+5. **Study bar hosts a gated tool strip** (layers toggle, ○ Pin) — real sessions have no top bar, but `pinPlace`/`meshPanel` are allowed features in several phases and those buttons live in the top bar in Full mode. Registration opens through its pre-existing edge toggle button, gated on `registrationCard`.
+6. **Two extra per-session store files**: `advance-{sid}.jsonl` (the §3 progress mirror must be queryable for completion/resume — the spec's store list omits a home for it) and `transforms-{sid}.jsonl` (raw posted transforms; `scores-{sid}.json` holds only the TRE results).
+7. **Tutorial gold retry**: config steps gain an optional `retryStep` field (validated within the phase); default = nearest preceding guidedAction. The 2nd wrong answer jumps back to that step (its Seq progress is preserved, so re-walking is read-only); the 3rd is screened server-side from the answers file against `secret.goldFailThreshold`.
+8. **Questionnaire steps** synthesize one `LikertGrid` question from `config.questionnaires` (id = questionnaire key, one grid answer per step; scales fixed by key: sus → 5-pt, tlx → 0–100 sliders, icet → 7-pt per §7).
+9. **Markdown bodies** render as blank-line-separated paragraphs only — the copy is placeholder English by §13, and the Aardvark.Dom CE has no raw-HTML injection path worth the risk.
+10. **Page-hide telemetry flush** uses a hidden DOM bus (`visibilitychange`/`pagehide` → synthetic input → `StudyTelemetry.flushNow`); a true `sendBeacon` would need the queue mirrored into JS. Best effort per spec.
+11. **Demo sessions are recorded** in `sessions.jsonl` (flagged `demo:true`) so their answers/events/transforms have a home; they are excluded from balanced assignment, which counts non-demo active+completed only.
+12. **`studies/` root** resolves exactly like `data/` (walk up from `AppContext.BaseDirectory`), i.e. `src/Superserver/studies/` in this repo; runtime artefacts (`data/`, `tokens.jsonl`, `server-secret.txt`) are gitignored, `config.json`/`secret.json` are committed.
+13. **Virtual route fixes**: `index.html` gains `<base href="/">` (all asset URLs were relative and broke under `/s/{token}` — the app never booted) and `ApiConfig.apiBase` ignores a leading `/s/…` when deriving the API base.
+14. **The final config step is `optional: true`** — it displays the completion code, so it can never have an advance record before `complete` is called; §3's "all non-optional steps" check is satisfied by everything before it.
+15. **`GET /api/study/list`** added (not in the spec's endpoint table): the gear popover's demo study picker needs the valid study ids.
+16. **Gold question T1** is phrased data-independently ("the reference column is zero by definition") — the violin/RMS values on real Hessigheim data shift with genuine inter-epoch change, so a data-dependent planted answer would be fragile. QA2/F1/F2 secret values are coarse placeholders for the researcher to refine (polygon, change values, tolerances).
+17. **Update-guard granularity**: blocked high-frequency messages (camera pointer moves, chart hover) no-op silently; discrete actions toast "Not available in this step". Solver *result* messages always pass — only user-action messages are gated.
+
+## Per-WP status (study mode)
+
+- **SWP0** ✅ repo map above.
+- **SWP6** ✅ `StudyModel.fs` — predicate engine + config DTOs/parser + runtime types; WASM-free, compiled into client, server and Supertests.
+- **SWP2** ✅ `StudyConfig.fs` — secret parsing, startup validation (datasets, features, anchors, questionnaire keys, predicate refs, gold↔secret, retrySteps, forbidden-key scan of the public file).
+- **SWP3** ✅ `StudyStore.fs` + `StudyHandlers.fs` + routes — JSONL stores with per-sid locks, balanced assignment, order-validated advance (idempotent repeats), TRE scoring on every transforms post, HMAC-SHA256 completion code, tutorial-gold echo + screening.
+- **SWP11** ✅ `POST /api/study/{studyId}/tokens` (localhost-only).
+- **SWP1** ✅ `/s/{token}` entry, demo entry from the gear popover, exit-demo, joining/failed/screened pages, deterministic scene reset on entry.
+- **SWP4** ✅ runtime reducer (Next gating per step kind, advance posts, dataset switches, gold flow, completion fetch, Set-as-final) + `StudyEvents.derive` diffing (before, after, msg) into the fixed event list.
+- **SWP5** ✅ study bar (dots, goal line, tool strip, ?, Next), instruction overlay / anchored tooltip with live checkmark, feature gating in views + update-level guard, NUM RMS table.
+- **SWP7** ✅ question widgets (singleChoice / sceneClick / numeric / freeText / likertGrid + confidence), task pane, 3D flag markers.
+- **SWP8** ✅ telemetry batcher (5 s/50-event flush, immediate on phaseEnter/stepComplete/page-hide, backoff retry, bounded queue dropping throttled types first, fpsSample).
+- **SWP10** ✅ resume (same token → same session at last advance, notice banner), screened-token page, workspace auto-upload at final.
+- **SWP9** ✅ `studies/glacier-v1/` config + secret (P0–P6 per §9, placeholder copy, NUM star filter, moving polygon, check-point pairs).
+- **SWP12** ✅ below.
+
+## Verification results (study mode, 2026-06-12)
+
+- **Builds**: `dotnet build Superprojekt.sln` — 0 errors (pre-existing warnings only).
+- **Unit** (`dotnet run --project src/Supertests`): **103/103 passed** (38 registration + 65 study). Predicate engine: thresholds, And/Or/answer, Seq ordering gate (later-stage events can't complete early stages), monotone progress across count resets, multi-stage advance, JSON parse + reference extraction. Reducer gating: instruction-on-render, guidedAction predicate, question answer+confidence, tutorial-gold confirmation gate (and non-tutorial non-gate), questionnaire completeness, freeText min length, retry-step resolution, NUM/FULL feature filtering, point-in-polygon. Config validation rejects dangling question refs, gold-without-secret, unknown features/events, missing datasets, secret keys in the public file. Store: 100 concurrent token sessions → 50/50 split (≤1 required), token resume/refusal, HMAC code (8 hex, deterministic, sid-dependent), TRE 8.7e-16 at the known transform, gold wrong×3 → screened + status, advance order/idempotence, completion gating (refused until all advances + final transforms, then code).
+- **Integration** (`node tools/study-integration.mjs`, server on :8002): **27/27 passed**. Balanced FULL/NUM pair, configPublic key-scan clean, NUM resolved feature set excludes all starred features, secret.json/scores unreachable via four route shapes, out-of-order advance 409, events/transforms/workspace 204 (no scores returned), tutorial gold echoed (wrong/right) and main-phase gold not echoed, full config walk (all 26 steps), mid-study resume at the recorded position, complete 409 mid-study and without final transforms then an 8-hex code, completed/screened token refusal, third-fail screen-out.
+- **In-browser** (puppeteer): `/` renders Full mode unchanged (top bar visible, no study chrome); gear → "Preview study mode ▶ glacier-v1" reaches P0 step 1 (study bar "Getting started" + goal line, 7 progress dots, demo badge, intro overlay, Next enabled on the instruction step); Next → guided orbit step shows the anchored tooltip with "○ not done yet" and a disabled Next; Exit study returns to Full mode; `/s/<bad-token>` shows the invalid-link page; `/s/<real-token>` enters the study with **no demo badge and no exit button** (no navigation back, §1).
+
+## Observed pre-existing issues (study mode scope, untouched)
+
+- The fusion-pick transform issue noted above remains; fusion is a Full-only feature and unreachable in study mode.

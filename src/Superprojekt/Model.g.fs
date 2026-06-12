@@ -1,5 +1,5 @@
-//8437ae6f-e8ee-cc53-b10c-f869716fc55f
-//3a0a3c34-41a8-ce9e-84f0-a3065b8308c2
+//5e26331a-1ce6-c385-0daf-fd49b1bb87e4
+//9b8d06e1-501d-25c0-a372-1a7f2f4c6cea
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -69,6 +69,8 @@ type AdaptiveModel(value : Model) =
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _LassoCardPos_ = FSharp.Data.Adaptive.cval(value.LassoCardPos)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
+    let _Study_ = FSharp.Data.Adaptive.cval(value.Study)
+    let _StudiesAvailable_ = FSharp.Data.Adaptive.cval(value.StudiesAvailable)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -134,6 +136,8 @@ type AdaptiveModel(value : Model) =
             _MeshSolo_.Value <- value.MeshSolo
             _LassoCardPos_.Value <- value.LassoCardPos
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
+            _Study_.Value <- value.Study
+            _StudiesAvailable_.Value <- value.StudiesAvailable
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -192,4 +196,6 @@ type AdaptiveModel(value : Model) =
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.LassoCardPos = _LassoCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.Study = _Study_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<StudyShell>>
+    member __.StudiesAvailable = _StudiesAvailable_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
 

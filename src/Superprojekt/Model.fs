@@ -261,6 +261,11 @@ type Model =
         MeshSolo            : MeshSoloState
         LassoCardPos        : V2d option
         GearPopoverOpen     : bool
+
+        // User-study mode: None = Full app; Some shell = study pages /
+        // running session (chrome replaced, features gated).
+        Study               : StudyShell option
+        StudiesAvailable    : string list
     }
 
 // Committed vs effective (committed ∘ pending-delta) transforms, in render and
@@ -352,4 +357,6 @@ module Model =
             MeshSolo            = NoSolo
             LassoCardPos        = None
             GearPopoverOpen     = false
+            Study               = None
+            StudiesAvailable    = []
         }

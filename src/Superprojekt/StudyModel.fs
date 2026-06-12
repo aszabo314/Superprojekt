@@ -425,6 +425,16 @@ type StudyShell =
     | StudyScreened
     | StudyActive of StudySession
 
+// /api/study/session response (shared between StudyApi and the reducer).
+type StudySessionInit = {
+    SessionId : string
+    Condition : StudyCondition
+    Demo      : bool
+    Resumed   : bool
+    LastStep  : (string * string) option   // last advanced (phaseId, stepId)
+    Config    : StudyConfigPublic
+}
+
 module StudyRuntime =
     let initial = {
         PhaseIx       = 0

@@ -128,6 +128,9 @@ module ApiConfig =
             let href = Window.Location.Href
             let uri = System.Uri(href)
             let mutable path = uri.AbsolutePath
+            // The /s/{token} study entry route is virtual (the server serves
+            // index.html for it) — it must not shift the API base.
+            if path.StartsWith "/s/" || path = "/s" then path <- ""
             if path.Contains('.') then path <- path.Substring(0, path.LastIndexOf('/') + 1)
             path <- path.TrimEnd('/')
             uri.GetLeftPart(System.UriPartial.Authority) + path + "/api"

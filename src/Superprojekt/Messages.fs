@@ -99,6 +99,17 @@ type Message =
     | SetPanoramaMode of PanoramaMode
     | SetPanoramaBlend of float
     | FlyToPanorama of int
+    | StudiesLoaded of string[]
+    | StudyMsg of StudyMessage
+
+and StudyMessage =
+    // Session lifecycle (§1/§10): real entry via /s/{token}, demo entry from
+    // the gear popover, exit only for demo sessions.
+    | StudyJoin of token:string
+    | StudyStartDemo of studyId:string * StudyCondition
+    | StudySessionStarted of StudySessionInit
+    | StudySessionFailed of message:string
+    | StudyExitDemo
 
 and CardMessage =
     | BringToFront of CardId

@@ -189,6 +189,29 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            showWhen (model.StudiesAvailable |> AVal.map (List.isEmpty >> not))
+                            span { Class "lp-sublabel"; "Preview study mode" }
+                            let demoCond = cval CondFull
+                            div {
+                                Class "tb-gear-btn-row"
+                                button {
+                                    Class "tb-gear-btn"
+                                    Attribute("title", "Condition for the preview session (FULL = all charts, NUM = numbers only)")
+                                    Dom.OnClick(fun _ -> transact (fun () ->
+                                        demoCond.Value <- (match demoCond.Value with CondFull -> CondNum | CondNum -> CondFull)))
+                                    (demoCond :> aval<_>) |> AVal.map (fun c -> sprintf "Condition: %s ⇄" (StudyCondition.tag c))
+                                }
+                                model.StudiesAvailable |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun studyId ->
+                                    button {
+                                        Class "tb-gear-btn"
+                                        Attribute("title", "Enter this study as a demo session (telemetry flagged demo, exit any time)")
+                                        Dom.OnClick(fun _ -> env.Emit [StudyMsg (StudyStartDemo(studyId, demoCond.Value))])
+                                        sprintf "▶ %s" studyId
+                                    })
+                            }
+                        }
+                        div {
+                            Class "tb-gear-row"
                             inlineSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v ->
                                 env.Emit [CameraMessage (OrbitMessage.SetSpeed v)])
                         }

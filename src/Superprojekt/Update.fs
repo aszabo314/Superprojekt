@@ -7,32 +7,6 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Superprojekt
 
-module ServerActions =
-
-    let loadDataset (env : Env<Message>) (dataset : string) =
-        task {
-            try
-                let! cs = MeshData.fetchCentroids ApiConfig.apiBase.Value dataset
-                env.Emit [CentroidsLoaded cs]
-            with _ -> ()
-            try
-                let! bboxes = MeshData.fetchBboxes ApiConfig.apiBase.Value dataset
-                env.Emit [SceneBoundsLoaded bboxes]
-            with _ -> ()
-        } |> ignore
-
-    let init (env : Env<Message>) =
-        task {
-            try
-                let! datasets = MeshData.fetchDatasets ApiConfig.apiBase.Value
-                env.Emit [DatasetsLoaded datasets]
-                let! autoLoad = MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
-                if not (System.String.IsNullOrEmpty autoLoad) && datasets |> Array.contains autoLoad then
-                    env.Emit [SetActiveDataset autoLoad]
-                    loadDataset env autoLoad
-            with _ -> ()
-        } |> ignore
-
 module Update =
 
     let mutable private hoverProbeCts : System.Threading.CancellationTokenSource =
@@ -1191,6 +1165,10 @@ module Update =
             { model with PanoramaMode = m }
         | SetPanoramaBlend b ->
             { model with PanoramaBlend = clamp 0.0 1.0 b }
+        | StudiesLoaded studies ->
+            { model with StudiesAvailable = studies |> Array.toList }
+        | StudyMsg smsg ->
+            StudyUpdate.handleMsg env model smsg
         | FlyToPanorama i ->
             match List.tryItem i model.Panoramas with
             | Some p ->

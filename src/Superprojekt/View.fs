@@ -464,7 +464,13 @@ module View =
                 | _ -> ()
             )
 
-            GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
+            // Study mode replaces the normal top bar with the study bar.
+            div {
+                Primitives.showWhenNot (model.Study |> AVal.map Study.isActive)
+                GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
+            }
+            GuiStudy.studyBar env model
+            GuiStudy.studyPages model
             GuiPanels.leftPanel env model
             GuiPanels.placementFlyout env model
             GuiCards.lassoCard env model

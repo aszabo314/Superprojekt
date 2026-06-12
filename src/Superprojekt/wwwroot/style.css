@@ -1001,3 +1001,101 @@ body.loaded { background: #f4f6f8; }
     .tb-gear-popover { width: calc(100vw - 16px); }
     .tb-coord { font-size: 10px; }
 }
+
+/* ── user-study mode ─────────────────────────────────────────────────── */
+
+.study-page {
+    position: fixed;
+    inset: 0;
+    z-index: 4000;
+    background: #f4f6f8;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.study-page-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    box-shadow: 0 8px 28px rgba(15, 23, 42, 0.10);
+    max-width: 460px;
+    padding: 28px 32px;
+    text-align: center;
+}
+
+.study-page-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: #0f172a;
+    margin-bottom: 10px;
+}
+
+.study-page-body {
+    font-size: 13px;
+    color: #475569;
+    line-height: 1.55;
+}
+
+.study-bar {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 3000;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    height: 44px;
+    padding: 0 14px;
+    background: #ffffff;
+    border-bottom: 1px solid #e2e8f0;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.06);
+}
+
+.study-bar-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #0f172a;
+    white-space: nowrap;
+}
+
+.study-bar-goal {
+    flex: 1;
+    font-size: 12.5px;
+    color: #334155;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.study-bar-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.study-demo-badge {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    color: #9a3412;
+    background: #ffedd5;
+    border: 1px solid #fdba74;
+    border-radius: 4px;
+    padding: 2px 7px;
+}
+
+.study-exit-btn {
+    font-size: 12px;
+    padding: 4px 10px;
+    background: #ffffff;
+    color: #0f172a;
+    border: 1px solid #cbd5e1;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.study-exit-btn:hover {
+    background: #f1f5f9;
+}

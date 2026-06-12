@@ -474,6 +474,47 @@ record which reference mesh they were solved against; changing the
 reference later never rewrites history. The lasso has no effect on
 registration.
 
+### 9.5 The workflow panel (⚲ Workflow, top bar)
+
+A floating panel that puts the whole registration state in one place — a
+**pure view over the model**: every toggle dispatches the existing message
+(★, eye, correspondence enable are two-way synced with the mesh panel,
+registration card and pin cards), and it never issues server queries. Four
+collapsible sections:
+
+- **Meshes** — per mesh: colour swatch, ★, eye, a **status chip**
+  (`Reference` / `Fine ✓` / `Coarse ✓` / `Skipped` = the last solve ran but
+  this mesh lacked 3 accepted pairs / `Unregistered` / `Hidden`), an amber
+  badge when the last solve flagged near-collinear anchors, the last
+  solve's RMS-after, and ⌖ **fly-to** (frames the mesh at ~25 % of the
+  viewport height, orientation kept; any input cancels the animation).
+- **Correspondence pins** — per enabled pin: host mesh, an **anchor-dot
+  matrix** (one dot per visible moving mesh in its colour: filled =
+  accepted, hollow = seeded, red ring = missing; tooltip names the mesh),
+  accepted `n/M`, reliability, the worst per-mesh residual of the last
+  coarse solve, exclude + open-card buttons. Clicking the row selects the
+  pin and flies to its sphere. A collapsed **Other pins** footer enables
+  correspondence on any committed Point pin (triggers the normal
+  auto-seed + review flow). The header aggregates accepted pairs per mesh.
+- **Registration status** — the pending banner (per-mesh RMS before→after
+  + Commit/Discard), the **diagnostics list** from the shared readiness
+  engine (blockers red, warnings amber, then one green
+  "Ready for coarse solve / fine ICP" per stage whose ▶ runs the solve;
+  every entry carries a navigation action: open the anchor review filtered
+  to the deficient mesh, open the pin card at its correspondence section,
+  highlight the ★ column, focus the registration card — targets get a
+  1.5 s pulse outline), and a history one-liner.
+- **Error stats** — per moving mesh the last committed RMS before→after,
+  Δ%, stage reached and an RMS sparkline across committed steps, plus a
+  mean/max + solved-`s/M` aggregate.
+
+The same readiness engine drives the registration card's readiness line,
+so the two never disagree; solve diagnostics (`lastSolve`: RMS,
+conditioning eigenvalues, per-pin residuals) persist in the workspace and
+are cleared per mesh when the producing step is rolled back. In study mode
+the panel is its own gated feature (`workflowPanel`, not enabled in
+glacier-v1).
+
 ---
 
 ## 10. Retarget (re-host pins onto another mesh)
@@ -614,6 +655,7 @@ What invalidates what (the glue between workflows):
 | Dataset switch | pins, lasso, panoramas, chart state, picking layer, pending preview, anchor flows — all cleared (registration history is kept, like the transforms) |
 | Sensor type / error override | probe error decomposition, provenance heatmap + diff detection limit, fusion winner |
 | Lasso, solo, ghost settings, isolate pins | rendering only — no recomputation anywhere |
+| Coarse / fine solve response | also recorded in `lastSolve` (per-mesh RMS + conditioning + per-pin residuals) → workflow-panel chips/stats; cleared per mesh by rolling back the producing step |
 | Study: any reducer step | telemetry events derived (before/after diff) → predicate counts + Seq milestones → Next gating refreshed |
 | Study: Next | advance posted (idempotent); answer re-posted; phase boundary may switch dataset (scene + registration state reset, predicate counts cleared) |
 | Study: registration commit | `commit#n` transforms posted (TRE scored server-side) |

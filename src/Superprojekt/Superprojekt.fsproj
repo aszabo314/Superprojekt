@@ -25,6 +25,7 @@
     <Compile Include="RegistrationModel.fs" />
     <Compile Include="StudyModel.fs" />
     <Compile Include="StudyApi.fs" />
+    <Compile Include="StudyTelemetry.fs" />
     <Compile Include="ScanPinModel.fs" />
     <Compile Include="ScanPinModel.g.fs" />
     <Compile Include="PinGeometry.fs" />

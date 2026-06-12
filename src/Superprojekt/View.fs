@@ -117,6 +117,15 @@ module View =
                 "  document.body.appendChild(a); a.click(); document.body.removeChild(a);"
                 "  URL.revokeObjectURL(url);"
                 "};"
+                // page hide → telemetry flush (best effort, §8)
+                "var studyFlush = function(){"
+                "  var b = document.querySelector('.study-flush-bus');"
+                "  if(b){ b.value = 'x'; b.dispatchEvent(new Event('input', {bubbles:true})); }"
+                "};"
+                "document.addEventListener('visibilitychange', function(){"
+                "  if(document.visibilityState === 'hidden') studyFlush();"
+                "});"
+                "window.addEventListener('pagehide', studyFlush);"
                 "window.SuperWorkspaceLoad = function(){"
                 "  return new Promise(function(resolve){"
                 "    var input = document.createElement('input');"
@@ -177,6 +186,7 @@ module View =
                 RenderControl.OnRendered(fun _ ->
                     if initial then
                         initial <- false
+                    StudyTelemetry.frameTick ()
                     let s = AVal.force overlaySize
                     if viewportSize.Value <> s then
                         transact (fun () -> viewportSize.Value <- s)
@@ -496,6 +506,11 @@ module View =
             GuiStudy.studyPages model
             GuiStudy.instructionOverlay env model
             GuiStudy.taskPane env model
+            input {
+                Class "study-flush-bus hidden"
+                Attribute("type", "text")
+                Dom.OnInput(fun _ -> StudyTelemetry.flushNow ())
+            }
             div {
                 Primitives.showWhen (StudyGate.featureOn model "meshPanel")
                 GuiPanels.leftPanel env model

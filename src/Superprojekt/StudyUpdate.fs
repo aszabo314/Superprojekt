@@ -412,6 +412,7 @@ module StudyUpdate =
         | StudySessionFailed message ->
             { model with Study = Some (StudyFailed message) }
         | StudySessionStarted init ->
+            StudyTelemetry.start init.SessionId
             let phaseIx, stepIx = resumePosition init.Config init.LastStep
             let rt =
                 { StudyRuntime.initial with PhaseIx = phaseIx; StepIx = stepIx }
@@ -433,6 +434,7 @@ module StudyUpdate =
             // Demo sessions only — real sessions have no way back (§1).
             match model.Study with
             | Some (StudyActive s) when s.Demo ->
+                StudyTelemetry.stop ()
                 task {
                     try
                         let! autoLoad = MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
@@ -507,7 +509,9 @@ module StudyUpdate =
         | StudyGoldResult (qid, correct, screened) ->
             match model.Study with
             | Some (StudyActive s) ->
-                if screened then { model with Study = Some StudyScreened }
+                if screened then
+                    StudyTelemetry.stop ()
+                    { model with Study = Some StudyScreened }
                 else
                     let rt = s.Runtime
                     let fails =
@@ -578,6 +582,10 @@ module StudyUpdate =
             let events = StudyEvents.derive before after msg
             if List.isEmpty events then after
             else
+                for etype, payload in events do
+                    StudyTelemetry.record etype payload
+                if events |> List.exists (fun (t, _) -> t = "phaseEnter" || t = "stepComplete") then
+                    StudyTelemetry.flushNow ()
                 if events |> List.exists (fst >> (=) "pinInMoving") then
                     env.Emit [ShowToast "Heads up: this pin sits on the moving region — stable terrain anchors registration better"]
                 match events |> List.tryFind (fst >> (=) "committed") with

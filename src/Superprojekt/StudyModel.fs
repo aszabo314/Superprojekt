@@ -501,19 +501,33 @@ module Study =
 
     // Questionnaire steps synthesize their grid question from the config's
     // questionnaires map (sus → 5-pt, tlx → 0–100 sliders, icet → 7-pt).
+    // Cached per config so callers always get the SAME instance — views key
+    // widget subtrees on the question value, and a fresh record per
+    // evaluation would only be saved by structural equality of its inner
+    // array, which the adaptive delta machinery does not guarantee.
+    let private synthesized =
+        System.Runtime.CompilerServices.ConditionalWeakTable<StudyConfigPublic, Collections.Generic.Dictionary<string, StudyQuestion>>()
+
     let effectiveQuestion (cfg : StudyConfigPublic) (step : StudyStep) : StudyQuestion option =
         match step.Question with
         | Some q -> Some q
         | None ->
             match step.Kind with
             | KQuestionnaire key ->
-                Map.tryFind key cfg.Questionnaires
-                |> Option.map (fun items ->
-                    { Id = key
-                      Kind = LikertGrid (items, StudyConfig.likertPoints key)
-                      Confidence = false
-                      Gold = false
-                      FlagPoint = None })
+                let cache = synthesized.GetValue(cfg, fun _ -> Collections.Generic.Dictionary())
+                match cache.TryGetValue key with
+                | true, q -> Some q
+                | _ ->
+                    Map.tryFind key cfg.Questionnaires
+                    |> Option.map (fun items ->
+                        let q =
+                            { Id = key
+                              Kind = LikertGrid (items, StudyConfig.likertPoints key)
+                              Confidence = false
+                              Gold = false
+                              FlagPoint = None }
+                        cache.[key] <- q
+                        q)
             | _ -> None
 
     let private answeredKind (q : StudyQuestion) (draft : AnswerDraft) =

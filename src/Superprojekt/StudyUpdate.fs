@@ -149,7 +149,12 @@ module StudyEvents =
             | ScanPinMsg (PlaceAnchor _) -> add "pinPlaced" "{}"
             | ScanPinMsg CommitPin ->
                 add "pinCommitted" "{}"
-                if committedPinInMoving before after s.Config then add "pinInMoving" "{}"
+                // §9 P2: the soft warning targets registration landmarks —
+                // in the measurement phase placing pins ON the moving region
+                // is the task, so gate on the solve feature being available.
+                if committedPinInMoving before after s.Config
+                   && Study.featureVisibleIn s "coarseSolve" then
+                    add "pinInMoving" "{}"
             | ScanPinMsg (DeletePin _) -> add "pinDeleted" "{}"
             | SetAnchor (ScanPinId.ScanPinId pid, mesh, _, source) ->
                 add "anchorSet" (obj' [ "pinId", j (string pid); "mesh", j mesh
@@ -287,11 +292,15 @@ module StudyUpdate =
                     |> Option.defaultValue 0
                 Study.nextPosition cfg pi si |> Option.defaultValue (pi, si)
 
-    // Deterministic clean state on study entry/exit: everything a dataset
-    // switch resets, plus registration state (a participant always starts
-    // from identity transforms).
+    // Deterministic clean state on study entry/exit and on phase dataset
+    // switches: everything a dataset switch resets, plus registration state
+    // (a participant always starts from identity transforms — tutorial
+    // registration must never leak into the main task's history, reference
+    // or commit#n labels) and mesh visibility (a demo started from Full mode
+    // must not inherit hidden meshes).
     let private resetScene (model : Model) =
         { model with
+            MeshVisible = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, true) |> Map.ofSeq
             ScanPins = ScanPinModel.initial
             ChartCursor = None
             ChartHoverMesh = None
@@ -337,7 +346,7 @@ module StudyUpdate =
     // §7: answers post immediately on change (idempotent upsert by question
     // id) and again on Next. Tutorial gold responses come back as
     // StudyGoldResult — the single server→client correctness channel.
-    let private submitAnswer (env : Env<Message>) (sid : string) (qid : string) (draft : AnswerDraft) =
+    let private submitAnswerNow (env : Env<Message>) (sid : string) (qid : string) (draft : AnswerDraft) =
         match draft.Value with
         | None -> ()
         | Some v ->
@@ -351,6 +360,31 @@ module StudyUpdate =
                 | Result.Ok (None, true) ->
                     env.Emit [StudyMsg (StudyGoldResult(qid, true, true))]
                 | _ -> ()
+            } |> ignore
+
+    // Change-driven posts are coalesced per question (500 ms) so per-keystroke
+    // text input and slider drags don't flood the server, and transient radio
+    // selections don't burn tutorial-gold attempts (every *posted* wrong
+    // answer counts toward the screen-out threshold). Next posts immediately.
+    let private answerCts = System.Collections.Generic.Dictionary<string, System.Threading.CancellationTokenSource>()
+
+    let private cancelPendingAnswer (qid : string) =
+        match answerCts.TryGetValue qid with
+        | true, cts -> cts.Cancel()
+        | _ -> ()
+
+    let private submitAnswer (env : Env<Message>) (sid : string) (qid : string) (draft : AnswerDraft) =
+        if draft.Value.IsSome then
+            cancelPendingAnswer qid
+            let cts = new System.Threading.CancellationTokenSource()
+            answerCts.[qid] <- cts
+            let token = cts.Token
+            task {
+                try
+                    do! System.Threading.Tasks.Task.Delay(500, token)
+                    if not token.IsCancellationRequested then
+                        submitAnswerNow env sid qid draft
+                with _ -> ()
             } |> ignore
 
     let private updateRuntime (model : Model) (f : StudySession -> StudyRuntime) =
@@ -401,6 +435,8 @@ module StudyUpdate =
     let private isExitPhase (cfg : StudyConfigPublic) (phaseIx : int) =
         phaseIx = List.length cfg.Phases - 1
 
+    let mutable private lastNextTick = 0
+
     let handleMsg (env : Env<Message>) (model : Model) (msg : StudyMessage) : Model =
         match msg with
         | StudyJoin token ->
@@ -431,6 +467,11 @@ module StudyUpdate =
                 |> Option.defaultValue init.Config.DatasetTutorial
             let model = resetScene { model with Study = Some (StudyActive session); MenuOpen = false }
             switchDataset env model dataset
+            // Resuming directly onto the final step: the entry transition
+            // that normally fetches the code never fires (the `final`
+            // transforms from the pre-reload life satisfy the server check).
+            if isLastPosition init.Config phaseIx stepIx then
+                fetchCompletion env init.SessionId
             model
         | StudyExitDemo ->
             // Demo sessions only — real sessions have no way back (§1).
@@ -449,21 +490,28 @@ module StudyUpdate =
             | _ -> model
 
         // §4 Next: enabled iff StepSatisfied; posts the advance mirror, moves
-        // on, switches dataset on phase boundaries that declare one.
+        // on, switches dataset on phase boundaries that declare one. The
+        // tick guard absorbs double-clicks — without it a second click lands
+        // on the (instantly satisfied) next instruction step and skips it.
         | StudyNext ->
             match model.Study with
-            | Some (StudyActive s) when s.Runtime.StepSatisfied ->
+            | Some (StudyActive s) when s.Runtime.StepSatisfied
+                                        && System.Environment.TickCount - lastNextTick >= 400 ->
+                lastNextTick <- System.Environment.TickCount
                 let cfg = s.Config
                 let rt = s.Runtime
                 match Study.phaseAt cfg rt.PhaseIx, Study.stepAt cfg rt.PhaseIx rt.StepIx with
                 | Some phase, Some step ->
                     StudyApi.postAdvance ApiConfig.apiBase.Value s.SessionId phase.Id step.Id
                     |> Async.Ignore |> Async.Start
-                    // final value wins server-side by timestamp (§7)
+                    // final value wins server-side by timestamp (§7) — posted
+                    // immediately, superseding any pending debounced post
                     match Study.effectiveQuestion cfg step with
                     | Some qu ->
                         match Map.tryFind qu.Id rt.AnswersDraft with
-                        | Some draft -> submitAnswer env s.SessionId qu.Id draft
+                        | Some draft ->
+                            cancelPendingAnswer qu.Id
+                            submitAnswerNow env s.SessionId qu.Id draft
                         | None -> ()
                     | None -> ()
                     match Study.nextPosition cfg rt.PhaseIx rt.StepIx with
@@ -485,6 +533,10 @@ module StudyUpdate =
                                 EventCounts = if datasetSwitch then Map.empty else rt.EventCounts }
                         let rt' = Study.reevaluate cfg rt' (Study.isTutorialPhase cfg pIx)
                         let model = { model with Study = Some (StudyActive { s with Runtime = rt' }) }
+                        // The dataset boundary is a clean slate: tutorial
+                        // pins, transforms, history and the ★ reference must
+                        // not leak into the main task.
+                        let model = if datasetSwitch then resetScene model else model
                         if datasetSwitch then
                             match dsAfter with
                             | Some ds -> switchDataset env model ds
@@ -558,7 +610,14 @@ module StudyUpdate =
             setDraft env model qid (fun d -> { d with Confidence = Some c })
 
         | StudyArmSceneClick qid ->
-            updateRuntime model (fun s -> { s.Runtime with SceneClickArm = Some qid })
+            // The armed pick owns the next tap — an active pin placement
+            // would otherwise keep its ghost preview under the crosshair.
+            let scanPins =
+                match model.ScanPins.Placement with
+                | AnchorPlacement -> { model.ScanPins with Placement = PlacementIdle }
+                | _ -> model.ScanPins
+            updateRuntime { model with ScanPins = scanPins }
+                (fun s -> { s.Runtime with SceneClickArm = Some qid })
         | StudyCancelSceneClick ->
             updateRuntime model (fun s -> { s.Runtime with SceneClickArm = None })
         | StudySceneClickHit world ->
@@ -582,7 +641,9 @@ module StudyUpdate =
     let postlude (env : Env<Message>) (before : Model) (after : Model) (msg : Message) : Model =
         match after.Study with
         | Some (StudyActive s) ->
-            let events = StudyEvents.derive before after msg
+            // A blocked (gated) message no-opped in the reducer — it must not
+            // count toward predicates or telemetry either.
+            let events = if blocked before msg then [] else StudyEvents.derive before after msg
             if List.isEmpty events then after
             else
                 for etype, payload in events do

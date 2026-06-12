@@ -473,7 +473,11 @@ module View =
 
             Dom.OnKeyDown(fun e ->
                 match e.Key with
-                | " "      -> transact (fun () -> spaceHeld.Value <- true)
+                | " " ->
+                    // Hold-space fullscreen is a Full-mode review tool; in a
+                    // study it would blank the pins/cards mid-task.
+                    if not (Study.isActive (AVal.force model.Study)) then
+                        transact (fun () -> spaceHeld.Value <- true)
                 | "Escape" ->
                     let studyArmed =
                         match AVal.force model.Study with

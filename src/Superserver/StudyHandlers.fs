@@ -62,11 +62,12 @@ let private studyOfSid (sid : string) : (LoadedStudy * string) option =
                 Some (study, StudyStore.dataDirOf rootDir id)
             | None -> None
 
+// WriteStringAsync IS the pipeline result — discarding its task and calling
+// next would race the body write against the response completion.
 let private jsonText (s : string) : HttpHandler =
-    fun next ctx ->
+    fun (_ : HttpFunc) (ctx : HttpContext) ->
         ctx.SetContentType "application/json; charset=utf-8"
-        ctx.WriteStringAsync s |> ignore
-        next ctx
+        ctx.WriteStringAsync s
 
 // ────────────────────────────── session ─────────────────────────────────
 

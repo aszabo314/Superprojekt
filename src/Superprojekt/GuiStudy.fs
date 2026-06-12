@@ -355,7 +355,12 @@ module GuiStudy =
                                 match d.Value with
                                 | Some (ANumber v) -> Some (Attribute("value", sprintf "%g" v))
                                 | _ -> None)
-                            Dom.OnInput(fun e ->
+                            // OnChange (commit on blur/Enter), not OnInput —
+                            // a per-keystroke draft writes the value
+                            // attribute back and rewrites "1." to "1" while
+                            // typing (same reason inlineSlider's text input
+                            // uses OnChange).
+                            Dom.OnChange(fun e ->
                                 parseFloatInv e.Value
                                 |> Option.iter (fun v -> env.Emit [StudyMsg (StudySetNumber(q.Id, v))]))
                         }

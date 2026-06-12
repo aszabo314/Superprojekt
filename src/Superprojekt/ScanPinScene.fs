@@ -515,8 +515,15 @@ module ScanPinScene =
 
         // Study flag markers (§7 sceneClick / §9 P5): config-planted flags of
         // the current phase in amber, the participant's marks in the linking
-        // accent. One Lines node, world-space pole + diamond head.
+        // accent. One Lines node, pole + diamond head sized in world metres
+        // and converted at the boundary like every other pin visual. The
+        // model.Study leaf changes on every study reducer step (answer
+        // drafts, predicate counts), so the result is memoized on the actual
+        // inputs and the same array reference is returned while they are
+        // unchanged — the equality cut keeps the line buffer untouched.
         let studyFlags =
+            let flagCache : ((string * int * Map<string, V3d> * V3d * float * Box3d) option * (V3d * V3d * V4d * float)[]) ref =
+                ref (None, Array.empty)
             let segs =
                 AVal.custom (fun t ->
                     match model.Study.GetValue t with
@@ -524,28 +531,37 @@ module ScanPinScene =
                         let cc = model.CommonCentroid.GetValue t
                         let scale = datasetScale.GetValue t
                         let sb = model.SceneBounds.GetValue t
-                        let h = if sb.IsInvalid then 1.0 else sb.Size.Length * 0.02
-                        let questions =
-                            match Study.currentPhase s with
-                            | Some ph -> ph.Steps |> List.choose (fun st -> Study.effectiveQuestion s.Config st)
-                            | None -> []
-                        let out = ResizeArray<V3d * V3d * V4d * float>()
-                        let flag (world : V3d) (colour : V4d) =
-                            let p = ScanPin.renderCentre cc scale world
-                            let top = p + V3d.OOI * h
-                            let r = h * 0.18
-                            out.Add(p, top, colour, 2.0)
-                            for (a, b) in [ V3d.IOO, V3d.OIO; V3d.OIO, -V3d.IOO; -V3d.IOO, -V3d.OIO; -V3d.OIO, V3d.IOO ] do
-                                out.Add(top + a * r, top + b * r, colour, 2.0)
-                        for q in questions do
-                            match q.FlagPoint with
-                            | Some fp -> flag fp (V4d(0.85, 0.47, 0.02, 0.95))
-                            | None -> ()
-                            match Map.tryFind q.Id s.Runtime.Flags with
-                            | Some mark -> flag mark (V4d(0.03, 0.57, 0.7, 0.95))
-                            | None -> ()
-                        out.ToArray()
-                    | _ -> [||])
+                        let key = Some (s.SessionId, s.Runtime.PhaseIx, s.Runtime.Flags, cc, scale, sb)
+                        match flagCache.Value with
+                        | lastKey, cached when lastKey = key -> cached
+                        | _ ->
+                            let hWorld = if sb.IsInvalid then 1.0 else sb.Size.Length * 0.02
+                            let h = ScanPin.renderLength scale hWorld
+                            let questions =
+                                match Study.currentPhase s with
+                                | Some ph -> ph.Steps |> List.choose (fun st -> Study.effectiveQuestion s.Config st)
+                                | None -> []
+                            let out = ResizeArray<V3d * V3d * V4d * float>()
+                            let flag (world : V3d) (colour : V4d) =
+                                let p = ScanPin.renderCentre cc scale world
+                                let top = p + V3d.OOI * h
+                                let r = h * 0.18
+                                out.Add(p, top, colour, 2.0)
+                                for (a, b) in [ V3d.IOO, V3d.OIO; V3d.OIO, -V3d.IOO; -V3d.IOO, -V3d.OIO; -V3d.OIO, V3d.IOO ] do
+                                    out.Add(top + a * r, top + b * r, colour, 2.0)
+                            for q in questions do
+                                match q.FlagPoint with
+                                | Some fp -> flag fp (V4d(0.85, 0.47, 0.02, 0.95))
+                                | None -> ()
+                                match Map.tryFind q.Id s.Runtime.Flags with
+                                | Some mark -> flag mark (V4d(0.03, 0.57, 0.7, 0.95))
+                                | None -> ()
+                            let result = out.ToArray()
+                            flagCache.Value <- key, result
+                            result
+                    | _ ->
+                        flagCache.Value <- None, Array.empty
+                        Array.empty)
             ASet.ofList [
                 sg {
                     Sg.Active notFullscreen

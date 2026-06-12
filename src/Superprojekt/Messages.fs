@@ -48,7 +48,7 @@ type Message =
     | TogglePatchShaded
     | PatchPickerReady of pinId:ScanPinId * normal:V3d * refDir:V3d * radius:float * entries:PatchPickerEntry list
     | PatchPickerFailed of string
-    | PatchPickerClick of mesh:string * u:float * v:float
+    | PatchPickerClick of mesh:string * u:float * v:float * h:float
     | ShowToast of string
     | ClearToast
     | SetMeshSensorType of string * SensorType

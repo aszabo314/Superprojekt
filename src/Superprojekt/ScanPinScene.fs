@@ -80,6 +80,7 @@ module ScanPinScene =
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (fullscreenActive : aval<bool>)
             (placementHover : aval<V3d option>)
+            (patchHover : aval<PatchHover option>)
             (model : AdaptiveModel) =
 
         let datasetScale =
@@ -519,6 +520,93 @@ module ScanPinScene =
                 }
             ]
 
+        // Patch-picker 2D→3D linking (patchHover is a view-local cval set by
+        // the cell JS — pointer moves never touch the reducer): while a patch
+        // cell is hovered, every sampled vertex inside the cell's current
+        // pan/zoom viewport gets a short tick along the shared frame normal,
+        // and the live cursor gets a jack glyph at the exact surface point —
+        // both in the chart-linking accent. The frame is orthonormal, so
+        // world = centre + u·refDir + v·left + h·normal reconstructs vertex
+        // positions exactly. Ticks are memoized (entries compared by
+        // reference) and return the same array while unchanged, so a plain
+        // pointer move only rebuilds the 3-segment marker.
+        let patchLink =
+            let accentTick = V4d(0.031, 0.569, 0.698, 0.45)
+            let accentMark = V4d(0.031, 0.569, 0.698, 0.95)
+            let tickCache :
+                (PatchPickerEntry list option * (string * V2d * float * V3d * float) * (V3d * V3d * V4d * float)[]) ref =
+                ref (None, ("", V2d.Zero, 0.0, V3d.Zero, 0.0), Array.empty)
+            let tickSegs =
+                AVal.custom (fun t ->
+                    let reset () =
+                        tickCache.Value <- None, ("", V2d.Zero, 0.0, V3d.Zero, 0.0), Array.empty
+                        Array.empty
+                    match patchHover.GetValue t with
+                    | None -> reset ()
+                    | Some hov ->
+                        match model.PatchPicker.GetValue t with
+                        | Some pp when not pp.Running ->
+                            match pp.Entries |> List.tryFind (fun e -> e.Mesh = hov.Mesh) with
+                            | Some entry ->
+                                let cc = model.CommonCentroid.GetValue t
+                                let scale = datasetScale.GetValue t
+                                let key = (hov.Mesh, hov.Centre, hov.Zoom, cc, scale)
+                                let lastEntries, lastKey, cached = tickCache.Value
+                                let entriesSame =
+                                    match lastEntries with
+                                    | Some le -> System.Object.ReferenceEquals(le, pp.Entries)
+                                    | None -> false
+                                if entriesSame && lastKey = key then cached
+                                else
+                                    let left = Vec.cross pp.Normal pp.RefDir
+                                    let s = pp.Radius / max 1.0 hov.Zoom
+                                    let tickLen = ScanPin.renderLength scale (pp.Radius * 0.05)
+                                    let out = ResizeArray<V3d * V3d * V4d * float>(entry.Points.Length)
+                                    for (uv, h, _) in entry.Points do
+                                        if abs (uv.X - hov.Centre.X) <= s && abs (uv.Y - hov.Centre.Y) <= s then
+                                            let wp = entry.Centre + pp.RefDir * uv.X + left * uv.Y + pp.Normal * h
+                                            let p = ScanPin.renderCentre cc scale wp
+                                            out.Add(p, p + pp.Normal * tickLen, accentTick, 1.0)
+                                    let arr = out.ToArray()
+                                    tickCache.Value <- Some pp.Entries, key, arr
+                                    arr
+                            | None -> reset ()
+                        | _ -> reset ())
+            let markerSegs =
+                AVal.custom (fun t ->
+                    match patchHover.GetValue t with
+                    | Some hov ->
+                        match hov.Point with
+                        | Some (uv, h) ->
+                            match model.PatchPicker.GetValue t with
+                            | Some pp when not pp.Running ->
+                                match pp.Entries |> List.tryFind (fun e -> e.Mesh = hov.Mesh) with
+                                | Some entry ->
+                                    let cc = model.CommonCentroid.GetValue t
+                                    let scale = datasetScale.GetValue t
+                                    let left = Vec.cross pp.Normal pp.RefDir
+                                    let wp = entry.Centre + pp.RefDir * uv.X + left * uv.Y + pp.Normal * h
+                                    let p = ScanPin.renderCentre cc scale wp
+                                    let l = ScanPin.renderLength scale (pp.Radius * 0.1)
+                                    [| p - pp.RefDir * l, p + pp.RefDir * l, accentMark, 1.8
+                                       p - left * l, p + left * l, accentMark, 1.8
+                                       p, p + pp.Normal * (l * 1.6), accentMark, 1.8 |]
+                                | None -> Array.empty
+                            | _ -> Array.empty
+                        | None -> Array.empty
+                    | None -> Array.empty)
+            let node segs =
+                sg {
+                    Sg.Active notFullscreen
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render segs
+                }
+            ASet.ofList [node tickSegs; node markerSegs]
+
         // Study flag markers (§7 sceneClick / §9 P5): config-planted flags of
         // the current phase in amber, the participant's marks in the linking
         // accent. One Lines node, pole + diamond head sized in world metres
@@ -580,4 +668,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; anchorGlyphs; studyFlags])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; anchorGlyphs; patchLink; studyFlags])

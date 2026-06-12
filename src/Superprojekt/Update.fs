@@ -708,7 +708,7 @@ module Update =
                             // the shared frame for every other mesh.
                             let refT = Map.tryFind refMesh trafos |> Option.defaultValue Trafo3d.Identity
                             let cRef = refT.Backward.TransformPos refAnchor
-                            let! refPts, refDirM, normalM =
+                            let! refPts, refTris, refDirM, normalM =
                                 Query.patchInFrame ApiConfig.apiBase.Value refMesh cRef radius 800 None
                                 |> Async.StartAsTask
                             let normalW = (refT.Forward.TransformDir normalM).Normalized
@@ -724,6 +724,7 @@ module Update =
                                     refPts |> Array.map (fun (uv2, wp, atlasUv) ->
                                         let world = refT.Forward.TransformPos wp
                                         uv2, Vec.dot (world - refAnchor) normalW, atlasUv)
+                                Triangles = refTris
                                 Crosshair = V2d.Zero
                                 AtlasUrl  = atlasUrl refMesh
                             }
@@ -749,7 +750,7 @@ module Update =
                                             let frame =
                                                 (t.Backward.TransformDir normalW),
                                                 (t.Backward.TransformDir refDirW)
-                                            let! pts, _, _ =
+                                            let! pts, tris, _, _ =
                                                 Query.patchInFrame ApiConfig.apiBase.Value mesh
                                                     (t.Backward.TransformPos cw) radius 800 (Some frame)
                                             let points =
@@ -761,6 +762,7 @@ module Update =
                                                     Vec.dot (refAnchor - cw) leftW)
                                             return Some {
                                                 Mesh = mesh; Centre = cw; Points = points
+                                                Triangles = tris
                                                 Crosshair = cross; AtlasUrl = atlasUrl mesh
                                             }
                                     with _ -> return None
@@ -801,31 +803,18 @@ module Update =
                 showToast env (sprintf "Patch sampling failed: %s" reason)
                     { model with PatchPicker = Some { pp with Running = false } }
             | None -> model
-        | PatchPickerClick(mesh, u, v) ->
+        | PatchPickerClick(mesh, u, v, h) ->
             match model.PatchPicker with
             | Some pp ->
                 match pp.Entries |> List.tryFind (fun e -> e.Mesh = mesh) with
                 | Some entry when Some mesh <> model.Registration.ReferenceMesh ->
-                    // (u,v) → world ray from above the patch, straight down
-                    // the shared frame normal, against this mesh only.
+                    // (u,v,h) come from the cell's triangle hit-test
+                    // (barycentric height on the picked triangle); the frame
+                    // is orthonormal, so this is the exact surface point at
+                    // committed poses — no server ray needed.
                     let left = Vec.cross pp.Normal pp.RefDir
-                    let origin = entry.Centre + pp.RefDir * u + left * v + pp.Normal * pp.Radius
-                    let direction = -pp.Normal
-                    let t = ModelTransforms.committedWorld model mesh
-                    let oM = t.Backward.TransformPos origin
-                    let dM = t.Backward.TransformDir direction
-                    let pinId = pp.PinId
-                    task {
-                        try
-                            let! hit = Query.rayHit ApiConfig.apiBase.Value mesh 0 oM dM |> Async.StartAsTask
-                            match hit with
-                            | Some h ->
-                                env.Emit [SetAnchor(pinId, mesh, t.Forward.TransformPos h.point, AnchorPatch2D)]
-                            | None ->
-                                env.Emit [ShowToast "No surface under that patch point"]
-                        with ex ->
-                            env.Emit [ShowToast (sprintf "Patch pick failed: %s" ex.Message)]
-                    } |> ignore
+                    let point = entry.Centre + pp.RefDir * u + left * v + pp.Normal * h
+                    env.Emit [SetAnchor(pp.PinId, mesh, point, AnchorPatch2D)]
                     model
                 | _ -> model
             | None -> model

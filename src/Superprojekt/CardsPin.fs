@@ -345,7 +345,7 @@ module CardsPin =
         | true, v -> Some v
         | _ -> None
 
-    let pinCardBody (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) (hoverWorld : aval<V3d option>) =
+    let pinCardBody (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) (hoverWorld : aval<V3d option>) (patchHover : cval<PatchHover option>) =
         let payloadKind =
             selectedPin |> AVal.map (function
                 | Some p -> Some (PayloadType.kind p.Payload)
@@ -750,23 +750,51 @@ module CardsPin =
                                         p.Entries |> List.iteri (fun i e ->
                                             if i > 0 then sb.Append(',') |> ignore
                                             let isRef = reg.ReferenceMesh = Some e.Mesh
-                                            sb.Append(sprintf "{\"id\":\"%s\",\"mesh\":\"%s\",\"color\":\"%s\",\"ref\":%b,\"atlas\":\"%s\",\"cross\":[%.4g,%.4g],\"pts\":["
+                                            sb.Append(sprintf "{\"id\":\"%s\",\"mesh\":\"%s\",\"color\":\"%s\",\"ref\":%b,\"atlas\":\"%s\",\"cross\":[%.5g,%.5g],\"tris\":["
                                                         e.Mesh (shortName e.Mesh) (colorHex e.Mesh) isRef e.AtlasUrl
                                                         e.Crosshair.X e.Crosshair.Y) |> ignore
+                                            e.Triangles |> Array.iteri (fun j t ->
+                                                if j > 0 then sb.Append(',') |> ignore
+                                                sb.Append(t) |> ignore)
+                                            sb.Append("],\"pts\":[") |> ignore
                                             e.Points |> Array.iteri (fun j (uv, h, atlasUv) ->
                                                 if j > 0 then sb.Append(',') |> ignore
-                                                sb.Append(sprintf "[%.4g,%.4g,%.4g,%.4g,%.4g]"
+                                                sb.Append(sprintf "[%.5g,%.5g,%.5g,%.5g,%.5g]"
                                                             uv.X uv.Y h atlasUv.X atlasUv.Y) |> ignore)
                                             sb.Append("]}") |> ignore)
                                         sb.Append("]}") |> ignore
                                         sb.ToString()
                                 | _ -> "{\"status\":\"none\"}")
+                        // Bus protocol from the cell JS:
+                        //   pk|mesh|u|v|h            click pick (h = barycentric height on the hit triangle)
+                        //   hv|mesh|cx|cy|z[|u|v|h]  hovered cell + its pan/zoom viewport, optional live cursor
+                        //   out                      pointer left the cell
+                        // pk goes through the reducer; hv/out only touch the
+                        // view-local cval (no reducer churn on pointer moves).
+                        let setPatchHover (next : PatchHover option) =
+                            if patchHover.Value <> next then
+                                transact (fun () -> patchHover.Value <- next)
                         let onPatchEvent (v : string) =
                             let parts = v.Split('|')
-                            if parts.Length >= 4 && parts.[0] = "pk" then
-                                match parseInvariant parts.[2], parseInvariant parts.[3] with
-                                | Some u, Some vv -> env.Emit [PatchPickerClick(parts.[1], u, vv)]
+                            if parts.Length = 0 then () else
+                            match parts.[0] with
+                            | "pk" when parts.Length >= 5 ->
+                                match parseInvariant parts.[2], parseInvariant parts.[3], parseInvariant parts.[4] with
+                                | Some u, Some vv, Some h -> env.Emit [PatchPickerClick(parts.[1], u, vv, h)]
                                 | _ -> ()
+                            | "hv" when parts.Length >= 5 ->
+                                match parseInvariant parts.[2], parseInvariant parts.[3], parseInvariant parts.[4] with
+                                | Some cx, Some cy, Some z ->
+                                    let point =
+                                        if parts.Length >= 8 then
+                                            match parseInvariant parts.[5], parseInvariant parts.[6], parseInvariant parts.[7] with
+                                            | Some u, Some vv, Some h -> Some (V2d(u, vv), h)
+                                            | _ -> None
+                                        else None
+                                    setPatchHover (Some { Mesh = parts.[1]; Centre = V2d(cx, cy); Zoom = z; Point = point })
+                                | _ -> ()
+                            | "out" -> setPatchHover None
+                            | _ -> ()
                         div {
                             Class "pc-patchpicker"
                             showOnly pickerOpen
@@ -795,6 +823,12 @@ module CardsPin =
                                 Class "pc-patch-grid"
                                 pickerJson |> AVal.map (fun j -> Some (Attribute("data-patches", j)))
                                 Primitives.observedRender "data-patches" "{}" [
+                                    // Canvas small-multiples: textured/shaded triangles, restricted
+                                    // pan/zoom per cell, triangle hit-test picking and 2D↔3D hover
+                                    // linking. Per-mesh viewport state survives re-renders on
+                                    // el.__ppv; two stacked canvases per cell (base = surface,
+                                    // overlay = cursor/vertex marks) so pointer moves never redraw
+                                    // the triangles.
                                     "  function placeholder(t){ var p = document.createElement('div'); p.className = 'pin-card-empty'; p.textContent = t; el.appendChild(p); }"
                                     "  if(!d.status || d.status === 'none'){ return; }"
                                     "  if(d.status === 'running'){ placeholder('Sampling patches…'); return; }"
@@ -812,7 +846,20 @@ module CardsPin =
                                     "    var b = pr ? pr.querySelector('.pc-patch-bus') : null;"
                                     "    if(b){ b.value = s; b.dispatchEvent(new Event('input', {bubbles:true})); }"
                                     "  };"
+                                    "  var lastHv = '', hvQueued = null, hvRaf = 0;"
+                                    "  var sendHv = function(s){"
+                                    "    hvQueued = s;"
+                                    "    if(!hvRaf){ hvRaf = requestAnimationFrame(function(){"
+                                    "      hvRaf = 0;"
+                                    "      if(hvQueued !== null && hvQueued !== lastHv){ lastHv = hvQueued; send(hvQueued); }"
+                                    "    }); }"
+                                    "  };"
+                                    "  var views = el.__ppv = el.__ppv || {};"
+                                    "  var cells = [];"
+                                    "  var ghost = null;"
+                                    "  var ACC = '#0891b2';"
                                     "  entries.forEach(function(e){"
+                                    "    var st = views[e.id] = views[e.id] || {cx:0, cy:0, z:1};"
                                     "    var wrap = document.createElement('div');"
                                     "    wrap.className = 'pc-patch-cell' + (e.ref ? ' pc-patch-cell-ref' : '');"
                                     "    var head = document.createElement('div');"
@@ -823,68 +870,214 @@ module CardsPin =
                                     "    var nm = document.createElement('span');"
                                     "    nm.textContent = e.mesh + (e.ref ? ' ★' : '');"
                                     "    head.appendChild(nm);"
+                                    "    var zl = document.createElement('span');"
+                                    "    zl.className = 'pc-patch-zoom';"
+                                    "    zl.title = 'reset zoom';"
+                                    "    head.appendChild(zl);"
                                     "    wrap.appendChild(head);"
-                                    "    var size = 124, pad = 6, maxR = size / 2 - pad, cx = size / 2, cy = size / 2;"
-                                    "    var svg = document.createElementNS(ns, 'svg');"
-                                    "    svg.setAttribute('width', size); svg.setAttribute('height', size);"
-                                    "    svg.setAttribute('viewBox', '0 0 ' + size + ' ' + size);"
-                                    "    var ring = document.createElementNS(ns, 'circle');"
-                                    "    ring.setAttribute('cx', cx); ring.setAttribute('cy', cy); ring.setAttribute('r', maxR);"
-                                    "    ring.setAttribute('fill', '#f8fafc');"
-                                    "    ring.setAttribute('stroke', e.ref ? '#b45309' : '#cbd5e1');"
-                                    "    ring.setAttribute('stroke-width', e.ref ? '2' : '1');"
-                                    "    svg.appendChild(ring);"
-                                    "    var sx = function(u){ return cx + u / d.r * maxR; };"
-                                    "    var sy = function(v){ return cy - v / d.r * maxR; };"
-                                    "    var dots = [];"
-                                    "    e.pts.forEach(function(p){"
-                                    "      var c = document.createElementNS(ns, 'circle');"
-                                    "      c.setAttribute('cx', sx(p[0])); c.setAttribute('cy', sy(p[1]));"
-                                    "      c.setAttribute('r', '1.7');"
-                                    "      c.setAttribute('fill', hcol(p[2]));"
-                                    "      c.setAttribute('opacity', '0.9');"
-                                    "      svg.appendChild(c); dots.push(c);"
-                                    "    });"
-                                    "    if(!d.shaded && e.atlas){"
-                                    "      var img = new Image();"
-                                    "      img.onload = function(){"
-                                    "        try{"
-                                    "          var cv = document.createElement('canvas');"
-                                    "          cv.width = img.width; cv.height = img.height;"
-                                    "          var g = cv.getContext('2d');"
-                                    "          g.drawImage(img, 0, 0);"
-                                    "          var data = g.getImageData(0, 0, cv.width, cv.height).data;"
-                                    "          e.pts.forEach(function(p, i){"
-                                    "            var u = Math.max(0, Math.min(1, p[3])), v = Math.max(0, Math.min(1, p[4]));"
-                                    "            var x = Math.min(cv.width - 1, Math.round(u * (cv.width - 1)));"
-                                    "            var y = Math.min(cv.height - 1, Math.round((1 - v) * (cv.height - 1)));"
-                                    "            var o = (y * cv.width + x) * 4;"
-                                    "            dots[i].setAttribute('fill', 'rgb(' + data[o] + ',' + data[o+1] + ',' + data[o+2] + ')');"
-                                    "          });"
-                                    "        } catch(err){}"
-                                    "      };"
-                                    "      img.src = e.atlas;"
+                                    "    var size = 124, pad = 6, maxR = size / 2 - pad, c0 = size / 2;"
+                                    "    var dpr = window.devicePixelRatio || 1;"
+                                    "    var box = document.createElement('div');"
+                                    "    box.className = 'pc-patch-box';"
+                                    "    box.style.width = size + 'px'; box.style.height = size + 'px';"
+                                    "    function mkCanvas(){"
+                                    "      var cv = document.createElement('canvas');"
+                                    "      cv.width = Math.round(size * dpr); cv.height = Math.round(size * dpr);"
+                                    "      cv.className = 'pc-patch-canvas';"
+                                    "      cv.style.width = size + 'px'; cv.style.height = size + 'px';"
+                                    "      box.appendChild(cv);"
+                                    "      var g = cv.getContext('2d');"
+                                    "      g.setTransform(dpr, 0, 0, dpr, 0, 0);"
+                                    "      return g;"
                                     "    }"
-                                    "    var chx = sx(e.cross[0]), chy = sy(e.cross[1]);"
-                                    "    [[chx - 6, chy, chx + 6, chy], [chx, chy - 6, chx, chy + 6]].forEach(function(l){"
-                                    "      var lel = document.createElementNS(ns, 'line');"
-                                    "      lel.setAttribute('x1', l[0]); lel.setAttribute('y1', l[1]);"
-                                    "      lel.setAttribute('x2', l[2]); lel.setAttribute('y2', l[3]);"
-                                    "      lel.setAttribute('stroke', '#0f172a'); lel.setAttribute('stroke-width', '1.2');"
-                                    "      svg.appendChild(lel);"
-                                    "    });"
-                                    "    if(!e.ref){"
-                                    "      svg.style.cursor = 'crosshair';"
-                                    "      svg.addEventListener('click', function(ev){"
-                                    "        var rc = svg.getBoundingClientRect();"
-                                    "        var px = ev.clientX - rc.left, py = ev.clientY - rc.top;"
-                                    "        var u = (px - cx) / maxR * d.r;"
-                                    "        var v = (cy - py) / maxR * d.r;"
-                                    "        if(u * u + v * v <= d.r * d.r * 1.02) send('pk|' + e.id + '|' + u.toFixed(4) + '|' + v.toFixed(4));"
-                                    "      });"
-                                    "    }"
-                                    "    wrap.appendChild(svg);"
+                                    "    var gb = mkCanvas(), gt = mkCanvas();"
+                                    "    wrap.appendChild(box);"
                                     "    el.appendChild(wrap);"
+                                    "    wrap.title = 'scroll = zoom, drag = pan, click the zoom label to reset' + (e.ref ? '' : ', click = set anchor');"
+                                    "    var order = [];"
+                                    "    var tr3 = e.tris || [];"
+                                    "    for(var i = 0; i + 2 < tr3.length; i += 3){ order.push([tr3[i], tr3[i+1], tr3[i+2]]); }"
+                                    "    order.sort(function(a, b){"
+                                    "      return (e.pts[a[0]][2] + e.pts[a[1]][2] + e.pts[a[2]][2]) - (e.pts[b[0]][2] + e.pts[b[1]][2] + e.pts[b[2]][2]);"
+                                    "    });"
+                                    "    var img = null;"
+                                    "    if(e.atlas){ var im = new Image(); im.onload = function(){ img = im; requestDraw(); }; im.src = e.atlas; }"
+                                    "    function k(){ return maxR / d.r * st.z; }"
+                                    "    function sx(u){ return c0 + (u - st.cx) * k(); }"
+                                    "    function sy(v){ return c0 - (v - st.cy) * k(); }"
+                                    "    function toData(px, py){ return [(px - c0) / k() + st.cx, st.cy - (py - c0) / k()]; }"
+                                    "    function clampView(){"
+                                    "      if(st.z < 1) st.z = 1; if(st.z > 12) st.z = 12;"
+                                    "      var m = d.r * (1 - 1 / st.z);"
+                                    "      var l = Math.hypot(st.cx, st.cy);"
+                                    "      if(l > m){ var f = l > 0 ? m / l : 0; st.cx *= f; st.cy *= f; }"
+                                    "    }"
+                                    "    clampView();"
+                                    "    function flatTri(x0, y0, x1, y1, x2, y2, col){"
+                                    "      gb.beginPath(); gb.moveTo(x0, y0); gb.lineTo(x1, y1); gb.lineTo(x2, y2); gb.closePath();"
+                                    "      gb.fillStyle = col; gb.fill();"
+                                    "      gb.strokeStyle = col; gb.lineWidth = 0.6; gb.stroke();"
+                                    "    }"
+                                    "    function drawBase(){"
+                                    "      gb.clearRect(0, 0, size, size);"
+                                    "      gb.beginPath(); gb.arc(sx(0), sy(0), d.r * k(), 0, 6.2832);"
+                                    "      gb.fillStyle = '#f8fafc'; gb.fill();"
+                                    "      var shaded = d.shaded || !img;"
+                                    "      order.forEach(function(tr){"
+                                    "        var p0 = e.pts[tr[0]], p1 = e.pts[tr[1]], p2 = e.pts[tr[2]];"
+                                    "        var x0 = sx(p0[0]), y0 = sy(p0[1]), x1 = sx(p1[0]), y1 = sy(p1[1]), x2 = sx(p2[0]), y2 = sy(p2[1]);"
+                                    "        if(Math.max(x0, x1, x2) < 0 || Math.max(y0, y1, y2) < 0 || Math.min(x0, x1, x2) > size || Math.min(y0, y1, y2) > size) return;"
+                                    "        if(shaded){ flatTri(x0, y0, x1, y1, x2, y2, hcol((p0[2] + p1[2] + p2[2]) / 3)); return; }"
+                                    "        var W = img.width, H = img.height;"
+                                    "        var u0 = p0[3] * W, v0 = (1 - p0[4]) * H, u1 = p1[3] * W, v1 = (1 - p1[4]) * H, u2 = p2[3] * W, v2 = (1 - p2[4]) * H;"
+                                    "        var du = Math.max(Math.abs(p0[3] - p1[3]), Math.abs(p0[3] - p2[3]), Math.abs(p0[4] - p1[4]), Math.abs(p0[4] - p2[4]));"
+                                    "        var den = (u1 - u0) * (v2 - v0) - (u2 - u0) * (v1 - v0);"
+                                    "        if(du > 0.25 || Math.abs(den) < 1e-6){ flatTri(x0, y0, x1, y1, x2, y2, hcol((p0[2] + p1[2] + p2[2]) / 3)); return; }"
+                                    "        var gx = (x0 + x1 + x2) / 3, gy = (y0 + y1 + y2) / 3, s = 1.025;"
+                                    "        var a = ((x1 - x0) * (v2 - v0) - (x2 - x0) * (v1 - v0)) / den;"
+                                    "        var b = ((x2 - x0) * (u1 - u0) - (x1 - x0) * (u2 - u0)) / den;"
+                                    "        var c = ((y1 - y0) * (v2 - v0) - (y2 - y0) * (v1 - v0)) / den;"
+                                    "        var f = ((y2 - y0) * (u1 - u0) - (y1 - y0) * (u2 - u0)) / den;"
+                                    "        gb.save();"
+                                    "        gb.beginPath();"
+                                    "        gb.moveTo(gx + (x0 - gx) * s, gy + (y0 - gy) * s);"
+                                    "        gb.lineTo(gx + (x1 - gx) * s, gy + (y1 - gy) * s);"
+                                    "        gb.lineTo(gx + (x2 - gx) * s, gy + (y2 - gy) * s);"
+                                    "        gb.closePath(); gb.clip();"
+                                    "        gb.transform(a, c, b, f, x0 - a * u0 - b * v0, y0 - c * u0 - f * v0);"
+                                    "        gb.drawImage(img, 0, 0);"
+                                    "        gb.restore();"
+                                    "      });"
+                                    "      if(order.length === 0){"
+                                    "        e.pts.forEach(function(p){"
+                                    "          var x = sx(p[0]), y = sy(p[1]);"
+                                    "          if(x < -2 || x > size + 2 || y < -2 || y > size + 2) return;"
+                                    "          gb.beginPath(); gb.arc(x, y, 1.7, 0, 6.2832); gb.fillStyle = hcol(p[2]); gb.fill();"
+                                    "        });"
+                                    "      }"
+                                    "      gb.beginPath(); gb.arc(sx(0), sy(0), d.r * k(), 0, 6.2832);"
+                                    "      gb.strokeStyle = e.ref ? '#b45309' : '#cbd5e1'; gb.lineWidth = e.ref ? 2 : 1; gb.stroke();"
+                                    "      var chx = sx(e.cross[0]), chy = sy(e.cross[1]);"
+                                    "      gb.strokeStyle = '#0f172a'; gb.lineWidth = 1.2;"
+                                    "      gb.beginPath(); gb.moveTo(chx - 6, chy); gb.lineTo(chx + 6, chy); gb.moveTo(chx, chy - 6); gb.lineTo(chx, chy + 6); gb.stroke();"
+                                    "      zl.textContent = st.z > 1.001 ? st.z.toFixed(1) + '×' : '';"
+                                    "    }"
+                                    "    var hovered = false, cursor = null, panning = null;"
+                                    "    function hitTri(u, v){"
+                                    "      for(var i = order.length - 1; i >= 0; i--){"
+                                    "        var tr = order[i];"
+                                    "        var p0 = e.pts[tr[0]], p1 = e.pts[tr[1]], p2 = e.pts[tr[2]];"
+                                    "        var d1 = (u - p1[0]) * (p0[1] - p1[1]) - (p0[0] - p1[0]) * (v - p1[1]);"
+                                    "        var d2 = (u - p2[0]) * (p1[1] - p2[1]) - (p1[0] - p2[0]) * (v - p2[1]);"
+                                    "        var d3 = (u - p0[0]) * (p2[1] - p0[1]) - (p2[0] - p0[0]) * (v - p0[1]);"
+                                    "        if(((d1 < 0) || (d2 < 0) || (d3 < 0)) && ((d1 > 0) || (d2 > 0) || (d3 > 0))) continue;"
+                                    "        var den = (p1[1] - p2[1]) * (p0[0] - p2[0]) + (p2[0] - p1[0]) * (p0[1] - p2[1]);"
+                                    "        if(Math.abs(den) < 1e-12) continue;"
+                                    "        var w0 = ((p1[1] - p2[1]) * (u - p2[0]) + (p2[0] - p1[0]) * (v - p2[1])) / den;"
+                                    "        var w1 = ((p2[1] - p0[1]) * (u - p2[0]) + (p0[0] - p2[0]) * (v - p2[1])) / den;"
+                                    "        return p0[2] * w0 + p1[2] * w1 + p2[2] * (1 - w0 - w1);"
+                                    "      }"
+                                    "      return null;"
+                                    "    }"
+                                    "    function drawTop(){"
+                                    "      gt.clearRect(0, 0, size, size);"
+                                    "      if(ghost && ghost.mesh !== e.id){"
+                                    "        var gx2 = sx(ghost.u), gy2 = sy(ghost.v);"
+                                    "        gt.strokeStyle = 'rgba(8,145,178,0.4)'; gt.lineWidth = 1;"
+                                    "        gt.beginPath(); gt.moveTo(gx2 - 5, gy2); gt.lineTo(gx2 + 5, gy2); gt.moveTo(gx2, gy2 - 5); gt.lineTo(gx2, gy2 + 5); gt.stroke();"
+                                    "      }"
+                                    "      if(!hovered) return;"
+                                    "      gt.fillStyle = 'rgba(15,23,42,0.35)';"
+                                    "      e.pts.forEach(function(p){"
+                                    "        var x = sx(p[0]), y = sy(p[1]);"
+                                    "        if(x >= 0 && x <= size && y >= 0 && y <= size) gt.fillRect(x - 0.7, y - 0.7, 1.4, 1.4);"
+                                    "      });"
+                                    "      if(cursor){"
+                                    "        var x = sx(cursor[0]), y = sy(cursor[1]);"
+                                    "        gt.strokeStyle = ACC; gt.lineWidth = 1.4;"
+                                    "        gt.beginPath(); gt.moveTo(x - 7, y); gt.lineTo(x + 7, y); gt.moveTo(x, y - 7); gt.lineTo(x, y + 7); gt.stroke();"
+                                    "        gt.beginPath(); gt.arc(x, y, 3, 0, 6.2832); gt.stroke();"
+                                    "        gt.fillStyle = ACC; gt.font = '10px sans-serif';"
+                                    "        gt.fillText('Δh ' + (cursor[2] >= 0 ? '+' : '') + cursor[2].toFixed(3) + ' m', 6, size - 6);"
+                                    "      }"
+                                    "    }"
+                                    "    var dirty = false;"
+                                    "    function requestDraw(){"
+                                    "      if(!dirty){ dirty = true; requestAnimationFrame(function(){ dirty = false; drawBase(); drawTop(); }); }"
+                                    "    }"
+                                    "    function viewStr(){ return e.id + '|' + st.cx.toFixed(5) + '|' + st.cy.toFixed(5) + '|' + st.z.toFixed(3); }"
+                                    "    function hvSend(){"
+                                    "      if(!hovered) return;"
+                                    "      if(cursor) sendHv('hv|' + viewStr() + '|' + cursor[0].toFixed(5) + '|' + cursor[1].toFixed(5) + '|' + cursor[2].toFixed(5));"
+                                    "      else sendHv('hv|' + viewStr());"
+                                    "    }"
+                                    "    function setGhost(){"
+                                    "      ghost = (hovered && cursor) ? {mesh: e.id, u: cursor[0], v: cursor[1]} : null;"
+                                    "      cells.forEach(function(c){ if(c.id !== e.id) c.top(); });"
+                                    "    }"
+                                    "    var ev = gt.canvas;"
+                                    "    if(!e.ref) ev.style.cursor = 'crosshair';"
+                                    "    ev.addEventListener('pointerenter', function(){ hovered = true; hvSend(); drawTop(); });"
+                                    "    ev.addEventListener('pointerleave', function(){"
+                                    "      hovered = false; cursor = null; hvQueued = null; lastHv = '';"
+                                    "      send('out'); setGhost(); drawTop();"
+                                    "    });"
+                                    "    ev.addEventListener('pointermove', function(evt){"
+                                    "      var rc = ev.getBoundingClientRect();"
+                                    "      if(panning){"
+                                    "        var dx = evt.clientX - panning.x, dy = evt.clientY - panning.y;"
+                                    "        if(panning.moved || Math.abs(dx) + Math.abs(dy) > 3){"
+                                    "          panning.moved = true;"
+                                    "          ev.style.cursor = 'grabbing';"
+                                    "          st.cx -= dx / k(); st.cy += dy / k();"
+                                    "          panning.x = evt.clientX; panning.y = evt.clientY;"
+                                    "          clampView(); requestDraw(); hvSend();"
+                                    "        }"
+                                    "        return;"
+                                    "      }"
+                                    "      var uv = toData(evt.clientX - rc.left, evt.clientY - rc.top);"
+                                    "      var h = hitTri(uv[0], uv[1]);"
+                                    "      cursor = h === null ? null : [uv[0], uv[1], h];"
+                                    "      hvSend(); setGhost(); drawTop();"
+                                    "    });"
+                                    "    ev.addEventListener('pointerdown', function(evt){"
+                                    "      if(evt.button !== 0) return;"
+                                    "      panning = {x: evt.clientX, y: evt.clientY, moved: false};"
+                                    "      ev.setPointerCapture(evt.pointerId);"
+                                    "    });"
+                                    "    ev.addEventListener('pointerup', function(evt){"
+                                    "      var wasPan = panning && panning.moved;"
+                                    "      panning = null;"
+                                    "      ev.style.cursor = e.ref ? '' : 'crosshair';"
+                                    "      try{ ev.releasePointerCapture(evt.pointerId); }catch(err){}"
+                                    "      if(wasPan || e.ref) return;"
+                                    "      var rc = ev.getBoundingClientRect();"
+                                    "      var uv = toData(evt.clientX - rc.left, evt.clientY - rc.top);"
+                                    "      var h = hitTri(uv[0], uv[1]);"
+                                    "      if(h !== null) send('pk|' + e.id + '|' + uv[0].toFixed(5) + '|' + uv[1].toFixed(5) + '|' + h.toFixed(5));"
+                                    "    });"
+                                    "    ev.addEventListener('wheel', function(evt){"
+                                    "      evt.preventDefault();"
+                                    "      var rc = ev.getBoundingClientRect();"
+                                    "      var px = evt.clientX - rc.left, py = evt.clientY - rc.top;"
+                                    "      var before = toData(px, py);"
+                                    "      st.z = Math.max(1, Math.min(12, st.z * Math.exp(-evt.deltaY * 0.002)));"
+                                    "      st.cx = before[0] - (px - c0) / k(); st.cy = before[1] + (py - c0) / k();"
+                                    "      clampView(); requestDraw();"
+                                    "      var uv = toData(px, py);"
+                                    "      var h = hitTri(uv[0], uv[1]);"
+                                    "      cursor = h === null ? null : [uv[0], uv[1], h];"
+                                    "      hvSend(); setGhost();"
+                                    "    }, {passive: false});"
+                                    // Reset lives on the zoom label, NOT on dblclick — a
+                                    // double-click on a pickable cell would fire the anchor
+                                    // pick twice before the reset.
+                                    "    zl.addEventListener('click', function(){"
+                                    "      st.cx = 0; st.cy = 0; st.z = 1;"
+                                    "      clampView(); requestDraw(); hvSend();"
+                                    "    });"
+                                    "    cells.push({id: e.id, top: drawTop});"
+                                    "    drawBase(); drawTop();"
                                     "  });"
                                 ]
                             }

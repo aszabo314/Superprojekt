@@ -306,6 +306,9 @@ body.loaded { background: #f4f6f8; }
     font-family: 'SF Mono', 'Monaco', monospace;
 }
 .pc-patch-swatch { width: 7px; height: 7px; flex-shrink: 0; display: inline-block; }
+.pc-patch-zoom { margin-left: auto; color: #64748b; font-size: 9px; cursor: pointer; padding: 0 2px; }
+.pc-patch-box { position: relative; }
+.pc-patch-canvas { position: absolute; left: 0; top: 0; touch-action: none; }
 
 /* ── Registration card: staged workflow ────────────────────────────── */
 
@@ -594,7 +597,7 @@ body.loaded { background: #f4f6f8; }
     color: #0f172a; background: #e2e8f0;
 }
 
-.card-body { padding: 6px; overflow-y: auto; }
+.card-body { padding: 6px; overflow-y: auto; max-height: 78vh; }
 
 .pin-card-body {
     display: flex; flex-direction: column; gap: 6px;

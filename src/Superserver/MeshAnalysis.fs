@@ -424,13 +424,21 @@ let curvatureRidgeWithScalars (lm : LoadedMesh) (seed : V3d) (thresholdRad : flo
             outPts, outSc
 
 type PatchPoint = { Px : float; Py : float; Wx : float; Wy : float; Wz : float; U : float; V : float }
-type PatchResult = { Points : PatchPoint[]; RefDirWorld : V3d; NormalWorld : V3d }
+type PatchResult = { Points : PatchPoint[]; Triangles : int[]; RefDirWorld : V3d; NormalWorld : V3d }
 
 // frame: optional (normal, refDir) override in the mesh's own frame — when
 // present the local plane fit is skipped and points are projected into the
 // supplied frame (origin = centre). Used by the patch small-multiples picker
 // so every mesh shares one co-oriented projection.
-let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (frame : (V3d * V3d) option) : PatchResult =
+//
+// withTriangles changes the output contract: (Px, Py) become the planar
+// orthographic projection onto the frame (exact orthonormal decomposition,
+// consistent with the picker's (u,v) → world inversion) instead of the
+// geodesic-polar unrolling, the maxPoints cap keeps the geodesically nearest
+// vertices (a smaller connected disc) instead of stride decimation, and
+// Triangles carries index triples into Points for every mesh triangle whose
+// corners all survived.
+let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (frame : (V3d * V3d) option) (withTriangles : bool) : PatchResult =
     let positions = lm.parsed.positions
     let uvs = lm.parsed.uvs
     let centroid = lm.parsed.centroid
@@ -453,7 +461,7 @@ let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (f
                 let nn = if n.Length > 1e-9 then n.Normalized else V3d.OOI
                 nn, orthoRef nn r
             | None -> V3d.OOI, V3d.OIO
-        { Points = [||]; RefDirWorld = r; NormalWorld = n }
+        { Points = [||]; Triangles = [||]; RefDirWorld = r; NormalWorld = n }
     else
         let triCount = triBuf.Length / 3
 
@@ -500,7 +508,7 @@ let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (f
             if d2 < seedD2 then seedD2 <- d2; seedV <- v
 
         if seedV < 0 then
-            { Points = [||]; RefDirWorld = refDir; NormalWorld = normal }
+            { Points = [||]; Triangles = [||]; RefDirWorld = refDir; NormalWorld = normal }
         else
             let dist = System.Collections.Generic.Dictionary<int, float>()
             let pq = System.Collections.Generic.PriorityQueue<int, float>()
@@ -524,28 +532,57 @@ let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (f
                                         dist.[n] <- alt
                                         pq.Enqueue(n, alt)
 
-            let out = ResizeArray<PatchPoint>(dist.Count)
-            for kv in dist do
-                let v = kv.Key
-                let d = kv.Value
-                let vp = V3d positions.[v]
-                let dv = vp - centreLocal
-                let dvTan = dv - normal * Vec.dot dv normal
-                let world = vp + centroid
-                let x = Vec.dot dvTan refDir
-                let y = Vec.dot dvTan leftDir
-                let bearing = atan2 y x
-                let px = d * cos bearing
-                let py = d * sin bearing
-                let uv = if v < uvs.Length then V2d uvs.[v] else V2d.Zero
-                out.Add { Px = px; Py = py; Wx = world.X; Wy = world.Y; Wz = world.Z; U = uv.X; V = uv.Y }
+            if withTriangles then
+                let kept =
+                    let all = dist |> Seq.toArray
+                    if all.Length <= maxPoints then all
+                    else
+                        all |> Array.sortBy (fun kv -> kv.Value) |> Array.truncate maxPoints
+                let indexOf = System.Collections.Generic.Dictionary<int, int>(kept.Length)
+                let pts =
+                    kept |> Array.mapi (fun i kv ->
+                        let v = kv.Key
+                        indexOf.[v] <- i
+                        let vp = V3d positions.[v]
+                        let dv = vp - centreLocal
+                        let dvTan = dv - normal * Vec.dot dv normal
+                        let world = vp + centroid
+                        let uv = if v < uvs.Length then V2d uvs.[v] else V2d.Zero
+                        { Px = Vec.dot dvTan refDir; Py = Vec.dot dvTan leftDir
+                          Wx = world.X; Wy = world.Y; Wz = world.Z; U = uv.X; V = uv.Y })
+                let tris = ResizeArray<int>(triCount * 3)
+                for ti in 0 .. triCount - 1 do
+                    let mutable a = 0
+                    let mutable b = 0
+                    let mutable c = 0
+                    if indexOf.TryGetValue(triBuf.[ti * 3], &a)
+                       && indexOf.TryGetValue(triBuf.[ti * 3 + 1], &b)
+                       && indexOf.TryGetValue(triBuf.[ti * 3 + 2], &c) then
+                        tris.Add a; tris.Add b; tris.Add c
+                { Points = pts; Triangles = tris.ToArray(); RefDirWorld = refDir; NormalWorld = normal }
+            else
+                let out = ResizeArray<PatchPoint>(dist.Count)
+                for kv in dist do
+                    let v = kv.Key
+                    let d = kv.Value
+                    let vp = V3d positions.[v]
+                    let dv = vp - centreLocal
+                    let dvTan = dv - normal * Vec.dot dv normal
+                    let world = vp + centroid
+                    let x = Vec.dot dvTan refDir
+                    let y = Vec.dot dvTan leftDir
+                    let bearing = atan2 y x
+                    let px = d * cos bearing
+                    let py = d * sin bearing
+                    let uv = if v < uvs.Length then V2d uvs.[v] else V2d.Zero
+                    out.Add { Px = px; Py = py; Wx = world.X; Wy = world.Y; Wz = world.Z; U = uv.X; V = uv.Y }
 
-            let pts = out.ToArray()
+                let pts = out.ToArray()
 
-            let final =
-                if pts.Length <= maxPoints then pts
-                else
-                    let stride = pts.Length / maxPoints
-                    let n = pts.Length / stride
-                    Array.init n (fun i -> pts.[i * stride])
-            { Points = final; RefDirWorld = refDir; NormalWorld = normal }
+                let final =
+                    if pts.Length <= maxPoints then pts
+                    else
+                        let stride = pts.Length / maxPoints
+                        let n = pts.Length / stride
+                        Array.init n (fun i -> pts.[i * stride])
+                { Points = final; Triangles = [||]; RefDirWorld = refDir; NormalWorld = normal }

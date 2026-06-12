@@ -26,6 +26,8 @@ type PatchRequest = {
     // Optional shared-frame override (mesh-frame directions); both must be
     // present to take effect. Absent fields bind to null → local plane fit.
     FrameNormal: float[]; FrameRefDir: float[]
+    // true → planar projection + triangle index triples (absent binds false).
+    Triangles: bool
 }
 
 [<CLIMutable>]
@@ -159,10 +161,10 @@ let patchHandler : HttpHandler =
                    && not (isNull req.FrameRefDir) && req.FrameRefDir.Length = 3 then
                     Some (toV3d req.FrameNormal, toV3d req.FrameRefDir)
                 else None
-            let result = MeshAnalysis.patch lm centre radius maxPoints frame
+            let result = MeshAnalysis.patch lm centre radius maxPoints frame req.Triangles
             let pts = result.Points |> Array.map (fun p -> [| p.Px; p.Py; p.Wx; p.Wy; p.Wz; p.U; p.V |])
-            log.LogInformation("patch {Name} r={Radius:F2}: {Count} pts", req.Name, radius, pts.Length)
-            return! json {| points = pts; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx
+            log.LogInformation("patch {Name} r={Radius:F2}: {Count} pts, {Tris} tris", req.Name, radius, pts.Length, result.Triangles.Length / 3)
+            return! json {| points = pts; triangles = result.Triangles; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx
         with ex ->
             log.LogError(ex, "patch failed")
             return! RequestErrors.notFound (text ex.Message) next ctx

@@ -146,19 +146,20 @@ module Query =
             return delta, residuals, eigen, collinear
         }
 
-    // Patch sampler with the shared-frame override and per-point atlas UVs
-    // (patch small-multiples picker). frame directions are in the mesh's own
-    // frame; pass None for the reference patch (local plane fit).
+    // Patch sampler with the shared-frame override, per-point atlas UVs and
+    // triangle index triples (patch small-multiples picker; (px,py) are the
+    // planar frame projection in this mode). frame directions are in the
+    // mesh's own frame; pass None for the reference patch (local plane fit).
     let patchInFrame
             (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int)
             (frame : (V3d * V3d) option)
-            : Async<(V2d * V3d * V2d)[] * V3d * V3d> =
+            : Async<(V2d * V3d * V2d)[] * int[] * V3d * V3d> =
         async {
             let frameJson =
                 match frame with
                 | Some (n, r) -> sprintf ""","frameNormal":%s,"frameRefDir":%s""" (v3 n) (v3 r)
                 | None -> ""
-            let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d%s}"""
+            let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d,"triangles":true%s}"""
                         name (v3 centre) radius maxPoints frameJson
             let! r = post serverUrl "/query/patch" json
             let pts =
@@ -167,10 +168,14 @@ module Query =
                     let uv = if a.Length >= 7 then V2d(a.[5], a.[6]) else V2d.Zero
                     V2d(a.[0], a.[1]), V3d(a.[2], a.[3], a.[4]), uv
                 ) |> Seq.toArray
+            let tris =
+                match r.TryGetProperty "triangles" with
+                | true, t -> t.EnumerateArray() |> Seq.map (fun e -> e.GetInt32()) |> Seq.toArray
+                | _ -> [||]
             let readVec (prop : string) =
                 let a = r.GetProperty(prop).EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                 V3d(a.[0], a.[1], a.[2])
-            return pts, readVec "refDir", readVec "normal"
+            return pts, tris, readVec "refDir", readVec "normal"
         }
 
     let patch (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int) : Async<(V2d * V3d)[] * V3d * V3d> =

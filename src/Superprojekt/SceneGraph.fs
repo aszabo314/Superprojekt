@@ -178,6 +178,7 @@ module SceneGraph =
         (proj : aval<Trafo3d>)
         (fullscreenActive : aval<bool>)
         (placementHover : aval<V3d option>)
+        (patchHover : aval<PatchHover option>)
         (cursorHighlight : aval<CursorHighlight option>)
         (wheelIsolation : aval<string option>)
         (model : AdaptiveModel) =
@@ -205,7 +206,7 @@ module SceneGraph =
 
         let meshScene  = MeshView.buildScene loadFinished cursorHighlight wheelIsolation model
         let fusionScene = FusionView.build info model view proj
-        let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
+        let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover patchHover model
 
         let notFullscreen = AVal.map not fullscreenActive
         let cross         = originIndicator view proj notFullscreen

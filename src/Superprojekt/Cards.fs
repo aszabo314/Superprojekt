@@ -85,7 +85,7 @@ module Cards =
                     Some (clampToViewport pos card.Size (V2d vpSize))
                 | None -> None
 
-    let renderCards (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) (hoverWorld : aval<V3d option>) =
+    let renderCards (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) (hoverWorld : aval<V3d option>) (patchHover : cval<PatchHover option>) =
         let allPinsVal = model.ScanPins.Pins |> AMap.toAVal
         let activePlacementId =
             model.ScanPins.Placement |> AVal.map (function
@@ -216,7 +216,7 @@ module Cards =
                     div {
                         Class "card-body"
                         Primitives.showWhenNot isCollapsed
-                        CardsPin.pinCardBody env model selectedPin hoverWorld
+                        CardsPin.pinCardBody env model selectedPin hoverWorld patchHover
                     }
                 }
             )

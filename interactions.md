@@ -414,14 +414,25 @@ later by hand:
 
 - **▦ Pick in patches** — the patch small-multiples picker. The reference
   patch is sampled first and its tangent frame becomes the shared frame for
-  every visible mesh (`/query/patch` with the frame override), so all
-  patches are co-oriented and directly comparable. The card shows one
-  orthographic footprint per mesh — reference first with a distinct border,
-  mesh-colour header swatch, **atlas-textured points** (toggle to a
-  height-colour rendering), and a crosshair at the reference anchor's (u,v)
-  in every patch. Clicking inside a moving mesh's patch shoots a ray down
-  the shared normal against that mesh and sets the anchor (`patch` source);
-  a miss shows a toast.
+  every visible mesh (`/query/patch` with the frame override and
+  `triangles: true`), so all patches are co-oriented and directly
+  comparable. The card shows one orthographic canvas per mesh — reference
+  first with a distinct border, mesh-colour header swatch, the **actual
+  mesh triangles** texture-mapped from the atlas (toggle to a height-colour
+  rendering; real surface holes stay holes), and a crosshair at the
+  reference anchor's (u,v) in every patch.
+  - *Picking*: clicking a triangle in a moving mesh's patch sets the anchor
+    at the exact barycentric surface point (`patch` source) — no server
+    round-trip, and clicks in holes do nothing.
+  - *Zoom / pan*: scroll zooms 1–12× anchored at the cursor, drag pans,
+    radially clamped so the data disc can never leave the cell; the zoom
+    badge in the header resets on click. Viewport state survives the
+    texture/height toggle.
+  - *2D↔3D linking* (accent `#0891b2`): hovering a cell marks its sampled
+    vertices — dots in 2D, short normal-aligned ticks in 3D, restricted to
+    the cell's current viewport — and the live cursor shows a crosshair +
+    Δh readout in 2D, a jack glyph at the same surface point in 3D, and a
+    faint ghost crosshair at the same (u,v) in the other cells.
 - **⊕ Pick in 3D** (per anchor row) — a one-shot mode: the target mesh
   renders solid (forced visible), the reference at ≈30 % opacity for
   context, everything else ghosted; crosshair cursor; **one depth-gated
@@ -606,7 +617,7 @@ GET /api/datasets/{ds}/mesh/{name}/{i}/atlas     → JPEG
 | `/api/query/closest` | name, point | found, point, distanceSquared | retarget projection, anchor auto-seeding, patch-picker centre seeding |
 | `/api/query/isoline` | name, elevation, seed, maxPoints | polyline | Line payload (elevation mode) |
 | `/api/query/curvature-ridge` | name, seed, maxPoints | polyline + scalars | Line payload (ridge mode) |
-| `/api/query/patch` | name, centre, radius, maxPoints, optional frameNormal + frameRefDir (skips the local plane fit) | projected points (incl. per-point atlas UVs), refDir, normal (echoes a supplied frame) | Patch payload, patch small-multiples picker |
+| `/api/query/patch` | name, centre, radius, maxPoints, optional frameNormal + frameRefDir (skips the local plane fit), optional triangles flag | projected points (incl. per-point atlas UVs), triangle index triples + planar projection when `triangles: true` (geodesic-polar + stride decimation otherwise), refDir, normal (echoes a supplied frame) | Patch payload (legacy mode), patch small-multiples picker (triangles mode) |
 | `/api/query/contact-rings` | name, centre, radius, maxPoints | rings: [[x,y,z]…]… (closed rings repeat the first point) | pin contact rings |
 | `/api/query/probe` | meshes [name + world transform], referenceName, centre, radius, length (0 = auto), maxPointsPerMesh | normal, planarity, length, per-mesh distributions (count/median/IQR/std/KDE), three-source decomposition | pin probe + hover probe |
 | `/api/query/icp` | referenceName, movingName, initialTransform, anchor centres/sigmas/weights, regionEps | transform (4×4), convergence per iteration, residuals | fine registration (Stage 2) |

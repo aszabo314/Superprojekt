@@ -666,11 +666,15 @@ type AnchorPickState = {
 }
 
 // Patch small-multiples picker (spec §7.2). Points are (patch-plane uv,
-// height along the shared frame normal, atlas texture uv).
+// height along the shared frame normal, atlas texture uv); since (refDir,
+// left, normal) is orthonormal, world = Centre + u·refDir + v·left + h·normal
+// exactly — world positions are never stored, they are reconstructed.
+// Triangles are flat index triples into Points.
 type PatchPickerEntry = {
     Mesh      : string
     Centre    : V3d
     Points    : (V2d * float * V2d)[]
+    Triangles : int[]
     Crosshair : V2d
     AtlasUrl  : string
 }
@@ -683,4 +687,16 @@ type PatchPickerState = {
     Entries : PatchPickerEntry list
     Running : bool
     Shaded  : bool
+}
+
+// Transient 2D→3D linking state for the patch picker, view-local (cval — the
+// reducer never sees pointer moves). Centre/Zoom describe the cell's current
+// pan/zoom viewport in patch coordinates so the 3D vertex ticks can be
+// restricted to what the hovered cell actually shows; Point is the live
+// cursor position on the triangulated surface (planar uv + height).
+type PatchHover = {
+    Mesh   : string
+    Centre : V2d
+    Zoom   : float
+    Point  : (V2d * float) option
 }

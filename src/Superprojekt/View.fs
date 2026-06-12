@@ -51,6 +51,7 @@ module View =
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
         let cursorScreen    = cval<V2d option> None
+        let patchHover      = cval<PatchHover option> None
 
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
 
@@ -519,7 +520,7 @@ module View =
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) cursorHighlight wheelIsolation model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) (patchHover :> aval<_>) cursorHighlight wheelIsolation model
             }
 
             Dom.OnKeyDown(fun e ->
@@ -596,7 +597,7 @@ module View =
             GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)
             div {
                 Primitives.showWhen (StudyGate.featureOn model "pinCard")
-                Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>)
+                Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>) patchHover
             }
             GuiOverlays.fullscreenInfo model
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)

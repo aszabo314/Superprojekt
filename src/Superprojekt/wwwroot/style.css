@@ -1257,3 +1257,11 @@ body.loaded { background: #f4f6f8; }
     background: #fffbeb; border: 1px solid #fcd34d; border-radius: 6px;
     padding: 8px 10px; margin-bottom: 12px;
 }
+
+/* navigation-action pulse (workflow panel) */
+.pulse-outline { animation: superPulse 1.5s ease-out; }
+@keyframes superPulse {
+    0%   { outline: 3px solid rgba(26, 86, 219, 0.9); outline-offset: 2px; }
+    70%  { outline: 3px solid rgba(26, 86, 219, 0.45); outline-offset: 2px; }
+    100% { outline: 3px solid rgba(26, 86, 219, 0.0); outline-offset: 2px; }
+}

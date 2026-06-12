@@ -102,6 +102,10 @@ type Message =
     | StudiesLoaded of string[]
     | ToggleWorkflowPanel
     | SetRegistrationCardOpen of bool
+    // Workflow panel: camera fly-to (aspect supplied by the view — fovY
+    // derives from the fixed 90° horizontal fov) and navigation actions.
+    | FlyTo of FlyToTarget * aspect:float
+    | NavTo of NavAction
     | StudyMsg of StudyMessage
 
 and StudyMessage =

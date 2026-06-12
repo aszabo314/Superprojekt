@@ -538,15 +538,24 @@ module GuiCards =
     let anchorReviewCard (env : Env<Message>) (model : AdaptiveModel) =
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         let candidatesAList =
-            model.AnchorReview
-            |> AVal.map (function
-                | AnchorReviewing cs -> IndexList.ofArray cs
+            (model.AnchorReview, model.AnchorReviewFilter) ||> AVal.map2 (fun review filt ->
+                match review with
+                | AnchorReviewing cs ->
+                    match filt with
+                    | Some mesh -> cs |> Array.filter (fun c -> c.Mesh = mesh) |> IndexList.ofArray
+                    | None -> IndexList.ofArray cs
                 | _ -> IndexList.empty)
             |> AList.ofAVal
         let title =
-            model.AnchorReview |> AVal.map (function
+            (model.AnchorReview, model.AnchorReviewFilter) ||> AVal.map2 (fun review filt ->
+                match review with
                 | AnchorReviewSeeding -> "Seeding correspondence anchors…"
-                | AnchorReviewing cs -> sprintf "Anchor review (%d anchors)" cs.Length
+                | AnchorReviewing cs ->
+                    match filt with
+                    | Some mesh ->
+                        let n = cs |> Array.filter (fun c -> c.Mesh = mesh) |> Array.length
+                        sprintf "Anchor review — %s (%d anchors)" (Cards.shortName mesh) n
+                    | None -> sprintf "Anchor review (%d anchors)" cs.Length
                 | _ -> "Anchor review")
         let progressNote =
             model.AnchorReview |> AVal.map (function

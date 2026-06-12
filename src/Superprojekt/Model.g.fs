@@ -1,5 +1,5 @@
-//56b7b956-f3f3-6de3-3352-c8ca770f8a12
-//984bceb8-3494-4141-aa3d-fca45bc011dc
+//e31862c0-382a-9c35-f363-7341dd5f9557
+//3bba67aa-7bc6-12e5-cbce-70d0a755e9bb
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -42,6 +42,7 @@ type AdaptiveModel(value : Model) =
     let _Retarget_ = FSharp.Data.Adaptive.cval(value.Retarget)
     let _PendingReg_ = FSharp.Data.Adaptive.cval(value.PendingReg)
     let _RegistrationLog_ = FSharp.Data.Adaptive.cval(value.RegistrationLog)
+    let _AnchorReviewFilter_ = FSharp.Data.Adaptive.cval(value.AnchorReviewFilter)
     let _LastSolve_ = FSharp.Data.Adaptive.cval(value.LastSolve)
     let _AnchorReview_ = FSharp.Data.Adaptive.cval(value.AnchorReview)
     let _AnchorPick_ = FSharp.Data.Adaptive.cval(value.AnchorPick)
@@ -112,6 +113,7 @@ type AdaptiveModel(value : Model) =
             _Retarget_.Value <- value.Retarget
             _PendingReg_.Value <- value.PendingReg
             _RegistrationLog_.Value <- value.RegistrationLog
+            _AnchorReviewFilter_.Value <- value.AnchorReviewFilter
             _LastSolve_.Value <- value.LastSolve
             _AnchorReview_.Value <- value.AnchorReview
             _AnchorPick_.Value <- value.AnchorPick
@@ -175,6 +177,7 @@ type AdaptiveModel(value : Model) =
     member __.Retarget = _Retarget_ :> FSharp.Data.Adaptive.aval<RetargetState>
     member __.PendingReg = _PendingReg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PendingRegistration>>
     member __.RegistrationLog = _RegistrationLog_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<RegStep>>
+    member __.AnchorReviewFilter = _AnchorReviewFilter_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.LastSolve = _LastSolve_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, LastSolveEntry>>
     member __.AnchorReview = _AnchorReview_ :> FSharp.Data.Adaptive.aval<AnchorReviewState>
     member __.AnchorPick = _AnchorPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<AnchorPickState>>

@@ -251,6 +251,26 @@ module LastSolve =
     let afterRollback (step : RegStep) (m : Map<string, LastSolveEntry>) =
         step.Outputs |> Map.fold (fun acc mesh _ -> Map.remove mesh acc) m
 
+// Camera fly-to (workflow panel §4): pure math, unit-tested. Targets are
+// world-space; the reducer converts to render space at the boundary.
+type FlyToTarget =
+    | FlyToSphere of centre : V3d * radius : float
+    | FlyToBounds of Box3d
+
+module FlyToMath =
+    // Vertical fov from the app's fixed 90° horizontal fov + viewport aspect.
+    let fovY (horizontalFovDeg : float) (aspect : float) =
+        2.0 * atan (tan (horizontalFovDeg * Math.PI / 360.0) / max 0.1 aspect)
+
+    // The target sphere subtends ~25 % of the viewport height.
+    let distance (fovYRad : float) (radius : float) =
+        radius / tan (fovYRad * 0.125)
+
+    let boundingSphere (target : FlyToTarget) =
+        match target with
+        | FlyToSphere (c, r) -> c, max 1e-3 r
+        | FlyToBounds b -> b.Center, max 1e-3 (b.Size.Length * 0.5)
+
 // ───────────── readiness engine (workflow panel §2, shared) ─────────────
 // Pure over a dedicated input DTO so Supertests can table-drive it; the
 // adaptive adapter lives in Primitives.ReadinessView.

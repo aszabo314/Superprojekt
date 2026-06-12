@@ -627,10 +627,10 @@ module Update =
                             setAnchor c.PinId c.Mesh c.Point AnchorAuto sp
                         else sp)
                         model.ScanPins
-                { model with ScanPins = sp; AnchorReview = AnchorReviewIdle }
+                { model with ScanPins = sp; AnchorReview = AnchorReviewIdle; AnchorReviewFilter = None }
             | _ -> model
         | CancelAnchorReview ->
-            { model with AnchorReview = AnchorReviewIdle }
+            { model with AnchorReview = AnchorReviewIdle; AnchorReviewFilter = None }
         | SetAnchor(pinId, mesh, point, source) ->
             { model with ScanPins = setAnchor pinId mesh point source model.ScanPins }
         | StartAnchorPick(pinId, mesh) ->
@@ -1198,6 +1198,44 @@ module Update =
             { model with WorkflowPanelOpen = not model.WorkflowPanelOpen }
         | SetRegistrationCardOpen v ->
             { model with RegistrationCardOpen = v }
+        // Workflow panel §4: keep orientation (phi/theta untouched), animate
+        // centre + radius so the target subtends ~25 % of the viewport
+        // height. User navigation input overrides the animation (existing
+        // orbit machinery).
+        | FlyTo(target, aspect) ->
+            let cW, rW = FlyToMath.boundingSphere target
+            let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
+            let centreR = (cW - model.CommonCentroid) * scale
+            let dist = FlyToMath.distance (FlyToMath.fovY 90.0 aspect) (rW * scale)
+            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, centreR))
+                      CameraMessage (OrbitMessage.SetTargetRadius(true, dist))]
+            model
+        // Workflow panel §5: diagnostics route through existing handlers;
+        // focus/highlight = open the target + 1.5 s pulse outline.
+        | NavTo action ->
+            let pulse (selector : string) =
+                try JSRuntime.Instance.InvokeVoid("SuperPulse", selector) with _ -> ()
+            match action with
+            | OpenAnchorReview meshFilter ->
+                seedAnchors env { model with AnchorReviewFilter = meshFilter }
+                    (correspondenceEnabledIds model)
+            | SelectPinOpenCard pinId ->
+                env.Emit [ScanPinMsg (SelectPin (Some pinId))]
+                pulse ".pc-corr"
+                model
+            | FocusRegistrationCard section ->
+                pulse (match section with
+                       | SectionStage -> ".registration-card .reg-readiness"
+                       | SectionPending -> ".registration-card .reg-pending"
+                       | SectionHistory -> ".registration-card .reg-history")
+                { model with RegistrationCardOpen = true }
+            | HighlightReferenceColumn ->
+                pulse ".left-panel .mesh-list"
+                { model with MenuOpen = true }
+            | RunCoarse -> env.Emit [SolveCoarse]; model
+            | RunFine -> env.Emit [RunRegistration]; model
+            | CommitPending -> env.Emit [CommitRegistration]; model
+            | DiscardPending -> env.Emit [DiscardRegistration]; model
         | StudyMsg smsg ->
             StudyUpdate.handleMsg env model smsg
         | FlyToPanorama i ->

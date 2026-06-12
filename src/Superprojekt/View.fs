@@ -137,6 +137,18 @@ module View =
                 "  if(document.visibilityState === 'hidden') studyFlush();"
                 "});"
                 "window.addEventListener('pagehide', studyFlush);"
+                // 1.5 s pulse outline for navigation actions (workflow §5);
+                // delayed slightly so just-opened targets are visible first.
+                "window.SuperPulse = function(selector){"
+                "  setTimeout(function(){"
+                "    var el = document.querySelector(selector);"
+                "    if(!el) return;"
+                "    el.classList.remove('pulse-outline');"
+                "    void el.offsetWidth;"
+                "    el.classList.add('pulse-outline');"
+                "    setTimeout(function(){ el.classList.remove('pulse-outline'); }, 1600);"
+                "  }, 150);"
+                "};"
                 "window.SuperWorkspaceLoad = function(){"
                 "  return new Promise(function(resolve){"
                 "    var input = document.createElement('input');"

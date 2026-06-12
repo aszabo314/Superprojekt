@@ -224,6 +224,8 @@ type Model =
         // patch small-multiples picker).
         PendingReg            : PendingRegistration option
         RegistrationLog       : RegStep list
+        // Workflow-panel nav: filters the anchor-review modal to one mesh.
+        AnchorReviewFilter    : string option
         // Last solve diagnostics per mesh (workflow panel) — persisted.
         LastSolve             : Map<string, LastSolveEntry>
         AnchorReview          : AnchorReviewState
@@ -337,6 +339,7 @@ module Model =
             Retarget              = RetargetState.initial
             PendingReg            = None
             RegistrationLog       = []
+            AnchorReviewFilter    = None
             LastSolve             = Map.empty
             AnchorReview          = AnchorReviewIdle
             AnchorPick            = None

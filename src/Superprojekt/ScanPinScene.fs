@@ -200,6 +200,12 @@ module ScanPinScene =
                                 let a1 = float (i + 1) / float segsN * Constant.PiTimesTwo
                                 out.Add(cR + (u * cos a0 + v * sin a0) * rR,
                                         cR + (u * cos a1 + v * sin a1) * rR, col, width)
+                            // 1 m (world) direction indicator along the pin
+                            // axis — thin + semitransparent so it reads as
+                            // orientation, not geometry. Points up until the
+                            // probe's PCA normal lands, like the equator ring.
+                            let axisCol = V4d(colour, (if sel then 0.5 else 0.35))
+                            out.Add(cR, cR + nN * ScanPin.renderLength scale 1.0, axisCol, 1.0)
                             for KeyValue(mesh, meshRings) in rings do
                                 if contactRingsOn.GetValue t
                                    && (Map.tryFind mesh vis |> Option.defaultValue true) then

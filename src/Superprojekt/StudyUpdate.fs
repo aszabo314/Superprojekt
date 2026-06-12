@@ -456,7 +456,7 @@ module StudyUpdate =
                     StudyApi.postAdvance ApiConfig.apiBase.Value s.SessionId phase.Id step.Id
                     |> Async.Ignore |> Async.Start
                     // final value wins server-side by timestamp (§7)
-                    match step.Question with
+                    match Study.effectiveQuestion cfg step with
                     | Some qu ->
                         match Map.tryFind qu.Id rt.AnswersDraft with
                         | Some draft -> submitAnswer env s.SessionId qu.Id draft

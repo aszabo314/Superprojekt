@@ -138,10 +138,17 @@ module View =
                 RenderControl.Samples 1
                 Class "render-control"
 
-                (model.ScanPins.Placement, lassoActive, model.AnchorPick) |||> AVal.map3 (fun p lasso ap ->
-                    match p, lasso, ap with
-                    | PlacementIdle, false, None -> None
-                    | _ -> Some (Dom.Style [Css.Cursor "crosshair"]))
+                let sceneClickArmed =
+                    model.Study |> AVal.map (function
+                        | Some (StudyActive s) -> s.Runtime.SceneClickArm.IsSome
+                        | _ -> false)
+                let pickModeOn =
+                    (model.ScanPins.Placement, lassoActive, model.AnchorPick) |||> AVal.map3 (fun p lasso ap ->
+                        match p, lasso, ap with
+                        | PlacementIdle, false, None -> false
+                        | _ -> true)
+                (pickModeOn, sceneClickArmed) ||> AVal.map2 (fun pick armed ->
+                    if pick || armed then Some (Dom.Style [Css.Cursor "crosshair"]) else None)
 
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
@@ -344,6 +351,16 @@ module View =
                 )
 
                 Sg.OnTap(fun e ->
+                    let studyArmed =
+                        match AVal.force model.Study with
+                        | Some (StudyActive s) -> s.Runtime.SceneClickArm.IsSome
+                        | _ -> false
+                    if studyArmed then
+                        // §7 sceneClick: one-shot depth-gated pick, no pin.
+                        if e.Location.Depth < 0.9999 then
+                            env.Emit [StudyMsg (StudySceneClickHit (worldFromRender model e.WorldPosition))]
+                        true
+                    else
                     match AVal.force model.AnchorPick with
                     | Some _ ->
                         // One-shot anchor pick: only the target mesh writes
@@ -478,6 +495,7 @@ module View =
             GuiStudy.studyBar env model
             GuiStudy.studyPages model
             GuiStudy.instructionOverlay env model
+            GuiStudy.taskPane env model
             div {
                 Primitives.showWhen (StudyGate.featureOn model "meshPanel")
                 GuiPanels.leftPanel env model

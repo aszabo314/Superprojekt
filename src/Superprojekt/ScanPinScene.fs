@@ -513,4 +513,49 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; anchorGlyphs])
+        // Study flag markers (§7 sceneClick / §9 P5): config-planted flags of
+        // the current phase in amber, the participant's marks in the linking
+        // accent. One Lines node, world-space pole + diamond head.
+        let studyFlags =
+            let segs =
+                AVal.custom (fun t ->
+                    match model.Study.GetValue t with
+                    | Some (StudyActive s) ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let scale = datasetScale.GetValue t
+                        let sb = model.SceneBounds.GetValue t
+                        let h = if sb.IsInvalid then 1.0 else sb.Size.Length * 0.02
+                        let questions =
+                            match Study.currentPhase s with
+                            | Some ph -> ph.Steps |> List.choose (fun st -> Study.effectiveQuestion s.Config st)
+                            | None -> []
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        let flag (world : V3d) (colour : V4d) =
+                            let p = ScanPin.renderCentre cc scale world
+                            let top = p + V3d.OOI * h
+                            let r = h * 0.18
+                            out.Add(p, top, colour, 2.0)
+                            for (a, b) in [ V3d.IOO, V3d.OIO; V3d.OIO, -V3d.IOO; -V3d.IOO, -V3d.OIO; -V3d.OIO, V3d.IOO ] do
+                                out.Add(top + a * r, top + b * r, colour, 2.0)
+                        for q in questions do
+                            match q.FlagPoint with
+                            | Some fp -> flag fp (V4d(0.85, 0.47, 0.02, 0.95))
+                            | None -> ()
+                            match Map.tryFind q.Id s.Runtime.Flags with
+                            | Some mark -> flag mark (V4d(0.03, 0.57, 0.7, 0.95))
+                            | None -> ()
+                        out.ToArray()
+                    | _ -> [||])
+            ASet.ofList [
+                sg {
+                    Sg.Active notFullscreen
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render segs
+                }
+            ]
+
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; anchorGlyphs; studyFlags])

@@ -496,6 +496,23 @@ module Study =
     let isActive (shell : StudyShell option) =
         match shell with Some (StudyActive _) -> true | _ -> false
 
+    // Questionnaire steps synthesize their grid question from the config's
+    // questionnaires map (sus → 5-pt, tlx → 0–100 sliders, icet → 7-pt).
+    let effectiveQuestion (cfg : StudyConfigPublic) (step : StudyStep) : StudyQuestion option =
+        match step.Question with
+        | Some q -> Some q
+        | None ->
+            match step.Kind with
+            | KQuestionnaire key ->
+                Map.tryFind key cfg.Questionnaires
+                |> Option.map (fun items ->
+                    { Id = key
+                      Kind = LikertGrid (items, StudyConfig.likertPoints key)
+                      Confidence = false
+                      Gold = false
+                      FlagPoint = None })
+            | _ -> None
+
     let private answeredKind (q : StudyQuestion) (draft : AnswerDraft) =
         let valueOk =
             match q.Kind, draft.Value with
@@ -520,8 +537,9 @@ module Study =
         match stepAt cfg rt.PhaseIx rt.StepIx with
         | None -> { rt with StepSatisfied = false }
         | Some step ->
+            let question = effectiveQuestion cfg step
             let answered qid =
-                match step.Question with
+                match question with
                 | Some q when q.Id = qid -> answerPresent rt q
                 | _ -> rt.AnswersDraft |> Map.tryFind qid |> Option.map (fun d -> d.Value.IsSome) |> Option.defaultValue false
             let key = seqKey rt
@@ -529,7 +547,7 @@ module Study =
             let progress = Predicate.advance rt.EventCounts answered step.Completion progress0
             let predOk = Predicate.satisfied rt.EventCounts answered step.Completion progress
             let kindOk =
-                match step.Kind, step.Question with
+                match step.Kind, question with
                 | KInstruction, _ -> true
                 | KGuidedAction, _ -> true
                 | KQuestion, Some q ->

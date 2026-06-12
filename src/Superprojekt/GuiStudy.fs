@@ -248,3 +248,224 @@ module GuiStudy =
                 }
             }
         }
+
+    // ── task pane: question + questionnaire widgets (§7) ───────────────
+
+    let private parseFloatInv (s : string) =
+        match System.Double.TryParse(s, System.Globalization.NumberStyles.Float,
+                                     System.Globalization.CultureInfo.InvariantCulture) with
+        | true, v -> Some v
+        | _ -> None
+
+    // n-point scale as a row of small buttons (1 … n), tracking an aval.
+    let private scaleRow (selected : aval<int option>) (points : int) (onPick : int -> unit) =
+        div {
+            Class "study-scale"
+            AList.ofList [ 1 .. points ]
+            |> AList.map (fun i ->
+                button {
+                    Class "study-scale-btn"
+                    selected |> AVal.map (fun s -> if s = Some i then Some (Class "study-scale-on") else None)
+                    Dom.OnClick(fun _ -> onPick i)
+                    string i
+                })
+        }
+
+    let private confidenceRow (env : Env<Message>) (qid : string) (draft : aval<AnswerDraft>) =
+        div {
+            Class "study-confidence"
+            span { Class "study-q-sub"; "How confident are you? (1 = guessing, 7 = certain)" }
+            scaleRow (draft |> AVal.map (fun d -> d.Confidence)) 7 (fun i ->
+                env.Emit [StudyMsg (StudySetConfidence(qid, i))])
+        }
+
+    let private questionWidget (env : Env<Message>) (session : aval<StudySession option>) =
+        // Key the widget subtree on the (config-static) question alone — the
+        // session changes on every runtime update and rebuilding the subtree
+        // would reset input focus mid-typing.
+        let stepQ =
+            session |> AVal.map (fun s ->
+                s |> Option.bind (fun s ->
+                    Study.currentStep s |> Option.bind (Study.effectiveQuestion s.Config)))
+        let draftOf (qid : string) =
+            session |> AVal.map (fun s ->
+                s |> Option.bind (fun s -> Map.tryFind qid s.Runtime.AnswersDraft)
+                  |> Option.defaultValue AnswerDraft.empty)
+        stepQ
+        |> AVal.map (fun q ->
+            match q with
+            | None -> IndexList.empty
+            | Some q -> IndexList.single q)
+        |> AList.ofAVal
+        |> AList.map (fun q ->
+            let draft = draftOf q.Id
+            div {
+                Class "study-q"
+                match q.Kind with
+                | SingleChoice options ->
+                    div {
+                        Class "study-choices"
+                        AList.ofList (List.ofArray options |> List.mapi (fun i o -> i, o))
+                        |> AList.map (fun (i, option_) ->
+                            button {
+                                Class "study-choice"
+                                draft |> AVal.map (fun d ->
+                                    if d.Value = Some (AChoice i) then Some (Class "study-choice-on") else None)
+                                Dom.OnClick(fun _ -> env.Emit [StudyMsg (StudySetChoice(q.Id, i))])
+                                option_
+                            })
+                    }
+                | SceneClick ->
+                    let armed =
+                        session |> AVal.map (fun s ->
+                            s |> Option.map (fun x -> x.Runtime.SceneClickArm = Some q.Id)
+                              |> Option.defaultValue false)
+                    div {
+                        Class "study-sceneclick"
+                        button {
+                            Class "study-mark-btn"
+                            armed |> AVal.map (fun a -> if a then Some (Class "tb-btn-active") else None)
+                            Dom.OnClick(fun _ ->
+                                if AVal.force armed then env.Emit [StudyMsg StudyCancelSceneClick]
+                                else env.Emit [StudyMsg (StudyArmSceneClick q.Id)])
+                            armed |> AVal.map (fun a -> if a then "Click on the surface… (Esc cancels)" else "⚑ Mark in scene")
+                        }
+                        span {
+                            Class "study-q-sub"
+                            draft |> AVal.map (fun d ->
+                                match d.Value with
+                                | Some (APoint p) -> sprintf "marked at (%.1f, %.1f, %.1f) — click again to replace" p.X p.Y p.Z
+                                | _ -> "no point marked yet")
+                        }
+                    }
+                | NumericQ unit_ ->
+                    div {
+                        Class "study-numeric"
+                        input {
+                            Class "study-num-input"
+                            Attribute("type", "number")
+                            Attribute("step", "any")
+                            draft |> AVal.map (fun d ->
+                                match d.Value with
+                                | Some (ANumber v) -> Some (Attribute("value", sprintf "%g" v))
+                                | _ -> None)
+                            Dom.OnInput(fun e ->
+                                parseFloatInv e.Value
+                                |> Option.iter (fun v -> env.Emit [StudyMsg (StudySetNumber(q.Id, v))]))
+                        }
+                        span { Class "study-unit"; unit_ }
+                    }
+                | FreeTextQ minLen ->
+                    div {
+                        Class "study-freetext"
+                        textarea {
+                            Class "study-text-input"
+                            Attribute("rows", "4")
+                            Dom.OnInput(fun e -> env.Emit [StudyMsg (StudySetText(q.Id, e.Value))])
+                        }
+                        span {
+                            Class "study-q-sub"
+                            if minLen > 0 then
+                                draft |> AVal.map (fun d ->
+                                    let len =
+                                        match d.Value with
+                                        | Some (AText t) -> t.Trim().Length
+                                        | _ -> 0
+                                    if len >= minLen then "✓"
+                                    else sprintf "%d more characters needed" (minLen - len))
+                            else AVal.constant ""
+                        }
+                    }
+                | LikertGrid (items, points) ->
+                    div {
+                        Class "study-grid"
+                        AList.ofList (List.ofArray items |> List.mapi (fun i it -> i, it))
+                        |> AList.map (fun (i, item) ->
+                            let cur =
+                                draft |> AVal.map (fun d ->
+                                    match d.Value with
+                                    | Some (AGrid g) -> Map.tryFind i g
+                                    | _ -> None)
+                            div {
+                                Class "study-grid-row"
+                                div { Class "study-grid-item"; item }
+                                if points > 20 then
+                                    // Raw-TLX style 0–100 slider
+                                    div {
+                                        Class "study-grid-slider"
+                                        input {
+                                            Attribute("type", "range")
+                                            Attribute("min", "0")
+                                            Attribute("max", "100")
+                                            Attribute("step", "1")
+                                            cur |> AVal.map (fun c ->
+                                                Some (Attribute("value", c |> Option.map (sprintf "%.0f") |> Option.defaultValue "50")))
+                                            Dom.OnInput(fun e ->
+                                                parseFloatInv e.Value
+                                                |> Option.iter (fun v -> env.Emit [StudyMsg (StudySetGridItem(q.Id, i, v))]))
+                                        }
+                                        span {
+                                            Class "study-grid-val"
+                                            cur |> AVal.map (function Some v -> sprintf "%.0f" v | None -> "—")
+                                        }
+                                    }
+                                else
+                                    scaleRow (cur |> AVal.map (Option.map int)) points (fun v ->
+                                        env.Emit [StudyMsg (StudySetGridItem(q.Id, i, float v))])
+                            })
+                    }
+                if q.Confidence then
+                    confidenceRow env q.Id draft
+                // tutorial gold feedback (the one correctness echo, §4)
+                div {
+                    Class "study-gold"
+                    session |> AVal.map (fun so ->
+                        match so with
+                        | Some s when Study.isTutorialPhase s.Config s.Runtime.PhaseIx && q.Gold ->
+                            match Map.tryFind q.Id s.Runtime.GoldStatus with
+                            | Some true -> Some (Class "study-gold-ok")
+                            | Some false -> Some (Class "study-gold-bad")
+                            | None -> Some (Class "hidden")
+                        | _ -> Some (Class "hidden"))
+                    session |> AVal.map (fun so ->
+                        match so with
+                        | Some s ->
+                            match Map.tryFind q.Id s.Runtime.GoldStatus with
+                            | Some true -> "✓ correct — press Next"
+                            | Some false -> "✗ not quite — have another look and try again"
+                            | None -> ""
+                        | None -> "")
+                }
+            })
+
+    let taskPane (env : Env<Message>) (model : AdaptiveModel) =
+        let session = sessionVal model
+        let current =
+            session |> AVal.map (fun s ->
+                s |> Option.bind (fun s ->
+                    Study.currentStep s |> Option.map (fun st -> s, st)))
+        let showPane =
+            current |> AVal.map (fun c ->
+                match c with
+                | Some (_, st) -> (match st.Kind with KQuestion | KQuestionnaire _ -> true | _ -> false)
+                | None -> false)
+        div {
+            Class "study-task-pane"
+            showWhen showPane
+            div {
+                Class "study-task-head"
+                current |> AVal.map (fun c ->
+                    match c with
+                    | Some (_, st) ->
+                        match st.Kind with
+                        | KQuestionnaire _ -> "Questionnaire"
+                        | _ -> "Question"
+                    | None -> "")
+            }
+            div {
+                Class "study-task-body"
+                current |> AVal.map (fun c ->
+                    c |> Option.map (fun (_, st) -> st.Body) |> Option.defaultValue "")
+            }
+            questionWidget env session
+        }

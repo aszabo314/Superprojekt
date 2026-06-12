@@ -125,4 +125,5 @@ let webApp : HttpHandler =
         routef "/api/study/%s/workspace"                        (fun sid -> POST >=> StudyHandlers.workspaceHandler sid)
         routef "/api/study/%s/advance"                          (fun sid -> POST >=> StudyHandlers.advanceHandler sid)
         routef "/api/study/%s/complete"                         (fun sid -> GET  >=> StudyHandlers.completeHandler sid)
+        routef "/api/study/%s/tokens"                           (fun studyId -> POST >=> StudyHandlers.tokensHandler studyId)
     ]

@@ -251,3 +251,23 @@ let completeHandler (sid : string) : HttpHandler =
                     ctx.SetStatusCode 409
                     return! jsonText (sprintf "{\"error\":\"%s\"}" reason) next ctx
         })
+
+// ───────────────────── token generation (localhost) ─────────────────────
+
+[<CLIMutable>]
+type TokensRequest = { N : int }
+
+let tokensHandler (studyId : string) : HttpHandler =
+    fun next ctx -> task {
+        let remote = ctx.Connection.RemoteIpAddress
+        if isNull remote || not (IPAddress.IsLoopback remote) then
+            return! RequestErrors.forbidden (text "localhost only") next ctx
+        else
+            match studyById studyId, snd loaded.Value with
+            | Some _, Some rootDir ->
+                let! req = ctx.BindJsonAsync<TokensRequest>()
+                let n = max 1 (min 500 req.N)
+                let fresh = StudyStore.generateTokens (StudyStore.tokensPath rootDir studyId) DateTime.UtcNow n
+                return! json fresh next ctx
+            | _ -> return! RequestErrors.notFound (text "unknown study") next ctx
+    }

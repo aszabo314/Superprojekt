@@ -99,9 +99,8 @@ All canvas input, with exact bindings:
 |---|---|
 | Left-drag | Orbit (azimuth + elevation; pitch clamped just short of the poles) |
 | Middle-drag | Pan the orbit centre in screen space; on release the camera re-anchors to the surface point under the screen centre (depth-gated) |
-| Wheel | Zoom along the view direction (smoothly animated, ~120 ms) |
-| Wheel **while hovering ≥2 stacked meshes** | Does **not** zoom — cycles the **active picking layer** through the meshes under the cursor; an overlay label near the cursor names the current layer |
-| **Alt + wheel** | Always zooms, bypassing layer cycling |
+| Wheel | Zoom along the view direction (smoothly animated, ~120 ms) — always; never hijacked by layer cycling |
+| **Option/Alt + wheel** | **Layer isolation mode**: cycles the **active picking layer** through the meshes under the cursor (over all visible meshes when fewer than two are stacked there). While the key is held the chosen mesh renders solid and every other mesh fades to a fixed ghost; an overlay label near the cursor names the current layer. The selection persists after release and keeps steering picks |
 | Double-click on a surface | Fly the orbit centre to the clicked point (350 ms animation). Background double-clicks are ignored (depth-gated) |
 | Two-finger touch | Pinch-zoom + rotate (mobile) |
 | Right-click | Suppressed (no context menu) |
@@ -124,9 +123,11 @@ surface hits nothing — ghost fragments deliberately write far-plane depth, so
 picks pass through translucent silhouettes to the opaque surface behind, and
 background misses can never create pins or fly the camera to infinity.
 
-**Active picking layer.** The wheel-selected layer biases picks to one mesh
-when several overlap; it is also the prerequisite/target for the **retarget**
-workflow (§10) and the preferred reference for the hover probe.
+**Active picking layer.** The Option/Alt-wheel-selected layer biases picks to
+one mesh when several overlap; it is also the prerequisite/target for the
+**retarget** workflow (§10), the preferred reference for the hover probe, and
+while a registration **one-shot anchor pick** is live, Option/Alt + wheel
+retargets the pick to the isolated mesh (the reference is skipped).
 
 ---
 
@@ -480,7 +481,7 @@ registration.
 When pins were placed on one surface but you want them evaluated against
 another (e.g. after loading a better reconstruction):
 
-1. Wheel-cycle to make the target mesh the **active picking layer** (§3).
+1. Option/Alt + wheel to make the target mesh the **active picking layer** (§3).
 2. Gear popover → **→ Project pins to active layer**.
 3. Every committed pin is projected to its closest point on the target
    (`/query/closest`, parallel). A centred modal lists each pin with its

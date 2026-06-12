@@ -149,7 +149,7 @@ module GuiTopBar =
                                     previewOn |> AVal.map (fun p ->
                                         Some (Attribute("title",
                                             if p then "Retarget is blocked while previewing a registration result"
-                                            else "Project all pins onto the active picking layer (use wheel-zoom to pick the target mesh first)")))
+                                            else "Project all pins onto the active picking layer (hold Option/Alt and scroll to pick the target mesh first)")))
                                     (model.ActivePickingLayer, previewOn) ||> AVal.map2 (fun l p ->
                                         if l.IsNone || p then Some (Attribute("disabled", "disabled")) else None)
                                     Dom.OnClick(fun _ ->

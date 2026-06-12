@@ -46,6 +46,7 @@ module View =
         ServerActions.init env
 
         let spaceHeld       = cval false
+        let altHeld         = cval false
         let hoverCoord      = cval<V3d option> None
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
@@ -53,6 +54,17 @@ module View =
         let registrationOpen = cval false
 
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
+
+        // Holding Option/Alt is the layer-isolation mode: the wheel cycles
+        // the active picking layer and the meshes render isolated (active
+        // solid, rest ghosted) while the key is down. The selection itself
+        // outlives the key — it keeps steering picks (pin placement, hover
+        // probe, retarget, the registration one-shot anchor pick).
+        // Suspended while the chart cursor is live: Alt there extends the
+        // slicing plane scene-wide, which needs every mesh visible.
+        let wheelIsolation =
+            (altHeld :> aval<_>, model.ActivePickingLayer, model.ChartCursor) |||> AVal.map3 (fun held layer chart ->
+                if held && chart.IsNone then layer else None)
 
         let lassoActive = model.LassoDrawing |> AVal.map Option.isSome
 
@@ -281,6 +293,9 @@ module View =
                     let cursorPx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
                     if cursorScreen.Value <> Some cursorPx then
                         transact (fun () -> cursorScreen.Value <- Some cursorPx)
+                    // self-heal a missed Alt keyup (focus lost while held)
+                    if altHeld.Value <> e.Alt then
+                        transact (fun () -> altHeld.Value <- e.Alt)
                 )
 
                 // hoverCoord would otherwise keep its last on-canvas value
@@ -293,11 +308,17 @@ module View =
 
                 Dom.OnMouseWheel(fun e ->
                     let delta = V2d(e.DeltaX, e.DeltaY) / 120.0
-                    let forwardZoom () =
+                    if not e.Alt then
+                        // plain wheel = camera zoom, always
                         env.Emit [CameraMessage (OrbitMessage.Wheel(false, delta))]
-                    if e.Alt then
-                        forwardZoom ()
                     else
+                        // Option/Alt + wheel = cycle the isolated layer.
+                        // Prefer the meshes stacked under the cursor; with
+                        // fewer than two there the gesture still works over
+                        // all visible meshes in panel order (the old
+                        // under-cursor-only rule made the wheel feel dead).
+                        if altHeld.Value <> true then
+                            transact (fun () -> altHeld.Value <- true)
                         let cursorPx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
                         let vpSize = AVal.force overlaySize
                         let v = AVal.force view
@@ -307,30 +328,49 @@ module View =
                         let bounds = AVal.force model.MeshBounds
                         let cc = AVal.force model.CommonCentroid
                         let scales = AVal.force model.DatasetScales
+                        let isVisible name = Map.tryFind name visible |> Option.defaultValue true
                         let hits =
                             bounds |> Map.toSeq
                             |> Seq.choose (fun (name, world) ->
-                                if Map.tryFind name visible |> Option.defaultValue true then
+                                if isVisible name then
                                     let scale = DatasetScale.forMesh scales name
                                     rayBoxT ray (renderBox world cc scale) |> Option.map (fun t -> t, name)
                                 else None)
                             |> Seq.sortBy fst
                             |> Seq.map snd
                             |> Array.ofSeq
-                        if hits.Length < 2 then
-                            forwardZoom ()
-                        else
+                        let candidates =
+                            if hits.Length >= 2 then hits
+                            else
+                                AVal.force model.MeshNames.Content |> IndexList.toArray |> Array.filter isVisible
+                        // While a one-shot anchor pick is live the cycle
+                        // retargets it, so the reference mesh is skipped
+                        // (anchors never land on the reference).
+                        let anchorPick = AVal.force model.AnchorPick
+                        let candidates =
+                            match anchorPick with
+                            | Some _ ->
+                                let refMesh = (AVal.force model.Registration).ReferenceMesh
+                                candidates |> Array.filter (fun n -> Some n <> refMesh)
+                            | None -> candidates
+                        if candidates.Length > 0 then
                             let cur = AVal.force model.ActivePickingLayer
-                            let n = hits.Length
+                            let n = candidates.Length
                             let dir = if e.DeltaY > 0.0 then 1 else -1
                             let next =
                                 match cur with
-                                | None -> hits.[if dir > 0 then 0 else n - 1]
+                                | None -> candidates.[if dir > 0 then 0 else n - 1]
                                 | Some c ->
-                                    match Array.tryFindIndex ((=) c) hits with
-                                    | Some i -> hits.[((i + dir) % n + n) % n]
-                                    | None -> hits.[if dir > 0 then 0 else n - 1]
+                                    match Array.tryFindIndex ((=) c) candidates with
+                                    | Some i -> candidates.[((i + dir) % n + n) % n]
+                                    | None -> candidates.[if dir > 0 then 0 else n - 1]
                             env.Emit [SetActivePickingLayer (Some next)]
+                            // reuse the selection for the registration pick:
+                            // the live anchor pick follows the isolated layer
+                            match anchorPick with
+                            | Some ap when ap.Mesh <> next ->
+                                env.Emit [StartAnchorPick(ap.PinId, next)]
+                            | _ -> ()
                 )
 
                 Sg.OnDoubleTap(fun e ->
@@ -468,11 +508,13 @@ module View =
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) cursorHighlight model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) cursorHighlight wheelIsolation model
             }
 
             Dom.OnKeyDown(fun e ->
                 match e.Key with
+                | "Alt" ->
+                    if not altHeld.Value then transact (fun () -> altHeld.Value <- true)
                 | " " ->
                     // Hold-space fullscreen is a Full-mode review tool; in a
                     // study it would blank the pins/cards mid-task.
@@ -498,6 +540,7 @@ module View =
             Dom.OnKeyUp(fun e ->
                 match e.Key with
                 | " "     -> transact (fun () -> spaceHeld.Value <- false)
+                | "Alt"   -> transact (fun () -> altHeld.Value <- false)
                 | _ -> ()
             )
 

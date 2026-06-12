@@ -30,14 +30,14 @@
           "id": "p0-orbit",
           "kind": "guidedAction",
           "anchor": "viewport",
-          "body": "Drag with the left mouse button to orbit around the scene, and use the mouse wheel over empty background (or hold Alt) to zoom. Try both now.",
+          "body": "Drag with the left mouse button to orbit around the scene, and use the mouse wheel to zoom. Try both now.",
           "completion": { "and": [{ "event": "orbit", "min": 1 }, { "event": "zoom", "min": 1 }] }
         },
         {
           "id": "p0-layers",
           "kind": "guidedAction",
           "anchor": "viewport",
-          "body": "Several scans overlap here. Move the mouse over the surface and scroll the wheel to cycle which scan layer is picked. The name of the active layer appears under the cursor.",
+          "body": "Several scans overlap here. Hold the Option (Alt) key and scroll the wheel to cycle which scan layer is active — the chosen scan stays solid while the others fade, and its name appears under the cursor.",
           "completion": { "event": "layerCycled", "min": 1 }
         },
         {

@@ -73,7 +73,7 @@ module GuiCards =
 
     // Unicode sparkline of an ICP convergence series (print-appropriate, no
     // extra JS / GPU resources).
-    let private spark (xs : float[]) =
+    let spark (xs : float[]) =
         if xs.Length < 2 then ""
         else
             let xs = if xs.Length > 24 then xs.[xs.Length - 24 ..] else xs

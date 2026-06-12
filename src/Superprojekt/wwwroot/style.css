@@ -1265,3 +1265,77 @@ body.loaded { background: #f4f6f8; }
     70%  { outline: 3px solid rgba(26, 86, 219, 0.45); outline-offset: 2px; }
     100% { outline: 3px solid rgba(26, 86, 219, 0.0); outline-offset: 2px; }
 }
+
+/* ── registration workflow panel ─────────────────────────────────────── */
+
+.workflow-panel { width: 460px; }
+.workflow-panel-body { max-height: 72vh; overflow-y: auto; font-size: 12px; }
+
+.wfp-section { display: flex; flex-direction: column; gap: 2px; }
+
+.wfp-row { display: flex; align-items: center; gap: 6px; padding: 2px 2px; border-bottom: 1px solid #f1f5f9; }
+.wfp-row-dim { opacity: 0.45; }
+.wfp-mesh-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.wfp-chip {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.02em;
+    padding: 1px 6px; border-radius: 8px; white-space: nowrap;
+}
+.wfp-chip-ref     { background: #fef9c3; color: #854d0e; border: 1px solid #fde047; }
+.wfp-chip-fine    { background: #dcfce7; color: #166534; border: 1px solid #86efac; }
+.wfp-chip-coarse  { background: #dbeafe; color: #1e40af; border: 1px solid #93c5fd; }
+.wfp-chip-none    { background: #f1f5f9; color: #64748b; border: 1px solid #e2e8f0; }
+.wfp-chip-skipped { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+.wfp-chip-hidden  { background: #f8fafc; color: #94a3b8; border: 1px solid #e2e8f0; }
+.wfp-chip-cond    { background: #ffedd5; color: #9a3412; border: 1px solid #fdba74; }
+
+.wfp-rms { min-width: 48px; text-align: right; font-variant-numeric: tabular-nums; color: #334155; }
+
+.wfp-pairs-line { font-size: 11px; color: #64748b; padding: 2px 0 4px 0; }
+
+.wfp-pin-row { align-items: center; }
+.wfp-rowmain { flex: 1; display: flex; align-items: center; gap: 6px; cursor: pointer; min-width: 0; }
+.wfp-rowmain:hover { background: #f8fafc; }
+.wfp-pin-label { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.wfp-pin-host { color: #64748b; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90px; }
+
+.wfp-dots { display: flex; gap: 3px; align-items: center; }
+.wfp-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    border: 2px solid currentColor; box-sizing: border-box;
+    background: transparent;
+}
+.wfp-dot-filled { background: currentColor; }
+
+.wfp-count { font-variant-numeric: tabular-nums; color: #334155; min-width: 28px; }
+.wfp-rel, .wfp-resid { font-size: 11px; color: #64748b; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+.wfp-others-head { font-size: 11.5px; color: #475569; cursor: pointer; padding: 4px 2px; }
+.wfp-others-head:hover { color: #0f172a; }
+.wfp-other-row { justify-content: space-between; }
+
+.wfp-pending {
+    background: #fff7ed; border: 1px solid #fdba74; border-radius: 6px;
+    padding: 6px 8px; margin-bottom: 6px;
+}
+.wfp-pending-text { font-size: 11.5px; color: #7c2d12; margin-bottom: 4px; }
+
+.wfp-diag-list { display: flex; flex-direction: column; gap: 3px; }
+.wfp-diag { display: flex; align-items: center; gap: 7px; padding: 4px 7px; border-radius: 6px; font-size: 11.5px; }
+.wfp-diag-icon { width: 13px; text-align: center; }
+.wfp-diag-text { flex: 1; }
+.wfp-diag-go { white-space: nowrap; }
+.wfp-diag-blocker { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+.wfp-diag-warning { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+.wfp-diag-info    { background: #f0f9ff; color: #075985; border: 1px solid #bae6fd; }
+.wfp-diag-ready   { background: #f0fdf4; color: #166534; border: 1px solid #bbf7d0; }
+
+.wfp-history { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: 11.5px; color: #334155; }
+.wfp-history-line { flex: 1; }
+
+.wfp-stats-head, .wfp-stats-row { display: flex; gap: 6px; align-items: center; padding: 2px 0; }
+.wfp-stats-head { font-weight: 600; color: #64748b; border-bottom: 1px solid #e2e8f0; font-size: 10.5px; }
+.wfp-stats-row { border-bottom: 1px solid #f1f5f9; font-variant-numeric: tabular-nums; }
+.wfp-stats-cell { flex: 1; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wfp-stats-cell.wfp-stats-mesh { flex: 1.4; text-align: left; }
+.wfp-aggregate { margin-top: 5px; font-size: 11.5px; color: #475569; }

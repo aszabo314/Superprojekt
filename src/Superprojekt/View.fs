@@ -580,6 +580,10 @@ module View =
                 GuiCards.registrationCard env model
                 GuiCards.registrationToggleButton env model
             }
+            div {
+                Primitives.showWhen (StudyGate.featureOn model "workflowPanel")
+                GuiWorkflow.workflowPanel env model (viewportSize :> aval<V2i>)
+            }
             GuiCards.retargetCard env model
             GuiCards.anchorReviewCard env model
             GuiCards.panoramaCard env model

@@ -51,6 +51,7 @@
     <Compile Include="GuiPanels.fs" />
     <Compile Include="GuiOverlays.fs" />
     <Compile Include="GuiCards.fs" />
+    <Compile Include="GuiWorkflow.fs" />
     <Compile Include="GuiStudy.fs" />
     <Compile Include="View.fs" />
     <Compile Include="ShaderCache.fs" />

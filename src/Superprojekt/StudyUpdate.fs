@@ -529,7 +529,7 @@ module StudyUpdate =
                                 ResumedNotice = false
                                 AdvancePosted = Set.add (phase.Id + "/" + step.Id) rt.AdvancePosted
                                 // predicate counts are cumulative per
-                                // dataset epoch (see IMPLEMENTATION_NOTES)
+                                // dataset epoch (see Predicate in StudyModel.fs)
                                 EventCounts = if datasetSwitch then Map.empty else rt.EventCounts }
                         let rt' = Study.reevaluate cfg rt' (Study.isTutorialPhase cfg pIx)
                         let model = { model with Study = Some (StudyActive { s with Runtime = rt' }) }

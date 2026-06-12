@@ -3,9 +3,9 @@ namespace Superprojekt
 // Telemetry batcher (§8). Module-level mutable state like the reducer's
 // CancellationTokenSource refs — the queue never enters the Elm model.
 // Flush every 5 s or 50 events, immediately on phaseEnter / stepComplete and
-// on page hide (best effort — see IMPLEMENTATION_NOTES); retry with
-// exponential backoff; bounded queue dropping oldest throttled-type events
-// first.
+// on page hide (best effort — a true sendBeacon would need the queue
+// mirrored into JS); retry with exponential backoff; bounded queue dropping
+// oldest throttled-type events first.
 module StudyTelemetry =
 
     let private queue = System.Collections.Generic.List<string * string>()   // (type, rendered json)

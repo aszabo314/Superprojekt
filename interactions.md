@@ -654,8 +654,10 @@ UI element with a live ○/✓ checkmark. Questions dock in a right-hand
 depth-gated 3D pick that drops a flag marker; Esc cancels, re-click
 replaces), numeric + unit, free text with a minimum length, and Likert
 grids (SUS 5-pt, Raw-TLX 0–100 sliders, ICE-T 7-pt), each with an optional
-7-point confidence row. Answers post immediately on change and again on
-Next (the final value wins server-side).
+7-point confidence row. Answers post on change (coalesced over 500 ms so
+keystrokes and transient selections don't flood the server or burn
+tutorial-gold attempts) and again on Next (posted immediately; the final
+value wins server-side).
 
 **Feature gating** is two-layered: views consult
 `phase.allowedFeatures ∩ ¬condition.disabledFeatures`, and the reducer

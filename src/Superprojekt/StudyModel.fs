@@ -58,11 +58,13 @@ type Predicate =
     | PAnswerSubmitted of questionId : string
 
 module Predicate =
-    // Event counts are cumulative since the last dataset switch (see
-    // IMPLEMENTATION_NOTES — the spec's §9 example predicates only check out
-    // under this reading). Seq nodes additionally keep a monotone progress
-    // counter per structural path: stage k is only evaluated once stages
-    // 0..k-1 completed, and a completed stage never un-completes.
+    // Event counts are cumulative since the last dataset switch — per-step
+    // resets would break later-phase predicates that count solves from
+    // earlier phases, while fully-cumulative counts would let tutorial
+    // events satisfy main-task milestones. Seq nodes additionally keep a
+    // monotone progress counter per structural path: stage k is only
+    // evaluated once stages 0..k-1 completed, and a completed stage never
+    // un-completes (so a re-shown tutorial step keeps its progress).
 
     let rec private satisfiedAt
             (counts : Map<string, int>)

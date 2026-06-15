@@ -478,7 +478,7 @@ module CardsPin =
                                 let dAx = Vec.dot v r.Normal
                                 let radial = (v - r.Normal * dAx).Length
                                 if radial <= pin.InnerRadius && abs dAx <= r.Length * 0.5
-                                then sprintf "{\"d\":%.4f}" dAx
+                                then sprintf "{\"d\":%.4f}" (dAx - r.RefOffset)
                                 else "{}"
                             | _ -> "{}"
                         | _ -> "{}")

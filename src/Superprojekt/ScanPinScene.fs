@@ -463,7 +463,7 @@ module ScanPinScene =
                                 | ProbeReady r ->
                                     let cc = model.CommonCentroid.GetValue t
                                     let scale = datasetScale.GetValue t
-                                    let centre = ScanPin.renderCentre cc scale (pin.Centre + r.Normal * cur.Distance)
+                                    let centre = ScanPin.renderCentre cc scale (pin.Centre + r.Normal * (cur.Distance + r.RefOffset))
                                     let radiusWorld =
                                         if cur.Extended then
                                             let sb = model.SceneBounds.GetValue t

@@ -41,6 +41,10 @@ type ProbeResult = {
     Planar        : bool
     Length        : float
     AutoLength    : float
+    // Axial offset (m along Normal from the pin centre) of chart y=0 = the
+    // reference median. chart→3D: pin.Centre + Normal·(value + RefOffset);
+    // 3D→chart: dot(q − pin.Centre, Normal) − RefOffset.
+    RefOffset     : float
     XAuto         : Range1d
     XFit          : Range1d
     Distributions : ProbeDistribution[]

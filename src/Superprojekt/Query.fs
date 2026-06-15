@@ -309,6 +309,10 @@ module Query =
                     Planar        = planarity <= 0.5
                     Length        = r.GetProperty("length").GetDouble()
                     AutoLength    = r.GetProperty("autoLength").GetDouble()
+                    RefOffset     =
+                        (match r.TryGetProperty "refOffset" with
+                         | true, v -> v.GetDouble()
+                         | _ -> 0.0)
                     XAuto         = readRange "xAuto"
                     XFit          = readRange "xFit"
                     Distributions = dists

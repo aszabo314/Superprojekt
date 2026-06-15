@@ -40,6 +40,10 @@ type ProbeResult = {
     Planarity         : float
     Length            : float
     AutoLength        : float
+    // Axial offset (metres along Normal, from the pin centre) of chart y=0:
+    // the distributions are re-centred so 0 = the reference median, which sits
+    // at pin.Centre + Normal·RefOffset in 3D. The chart↔3D linking must add it.
+    RefOffset         : float
     XAuto             : float * float
     XFit              : float * float
     Distributions     : ProbeDistribution[]
@@ -331,6 +335,7 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
                 Planarity = planarity
                 Length = length
                 AutoLength = autoLen
+                RefOffset = refMedian
                 XAuto = (aLo, aHi)
                 XFit = (gLo, gHi)
                 Distributions = dists

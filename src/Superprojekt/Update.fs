@@ -305,11 +305,13 @@ module Update =
             match pid |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
             | Some pin ->
                 let pv = PendingRegistration.isPreview model.PendingReg
-                let axis =
+                // chart value d → 3D needs the reference-median offset (chart
+                // y=0 sits at pin.Centre + axis·RefOffset).
+                let axis, refOffset =
                     match ScanPin.effectiveProbe pv pin with
-                    | ProbeReady r -> r.Normal
-                    | _ -> ScanPin.axis pin
-                let origin = pin.Centre + axis * d
+                    | ProbeReady r -> r.Normal, r.RefOffset
+                    | _ -> ScanPin.axis pin, 0.0
+                let origin = pin.Centre + axis * (d + refOffset)
                 let plane = { Origin = origin; Normal = axis; Axis = V3d.Zero
                               Mode = ClipSectionCap; CameraRelative = false }
                 // Alt-click the same spot releases; a new spot relocks.

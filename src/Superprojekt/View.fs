@@ -94,7 +94,7 @@ module View =
                 match model.ChartCursor.GetValue t with
                 | Some cur when effectiveId.GetValue t = Some cur.PinId ->
                     probeOf cur.PinId |> Option.map (fun (pin, r) ->
-                        { Origin    = pin.Centre + r.Normal * cur.Distance
+                        { Origin    = pin.Centre + r.Normal * (cur.Distance + r.RefOffset)
                           Normal    = r.Normal
                           Clip      = not cur.Extended
                           PinCentre = pin.Centre
@@ -211,7 +211,7 @@ module View =
                             let pv = PendingRegistration.isPreview (model.PendingReg.GetValue t)
                             match ScanPin.effectiveProbe pv pin with
                             | ProbeReady r ->
-                                Some { Origin = pin.Centre + r.Normal * cur.Distance
+                                Some { Origin = pin.Centre + r.Normal * (cur.Distance + r.RefOffset)
                                        Normal = r.Normal; Axis = V3d.Zero
                                        Mode = ClipSectionCap; CameraRelative = false }
                             | _ -> None

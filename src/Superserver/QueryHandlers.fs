@@ -234,6 +234,7 @@ let probeHandler : HttpHandler =
                     planarity = r.Planarity
                     length = r.Length
                     autoLength = r.AutoLength
+                    refOffset = r.RefOffset
                     xAuto = [| fst r.XAuto; snd r.XAuto |]
                     xFit = [| fst r.XFit; snd r.XFit |]
                     distributions = dists

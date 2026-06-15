@@ -278,6 +278,10 @@ module Query =
                                     let a = p.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                                     a.[0], a.[1])
                                 |> Seq.toArray
+                            Samples   =
+                                match d.TryGetProperty "samples" with
+                                | true, se -> se.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                                | _ -> [||]
                         })
                     |> Seq.toArray
                 let s = r.GetProperty("sources")

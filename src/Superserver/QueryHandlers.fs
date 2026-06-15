@@ -221,7 +221,7 @@ let probeHandler : HttpHandler =
                     r.Distributions |> Array.map (fun d ->
                         {| name = d.Name; count = d.Count
                            median = d.Median; q1 = d.Q1; q3 = d.Q3; std = d.Std
-                           bandwidth = d.Bandwidth; kde = d.Kde |})
+                           bandwidth = d.Bandwidth; kde = d.Kde; samples = d.Samples |})
                 let perMesh =
                     r.PerMesh |> Array.map (fun p ->
                         {| name = p.Name; iqr = p.Iqr; medianOffset = p.MedianOffset; count = p.Count |})

@@ -40,6 +40,7 @@ module CardsPin =
         "  var n = rows.length;"
         "  if(n === 0){ placeholder('No meshes.'); return; }"
         "  var accent = '#0891b2';"
+        "  var SMALL_N = 20;"
         "  var w = mini ? 240 : Math.max(220, el.clientWidth || 296);"
         "  var axisW = mini ? 34 : 80;"
         "  var headerH = mini ? 16 : 24;"
@@ -173,7 +174,16 @@ module CardsPin =
         "        txt(cx + 5, (ym1 + ym2) / 2 + 3, 'Δ' + (dvv >= 0 ? '+' : '') + dvv.toFixed(3), 'start', '#0f172a', '8');"
         "      } else {"
         "        var kde = (r.kde || []).filter(function(p){ return p[0] >= y0 && p[0] <= y1; });"
-        "        if(kde.length > 1 && maxDen > 0){"
+        "        if(r.count > 0 && r.count < SMALL_N){"
+        "          (r.samples || []).forEach(function(sv, si){"
+        "            if(sv < y0 || sv > y1) return;"
+        "            var jx = cx + (((si * 7) % 11) / 11 - 0.5) * hw * 1.1;"
+        "            var dot = document.createElementNS(ns,'circle');"
+        "            dot.setAttribute('cx', jx.toFixed(1)); dot.setAttribute('cy', sy(sv).toFixed(1));"
+        "            dot.setAttribute('r','1.7'); dot.setAttribute('fill', r.color); dot.setAttribute('fill-opacity','0.75');"
+        "            svg.appendChild(dot);"
+        "          });"
+        "        } else if(kde.length > 1 && maxDen > 0){"
         "          var path = '';"
         "          kde.forEach(function(p, k){"
         "            path += (k === 0 ? 'M' : 'L') + (cx + p[1] / maxDen * hw).toFixed(1) + ',' + sy(p[0]).toFixed(1);"
@@ -322,6 +332,10 @@ module CardsPin =
             kde |> Array.iteri (fun j (x, y) ->
                 if j > 0 then sb.Append(',') |> ignore
                 sb.Append(sprintf "[%.4g,%.4g]" x y) |> ignore)
+        let appendSamples (sb : System.Text.StringBuilder) (s : float[]) =
+            s |> Array.iteri (fun j x ->
+                if j > 0 then sb.Append(',') |> ignore
+                sb.Append(sprintf "%.4g" x) |> ignore)
         // σ_ref = the reference mesh's roughness (std of its re-centred
         // distances); feeds the per-mesh detection-limit band lod95 =
         // 1.96·√(σ_ref² + σ_mesh²).
@@ -333,8 +347,10 @@ module CardsPin =
                     mini win.Min win.Max refStd (sticky |> Option.defaultValue "")) |> ignore
         rows |> Array.iteri (fun i d ->
             if i > 0 then sb.Append(',') |> ignore
-            sb.Append(sprintf "{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"std\":%.5g,\"kde\":["
+            sb.Append(sprintf "{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"std\":%.5g,\"samples\":["
                         d.MeshName (shortName d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3 d.Std) |> ignore
+            appendSamples sb d.Samples
+            sb.Append("],\"kde\":[") |> ignore
             appendKde sb d.Kde
             sb.Append("]") |> ignore
             match preview |> Option.bind (fun p -> p.Distributions |> Array.tryFind (fun pd -> pd.MeshName = d.MeshName)) with

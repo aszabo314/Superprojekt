@@ -16,6 +16,8 @@ type ProbeDistribution = {
     Std       : float
     Kde       : (float * float)[]
     Bandwidth : float
+    // Raw re-centred samples for the small-N strip (empty for large N).
+    Samples   : float[]
 }
 
 type ProbeSourcesPerMesh = {

@@ -28,6 +28,9 @@ type ProbeDistribution = {
     Std       : float
     Bandwidth : float
     Kde       : float[][]
+    // Raw re-centred samples for the small-N strip (KDE fabricates shape
+    // below ~20 points); only sent for small distributions to bound payload.
+    Samples   : float[]
 }
 
 type PerMeshSource = { Name : string; Iqr : float; MedianOffset : float; Count : int }
@@ -290,7 +293,8 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
                                 [| x; s * norm |])
                     { Name = args.Meshes.[i].Name; Count = a.Length
                       Median = med; Q1 = q1; Q3 = q3; Std = std
-                      Bandwidth = h; Kde = kde })
+                      Bandwidth = h; Kde = kde
+                      Samples = if a.Length < 40 then a else [||] })
             // Three-source decomposition: dataset = IQR of the union,
             // algorithm = RMS of non-reference median offsets, conditioning =
             // c_scale / (n_present · mean points) with c_scale = 1.

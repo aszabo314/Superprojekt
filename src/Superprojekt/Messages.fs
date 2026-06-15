@@ -21,6 +21,9 @@ type Message =
     | SetClipPlanes of ClipPlane list
     | ToggleCutaway
     | SetCutawayMode of ClipMode
+    | ToggleClipAboveIso
+    // Lock the chart-driven iso-plane at a signed distance into ClipPlanes.
+    | LockIsoPlane of float
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
     // Stage 2 · Fine (ICP). Solves land in PendingReg, not MeshTransforms.

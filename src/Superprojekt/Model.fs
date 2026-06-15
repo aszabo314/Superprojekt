@@ -248,6 +248,9 @@ type Model =
         ReferencePeekHeld : bool
         CutawayActive     : bool
         CutawayMode       : ClipMode
+        // While hovering the violin, also clip the meshes above the live
+        // iso-plane (lets the user see into the section). Alt-click locks it.
+        ClipAboveIso      : bool
 
         MeshTransforms        : Map<string, Trafo3d>
         Registration          : RegistrationState
@@ -372,6 +375,7 @@ module Model =
             ReferencePeekHeld = false
             CutawayActive     = false
             CutawayMode       = ClipGhost
+            ClipAboveIso      = false
             MeshTransforms        = Map.empty
             Registration          = RegistrationState.initial
             Retarget              = RetargetState.initial

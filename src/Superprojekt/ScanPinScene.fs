@@ -520,6 +520,46 @@ module ScanPinScene =
                 }
             ]
 
+        // Locked iso-plane gizmo: a slate ring in the plane plus a short
+        // normal stub, drawn for every committed ClipPlane so the persistent
+        // section plane stays legible while orbiting.
+        let clipGizmos =
+            let col = V4d(0.27, 0.31, 0.39, 0.85)
+            let segs =
+                AVal.custom (fun t ->
+                    let planes = model.ClipPlanes.GetValue t
+                    if List.isEmpty planes then [||]
+                    else
+                        let cc = model.CommonCentroid.GetValue t
+                        let scale = datasetScale.GetValue t
+                        let sb = model.SceneBounds.GetValue t
+                        let rWorld = if sb.IsInvalid then 5.0 else sb.Size.Length * 0.3
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        for p in planes do
+                            let c = ScanPin.renderCentre cc scale p.Origin
+                            let r = ScanPin.renderLength scale rWorld
+                            let nN = if p.Normal.Length > 1e-9 then p.Normal.Normalized else V3d.OOI
+                            let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
+                            let v = Vec.cross nN u
+                            let segsN = 72
+                            for i in 0 .. segsN - 1 do
+                                let a0 = float i / float segsN * Constant.PiTimesTwo
+                                let a1 = float (i + 1) / float segsN * Constant.PiTimesTwo
+                                out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, 1.5)
+                            out.Add(c, c + nN * (r * 0.12), col, 1.5)
+                        out.ToArray())
+            ASet.ofList [
+                sg {
+                    Sg.Active notFullscreen
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render segs
+                }
+            ]
+
         // Patch-picker 2D→3D linking (patchHover is a view-local cval set by
         // the cell JS — pointer moves never touch the reducer): while a patch
         // cell is hovered, every sampled vertex inside the cell's current
@@ -668,4 +708,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; anchorGlyphs; patchLink; studyFlags])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; patchLink; studyFlags])

@@ -273,6 +273,31 @@ module Update =
             { model with CutawayActive = not model.CutawayActive }
         | SetCutawayMode m ->
             { model with CutawayMode = m }
+        | ToggleClipAboveIso ->
+            { model with ClipAboveIso = not model.ClipAboveIso }
+        | LockIsoPlane d ->
+            let pid =
+                match model.ScanPins.Placement with
+                | AdjustingPin id -> Some id
+                | _ -> model.ScanPins.SelectedPin
+            match pid |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
+            | Some pin ->
+                let pv = PendingRegistration.isPreview model.PendingReg
+                let axis =
+                    match ScanPin.effectiveProbe pv pin with
+                    | ProbeReady r -> r.Normal
+                    | _ -> ScanPin.axis pin
+                let origin = pin.Centre + axis * d
+                let plane = { Origin = origin; Normal = axis; Axis = V3d.Zero
+                              Mode = ClipSectionCap; CameraRelative = false }
+                // Alt-click the same spot releases; a new spot relocks.
+                let same =
+                    match List.tryHead model.ClipPlanes with
+                    | Some e -> (e.Origin - origin).Length < max 1e-3 (pin.InnerRadius * 0.1)
+                    | None -> false
+                if same then { model with ClipPlanes = [] }
+                else { model with ClipPlanes = [plane] }
+            | None -> model
 
         | SetRegistrationMode m ->
             { model with Registration = { model.Registration with Mode = m } }

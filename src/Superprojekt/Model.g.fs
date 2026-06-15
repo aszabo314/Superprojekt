@@ -1,5 +1,5 @@
-//03b0813c-6897-92e8-c0f5-80866984fff3
-//45c71544-b994-8e66-bed5-0e54af35a468
+//e5b07b34-ba29-af58-ee37-4998f33c5493
+//7840ee83-c66b-e94b-768c-61591172b927
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -41,6 +41,7 @@ type AdaptiveModel(value : Model) =
     let _ReferencePeekHeld_ = FSharp.Data.Adaptive.cval(value.ReferencePeekHeld)
     let _CutawayActive_ = FSharp.Data.Adaptive.cval(value.CutawayActive)
     let _CutawayMode_ = FSharp.Data.Adaptive.cval(value.CutawayMode)
+    let _ClipAboveIso_ = FSharp.Data.Adaptive.cval(value.ClipAboveIso)
     let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _Retarget_ = FSharp.Data.Adaptive.cval(value.Retarget)
@@ -116,6 +117,7 @@ type AdaptiveModel(value : Model) =
             _ReferencePeekHeld_.Value <- value.ReferencePeekHeld
             _CutawayActive_.Value <- value.CutawayActive
             _CutawayMode_.Value <- value.CutawayMode
+            _ClipAboveIso_.Value <- value.ClipAboveIso
             _MeshTransforms_.Value <- value.MeshTransforms
             _Registration_.Value <- value.Registration
             _Retarget_.Value <- value.Retarget
@@ -184,6 +186,7 @@ type AdaptiveModel(value : Model) =
     member __.ReferencePeekHeld = _ReferencePeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CutawayActive = _CutawayActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CutawayMode = _CutawayMode_ :> FSharp.Data.Adaptive.aval<ClipMode>
+    member __.ClipAboveIso = _ClipAboveIso_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.Retarget = _Retarget_ :> FSharp.Data.Adaptive.aval<RetargetState>

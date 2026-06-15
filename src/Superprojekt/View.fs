@@ -166,6 +166,32 @@ module View =
                             | _ -> None
                         | None -> None)
 
+        // Mode C live "clip above" the chart-driven iso-plane (transient,
+        // follows the hover) — only when the ClipAboveIso toggle is on and no
+        // lock is present. SectionCap with normal = +probe axis removes the
+        // half above the plane.
+        let liveIsoPlane =
+            let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+            let effectiveId =
+                (model.ScanPins.Placement, model.ScanPins.SelectedPin) ||> AVal.map2 (fun pl sel ->
+                    match pl with AdjustingPin id -> Some id | _ -> sel)
+            AVal.custom (fun t ->
+                if not (model.ClipAboveIso.GetValue t) then None
+                else
+                    match model.ChartCursor.GetValue t with
+                    | Some cur when effectiveId.GetValue t = Some cur.PinId ->
+                        match HashMap.tryFind cur.PinId (pinsVal.GetValue t) with
+                        | Some pin ->
+                            let pv = PendingRegistration.isPreview (model.PendingReg.GetValue t)
+                            match ScanPin.effectiveProbe pv pin with
+                            | ProbeReady r ->
+                                Some { Origin = pin.Centre + r.Normal * cur.Distance
+                                       Normal = r.Normal; Axis = V3d.Zero
+                                       Mode = ClipSectionCap; CameraRelative = false }
+                            | _ -> None
+                        | None -> None
+                    | _ -> None)
+
         // Resolved render-space clip-plane equations for the mesh shader.
         // Effective set = the live anchor cutaway (front) then any manually
         // locked planes (iso-plane lock), capped at 2 (focus box = both).
@@ -177,8 +203,10 @@ module View =
                 (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
             let camForward = model.Camera.view |> AVal.map (fun cv -> cv.Forward)
             AVal.custom (fun t ->
-                let planes =
-                    (cutawayPlane.GetValue t |> Option.toList) @ model.ClipPlanes.GetValue t
+                let cut = cutawayPlane.GetValue t |> Option.toList
+                let locked = model.ClipPlanes.GetValue t
+                let iso = if List.isEmpty locked then liveIsoPlane.GetValue t |> Option.toList else []
+                let planes = cut @ locked @ iso
                 let cc = model.CommonCentroid.GetValue t
                 let s = datasetScaleA.GetValue t
                 let fwd = camForward.GetValue t
@@ -632,6 +660,8 @@ module View =
                         env.Emit [CancelAnchorPick]
                     elif Option.isSome (AVal.force model.HoverProbe) then
                         env.Emit [ClearHoverProbe]
+                    elif not (List.isEmpty (AVal.force model.ClipPlanes)) then
+                        env.Emit [SetClipPlanes []]
                     else
                         match AVal.force model.LassoDrawing with
                         | Some _ -> env.Emit [LassoCancel]

@@ -260,7 +260,8 @@ module CardsPin =
         "      var ci = colAt(x);"
         "      if(y >= plotY0 && y <= plotY1 && ci >= 0){"
         "        lastSent = '';"
-        "        if(ev.shiftKey) send('apick|' + fromY(y).toFixed(4) + '|' + rows[ci].id);"
+        "        if(ev.altKey) send('lock|' + fromY(y).toFixed(4));"
+        "        else if(ev.shiftKey) send('apick|' + fromY(y).toFixed(4) + '|' + rows[ci].id);"
         "        else send('click|' + rows[ci].id);"
         "      }"
         "    });"
@@ -495,6 +496,12 @@ module CardsPin =
                             | _ -> ()
                     | "clickout" ->
                         env.Emit [ClearChartSticky]
+                    // Alt-click the plot → lock the iso-plane (SectionCap)
+                    // into ClipPlanes so it survives orbiting.
+                    | "lock" when parts.Length >= 2 ->
+                        match parseInvariant parts.[1] with
+                        | Some dv -> env.Emit [LockIsoPlane dv]
+                        | None -> ()
                     | _ -> ()
                 let planarBadge =
                     probeResult |> AVal.map (Option.map (fun r -> r.Planar))
@@ -513,6 +520,16 @@ module CardsPin =
                     div {
                         Class "pc-probe-head"
                         span { Class "pc-section-title"; "Distance probe" }
+                        // Iso-plane sectioning: clip above the hovered plane;
+                        // Alt-click the chart locks it (survives orbit).
+                        button {
+                            Class "tb-gear-btn"
+                            showOnly violinOn
+                            model.ClipAboveIso |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
+                            Attribute("title", "Slice: while hovering the chart, clip the meshes above the iso-plane. Alt-click the chart to lock it.")
+                            Dom.OnClick(fun _ -> env.Emit [ToggleClipAboveIso])
+                            "⊟ slice"
+                        }
                         span {
                             Class "pc-planarity"
                             planarBadge |> AVal.map (function

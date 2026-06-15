@@ -273,6 +273,13 @@ let conditioningTests () =
     check "collinear spread flagged" (RegConditioning.isCollinear (RegConditioning.spreadEigenvalues line))
     let spread = Array.init 24 (fun _ -> randV3 10.0, 1.0)
     check "spread set not flagged" (not (RegConditioning.isCollinear (RegConditioning.spreadEigenvalues spread)))
+    // dominantAxis (anchor cutaway): the PCA axis aligns with the line of
+    // maximum spread regardless of sign.
+    let axisDir = V3d(1.0, 2.0, -0.5) |> Vec.normalize
+    let alongLine = Array.init 8 (fun i -> V3d.Zero + axisDir * (float i - 3.5) + randV3 0.01)
+    let recovered = RegConditioning.dominantAxis alongLine
+    checkLe "dominantAxis recovers spread line" (1.0 - abs (Vec.dot recovered axisDir)) 1e-3
+    check "dominantAxis degenerate → up" (RegConditioning.dominantAxis [| V3d.Zero |] = V3d.OOI)
 
 // ───────────────────────── Study: predicate engine ────────────────────────
 

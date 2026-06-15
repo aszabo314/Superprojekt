@@ -116,7 +116,59 @@ module View =
                             else None)
                     | _ -> None)
 
+        // Anchor cutaway (Mode B): a live camera-relative section plane through
+        // the selected pin's accepted anchors. PCA → axisMax (the plane
+        // contains it); origin = the accepted anchor nearest the camera; the
+        // normal is recomputed per frame (clipUniforms below) as the camera
+        // orbits, so anchors + the surface behind them stay revealed.
+        let cutawayPlane =
+            let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+            let effectiveId =
+                (model.ScanPins.Placement, model.ScanPins.SelectedPin) ||> AVal.map2 (fun pl sel ->
+                    match pl with AdjustingPin id -> Some id | _ -> sel)
+            AVal.custom (fun t ->
+                if not (model.CutawayActive.GetValue t) then None
+                else
+                    match effectiveId.GetValue t with
+                    | None -> None
+                    | Some pid ->
+                        match HashMap.tryFind pid (pinsVal.GetValue t) with
+                        | Some pin ->
+                            match ScanPin.correspondence pin with
+                            | Some corr when corr.Enabled ->
+                                let pending = model.PendingReg.GetValue t
+                                let transforms = model.MeshTransforms.GetValue t
+                                let scales = model.DatasetScales.GetValue t
+                                let cc = model.CommonCentroid.GetValue t
+                                let pts =
+                                    corr.Anchors |> Map.toSeq
+                                    |> Seq.choose (fun (mesh, a) ->
+                                        if not a.Accepted then None
+                                        else
+                                            match PendingRegistration.delta mesh pending with
+                                            | Some d ->
+                                                let scale = DatasetScale.forMesh scales mesh
+                                                let c = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
+                                                let wb = RigidTransform.renderToWorld scale cc c
+                                                let wa = RigidTransform.renderToWorld scale cc (RegLog.effective c d)
+                                                Some ((wb.Inverse * wa).Forward.TransformPos a.Point)
+                                            | None -> Some a.Point)
+                                    |> Array.ofSeq
+                                if pts.Length < 2 then None
+                                else
+                                    let axis = RegConditioning.dominantAxis pts
+                                    let camLocRender = (model.Camera.view.GetValue t).Location
+                                    let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
+                                    let camWorld = ScanPin.worldCentre cc s camLocRender
+                                    let origin = pts |> Array.minBy (fun p -> (p - camWorld).LengthSquared)
+                                    Some { Origin = origin; Normal = axis; Axis = axis
+                                           Mode = model.CutawayMode.GetValue t; CameraRelative = true }
+                            | _ -> None
+                        | None -> None)
+
         // Resolved render-space clip-plane equations for the mesh shader.
+        // Effective set = the live anchor cutaway (front) then any manually
+        // locked planes (iso-plane lock), capped at 2 (focus box = both).
         // CameraRelative planes recompute their normal each frame from the
         // camera forward (the plane contains Axis and faces the camera);
         // static planes use the stored metric normal. Origin metric → render.
@@ -125,7 +177,8 @@ module View =
                 (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
             let camForward = model.Camera.view |> AVal.map (fun cv -> cv.Forward)
             AVal.custom (fun t ->
-                let planes = model.ClipPlanes.GetValue t
+                let planes =
+                    (cutawayPlane.GetValue t |> Option.toList) @ model.ClipPlanes.GetValue t
                 let cc = model.CommonCentroid.GetValue t
                 let s = datasetScaleA.GetValue t
                 let fwd = camForward.GetValue t

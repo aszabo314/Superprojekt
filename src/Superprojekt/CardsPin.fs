@@ -720,6 +720,23 @@ module CardsPin =
                                 Dom.OnClick(fun _ -> emitForPinTop OpenPatchPicker)
                                 "▦ Pick in patches"
                             }
+                            // Anchor cutaway (Mode B): section through this
+                            // pin's accepted anchors, facing the camera.
+                            button {
+                                Class "tb-gear-btn"
+                                model.CutawayActive |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
+                                Attribute("title", "Cutaway: slice the meshes through this pin's anchors, facing the camera (needs ≥2 accepted anchors)")
+                                Dom.OnClick(fun _ -> env.Emit [ToggleCutaway])
+                                model.CutawayActive |> AVal.map (fun on -> if on then "✂ Cutaway ✓" else "✂ Cutaway")
+                            }
+                            button {
+                                Class "tb-gear-btn"
+                                Primitives.showWhen model.CutawayActive
+                                Attribute("title", "Cutaway removal mode: Ghost fades the near half, Hide removes it")
+                                Dom.OnClick(fun _ ->
+                                    env.Emit [SetCutawayMode (match AVal.force model.CutawayMode with ClipGhost -> ClipHide | _ -> ClipGhost)])
+                                model.CutawayMode |> AVal.map (function ClipHide -> "hide" | _ -> "ghost")
+                            }
                         }
                         // Patch small-multiples picker: one orthographic
                         // footprint per visible mesh in the shared reference

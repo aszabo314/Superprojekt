@@ -269,6 +269,10 @@ module Update =
             else { model with ReferencePeekHeld = held }
         | SetClipPlanes planes ->
             { model with ClipPlanes = planes }
+        | ToggleCutaway ->
+            { model with CutawayActive = not model.CutawayActive }
+        | SetCutawayMode m ->
+            { model with CutawayMode = m }
 
         | SetRegistrationMode m ->
             { model with Registration = { model.Registration with Mode = m } }

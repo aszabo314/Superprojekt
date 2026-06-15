@@ -222,6 +222,40 @@ module RegConditioning =
                                     xy * s, yy * s, yz * s,
                                     xz * s, yz * s, zz * s))
 
+    // First principal axis (dominant eigenvector) of an unweighted point set,
+    // via power iteration on the covariance — used by the anchor cutaway to
+    // orient the section plane along the line of maximum anchor spread.
+    let dominantAxis (points : V3d[]) =
+        if points.Length < 2 then V3d.OOI
+        else
+            let mean = (points |> Array.fold (+) V3d.Zero) / float points.Length
+            let mutable xx = 0.0
+            let mutable xy = 0.0
+            let mutable xz = 0.0
+            let mutable yy = 0.0
+            let mutable yz = 0.0
+            let mutable zz = 0.0
+            for p in points do
+                let d = p - mean
+                xx <- xx + d.X * d.X
+                xy <- xy + d.X * d.Y
+                xz <- xz + d.X * d.Z
+                yy <- yy + d.Y * d.Y
+                yz <- yz + d.Y * d.Z
+                zz <- zz + d.Z * d.Z
+            let cov = M33d(xx, xy, xz, xy, yy, yz, xz, yz, zz)
+            // seed with the coordinate axis of largest variance (never
+            // orthogonal to the dominant eigenvector for non-degenerate sets)
+            let mutable v =
+                if xx >= yy && xx >= zz then V3d.IOO
+                elif yy >= zz then V3d.OIO
+                else V3d.OOI
+            for _ in 0 .. 63 do
+                let p = cov * v
+                let l = p.Length
+                if l > 1e-15 then v <- p / l
+            if v.Length > 1e-9 then v.Normalized else V3d.OOI
+
     let lambdaRatio (eigenvalues : float[]) =
         if eigenvalues.Length < 2 || eigenvalues.[0] <= 1e-12 then 0.0
         else max 0.0 eigenvalues.[1] / eigenvalues.[0]

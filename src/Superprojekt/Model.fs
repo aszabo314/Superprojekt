@@ -242,8 +242,12 @@ type Model =
         LassoEnabled : bool
 
         // 3D sectioning (0..2 active planes) + spring-loaded reference peek.
+        // ClipPlanes holds manually-locked planes (iso-plane lock); the
+        // anchor cutaway is derived live from the selected pin + camera.
         ClipPlanes        : ClipPlane list
         ReferencePeekHeld : bool
+        CutawayActive     : bool
+        CutawayMode       : ClipMode
 
         MeshTransforms        : Map<string, Trafo3d>
         Registration          : RegistrationState
@@ -366,6 +370,8 @@ module Model =
             LassoEnabled = true
             ClipPlanes        = []
             ReferencePeekHeld = false
+            CutawayActive     = false
+            CutawayMode       = ClipGhost
             MeshTransforms        = Map.empty
             Registration          = RegistrationState.initial
             Retarget              = RetargetState.initial

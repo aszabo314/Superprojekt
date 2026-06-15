@@ -601,7 +601,11 @@ module GuiCards =
                             Class baseClass
                             span { Class "retarget-pin"; pinLabel }
                             span { Class "retarget-pin"; Cards.shortName c.Mesh }
-                            span { Class "retarget-dist"; distLabel }
+                            span {
+                                Class "retarget-dist"
+                                Attribute("title", "Pre-alignment distance from the pin to this mesh's surface (the work the registration has to close) — not the residual error")
+                                distLabel
+                            }
                             div {
                                 Class "retarget-actions"
                                 button {

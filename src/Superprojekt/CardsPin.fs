@@ -296,7 +296,7 @@ module CardsPin =
     // Three-source stacked bar for a data-srcs = [d,a,c] attribute.
     let probeBarJs = [
         "  if(!d || d.length < 3) return;"
-        "  var labels = ['Dataset error','Algorithm residual','Local conditioning'];"
+        "  var labels = ['Dataset error (sensor / reconstruction)','Algorithm residual (registration, correlated across the mesh)','Local conditioning (geometric observability of the anchor)'];"
         "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
         "  var total = d[0] + d[1] + d[2];"
         "  if(total <= 0) return;"
@@ -581,6 +581,13 @@ module CardsPin =
                         probeJson |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
                         cursor3d |> AVal.map (fun j -> Some (Attribute("data-cursor", j)))
                         Primitives.observedRender "data-ridge" "{}" ridgelineJs
+                    }
+                    // Channel legend (OQ-1): what each violin channel encodes.
+                    div {
+                        Class "pc-violin-legend"
+                        showOnly violinOn
+                        Attribute("title", "y = signed distance along the reference's local surface normal (0 = reference). Width = precision / roughness (shared density scale). Median tick = bias. Grey band = ±LoD95 detection limit; a median inside it is not significant (n.s.). Two lobes = two surfaces, not noise.")
+                        "y: distance along normal · width: roughness · tick: bias · band: ±LoD95 (n.s. inside)"
                     }
                     // NUM replacement: per-mesh signed-distance numbers from
                     // the same probe, plus registration RMS before/after.

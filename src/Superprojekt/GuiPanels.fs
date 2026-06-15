@@ -136,6 +136,37 @@ module GuiPanels =
                     match AVal.force pinId with
                     | Some id -> env.Emit [ScanPinMsg (mk id)]
                     | None -> ()
+
+            // Numeric reposition (WP18): set the pin centre live while
+            // adjusting, so position and size can be dialled in together.
+            let centre =
+                activePin |> AVal.map (Option.map (fun p -> p.Centre) >> Option.defaultValue V3d.Zero)
+            let posInput (lbl : string) (get : V3d -> float) (upd : V3d -> float -> V3d) =
+                div {
+                    Class "pf-pos-field"
+                    span { Class "pf-pos-lbl"; lbl }
+                    input {
+                        Class "pf-pos-input"
+                        Attribute("type", "number")
+                        Attribute("step", "0.1")
+                        centre |> AVal.map (fun c -> Some (Attribute("value", sprintf "%.2f" (get c))))
+                        Dom.OnChange(fun e ->
+                            match System.Double.TryParse(e.Value, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+                            | true, v ->
+                                match AVal.force pinId with
+                                | Some id -> env.Emit [ScanPinMsg (RepositionPin(id, upd (AVal.force centre) v))]
+                                | None -> ()
+                            | _ -> ())
+                    }
+                }
+            div { Class "lp-sublabel"; "Position (m)" }
+            div {
+                Class "pf-pos-fields"
+                posInput "X" (fun c -> c.X) (fun c v -> V3d(v, c.Y, c.Z))
+                posInput "Y" (fun c -> c.Y) (fun c v -> V3d(c.X, v, c.Z))
+                posInput "Z" (fun c -> c.Z) (fun c v -> V3d(c.X, c.Y, v))
+            }
+
             div { Class "lp-sublabel"; "Payload" }
             compactButtonBar [
                 "Point", payloadKind |> AVal.map ((=) PointKind),

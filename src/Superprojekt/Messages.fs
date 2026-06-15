@@ -159,6 +159,8 @@ and ScanPinMessage =
     | SetInnerRadius of float
     // Delta added to InnerRadius to get FalloffRadius — slider is relative.
     | SetFalloffDelta of float
+    // Move the pin being adjusted (numeric position fields in the flyout).
+    | RepositionPin of ScanPinId * V3d
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option

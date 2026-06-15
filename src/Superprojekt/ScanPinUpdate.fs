@@ -110,6 +110,13 @@ module ScanPinUpdate =
                 else pin)
             | None -> sp
 
+        | RepositionPin (id, centre) ->
+            // Move the pin live during adjustment; probe + rings recompute.
+            if ScanPinModel.activePlacementId sp = Some id then
+                sp |> updatePin id (fun pin ->
+                    { pin with Centre = centre; Probe = ProbeNone; ContactRings = RingsNone })
+            else sp
+
         | CommitPin ->
             match ScanPinModel.activePlacementId sp with
             | Some id ->

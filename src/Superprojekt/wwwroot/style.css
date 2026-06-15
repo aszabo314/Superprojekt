@@ -485,6 +485,14 @@ body.loaded { background: #f4f6f8; }
 .placement-flyout.hidden { display: none; }
 .placement-flyout.pf-left-open { left: 248px; }
 .placement-flyout.pf-left-closed { left: 36px; }
+.pf-pos-fields { display: flex; gap: 4px; }
+.pf-pos-field { display: flex; align-items: center; gap: 2px; flex: 1; }
+.pf-pos-lbl { font-size: 10px; color: #64748b; width: 9px; }
+.pf-pos-input {
+    width: 100%; min-width: 0; font-size: 11px;
+    font-family: 'SF Mono', 'Monaco', monospace;
+    border: 1px solid #c5cdd8; border-radius: 3px; padding: 1px 3px;
+}
 .lp-commit-row { display: flex; gap: 4px; margin-top: 8px; }
 .lp-commit, .lp-discard {
     flex: 1;

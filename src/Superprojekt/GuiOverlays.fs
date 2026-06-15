@@ -23,6 +23,76 @@ module GuiOverlays =
                 | None -> "")
         }
 
+    // Measurement rulers: one HTML label per accepted anchor↔reference of the
+    // selected pin, at the connector midpoint. Default shows the distance
+    // (the live pair gap = the per-pair residual once a solve preview shrinks
+    // the gap); the title carries the endpoints. HTML so it is always legible
+    // and depth-tested against overlays, not meshes.
+    let rulerOverlay (model : AdaptiveModel) (view : aval<Trafo3d>) (viewportSize : aval<V2i>) =
+        let projectToScreen (p : V3d) (viewTrafo : Trafo3d) (vp : V2i) =
+            let aspect = float vp.X / max 1.0 (float vp.Y)
+            let proj = Frustum.perspective 90.0 1.0 5000.0 aspect |> Frustum.projTrafo
+            let h = (proj.Forward * viewTrafo.Forward) * V4d(p, 1.0)
+            if h.W < 0.1 then None
+            else
+                let ndc = h.XYZ / h.W
+                if abs ndc.X > 1.2 || abs ndc.Y > 1.2 then None
+                else Some (V2d((ndc.X * 0.5 + 0.5) * float vp.X, (1.0 - (ndc.Y * 0.5 + 0.5)) * float vp.Y))
+        let labels =
+            AVal.custom (fun t ->
+                if not (model.RulerActive.GetValue t) then []
+                else
+                    let sel =
+                        match model.ScanPins.Placement.GetValue t with
+                        | AdjustingPin id -> Some id
+                        | _ -> model.ScanPins.SelectedPin.GetValue t
+                    match sel |> Option.bind (fun id -> HashMap.tryFind id ((model.ScanPins.Pins |> AMap.toAVal).GetValue t)) with
+                    | Some pin ->
+                        match ScanPin.correspondence pin with
+                        | Some corr when corr.Enabled ->
+                            match corr.RefAnchor with
+                            | Some refA ->
+                                let pending = model.PendingReg.GetValue t
+                                let transforms = model.MeshTransforms.GetValue t
+                                let scales = model.DatasetScales.GetValue t
+                                let cc = model.CommonCentroid.GetValue t
+                                let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
+                                let vtr = view.GetValue t
+                                let vp = viewportSize.GetValue t
+                                let refR = ScanPin.renderCentre cc s refA
+                                corr.Anchors |> Map.toList |> List.choose (fun (mesh, a) ->
+                                    if not a.Accepted then None
+                                    else
+                                        let hasDelta = (PendingRegistration.delta mesh pending).IsSome
+                                        let aw =
+                                            match PendingRegistration.delta mesh pending with
+                                            | Some d ->
+                                                let scale = DatasetScale.forMesh scales mesh
+                                                let cT = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
+                                                let wb = RigidTransform.renderToWorld scale cc cT
+                                                let wa = RigidTransform.renderToWorld scale cc (RegLog.effective cT d)
+                                                (wb.Inverse * wa).Forward.TransformPos a.Point
+                                            | None -> a.Point
+                                        let mid = (ScanPin.renderCentre cc s aw + refR) * 0.5
+                                        match projectToScreen mid vtr vp with
+                                        | Some px -> Some (mesh, px, (aw - refA).Length, hasDelta)
+                                        | None -> None)
+                            | None -> []
+                        | _ -> []
+                    | None -> [])
+        div {
+            Class "ruler-overlay"
+            labels |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun (mesh, px, dist, hasDelta) ->
+                div {
+                    Class "ruler-label"
+                    Style [Left (sprintf "%.0fpx" px.X); Top (sprintf "%.0fpx" px.Y)]
+                    Attribute("title",
+                        sprintf "%s ↔ reference: %.3f m (%s)" (Cards.shortName mesh) dist
+                            (if hasDelta then "residual" else "pre-alignment gap"))
+                    sprintf "%.3f m" dist
+                })
+        }
+
     // Ctrl-click hover probe: compressed ridgeline at the cursor,
     // kept inside the viewport; dismissed by Escape / click / timeout.
     let hoverProbeTooltip (model : AdaptiveModel) (viewportSize : aval<V2i>) =

@@ -719,6 +719,7 @@ module View =
                 Primitives.showWhen (StudyGate.featureOn model "pinCard")
                 Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>) patchHover
             }
+            GuiOverlays.rulerOverlay model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
             GuiOverlays.fullscreenInfo model
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.orientationIndicator model

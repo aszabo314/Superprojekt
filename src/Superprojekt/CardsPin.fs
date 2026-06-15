@@ -763,6 +763,14 @@ module CardsPin =
                                 Dom.OnClick(fun _ -> env.Emit [FocusAnchors])
                                 "⊡ Focus"
                             }
+                            // Anchor↔reference rulers (distance / residual labels).
+                            button {
+                                Class "tb-gear-btn"
+                                model.RulerActive |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
+                                Attribute("title", "Rulers: label each accepted anchor↔reference distance (the pair gap; shrinks to the residual after a solve)")
+                                Dom.OnClick(fun _ -> env.Emit [ToggleRuler])
+                                "📏 Rulers"
+                            }
                         }
                         // Patch small-multiples picker: one orthographic
                         // footprint per visible mesh in the shared reference

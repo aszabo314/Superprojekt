@@ -320,6 +320,8 @@ module Update =
                                   Mode = ClipSectionCap; CameraRelative = false }
                     { model with CutawayActive = true; ClipPlanes = [plane] }
                 | None -> model
+        | ToggleRuler ->
+            { model with RulerActive = not model.RulerActive }
 
         | SetRegistrationMode m ->
             { model with Registration = { model.Registration with Mode = m } }

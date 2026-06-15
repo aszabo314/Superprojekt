@@ -796,6 +796,28 @@ body.loaded { background: #f4f6f8; }
     white-space: nowrap;
 }
 
+/* ── Measurement ruler labels ─────────────────────────────────────── */
+.ruler-overlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 1150;
+}
+.ruler-label {
+    position: fixed;
+    transform: translate(-50%, -50%);
+    pointer-events: auto;
+    font-family: 'SF Mono', 'Monaco', monospace;
+    font-size: 10px;
+    color: #0f172a;
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid #0891b2;
+    border-radius: 8px;
+    padding: 0 5px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+    white-space: nowrap;
+}
+
 /* ── Fusion register-first notice ─────────────────────────────────── */
 
 .fusion-notice {

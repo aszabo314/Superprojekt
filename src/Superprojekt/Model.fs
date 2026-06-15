@@ -251,6 +251,8 @@ type Model =
         // While hovering the violin, also clip the meshes above the live
         // iso-plane (lets the user see into the section). Alt-click locks it.
         ClipAboveIso      : bool
+        // Labelled anchor↔reference rulers for the selected pin (HTML overlay).
+        RulerActive       : bool
 
         MeshTransforms        : Map<string, Trafo3d>
         Registration          : RegistrationState
@@ -376,6 +378,7 @@ module Model =
             CutawayActive     = false
             CutawayMode       = ClipGhost
             ClipAboveIso      = false
+            RulerActive       = false
             MeshTransforms        = Map.empty
             Registration          = RegistrationState.initial
             Retarget              = RetargetState.initial

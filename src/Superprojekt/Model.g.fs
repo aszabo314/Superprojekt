@@ -1,5 +1,5 @@
-//e5b07b34-ba29-af58-ee37-4998f33c5493
-//7840ee83-c66b-e94b-768c-61591172b927
+//dbeccf10-a827-547e-43b1-18e1c4276a21
+//b0d4df8b-c847-1f07-1705-8d4c456abd0e
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -42,6 +42,7 @@ type AdaptiveModel(value : Model) =
     let _CutawayActive_ = FSharp.Data.Adaptive.cval(value.CutawayActive)
     let _CutawayMode_ = FSharp.Data.Adaptive.cval(value.CutawayMode)
     let _ClipAboveIso_ = FSharp.Data.Adaptive.cval(value.ClipAboveIso)
+    let _RulerActive_ = FSharp.Data.Adaptive.cval(value.RulerActive)
     let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _Retarget_ = FSharp.Data.Adaptive.cval(value.Retarget)
@@ -118,6 +119,7 @@ type AdaptiveModel(value : Model) =
             _CutawayActive_.Value <- value.CutawayActive
             _CutawayMode_.Value <- value.CutawayMode
             _ClipAboveIso_.Value <- value.ClipAboveIso
+            _RulerActive_.Value <- value.RulerActive
             _MeshTransforms_.Value <- value.MeshTransforms
             _Registration_.Value <- value.Registration
             _Retarget_.Value <- value.Retarget
@@ -187,6 +189,7 @@ type AdaptiveModel(value : Model) =
     member __.CutawayActive = _CutawayActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CutawayMode = _CutawayMode_ :> FSharp.Data.Adaptive.aval<ClipMode>
     member __.ClipAboveIso = _ClipAboveIso_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.RulerActive = _RulerActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.Retarget = _Retarget_ :> FSharp.Data.Adaptive.aval<RetargetState>

@@ -26,6 +26,7 @@ type Message =
     | LockIsoPlane of float
     // Focus box (Mode D): cutaway (front) + locked top iso-plane at once.
     | FocusAnchors
+    | ToggleRuler
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
     // Stage 2 · Fine (ICP). Solves land in PendingReg, not MeshTransforms.

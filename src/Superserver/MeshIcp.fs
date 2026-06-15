@@ -103,15 +103,19 @@ module private IcpMath =
         let t = V3d(x.[3], x.[4], x.[5])
         let R = rotFromOmega omega
         // p ↦ R(p − c) + c + t, expressed as a world map p ↦ R·p + tWorld.
+        // The centroid c maps to c + t, so the actual displacement this step
+        // is |t| — NOT |tWorld|, which is inflated by (I−R)c for any rotation
+        // about a far-from-origin centroid even when the mesh barely moves.
         let tWorld = c - R * c + t
-        R, tWorld, sqrt (rmsSum / max 1.0 wSum)
+        R, tWorld, sqrt (rmsSum / max 1.0 wSum), t.Length
 
-// Abort rather than return a divergent pose: a fine-ICP step whose
-// translation exceeds this multiple of the overlap extent (the reference
-// bbox diagonal) is treated as runaway. Pure + unit-tested.
-let divergenceGate (refDiag : float) = max 50.0 (8.0 * refDiag)
-let isRunawayStep (stepTranslation : float) (refDiag : float) =
-    not (System.Double.IsFinite stepTranslation) || stepTranslation > divergenceGate refDiag
+// Abort rather than return a divergent pose: a fine-ICP step that displaces
+// the mesh centroid by more than a few combined mesh-extents is runaway
+// (overlap starvation), not a legitimate gap-closing step. Generous so only
+// absurd motions trip it.
+let divergenceGate (refDiag : float) (movDiag : float) = max 100.0 (3.0 * (refDiag + movDiag))
+let isRunawayStep (stepDisplacement : float) (gate : float) =
+    not (System.Double.IsFinite stepDisplacement) || stepDisplacement > gate
 
 // Reference is "small" relative to the mover when its bbox diagonal is under
 // this fraction of the mover's — the overlap-starvation regime where naive
@@ -133,6 +137,7 @@ let runIcp
     let refDiag = if refBox.IsInvalid then 0.0 else refBox.Size.Length
     let movDiag = if movBox.IsInvalid then 0.0 else movBox.Size.Length
     let smallRef = smallReferenceRegime refDiag movDiag
+    let gate = divergenceGate refDiag movDiag
     // Restrict moving samples to the reference's world region (+ margin) so
     // far-away, non-overlapping points can't form biasing correspondences.
     let refWorldBox =
@@ -193,10 +198,10 @@ let runIcp
                     for i in 0 .. pairs.Count - 1 do
                         if dists.[i] <= gate then filtered.Add pairs.[i]
                     if filtered.Count >= 6 then filtered else pairs
-            let Rd, td, rms = icpStep pairs
+            let Rd, td, rms, stepDisp = icpStep pairs
             // Divergence guard: a runaway step (overlap-starved fit) aborts
             // before the flung pose is ever applied or returned.
-            if isRunawayStep td.Length refDiag then
+            if isRunawayStep stepDisp gate then
                 aborted <- true
             else
                 convergence.Add rms

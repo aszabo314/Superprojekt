@@ -122,12 +122,18 @@ let private estimateNormal (mi : ProbeMeshInput) (centre : V3d) (radius : float)
             m12 <- m12 + d.Y * d.Z
             m22 <- m22 + d.Z * d.Z
         let n = float pts.Count
-        let l0, l1, _ = symEigenvalues (m00 / n) (m01 / n) (m02 / n) (m11 / n) (m12 / n) (m22 / n)
+        let l0, l1, l2 = symEigenvalues (m00 / n) (m01 / n) (m02 / n) (m11 / n) (m12 / n) (m22 / n)
         let nLocal = eigenvectorFor (m00 / n) (m01 / n) (m02 / n) (m11 / n) (m12 / n) (m22 / n) l0
         let nWorld = (mi.Transform.TransformDir nLocal).Normalized
         let nWorld = if nWorld.Z < 0.0 then -nWorld else nWorld
         let planarity = if l1 > 1e-30 then l0 / l1 else 1.0
-        Some (nWorld, planarity)
+        // Local geometric observability: λmin/λmax of the neighbourhood
+        // covariance. A near-planar/degenerate patch (λmin≈0) is weakly
+        // conditioned for a 3D registration solve → deficiency ≈ 1; an
+        // isotropic (corner-like) patch → ≈ 0. Same formula as
+        // RegMath.observabilityDeficiency (unit-tested).
+        let condDeficiency = if l2 > 1e-30 then max 0.0 (min 1.0 (1.0 - l0 / l2)) else 1.0
+        Some (nWorld, planarity, condDeficiency)
 
 // Max extent of the union of all (transformed) mesh bboxes projected onto the axis.
 let private autoLengthAlong (meshes : ProbeMeshInput[]) (axis : V3d) =
@@ -213,7 +219,7 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
     | Some refIdx ->
         match estimateNormal args.Meshes.[refIdx] args.Centre args.Radius with
         | None -> Result.Error "not enough reference-mesh vertices inside the pin sphere (need ≥ 6)"
-        | Some (normal, planarity) ->
+        | Some (normal, planarity, condDeficiency) ->
             let autoLen = autoLengthAlong args.Meshes normal
             let length = if args.Length > 0.0 then max 0.1 (min 1000.0 args.Length) else autoLen
             let halfLen = length * 0.5
@@ -312,11 +318,11 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
             let algorithmResid =
                 if offsets.Length = 0 then 0.0
                 else sqrt ((offsets |> Array.sumBy (fun o -> o * o)) / float offsets.Length)
-            let present = dists |> Array.filter (fun d -> d.Count > 0)
-            let meanPts =
-                if present.Length = 0 then 0.0
-                else float (present |> Array.sumBy (fun d -> d.Count)) / float present.Length
-            let conditioning = 1.0 / (float present.Length * meanPts + 1e-6)
+            // Local conditioning: in-plane positional uncertainty of the
+            // anchor neighbourhood ≈ pin radius scaled by the geometric
+            // observability deficiency (degenerate/planar → ~radius,
+            // isotropic → ~0). Geometric, not a sample-count heuristic.
+            let conditioning = args.Radius * condDeficiency
             let perMesh =
                 dists |> Array.map (fun d ->
                     { Name = d.Name; Iqr = d.Q3 - d.Q1; MedianOffset = d.Median; Count = d.Count })

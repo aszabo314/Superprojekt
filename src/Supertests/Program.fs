@@ -280,6 +280,11 @@ let conditioningTests () =
     let recovered = RegConditioning.dominantAxis alongLine
     checkLe "dominantAxis recovers spread line" (1.0 - abs (Vec.dot recovered axisDir)) 1e-3
     check "dominantAxis degenerate → up" (RegConditioning.dominantAxis [| V3d.Zero |] = V3d.OOI)
+    // observabilityDeficiency: near-planar neighbourhood → high (weakly
+    // conditioned), isotropic → ~0. Genuine ~0 distinct from absent (1.0).
+    check "planar neighbourhood weakly conditioned" (RegMath.observabilityDeficiency [| 1.0; 1.0; 1e-5 |] > 0.99)
+    check "isotropic neighbourhood well conditioned" (RegMath.observabilityDeficiency [| 1.0; 1.0; 1.0 |] < 1e-6)
+    check "empty eigenvalues default degenerate" (RegMath.observabilityDeficiency [||] = 1.0)
 
 // ───────────────────────── Study: predicate engine ────────────────────────
 

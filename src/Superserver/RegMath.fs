@@ -12,6 +12,17 @@ type LsqResult = {
     CollinearityWarning : bool      // λ2/λ1 < 1e-3
 }
 
+// Local geometric observability deficiency of a point neighbourhood, from its
+// covariance eigenvalues: 1 − λmin/λmax. A near-planar/degenerate patch
+// (λmin≈0) → ≈1 (weakly conditioned for a 3D solve); an isotropic patch
+// (λmin≈λmax) → ≈0. Shared formula with the probe's local-conditioning source.
+let observabilityDeficiency (eigenvalues : float[]) =
+    if eigenvalues.Length = 0 then 1.0
+    else
+        let mn = Array.min eigenvalues
+        let mx = Array.max eigenvalues
+        if mx > 1e-30 then max 0.0 (min 1.0 (1.0 - mn / mx)) else 1.0
+
 // Jacobi eigen decomposition of a symmetric 3×3.
 // Returns eigenvalues (descending) and matching eigenvectors (columns).
 let symEigen3 (m : M33d) : float[] * V3d[] =

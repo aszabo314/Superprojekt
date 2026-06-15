@@ -131,6 +131,9 @@ module CardsPin =
         "      txt(sx0 + 11, 15, nm, 'start', grey ? '#94a3b8' : '#0f172a');"
         "    }"
         "    if(!grey){"
+        "      var refstd = d.refstd || 0;"
+        "      var lod = 1.96 * Math.sqrt(refstd*refstd + (r.std||0)*(r.std||0));"
+        "      if(lod > 0){ var bl=Math.max(y0,-lod), bh=Math.min(y1,lod); if(bh>bl){ var bnd=document.createElementNS(ns,'rect'); bnd.setAttribute('x',x0+1); bnd.setAttribute('y',sy(bh)); bnd.setAttribute('width',colW-2); bnd.setAttribute('height',Math.max(0,sy(bl)-sy(bh))); bnd.setAttribute('fill','#94a3b8'); bnd.setAttribute('fill-opacity','0.16'); svg.appendChild(bnd); } }"
         "      var hw = colW * 0.42;"
         "      var split = !!(r.kde2 && r.kde2.length > 1);"
         "      function halfArea(kdeRaw, sign, colour){"
@@ -185,7 +188,11 @@ module CardsPin =
         "          area.setAttribute('stroke', r.color); area.setAttribute('stroke-width','1');"
         "          svg.appendChild(area);"
         "        }"
-        "        if(r.median >= y0 && r.median <= y1) ln(cx - colW * 0.3, sy(r.median), cx + colW * 0.3, sy(r.median), r.color, '1.5');"
+        "        var sig = Math.abs(r.median) >= lod;"
+        "        if(r.median >= y0 && r.median <= y1){"
+        "          ln(cx - colW * 0.3, sy(r.median), cx + colW * 0.3, sy(r.median), sig ? r.color : '#94a3b8', sig ? '1.5' : '1', sig ? null : '2,2');"
+        "          if(!sig) txt(cx + colW * 0.3 + 1, sy(r.median) + 3, 'n.s.', 'start', '#94a3b8', '7');"
+        "        }"
         "        var qa = Math.max(r.q1, y0), qb = Math.min(r.q3, y1);"
         "        if(qb > qa) ln(cx, sy(qa), cx, sy(qb), r.color, '2.5', null, '0.9');"
         "      }"
@@ -315,13 +322,19 @@ module CardsPin =
             kde |> Array.iteri (fun j (x, y) ->
                 if j > 0 then sb.Append(',') |> ignore
                 sb.Append(sprintf "[%.4g,%.4g]" x y) |> ignore)
+        // σ_ref = the reference mesh's roughness (std of its re-centred
+        // distances); feeds the per-mesh detection-limit band lod95 =
+        // 1.96·√(σ_ref² + σ_mesh²).
+        let refStd =
+            r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
+            |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
         let sb = System.Text.StringBuilder()
-        sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"ymin\":%.5g,\"ymax\":%.5g,\"sticky\":\"%s\",\"rows\":["
-                    mini win.Min win.Max (sticky |> Option.defaultValue "")) |> ignore
+        sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"ymin\":%.5g,\"ymax\":%.5g,\"refstd\":%.5g,\"sticky\":\"%s\",\"rows\":["
+                    mini win.Min win.Max refStd (sticky |> Option.defaultValue "")) |> ignore
         rows |> Array.iteri (fun i d ->
             if i > 0 then sb.Append(',') |> ignore
-            sb.Append(sprintf "{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"kde\":["
-                        d.MeshName (shortName d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3) |> ignore
+            sb.Append(sprintf "{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"std\":%.5g,\"kde\":["
+                        d.MeshName (shortName d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3 d.Std) |> ignore
             appendKde sb d.Kde
             sb.Append("]") |> ignore
             match preview |> Option.bind (fun p -> p.Distributions |> Array.tryFind (fun pd -> pd.MeshName = d.MeshName)) with

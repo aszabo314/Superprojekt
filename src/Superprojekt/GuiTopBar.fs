@@ -247,8 +247,14 @@ module GuiTopBar =
                         div {
                             Class "tb-gear-row"
                             // Isolate pins: ghost everything outside the pins' falloff regions.
-                            compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
-                                env.Emit [ToggleAnchorGhostMode])
+                            // Auto-suspended while placing an anchor (terrain stays visible);
+                            // the toggle reflects the temporary hold and is inert during it.
+                            let placing =
+                                model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
+                            let isoEffective =
+                                (model.AnchorGhostMode, placing) ||> AVal.map2 (fun on p -> on && not p)
+                            compactToggle "Isolate pins" isoEffective (fun () ->
+                                if not (AVal.force placing) then env.Emit [ToggleAnchorGhostMode])
                         }
                         div {
                             Class "tb-gear-row"

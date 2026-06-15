@@ -216,8 +216,14 @@ module MeshView =
         let peekTarget =
             (model.ReferencePeekHeld, model.Registration) ||> AVal.map2 (fun held reg ->
                 if held then reg.ReferenceMesh else None)
+        // Auto-suspend pin isolation while placing an anchor so the terrain
+        // stays visible for aiming (restored automatically when placement
+        // ends — no model mutation).
         let anchorGhost =
-            model.AnchorGhostMode |> AVal.map (fun on -> if on then 1 else 0)
+            (model.AnchorGhostMode, model.ScanPins.Placement) ||> AVal.map2 (fun on pl ->
+                match pl with
+                | AnchorPlacement -> 0
+                | _ -> if on then 1 else 0)
         let heatmapModeInt =
             model.HeatmapMode |> AVal.map (function
                 | HeatOff -> 0

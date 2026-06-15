@@ -207,9 +207,16 @@ module MeshView =
         // uniform-ghost path (MeshActive=false) at a fixed 0.2 alpha —
         // independent of the GhostSilhouette toggle, because this is an
         // explicit user gesture.
+        // Suspended during anchor placement so the chart-sticky/hover column
+        // can't ghost (and thus make un-pickable) the rest of the terrain you
+        // are trying to drop the next pin on — the same rationale as the
+        // isolation auto-suspend below.
         let chartHighlight =
-            (model.ChartHoverMesh, model.ChartStickyMesh)
-            ||> AVal.map2 (fun hov sticky -> hov |> Option.orElse sticky)
+            (model.ChartHoverMesh, model.ChartStickyMesh, model.ScanPins.Placement)
+            |||> AVal.map3 (fun hov sticky pl ->
+                match pl with
+                | AnchorPlacement -> None
+                | _ -> hov |> Option.orElse sticky)
         // Reference peek (spring-loaded): while held with a reference set, the
         // reference is the only solid mesh — a transient importance override,
         // never touching the persistent eye state. No-op without a reference.

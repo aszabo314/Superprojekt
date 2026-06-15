@@ -116,6 +116,38 @@ module View =
                             else None)
                     | _ -> None)
 
+        // Resolved render-space clip-plane equations for the mesh shader.
+        // CameraRelative planes recompute their normal each frame from the
+        // camera forward (the plane contains Axis and faces the camera);
+        // static planes use the stored metric normal. Origin metric → render.
+        let clipUniforms =
+            let datasetScaleA =
+                (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
+            let camForward = model.Camera.view |> AVal.map (fun cv -> cv.Forward)
+            AVal.custom (fun t ->
+                let planes = model.ClipPlanes.GetValue t
+                let cc = model.CommonCentroid.GetValue t
+                let s = datasetScaleA.GetValue t
+                let fwd = camForward.GetValue t
+                let resolve (cp : ClipPlane) =
+                    let n =
+                        if cp.CameraRelative then
+                            let toCam = -fwd
+                            if cp.Axis.Length > 1e-9 then
+                                let a = cp.Axis.Normalized
+                                let m = toCam - a * (Vec.dot toCam a)
+                                if m.Length > 1e-9 then m.Normalized else toCam.Normalized
+                            else toCam.Normalized
+                        elif cp.Normal.Length > 1e-9 then cp.Normal.Normalized
+                        else V3d.OOI
+                    let ro = ScanPin.renderCentre cc s cp.Origin
+                    V4f(float32 n.X, float32 n.Y, float32 n.Z, float32 (-(Vec.dot n ro))),
+                    ClipMode.toInt cp.Mode
+                match planes |> List.truncate 2 |> List.map resolve with
+                | [] -> 0, V4f.Zero, V4f.Zero, 0, 0
+                | [ (p0, m0) ] -> 1, p0, V4f.Zero, m0, 0
+                | (p0, m0) :: (p1, m1) :: _ -> 2, p0, p1, m0, m1)
+
         body {
             OnBoot [
                 "const l = document.getElementById('loader');"
@@ -520,7 +552,7 @@ module View =
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) (patchHover :> aval<_>) cursorHighlight wheelIsolation model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) (patchHover :> aval<_>) cursorHighlight clipUniforms wheelIsolation model
             }
 
             Dom.OnKeyDown(fun e ->

@@ -180,6 +180,7 @@ module SceneGraph =
         (placementHover : aval<V3d option>)
         (patchHover : aval<PatchHover option>)
         (cursorHighlight : aval<CursorHighlight option>)
+        (clipUniforms : aval<int * V4f * V4f * int * int>)
         (wheelIsolation : aval<string option>)
         (model : AdaptiveModel) =
 
@@ -204,7 +205,7 @@ module SceneGraph =
         // "translucent should not write depth" rule but is the only
         // combination that actually renders correctly here.
 
-        let meshScene  = MeshView.buildScene loadFinished cursorHighlight wheelIsolation model
+        let meshScene  = MeshView.buildScene loadFinished cursorHighlight clipUniforms wheelIsolation model
         let fusionScene = FusionView.build info model view proj
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover patchHover model
 

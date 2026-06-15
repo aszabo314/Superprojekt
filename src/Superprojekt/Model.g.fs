@@ -1,5 +1,5 @@
-//e31862c0-382a-9c35-f363-7341dd5f9557
-//3bba67aa-7bc6-12e5-cbce-70d0a755e9bb
+//4ffa04bf-6272-9c50-9826-730e57a5304b
+//01b21791-12bc-2fbf-ab1b-66f7f354f2d7
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -37,6 +37,8 @@ type AdaptiveModel(value : Model) =
     let _LassoDrawing_ = FSharp.Data.Adaptive.cval(value.LassoDrawing)
     let _LassoVolume_ = FSharp.Data.Adaptive.cval(value.LassoVolume)
     let _LassoEnabled_ = FSharp.Data.Adaptive.cval(value.LassoEnabled)
+    let _ClipPlanes_ = FSharp.Data.Adaptive.cval(value.ClipPlanes)
+    let _ReferencePeekHeld_ = FSharp.Data.Adaptive.cval(value.ReferencePeekHeld)
     let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _Retarget_ = FSharp.Data.Adaptive.cval(value.Retarget)
@@ -108,6 +110,8 @@ type AdaptiveModel(value : Model) =
             _LassoDrawing_.Value <- value.LassoDrawing
             _LassoVolume_.Value <- value.LassoVolume
             _LassoEnabled_.Value <- value.LassoEnabled
+            _ClipPlanes_.Value <- value.ClipPlanes
+            _ReferencePeekHeld_.Value <- value.ReferencePeekHeld
             _MeshTransforms_.Value <- value.MeshTransforms
             _Registration_.Value <- value.Registration
             _Retarget_.Value <- value.Retarget
@@ -172,6 +176,8 @@ type AdaptiveModel(value : Model) =
     member __.LassoDrawing = _LassoDrawing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoDraft>>
     member __.LassoVolume = _LassoVolume_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoVolume>>
     member __.LassoEnabled = _LassoEnabled_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ClipPlanes = _ClipPlanes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<ClipPlane>>
+    member __.ReferencePeekHeld = _ReferencePeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.Retarget = _Retarget_ :> FSharp.Data.Adaptive.aval<RetargetState>

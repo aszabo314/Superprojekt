@@ -143,7 +143,7 @@ module MeshView =
     [<Literal>]
     let private cursorDarken = 0.85f
 
-    let buildScene (loadFinished : string -> unit) (cursor : aval<CursorHighlight option>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
+    let buildScene (loadFinished : string -> unit) (cursor : aval<CursorHighlight option>) (clip : aval<int * V4f * V4f * int * int>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
         let renderingModeInt =
             model.RenderingMode |> AVal.map (function
                 | Textured     -> 0
@@ -174,6 +174,11 @@ module MeshView =
                 arr)
 
         let blobCount, blobs, blobFalloffs = pinBlobUniforms model
+        let clipCount  = clip |> AVal.map (fun (c, _, _, _, _) -> c)
+        let clipPlane0 = clip |> AVal.map (fun (_, p, _, _, _) -> p)
+        let clipPlane1 = clip |> AVal.map (fun (_, _, p, _, _) -> p)
+        let clipMode0  = clip |> AVal.map (fun (_, _, _, m, _) -> m)
+        let clipMode1  = clip |> AVal.map (fun (_, _, _, _, m) -> m)
         // Cursor-plane uniforms shared by every mesh, converted metric →
         // render space once. CursorActive is the only per-mesh one (below).
         let cursorRender =
@@ -385,6 +390,11 @@ module MeshView =
                     Sg.Uniform("CursorPinCentre",      cursorPinC)
                     Sg.Uniform("CursorPinRadius",      cursorPinR)
                     Sg.Uniform("CursorCylLength",      cursorCylLen)
+                    Sg.Uniform("ClipPlaneCount",       clipCount)
+                    Sg.Uniform("ClipPlane0",           clipPlane0)
+                    Sg.Uniform("ClipPlane1",           clipPlane1)
+                    Sg.Uniform("ClipMode0",            clipMode0)
+                    Sg.Uniform("ClipMode1",            clipMode1)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
@@ -443,6 +453,11 @@ module MeshView =
                     Sg.Uniform("CursorPinCentre",      cursorPinC)
                     Sg.Uniform("CursorPinRadius",      cursorPinR)
                     Sg.Uniform("CursorCylLength",      cursorCylLen)
+                    Sg.Uniform("ClipPlaneCount",       clipCount)
+                    Sg.Uniform("ClipPlane0",           clipPlane0)
+                    Sg.Uniform("ClipPlane1",           clipPlane1)
+                    Sg.Uniform("ClipMode0",            clipMode0)
+                    Sg.Uniform("ClipMode1",            clipMode1)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)

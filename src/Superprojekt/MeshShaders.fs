@@ -71,6 +71,15 @@ module MeshShader =
         member x.CursorPinCentre      : V3f     = x?CursorPinCentre
         member x.CursorPinRadius      : float32 = x?CursorPinRadius
         member x.CursorCylLength      : float32 = x?CursorCylLength
+        // 3D sectioning: up to two render-space plane equations
+        // V4f(nx,ny,nz, -dot(n,renderOrigin)); a fragment with
+        // dot(n,wp)+w > 0 is on the removed (camera-side) half. Mode:
+        // 0 = Hide/SectionCap (discard), 1 = Ghost (drop to ghost alpha).
+        member x.ClipPlaneCount : int = x?ClipPlaneCount
+        member x.ClipPlane0     : V4f = x?ClipPlane0
+        member x.ClipPlane1     : V4f = x?ClipPlane1
+        member x.ClipMode0      : int = x?ClipMode0
+        member x.ClipMode1      : int = x?ClipMode1
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -87,6 +96,23 @@ module MeshShader =
     let shade (v : FragIn) =
         fragment {
             let wp = v.wp.XYZ
+            // 3D sectioning (mesh geometry only; overlays are never clipped):
+            // the camera-side half (dot(n,wp)+w > 0) is discarded (Hide /
+            // SectionCap) or dropped to ghost alpha (Ghost).
+            let mutable clipGhost = false
+            let cpc = uniform.ClipPlaneCount
+            if cpc >= 1 then
+                let p = uniform.ClipPlane0
+                let sd = p.X * wp.X + p.Y * wp.Y + p.Z * wp.Z + p.W
+                if sd > 0.0f then
+                    if uniform.ClipMode0 = 1 then clipGhost <- true
+                    else discard()
+            if cpc >= 2 then
+                let p = uniform.ClipPlane1
+                let sd = p.X * wp.X + p.Y * wp.Y + p.Z * wp.Z + p.W
+                if sd > 0.0f then
+                    if uniform.ClipMode1 = 1 then clipGhost <- true
+                    else discard()
             let mutable lassoMask = 1.0f
             let lc = uniform.LassoPlaneCount
             if lc > 0 then
@@ -146,6 +172,11 @@ module MeshShader =
             let fullySolid = lassoFull && blobFull
             if uniform.MeshActive && not fullySolid then
                 alpha <- min alpha (opaqueThreshold - 0.01f)
+            // Clip-ghost half: force a faint, never-occluding ghost so the cut
+            // reveals geometry behind it. Reads as the uniform silhouette
+            // colour (aboveGhost is suppressed below).
+            if clipGhost then
+                alpha <- min (max ghost 0.10f) (opaqueThreshold - 0.01f)
             let n = v.n |> Vec.normalize
             let toCam = (uniform.CameraLocation - v.wp.XYZ) |> Vec.normalize
             let ndl = max 0.15f (abs (Vec.dot n toCam))
@@ -167,8 +198,9 @@ module MeshShader =
                     let s = t * t * (3.0f - 2.0f * t)
                     blueCol * (1.0f - s) + hotCol * s
             // Ghost-level fragments always use the solid mesh colour so the
-            // silhouette reads uniformly regardless of rendering mode.
-            let aboveGhost = alpha > ghost + 1e-4f
+            // silhouette reads uniformly regardless of rendering mode. Clip-
+            // ghosted fragments are forced to the ghost path too.
+            let aboveGhost = (not clipGhost) && alpha > ghost + 1e-4f
             let mutable baseRgb =
                 if not aboveGhost then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ

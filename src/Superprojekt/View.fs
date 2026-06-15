@@ -127,7 +127,26 @@ module View =
             let effectiveId =
                 (model.ScanPins.Placement, model.ScanPins.SelectedPin) ||> AVal.map2 (fun pl sel ->
                     match pl with AdjustingPin id -> Some id | _ -> sel)
+            let camCutaway (pts : V3d[]) (mode : ClipMode) t =
+                if pts.Length < 2 then None
+                else
+                    let cc = model.CommonCentroid.GetValue t
+                    let axis = RegConditioning.dominantAxis pts
+                    let camLocRender = (model.Camera.view.GetValue t).Location
+                    let s = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
+                    let camWorld = ScanPin.worldCentre cc s camLocRender
+                    let origin = pts |> Array.minBy (fun p -> (p - camWorld).LengthSquared)
+                    Some { Origin = origin; Normal = axis; Axis = axis; Mode = mode; CameraRelative = true }
             AVal.custom (fun t ->
+                // Auto-cutaway during anchor review so the candidates show
+                // despite occluders (Mode B, over all candidate points).
+                match model.AnchorReview.GetValue t with
+                | AnchorReviewing cands when cands.Length >= 2 ->
+                    let pts =
+                        cands |> Array.choose (fun c ->
+                            if System.Double.IsFinite c.ProjectionDistance then Some c.Point else None)
+                    camCutaway pts ClipGhost t
+                | _ ->
                 if not (model.CutawayActive.GetValue t) then None
                 else
                     match effectiveId.GetValue t with

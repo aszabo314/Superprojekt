@@ -560,6 +560,54 @@ module ScanPinScene =
                 }
             ]
 
+        // Review candidate anchors (WP16): during AnchorReviewing, draw each
+        // candidate as a hollow tetra glyph in a pending colour (amber
+        // undecided / green accept / red reject) with a connector to its pin's
+        // reference anchor — visible before Apply, so the review modal's
+        // decisions can be judged in 3D (Mode B cutaway is auto-active).
+        let reviewCandidates =
+            let tetra =
+                let s = 1.0 / sqrt 3.0
+                [| V3d(s, s, s); V3d(s, -s, -s); V3d(-s, s, -s); V3d(-s, -s, s) |]
+            let tetraEdges = [| 0, 1; 0, 2; 0, 3; 1, 2; 1, 3; 2, 3 |]
+            let segs =
+                AVal.custom (fun t ->
+                    match model.AnchorReview.GetValue t with
+                    | AnchorReviewing cands ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let scale = datasetScale.GetValue t
+                        let pins = pinsVal.GetValue t
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        for c in cands do
+                            if System.Double.IsFinite c.ProjectionDistance then
+                                let col =
+                                    match c.Decision with
+                                    | AnchorAccept    -> V4d(0.13, 0.70, 0.36, 0.95)
+                                    | AnchorReject    -> V4d(0.86, 0.15, 0.15, 0.75)
+                                    | AnchorUndecided -> V4d(0.85, 0.47, 0.02, 0.95)
+                                let p = ScanPin.renderCentre cc scale c.Point
+                                let glyphR = ScanPin.renderLength scale (max 0.05 (c.FalloffRadius * 0.06))
+                                for (i, j) in tetraEdges do
+                                    out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, col, 1.2)
+                                match HashMap.tryFind c.PinId pins
+                                      |> Option.bind ScanPin.correspondence
+                                      |> Option.bind (fun cr -> cr.RefAnchor) with
+                                | Some ra -> out.Add(p, ScanPin.renderCentre cc scale ra, col, 1.0)
+                                | None -> ()
+                        out.ToArray()
+                    | _ -> [||])
+            ASet.ofList [
+                sg {
+                    Sg.Active notFullscreen
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render segs
+                }
+            ]
+
         // Patch-picker 2D→3D linking (patchHover is a view-local cval set by
         // the cell JS — pointer moves never touch the reducer): while a patch
         // cell is hovered, every sampled vertex inside the cell's current
@@ -708,4 +756,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; patchLink; studyFlags])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; reviewCandidates; patchLink; studyFlags])

@@ -704,6 +704,19 @@ module CardsPin =
                     // The one-click exclude/include toggle (sets enabled).
                     Primitives.compactToggle "Use as registration landmark" corrEnabled (fun () ->
                         emitForPinTop ToggleCorrespondence)
+                    // Micro-glossary (WP19): the three terms, standardized.
+                    div {
+                        Class "pc-glossary"
+                        Attribute("title", "Landmark = one real spot in the world. Anchor = that landmark's mark on each individual mesh (one per mesh). Pin = the marker you drop to define the landmark and gather its anchors. Map analogy: the place, the pins stuck through each transparency, and the act of pinning.")
+                        "landmark = one real spot · anchor = its mark on each mesh · pin = the marker you drop"
+                    }
+                    // Fresh-pin hint: distinguishes the influence zone from a
+                    // clickable picking area, shown until correspondence is on.
+                    div {
+                        Class "pc-fresh-hint"
+                        Primitives.showWhenNot corrEnabled
+                        "This pin marks one spot. Enable the landmark toggle to match it across meshes and pick an anchor per mesh."
+                    }
                     div {
                         Class "pc-corr-body"
                         showOnly corrEnabled

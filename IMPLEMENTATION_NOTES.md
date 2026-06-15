@@ -79,5 +79,11 @@ Living document. WP0 = path map; each WP appends its outcome at the bottom.
 ### Tests
 - `src/Supertests` compiles RegistrationModel/StudyModel/RegMath/StudyConfig/StudyStore. **WP11/WP13 add tests here (the conditioning + ICP math must be reachable from a WASM-free module).** ICP solver currently lives in `MeshIcp.fs` which is NOT in Supertests — to unit-test the divergence guard I either move the pure math to a Supertests-compiled module or test via the integration harness. Decision recorded per-WP.
 
+## Per-WP outcomes
+
+- **WP1** (clip core): `ClipMode`/`ClipPlane` + `ClipPlanes`/`ReferencePeekHeld` in Model.fs (adaptify regen'd). Shader: `ClipPlaneCount/ClipPlane0/1/ClipMode0/1` uniforms; camera-side half (`dot(n,wp)+w>0`) discarded (Hide/SectionCap) or forced to ghost alpha (Ghost), clip-ghost fragments read as uniform silhouette colour and never occlude/pick. `clipUniforms` aval resolved in View.fs (camera-relative normal per frame, metric origin→render), threaded SceneGraph→MeshView onto both surface + committed-ghost. **Deviation:** SectionCap currently discards (flat cap not rendered) — spec explicitly allowed this ("cap optional, behind a flag"). **ClipPlane half-space:** Normal points at the half to REMOVE; for camera-relative the resolver makes it the toward-camera component orthogonal to `Axis` (so the cut reveals what's behind, per A1).
+- **WP2** (reference peek): `peekTarget` aval in MeshView weaves into per-mesh `isActive`+`GhostOpacity` (precedence: AnchorPick > peek > wheelIso > chartHighlight > silhouette). Spring-loaded top-bar "👁 Peek" button (`pointerCapture`) + hold-R hotkey (`SetReferencePeek`); both no-op without a reference / in study mode. No eye-state mutation. Hovered-mesh target (config flag) deferred — reference-only for now.
+
 ## Conflicts / deviations from spec
 (recorded as encountered)
+- WP1: SectionCap renders as plain discard (no flat cap pass) — permitted by spec.

@@ -564,6 +564,10 @@ module View =
                     // study it would blank the pins/cards mid-task.
                     if not (Study.isActive (AVal.force model.Study)) then
                         transact (fun () -> spaceHeld.Value <- true)
+                | "r" | "R" ->
+                    // Hold-R reference peek (Full-mode review tool).
+                    if not (Study.isActive (AVal.force model.Study)) then
+                        env.Emit [SetReferencePeek true]
                 | "Escape" ->
                     let studyArmed =
                         match AVal.force model.Study with
@@ -585,6 +589,7 @@ module View =
                 match e.Key with
                 | " "     -> transact (fun () -> spaceHeld.Value <- false)
                 | "Alt"   -> transact (fun () -> altHeld.Value <- false)
+                | "r" | "R" -> env.Emit [SetReferencePeek false]
                 | _ -> ()
             )
 

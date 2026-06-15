@@ -264,6 +264,11 @@ module Update =
             { model with SlopeThresholdDeg = v }
         | ToggleAnchorGhostMode ->
             { model with AnchorGhostMode = not model.AnchorGhostMode }
+        | SetReferencePeek held ->
+            if model.ReferencePeekHeld = held then model
+            else { model with ReferencePeekHeld = held }
+        | SetClipPlanes planes ->
+            { model with ClipPlanes = planes }
 
         | SetRegistrationMode m ->
             { model with Registration = { model.Registration with Mode = m } }

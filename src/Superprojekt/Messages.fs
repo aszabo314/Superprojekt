@@ -16,6 +16,9 @@ type Message =
     | SetShadingStrength of float
     | SetSlopeThresholdDeg of float
     | ToggleAnchorGhostMode
+    // 3D sectioning / cutaway.
+    | SetReferencePeek of bool
+    | SetClipPlanes of ClipPlane list
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
     // Stage 2 · Fine (ICP). Solves land in PendingReg, not MeshTransforms.

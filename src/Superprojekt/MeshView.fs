@@ -210,6 +210,12 @@ module MeshView =
         let chartHighlight =
             (model.ChartHoverMesh, model.ChartStickyMesh)
             ||> AVal.map2 (fun hov sticky -> hov |> Option.orElse sticky)
+        // Reference peek (spring-loaded): while held with a reference set, the
+        // reference is the only solid mesh — a transient importance override,
+        // never touching the persistent eye state. No-op without a reference.
+        let peekTarget =
+            (model.ReferencePeekHeld, model.Registration) ||> AVal.map2 (fun held reg ->
+                if held then reg.ReferenceMesh else None)
         let anchorGhost =
             model.AnchorGhostMode |> AVal.map (fun on -> if on then 1 else 0)
         let heatmapModeInt =
@@ -238,6 +244,9 @@ module MeshView =
                 AVal.custom (fun t ->
                     match model.AnchorPick.GetValue t with
                     | Some pick -> pick.Mesh = name
+                    | None ->
+                    match peekTarget.GetValue t with
+                    | Some target -> target = name
                     | None ->
                         match wheelIsolation.GetValue t with
                         | Some iso -> iso = name
@@ -351,6 +360,9 @@ module MeshView =
                                 if (model.Registration.GetValue t).ReferenceMesh = Some name
                                 then 0.3f else 0.08f
                             | _ ->
+                                match peekTarget.GetValue t with
+                                | Some target when target <> name -> 0.12f
+                                | _ ->
                                 match wheelIsolation.GetValue t with
                                 | Some iso when iso <> name -> 0.15f
                                 | _ ->

@@ -15,12 +15,6 @@ type RayRequest     = { Name: string; Index: int; Origin: float[]; Direction: fl
 type ClosestRequest = { Name: string; Index: int; Point: float[] }
 
 [<CLIMutable>]
-type IsolineRequest = { Name: string; Elevation: float; Seed: float[]; MaxPoints: int }
-
-[<CLIMutable>]
-type RidgeRequest = { Name: string; Seed: float[]; ThresholdRad: float; MaxPoints: int }
-
-[<CLIMutable>]
 type PatchRequest = {
     Name: string; Centre: float[]; Radius: float; MaxPoints: int
     // Optional shared-frame override (mesh-frame directions); both must be
@@ -108,43 +102,6 @@ let closestHandler : HttpHandler =
             else
                 return! json {| found = false |} next ctx
         with ex -> return! RequestErrors.notFound (text ex.Message) next ctx
-    }
-
-let isolineHandler : HttpHandler =
-    fun next ctx -> task {
-        let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<IsolineRequest>()
-            let lm = loadMesh req.Name 0
-            let seed = toV3d req.Seed
-            let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
-            let flat = MeshAnalysis.isoline lm req.Elevation seed maxPoints
-            let n = flat.Length / 3
-            let pts = Array.init n (fun i -> [| flat.[i * 3]; flat.[i * 3 + 1]; flat.[i * 3 + 2] |])
-            log.LogInformation("isoline {Name} z={Elevation:F3}: {Count} pts", req.Name, req.Elevation, n)
-            return! json {| polyline = pts |} next ctx
-        with ex ->
-            log.LogError(ex, "isoline failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
-    }
-
-let curvatureRidgeHandler : HttpHandler =
-    fun next ctx -> task {
-        let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<RidgeRequest>()
-            let lm = loadMesh req.Name 0
-            let seed = toV3d req.Seed
-            let threshold = if req.ThresholdRad <= 0.0 then 0.4 else req.ThresholdRad
-            let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
-            let flat, scalars = MeshAnalysis.curvatureRidgeWithScalars lm seed threshold maxPoints
-            let n = flat.Length / 3
-            let pts = Array.init n (fun i -> [| flat.[i * 3]; flat.[i * 3 + 1]; flat.[i * 3 + 2] |])
-            log.LogInformation("curvature-ridge {Name} θ={Threshold:F2}rad: {Count} pts", req.Name, threshold, n)
-            return! json {| polyline = pts; scalars = scalars |} next ctx
-        with ex ->
-            log.LogError(ex, "curvature-ridge failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
 let patchHandler : HttpHandler =

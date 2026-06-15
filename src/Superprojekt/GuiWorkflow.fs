@@ -194,7 +194,7 @@ module GuiWorkflow =
                                     | None -> 0                     // red ring (missing)
                                 m, colourOf m, state)
                         let accepted = dots |> List.filter (fun (_, _, st) -> st = 2) |> List.length
-                        let rel = match p.Payload with Point pp -> pp.ReliabilityWeight | _ -> 1.0
+                        let rel = p.ReliabilityWeight
                         let resid =
                             ls |> Map.toList
                             |> List.choose (fun (_, e) -> e.PerPinResiduals |> Option.bind (Map.tryFind id))
@@ -213,8 +213,7 @@ module GuiWorkflow =
                 |> List.choose (fun (id, p) ->
                     let enabled =
                         ScanPin.correspondence p |> Option.map (fun c -> c.Enabled) |> Option.defaultValue false
-                    let isPoint = match p.Payload with Point _ -> true | _ -> false
-                    if p.Phase = PinPhase.Committed && isPoint && not enabled then
+                    if p.Phase = PinPhase.Committed && not enabled then
                         Some (id, sprintf "(%.1f, %.1f, %.1f)" p.Centre.X p.Centre.Y p.Centre.Z)
                     else None)
                 |> IndexList.ofList)

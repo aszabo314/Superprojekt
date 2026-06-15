@@ -58,34 +58,8 @@ module Persistence =
     let private renderModeOf = function
         | "shaded" -> Shaded | "slope" -> SlopeColor | _ -> Textured
 
-    let private lineModeJ = function
-        | ElevationIsoline e -> sprintf "{\"k\":\"elev\",\"e\":%s}" (f e)
-        | CurvatureRidge -> "{\"k\":\"ridge\"}"
-    let private payloadJ = function
-        | Point p ->
-            sprintf "{\"k\":\"point\",\"rel\":%s,\"corr\":%s}"
-                (f p.ReliabilityWeight)
-                (match p.Correspondence with Some c -> RegJson.correspondenceJ c | None -> "null")
-        | Line l ->
-            let pts = l.Points |> Array.map v3 |> String.concat ","
-            let scs = l.ScalarVals |> Array.map f |> String.concat ","
-            let traces =
-                l.CrossMeshTraces |> Map.toSeq |> Seq.map (fun (mesh, (mpts, mscs)) ->
-                    sprintf "{\"mesh\":%s,\"pts\":[%s],\"scs\":[%s]}"
-                        (q mesh)
-                        (mpts |> Array.map v3 |> String.concat ",")
-                        (mscs |> Array.map f |> String.concat ","))
-                |> String.concat ","
-            sprintf "{\"k\":\"line\",\"mode\":%s,\"pts\":[%s],\"scs\":[%s],\"traces\":[%s]}"
-                (lineModeJ l.Mode) pts scs traces
-        | Patch p ->
-            let pts =
-                p.ProjectedPoints |> Array.map (fun (a, b) ->
-                    sprintf "[%s,%s,%s,%s,%s]" (f a.X) (f a.Y) (f b.X) (f b.Y) (f b.Z))
-                |> String.concat ","
-            sprintf "{\"k\":\"patch\",\"center\":%s,\"r\":%s,\"src\":%s,\"pts\":[%s],\"north\":%s,\"refDir\":%s,\"normal\":%s}"
-                (v3 p.CenterOnMesh) (f p.Radius) (q p.SourceMeshName)
-                pts (v2 p.CompassNorth) (v3 p.RefDirWorld) (v3 p.NormalWorld)
+    let private corrJ (c : Correspondence option) =
+        match c with Some c -> RegJson.correspondenceJ c | None -> "null"
 
     let private pinPhaseTag = function
         | PinPhase.Placement -> "placement"
@@ -102,9 +76,9 @@ module Persistence =
             p.DatasetColors |> Map.toSeq
             |> Seq.map (fun (k, v) -> sprintf "%s:%s" (q k) (c4bJ v))
             |> String.concat ","
-        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"payload\":%s,\"host\":%s,\"colors\":{%s},\"camera\":%s,\"createdAt\":%s,\"probeLen\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
+        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"rel\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"camera\":%s,\"createdAt\":%s,\"probeLen\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
             (q (guid.ToString())) (pinPhaseTag p.Phase) (v3 p.Centre)
-            (f p.InnerRadius) (f p.FalloffRadius) (payloadJ p.Payload)
+            (f p.InnerRadius) (f p.FalloffRadius) (f p.ReliabilityWeight) (corrJ p.Correspondence)
             (match p.HostMeshName with Some n -> q n | None -> "null")
             colors (camSnapJ p.CreationCameraState) (q (p.CreatedAt.ToString("O")))
             (match p.ProbeLengthOverride with Some l -> f l | None -> "null")
@@ -200,45 +174,24 @@ module Persistence =
         | true, v -> Some v
         | _       -> None
 
-    let private rLineMode (e : JsonElement) =
-        match e.GetProperty("k").GetString() with
-        | "ridge" -> CurvatureRidge
-        | _ -> ElevationIsoline (e.GetProperty("e").GetDouble())
-    let private rPayload (e : JsonElement) =
-        match e.GetProperty("k").GetString() with
-        | "point" ->
-            let corr =
-                match tryProp "corr" e with
-                | Some v when v.ValueKind <> JsonValueKind.Null -> Some (RegJson.readCorrespondence v)
-                | _ -> None
-            Point { ReliabilityWeight = e.GetProperty("rel").GetDouble(); Correspondence = corr }
-        | "line" ->
-            let mode = rLineMode (e.GetProperty("mode"))
-            let pts = e.GetProperty("pts").EnumerateArray() |> Seq.map rV3 |> Array.ofSeq
-            let scs = e.GetProperty("scs").EnumerateArray() |> Seq.map (fun x -> x.GetDouble()) |> Array.ofSeq
-            let traces =
-                e.GetProperty("traces").EnumerateArray() |> Seq.map (fun t ->
-                    let m = t.GetProperty("mesh").GetString()
-                    let ps = t.GetProperty("pts").EnumerateArray() |> Seq.map rV3 |> Array.ofSeq
-                    let ss = t.GetProperty("scs").EnumerateArray() |> Seq.map (fun x -> x.GetDouble()) |> Array.ofSeq
-                    m, (ps, ss))
-                |> Map.ofSeq
-            Line { Mode = mode; Points = pts; ScalarVals = scs; CrossMeshTraces = traces }
+    // Reliability + correspondence, read from the new flat fields and falling
+    // back to a legacy "payload" object (only its point fields survive — the
+    // removed line/patch payloads load as a plain pin).
+    let private rReliability (e : JsonElement) =
+        match tryProp "rel" e with
+        | Some v when v.ValueKind = JsonValueKind.Number -> v.GetDouble()
         | _ ->
-            let pts =
-                e.GetProperty("pts").EnumerateArray() |> Seq.map (fun p ->
-                    let a = p.EnumerateArray() |> Seq.map (fun x -> x.GetDouble()) |> Array.ofSeq
-                    V2d(a.[0], a.[1]), V3d(a.[2], a.[3], a.[4]))
-                |> Array.ofSeq
-            Patch {
-                CenterOnMesh = rV3 (e.GetProperty("center"))
-                Radius = e.GetProperty("r").GetDouble()
-                SourceMeshName = e.GetProperty("src").GetString()
-                ProjectedPoints = pts
-                CompassNorth = rV2 (e.GetProperty("north"))
-                RefDirWorld = rV3 (e.GetProperty("refDir"))
-                NormalWorld = rV3 (e.GetProperty("normal"))
-            }
+            match tryProp "payload" e |> Option.bind (tryProp "rel") with
+            | Some v when v.ValueKind = JsonValueKind.Number -> v.GetDouble()
+            | _ -> 1.0
+    let private rCorrespondence (e : JsonElement) =
+        let fromObj o =
+            match tryProp "corr" o with
+            | Some v when v.ValueKind <> JsonValueKind.Null -> Some (RegJson.readCorrespondence v)
+            | _ -> None
+        match fromObj e with
+        | Some c -> Some c
+        | None -> tryProp "payload" e |> Option.bind fromObj
     let private rPin (e : JsonElement) =
         let idStr = e.GetProperty("id").GetString()
         let id = ScanPinId.ScanPinId (Guid.Parse idStr)
@@ -278,7 +231,8 @@ module Persistence =
             Centre = rV3 (e.GetProperty("centre"))
             InnerRadius = e.GetProperty("inner").GetDouble()
             FalloffRadius = e.GetProperty("falloff").GetDouble()
-            Payload = rPayload (e.GetProperty("payload"))
+            ReliabilityWeight = rReliability e
+            Correspondence = rCorrespondence e
             HostMeshName = host
             CreationCameraState = cam
             CreatedAt = createdAt

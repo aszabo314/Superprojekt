@@ -45,19 +45,6 @@ module Query =
                 return None
         }
 
-    let isoline (serverUrl : string) (name : string) (elevation : float) (seed : V3d) (maxPoints : int) : Async<V3d[]> =
-        async {
-            let json = sprintf """{"name":"%s","elevation":%.17g,"seed":%s,"maxPoints":%d}"""
-                        name elevation (v3 seed) maxPoints
-            let! r = post serverUrl "/query/isoline" json
-            let pts =
-                r.GetProperty("polyline").EnumerateArray() |> Seq.map (fun e ->
-                    let a = e.EnumerateArray() |> Seq.map (fun v -> v.GetDouble()) |> Seq.toArray
-                    V3d(a.[0], a.[1], a.[2])
-                ) |> Seq.toArray
-            return pts
-        }
-
     let runIcp
             (serverUrl : string)
             (referenceName : string) (movingName : string)
@@ -182,38 +169,6 @@ module Query =
                 let a = r.GetProperty(prop).EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                 V3d(a.[0], a.[1], a.[2])
             return pts, tris, readVec "refDir", readVec "normal"
-        }
-
-    let patch (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int) : Async<(V2d * V3d)[] * V3d * V3d> =
-        async {
-            let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d}"""
-                        name (v3 centre) radius maxPoints
-            let! r = post serverUrl "/query/patch" json
-            let pts =
-                r.GetProperty("points").EnumerateArray() |> Seq.map (fun e ->
-                    let a = e.EnumerateArray() |> Seq.map (fun v -> v.GetDouble()) |> Seq.toArray
-                    V2d(a.[0], a.[1]), V3d(a.[2], a.[3], a.[4])
-                ) |> Seq.toArray
-            let readVec (prop : string) =
-                let a = r.GetProperty(prop).EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                V3d(a.[0], a.[1], a.[2])
-            return pts, readVec "refDir", readVec "normal"
-        }
-
-    let curvatureRidge (serverUrl : string) (name : string) (seed : V3d) (thresholdRad : float) (maxPoints : int) : Async<V3d[] * float[]> =
-        async {
-            let json = sprintf """{"name":"%s","seed":%s,"thresholdRad":%.17g,"maxPoints":%d}"""
-                        name (v3 seed) thresholdRad maxPoints
-            let! r = post serverUrl "/query/curvature-ridge" json
-            let pts =
-                r.GetProperty("polyline").EnumerateArray() |> Seq.map (fun e ->
-                    let a = e.EnumerateArray() |> Seq.map (fun v -> v.GetDouble()) |> Seq.toArray
-                    V3d(a.[0], a.[1], a.[2])
-                ) |> Seq.toArray
-            let scalars =
-                r.GetProperty("scalars").EnumerateArray() |> Seq.map (fun e -> e.GetDouble())
-                |> Seq.toArray
-            return pts, scalars
         }
 
     // Sphere–surface contact rings; centre is in the mesh's own (untransformed)

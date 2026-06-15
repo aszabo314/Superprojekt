@@ -223,8 +223,8 @@ module StudyUpdate =
                         | OrbitMessage.PointerUp _ | OrbitMessage.Wheel _) -> Some "navigation"
         | SetActivePickingLayer (Some _) -> Some "layerCycle"
         | ScanPinMsg (EnterAnchorPlacement | PlaceAnchor _ | CommitPin) -> Some "pinPlace"
-        | ScanPinMsg (SetInnerRadius _ | SetFalloffDelta _ | ChangePayloadType _
-                     | SetReliabilityWeight _ | SetLineMode _ | SetProbeLength _
+        | ScanPinMsg (SetInnerRadius _ | SetFalloffDelta _
+                     | SetReliabilityWeight _ | SetProbeLength _
                      | ToggleProbeLockOrder _ | SetProbeXRange _ | DeletePin _) -> Some "pinEdit"
         | EditPin _ -> Some "pinEdit"
         | CardMsg (CreateCardsForPin _) -> Some "pinCard"

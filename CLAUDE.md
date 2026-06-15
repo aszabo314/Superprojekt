@@ -2,7 +2,7 @@
 
 Research prototype for interactive 3D mesh/pointcloud visualisation. Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, closest-point, multi-mesh raycasts, isolines, curvature ridges, surface patches, ICP). Runs on `http://localhost:5000` and also hosts the WASM client.
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, closest-point, multi-mesh raycasts, surface patches, sphere contact rings, ICP). Runs on `http://localhost:5000` and also hosts the WASM client.
 - **Superprojekt** — Blazor WASM client. Aardvark.Dom Elm-style architecture, WebGL2 rendering. Must work on desktop and mobile; the client stays thin and pushes heavy compute to the server.
 
 See `README.md` for what the app does and how to run it.
@@ -104,7 +104,7 @@ For scene graph nodes (`Sg.Text`, `sg { ... }`), this matters even more: rebuild
 
 ## Server query performance
 
-Costly spatial queries (`isoline`, `curvature-ridge`, `icp`) scale with mesh count and sample density. Rules of thumb:
+Costly spatial queries (`probe`, `contact-rings`, `icp`) scale with mesh count and sample density. Rules of thumb:
 
 - **Never issue per-mesh requests sequentially.** Use `Query.rayHitMany` (parallel fan-out) for multi-mesh raycasts; if a multi-mesh operation becomes hot, add a batched server endpoint with `Parallel.For` fan-out instead.
 - **Parallelise the heavy inner loop server-side** when inputs are independent. Embree `Scene.Intersect` is thread-safe.
@@ -126,7 +126,7 @@ StudyModel.fs                   ← study-mode shared types: config DTOs + parse
 StudyApi.fs                     ← /api/study/* HTTP wrappers + StudyBoot.entryToken
 StudyTelemetry.fs               ← telemetry batcher (module-level queue, 5 s/50-event flush, backoff, throttling)
 ScanPinModel.fs / .g.fs         ← ScanPin + Card types
-PinGeometry.fs                  ← icosphere, sphere outline, patch footprint
+PinGeometry.fs                  ← icosphere, sphere outline
 Model.fs / .g.fs                ← [<ModelType>] Model + DatasetScale helpers
 Persistence.fs                  ← workspace JSON serialise / apply
 LineShader.fs                   ← Shader.flatColor + Lines (pixel-constant 3D lines)
@@ -154,7 +154,7 @@ ShaderCache.fs / Program.fs
 ```
 MeshLoader.fs          OBJ parse, centroid file, atlas paths
 MeshCache.fs           Embree scene + BbTree cache (lazy, permanent)
-MeshAnalysis.fs        isoline + curvature-ridge tracing, patch sampling
+MeshAnalysis.fs        sphere contact-ring tracing, patch sampling
 MeshProbe.fs           N-mesh M3C2 probe (normal PCA, cylinder sampling, KDE, three sources)
 MeshIcp.fs             ICP solver (recentred Gauss-Newton, trimmed correspondences)
 RegMath.fs             weighted Umeyama rigid landmark solve (Jacobi SVD, conditioning)
@@ -178,9 +178,7 @@ GET  /api/datasets/{dataset}/mesh/{name}/{i}    → binary mesh
 GET  /api/datasets/{dataset}/mesh/{name}/{i}/atlas → JPEG
 POST /api/query/ray                             → { hit, t, point, triangleId }   Name = "dataset/mesh"
 POST /api/query/closest                         → { found, point, distanceSquared, triangleId }
-POST /api/query/isoline                         → polyline at a given elevation
-POST /api/query/curvature-ridge                 → polyline along a curvature ridge
-POST /api/query/patch                           → tangent + normal at a point, plus neighbour sample (optional frameNormal/frameRefDir override skips the plane fit; points carry per-vertex atlas UVs; optional triangles flag → planar projection + triangle index triples + nearest-by-geodesic cap instead of geodesic-polar + stride decimation)
+POST /api/query/patch                           → tangent + normal at a point, plus neighbour sample (optional frameNormal/frameRefDir override skips the plane fit; points carry per-vertex atlas UVs; optional triangles flag → planar projection + triangle index triples + nearest-by-geodesic cap instead of geodesic-polar + stride decimation). Used by the patch small-multiples anchor picker.
 POST /api/query/contact-rings                   → sphere–surface intersection polylines (all rings, closed rings repeat the first point)
 POST /api/query/icp                             → ICP transform + convergence + residuals
 POST /api/query/lsq-pairs                       → weighted rigid landmark solve (delta onto reference + per-pair residuals + conditioning; 400 on <3 pairs)
@@ -193,7 +191,7 @@ POST /api/study/{studyId}/tokens                → localhost-only token generat
 
 All query coordinates are **absolute world space**. The server converts: `localPos = V3f(worldPos - meshCentroid)`.
 
-Removed for lack of consumers (don't re-add without one): sphere / box / sphere-batch (old per-vertex filter), ray-batch, grid-eval. Multi-mesh raycasts go through `Query.rayHitMany` (client-side `Async.Parallel` over `/query/ray`).
+Removed for lack of consumers (don't re-add without one): sphere / box / sphere-batch (old per-vertex filter), ray-batch, grid-eval, isoline, curvature-ridge (the last two went with the Line pin payload). Multi-mesh raycasts go through `Query.rayHitMany` (client-side `Async.Parallel` over `/query/ray`).
 
 ## Client Model snapshot
 
@@ -225,15 +223,15 @@ GUI placement:
 
 ## ScanPin system
 
-A ScanPin is a 3D annotation in **metric world-space**: `Centre : V3d` (world metres), `InnerRadius : float` (hard truth — α = 1 and full evaluation weight inside; metres), `FalloffRadius : float` (exponential decay to ~0 by this distance; metres). InnerRadius and FalloffRadius are independent — `GhostOpacity` and falloff slider changes never move the inner radius. The placement flyout exposes inner radius directly and the falloff as a *relative* slider whose value is the delta `FalloffRadius - InnerRadius`; moving the inner slider preserves that delta. Pins drive the per-pixel blob in the mesh shader (`Blobs` + `BlobFalloffs` uniforms) and can host a `Point` / `Line` / `Patch` payload.
+A ScanPin is a 3D annotation in **metric world-space**: `Centre : V3d` (world metres), `InnerRadius : float` (hard truth — α = 1 and full evaluation weight inside; metres), `FalloffRadius : float` (exponential decay to ~0 by this distance; metres). InnerRadius and FalloffRadius are independent — `GhostOpacity` and falloff slider changes never move the inner radius. The placement flyout exposes inner radius directly and the falloff as a *relative* slider whose value is the delta `FalloffRadius - InnerRadius`; moving the inner slider preserves that delta. Pins drive the per-pixel blob in the mesh shader (`Blobs` + `BlobFalloffs` uniforms). A pin carries `ReliabilityWeight` + an optional `Correspondence` directly (the old `Point`/`Line`/`Patch` payload DU was removed — every pin is the former Point: an M3C2 probe + optional registration correspondence).
 
-Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc scale` and `ScanPin.renderLength scale` in `ScanPinModel.fs`. `MeshView.buildScene` projects centres/radii to render-space on upload; `ScanPinScene.fs` does the same for marker dots, spheres, outline, patch footprint. The `Cards.projectToScreen` anchor is stashed in render-space by `ScanPinUpdate.handleMsg`. Camera focus (`OrbitMessage.SetTargetCenter`) takes render-space coords too.
+Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc scale` and `ScanPin.renderLength scale` in `ScanPinModel.fs`. `MeshView.buildScene` projects centres/radii to render-space on upload; `ScanPinScene.fs` does the same for marker dots, spheres, outline. The `Cards.projectToScreen` anchor is stashed in render-space by `ScanPinUpdate.handleMsg`. Camera focus (`OrbitMessage.SetTargetCenter`) takes render-space coords too.
 
-**Placement workflow:** Top-bar **○ Pin** toggles placement. After click-placement the pin enters `AdjustingPin` state with a flyout for radius / sigma / payload-type fine-tuning. Commit / Discard / Escape end placement.
+**Placement workflow:** Top-bar **○ Pin** toggles placement. After click-placement the pin enters `AdjustingPin` state with a flyout for position (X/Y/Z fields) / inner radius / falloff / reliability / probe-cylinder length. Commit / Discard / Escape end placement.
 
 **State:** `Placement : PlacementState` single DU on `ScanPinModel` — `PlacementIdle | AnchorPlacement | AdjustingPin of ScanPinId`. Helpers: `ScanPinModel.activePlacementId sp`, `ScanPinModel.isPlacing sp`.
 
-**M3C2 probe**: every Point-payload pin owns `Probe : ProbeState` (`ProbeNone | ProbeRunning | ProbeReady of ProbeResult | ProbeError`), plus `ProbeLengthOverride` (None = server auto-length), `ProbeLockOrder`, `ProbeXRange`. The probe samples all visible meshes inside a cylinder (radius = InnerRadius, axis = PCA normal of the reference mesh inside the pin sphere) on the server (`POST /api/query/probe`, one batched round-trip carrying world-space registration transforms) and returns per-mesh signed-distance distributions (median/IQR/std/KDE, re-centred so 0 = reference median) plus the dataset/algorithm/conditioning decomposition. Computation is **lazy + debounced**: `ScanPinUpdate.ensureProbe` runs as a postlude after every reducer step and launches one 250 ms-debounced query for the effective (card-open) pin when its state is `ProbeNone`; invalidation just resets to `ProbeNone` (radius change, centre move, payload change, reference change, transforms, visibility, length override). Stale responses are dropped by the `ProbeRunning` guard. The pin card renders the **vertical violin chart** (signed distance on the y axis, positive up, 0 = reference median, one column per mesh with median tick / IQR whisker / count badge, y-range presets, lock-order toggle) + planarity badge + three-source stacked bar from `ProbeReady` data (`CardsPin.ridgelineJs`, shared with the Ctrl-click hover-probe tooltip via the `d.mini` flag).
+**M3C2 probe**: every pin owns `Probe : ProbeState` (`ProbeNone | ProbeRunning | ProbeReady of ProbeResult | ProbeError`), plus `ProbeLengthOverride` (None = server auto-length), `ProbeLockOrder`, `ProbeXRange`. The probe samples all visible meshes inside a cylinder (radius = InnerRadius, axis = PCA normal of the reference mesh inside the pin sphere) on the server (`POST /api/query/probe`, one batched round-trip carrying world-space registration transforms) and returns per-mesh signed-distance distributions (median/IQR/std/KDE, re-centred so 0 = reference median) plus the dataset/algorithm/conditioning decomposition. Computation is **lazy + debounced**: `ScanPinUpdate.ensureProbe` runs as a postlude after every reducer step and launches one 250 ms-debounced query for the effective (card-open) pin when its state is `ProbeNone`; invalidation just resets to `ProbeNone` (radius change, centre move, payload change, reference change, transforms, visibility, length override). Stale responses are dropped by the `ProbeRunning` guard. The pin card renders the **vertical violin chart** (signed distance on the y axis, positive up, 0 = reference median, one column per mesh with median tick / IQR whisker / count badge, y-range presets, lock-order toggle) + planarity badge + three-source stacked bar from `ProbeReady` data (`CardsPin.ridgelineJs`, shared with the Ctrl-click hover-probe tooltip via the `d.mini` flag).
 
 **Chart 2D-3D linking** (accent `#0891b2`, deliberately distinct from the mesh palette):
 - *Chart → 3D elevation cursor*: hovering the chart plot at signed distance `d` renders a translucent disk orthogonal to the **probe axis** (not world-up — they only coincide for heightfields) at `centre + d·axis`, radius = InnerRadius; Alt extends it to scene bounds. State = `Model.ChartCursor`, drawn in `ScanPinScene`, gated on the cursor pin's card being open + `ProbeReady`.
@@ -242,9 +240,9 @@ Render-space conversions happen at pipeline boundaries: `ScanPin.renderCentre cc
 - *Column highlight*: hovering a column ghosts every other mesh at fixed α 0.2 (`MeshActive=false` + `GhostOpacity=0.2` overrides in `MeshView.buildScene`, independent of the GhostSilhouette toggle); clicking makes it sticky (`Model.ChartStickyMesh`, thick border in the chart, toggled off by re-click / another column / any click outside the chart via a document-level listener installed by the chart JS).
 - *JS → Elm event bus*: the chart JS has no `env` — it hit-tests locally (exact even when the chart scrolls horizontally) and posts `mv|d|alt|mesh` / `out` / `click|mesh` / `clickout` strings to the hidden `.pc-ridge-bus` input via synthetic `input` events, which `Dom.OnInput` picks up and converts to messages. Pointer-move payloads are rAF-coalesced and deduped.
 
-**3D rendering** (`ScanPinScene.fs`): `pinDots` clickable markers, `pinRings` draws the pin's influence as thin curves in the pin's categorical colour (host-mesh palette colour, `#1a56db` fallback) — an equator ring (parametric circle ⊥ `ScanPin.axis`, radius = InnerRadius) plus the cached sphere–surface **contact rings** per *visible* mesh; α 0.6 / 1.5 px unselected, α 1.0 / 2.5 px selected, normal depth testing (occlusion is the spatial cue). There are **no filled translucent shells** any more; the white FalloffRadius outline only renders during `AdjustingPin` as slider feedback. `pinLines` for Line payloads, `pinPatchRings` for Patch payloads, `ghostPreview` for the placement hover.
+**3D rendering** (`ScanPinScene.fs`): `pinDots` clickable markers, `pinRings` draws the pin's influence as thin curves in the pin's categorical colour (host-mesh palette colour, `#1a56db` fallback) — an equator ring (parametric circle ⊥ `ScanPin.axis`, radius = InnerRadius) plus the cached sphere–surface **contact rings** per *visible* mesh; α 0.6 / 1.5 px unselected, α 1.0 / 2.5 px selected, normal depth testing (occlusion is the spatial cue). There are **no filled translucent shells** any more; the white FalloffRadius outline only renders during `AdjustingPin` as slider feedback. `ghostPreview` for the placement hover.
 
-**Contact rings**: every pin caches `ContactRings : ContactRingState` (`RingsNone | RingsRunning | RingsReady of Map<mesh, V3d[][]>`, registered world-space metres). `ScanPinUpdate.ensureRings` runs as a postlude after every reducer step (next to `ensureProbe`) and launches one 250 ms-debounced per-pin fan-out of `POST /api/query/contact-rings` over **all** meshes (visibility only gates rendering, so toggling a mesh never recomputes); per-pin `CancellationTokenSource`s let several pins recompute concurrently after a registration. Registration transforms are rigid, so the client inverse-transforms the sphere centre into each mesh's own frame and maps the returned rings back. Invalidation → `RingsNone`: radius change, retarget centre move, `RegistrationComplete` / `ResetMeshTransforms` (`ScanPinModel.invalidateRings` — deliberately *not* applied on visibility changes, unlike `invalidateProbes`). The server (`MeshAnalysis.contactRings`) marches the level set of `|p − c| − r` over BVH-candidate triangles with the same edge-key linking as the isoline tracer (exact quadratic edge–sphere roots; closed rings repeat their first point so there is no gap).
+**Contact rings**: every pin caches `ContactRings : ContactRingState` (`RingsNone | RingsRunning | RingsReady of Map<mesh, V3d[][]>`, registered world-space metres). `ScanPinUpdate.ensureRings` runs as a postlude after every reducer step (next to `ensureProbe`) and launches one 250 ms-debounced per-pin fan-out of `POST /api/query/contact-rings` over **all** meshes (visibility only gates rendering, so toggling a mesh never recomputes); per-pin `CancellationTokenSource`s let several pins recompute concurrently after a registration. Registration transforms are rigid, so the client inverse-transforms the sphere centre into each mesh's own frame and maps the returned rings back. Invalidation → `RingsNone`: radius change, retarget centre move, `RegistrationComplete` / `ResetMeshTransforms` (`ScanPinModel.invalidateRings` — deliberately *not* applied on visibility changes, unlike `invalidateProbes`). The server (`MeshAnalysis.contactRings`) marches the level set of `|p − c| − r` over BVH-candidate triangles with marching-squares edge linking (exact quadratic edge–sphere roots; closed rings repeat their first point so there is no gap).
 
 ## Registration (ensemble workflow)
 
@@ -278,7 +276,7 @@ The lasso never affects registration — it is purely visual. Workspace JSON v2 
 - **Panorama viewpoints are synthetic** — one pose per dataset at the scene-bbox centre (`Update.fs`, `SceneBoundsLoaded`); the panel renders live cubemap captures reprojected cylindrically. If real imagery + poses arrive, swap the pose generation and add a Photo texture source.
 - **Workspace persistence is a JSON download / upload** through the browser (`Persistence.fs`); no server-side store. Panoramas are not persisted.
 - **Fusion picking is a CPU raycast** over visible meshes keeping the lowest-error hit (matches the depth-test winner).
-- **Removed features — don't resurrect from old branches**: Explore mode, point-pair registration, residual histogram, per-vertex filter endpoints.
+- **Removed features — don't resurrect from old branches**: Explore mode, point-pair registration, residual histogram, per-vertex filter endpoints, the pin **Line / Patch payload modes** (every pin is now the former Point: probe + correspondence; no payload-type selector — `ScanPin` carries `ReliabilityWeight` + `Correspondence` directly). The **patch small-multiples anchor picker** (`/query/patch`, `PatchPickerState`) is a separate registration feature and stays.
 
 ## Aardvark.Dom gotchas
 

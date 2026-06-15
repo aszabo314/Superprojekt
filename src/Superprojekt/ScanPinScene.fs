@@ -325,90 +325,6 @@ module ScanPinScene =
                 }
             ]
 
-        let inline colorForMesh (mesh : string) (palette : Map<string, C4b>) (selected : bool) (isHost : bool) =
-            if selected && isHost then V4d(1.0, 0.9, 0.0, 0.98)
-            else
-                match Map.tryFind mesh palette with
-                | Some c -> V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 0.95)
-                | None -> V4d(0.1, 0.34, 0.86, 0.95)
-
-        let pinLines =
-            pinIdSet |> ASet.map (fun id ->
-                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
-                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
-                let active = (notFullscreen, isSelected) ||> AVal.map2 (&&)
-                let traces =
-                    pinVal |> AVal.map (fun po ->
-                        match po with
-                        | Some p ->
-                            match p.Payload, p.HostMeshName with
-                            | Line lp, hostOpt ->
-                                let host = hostOpt |> Option.defaultValue ""
-                                let palette = p.DatasetColors
-                                let pairs = ResizeArray<string * V3d[] * bool>()
-                                pairs.Add(host, lp.Points, true)
-                                for kv in lp.CrossMeshTraces do
-                                    pairs.Add(kv.Key, fst kv.Value, false)
-                                palette, pairs.ToArray()
-                            | _ -> Map.empty, [||]
-                        | None -> Map.empty, [||])
-                let ccScale =
-                    (model.CommonCentroid, datasetScale) ||> AVal.map2 (fun cc s -> cc, s)
-                let segs =
-                    (traces, isSelected, ccScale) |||> AVal.map3 (fun (palette, lines) sel (cc, scale) ->
-                        let out = ResizeArray<V3d * V3d * V4d * float>()
-                        for (mesh, pts, isHost) in lines do
-                            if pts.Length >= 2 then
-                                let color = colorForMesh mesh palette sel isHost
-                                let rps = pts |> Array.map (fun p -> (p - cc) * scale)
-                                for i in 0 .. rps.Length - 2 do
-                                    out.Add(rps.[i], rps.[i + 1], color, 2.0)
-                        out.ToArray())
-                sg {
-                    Sg.Active active
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Lines.render segs
-                })
-
-        let pinPatchRings =
-            pinIdSet |> ASet.map (fun id ->
-                let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
-                let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
-                let active = (notFullscreen, isSelected) ||> AVal.map2 (&&)
-                let segs =
-                    (pinVal, model.CommonCentroid, datasetScale)
-                    |||> AVal.map3 (fun po cc scale ->
-                        match po with
-                        | Some p ->
-                            match p.Payload with
-                            | Patch pp ->
-                                let centreRender = ScanPin.renderCentre cc scale p.Centre
-                                let radiusRender = pp.Radius
-                                let color =
-                                    match p.HostMeshName with
-                                    | Some host ->
-                                        match Map.tryFind host p.DatasetColors with
-                                        | Some c -> V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 0.95)
-                                        | None -> V4d(0.1, 0.34, 0.86, 0.95)
-                                    | None -> V4d(0.1, 0.34, 0.86, 0.95)
-                                PinGeometry.buildPatchFootprint
-                                    centreRender radiusRender
-                                    pp.RefDirWorld pp.NormalWorld
-                                    color 1.5
-                            | _ -> [||]
-                        | None -> [||])
-                sg {
-                    Sg.Active active
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Lines.render segs
-                })
-
         let ghostPreview =
             let defaultR =
                 model.SceneBounds |> AVal.map (fun b ->
@@ -756,4 +672,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinLines; pinPatchRings; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; reviewCandidates; patchLink; studyFlags])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; reviewCandidates; patchLink; studyFlags])

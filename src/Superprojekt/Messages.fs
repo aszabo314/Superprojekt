@@ -165,13 +165,7 @@ and ScanPinMessage =
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
     | FocusPin of ScanPinId
-    | ChangePayloadType of ScanPinId * PayloadKind
     | SetReliabilityWeight of ScanPinId * float
-    | SetLineMode of ScanPinId * LineMode
-    | IsolineComputed of ScanPinId * V3d[] * elevation:float
-    | RidgeComputed of ScanPinId * V3d[] * scalars:float[]
-    | LineCrossMeshComputed of ScanPinId * meshName:string * V3d[] * scalars:float[]
-    | PatchComputed of ScanPinId * (V2d * V3d)[] * refDir:V3d * normal:V3d
     | ProbeComputed of ScanPinId * ProbeResult
     | ProbeFailed of ScanPinId * string
     | ProbePreviewComputed of ScanPinId * ProbeResult

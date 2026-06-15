@@ -376,13 +376,7 @@ module CardsPin =
         | _ -> None
 
     let pinCardBody (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) (hoverWorld : aval<V3d option>) (patchHover : cval<PatchHover option>) =
-        let payloadKind =
-            selectedPin |> AVal.map (function
-                | Some p -> Some (PayloadType.kind p.Payload)
-                | None -> None)
-        let isPoint = payloadKind |> AVal.map ((=) (Some PointKind))
-        let isLine  = payloadKind |> AVal.map ((=) (Some LineKind))
-        let isPatch = payloadKind |> AVal.map ((=) (Some PatchKind))
+        let isPoint = AVal.constant true
         let showOnly = Primitives.showWhen
 
         let centreText = selectedPin |> AVal.map (function
@@ -395,10 +389,7 @@ module CardsPin =
             | Some p -> sprintf "%.2f m" p.FalloffRadius
             | None -> "—")
         let reliability = selectedPin |> AVal.map (function
-            | Some p ->
-                match p.Payload with
-                | Point pp -> pp.ReliabilityWeight
-                | _ -> 1.0
+            | Some p -> p.ReliabilityWeight
             | None -> 1.0)
         let onReliabilityChange v =
             match AVal.force selectedPin with
@@ -433,7 +424,7 @@ module CardsPin =
                 // x-range / lock-order controls, three-source stacked bar.
                 let probe =
                     selectedPin |> AVal.map (function
-                        | Some p -> (match p.Payload with Point _ -> Some p.Probe | _ -> None)
+                        | Some p -> Some p.Probe
                         | None -> None)
                 let probeResult =
                     probe |> AVal.map (function
@@ -450,18 +441,15 @@ module CardsPin =
                     (selectedPin, model.ChartStickyMesh, previewSplit) |||> AVal.map3 (fun po sticky pv ->
                         match po with
                         | Some pin ->
-                            match pin.Payload with
-                            | Point _ ->
-                                // Split violin while a solve preview is
-                                // pending and the preview probe is in.
-                                let preview =
-                                    if pv then
-                                        match pin.ProbePreview with
-                                        | ProbeReady r -> Some r
-                                        | _ -> None
-                                    else None
-                                probeStateJson false pin.ProbeLockOrder pin.ProbeXRange sticky pin.DatasetColors preview pin.Probe
-                            | _ -> "{\"status\":\"none\"}"
+                            // Split violin while a solve preview is pending and
+                            // the preview probe is in.
+                            let preview =
+                                if pv then
+                                    match pin.ProbePreview with
+                                    | ProbeReady r -> Some r
+                                    | _ -> None
+                                else None
+                            probeStateJson false pin.ProbeLockOrder pin.ProbeXRange sticky pin.DatasetColors preview pin.Probe
                         | None -> "{\"status\":\"none\"}")
                 // 3D → chart: the elevation cursor line at the 3D hover
                 // point's signed distance along the probe axis, shown only
@@ -1186,242 +1174,4 @@ module CardsPin =
                 }
             }
 
-            let lineStateJson =
-                selectedPin |> AVal.map (function
-                    | Some pin ->
-                        match pin.Payload with
-                        | Line lp ->
-                            let modeLabel =
-                                match lp.Mode with
-                                | ElevationIsoline _ -> "Elevation"
-                                | CurvatureRidge -> "Ridge dihedral"
-                            let traces = ResizeArray<string * V3d[] * float[] * string * bool>()
-                            let palette = pin.DatasetColors
-                            let colorHex (name : string) =
-                                match Map.tryFind name palette with
-                                | Some c -> c4bToHex c
-                                | None -> "#1a56db"
-                            let host = pin.HostMeshName |> Option.defaultValue ""
-                            traces.Add(host, lp.Points, lp.ScalarVals, colorHex host, true)
-                            for kv in lp.CrossMeshTraces do
-                                let mesh = kv.Key
-                                let pts, sc = kv.Value
-                                traces.Add(mesh, pts, sc, colorHex mesh, false)
-                            let traces =
-                                traces |> Seq.filter (fun (_, pts, _, _, _) -> pts.Length >= 2)
-                                       |> Array.ofSeq
-                            if traces.Length = 0 then "{}"
-                            else
-                                let sb = System.Text.StringBuilder()
-                                sb.Append("{\"mode\":\"") |> ignore
-                                sb.Append(modeLabel) |> ignore
-                                sb.Append("\",\"traces\":[") |> ignore
-                                for ti in 0 .. traces.Length - 1 do
-                                    if ti > 0 then sb.Append(',') |> ignore
-                                    let (mesh, pts, scalars, color, isHost) = traces.[ti]
-                                    let n = pts.Length
-                                    let arc = Array.zeroCreate<float> n
-                                    for i in 1 .. n - 1 do
-                                        arc.[i] <- arc.[i - 1] + (pts.[i] - pts.[i - 1]).Length
-                                    sb.Append("{\"mesh\":\"") |> ignore
-                                    sb.Append(shortName mesh) |> ignore
-                                    sb.Append("\",\"color\":\"") |> ignore
-                                    sb.Append(color) |> ignore
-                                    sb.Append("\",\"host\":") |> ignore
-                                    sb.Append(if isHost then "true" else "false") |> ignore
-                                    sb.Append(",\"pts\":[") |> ignore
-                                    for i in 0 .. n - 1 do
-                                        if i > 0 then sb.Append(',') |> ignore
-                                        let s = if i < scalars.Length then scalars.[i] else 0.0
-                                        sb.Append(sprintf "[%.3f,%.3f]" arc.[i] s) |> ignore
-                                    sb.Append("]}") |> ignore
-                                sb.Append("]}") |> ignore
-                                sb.ToString()
-                        | _ -> "{}"
-                    | None -> "{}")
-            div {
-                Class "pin-card-section pin-card-line"
-                showOnly isLine
-                lineStateJson |> AVal.map (fun j -> Some (Attribute("data-line", j)))
-                Primitives.observedRender "data-line" "{}" [
-                    "  if(!d.traces || d.traces.length === 0){"
-                    "    var p = document.createElement('div');"
-                    "    p.className = 'pin-card-empty';"
-                    "    p.textContent = 'Tracing…';"
-                    "    el.appendChild(p);"
-                    "    return;"
-                    "  }"
-                    "  var w = 280, h = 130, padL = 38, padR = 6, padT = 6, padB = 38;"
-                    "  var iw = w - padL - padR, ih = h - padT - padB;"
-                    "  var xMax = 0, yMin = Infinity, yMax = -Infinity;"
-                    "  d.traces.forEach(function(t){"
-                    "    t.pts.forEach(function(p){"
-                    "      if(p[0] > xMax) xMax = p[0];"
-                    "      if(p[1] < yMin) yMin = p[1];"
-                    "      if(p[1] > yMax) yMax = p[1];"
-                    "    });"
-                    "  });"
-                    "  if(yMax - yMin < 0.001){ var c = (yMax + yMin)/2; yMin = c - 0.5; yMax = c + 0.5; }"
-                    "  if(xMax < 0.001) xMax = 1.0;"
-                    "  var sx = function(v){ return padL + v / xMax * iw; };"
-                    "  var sy = function(v){ return padT + ih - (v - yMin)/(yMax - yMin) * ih; };"
-                    "  var svg = document.createElementNS(ns,'svg');"
-                    "  svg.setAttribute('class','line-plot');"
-                    "  svg.setAttribute('width', w); svg.setAttribute('height', h);"
-                    "  svg.setAttribute('viewBox', '0 0 ' + w + ' ' + h);"
-                    "  var frame = document.createElementNS(ns,'rect');"
-                    "  frame.setAttribute('x', padL); frame.setAttribute('y', padT);"
-                    "  frame.setAttribute('width', iw); frame.setAttribute('height', ih);"
-                    "  frame.setAttribute('fill','#f8fafc'); frame.setAttribute('stroke','#cbd5e1');"
-                    "  frame.setAttribute('stroke-width','1');"
-                    "  svg.appendChild(frame);"
-                    "  d.traces.forEach(function(tr){"
-                    "    var pl = document.createElementNS(ns,'polyline');"
-                    "    pl.setAttribute('points', tr.pts.map(function(p){return sx(p[0])+','+sy(p[1]);}).join(' '));"
-                    "    pl.setAttribute('stroke', tr.color);"
-                    "    pl.setAttribute('stroke-width', tr.host ? '1.8' : '1.2');"
-                    "    pl.setAttribute('stroke-opacity', tr.host ? '1.0' : '0.85');"
-                    "    pl.setAttribute('fill','none');"
-                    "    svg.appendChild(pl);"
-                    "  });"
-                    "  function txt(x,y,s,anchor,color){"
-                    "    var t = document.createElementNS(ns,'text');"
-                    "    t.setAttribute('x', x); t.setAttribute('y', y);"
-                    "    t.setAttribute('text-anchor', anchor || 'middle');"
-                    "    t.setAttribute('font-family','SF Mono, Monaco, monospace');"
-                    "    t.setAttribute('font-size','9');"
-                    "    t.setAttribute('fill', color || '#475569');"
-                    "    t.textContent = s; return t;"
-                    "  }"
-                    "  svg.appendChild(txt(padL - 4, padT + 8, yMax.toFixed(1)));"
-                    "  svg.appendChild(txt(padL - 4, padT + ih - 1, yMin.toFixed(1), 'end'));"
-                    "  svg.appendChild(txt(padL, padT + ih + 10, '0m', 'start'));"
-                    "  svg.appendChild(txt(w - padR, padT + ih + 10, xMax.toFixed(1) + 'm', 'end'));"
-                    "  svg.appendChild(txt((padL + w - padR)/2, padT + ih + 10, d.mode, 'middle'));"
-                    "  var lyBase = padT + ih + 22;"
-                    "  d.traces.forEach(function(tr, i){"
-                    "    var col = i % 2;"
-                    "    var row = (i / 2) | 0;"
-                    "    var lx = padL + col * (iw / 2);"
-                    "    var ly = lyBase + row * 10;"
-                    "    var sw = document.createElementNS(ns,'rect');"
-                    "    sw.setAttribute('x', lx); sw.setAttribute('y', ly - 5);"
-                    "    sw.setAttribute('width','7'); sw.setAttribute('height','5');"
-                    "    sw.setAttribute('fill', tr.color); svg.appendChild(sw);"
-                    "    svg.appendChild(txt(lx + 10, ly, tr.mesh + (tr.host ? ' ★' : ''), 'start', tr.color));"
-                    "  });"
-                    "  el.appendChild(svg);"
-                ]
-            }
-
-            let patchStateJson =
-                selectedPin |> AVal.map (function
-                    | Some pin ->
-                        match pin.Payload with
-                        | Patch pp ->
-                            let pts = pp.ProjectedPoints
-                            if pts.Length = 0 then
-                                sprintf "{\"r\":%.3f,\"empty\":true}" pp.Radius
-                            else
-                                let mutable zMin = System.Double.MaxValue
-                                let mutable zMax = System.Double.MinValue
-                                for (_, w) in pts do
-                                    if w.Z < zMin then zMin <- w.Z
-                                    if w.Z > zMax then zMax <- w.Z
-                                if zMax - zMin < 1e-6 then
-                                    let m = (zMin + zMax) * 0.5
-                                    zMin <- m - 0.5; zMax <- m + 0.5
-                                let sb = System.Text.StringBuilder()
-                                sb.Append("{\"r\":") |> ignore
-                                sb.Append(sprintf "%.3f" pp.Radius) |> ignore
-                                sb.Append(",\"zMin\":") |> ignore
-                                sb.Append(sprintf "%.3f" zMin) |> ignore
-                                sb.Append(",\"zMax\":") |> ignore
-                                sb.Append(sprintf "%.3f" zMax) |> ignore
-                                sb.Append(",\"north\":[") |> ignore
-                                sb.Append(sprintf "%.3f,%.3f" pp.CompassNorth.X pp.CompassNorth.Y) |> ignore
-                                sb.Append("],\"mesh\":\"") |> ignore
-                                sb.Append(shortName pp.SourceMeshName) |> ignore
-                                sb.Append("\",\"color\":\"") |> ignore
-                                let colorHex =
-                                    match Map.tryFind pp.SourceMeshName pin.DatasetColors with
-                                    | Some c -> c4bToHex c
-                                    | None -> "#1a56db"
-                                sb.Append(colorHex) |> ignore
-                                sb.Append("\",\"pts\":[") |> ignore
-                                for i in 0 .. pts.Length - 1 do
-                                    if i > 0 then sb.Append(',') |> ignore
-                                    let (p2, w) = pts.[i]
-                                    sb.Append(sprintf "[%.3f,%.3f,%.3f]" p2.X p2.Y w.Z) |> ignore
-                                sb.Append("]}") |> ignore
-                                sb.ToString()
-                        | _ -> "{}"
-                    | None -> "{}")
-            div {
-                Class "pin-card-section pin-card-patch"
-                showOnly isPatch
-                patchStateJson |> AVal.map (fun j -> Some (Attribute("data-patch", j)))
-                Primitives.observedRender "data-patch" "{}" [
-                    "  if(d.empty || !d.pts || d.pts.length < 3){"
-                    "    var p = document.createElement('div');"
-                    "    p.className = 'pin-card-empty';"
-                    "    p.textContent = 'Computing patch projection…';"
-                    "    el.appendChild(p);"
-                    "    return;"
-                    "  }"
-                    "  var size = 220, pad = 14;"
-                    "  var cx = size/2, cy = size/2;"
-                    "  var maxR = (size/2) - pad;"
-                    "  var sx = function(px){ return cx + px / d.r * maxR; };"
-                    "  var sy = function(py){ return cy - py / d.r * maxR; };"
-                    "  var svg = document.createElementNS(ns,'svg');"
-                    "  svg.setAttribute('class','patch-plot');"
-                    "  svg.setAttribute('width', size); svg.setAttribute('height', size);"
-                    "  svg.setAttribute('viewBox','0 0 '+size+' '+size);"
-                    "  var ring = document.createElementNS(ns,'circle');"
-                    "  ring.setAttribute('cx', cx); ring.setAttribute('cy', cy);"
-                    "  ring.setAttribute('r', maxR);"
-                    "  ring.setAttribute('fill','#f8fafc');"
-                    "  ring.setAttribute('stroke', d.color);"
-                    "  ring.setAttribute('stroke-width','2');"
-                    "  svg.appendChild(ring);"
-                    "  function colour(z){"
-                    "    var t = (z - d.zMin) / (d.zMax - d.zMin);"
-                    "    t = Math.max(0, Math.min(1, t));"
-                    "    var r = Math.round(255 * t);"
-                    "    var b = Math.round(255 * (1 - t));"
-                    "    return 'rgb(' + r + ',' + (60 + Math.round(120*t)) + ',' + b + ')';"
-                    "  }"
-                    "  d.pts.forEach(function(p){"
-                    "    var c = document.createElementNS(ns,'circle');"
-                    "    c.setAttribute('cx', sx(p[0])); c.setAttribute('cy', sy(p[1]));"
-                    "    c.setAttribute('r','1.6');"
-                    "    c.setAttribute('fill', colour(p[2]));"
-                    "    c.setAttribute('opacity','0.85');"
-                    "    svg.appendChild(c);"
-                    "  });"
-                    "  var nx = sx(d.north[0] * d.r * 0.9);"
-                    "  var ny = sy(d.north[1] * d.r * 0.9);"
-                    "  var arrow = document.createElementNS(ns,'line');"
-                    "  arrow.setAttribute('x1', cx); arrow.setAttribute('y1', cy);"
-                    "  arrow.setAttribute('x2', nx); arrow.setAttribute('y2', ny);"
-                    "  arrow.setAttribute('stroke','#0f172a');"
-                    "  arrow.setAttribute('stroke-width','1.5');"
-                    "  svg.appendChild(arrow);"
-                    "  var nLabel = document.createElementNS(ns,'text');"
-                    "  nLabel.setAttribute('x', nx); nLabel.setAttribute('y', ny - 2);"
-                    "  nLabel.setAttribute('text-anchor','middle');"
-                    "  nLabel.setAttribute('font-family','SF Mono, Monaco, monospace');"
-                    "  nLabel.setAttribute('font-size','10');"
-                    "  nLabel.setAttribute('font-weight','bold');"
-                    "  nLabel.setAttribute('fill','#0f172a');"
-                    "  nLabel.textContent = 'N';"
-                    "  svg.appendChild(nLabel);"
-                    "  el.appendChild(svg);"
-                    "  var caption = document.createElement('div');"
-                    "  caption.className = 'pin-card-caption';"
-                    "  caption.textContent = d.mesh + ' • r=' + d.r.toFixed(1) + 'm • ' + d.pts.length + ' pts';"
-                    "  el.appendChild(caption);"
-                ]
-            }
         }

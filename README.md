@@ -2,7 +2,7 @@
 
 Research prototype for interactive 3D inspection of geological mesh and pointcloud datasets. Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, closest-point, multi-mesh raycasts, isolines, curvature ridges, surface patches, weighted landmark solves, ICP).
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH, closest-point, multi-mesh raycasts, surface patches, sphere contact rings, weighted landmark solves, ICP).
 - **Superprojekt** — Blazor WebAssembly client. Aardvark.Dom Elm-style architecture, WebGL rendering. Runs on desktop and mobile browsers; thin client by design — heavy compute lives on the server.
 
 ## Run it
@@ -48,7 +48,7 @@ The first request for a mesh parses OBJ + builds an Embree scene + BbTree; the r
 - **Toggle individual meshes / solo / focus.** Bulk All / None. Choose textured, shaded, or slope-color rendering.
 - **Ghost silhouette.** Inactive meshes render as a faint translucent shell so you keep spatial context. Toggle + opacity in the gear popover; default on.
 - **Lasso clip.** Top-level `◌ Lasso` button opens a floating card; draw a polygon in the viewport, outside-lasso fragments fade to ghost level. The card has a symbol toolbar (`◉/○` enable, `✎` redraw, `⊘` cancel, `✕` clear) — toggling the filter off keeps the polygon so you can re-enable without redrawing.
-- **ScanPins (annotations).** Place a 3D anchor on a surface. Each pin has an **Inner radius** (hard truth: α = 1 and full evaluation weight inside) and a **Falloff radius** (exponential decay beyond inner). Both stored in metric world-metres; the falloff slider is relative to the inner radius. Pin Point / Line / Patch payloads carry derived analysis. The pin's influence renders as thin outlines in the pin's colour: an **equator ring** (perpendicular to the probe axis at the inner radius) plus per-mesh **contact rings** — the exact sphere–surface intersection curves, computed server-side and cached (invalidated on radius / centre / registration changes). The curves depth-test normally, so foreground geometry occludes them.
+- **ScanPins (annotations).** Place a 3D anchor on a surface. Each pin has an **Inner radius** (hard truth: α = 1 and full evaluation weight inside) and a **Falloff radius** (exponential decay beyond inner). Both stored in metric world-metres; the falloff slider is relative to the inner radius. Each pin carries an M3C2 distance probe and an optional registration correspondence. The pin's influence renders as thin outlines in the pin's colour: an **equator ring** (perpendicular to the probe axis at the inner radius) plus per-mesh **contact rings** — the exact sphere–surface intersection curves, computed server-side and cached (invalidated on radius / centre / registration changes). The curves depth-test normally, so foreground geometry occludes them.
 - **N-mesh distance probe (M3C2).** Every Point-payload pin runs a server-side probe: a cylinder along the locally-estimated surface normal (PCA over the reference mesh inside the pin sphere) samples **all visible meshes** and returns one signed-distance distribution per mesh, re-centred so 0 = the reference mesh's median. The pin card shows a **vertical violin chart** (signed distance on the y axis, positive up; one column per mesh with KDE violin, median tick, IQR whisker, count badge; planarity badge, y-range presets, lock-order toggle) and a **three-source stacked bar** decomposing the error into dataset spread / algorithm offset / local conditioning. Probes recompute lazily and invalidate on radius/centre/reference/transform/visibility changes. Cylinder length is auto (1.1 × scene extent along the normal, capped at 100 m) or manual via the adjustment flyout.
 - **Chart ↔ 3D linking.** Hovering the violin chart drives a cyan **slicing plane** in 3D, orthogonal to the probe axis at the hovered signed distance (clipped to the probe cylinder; hold **Alt** to extend it scene-wide). While the cursor is active, intersected meshes darken slightly and a bright **contact-line band** (~±20 cm, same cyan) traces where the plane meets each surface — scene-wide under Alt, cylinder-clipped otherwise. Hovering the 3D surface inside the probe cylinder draws the matching **elevation cursor line** on the chart and the same contact-line band at the hovered elevation. Hovering a chart column highlights that mesh in 3D (all others ghost to α 0.2); clicking a column makes the highlight **sticky** (thick border) until you click it again, another column, or anywhere outside the chart.
 - **Hover probe.** Ctrl-click any surface for a transient mini-violin chart at the cursor (radius = 5% of the scene bbox diagonal). Dismissed by Escape, clicking elsewhere, or after a few seconds.
@@ -109,7 +109,7 @@ The server is much smaller (`src/Superserver/`):
 ```
 MeshLoader.fs                        OBJ parse + centroid file + atlas paths
 MeshCache.fs                         lazy Embree scene + BbTree cache
-MeshAnalysis.fs                      isoline / ridge tracing, patch sampling
+MeshAnalysis.fs                      sphere contact-ring tracing, patch sampling
 MeshProbe.fs                         N-mesh M3C2 probe
 MeshIcp.fs                           ICP solver
 RegMath.fs                           weighted Umeyama landmark solve

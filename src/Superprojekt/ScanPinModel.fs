@@ -20,72 +20,6 @@ type CameraSnapshot = {
     Theta  : float
 }
 
-type PointPayload = {
-    ReliabilityWeight : float
-    // Ensemble-registration correspondence (spec: extends the Point payload,
-    // not a new payload type). None = never enabled.
-    Correspondence    : Correspondence option
-}
-
-type LineMode =
-    | ElevationIsoline of elevation:float
-    | CurvatureRidge
-
-type LinePayload = {
-    Mode            : LineMode
-    Points          : V3d[]
-    ScalarVals      : float[]
-    CrossMeshTraces : Map<string, V3d[] * float[]>
-}
-
-type PatchPayload = {
-    CenterOnMesh    : V3d
-    Radius          : float
-    SourceMeshName  : string
-    ProjectedPoints : (V2d * V3d)[]
-    CompassNorth    : V2d
-    RefDirWorld     : V3d
-    NormalWorld     : V3d
-}
-
-type PayloadType =
-    | Point of PointPayload
-    | Line  of LinePayload
-    | Patch of PatchPayload
-
-type PayloadKind =
-    | PointKind
-    | LineKind
-    | PatchKind
-
-module PayloadType =
-    let kind = function
-        | Point _ -> PointKind
-        | Line  _ -> LineKind
-        | Patch _ -> PatchKind
-
-    let defaultFor (radius : float) (centre : V3d) (host : string option) (kind : PayloadKind) =
-        match kind with
-        | PointKind ->
-            Point { ReliabilityWeight = 1.0; Correspondence = None }
-        | LineKind ->
-            Line {
-                Mode            = ElevationIsoline centre.Z
-                Points          = [||]
-                ScalarVals      = [||]
-                CrossMeshTraces = Map.empty
-            }
-        | PatchKind ->
-            Patch {
-                CenterOnMesh    = centre
-                Radius          = radius
-                SourceMeshName  = host |> Option.defaultValue ""
-                ProjectedPoints = [||]
-                CompassNorth    = V2d(1.0, 0.0)
-                RefDirWorld     = V3d.OIO
-                NormalWorld     = V3d.OOI
-            }
-
 // Sphere–surface contact rings (per mesh, registered world-space metres),
 // computed server-side and cached on the pin. Invalidated (→ RingsNone, lazy
 // recompute) by radius / centre / registration-transform changes; mesh
@@ -97,15 +31,17 @@ type ContactRingState =
 
 // All ScanPin geometry is metric world-space; InnerRadius and FalloffRadius
 // are independent. Render-space conversion happens at pipeline boundaries.
-// Probe: cached M3C2 probe result for Point payloads, recomputed lazily after
-// invalidation (ProbeNone). ProbeLengthOverride None = server auto-length.
+// Probe: cached M3C2 probe result, recomputed lazily after invalidation
+// (ProbeNone). ProbeLengthOverride None = server auto-length.
 type ScanPin = {
     Id                   : ScanPinId
     Phase                : PinPhase
     Centre               : V3d
     InnerRadius          : float
     FalloffRadius        : float
-    Payload              : PayloadType
+    // Reliability weight (registration) + optional correspondence anchors.
+    ReliabilityWeight    : float
+    Correspondence       : Correspondence option
     HostMeshName         : string option
     CreationCameraState  : CameraSnapshot
     CreatedAt            : DateTime
@@ -186,25 +122,17 @@ module ScanPin =
     let renderLength (datasetScale : float) (metricLength : float) =
         metricLength * datasetScale
 
-    // The pin's reference axis: probe normal when available, Patch normal as
-    // a fallback, world-up otherwise (correct for heightfields).
+    // The pin's reference axis: probe normal when available, world-up
+    // otherwise (correct for heightfields).
     let axis (p : ScanPin) =
         match p.Probe with
         | ProbeReady r -> r.Normal
-        | _ ->
-            match p.Payload with
-            | Patch pp when pp.NormalWorld.Length > 1e-9 -> pp.NormalWorld.Normalized
-            | _ -> V3d.OOI
+        | _ -> V3d.OOI
 
-    let correspondence (p : ScanPin) =
-        match p.Payload with
-        | Point pp -> pp.Correspondence
-        | _ -> None
+    let correspondence (p : ScanPin) = p.Correspondence
 
     let withCorrespondence (c : Correspondence option) (p : ScanPin) =
-        match p.Payload with
-        | Point pp -> { p with Payload = Point { pp with Correspondence = c } }
-        | _ -> p
+        { p with Correspondence = c }
 
     // The probe that matches what's on screen: the preview probe while a
     // registration preview is pending (and ready), the committed one otherwise.

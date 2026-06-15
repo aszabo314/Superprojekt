@@ -126,19 +126,10 @@ module GuiPanels =
             inlineLogSlider "Falloff +" 0.01 10000.0 (sprintf "+%.2f m") falloffDelta (fun v ->
                 env.Emit [ScanPinMsg (SetFalloffDelta v)])
 
-            let payloadKind =
-                activePin |> AVal.map (function
-                    | Some p -> PayloadType.kind p.Payload
-                    | None -> PointKind)
             let pinId = activePlacementId
-            let emitForId (mk : ScanPinId -> ScanPinMessage) =
-                fun () ->
-                    match AVal.force pinId with
-                    | Some id -> env.Emit [ScanPinMsg (mk id)]
-                    | None -> ()
 
-            // Numeric reposition (WP18): set the pin centre live while
-            // adjusting, so position and size can be dialled in together.
+            // Numeric reposition: set the pin centre live while adjusting, so
+            // position and size can be dialled in together.
             let centre =
                 activePin |> AVal.map (Option.map (fun p -> p.Centre) >> Option.defaultValue V3d.Zero)
             let posInput (lbl : string) (get : V3d -> float) (upd : V3d -> float -> V3d) =
@@ -167,28 +158,10 @@ module GuiPanels =
                 posInput "Z" (fun c -> c.Z) (fun c v -> V3d(c.X, c.Y, v))
             }
 
-            div { Class "lp-sublabel"; "Payload" }
-            compactButtonBar [
-                "Point", payloadKind |> AVal.map ((=) PointKind),
-                    emitForId (fun id -> ChangePayloadType(id, PointKind))
-                "Line",  payloadKind |> AVal.map ((=) LineKind),
-                    emitForId (fun id -> ChangePayloadType(id, LineKind))
-                "Patch", payloadKind |> AVal.map ((=) PatchKind),
-                    emitForId (fun id -> ChangePayloadType(id, PatchKind))
-            ]
-
-            let isPoint = payloadKind |> AVal.map ((=) PointKind)
             let reliability =
-                activePin |> AVal.map (fun po ->
-                    match po with
-                    | Some p ->
-                        match p.Payload with
-                        | Point pp -> pp.ReliabilityWeight
-                        | _ -> 1.0
-                    | None -> 1.0)
+                activePin |> AVal.map (Option.map (fun p -> p.ReliabilityWeight) >> Option.defaultValue 1.0)
             div {
                 Class "lp-reliability-row"
-                showWhen isPoint
                 inlineSlider "Reliability" 0.0 1.0 0.01 (sprintf "%.2f") reliability (fun v ->
                     match AVal.force pinId with
                     | Some id -> env.Emit [ScanPinMsg (SetReliabilityWeight(id, v))]
@@ -214,7 +187,6 @@ module GuiPanels =
                     | None -> true)
             div {
                 Class "lp-probelen-row"
-                showWhen isPoint
                 inlineLogSlider "Cyl. length" 1.0 100.0 (sprintf "%.1f m") probeLen (fun v ->
                     match AVal.force pinId with
                     | Some id -> env.Emit [ScanPinMsg (SetProbeLength(id, Some v))]
@@ -227,50 +199,6 @@ module GuiPanels =
                         | Some id -> env.Emit [ScanPinMsg (SetProbeLength(id, None))]
                         | None -> ())
                     "auto"
-                }
-            }
-
-            let isLine = payloadKind |> AVal.map ((=) LineKind)
-            let isIsoline =
-                activePin |> AVal.map (fun po ->
-                    match po with
-                    | Some p ->
-                        match p.Payload with
-                        | Line { Mode = ElevationIsoline _ } -> true
-                        | _ -> false
-                    | None -> false)
-            let isolineElev =
-                activePin |> AVal.map (fun po ->
-                    match po with
-                    | Some p ->
-                        match p.Payload with
-                        | Line { Mode = ElevationIsoline e } -> e
-                        | _ -> p.Centre.Z
-                    | None -> 0.0)
-            let centreZ =
-                activePin |> AVal.map (function
-                    | Some p -> p.Centre.Z
-                    | None -> 0.0)
-            div {
-                Class "lp-line-controls"
-                showWhen isLine
-                div { Class "lp-sublabel"; "Line mode" }
-                compactButtonBar [
-                    "Elevation", isIsoline,
-                        (fun () ->
-                            match AVal.force pinId, AVal.force centreZ with
-                            | Some id, z -> env.Emit [ScanPinMsg (SetLineMode(id, ElevationIsoline z))]
-                            | _ -> ())
-                    "Ridge", isIsoline |> AVal.map not,
-                        emitForId (fun id -> SetLineMode(id, CurvatureRidge))
-                ]
-                div {
-                    Class "lp-isoline-row"
-                    showWhen isIsoline
-                    inlineSlider "Elevation" -10000.0 10000.0 0.1 (sprintf "%.1fm") isolineElev (fun v ->
-                        match AVal.force pinId with
-                        | Some id -> env.Emit [ScanPinMsg (SetLineMode(id, ElevationIsoline v))]
-                        | None -> ())
                 }
             }
             }

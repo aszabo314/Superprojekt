@@ -67,37 +67,3 @@ module PinGeometry =
         circle V3d.IOO V3d.OOI
         circle V3d.OIO V3d.OOI
         segs.ToArray()
-
-    let buildPatchFootprint
-            (centre : V3d) (radius : float)
-            (refDirWorld : V3d) (normalWorld : V3d)
-            (color : V4d) (widthPx : float) =
-        let n = 64
-        let nNorm =
-            let l = normalWorld.Length
-            if l > 1e-9 then normalWorld / l else V3d.OOI
-        let refN =
-            let r = refDirWorld - nNorm * Vec.dot refDirWorld nNorm
-            let l = r.Length
-            if l > 1e-9 then r / l
-            else
-                let alt = if abs nNorm.X < 0.9 then V3d.IOO else V3d.OIO
-                let r = alt - nNorm * Vec.dot alt nNorm
-                let l2 = r.Length
-                if l2 > 1e-9 then r / l2 else V3d.IOO
-        let leftN = Vec.cross nNorm refN |> Vec.normalize
-        let segs = ResizeArray<V3d * V3d * V4d * float>(n + 3)
-        for i in 0 .. n - 1 do
-            let a0 = float i       / float n * Constant.PiTimesTwo
-            let a1 = float (i + 1) / float n * Constant.PiTimesTwo
-            let p0 = centre + (refN * cos a0 + leftN * sin a0) * radius
-            let p1 = centre + (refN * cos a1 + leftN * sin a1) * radius
-            segs.Add((p0, p1, color, widthPx))
-        let tip = centre + refN * radius
-        let arrowCol = V4d(0.06, 0.09, 0.16, 0.95)
-        segs.Add((centre, tip, arrowCol, widthPx + 0.5))
-        let backRef  = refN  * (radius * 0.10)
-        let backLeft = leftN * (radius * 0.06)
-        segs.Add((tip, tip - backRef + backLeft, arrowCol, widthPx + 0.5))
-        segs.Add((tip, tip - backRef - backLeft, arrowCol, widthPx + 0.5))
-        segs.ToArray()

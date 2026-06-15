@@ -51,10 +51,10 @@ module Update =
 
     let private updateCorr (id : ScanPinId) (f : Correspondence -> Correspondence) (sp : ScanPinModel) =
         match HashMap.tryFind id sp.Pins with
-        | Some pin when (match pin.Payload with Point _ -> true | _ -> false) ->
+        | Some pin ->
             let cur = ScanPin.correspondence pin |> Option.defaultValue Correspondence.empty
             { sp with Pins = HashMap.add id (ScanPin.withCorrespondence (Some (f cur)) pin) sp.Pins }
-        | _ -> sp
+        | None -> sp
 
     let private setAnchor (id : ScanPinId) (mesh : string) (point : V3d) (source : AnchorSource) (sp : ScanPinModel) =
         sp |> updateCorr id (fun c ->
@@ -376,11 +376,7 @@ module Update =
                     |> List.choose (fun (_, p) ->
                         match ScanPin.correspondence p with
                         | Some c when c.Enabled && c.RefAnchor.IsSome && p.Phase = PinPhase.Committed ->
-                            let rel =
-                                match p.Payload with
-                                | Point pp -> pp.ReliabilityWeight
-                                | _ -> 1.0
-                            Some (p.Id, c.RefAnchor.Value, rel, c.Anchors)
+                            Some (p.Id, c.RefAnchor.Value, p.ReliabilityWeight, c.Anchors)
                         | _ -> None)
                 let pairsFor mesh =
                     enabledPins
@@ -496,11 +492,7 @@ module Update =
                             if pin.Phase = PinPhase.Committed then
                                 // pin.Centre and pin.FalloffRadius are
                                 // already world-space metres.
-                                let w =
-                                    match pin.Payload with
-                                    | Point pp -> pp.ReliabilityWeight
-                                    | _ -> 1.0
-                                Some (pin.Id, (pin.Centre, pin.FalloffRadius, w))
+                                Some (pin.Id, (pin.Centre, pin.FalloffRadius, pin.ReliabilityWeight))
                             else None)
                         |> Array.ofSeq
                     let anchors =
@@ -656,21 +648,18 @@ module Update =
         | ToggleCorrespondence pinId ->
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
-                match pin.Payload with
-                | Point pp ->
-                    let next =
-                        match pp.Correspondence with
-                        | Some c -> { c with Enabled = not c.Enabled }
-                        | None -> Correspondence.empty
-                    let sp =
-                        { model.ScanPins with
-                            Pins = HashMap.add pinId { pin with Payload = Point { pp with Correspondence = Some next } } model.ScanPins.Pins }
-                    let model = { model with ScanPins = sp }
-                    if next.Enabled then
-                        if model.Registration.ReferenceMesh.IsSome then seedAnchors env model [pinId]
-                        else showToast env "Designate a reference mesh (★) to seed anchors" model
-                    else model
-                | _ -> model
+                let next =
+                    match pin.Correspondence with
+                    | Some c -> { c with Enabled = not c.Enabled }
+                    | None -> Correspondence.empty
+                let sp =
+                    { model.ScanPins with
+                        Pins = HashMap.add pinId { pin with Correspondence = Some next } model.ScanPins.Pins }
+                let model = { model with ScanPins = sp }
+                if next.Enabled then
+                    if model.Registration.ReferenceMesh.IsSome then seedAnchors env model [pinId]
+                    else showToast env "Designate a reference mesh (★) to seed anchors" model
+                else model
             | None -> model
         | AnchorsSeeded(refUpdates, candidates) ->
             let sp =

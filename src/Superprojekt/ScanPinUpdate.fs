@@ -8,8 +8,6 @@ open Superprojekt
 
 module ScanPinUpdate =
 
-    let mutable lineQueryCts : System.Threading.CancellationTokenSource =
-        new System.Threading.CancellationTokenSource()
 
     let mutable probeCts : System.Threading.CancellationTokenSource =
         new System.Threading.CancellationTokenSource()
@@ -41,7 +39,8 @@ module ScanPinUpdate =
             Centre               = worldCentre
             InnerRadius          = inner
             FalloffRadius        = falloff
-            Payload              = Point { ReliabilityWeight = 1.0; Correspondence = None }
+            ReliabilityWeight    = 1.0
+            Correspondence       = None
             HostMeshName         = model.ActivePickingLayer
             CreationCameraState  = cam
             CreatedAt            = System.DateTime.UtcNow
@@ -136,71 +135,9 @@ module ScanPinUpdate =
 
         | FocusPin _ -> sp
 
-        | ChangePayloadType(id, kind) ->
-            sp |> updatePin id (fun pin ->
-                if PayloadType.kind pin.Payload = kind then pin
-                else
-                    // PayloadType.defaultFor expects render-space (the Patch
-                    // payload's Radius is render-space throughout the rest of
-                    // the pipeline). Convert from metric here.
-                    let scale = activeScale model
-                    let payloadRadiusRender = ScanPin.renderLength scale pin.FalloffRadius
-                    let renderCentre = ScanPin.renderCentre model.CommonCentroid scale pin.Centre
-                    let payload = PayloadType.defaultFor payloadRadiusRender renderCentre pin.HostMeshName kind
-                    { pin with Payload = payload; Probe = ProbeNone })
-
         | SetReliabilityWeight(id, w) ->
             sp |> updatePin id (fun pin ->
-                match pin.Payload with
-                | Point pp ->
-                    let w = clamp 0.0 1.0 w
-                    { pin with Payload = Point { pp with ReliabilityWeight = w } }
-                | _ -> pin)
-
-        | SetLineMode(id, mode) ->
-            sp |> updatePin id (fun pin ->
-                match pin.Payload with
-                | Line lp ->
-                    { pin with Payload = Line { lp with Mode = mode; Points = [||]; ScalarVals = [||]; CrossMeshTraces = Map.empty } }
-                | _ -> pin)
-
-        | IsolineComputed(id, pts, _elevation) ->
-            sp |> updatePin id (fun pin ->
-                match pin.Payload with
-                | Line lp ->
-                    let scalars = pts |> Array.map (fun p -> p.Z)
-                    { pin with Payload = Line { lp with Points = pts; ScalarVals = scalars } }
-                | _ -> pin)
-
-        | RidgeComputed(id, pts, scalars) ->
-            sp |> updatePin id (fun pin ->
-                match pin.Payload with
-                | Line lp ->
-                    { pin with Payload = Line { lp with Points = pts; ScalarVals = scalars } }
-                | _ -> pin)
-
-        | LineCrossMeshComputed(id, mesh, pts, scalars) ->
-            sp |> updatePin id (fun pin ->
-                match pin.Payload with
-                | Line lp ->
-                    let map =
-                        if pts.Length = 0 then Map.remove mesh lp.CrossMeshTraces
-                        else Map.add mesh (pts, scalars) lp.CrossMeshTraces
-                    { pin with Payload = Line { lp with CrossMeshTraces = map } }
-                | _ -> pin)
-
-        | PatchComputed(id, pts, refDir, normal) ->
-            sp |> updatePin id (fun pin ->
-                match pin.Payload with
-                | Patch pp ->
-                    let pp' =
-                        { pp with
-                            ProjectedPoints = pts
-                            CompassNorth    = V2d(1.0, 0.0)
-                            RefDirWorld     = refDir
-                            NormalWorld     = normal }
-                    { pin with Payload = Patch pp' }
-                | _ -> pin)
+                { pin with ReliabilityWeight = clamp 0.0 1.0 w })
 
         // Stale guard: results only land while the pin is still ProbeRunning;
         // anything that invalidated the probe in the meantime wins.
@@ -265,105 +202,6 @@ module ScanPinUpdate =
                     env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderCentre))]
                 | None -> ()
             | None -> ()
-        | ChangePayloadType(id, LineKind)
-        | SetLineMode(id, _) ->
-            match HashMap.tryFind id sp'.Pins with
-            | Some pin ->
-                let scale = activeScale model
-                let seedWorld = pin.Centre
-                let peers =
-                    match pin.HostMeshName with
-                    | Some host ->
-                        model.MeshNames |> IndexList.toSeq
-                        |> Seq.filter (fun n ->
-                            n <> host
-                            && Map.tryFind n model.MeshVisible |> Option.defaultValue true)
-                        |> Array.ofSeq
-                    | None -> [||]
-                lineQueryCts.Cancel()
-                lineQueryCts <- new System.Threading.CancellationTokenSource()
-                let token = lineQueryCts.Token
-                let emitIfLive m =
-                    if not token.IsCancellationRequested then env.Emit [ScanPinMsg m]
-                match pin.Payload, pin.HostMeshName with
-                | Line { Mode = ElevationIsoline elev }, Some host ->
-                    // elev is already world-space metres (LineMode is fed from
-                    // pin.Centre.Z, which is metric).
-                    let elevWorld = elev
-                    let queryOne (name : string) (isHost : bool) =
-                        task {
-                            try
-                                let! pts =
-                                    Query.isoline ApiConfig.apiBase.Value name elevWorld seedWorld 4096
-                                    |> Async.StartAsTask
-                                if isHost then
-                                    emitIfLive (IsolineComputed(id, pts, elevWorld))
-                                else
-                                    let scalars = pts |> Array.map (fun p -> p.Z)
-                                    emitIfLive (LineCrossMeshComputed(id, name, pts, scalars))
-                            with _ -> ()
-                        } :> System.Threading.Tasks.Task
-                    task {
-                        try
-                            do! System.Threading.Tasks.Task.Delay(250, token)
-                            let all =
-                                [|
-                                    yield queryOne host true
-                                    for peer in peers -> queryOne peer false
-                                |]
-                            do! System.Threading.Tasks.Task.WhenAll(all)
-                        with
-                        | :? System.OperationCanceledException -> ()
-                        | _ -> ()
-                    } |> ignore
-                | Line { Mode = CurvatureRidge }, Some host ->
-                    let queryOne (name : string) (isHost : bool) =
-                        task {
-                            try
-                                let! pts, scalars =
-                                    Query.curvatureRidge ApiConfig.apiBase.Value name seedWorld 0.4 4096
-                                    |> Async.StartAsTask
-                                if isHost then
-                                    emitIfLive (RidgeComputed(id, pts, scalars))
-                                else
-                                    emitIfLive (LineCrossMeshComputed(id, name, pts, scalars))
-                            with _ -> ()
-                        } :> System.Threading.Tasks.Task
-                    task {
-                        try
-                            do! System.Threading.Tasks.Task.Delay(250, token)
-                            let all =
-                                [|
-                                    yield queryOne host true
-                                    for peer in peers -> queryOne peer false
-                                |]
-                            do! System.Threading.Tasks.Task.WhenAll(all)
-                        with
-                        | :? System.OperationCanceledException -> ()
-                        | _ -> ()
-                    } |> ignore
-                | _ -> ()
-            | None -> ()
-        | ChangePayloadType(id, PatchKind) ->
-            match HashMap.tryFind id sp'.Pins with
-            | Some pin ->
-                match pin.Payload, pin.HostMeshName with
-                | Patch pp, Some host ->
-                    let scale = activeScale model
-                    let centreWorld = pin.Centre
-                    // pp.Radius stays render-space for the rest of the patch
-                    // pipeline; convert to metres for the server query.
-                    let radiusWorld = pp.Radius / scale
-                    task {
-                        try
-                            let! pts, refDir, normal =
-                                Query.patch ApiConfig.apiBase.Value host centreWorld radiusWorld 4096
-                                |> Async.StartAsTask
-                            env.Emit [ScanPinMsg (PatchComputed(id, pts, refDir, normal))]
-                        with _ -> ()
-                    } |> ignore
-                | _ -> ()
-            | None -> ()
         | _ -> ()
         let model = { model with ScanPins = sp' }
         let selChanged = sp'.SelectedPin <> sp.SelectedPin || ScanPinModel.activePlacementId sp' <> ScanPinModel.activePlacementId sp
@@ -417,7 +255,7 @@ module ScanPinUpdate =
             |> Option.orElse sp.SelectedPin
             |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
         match effective with
-        | Some pin when (match pin.Payload, pin.Probe with Point _, ProbeNone -> true | _ -> false) ->
+        | Some pin when (match pin.Probe with ProbeNone -> true | _ -> false) ->
             let visible =
                 model.MeshNames |> IndexList.toList
                 |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
@@ -489,7 +327,7 @@ module ScanPinUpdate =
                 |> Option.orElse sp.SelectedPin
                 |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
             match effective with
-            | Some pin when (match pin.Payload, pin.ProbePreview with Point _, ProbeNone -> true | _ -> false) ->
+            | Some pin when (match pin.ProbePreview with ProbeNone -> true | _ -> false) ->
                 let visible =
                     model.MeshNames |> IndexList.toList
                     |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)

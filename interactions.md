@@ -9,7 +9,7 @@ inspect them, quantify their disagreement, align them, and fuse them.
 Architecture in one sentence: a thin Blazor-WASM client (Elm-style
 Model → Update → View, WebGL2 rendering) talks to an ASP.NET/Giraffe server
 that owns the heavy geometry (Embree BVH raycasts, closest-point, M3C2
-probes, isolines, ridges, sphere contact rings, weighted landmark solves,
+probes, surface patches, sphere contact rings, weighted landmark solves,
 ICP) at `http://localhost:5000`.
 
 ---
@@ -236,12 +236,11 @@ place pins by clicking inside the panorama view (§11).
 |---|---|
 | Inner radius | log slider 0.01–10 000 m; the hard-truth core (full opacity & probe weight). Changing it preserves the falloff *delta* |
 | Falloff + | log slider, *relative*: `FalloffRadius = InnerRadius + delta`. Drawn as a white sphere outline only while adjusting |
-| Payload | Point / Line / Patch (§8.1) |
-| Reliability (Point) | 0–1, the pin's weight multiplier as a registration anchor |
-| Cyl. length (Point) | probe cylinder length, log slider 1–100 m, or **auto** (server-estimated) |
-| Line mode (Line) | Elevation isoline (with elevation slider) or curvature Ridge |
+| Position (m) | X / Y / Z numeric fields — move the pin while adjusting |
+| Reliability | 0–1, the pin's weight multiplier as a registration anchor |
+| Cyl. length | probe cylinder length, log slider 1–100 m, or **auto** (server-estimated) |
 
-Changing radius/payload/length immediately invalidates the pin's probe and
+Changing radius/position/length immediately invalidates the pin's probe and
 contact rings; both recompute lazily (§8.4).
 
 **Pin list** (left panel): one row per pin — click the coordinates to
@@ -260,18 +259,11 @@ so occlusion reads as the spatial cue.
 
 ## 8. ScanPins — measurement & analysis
 
-### 8.1 Payloads
-
-- **Point** (default): hosts the M3C2 probe (below) and a reliability weight
-  for registration anchoring.
-- **Line**: traces a polyline on the host mesh — either an **elevation
-  isoline** (slider-driven height) or a **curvature ridge** — plus
-  cross-mesh traces of the same feature on every other visible mesh. Server
-  queries `/query/isoline` / `/query/curvature-ridge`, debounced 250 ms. The
-  card plots arc-length × scalar per mesh; the 3D scene draws the polylines.
-- **Patch**: server fits a local tangent plane (`/query/patch`) and returns
-  a neighbour sample projected into it; the card shows the orthographic
-  footprint with a compass-north arrow, the scene shows the footprint ring.
+Every pin hosts the M3C2 distance probe (§8.3) and a reliability weight for
+registration anchoring, plus an optional correspondence (§9). (Earlier
+iterations had selectable Point / Line / Patch payload modes; only the Point
+behaviour remained in use, so the mode selector and the Line/Patch code were
+removed — a pin just *is* a probe + correspondence.)
 
 ### 8.2 Pin cards
 
@@ -615,9 +607,7 @@ GET /api/datasets/{ds}/mesh/{name}/{i}/atlas     → JPEG
 |---|---|---|---|
 | `/api/query/ray` | name, origin, direction | hit, t, point, triangleId | picking under fusion, panorama placement (client fans out over meshes via `rayHitMany`) |
 | `/api/query/closest` | name, point | found, point, distanceSquared | retarget projection, anchor auto-seeding, patch-picker centre seeding |
-| `/api/query/isoline` | name, elevation, seed, maxPoints | polyline | Line payload (elevation mode) |
-| `/api/query/curvature-ridge` | name, seed, maxPoints | polyline + scalars | Line payload (ridge mode) |
-| `/api/query/patch` | name, centre, radius, maxPoints, optional frameNormal + frameRefDir (skips the local plane fit), optional triangles flag | projected points (incl. per-point atlas UVs), triangle index triples + planar projection when `triangles: true` (geodesic-polar + stride decimation otherwise), refDir, normal (echoes a supplied frame) | Patch payload (legacy mode), patch small-multiples picker (triangles mode) |
+| `/api/query/patch` | name, centre, radius, maxPoints, optional frameNormal + frameRefDir (skips the local plane fit), optional triangles flag | projected points (incl. per-point atlas UVs), triangle index triples + planar projection when `triangles: true` (geodesic-polar + stride decimation otherwise), refDir, normal (echoes a supplied frame) | patch small-multiples anchor picker |
 | `/api/query/contact-rings` | name, centre, radius, maxPoints | rings: [[x,y,z]…]… (closed rings repeat the first point) | pin contact rings |
 | `/api/query/probe` | meshes [name + world transform], referenceName, centre, radius, length (0 = auto), maxPointsPerMesh | normal, planarity, length, per-mesh distributions (count/median/IQR/std/KDE), three-source decomposition | pin probe + hover probe |
 | `/api/query/icp` | referenceName, movingName, initialTransform, anchor centres/sigmas/weights, regionEps | transform (4×4), convergence per iteration, residuals | fine registration (Stage 2) |

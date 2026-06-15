@@ -110,8 +110,6 @@ let webApp : HttpHandler =
         routef "/api/datasets/%s/mesh/%s"                       (fun (d,n)   -> meshCountHandler(d,n))
         route  "/api/query/ray"                                 >=> rayHandler
         route  "/api/query/closest"                             >=> closestHandler
-        route  "/api/query/isoline"                             >=> isolineHandler
-        route  "/api/query/curvature-ridge"                     >=> curvatureRidgeHandler
         route  "/api/query/patch"                               >=> patchHandler
         route  "/api/query/contact-rings"                       >=> contactRingsHandler
         route  "/api/query/icp"                                 >=> icpHandler

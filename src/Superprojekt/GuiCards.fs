@@ -96,6 +96,25 @@ module GuiCards =
         let refMeshOpt = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let running = model.Registration |> AVal.map (fun r -> r.Running)
         let mode = model.Registration |> AVal.map (fun r -> r.Mode)
+        // Small-reference regime (matches the server's MeshIcp threshold): the
+        // reference's world bbox diagonal is under 0.4× a visible mover's.
+        // Region-restricted ICP is the safer choice there (WP13/WP15).
+        let smallRefSuggest =
+            AVal.custom (fun t ->
+                match (model.Registration.GetValue t).ReferenceMesh with
+                | None -> false
+                | Some refM ->
+                    let bounds = model.MeshBounds.GetValue t
+                    let vis = model.MeshVisible.GetValue t
+                    match Map.tryFind refM bounds with
+                    | Some rb when not rb.IsInvalid && rb.Size.Length > 1e-6 ->
+                        let refDiag = rb.Size.Length
+                        bounds |> Map.toSeq |> Seq.exists (fun (m, b) ->
+                            m <> refM
+                            && (Map.tryFind m vis |> Option.defaultValue true)
+                            && not b.IsInvalid && b.Size.Length > 1e-6
+                            && refDiag / b.Size.Length < 0.4)
+                    | _ -> false)
 
         // Shared readiness engine (workflow panel §2): the card renders its
         // readiness line / badge / pin rows from the same input + diagnostics
@@ -240,6 +259,21 @@ module GuiCards =
                         mode |> AVal.map (fun m -> m = RegionRestrictedIcp),
                         (fun () -> env.Emit [SetRegistrationMode RegionRestrictedIcp])
                 ]
+                div {
+                    Class "reg-mode-help"
+                    "Traditional matches all moving points to the reference. Region-restricted weights correspondences toward your committed pins — use it when the reference covers only part of the scene."
+                }
+                div {
+                    Class "reg-fine-warn"
+                    showWhen ((smallRefSuggest, mode) ||> AVal.map2 (fun s m -> s && m = TraditionalIcp))
+                    span { "Reference is small vs the moving meshes — Region-restricted is recommended to avoid drift." }
+                    button {
+                        Class "mb"
+                        Attribute("title", "Switch to Region-restricted ICP")
+                        Dom.OnClick(fun _ -> env.Emit [SetRegistrationMode RegionRestrictedIcp])
+                        "use it"
+                    }
+                }
                 div {
                     Class "reg-fine-warn"
                     let noCoarse =

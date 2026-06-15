@@ -329,19 +329,23 @@ let icpHandler : HttpHandler =
             let stride = if req.SampleStride <= 0 then 50 else req.SampleStride
             let maxIter = if req.MaxIterations <= 0 then 30 else req.MaxIterations
             let eps = if req.RegionEps <= 0.0 then 0.0 else req.RegionEps
-            let result = MeshIcp.runIcp lmRef lmMov initial stride maxIter weights eps
-
-            let m = result.Transform
-            let flat = [|
-                m.M00; m.M01; m.M02; m.M03
-                m.M10; m.M11; m.M12; m.M13
-                m.M20; m.M21; m.M22; m.M23
-                m.M30; m.M31; m.M32; m.M33
-            |]
-            log.LogInformation("icp ref={Ref} mov={Mov}: {Iters} iters, final RMS={Rms:F4}",
-                req.ReferenceName, req.MovingName, result.Convergence.Length,
-                (if result.Convergence.Length > 0 then result.Convergence.[result.Convergence.Length - 1] else 0.0))
-            return! json {| transform = flat; convergence = result.Convergence; residuals = result.Residuals |} next ctx
+            match MeshIcp.runIcp lmRef lmMov initial stride maxIter weights eps with
+            | Result.Error reason ->
+                log.LogWarning("icp ref={Ref} mov={Mov}: aborted ({Reason})",
+                    req.ReferenceName, req.MovingName, reason)
+                return! json {| ok = false; reason = reason |} next ctx
+            | Result.Ok result ->
+                let m = result.Transform
+                let flat = [|
+                    m.M00; m.M01; m.M02; m.M03
+                    m.M10; m.M11; m.M12; m.M13
+                    m.M20; m.M21; m.M22; m.M23
+                    m.M30; m.M31; m.M32; m.M33
+                |]
+                log.LogInformation("icp ref={Ref} mov={Mov}: {Iters} iters, final RMS={Rms:F4}",
+                    req.ReferenceName, req.MovingName, result.Convergence.Length,
+                    (if result.Convergence.Length > 0 then result.Convergence.[result.Convergence.Length - 1] else 0.0))
+                return! json {| ok = true; transform = flat; convergence = result.Convergence; residuals = result.Residuals |} next ctx
         with ex ->
             log.LogError(ex, "icp failed")
             return! RequestErrors.notFound (text ex.Message) next ctx

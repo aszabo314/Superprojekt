@@ -96,6 +96,12 @@ module Query =
                 sprintf """{"referenceName":"%s","movingName":"%s","initialTransform":%s,"sampleStride":%d,"maxIterations":%d,"anchorCentres":%s,"anchorSigmas":%s,"anchorWeights":%s,"regionEps":%.17g}"""
                     referenceName movingName initJson sampleStride maxIterations centresFlat sigmasFlat weightsFlat regionEps
             let! r = post serverUrl "/query/icp" json
+            // Abort (e.g. insufficient overlap) comes back as {ok:false,reason}
+            // with no transform — surface it as a failure (→ FineFailed).
+            let hasTransform = match r.TryGetProperty "transform" with true, _ -> true | _ -> false
+            if not hasTransform then
+                let reason = match r.TryGetProperty "reason" with true, rp -> rp.GetString() | _ -> "ICP failed"
+                return raise (System.Exception reason)
             let tf =
                 r.GetProperty("transform").EnumerateArray()
                 |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray

@@ -106,14 +106,43 @@ module private IcpMath =
         let tWorld = c - R * c + t
         R, tWorld, sqrt (rmsSum / max 1.0 wSum)
 
+// Abort rather than return a divergent pose: a fine-ICP step whose
+// translation exceeds this multiple of the overlap extent (the reference
+// bbox diagonal) is treated as runaway. Pure + unit-tested.
+let divergenceGate (refDiag : float) = max 50.0 (8.0 * refDiag)
+let isRunawayStep (stepTranslation : float) (refDiag : float) =
+    not (System.Double.IsFinite stepTranslation) || stepTranslation > divergenceGate refDiag
+
+// Reference is "small" relative to the mover when its bbox diagonal is under
+// this fraction of the mover's — the overlap-starvation regime where naive
+// closest-point ICP drags the mover (the study's flung-mesh defect).
+let smallReferenceRegime (refDiag : float) (movDiag : float) =
+    refDiag > 1e-6 && movDiag > 1e-6 && refDiag / movDiag < 0.4
+
 let runIcp
         (lmRef : LoadedMesh) (lmMov : LoadedMesh)
         (initial : M44d) (sampleStride : int) (maxIter : int)
         (anchorWeights : (V3d -> float) option) (regionEps : float)
-        : IcpResult =
+        : Result<IcpResult, string> =
     let movPos = lmMov.parsed.positions
     let movCentroid = lmMov.parsed.centroid
     let refCentroid = lmRef.parsed.centroid
+
+    let refBox = lmRef.parsed.bbox
+    let movBox = lmMov.parsed.bbox
+    let refDiag = if refBox.IsInvalid then 0.0 else refBox.Size.Length
+    let movDiag = if movBox.IsInvalid then 0.0 else movBox.Size.Length
+    let smallRef = smallReferenceRegime refDiag movDiag
+    // Restrict moving samples to the reference's world region (+ margin) so
+    // far-away, non-overlapping points can't form biasing correspondences.
+    let refWorldBox =
+        if refBox.IsInvalid then Box3d.Invalid
+        else
+            let m = 0.5 * refDiag
+            let mv = V3d(m, m, m)
+            Box3d(refCentroid + refBox.Min - mv, refCentroid + refBox.Max + mv)
+    let inRegion (p : V3d) =
+        not smallRef || refWorldBox.IsInvalid || refWorldBox.Contains p
 
     let stride = max 1 sampleStride
     let sampleCount = (movPos.Length + stride - 1) / stride
@@ -131,9 +160,10 @@ let runIcp
     let convergence = ResizeArray<float>(maxIter)
     let mutable finalResiduals : float[] = [||]
     let mutable converged = false
+    let mutable aborted = false
     let mutable lastRms = System.Double.MaxValue
     let mutable iter = 0
-    while iter < maxIter && not converged do
+    while iter < maxIter && not converged && not aborted do
         let pairs = ResizeArray<struct (V3d * V3d * float)>(samplesWorld.Length)
         for s in samplesWorld do
             let aMoved = currR * s + currTr
@@ -141,7 +171,7 @@ let runIcp
                 match anchorWeights with
                 | Some f -> f aMoved
                 | None -> 1.0
-            if w > regionEps then
+            if w > regionEps && inRegion aMoved then
                 let res = lmRef.scene.GetClosestPoint(V3f(aMoved - refCentroid))
                 if res.IsValid then
                     let bWorld = V3d(res.Point) + refCentroid
@@ -164,22 +194,30 @@ let runIcp
                         if dists.[i] <= gate then filtered.Add pairs.[i]
                     if filtered.Count >= 6 then filtered else pairs
             let Rd, td, rms = icpStep pairs
-            convergence.Add rms
-            currR <- Rd * currR
-            currTr <- Rd * currTr + td
-            if iter = maxIter - 1 || abs (lastRms - rms) < 1e-7 then
-                finalResiduals <-
-                    pairs |> Seq.map (fun (struct (a, b, _)) ->
-                        let a' = Rd * a + td
-                        (a' - b).Length)
-                    |> Array.ofSeq
-                if abs (lastRms - rms) < 1e-7 then converged <- true
-            lastRms <- rms
-            iter <- iter + 1
+            // Divergence guard: a runaway step (overlap-starved fit) aborts
+            // before the flung pose is ever applied or returned.
+            if isRunawayStep td.Length refDiag then
+                aborted <- true
+            else
+                convergence.Add rms
+                currR <- Rd * currR
+                currTr <- Rd * currTr + td
+                if iter = maxIter - 1 || abs (lastRms - rms) < 1e-7 then
+                    finalResiduals <-
+                        pairs |> Seq.map (fun (struct (a, b, _)) ->
+                            let a' = Rd * a + td
+                            (a' - b).Length)
+                        |> Array.ofSeq
+                    if abs (lastRms - rms) < 1e-7 then converged <- true
+                lastRms <- rms
+                iter <- iter + 1
 
-    let finalT =
-        M44d(currR.M00, currR.M01, currR.M02, currTr.X,
-             currR.M10, currR.M11, currR.M12, currTr.Y,
-             currR.M20, currR.M21, currR.M22, currTr.Z,
-             0.0, 0.0, 0.0, 1.0)
-    { Transform = finalT; Convergence = convergence.ToArray(); Residuals = finalResiduals }
+    if aborted then
+        Result.Error "insufficient overlap — fine ICP diverged; try region-restricted mode or a tighter reference region"
+    else
+        let finalT =
+            M44d(currR.M00, currR.M01, currR.M02, currTr.X,
+                 currR.M10, currR.M11, currR.M12, currTr.Y,
+                 currR.M20, currR.M21, currR.M22, currTr.Z,
+                 0.0, 0.0, 0.0, 1.0)
+        Result.Ok { Transform = finalT; Convergence = convergence.ToArray(); Residuals = finalResiduals }

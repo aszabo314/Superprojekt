@@ -62,22 +62,44 @@ module Update =
 
     // Anchors are stored world-space at current committed poses; committing or
     // rolling back a step re-bases every anchor on a moved mesh by the
-    // applied world delta so it stays on the surface.
+    // applied world delta so it stays on the surface. Host-aware pin tracking
+    // (WP14): a plain pin's centre follows its host mesh's delta; a
+    // correspondence pin's centre is left static (it lives in the reference
+    // frame), only its per-mesh anchors follow their own meshes.
     let private bakeAnchors (deltas : Map<string, Trafo3d>) (sp : ScanPinModel) =
         if Map.isEmpty deltas then sp
         else
             let pins =
                 sp.Pins |> HashMap.map (fun _ p ->
                     match ScanPin.correspondence p with
-                    | Some c when not (Map.isEmpty c.Anchors) ->
-                        let anchors =
-                            c.Anchors |> Map.map (fun mesh a ->
-                                match Map.tryFind mesh deltas with
-                                | Some d -> { a with Point = d.Forward.TransformPos a.Point }
-                                | None -> a)
-                        ScanPin.withCorrespondence (Some { c with Anchors = anchors }) p
-                    | _ -> p)
+                    | Some c ->
+                        if Map.isEmpty c.Anchors then p
+                        else
+                            let anchors =
+                                c.Anchors |> Map.map (fun mesh a ->
+                                    match Map.tryFind mesh deltas with
+                                    | Some d -> { a with Point = d.Forward.TransformPos a.Point }
+                                    | None -> a)
+                            ScanPin.withCorrespondence (Some { c with Anchors = anchors }) p
+                    | None ->
+                        match p.HostMeshName |> Option.bind (fun h -> Map.tryFind h deltas) with
+                        | Some d -> { p with Centre = d.Forward.TransformPos p.Centre }
+                        | None -> p)
             { sp with Pins = pins }
+
+    // Re-derive each pin card's 3D anchor (render-space) from its pin's current
+    // centre so attached cards follow host-tracked pins after a commit/rollback.
+    let private reanchorCards (model : Model) =
+        let cc = model.CommonCentroid
+        let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
+        let cards =
+            model.CardSystem.Cards |> HashMap.map (fun _ card ->
+                match card.Content with
+                | PinCard pid ->
+                    match HashMap.tryFind pid model.ScanPins.Pins with
+                    | Some p -> { card with Anchor = AnchorToWorldPoint (ScanPin.renderCentre cc scale p.Centre) }
+                    | None -> card)
+        { model with CardSystem = { model.CardSystem with Cards = cards } }
 
     let private regState (model : Model) : RegTransformState =
         {
@@ -570,12 +592,13 @@ module Update =
                     step.Outputs |> Map.map (fun mesh o ->
                         ModelTransforms.worldDelta model mesh o.TransformBefore o.TransformAfter)
                 let model =
-                    { model with
-                        MeshTransforms = st'.Transforms
-                        MeshAlgorithmResidual = st'.AlgoResiduals
-                        RegistrationLog = st'.Log
-                        ScanPins = bakeAnchors worldDeltas model.ScanPins
-                        Registration = { model.Registration with Running = false } }
+                    reanchorCards
+                        { model with
+                            MeshTransforms = st'.Transforms
+                            MeshAlgorithmResidual = st'.AlgoResiduals
+                            RegistrationLog = st'.Log
+                            ScanPins = bakeAnchors worldDeltas model.ScanPins
+                            Registration = { model.Registration with Running = false } }
                 // Registration-complete cascade: all probes + contact rings +
                 // algorithm RMS (already swapped in above).
                 invalidateProbes (exitPreview model)
@@ -592,13 +615,14 @@ module Update =
                         // inverse of the committed delta: after → before
                         ModelTransforms.worldDelta model mesh o.TransformAfter o.TransformBefore)
                 let model =
-                    { model with
-                        MeshTransforms = st'.Transforms
-                        MeshAlgorithmResidual = st'.AlgoResiduals
-                        RegistrationLog = st'.Log
-                        // diagnostics of the rolled-back step are stale now
-                        LastSolve = LastSolve.afterRollback step model.LastSolve
-                        ScanPins = bakeAnchors worldDeltas model.ScanPins }
+                    reanchorCards
+                        { model with
+                            MeshTransforms = st'.Transforms
+                            MeshAlgorithmResidual = st'.AlgoResiduals
+                            RegistrationLog = st'.Log
+                            // diagnostics of the rolled-back step are stale now
+                            LastSolve = LastSolve.afterRollback step model.LastSolve
+                            ScanPins = bakeAnchors worldDeltas model.ScanPins }
                 invalidateProbes (exitPreview model)
             | None -> model
         | ResetRegistration ->
@@ -618,7 +642,7 @@ module Update =
                             RegistrationLog = st'.Log
                             ScanPins = bakeAnchors worldDeltas model.ScanPins }
                 | None -> model
-            let model = rollAll model
+            let model = reanchorCards (rollAll model)
             invalidateProbes (exitPreview
                 { model with
                     MeshTransforms = Map.empty

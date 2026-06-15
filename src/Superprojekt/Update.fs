@@ -1323,10 +1323,30 @@ module Update =
                 model
             | None -> model
 
+    // Cutaway / rulers / locked iso-plane are scoped to the pin under
+    // inspection: when the effective (selected/adjusting) pin changes — incl.
+    // a full deselect — they reset, so the section can't "follow" the next
+    // selection or stay stuck with no pin (the toggles themselves don't move
+    // the effective pin, so they keep working).
+    let private effectivePinId (m : Model) =
+        match m.ScanPins.Placement with
+        | AdjustingPin id -> Some id
+        | _ -> m.ScanPins.SelectedPin
+
+    let private clearSectioningOnPinChange (before : Model) (after : Model) =
+        if effectivePinId before = effectivePinId after then after
+        else
+            let after =
+                if after.CutawayActive || after.RulerActive then
+                    { after with CutawayActive = false; RulerActive = false }
+                else after
+            if List.isEmpty after.ClipPlanes then after else { after with ClipPlanes = [] }
+
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         let updated =
             updateCore env model msg
             |> ScanPinUpdate.ensureProbe env
             |> ScanPinUpdate.ensureProbePreview env
             |> ScanPinUpdate.ensureRings env
+            |> clearSectioningOnPinChange model
         StudyUpdate.postlude env model updated msg

@@ -38,59 +38,77 @@ module GuiOverlays =
                 let ndc = h.XYZ / h.W
                 if abs ndc.X > 1.2 || abs ndc.Y > 1.2 then None
                 else Some (V2d((ndc.X * 0.5 + 0.5) * float vp.X, (1.0 - (ndc.Y * 0.5 + 0.5)) * float vp.Y))
-        let labels =
+        // Single JSON attribute updated per frame; observedRender fully
+        // rebuilds the label set each change (and dedups when unchanged) —
+        // no per-frame AList churn / stuck DOM nodes.
+        let json =
             AVal.custom (fun t ->
-                if not (model.RulerActive.GetValue t) then []
-                else
-                    let sel =
-                        match model.ScanPins.Placement.GetValue t with
-                        | AdjustingPin id -> Some id
-                        | _ -> model.ScanPins.SelectedPin.GetValue t
-                    match sel |> Option.bind (fun id -> HashMap.tryFind id ((model.ScanPins.Pins |> AMap.toAVal).GetValue t)) with
-                    | Some pin ->
-                        match ScanPin.correspondence pin with
-                        | Some corr when corr.Enabled ->
-                            match corr.RefAnchor with
-                            | Some refA ->
-                                let pending = model.PendingReg.GetValue t
-                                let transforms = model.MeshTransforms.GetValue t
-                                let scales = model.DatasetScales.GetValue t
-                                let cc = model.CommonCentroid.GetValue t
-                                let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
-                                let vtr = view.GetValue t
-                                let vp = viewportSize.GetValue t
-                                let refR = ScanPin.renderCentre cc s refA
-                                corr.Anchors |> Map.toList |> List.choose (fun (mesh, a) ->
-                                    if not a.Accepted then None
-                                    else
-                                        let hasDelta = (PendingRegistration.delta mesh pending).IsSome
-                                        let aw =
-                                            match PendingRegistration.delta mesh pending with
-                                            | Some d ->
-                                                let scale = DatasetScale.forMesh scales mesh
-                                                let cT = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
-                                                let wb = RigidTransform.renderToWorld scale cc cT
-                                                let wa = RigidTransform.renderToWorld scale cc (RegLog.effective cT d)
-                                                (wb.Inverse * wa).Forward.TransformPos a.Point
-                                            | None -> a.Point
-                                        let mid = (ScanPin.renderCentre cc s aw + refR) * 0.5
-                                        match projectToScreen mid vtr vp with
-                                        | Some px -> Some (mesh, px, (aw - refA).Length, hasDelta)
-                                        | None -> None)
-                            | None -> []
-                        | _ -> []
-                    | None -> [])
+                let items =
+                    if not (model.RulerActive.GetValue t) then []
+                    else
+                        let sel =
+                            match model.ScanPins.Placement.GetValue t with
+                            | AdjustingPin id -> Some id
+                            | _ -> model.ScanPins.SelectedPin.GetValue t
+                        match sel |> Option.bind (fun id -> HashMap.tryFind id ((model.ScanPins.Pins |> AMap.toAVal).GetValue t)) with
+                        | Some pin ->
+                            match ScanPin.correspondence pin with
+                            | Some corr when corr.Enabled ->
+                                match corr.RefAnchor with
+                                | Some refA ->
+                                    let pending = model.PendingReg.GetValue t
+                                    let transforms = model.MeshTransforms.GetValue t
+                                    let scales = model.DatasetScales.GetValue t
+                                    let cc = model.CommonCentroid.GetValue t
+                                    let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
+                                    let vtr = view.GetValue t
+                                    let vp = viewportSize.GetValue t
+                                    let refR = ScanPin.renderCentre cc s refA
+                                    corr.Anchors |> Map.toList |> List.choose (fun (mesh, a) ->
+                                        if not a.Accepted then None
+                                        else
+                                            let hasDelta = (PendingRegistration.delta mesh pending).IsSome
+                                            let aw =
+                                                match PendingRegistration.delta mesh pending with
+                                                | Some d ->
+                                                    let scale = DatasetScale.forMesh scales mesh
+                                                    let cT = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
+                                                    let wb = RigidTransform.renderToWorld scale cc cT
+                                                    let wa = RigidTransform.renderToWorld scale cc (RegLog.effective cT d)
+                                                    (wb.Inverse * wa).Forward.TransformPos a.Point
+                                                | None -> a.Point
+                                            let mid = (ScanPin.renderCentre cc s aw + refR) * 0.5
+                                            match projectToScreen mid vtr vp with
+                                            | Some px -> Some (mesh, px, (aw - refA).Length, hasDelta)
+                                            | None -> None)
+                                | None -> []
+                            | _ -> []
+                        | None -> []
+                let sb = System.Text.StringBuilder()
+                sb.Append("{\"labels\":[") |> ignore
+                items |> List.iteri (fun i (mesh, px, dist, hasDelta) ->
+                    if i > 0 then sb.Append(',') |> ignore
+                    let title =
+                        (sprintf "%s <-> reference: %.3f m (%s)" (Cards.shortName mesh) dist
+                            (if hasDelta then "residual" else "pre-alignment gap"))
+                            .Replace("\\", "").Replace("\"", "'")
+                    sb.Append(sprintf "{\"x\":%.0f,\"y\":%.0f,\"t\":\"%.3f m\",\"title\":\"%s\"}" px.X px.Y dist title) |> ignore)
+                sb.Append("]}") |> ignore
+                sb.ToString())
         div {
             Class "ruler-overlay"
-            labels |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun (mesh, px, dist, hasDelta) ->
-                div {
-                    Class "ruler-label"
-                    Style [Left (sprintf "%.0fpx" px.X); Top (sprintf "%.0fpx" px.Y)]
-                    Attribute("title",
-                        sprintf "%s ↔ reference: %.3f m (%s)" (Cards.shortName mesh) dist
-                            (if hasDelta then "residual" else "pre-alignment gap"))
-                    sprintf "%.3f m" dist
-                })
+            json |> AVal.map (fun j -> Some (Attribute("data-ruler", j)))
+            Primitives.observedRender "data-ruler" "{\"labels\":[]}" [
+                "  var labels = (d.labels) || [];"
+                "  labels.forEach(function(l){"
+                "    var div = document.createElement('div');"
+                "    div.className = 'ruler-label';"
+                "    div.style.left = l.x + 'px'; div.style.top = l.y + 'px';"
+                "    if(l.title) div.title = l.title;"
+                "    div.textContent = l.t;"
+                "    el.appendChild(div);"
+                "  });"
+            ]
         }
 
     // Ctrl-click hover probe: compressed ridgeline at the cursor,

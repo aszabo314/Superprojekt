@@ -35,6 +35,36 @@ module GuiWorkflow =
 
     let private hex (c : C4b) = sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B)
 
+    // Median-offset-across-pins strip (spec WP10): one row per moving mesh,
+    // one mark per pin at its signed median offset, shared x-scale, ±LoD band.
+    // A flat row (marks aligned) ⇒ a rigid/datum offset (H-A); a varying row
+    // ⇒ spatially-varying real change (H-B). Marks post hover/click to the
+    // .wfp-medstrip-bus for 3D + pin linking.
+    let private medStripJs = [
+        "  if(!d || !d.rows || d.rows.length === 0){ var p=document.createElement('div'); p.className='wfp-medstrip-empty'; p.textContent='No per-pin medians yet (enable correspondence pins and probe).'; el.appendChild(p); return; }"
+        "  var rows = d.rows;"
+        "  var w = Math.max(220, el.clientWidth || 260);"
+        "  var labelW = 62, rowH = 18, padTop = 16, padBot = 12;"
+        "  var H = padTop + rows.length * rowH + padBot;"
+        "  var x0 = d.xmin, x1 = d.xmax; if(!(x1 > x0)){ x0=-0.1; x1=0.1; }"
+        "  var plotL = labelW, plotR = w - 8;"
+        "  function sx(v){ return plotL + (v - x0)/(x1 - x0) * (plotR - plotL); }"
+        "  var svg = document.createElementNS(ns,'svg'); svg.setAttribute('width', w); svg.setAttribute('height', H); svg.setAttribute('viewBox','0 0 '+w+' '+H);"
+        "  function ln(xa,ya,xb,yb,st,sw,dash){ var l=document.createElementNS(ns,'line'); l.setAttribute('x1',xa); l.setAttribute('y1',ya); l.setAttribute('x2',xb); l.setAttribute('y2',yb); l.setAttribute('stroke',st); l.setAttribute('stroke-width',sw); if(dash) l.setAttribute('stroke-dasharray',dash); svg.appendChild(l); }"
+        "  function tx(x,y,s,a,fill){ var t=document.createElementNS(ns,'text'); t.setAttribute('x',x); t.setAttribute('y',y); t.setAttribute('text-anchor',a||'middle'); t.setAttribute('font-family','SF Mono, Monaco, monospace'); t.setAttribute('font-size','8'); t.setAttribute('fill',fill||'#475569'); t.textContent=s; svg.appendChild(t); }"
+        "  var bus = (function(){ var s = el.closest('.wfp-section'); return s ? s.querySelector('.wfp-medstrip-bus') : null; })();"
+        "  function send(v){ if(bus){ bus.value=v; bus.dispatchEvent(new Event('input',{bubbles:true})); } }"
+        "  tx(sx(x0), padTop-6, x0.toFixed(2), 'start', '#94a3b8'); tx(sx(x1), padTop-6, x1.toFixed(2), 'end', '#94a3b8');"
+        "  if(0>=x0 && 0<=x1) ln(sx(0), padTop-4, sx(0), H-padBot, '#64748b','1','3,3');"
+        "  rows.forEach(function(r, i){ var cy = padTop + i*rowH + rowH/2;"
+        "    tx(4, cy+3, r.name, 'start', '#0f172a');"
+        "    if(r.lod>0){ var bx0=Math.max(plotL, sx(-r.lod)), bx1=Math.min(plotR, sx(r.lod)); if(bx1>bx0){ var bnd=document.createElementNS(ns,'rect'); bnd.setAttribute('x',bx0); bnd.setAttribute('y',cy-5); bnd.setAttribute('width',bx1-bx0); bnd.setAttribute('height',10); bnd.setAttribute('fill','#94a3b8'); bnd.setAttribute('fill-opacity','0.16'); svg.appendChild(bnd); } }"
+        "    ln(plotL, cy, plotR, cy, '#e2e8f0','1');"
+        "    (r.marks||[]).forEach(function(m){ var cxp=Math.max(plotL,Math.min(plotR,sx(m.x))); var c=document.createElementNS(ns,'circle'); c.setAttribute('cx',cxp.toFixed(1)); c.setAttribute('cy',cy); c.setAttribute('r','3.2'); c.setAttribute('fill',m.sig?r.color:'#cbd5e1'); c.setAttribute('stroke','#334155'); c.setAttribute('stroke-width','0.5'); c.style.cursor='pointer'; var ttl=document.createElementNS(ns,'title'); ttl.textContent=m.label+': '+m.x.toFixed(3)+' m'+(m.sig?'':' (n.s.)'); c.appendChild(ttl); c.addEventListener('pointerenter',function(){ send('hover|'+r.mesh); }); c.addEventListener('pointerleave',function(){ send('out'); }); c.addEventListener('click',function(){ send('click|'+m.id); }); svg.appendChild(c); });"
+        "  });"
+        "  el.appendChild(svg);"
+    ]
+
     let workflowPanel (env : Env<Message>) (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let dragState : cval<(V2d * V2d) option> = cval None
         let committedPos = cval (V2d(64.0, 110.0))
@@ -320,6 +350,75 @@ module GuiWorkflow =
                     sprintf "mean %.3f · max %.3f · meshes solved %d/%d"
                         (List.average solved) (List.max solved) (List.length solved) total)
 
+        // Median-offset-across-pins strip data (WP10): per moving mesh, the
+        // signed median offset at each enabled committed-probe pin + a
+        // representative ±LoD band.
+        let medStripJson =
+            AVal.custom (fun t ->
+                let pins = pinsVal.GetValue t
+                let input = readinessInput.GetValue t
+                let order = model.MeshOrder.Content.GetValue t
+                let colourOf m = hex (meshColor (HashMap.tryFind m order |> Option.defaultValue 0))
+                let probed =
+                    pins |> HashMap.toList
+                    |> List.choose (fun (id, p) ->
+                        match ScanPin.correspondence p with
+                        | Some c when c.Enabled ->
+                            match p.Probe with ProbeReady r -> Some (id, p, r) | _ -> None
+                        | _ -> None)
+                if List.isEmpty probed || List.isEmpty input.VisibleMovingMeshes then "{\"rows\":[]}"
+                else
+                    let pinData =
+                        probed |> List.map (fun (id, p, r) ->
+                            let refStd =
+                                r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
+                                |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
+                            let label = sprintf "(%.0f,%.0f,%.0f)" p.Centre.X p.Centre.Y p.Centre.Z
+                            let byMesh =
+                                r.Distributions |> Array.choose (fun d ->
+                                    if d.Count > 0 then Some (d.MeshName, (d.Median, d.Std)) else None)
+                                |> Map.ofArray
+                            id, label, refStd, byMesh)
+                    let allMed =
+                        pinData |> List.collect (fun (_,_,_,bm) -> bm |> Map.toList |> List.map (fun (_, (m,_)) -> m))
+                    let xmn0 = if List.isEmpty allMed then -0.1 else List.min allMed
+                    let xmx0 = if List.isEmpty allMed then 0.1 else List.max allMed
+                    let pad = max 0.05 ((xmx0 - xmn0) * 0.15)
+                    let sb = System.Text.StringBuilder()
+                    sb.Append(sprintf "{\"xmin\":%.5g,\"xmax\":%.5g,\"rows\":[" (xmn0 - pad) (xmx0 + pad)) |> ignore
+                    input.VisibleMovingMeshes |> List.iteri (fun ri mesh ->
+                        if ri > 0 then sb.Append(',') |> ignore
+                        let marks =
+                            pinData |> List.choose (fun (id, label, refStd, bm) ->
+                                match Map.tryFind mesh bm with
+                                | Some (med, std) ->
+                                    let lod = 1.96 * sqrt (refStd*refStd + std*std)
+                                    let (ScanPinId.ScanPinId g) = id
+                                    Some (g.ToString(), label, med, abs med >= lod, lod)
+                                | None -> None)
+                        let lodMean =
+                            match marks with
+                            | [] -> 0.0
+                            | _ -> (marks |> List.sumBy (fun (_,_,_,_,l) -> l)) / float marks.Length
+                        sb.Append(sprintf "{\"mesh\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"lod\":%.5g,\"marks\":["
+                                    mesh (Cards.shortName mesh) (colourOf mesh) lodMean) |> ignore
+                        marks |> List.iteri (fun mi (g, label, med, sg, _) ->
+                            if mi > 0 then sb.Append(',') |> ignore
+                            sb.Append(sprintf "{\"id\":\"%s\",\"label\":\"%s\",\"x\":%.5g,\"sig\":%b}" g label med sg) |> ignore)
+                        sb.Append("]}") |> ignore)
+                    sb.Append("]}") |> ignore
+                    sb.ToString())
+        let onMedStripEvent (v : string) =
+            let parts = v.Split('|')
+            match parts.[0] with
+            | "hover" when parts.Length >= 2 -> env.Emit [SetChartHoverMesh (Some parts.[1])]
+            | "out" -> env.Emit [SetChartHoverMesh None]
+            | "click" when parts.Length >= 2 ->
+                match System.Guid.TryParse parts.[1] with
+                | true, g -> env.Emit [ScanPinMsg (SelectPin (Some (ScanPinId.ScanPinId g)))]
+                | _ -> ()
+            | _ -> ()
+
         // ── assembly ───────────────────────────────────────────────────
         div {
             Class "card workflow-panel"
@@ -475,6 +574,21 @@ module GuiWorkflow =
                                 span { Class "wfp-stats-cell reg-spark"; GuiCards.spark series }
                             })
                         div { Class "wfp-aggregate"; aggregateLine }
+                        div {
+                            Class "wfp-medstrip-head"
+                            Attribute("title", "Each row is a moving mesh; each dot a pin's signed median offset. A flat row across pins = a rigid/datum offset; a varying row = spatially-varying change. Grey band = ±LoD95.")
+                            "Median offset across pins"
+                        }
+                        input {
+                            Class "wfp-medstrip-bus"
+                            Attribute("type", "text")
+                            Dom.OnInput(fun e -> onMedStripEvent e.Value)
+                        }
+                        div {
+                            Class "wfp-medstrip"
+                            medStripJson |> AVal.map (fun j -> Some (Attribute("data-medstrip", j)))
+                            Primitives.observedRender "data-medstrip" "{}" medStripJs
+                        }
                     })
             }
         }

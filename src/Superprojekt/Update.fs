@@ -298,6 +298,28 @@ module Update =
                 if same then { model with ClipPlanes = [] }
                 else { model with ClipPlanes = [plane] }
             | None -> model
+        | FocusAnchors ->
+            // Toggle the focus box: cutaway (front, camera-relative) + a
+            // locked top iso-plane at the pin centre = a corner that isolates
+            // the anchor neighbourhood.
+            if model.CutawayActive && not (List.isEmpty model.ClipPlanes) then
+                { model with CutawayActive = false; ClipPlanes = [] }
+            else
+                let pid =
+                    match model.ScanPins.Placement with
+                    | AdjustingPin id -> Some id
+                    | _ -> model.ScanPins.SelectedPin
+                match pid |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
+                | Some pin ->
+                    let pv = PendingRegistration.isPreview model.PendingReg
+                    let axis =
+                        match ScanPin.effectiveProbe pv pin with
+                        | ProbeReady r -> r.Normal
+                        | _ -> ScanPin.axis pin
+                    let plane = { Origin = pin.Centre; Normal = axis; Axis = V3d.Zero
+                                  Mode = ClipSectionCap; CameraRelative = false }
+                    { model with CutawayActive = true; ClipPlanes = [plane] }
+                | None -> model
 
         | SetRegistrationMode m ->
             { model with Registration = { model.Registration with Mode = m } }

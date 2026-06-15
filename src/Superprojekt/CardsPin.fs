@@ -754,6 +754,15 @@ module CardsPin =
                                     env.Emit [SetCutawayMode (match AVal.force model.CutawayMode with ClipGhost -> ClipHide | _ -> ClipGhost)])
                                 model.CutawayMode |> AVal.map (function ClipHide -> "hide" | _ -> "ghost")
                             }
+                            // Focus box (Mode D): cutaway + top iso-plane at once.
+                            button {
+                                Class "tb-gear-btn"
+                                (model.CutawayActive, model.ClipPlanes) ||> AVal.map2 (fun ca cp ->
+                                    if ca && not (List.isEmpty cp) then Some (Class "btn-active") else None)
+                                Attribute("title", "Focus anchors: cut from the front and clip from the top at once, isolating this pin's anchor neighbourhood")
+                                Dom.OnClick(fun _ -> env.Emit [FocusAnchors])
+                                "⊡ Focus"
+                            }
                         }
                         // Patch small-multiples picker: one orthographic
                         // footprint per visible mesh in the shared reference

@@ -24,6 +24,8 @@ type Message =
     | ToggleClipAboveIso
     // Lock the chart-driven iso-plane at a signed distance into ClipPlanes.
     | LockIsoPlane of float
+    // Focus box (Mode D): cutaway (front) + locked top iso-plane at once.
+    | FocusAnchors
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
     // Stage 2 · Fine (ICP). Solves land in PendingReg, not MeshTransforms.

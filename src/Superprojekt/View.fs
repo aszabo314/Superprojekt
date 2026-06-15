@@ -52,6 +52,7 @@ module View =
         let placementHover  = cval<V3d option> None
         let cursorScreen    = cval<V2d option> None
         let patchHover      = cval<PatchHover option> None
+        let previewSwap     = cval false
 
         let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
 
@@ -633,7 +634,7 @@ module View =
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) (patchHover :> aval<_>) cursorHighlight clipUniforms wheelIsolation model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) (patchHover :> aval<_>) cursorHighlight clipUniforms (previewSwap :> aval<bool>) wheelIsolation model
             }
 
             Dom.OnKeyDown(fun e ->
@@ -708,7 +709,7 @@ module View =
             GuiCards.retargetCard env model
             GuiCards.anchorReviewCard env model
             GuiCards.panoramaCard env model
-            GuiOverlays.previewBanner model
+            GuiOverlays.previewBanner model (fun b -> transact (fun () -> previewSwap.Value <- b))
             GuiOverlays.toast model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.hoverProbeTooltip model (viewportSize :> aval<V2i>)

@@ -143,7 +143,7 @@ module MeshView =
     [<Literal>]
     let private cursorDarken = 0.85f
 
-    let buildScene (loadFinished : string -> unit) (cursor : aval<CursorHighlight option>) (clip : aval<int * V4f * V4f * int * int>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
+    let buildScene (loadFinished : string -> unit) (cursor : aval<CursorHighlight option>) (clip : aval<int * V4f * V4f * int * int>) (previewSwap : aval<bool>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
         let renderingModeInt =
             model.RenderingMode |> AVal.map (function
                 | Textured     -> 0
@@ -258,8 +258,12 @@ module MeshView =
                             | Some hm -> vis && hm = name
                             | None -> vis)
             let scale = scaleFor model name
-            // Effective pose: committed ∘ pending preview delta.
-            let meshT = effectiveMeshT model name
+            // Effective pose: committed ∘ pending preview delta. While the
+            // before/after swap is held, render the committed pose instead
+            // (pure render-time selection — no model mutation).
+            let meshT =
+                (effectiveMeshT model name, committedMeshT model name, previewSwap)
+                |||> AVal.map3 (fun eff comm swap -> if swap then comm else eff)
             // Inactive meshes still render (as ghost); gate only on load state
             // and fusion mode (the fusion composite replaces the normal pass).
             let renderEnabled =
@@ -422,8 +426,8 @@ module MeshView =
             // a distinct slate tint. Ghost fragments write far depth, so
             // picks pass through to the previewed surface.
             let ghostActive =
-                (renderEnabled, model.PendingReg) ||> AVal.map2 (fun r pending ->
-                    r && (PendingRegistration.delta name pending |> Option.isSome))
+                (renderEnabled, model.PendingReg, previewSwap) |||> AVal.map3 (fun r pending swap ->
+                    r && (not swap) && (PendingRegistration.delta name pending |> Option.isSome))
             let committedGhost =
                 sg {
                     Sg.Active ghostActive

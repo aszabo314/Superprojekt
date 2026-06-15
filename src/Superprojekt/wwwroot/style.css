@@ -253,7 +253,16 @@ body.loaded { background: #f4f6f8; }
     font-size: 12px; padding: 3px 14px;
     border-radius: 0 0 6px 6px; z-index: 150;
     pointer-events: none;
+    display: flex; align-items: center; gap: 10px;
 }
+.preview-banner-swap {
+    pointer-events: auto;
+    font-size: 11px; padding: 1px 8px;
+    border: 1px solid #0369a1; border-radius: 10px;
+    background: #ffffff; color: #0369a1; cursor: pointer;
+    user-select: none; touch-action: none;
+}
+.preview-banner-swap:active { background: #0369a1; color: #ffffff; }
 
 /* ── Toast ─────────────────────────────────────────────────────────── */
 

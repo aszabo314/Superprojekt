@@ -117,11 +117,12 @@ module View =
                             else None)
                     | _ -> None)
 
-        // Anchor cutaway (Mode B): a live camera-relative section plane through
-        // the selected pin's accepted anchors. PCA → axisMax (the plane
-        // contains it); origin = the accepted anchor nearest the camera; the
+        // Anchor cutaway (Mode B): a live camera-relative section plane for the
+        // selected pin. The plane contains the pin axis (probe normal) and its
         // normal is recomputed per frame (clipUniforms below) as the camera
-        // orbits, so anchors + the surface behind them stay revealed.
+        // orbits; origin = the anchor nearest the camera so the anchors + the
+        // surface behind them stay revealed. The review auto-cutaway still uses
+        // a PCA over all candidate points (no single pin axis there).
         let cutawayPlane =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
@@ -174,15 +175,20 @@ module View =
                                                 Some ((wb.Inverse * wa).Forward.TransformPos a.Point)
                                             | None -> Some a.Point)
                                     |> Array.ofSeq
-                                if pts.Length < 2 then None
-                                else
-                                    let axis = RegConditioning.dominantAxis pts
-                                    let camLocRender = (model.Camera.view.GetValue t).Location
-                                    let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
-                                    let camWorld = ScanPin.worldCentre cc s camLocRender
-                                    let origin = pts |> Array.minBy (fun p -> (p - camWorld).LengthSquared)
-                                    Some { Origin = origin; Normal = axis; Axis = axis
-                                           Mode = model.CutawayMode.GetValue t; CameraRelative = true }
+                                // Direction is anchored to the pin axis (probe
+                                // normal), not a PCA of the anchors — the PCA is
+                                // ill-conditioned when the anchors cluster, which
+                                // made the cut wobble. Origin = the point nearest
+                                // the camera (anchors if any, else the centre) so
+                                // it lands on the far/revealed side of the cut.
+                                let originPts = if Array.isEmpty pts then [| pin.Centre |] else pts
+                                let axis = ScanPin.axis pin
+                                let camLocRender = (model.Camera.view.GetValue t).Location
+                                let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
+                                let camWorld = ScanPin.worldCentre cc s camLocRender
+                                let origin = originPts |> Array.minBy (fun p -> (p - camWorld).LengthSquared)
+                                Some { Origin = origin; Normal = axis; Axis = axis
+                                       Mode = model.CutawayMode.GetValue t; CameraRelative = true }
                             | _ -> None
                         | None -> None)
 

@@ -570,6 +570,9 @@ module GuiCards =
     // per (pin × mesh) seeded anchor with the projection distance; rows with
     // Δ > 2× falloff or no projection are flagged. Apply marks accepted.
     let anchorReviewCard (env : Env<Message>) (model : AdaptiveModel) =
+        let dragState : cval<(V2d * V2d) option> = cval None
+        let committedPos = cval (V2d(360.0, 70.0))
+        let pos = Cards.cardPos (committedPos :> aval<_>) dragState
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         let candidatesAList =
             (model.AnchorReview, model.AnchorReviewFilter) ||> AVal.map2 (fun review filt ->
@@ -596,11 +599,11 @@ module GuiCards =
                 | AnchorReviewSeeding -> "Projecting reference anchors onto the other meshes…"
                 | _ -> "")
         div {
-            Class "card retarget-card anchor-review-card"
-            showWhen (model.AnchorReview |> AVal.map (function AnchorReviewIdle -> false | _ -> true))
+            Class "card anchor-review-card"
+            Cards.cardStyle (model.AnchorReview |> AVal.map (function AnchorReviewIdle -> false | _ -> true)) pos
             div {
                 Class "card-titlebar"
-                span { Class "card-title"; title }
+                Cards.cardDragHandle title pos dragState (fun p -> transact (fun () -> committedPos.Value <- p))
                 button {
                     Class "card-btn-close"
                     Attribute("title", "Close (anchors stay unaccepted)")

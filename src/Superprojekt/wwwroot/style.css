@@ -887,6 +887,9 @@ body.loaded { background: #f4f6f8; }
     box-shadow: 0 4px 12px rgba(0,0,0,0.20);
     z-index: 9000;
 }
+/* Anchor-review card: draggable (shared card chrome), so it positions via
+   cardStyle (inline left/top) rather than the retarget modal centring. */
+.anchor-review-card { min-width: 360px; max-width: 480px; z-index: 9000; }
 .retarget-card .card-titlebar {
     display: flex; align-items: center; justify-content: space-between;
     padding: 6px 10px; border-bottom: 1px solid #e2e8f0;

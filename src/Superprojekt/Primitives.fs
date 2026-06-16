@@ -194,7 +194,7 @@ module ReadinessView =
                 |> List.choose (fun (id, p) ->
                     match ScanPin.correspondence p with
                     | Some c when c.Enabled && p.Phase = PinPhase.Committed ->
-                        let rel = p.ReliabilityWeight
+                        let rel = 1.0
                         let accepted =
                             movingVisible
                             |> List.filter (fun m ->

@@ -385,17 +385,6 @@ module CardsPin =
         let innerText = selectedPin |> AVal.map (function
             | Some p -> sprintf "%.2f m" p.InnerRadius
             | None -> "—")
-        let falloffText = selectedPin |> AVal.map (function
-            | Some p -> sprintf "%.2f m" p.FalloffRadius
-            | None -> "—")
-        let reliability = selectedPin |> AVal.map (function
-            | Some p -> p.ReliabilityWeight
-            | None -> 1.0)
-        let onReliabilityChange v =
-            match AVal.force selectedPin with
-            | Some p -> env.Emit [ScanPinMsg (SetReliabilityWeight(p.Id, v))]
-            | None -> ()
-
         div {
             Class "pin-card-body"
 
@@ -414,14 +403,9 @@ module CardsPin =
                         span { Class "pc-key"; "Inner R" }
                         span { Class "pc-val"; innerText }
                     }
-                    div {
-                        Class "pc-readout-row"
-                        span { Class "pc-key"; "Falloff R" }
-                        span { Class "pc-val"; falloffText }
-                    }
                 }
-                // M3C2 probe: planarity badge, ridgeline,
-                // x-range / lock-order controls, three-source stacked bar.
+                // M3C2 probe: ridgeline, x-range / lock-order controls,
+                // three-source stacked bar.
                 let probe =
                     selectedPin |> AVal.map (function
                         | Some p -> Some p.Probe
@@ -520,8 +504,6 @@ module CardsPin =
                         | Some dv -> env.Emit [LockIsoPlane dv]
                         | None -> ()
                     | _ -> ()
-                let planarBadge =
-                    probeResult |> AVal.map (Option.map (fun r -> r.Planar))
                 let sources =
                     probeResult |> AVal.map (Option.map (fun r -> r.Sources))
                 let srcText =
@@ -546,16 +528,6 @@ module CardsPin =
                             Attribute("title", "Slice: while hovering the chart, clip the meshes above the iso-plane. Alt-click the chart to lock it.")
                             Dom.OnClick(fun _ -> env.Emit [ToggleClipAboveIso])
                             "⊟ slice"
-                        }
-                        span {
-                            Class "pc-planarity"
-                            planarBadge |> AVal.map (function
-                                | Some true -> Some (Class "pc-planar-ok")
-                                | Some false -> Some (Class "pc-planar-warn")
-                                | None -> Some (Class "hidden"))
-                            planarBadge |> AVal.map (function
-                                | Some false -> "not planar"
-                                | _ -> "planar")
                         }
                     }
                     input {
@@ -663,15 +635,6 @@ module CardsPin =
                         span { Class "pc-legend-item pc-bar-conditioning"; "Conditioning" }
                     }
                     div { Class "pc-provenance-readout"; srcText }
-                }
-                div {
-                    Class "pc-reliability"
-                    Primitives.inlineSlider
-                        "Reliability"
-                        0.0 1.0 0.01
-                        (sprintf "%.2f")
-                        reliability
-                        onReliabilityChange
                 }
                 // Ensemble-registration correspondence: anchor status per
                 // mesh, residuals of the last coarse solve, fallback picks.

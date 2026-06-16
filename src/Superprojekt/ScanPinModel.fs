@@ -30,17 +30,16 @@ type ContactRingState =
     | RingsReady of Map<string, V3d[][]>
 
 // All ScanPin geometry is metric world-space; InnerRadius and FalloffRadius
-// are independent. Render-space conversion happens at pipeline boundaries.
-// Probe: cached M3C2 probe result, recomputed lazily after invalidation
-// (ProbeNone). ProbeLengthOverride None = server auto-length.
+// are independent (FalloffRadius is fixed; see ScanPin.fixedFalloffRadius).
+// Render-space conversion happens at pipeline boundaries. Probe: cached M3C2
+// result, recomputed lazily after invalidation (ProbeNone).
 type ScanPin = {
     Id                   : ScanPinId
     Phase                : PinPhase
     Centre               : V3d
     InnerRadius          : float
     FalloffRadius        : float
-    // Reliability weight (registration) + optional correspondence anchors.
-    ReliabilityWeight    : float
+    // Optional registration correspondence anchors.
     Correspondence       : Correspondence option
     HostMeshName         : string option
     CreationCameraState  : CameraSnapshot
@@ -50,7 +49,6 @@ type ScanPin = {
     // Second probe under the effective preview transforms while a
     // registration solve is pending (split violin). Never persisted.
     ProbePreview         : ProbeState
-    ProbeLengthOverride  : float option
     ProbeLockOrder       : bool
     ProbeXRange          : ProbeXRange
     ContactRings         : ContactRingState
@@ -112,6 +110,10 @@ module ScanPinModel =
         { sp with Pins = pins }
 
 module ScanPin =
+    // Falloff radius and probe-cylinder length are fixed (no GUI sliders).
+    let fixedFalloffRadius = 1.2
+    let fixedProbeLength    = 20.0
+
     // World-space (metric) → render-space (post centroid translate, post scale).
     let renderCentre (commonCentroid : V3d) (datasetScale : float) (worldCentre : V3d) =
         (worldCentre - commonCentroid) * datasetScale

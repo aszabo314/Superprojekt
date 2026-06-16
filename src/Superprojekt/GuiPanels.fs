@@ -119,12 +119,8 @@ module GuiPanels =
             showWhen (StudyGate.featureOn model "pinEdit")
             let innerR =
                 activePin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 1.0)
-            let falloffDelta =
-                activePin |> AVal.map (Option.map (fun p -> max 0.01 (p.FalloffRadius - p.InnerRadius)) >> Option.defaultValue 3.0)
             inlineLogSlider "Inner radius" 0.01 10000.0 (sprintf "%.2f m") innerR (fun v ->
                 env.Emit [ScanPinMsg (SetInnerRadius v)])
-            inlineLogSlider "Falloff +" 0.01 10000.0 (sprintf "+%.2f m") falloffDelta (fun v ->
-                env.Emit [ScanPinMsg (SetFalloffDelta v)])
 
             let pinId = activePlacementId
 
@@ -156,50 +152,6 @@ module GuiPanels =
                 posInput "X" (fun c -> c.X) (fun c v -> V3d(v, c.Y, c.Z))
                 posInput "Y" (fun c -> c.Y) (fun c v -> V3d(c.X, v, c.Z))
                 posInput "Z" (fun c -> c.Z) (fun c v -> V3d(c.X, c.Y, v))
-            }
-
-            let reliability =
-                activePin |> AVal.map (Option.map (fun p -> p.ReliabilityWeight) >> Option.defaultValue 1.0)
-            div {
-                Class "lp-reliability-row"
-                inlineSlider "Reliability" 0.0 1.0 0.01 (sprintf "%.2f") reliability (fun v ->
-                    match AVal.force pinId with
-                    | Some id -> env.Emit [ScanPinMsg (SetReliabilityWeight(id, v))]
-                    | None -> ())
-            }
-
-            // Probe cylinder length: manual override 1–100 m, or
-            // server auto-length (1.1 × union bbox extent along the normal).
-            let probeLen =
-                activePin |> AVal.map (fun po ->
-                    match po with
-                    | Some p ->
-                        match p.ProbeLengthOverride with
-                        | Some l -> l
-                        | None ->
-                            match p.Probe with
-                            | ProbeReady r -> r.Length
-                            | _ -> 10.0
-                    | None -> 10.0)
-            let lenIsAuto =
-                activePin |> AVal.map (function
-                    | Some p -> p.ProbeLengthOverride.IsNone
-                    | None -> true)
-            div {
-                Class "lp-probelen-row"
-                inlineLogSlider "Cyl. length" 1.0 100.0 (sprintf "%.1f m") probeLen (fun v ->
-                    match AVal.force pinId with
-                    | Some id -> env.Emit [ScanPinMsg (SetProbeLength(id, Some v))]
-                    | None -> ())
-                button {
-                    Class "lp-probelen-auto"
-                    lenIsAuto |> AVal.map (fun a -> if a then Some (Class "btn-active") else None)
-                    Dom.OnClick(fun _ ->
-                        match AVal.force pinId with
-                        | Some id -> env.Emit [ScanPinMsg (SetProbeLength(id, None))]
-                        | None -> ())
-                    "auto"
-                }
             }
             }
 

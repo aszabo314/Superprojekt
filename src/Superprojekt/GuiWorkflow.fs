@@ -194,7 +194,6 @@ module GuiWorkflow =
                                     | None -> 0                     // red ring (missing)
                                 m, colourOf m, state)
                         let accepted = dots |> List.filter (fun (_, _, st) -> st = 2) |> List.length
-                        let rel = p.ReliabilityWeight
                         let resid =
                             ls |> Map.toList
                             |> List.choose (fun (_, e) -> e.PerPinResiduals |> Option.bind (Map.tryFind id))
@@ -203,7 +202,7 @@ module GuiWorkflow =
                               sprintf "(%.1f, %.1f, %.1f)" p.Centre.X p.Centre.Y p.Centre.Z,
                               p.HostMeshName, dots, accepted,
                               List.length input.VisibleMovingMeshes,
-                              rel, resid, p.Centre, p.FalloffRadius)
+                              resid, p.Centre, p.FalloffRadius)
                     | _ -> None)
                 |> IndexList.ofList)
 
@@ -218,7 +217,7 @@ module GuiWorkflow =
                     else None)
                 |> IndexList.ofList)
 
-        let pinRow (id, label : string, host : string option, dots, accepted, total, rel, resid, centre, falloff) =
+        let pinRow (id, label : string, host : string option, dots, accepted, total, resid, centre, falloff) =
             div {
                 Class "wfp-row wfp-pin-row"
                 div {
@@ -252,7 +251,6 @@ module GuiWorkflow =
                             }
                     }
                     span { Class "wfp-count"; sprintf "%d/%d" accepted total }
-                    span { Class "wfp-rel"; Attribute("title", "Reliability weight"); sprintf "w %.2f" rel }
                     span {
                         Class "wfp-resid"
                         Attribute("title", "Worst per-mesh residual of the last coarse solve")

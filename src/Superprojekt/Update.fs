@@ -376,7 +376,7 @@ module Update =
                     |> List.choose (fun (_, p) ->
                         match ScanPin.correspondence p with
                         | Some c when c.Enabled && c.RefAnchor.IsSome && p.Phase = PinPhase.Committed ->
-                            Some (p.Id, c.RefAnchor.Value, p.ReliabilityWeight, c.Anchors)
+                            Some (p.Id, c.RefAnchor.Value, 1.0, c.Anchors)
                         | _ -> None)
                 let pairsFor mesh =
                     enabledPins
@@ -492,7 +492,7 @@ module Update =
                             if pin.Phase = PinPhase.Committed then
                                 // pin.Centre and pin.FalloffRadius are
                                 // already world-space metres.
-                                Some (pin.Id, (pin.Centre, pin.FalloffRadius, pin.ReliabilityWeight))
+                                Some (pin.Id, (pin.Centre, pin.FalloffRadius, 1.0))
                             else None)
                         |> Array.ofSeq
                     let anchors =

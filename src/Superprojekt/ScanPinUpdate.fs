@@ -24,22 +24,19 @@ module ScanPinUpdate =
     let activeScale (model : Model) =
         DatasetScale.active model.ActiveDataset model.DatasetScales
 
-    // Metric defaults: 5 m hard core, +1 m falloff delta.
+    // Metric default hard-core radius (falloff is fixed; see ScanPin).
     let defaultInnerRadius (_ : Model) = 5.0
-    let defaultFalloffRadius (model : Model) = defaultInnerRadius model + 1.0
 
     // centre is in world-space metres.
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
         let inner   = defaultInnerRadius model
-        let falloff = defaultFalloffRadius model
         let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
         {
             Id                   = id
             Phase                = PinPhase.Placement
             Centre               = worldCentre
             InnerRadius          = inner
-            FalloffRadius        = falloff
-            ReliabilityWeight    = 1.0
+            FalloffRadius        = ScanPin.fixedFalloffRadius
             Correspondence       = None
             HostMeshName         = model.ActivePickingLayer
             CreationCameraState  = cam
@@ -47,7 +44,6 @@ module ScanPinUpdate =
             DatasetColors        = assignColors model.MeshNames
             Probe                = ProbeNone
             ProbePreview         = ProbeNone
-            ProbeLengthOverride  = None
             ProbeLockOrder       = false
             ProbeXRange          = ProbeXAuto
             ContactRings         = RingsNone
@@ -86,26 +82,13 @@ module ScanPinUpdate =
                     SelectedPin = Some id }
             | _ -> sp
 
-        // InnerRadius is the "hard truth" and is unaffected by the falloff
-        // slider or GhostOpacity changes. The falloff slider is *relative*:
-        // its value is the delta added to InnerRadius. Moving the inner
-        // slider preserves that delta (the falloff-zone thickness stays
-        // constant) so the falloff slider doesn't jump under the user.
+        // InnerRadius is the "hard truth" (full opacity + probe weight inside).
+        // FalloffRadius is fixed (ScanPin.fixedFalloffRadius), not edited here.
         | SetInnerRadius r ->
             match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
                 if pin.Phase = PinPhase.Placement then
-                    let r' = max 0.01 r
-                    let delta = max 0.0 (pin.FalloffRadius - pin.InnerRadius)
-                    { pin with InnerRadius = r'; FalloffRadius = r' + delta; Probe = ProbeNone; ContactRings = RingsNone }
-                else pin)
-            | None -> sp
-
-        | SetFalloffDelta d ->
-            match ScanPinModel.activePlacementId sp with
-            | Some id -> sp |> updatePin id (fun pin ->
-                if pin.Phase = PinPhase.Placement then
-                    { pin with FalloffRadius = pin.InnerRadius + max 0.0 d }
+                    { pin with InnerRadius = max 0.01 r; Probe = ProbeNone; ContactRings = RingsNone }
                 else pin)
             | None -> sp
 
@@ -135,10 +118,6 @@ module ScanPinUpdate =
 
         | FocusPin _ -> sp
 
-        | SetReliabilityWeight(id, w) ->
-            sp |> updatePin id (fun pin ->
-                { pin with ReliabilityWeight = clamp 0.0 1.0 w })
-
         // Stale guard: results only land while the pin is still ProbeRunning;
         // anything that invalidated the probe in the meantime wins.
         | ProbeComputed(id, result) ->
@@ -160,12 +139,6 @@ module ScanPinUpdate =
         | ContactRingsComputed(id, rings) ->
             sp |> updatePin id (fun pin ->
                 if pin.ContactRings = RingsRunning then { pin with ContactRings = RingsReady rings } else pin)
-
-        | SetProbeLength(id, len) ->
-            sp |> updatePin id (fun pin ->
-                let len = len |> Option.map (fun l -> clamp 1.0 100.0 l)
-                if pin.ProbeLengthOverride = len then pin
-                else { pin with ProbeLengthOverride = len; Probe = ProbeNone })
 
         | ToggleProbeLockOrder id ->
             sp |> updatePin id (fun pin -> { pin with ProbeLockOrder = not pin.ProbeLockOrder })
@@ -275,7 +248,7 @@ module ScanPinUpdate =
                 let id = pin.Id
                 let centre = pin.Centre
                 let radius = pin.InnerRadius
-                let length = pin.ProbeLengthOverride |> Option.defaultValue 0.0
+                let length = ScanPin.fixedProbeLength
                 probeCts.Cancel()
                 probeCts <- new System.Threading.CancellationTokenSource()
                 // The cancelled task never emits, so a different pin whose
@@ -343,7 +316,7 @@ module ScanPinUpdate =
                     let id = pin.Id
                     let centre = pin.Centre
                     let radius = pin.InnerRadius
-                    let length = pin.ProbeLengthOverride |> Option.defaultValue 0.0
+                    let length = ScanPin.fixedProbeLength
                     previewProbeCts.Cancel()
                     previewProbeCts <- new System.Threading.CancellationTokenSource()
                     let sp =

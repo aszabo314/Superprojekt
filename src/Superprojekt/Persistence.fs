@@ -76,12 +76,11 @@ module Persistence =
             p.DatasetColors |> Map.toSeq
             |> Seq.map (fun (k, v) -> sprintf "%s:%s" (q k) (c4bJ v))
             |> String.concat ","
-        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"rel\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"camera\":%s,\"createdAt\":%s,\"probeLen\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
+        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"camera\":%s,\"createdAt\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
             (q (guid.ToString())) (pinPhaseTag p.Phase) (v3 p.Centre)
-            (f p.InnerRadius) (f p.FalloffRadius) (f p.ReliabilityWeight) (corrJ p.Correspondence)
+            (f p.InnerRadius) (f p.FalloffRadius) (corrJ p.Correspondence)
             (match p.HostMeshName with Some n -> q n | None -> "null")
             colors (camSnapJ p.CreationCameraState) (q (p.CreatedAt.ToString("O")))
-            (match p.ProbeLengthOverride with Some l -> f l | None -> "null")
             p.ProbeLockOrder (ProbeXRange.tag p.ProbeXRange)
 
     let serialize (model : Model) : string =
@@ -174,16 +173,8 @@ module Persistence =
         | true, v -> Some v
         | _       -> None
 
-    // Reliability + correspondence, read from the new flat fields and falling
-    // back to a legacy "payload" object (only its point fields survive — the
-    // removed line/patch payloads load as a plain pin).
-    let private rReliability (e : JsonElement) =
-        match tryProp "rel" e with
-        | Some v when v.ValueKind = JsonValueKind.Number -> v.GetDouble()
-        | _ ->
-            match tryProp "payload" e |> Option.bind (tryProp "rel") with
-            | Some v when v.ValueKind = JsonValueKind.Number -> v.GetDouble()
-            | _ -> 1.0
+    // Correspondence, read from the new flat field and falling back to a
+    // legacy "payload" object (removed line/patch payloads load as plain pins).
     let private rCorrespondence (e : JsonElement) =
         let fromObj o =
             match tryProp "corr" o with
@@ -213,10 +204,6 @@ module Persistence =
             match e.GetProperty("createdAt").GetString() |> DateTime.TryParse with
             | true, dt -> dt
             | _ -> DateTime.UtcNow
-        let probeLen =
-            match tryProp "probeLen" e with
-            | Some v when v.ValueKind <> JsonValueKind.Null -> Some (v.GetDouble())
-            | _ -> None
         let probeLock =
             match tryProp "probeLock" e with
             | Some v -> v.GetBoolean()
@@ -230,8 +217,7 @@ module Persistence =
             Phase = pinPhaseOf (e.GetProperty("phase").GetString())
             Centre = rV3 (e.GetProperty("centre"))
             InnerRadius = e.GetProperty("inner").GetDouble()
-            FalloffRadius = e.GetProperty("falloff").GetDouble()
-            ReliabilityWeight = rReliability e
+            FalloffRadius = ScanPin.fixedFalloffRadius
             Correspondence = rCorrespondence e
             HostMeshName = host
             CreationCameraState = cam
@@ -239,7 +225,6 @@ module Persistence =
             DatasetColors = colors
             Probe = ProbeNone
             ProbePreview = ProbeNone
-            ProbeLengthOverride = probeLen
             ProbeLockOrder = probeLock
             ProbeXRange = probeRange
             ContactRings = RingsNone

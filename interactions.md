@@ -234,14 +234,12 @@ place pins by clicking inside the panorama view (§11).
 
 | Control | Range / behaviour |
 |---|---|
-| Inner radius | log slider 0.01–10 000 m; the hard-truth core (full opacity & probe weight). Changing it preserves the falloff *delta* |
-| Falloff + | log slider, *relative*: `FalloffRadius = InnerRadius + delta`. Drawn as a white sphere outline only while adjusting |
+| Inner radius | log slider 0.01–10 000 m; the hard-truth core (full opacity & probe weight) |
 | Position (m) | X / Y / Z numeric fields — move the pin while adjusting |
-| Reliability | 0–1, the pin's weight multiplier as a registration anchor |
-| Cyl. length | probe cylinder length, log slider 1–100 m, or **auto** (server-estimated) |
 
-Changing radius/position/length immediately invalidates the pin's probe and
-contact rings; both recompute lazily (§8.4).
+Falloff radius (1.2 m) and probe-cylinder length (20 m) are fixed (no
+sliders). Changing the radius/position immediately invalidates the pin's
+probe and contact rings; both recompute lazily (§8.4).
 
 **Pin list** (left panel): one row per pin — click the coordinates to
 select/deselect (opens/closes its card), **⌖** focus (flies the camera back
@@ -259,11 +257,12 @@ so occlusion reads as the spatial cue.
 
 ## 8. ScanPins — measurement & analysis
 
-Every pin hosts the M3C2 distance probe (§8.3) and a reliability weight for
-registration anchoring, plus an optional correspondence (§9). (Earlier
-iterations had selectable Point / Line / Patch payload modes; only the Point
-behaviour remained in use, so the mode selector and the Line/Patch code were
-removed — a pin just *is* a probe + correspondence.)
+Every pin hosts the M3C2 distance probe (§8.3) plus an optional
+correspondence (§9). (Earlier iterations had selectable Point / Line / Patch
+payload modes and per-pin reliability / falloff / cylinder-length controls;
+only the Point behaviour remained in use, so the mode selector, those
+controls and the Line/Patch code were removed — a pin just *is* a probe +
+correspondence; registration weights are uniform.)
 
 ### 8.2 Pin cards
 
@@ -273,12 +272,11 @@ draggable cards): drag handle to move (dragging detaches it to a fixed
 screen position; 📌 re-docks), collapse toggle, ✕ close (deselects), click
 brings to front.
 
-Card body (Point payload): centre / radii readouts, planarity badge
-(planar ✓ / not planar ⚠ from the probe's PCA), the **violin chart** (8.3),
+Card body: centre / inner-radius readouts, the **violin chart** (8.3),
 y-range presets (auto / ±0.5 / ±2 / ±10 / fit), lock-order toggle, the
 **three-source stacked error bar** (blue dataset / orange algorithm / purple
-conditioning) with numeric breakdown, probe-length override, the
-reliability slider, and the **correspondence section** (§9.2): a "use as
+conditioning) with numeric breakdown, and the **correspondence section**
+(§9.2): a "use as
 registration landmark" toggle, the reference-anchor status (⚠ when the
 projection is > 2× the falloff radius), one row per other mesh (anchor
 source + accepted state + last coarse-solve residual + ⊕ pick-in-3D), and
@@ -449,7 +447,7 @@ collinear), and the enabled-pin list with a one-click **⊘ exclude** per
 pin. **▶ Solve coarse** (enabled when ≥1 visible moving mesh has ≥3
 accepted pairs; disabled states explain themselves in the tooltip) POSTs
 `/query/lsq-pairs` per qualifying mesh in parallel — a weighted rigid
-Umeyama/Arun solve (weights = pin reliability) that returns the delta,
+Umeyama/Arun solve (uniform weights) that returns the delta,
 per-pair residuals (shown in each pin's correspondence rows), and a
 collinearity warning. Meshes with <3 pairs are listed as unsolved. Hidden
 meshes are never solved, but their anchors persist.
@@ -458,7 +456,7 @@ meshes are never solved, but their anchors persist.
 
 Unchanged math: *Traditional ICP* (uniform weights) or *Region-restricted*
 (each committed pin becomes a Gaussian anchor: centre, sigma =
-FalloffRadius, multiplier = reliability). `POST /api/query/icp` per visible
+FalloffRadius, multiplier = 1). `POST /api/query/icp` per visible
 moving mesh in parallel (Gauss-Newton point-to-surface, Embree
 closest-point correspondences, trimmed at 3× the median pair distance),
 starting from the **committed** transforms — so the intended flow is
@@ -494,10 +492,10 @@ collapsible sections:
 - **Correspondence pins** — per enabled pin: host mesh, an **anchor-dot
   matrix** (one dot per visible moving mesh in its colour: filled =
   accepted, hollow = seeded, red ring = missing; tooltip names the mesh),
-  accepted `n/M`, reliability, the worst per-mesh residual of the last
+  accepted `n/M`, the worst per-mesh residual of the last
   coarse solve, exclude + open-card buttons. Clicking the row selects the
   pin and flies to its sphere. A collapsed **Other pins** footer enables
-  correspondence on any committed Point pin (triggers the normal
+  correspondence on any committed pin (triggers the normal
   auto-seed + review flow). The header aggregates accepted pairs per mesh.
 - **Registration status** — the pending banner (per-mesh RMS before→after
   + Commit/Discard), the **diagnostics list** from the shared readiness

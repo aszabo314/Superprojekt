@@ -673,17 +673,9 @@ body.loaded { background: #f4f6f8; }
 .pc-legend-item.pc-bar-algorithm,
 .pc-legend-item.pc-bar-conditioning { background: transparent; }
 
-.pc-reliability { margin-top: 2px; }
-
 /* ── M3C2 probe block ─────────────────────────────────────────────── */
 .pc-probe { display: flex; flex-direction: column; gap: 4px; }
 .pc-probe-head { display: flex; align-items: baseline; justify-content: space-between; }
-.pc-planarity {
-    font-size: 9px; padding: 1px 6px; border-radius: 8px;
-    text-transform: uppercase; letter-spacing: 0.04em;
-}
-.pc-planar-ok { background: #dcfce7; color: #15803d; }
-.pc-planar-warn { background: #fef9c3; color: #a16207; }
 .pc-ridge { overflow-x: auto; }
 .pc-ridge .ridge-plot { display: block; cursor: crosshair; }
 .pc-violin-legend {
@@ -708,16 +700,6 @@ body.loaded { background: #f4f6f8; }
     font-size: 10px; color: #64748b;
     font-family: 'SF Mono', 'Monaco', monospace;
 }
-
-/* Reliability slider container in the placement flyout. */
-.lp-reliability-row { margin-top: 2px; }
-.lp-probelen-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
-.lp-probelen-row .is { flex: 1; }
-.lp-probelen-auto {
-    background: #f8fafc; border: 1px solid #c5cdd8; border-radius: 2px;
-    color: #0f172a; font-size: 10px; padding: 2px 8px; cursor: pointer;
-}
-.lp-probelen-auto:hover { background: #e2e8f0; }
 
 /* Line payload flyout controls (V6 §D.7.2) */
 .lp-line-controls { display: flex; flex-direction: column; gap: 4px; }

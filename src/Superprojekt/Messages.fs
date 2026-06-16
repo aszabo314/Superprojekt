@@ -157,20 +157,16 @@ and ScanPinMessage =
     | CancelPlacement
     | PlaceAnchor of worldCentre:V3d
     | SetInnerRadius of float
-    // Delta added to InnerRadius to get FalloffRadius — slider is relative.
-    | SetFalloffDelta of float
     // Move the pin being adjusted (numeric position fields in the flyout).
     | RepositionPin of ScanPinId * V3d
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
     | FocusPin of ScanPinId
-    | SetReliabilityWeight of ScanPinId * float
     | ProbeComputed of ScanPinId * ProbeResult
     | ProbeFailed of ScanPinId * string
     | ProbePreviewComputed of ScanPinId * ProbeResult
     | ProbePreviewFailed of ScanPinId * string
     | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>
-    | SetProbeLength of ScanPinId * float option
     | ToggleProbeLockOrder of ScanPinId
     | SetProbeXRange of ScanPinId * ProbeXRange

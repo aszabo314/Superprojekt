@@ -73,8 +73,8 @@ module Persistence =
             p.DatasetColors |> Map.toSeq
             |> Seq.map (fun (k, v) -> sprintf "%s:%s" (q k) (c4bJ v))
             |> String.concat ","
-        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"createdAt\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
-            (q (guid.ToString())) (pinPhaseTag p.Phase) (v3 p.Centre)
+        sprintf "{\"id\":%s,\"name\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"createdAt\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
+            (q (guid.ToString())) (q p.Name) (pinPhaseTag p.Phase) (v3 p.Centre)
             (f p.InnerRadius) (f p.FalloffRadius) (corrJ p.Correspondence)
             (match p.HostMeshName with Some n -> q n | None -> "null")
             colors (q (p.CreatedAt.ToString("O")))
@@ -204,6 +204,10 @@ module Persistence =
             | None -> ProbeXAuto
         {
             Id = id
+            Name =
+                match tryProp "name" e with
+                | Some v when v.ValueKind = JsonValueKind.String -> v.GetString()
+                | _ -> PinNames.generate id
             Phase = pinPhaseOf (e.GetProperty("phase").GetString())
             Centre = rV3 (e.GetProperty("centre"))
             InnerRadius = e.GetProperty("inner").GetDouble()

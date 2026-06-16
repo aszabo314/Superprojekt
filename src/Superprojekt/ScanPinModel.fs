@@ -26,8 +26,24 @@ type ContactRingState =
 // are independent (FalloffRadius is fixed; see ScanPin.fixedFalloffRadius).
 // Render-space conversion happens at pipeline boundaries. Probe: cached M3C2
 // result, recomputed lazily after invalidation (ProbeNone).
+// Human-readable short pin names (adjective + noun), derived deterministically
+// from the pin id so the same pin always gets the same name.
+module PinNames =
+    let private adjectives =
+        [| "Amber"; "Brisk"; "Calm"; "Dusky"; "Early"; "Fleet"; "Grave"; "Hazel"
+           "Ivory"; "Jolly"; "Keen"; "Lush"; "Misty"; "Noble"; "Olive"; "Pale"
+           "Quiet"; "Rusty"; "Slate"; "Tawny"; "Umber"; "Vivid"; "Wry"; "Zesty" |]
+    let private nouns =
+        [| "Otter"; "Finch"; "Cedar"; "Ridge"; "Delta"; "Heron"; "Maple"; "Quartz"
+           "Birch"; "Coral"; "Dune"; "Ember"; "Fjord"; "Gull"; "Holly"; "Inlet"
+           "Jasper"; "Knoll"; "Larch"; "Moss"; "Nook"; "Reef"; "Spruce"; "Thorn" |]
+    let generate (ScanPinId.ScanPinId g : ScanPinId) =
+        let h = g.GetHashCode() &&& 0x7FFFFFFF
+        sprintf "%s %s" adjectives.[h % adjectives.Length] nouns.[(h / adjectives.Length) % nouns.Length]
+
 type ScanPin = {
     Id                   : ScanPinId
+    Name                 : string
     Phase                : PinPhase
     Centre               : V3d
     InnerRadius          : float

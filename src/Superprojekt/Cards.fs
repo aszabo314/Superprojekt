@@ -8,6 +8,7 @@ open Aardvark.Dom
 module Cards =
 
     let shortName = CardsPin.shortName
+    let numbered = CardsPin.numbered
 
     // Shared chrome for every floating card. A drag is held in a local
     // cval<(cardPos, grabOffset) option>; `pos` is the card's current position
@@ -180,9 +181,7 @@ module Cards =
                         cardDragHandle
                             (selectedPin |> AVal.map (fun po ->
                                 match po with
-                                | Some pin ->
-                                    let p = pin.Centre
-                                    sprintf "Pin  (%.1f, %.1f, %.1f) m" p.X p.Y p.Z
+                                | Some pin -> sprintf "Pin · %s" pin.Name
                                 | None -> "Pin"))
                             (effectivePos |> AVal.map (Option.defaultValue V2d.Zero))
                             dragState

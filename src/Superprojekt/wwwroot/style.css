@@ -204,6 +204,17 @@ body.loaded { background: #f4f6f8; }
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     color: #0f172a;
 }
+/* Stable 1-based mesh index, matches the palette colour; disambiguates
+   similar mesh names across every list / chart. */
+.mesh-num {
+    flex-shrink: 0;
+    min-width: 14px;
+    text-align: right;
+    font-family: 'SF Mono', 'Monaco', monospace;
+    font-size: 10px;
+    font-weight: 600;
+    color: #64748b;
+}
 
 /* ── Pin list ──────────────────────────────────────────────────────── */
 

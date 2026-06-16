@@ -13,8 +13,8 @@ module GuiPanels =
         let isSolo = model.MeshSolo |> AVal.map (fun s ->
             match s with Solo(n, _) -> n = name | _ -> false)
         let isRef = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some name)
-        let colorVal =
-            model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0 >> meshColor)
+        let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+        let colorVal = idxVal |> AVal.map meshColor
         div {
             Class "mesh-row"
             span {
@@ -22,6 +22,7 @@ module GuiPanels =
                 colorVal |> AVal.map (fun c ->
                     Some (Style [Css.Background (sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B))]))
             }
+            span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
             span { Class "mesh-name"; Cards.shortName name }
             // Single-selection reference toggle, two-way bound to the
             // registration card's reference selector.
@@ -204,9 +205,11 @@ module GuiPanels =
                                 else env.Emit [ScanPinMsg (SelectPin (Some id))])
                             pinVal |> AVal.map (fun po ->
                                 match po with
-                                | Some p ->
-                                    let a = p.Centre
-                                    sprintf "(%.1f, %.1f, %.1f)" a.X a.Y a.Z
+                                | Some p -> Some (Attribute("title", sprintf "(%.1f, %.1f, %.1f) m" p.Centre.X p.Centre.Y p.Centre.Z))
+                                | None -> None)
+                            pinVal |> AVal.map (fun po ->
+                                match po with
+                                | Some p -> p.Name
                                 | None -> "(removed)")
                         }
                         button {
@@ -246,9 +249,12 @@ module GuiPanels =
                             let sensorBtn (label : string) (sensorType : SensorType) =
                                 label, sensor |> AVal.map ((=) sensorType),
                                     (fun () -> env.Emit [SetMeshSensorType(name, sensorType)])
+                            let numName =
+                                model.MeshOrder |> AMap.tryFind name |> AVal.map (fun o ->
+                                    sprintf "%d  %s" ((Option.defaultValue 0 o) + 1) (Cards.shortName name))
                             div {
                                 Class "lp-err-mesh-row"
-                                div { Class "lp-err-mesh-name"; Cards.shortName name }
+                                div { Class "lp-err-mesh-name"; numName }
                                 compactButtonBar [
                                     sensorBtn "Rover" RoverStereo
                                     sensorBtn "Sat"   Satellite

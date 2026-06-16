@@ -8,6 +8,7 @@ open Aardvark.Dom
 module GuiOverlays =
 
     let meshWheelLabel (model : AdaptiveModel) (cursorScreen : aval<V2d option>) =
+        let meshOrderMap = model.MeshOrder.Content
         div {
             Class "mesh-wheel-label"
             (model.ActivePickingLayer, cursorScreen) ||> AVal.map2 (fun layer cOpt ->
@@ -18,8 +19,9 @@ module GuiOverlays =
                         Top  (sprintf "%.0fpx" (pos.Y - 10.0))
                     ])
                 | _ -> Some (Style [Display "none"]))
-            model.ActivePickingLayer |> AVal.map (function
-                | Some name -> Cards.shortName name
+            (model.ActivePickingLayer, meshOrderMap) ||> AVal.map2 (fun layer order ->
+                match layer with
+                | Some name -> Cards.numbered order name
                 | None -> "")
         }
 
@@ -84,12 +86,13 @@ module GuiOverlays =
                                 | None -> []
                             | _ -> []
                         | None -> []
+                let order = model.MeshOrder.Content.GetValue t
                 let sb = System.Text.StringBuilder()
                 sb.Append("{\"labels\":[") |> ignore
                 items |> List.iteri (fun i (mesh, px, dist, hasDelta) ->
                     if i > 0 then sb.Append(',') |> ignore
                     let title =
-                        (sprintf "%s <-> reference: %.3f m (%s)" (Cards.shortName mesh) dist
+                        (sprintf "%s <-> reference: %.3f m (%s)" (Cards.numbered order mesh) dist
                             (if hasDelta then "residual" else "pre-alignment gap"))
                             .Replace("\\", "").Replace("\"", "'")
                     sb.Append(sprintf "{\"x\":%.0f,\"y\":%.0f,\"t\":\"%.3f m\",\"title\":\"%s\"}" px.X px.Y dist title) |> ignore)
@@ -130,10 +133,11 @@ module GuiOverlays =
                 order |> HashMap.toSeq
                 |> Seq.map (fun (n, i) -> n, Primitives.meshColor i)
                 |> Map.ofSeq)
+        let orderMap = model.MeshOrder |> AMap.toAVal
         let json =
-            (model.HoverProbe, colors) ||> AVal.map2 (fun hp cols ->
+            (model.HoverProbe, colors, orderMap) |||> AVal.map3 (fun hp cols order ->
                 match hp with
-                | Some h -> CardsPin.probeStateJson true false ProbeXAuto None cols None h.Probe
+                | Some h -> CardsPin.probeStateJson true false ProbeXAuto None cols order None h.Probe
                 | None -> "{\"status\":\"none\"}")
         div {
             Class "hover-probe-tip"
@@ -156,6 +160,7 @@ module GuiOverlays =
                 let cOpt = cursorScreen.GetValue t
                 let wOpt = hoverWorld.GetValue t
                 let layer = model.ActivePickingLayer.GetValue t
+                let order = model.MeshOrder.Content.GetValue t
                 match mode, cOpt, wOpt with
                 | HeatOff, _, _ | _, None, _ | _, _, None -> None
                 | HeatProvenance, Some px, Some w ->
@@ -173,7 +178,7 @@ module GuiOverlays =
                     let d, a, c = Provenance.sourcesAt mesh overrides sensors algo w anchors
                     let label =
                         match layer with
-                        | Some name -> Cards.shortName name
+                        | Some name -> Cards.numbered order name
                         | None -> "— no layer —"
                     let cM = c * 0.01
                     let total = max 1e-6 (d + a + cM)
@@ -187,7 +192,7 @@ module GuiOverlays =
                     | Some mesh ->
                         let pending = model.PendingReg.GetValue t
                         match pending |> Option.bind (fun pr -> Map.tryFind mesh pr.Results) with
-                        | None -> Some (px, Cards.shortName mesh, "no pending delta for this mesh", "[]")
+                        | None -> Some (px, Cards.numbered order mesh, "no pending delta for this mesh", "[]")
                         | Some res ->
                             let sensors   = model.MeshSensorTypes.GetValue t
                             let overrides = model.MeshDatasetErrors.GetValue t
@@ -226,7 +231,7 @@ module GuiOverlays =
                                 if abs dd < lod then "below detection"
                                 elif dd < 0.0 then "improved"
                                 else "degraded"
-                            Some (px, Cards.shortName mesh,
+                            Some (px, Cards.numbered order mesh,
                                   sprintf "Δ %+.4f m • LoD %.4f m • %s" dd lod verdict, "[]")
                 | _ -> None)
         let visStyle =

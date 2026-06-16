@@ -93,6 +93,7 @@ module GuiCards =
         let fineWarnDismissed = cval false
 
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let meshOrderMap = model.MeshOrder.Content
         let refMeshOpt = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let running = model.Registration |> AVal.map (fun r -> r.Running)
         let mode = model.Registration |> AVal.map (fun r -> r.Mode)
@@ -163,8 +164,9 @@ module GuiCards =
                 // 1 · Reference (mirror of the mesh panel's ★ toggle).
                 div {
                     Class "lp-sublabel"
-                    refMeshOpt |> AVal.map (function
-                        | Some r -> sprintf "★ Reference: %s" (Cards.shortName r)
+                    (refMeshOpt, meshOrderMap) ||> AVal.map2 (fun rr order ->
+                        match rr with
+                        | Some r -> sprintf "★ Reference: %s" (Cards.numbered order r)
                         | None -> "★ Reference: — none —")
                 }
                 div {
@@ -178,7 +180,7 @@ module GuiCards =
                             Dom.OnClick(fun _ ->
                                 let cur = AVal.force refMeshOpt
                                 env.Emit [SetReferenceMesh (if cur = Some n then None else Some n)])
-                            Cards.shortName n
+                            meshOrderMap |> AVal.map (fun o -> Cards.numbered o n)
                         })
                 }
 
@@ -188,13 +190,13 @@ module GuiCards =
                     Class "reg-readiness"
                     div {
                         Class "reg-readiness-line"
-                        readiness |> AVal.map (fun i ->
+                        (readiness, meshOrderMap) ||> AVal.map2 (fun i order ->
                             let pairCounts = Readiness.pairCounts i
                             let pairsTxt =
                                 if List.isEmpty pairCounts then "no visible moving meshes"
                                 else
                                     pairCounts
-                                    |> List.map (fun (m, n) -> sprintf "%s:%d" (Cards.shortName m) n)
+                                    |> List.map (fun (m, n) -> sprintf "%s:%d" (Cards.numbered order m) n)
                                     |> String.concat "  "
                             sprintf "%d enabled pins · pairs %s" (List.length i.EnabledPins) pairsTxt)
                     }
@@ -321,7 +323,7 @@ module GuiCards =
                                 else (r.RmsAfter - r.RmsBefore) / r.RmsBefore * 100.0
                             div {
                                 Class "reg-pending-row"
-                                span { Class "reg-pending-mesh"; Cards.shortName mesh }
+                                span { Class "reg-pending-mesh"; meshOrderMap |> AVal.map (fun o -> Cards.numbered o mesh) }
                                 span {
                                     Class "reg-pending-rms"
                                     sprintf "%.3f → %.3f m (%+.1f%%)" r.RmsBefore r.RmsAfter dPct
@@ -336,10 +338,11 @@ module GuiCards =
                     }
                     div {
                         Class "reg-unsolved"
-                        model.PendingReg |> AVal.map (function
+                        (model.PendingReg, meshOrderMap) ||> AVal.map2 (fun pr order ->
+                            match pr with
                             | Some pr when not (List.isEmpty pr.Unsolved) ->
                                 sprintf "unsolved: %s"
-                                    (pr.Unsolved |> List.map Cards.shortName |> String.concat ", ")
+                                    (pr.Unsolved |> List.map (Cards.numbered order) |> String.concat ", ")
                             | _ -> "")
                     }
                     div {
@@ -574,6 +577,7 @@ module GuiCards =
         let committedPos = cval (V2d(360.0, 70.0))
         let pos = Cards.cardPos (committedPos :> aval<_>) dragState
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let meshOrderMap = model.MeshOrder.Content
         let candidatesAList =
             (model.AnchorReview, model.AnchorReviewFilter) ||> AVal.map2 (fun review filt ->
                 match review with
@@ -584,14 +588,14 @@ module GuiCards =
                 | _ -> IndexList.empty)
             |> AList.ofAVal
         let title =
-            (model.AnchorReview, model.AnchorReviewFilter) ||> AVal.map2 (fun review filt ->
+            (model.AnchorReview, model.AnchorReviewFilter, meshOrderMap) |||> AVal.map3 (fun review filt order ->
                 match review with
                 | AnchorReviewSeeding -> "Seeding correspondence anchors…"
                 | AnchorReviewing cs ->
                     match filt with
                     | Some mesh ->
                         let n = cs |> Array.filter (fun c -> c.Mesh = mesh) |> Array.length
-                        sprintf "Anchor review — %s (%d anchors)" (Cards.shortName mesh) n
+                        sprintf "Anchor review — %s (%d anchors)" (Cards.numbered order mesh) n
                     | None -> sprintf "Anchor review (%d anchors)" cs.Length
                 | _ -> "Anchor review")
         let progressNote =
@@ -625,7 +629,7 @@ module GuiCards =
                         let pinLabel =
                             pinsVal |> AVal.map (fun pins ->
                                 match HashMap.tryFind c.PinId pins with
-                                | Some p -> sprintf "(%.1f, %.1f, %.1f)" p.Centre.X p.Centre.Y p.Centre.Z
+                                | Some p -> p.Name
                                 | None -> "(removed)")
                         let baseClass =
                             "retarget-row" +
@@ -640,7 +644,7 @@ module GuiCards =
                             Dom.OnMouseEnter(fun _ -> env.Emit [SetReviewAnchorHover (Some (c.PinId, c.Mesh))])
                             Dom.OnMouseLeave(fun _ -> env.Emit [SetReviewAnchorHover None])
                             span { Class "retarget-pin"; pinLabel }
-                            span { Class "retarget-pin"; Cards.shortName c.Mesh }
+                            span { Class "retarget-pin"; meshOrderMap |> AVal.map (fun o -> Cards.numbered o c.Mesh) }
                             span {
                                 Class "retarget-dist"
                                 Attribute("title", "Pre-alignment distance from the pin to this mesh's surface (the work the registration has to close) — not the residual error")
@@ -685,6 +689,7 @@ module GuiCards =
     // (waiting on server) or RetargetReviewing (user picks accept/reject per
     // pin). Hidden on RetargetIdle.
     let retargetCard (env : Env<Message>) (model : AdaptiveModel) =
+        let meshOrderMap = model.MeshOrder.Content
         let candidatesAList =
             model.Retarget
             |> AVal.map (function
@@ -692,9 +697,10 @@ module GuiCards =
                 | _ -> IndexList.empty)
             |> AList.ofAVal
         let title =
-            model.Retarget |> AVal.map (function
+            (model.Retarget, meshOrderMap) ||> AVal.map2 (fun rt order ->
+                match rt with
                 | RetargetProjecting target ->
-                    sprintf "Retarget to %s — projecting…" (Cards.shortName target)
+                    sprintf "Retarget to %s — projecting…" (Cards.numbered order target)
                 | RetargetReviewing cs ->
                     sprintf "Retarget review (%d pins)" cs.Length
                 | _ -> "Retarget")
@@ -737,7 +743,8 @@ module GuiCards =
                             Class baseClass
                             span {
                                 Class "retarget-pin"
-                                c.OriginalHostMesh |> Option.defaultValue "—" |> Cards.shortName
+                                meshOrderMap |> AVal.map (fun o ->
+                                    c.OriginalHostMesh |> Option.map (Cards.numbered o) |> Option.defaultValue "—")
                             }
                             span { Class "retarget-dist"; distLabel }
                             div {

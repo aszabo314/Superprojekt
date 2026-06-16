@@ -32,6 +32,7 @@ module ScanPinUpdate =
         let inner   = defaultInnerRadius model
         {
             Id                   = id
+            Name                 = PinNames.generate id
             Phase                = PinPhase.Placement
             Centre               = worldCentre
             InnerRadius          = inner

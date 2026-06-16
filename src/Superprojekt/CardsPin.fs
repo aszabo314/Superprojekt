@@ -17,6 +17,14 @@ module CardsPin =
             if si > 0 then date + "_" + mesh.[si + 1 ..] else date
         else mesh
 
+    // Mesh names are easy to confuse (long, similar prefixes), so every list
+    // / chart prefixes the mesh's stable order number (1-based, matches the
+    // palette colour index in the mesh panel).
+    let numbered (order : HashMap<string, int>) (name : string) =
+        match HashMap.tryFind name order with
+        | Some i -> sprintf "%d  %s" (i + 1) (shortName name)
+        | None -> shortName name
+
     let c4bToHex (c : C4b) =
         sprintf "#%02x%02x%02x" c.R c.G c.B
 
@@ -313,7 +321,7 @@ module CardsPin =
     // preview: the probe under the effective preview transforms while a
     // registration solve is pending — rows become paired half-violins
     // (committed left, preview right) with a median-shift arrow.
-    let probeRidgeJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (preview : ProbeResult option) (r : ProbeResult) =
+    let probeRidgeJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (r : ProbeResult) =
         let win = ProbeXRange.window r xRange
         let win =
             match preview with
@@ -348,7 +356,7 @@ module CardsPin =
         rows |> Array.iteri (fun i d ->
             if i > 0 then sb.Append(',') |> ignore
             sb.Append(sprintf "{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"std\":%.5g,\"samples\":["
-                        d.MeshName (shortName d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3 d.Std) |> ignore
+                        d.MeshName (numbered order d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3 d.Std) |> ignore
             appendSamples sb d.Samples
             sb.Append("],\"kde\":[") |> ignore
             appendKde sb d.Kde
@@ -364,9 +372,9 @@ module CardsPin =
         sb.Append("]}") |> ignore
         sb.ToString()
 
-    let probeStateJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (preview : ProbeResult option) (probe : ProbeState) =
+    let probeStateJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (probe : ProbeState) =
         match probe with
-        | ProbeReady r -> probeRidgeJson mini lockOrder xRange sticky colors preview r
+        | ProbeReady r -> probeRidgeJson mini lockOrder xRange sticky colors order preview r
         | ProbeError e -> sprintf "{\"status\":\"error\",\"reason\":\"%s\"}" (e.Replace("\\", "/").Replace("\"", "'"))
         | ProbeNone | ProbeRunning -> "{\"status\":\"running\"}"
 
@@ -419,10 +427,12 @@ module CardsPin =
                 // split-violin preview and three-source bar hidden.
                 let violinOn = StudyGate.featureOn model "violinChart"
                 let barOn = StudyGate.featureOn model "threeSourceBar"
+                let meshOrderMap = model.MeshOrder.Content
                 let previewSplit =
                     (previewActive, StudyGate.featureOn model "splitViolinPreview") ||> AVal.map2 (&&)
                 let probeJson =
-                    (selectedPin, model.ChartStickyMesh, previewSplit) |||> AVal.map3 (fun po sticky pv ->
+                    let selOrder = (selectedPin, meshOrderMap) ||> AVal.map2 (fun po ord -> po, ord)
+                    (selOrder, model.ChartStickyMesh, previewSplit) |||> AVal.map3 (fun (po, order) sticky pv ->
                         match po with
                         | Some pin ->
                             // Split violin while a solve preview is pending and
@@ -433,7 +443,7 @@ module CardsPin =
                                     | ProbeReady r -> Some r
                                     | _ -> None
                                 else None
-                            probeStateJson false pin.ProbeLockOrder pin.ProbeXRange sticky pin.DatasetColors preview pin.Probe
+                            probeStateJson false pin.ProbeLockOrder pin.ProbeXRange sticky pin.DatasetColors order preview pin.Probe
                         | None -> "{\"status\":\"none\"}")
                 // 3D → chart: the elevation cursor line at the 3D hover
                 // point's signed distance along the probe axis, shown only
@@ -573,14 +583,14 @@ module CardsPin =
                         |> AList.map (fun (name, median, iqr, count) ->
                             div {
                                 Class "pc-rms-row"
-                                span { Class "pc-rms-cell pc-rms-mesh"; shortName name }
+                                span { Class "pc-rms-cell pc-rms-mesh"; meshOrderMap |> AVal.map (fun o -> numbered o name) }
                                 span { Class "pc-rms-cell"; sprintf "%+.3f m" median }
                                 span { Class "pc-rms-cell"; sprintf "%.3f m" iqr }
                                 span { Class "pc-rms-cell"; string count }
                             })
                         div {
                             Class "pc-rms-reg"
-                            (model.PendingReg, model.RegistrationLog) ||> AVal.map2 (fun pending log ->
+                            (model.PendingReg, model.RegistrationLog, meshOrderMap) |||> AVal.map3 (fun pending log order ->
                                 let rows =
                                     match pending with
                                     | Some pr when not (Map.isEmpty pr.Results) ->
@@ -597,7 +607,7 @@ module CardsPin =
                                 | rows ->
                                     rows
                                     |> List.map (fun (m, b, a, tag) ->
-                                        sprintf "%s: RMS %.3f → %.3f m (%s)" (shortName m) b a tag)
+                                        sprintf "%s: RMS %.3f → %.3f m (%s)" (numbered order m) b a tag)
                                     |> String.concat " · ")
                         }
                     }
@@ -615,8 +625,9 @@ module CardsPin =
                     }
                     div {
                         Class "pc-probe-caption"
-                        probeResult |> AVal.map (function
-                            | Some r -> sprintf "ref %s · cylinder L %.1f m" (shortName r.ReferenceMesh) r.Length
+                        (probeResult, meshOrderMap) ||> AVal.map2 (fun rr order ->
+                            match rr with
+                            | Some r -> sprintf "ref %s · cylinder L %.1f m" (numbered order r.ReferenceMesh) r.Length
                             | None -> "")
                     }
                     div {
@@ -701,7 +712,7 @@ module CardsPin =
                                 div {
                                     Class "pc-corr-row"
                                     Primitives.showWhen isMoving
-                                    span { Class "pc-corr-mesh"; shortName mesh }
+                                    span { Class "pc-corr-mesh"; meshOrderMap |> AVal.map (fun o -> numbered o mesh) }
                                     span {
                                         Class "pc-corr-acc"
                                         anchor |> AVal.map (function
@@ -785,7 +796,8 @@ module CardsPin =
                                 | Some p -> p.Shaded
                                 | None -> false)
                         let pickerJson =
-                            (model.PatchPicker, selectedPin, model.Registration) |||> AVal.map3 (fun pp po reg ->
+                            let pickOrder = (model.PatchPicker, meshOrderMap) ||> AVal.map2 (fun pp ord -> pp, ord)
+                            (pickOrder, selectedPin, model.Registration) |||> AVal.map3 (fun (pp, order) po reg ->
                                 match pp, po with
                                 | Some p, Some pin when p.PinId = pin.Id ->
                                     if p.Running then "{\"status\":\"running\"}"
@@ -802,7 +814,7 @@ module CardsPin =
                                             if i > 0 then sb.Append(',') |> ignore
                                             let isRef = reg.ReferenceMesh = Some e.Mesh
                                             sb.Append(sprintf "{\"id\":\"%s\",\"mesh\":\"%s\",\"color\":\"%s\",\"ref\":%b,\"atlas\":\"%s\",\"cross\":[%.5g,%.5g],\"tris\":["
-                                                        e.Mesh (shortName e.Mesh) (colorHex e.Mesh) isRef e.AtlasUrl
+                                                        e.Mesh (numbered order e.Mesh) (colorHex e.Mesh) isRef e.AtlasUrl
                                                         e.Crosshair.X e.Crosshair.Y) |> ignore
                                             e.Triangles |> Array.iteri (fun j t ->
                                                 if j > 0 then sb.Append(',') |> ignore

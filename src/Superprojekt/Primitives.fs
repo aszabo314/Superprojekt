@@ -204,7 +204,7 @@ module ReadinessView =
                             |> Set.ofList
                         Some {
                             Id            = id
-                            Label         = sprintf "(%.1f, %.1f, %.1f)" p.Centre.X p.Centre.Y p.Centre.Z
+                            Label         = p.Name
                             RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, max 0.01 rel)
                             Accepted      = accepted
                             AcceptedTotal =

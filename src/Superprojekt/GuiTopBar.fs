@@ -285,9 +285,12 @@ module GuiTopBar =
                             Class "tb-gear-mesh-info"
                             model.MeshNames |> AList.map (fun name ->
                                 let centroid = model.DatasetCentroids |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue V3d.Zero)
+                                let numName =
+                                    model.MeshOrder |> AMap.tryFind name |> AVal.map (fun o ->
+                                        sprintf "%d  %s" ((Option.defaultValue 0 o) + 1) (Cards.shortName name))
                                 div {
                                     Class "tb-gear-mesh-row"
-                                    span { Class "tb-gear-mesh-name"; Cards.shortName name }
+                                    span { Class "tb-gear-mesh-name"; numName }
                                     span {
                                         Class "tb-gear-mesh-coord"
                                         centroid |> AVal.map (fun c ->

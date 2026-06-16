@@ -74,6 +74,7 @@ module GuiWorkflow =
         let diagnostics = readinessInput |> AVal.map Readiness.compute
         let refMesh = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let meshOrderMap = model.MeshOrder.Content
         let flyTo (target : FlyToTarget) =
             let s = AVal.force viewportSize
             env.Emit [FlyTo(target, float s.X / float (max 1 s.Y))]
@@ -82,8 +83,8 @@ module GuiWorkflow =
         let meshRow (name : string) =
             let isVis = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
             let isRef = refMesh |> AVal.map ((=) (Some name))
-            let colorVal =
-                model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0 >> meshColor)
+            let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+            let colorVal = idxVal |> AVal.map meshColor
             // chip: Reference / Fine ✓ / Coarse ✓ / Skipped / Unregistered /
             // Hidden — committed stages from the log, Skipped = a solve ran
             // but this visible moving mesh lacked the 3 accepted pairs.
@@ -125,6 +126,7 @@ module GuiWorkflow =
                     Class "mesh-swatch"
                     colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)]))
                 }
+                span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                 span { Class "wfp-mesh-name"; Attribute("title", name); Cards.shortName name }
                 button {
                     Class "mb mb-ref"
@@ -192,15 +194,14 @@ module GuiWorkflow =
                                     | Some a when a.Accepted -> 2   // filled
                                     | Some _ -> 1                   // hollow (seeded)
                                     | None -> 0                     // red ring (missing)
-                                m, colourOf m, state)
+                                Cards.numbered order m, colourOf m, state)
                         let accepted = dots |> List.filter (fun (_, _, st) -> st = 2) |> List.length
                         let resid =
                             ls |> Map.toList
                             |> List.choose (fun (_, e) -> e.PerPinResiduals |> Option.bind (Map.tryFind id))
                             |> function [] -> None | xs -> Some (List.max xs)
-                        Some (id,
-                              sprintf "(%.1f, %.1f, %.1f)" p.Centre.X p.Centre.Y p.Centre.Z,
-                              p.HostMeshName, dots, accepted,
+                        Some (id, p.Name,
+                              (p.HostMeshName |> Option.map (Cards.numbered order)), dots, accepted,
                               List.length input.VisibleMovingMeshes,
                               resid, p.Centre, p.FalloffRadius)
                     | _ -> None)
@@ -213,7 +214,7 @@ module GuiWorkflow =
                     let enabled =
                         ScanPin.correspondence p |> Option.map (fun c -> c.Enabled) |> Option.defaultValue false
                     if p.Phase = PinPhase.Committed && not enabled then
-                        Some (id, sprintf "(%.1f, %.1f, %.1f)" p.Centre.X p.Centre.Y p.Centre.Z)
+                        Some (id, p.Name)
                     else None)
                 |> IndexList.ofList)
 
@@ -232,7 +233,7 @@ module GuiWorkflow =
                     span { Class "wfp-pin-label"; label }
                     span {
                         Class "wfp-pin-host"
-                        host |> Option.map Cards.shortName |> Option.defaultValue "—"
+                        host |> Option.defaultValue "—"
                     }
                     div {
                         Class "wfp-dots"
@@ -243,7 +244,7 @@ module GuiWorkflow =
                                        | 1 -> "wfp-dot wfp-dot-hollow"
                                        | _ -> "wfp-dot wfp-dot-missing")
                                 Attribute("title",
-                                    sprintf "%s — %s" (Cards.shortName mesh)
+                                    sprintf "%s — %s" mesh
                                         (match state with
                                          | 2 -> "accepted"
                                          | 1 -> "seeded, not accepted"
@@ -285,14 +286,14 @@ module GuiWorkflow =
 
         // ── 3.3/3.4 derived data ───────────────────────────────────────
         let pendingInfo =
-            model.PendingReg |> AVal.map (fun pr ->
+            (model.PendingReg, meshOrderMap) ||> AVal.map2 (fun pr order ->
                 match pr with
                 | Some pr when not (Map.isEmpty pr.Results) ->
                     let stage = match pr.Stage with StageCoarse -> "coarse" | StageFine -> "fine"
                     let line =
                         pr.Results |> Map.toList
                         |> List.map (fun (m, r) ->
-                            sprintf "%s %.3f→%.3f" (Cards.shortName m) r.RmsBefore r.RmsAfter)
+                            sprintf "%s %.3f→%.3f" (Cards.numbered order m) r.RmsBefore r.RmsAfter)
                         |> String.concat " · "
                     Some (stage, line)
                 | _ -> None)
@@ -379,7 +380,7 @@ module GuiWorkflow =
                             let refStd =
                                 r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
                                 |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
-                            let label = sprintf "(%.0f,%.0f,%.0f)" p.Centre.X p.Centre.Y p.Centre.Z
+                            let label = p.Name
                             let byMesh =
                                 r.Distributions |> Array.choose (fun d ->
                                     if d.Count > 0 then Some (d.MeshName, (d.Median, d.Std)) else None)
@@ -407,7 +408,7 @@ module GuiWorkflow =
                             | [] -> 0.0
                             | _ -> (marks |> List.sumBy (fun (_,_,_,_,l) -> l)) / float marks.Length
                         sb.Append(sprintf "{\"mesh\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"lod\":%.5g,\"marks\":["
-                                    mesh (Cards.shortName mesh) (colourOf mesh) lodMean) |> ignore
+                                    mesh (Cards.numbered order mesh) (colourOf mesh) lodMean) |> ignore
                         marks |> List.iteri (fun mi (g, label, med, sg, _) ->
                             if mi > 0 then sb.Append(',') |> ignore
                             sb.Append(sprintf "{\"id\":\"%s\",\"label\":\"%s\",\"x\":%.5g,\"sig\":%b}" g label med sg) |> ignore)
@@ -454,13 +455,13 @@ module GuiWorkflow =
                         Class "wfp-section"
                         div {
                             Class "wfp-pairs-line"
-                            readinessInput |> AVal.map (fun i ->
+                            (readinessInput, meshOrderMap) ||> AVal.map2 (fun i order ->
                                 let counts = Readiness.pairCounts i
                                 if List.isEmpty counts then "pairs per mesh: —"
                                 else
                                     "pairs per mesh: " +
                                     (counts
-                                     |> List.map (fun (m, n) -> sprintf "%s: %d" (Cards.shortName m) n)
+                                     |> List.map (fun (m, n) -> sprintf "%s: %d" (Cards.numbered order m) n)
                                      |> String.concat "  "))
                         }
                         corrRows |> AList.ofAVal |> AList.map pinRow
@@ -559,7 +560,7 @@ module GuiWorkflow =
                         statsRows |> AList.ofAVal |> AList.map (fun (mesh, last, stage, series) ->
                             div {
                                 Class "wfp-stats-row"
-                                span { Class "wfp-stats-cell wfp-stats-mesh"; Attribute("title", mesh); Cards.shortName mesh }
+                                span { Class "wfp-stats-cell wfp-stats-mesh"; Attribute("title", mesh); meshOrderMap |> AVal.map (fun o -> Cards.numbered o mesh) }
                                 span {
                                     Class "wfp-stats-cell"
                                     let rmsTxt =

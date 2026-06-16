@@ -74,7 +74,7 @@ type RetargetCandidate = {
     PinId              : ScanPinId
     OriginalCentre     : V3d
     OriginalHostMesh   : string option
-    FalloffRadius      : float
+    InnerRadius        : float
     ProjectedCentre    : V3d
     ProjectionDistance : float
     TargetMesh         : string
@@ -279,7 +279,6 @@ type Model =
         // Mode to restore when HeatDiff auto-reverts on commit/discard.
         HeatmapPrev           : HeatmapMode
         ProvenanceThreshold   : float
-        FalloffZoneOnly       : bool
 
         FusionMode            : bool
 
@@ -402,7 +401,6 @@ module Model =
             HeatmapMode           = HeatOff
             HeatmapPrev           = HeatOff
             ProvenanceThreshold   = 0.01
-            FalloffZoneOnly       = false
             FusionMode            = false
             PanoramaOpen          = false
             Panoramas             = []

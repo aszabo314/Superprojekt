@@ -111,9 +111,9 @@ module MeshView =
         model.MeshNames |> AList.toAVal |> AVal.force |> IndexList.toList
         |> List.filter (fun n -> Map.tryFind n visible |> Option.defaultValue true)
 
-    // Pin anchor blobs as 32-slot uniform arrays, converted metric → render
-    // space here. Shared by the mesh shader (isolation + provenance) and the
-    // fusion shader (conditioning).
+    // Pin anchor blobs as a 32-slot uniform array, converted metric → render
+    // space here (centre in xyz, inner radius in w). Shared by the mesh shader
+    // (isolation + provenance) and the fusion shader (conditioning).
     let private pinBlobUniforms (model : AdaptiveModel) =
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
@@ -123,18 +123,14 @@ module MeshView =
                 let pins  = HashMap.toArray pinsMap |> Array.map snd
                 let n     = min pins.Length MeshShader.MaxBlobs
                 let centres  = Array.zeroCreate<V4f> MeshShader.MaxBlobs
-                let falloffs = Array.zeroCreate<V4f> MeshShader.MaxBlobs
                 for i in 0 .. n - 1 do
                     let p  = pins.[i]
                     let cr = (p.Centre - cc) * scale
-                    let ir = float32 (p.InnerRadius   * scale)
-                    let fr = float32 (p.FalloffRadius * scale)
+                    let ir = float32 (p.InnerRadius * scale)
                     centres.[i]  <- V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, ir)
-                    falloffs.[i] <- V4f(fr, 0.0f, 0.0f, 0.0f)
-                n, centres, falloffs)
-        blobsArr |> AVal.map (fun (n, _, _) -> n),
-        blobsArr |> AVal.map (fun (_, c, _) -> c),
-        blobsArr |> AVal.map (fun (_, _, f) -> f)
+                n, centres)
+        blobsArr |> AVal.map (fun (n, _) -> n),
+        blobsArr |> AVal.map (fun (_, c) -> c)
 
     // Smoothstep half-width of the contact-line highlight band (metres) and
     // the darkening applied to the rest of an intersected mesh.
@@ -173,7 +169,7 @@ module MeshView =
                 | None -> ()
                 arr)
 
-        let blobCount, blobs, blobFalloffs = pinBlobUniforms model
+        let blobCount, blobs = pinBlobUniforms model
         let clipCount  = clip |> AVal.map (fun (c, _, _, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _, _, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p, _, _) -> p)
@@ -244,8 +240,6 @@ module MeshView =
                 | None -> 0.0f)
         let provThreshold =
             model.ProvenanceThreshold |> AVal.map float32
-        let falloffZoneOnly =
-            model.FalloffZoneOnly |> AVal.map (fun on -> if on then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             // One-shot 3D anchor pick: the target mesh is the only solid one
@@ -399,11 +393,9 @@ module MeshView =
                     Sg.Uniform("LassoPlanes",     lassoPlanes)
                     Sg.Uniform("BlobCount",       blobCount)
                     Sg.Uniform("Blobs",           blobs)
-                    Sg.Uniform("BlobFalloffs",    blobFalloffs)
                     Sg.Uniform("AnchorGhost",     anchorGhost)
                     Sg.Uniform("HeatmapMode",       heatmapModeInt)
                     Sg.Uniform("ProvThreshold",     provThreshold)
-                    Sg.Uniform("FalloffZoneOnly",   falloffZoneOnly)
                     Sg.Uniform("MeshDatasetError",  meshDatasetErr)
                     Sg.Uniform("MeshAlgoResidual",  meshAlgoRes)
                     Sg.Uniform("DiffAlgoAfter",     diffData |> AVal.map (fun (a, _, _) -> a))
@@ -465,11 +457,9 @@ module MeshView =
                     Sg.Uniform("LassoPlanes",     lassoPlanes)
                     Sg.Uniform("BlobCount",       AVal.constant 0)
                     Sg.Uniform("Blobs",           blobs)
-                    Sg.Uniform("BlobFalloffs",    blobFalloffs)
                     Sg.Uniform("AnchorGhost",     AVal.constant 0)
                     Sg.Uniform("HeatmapMode",       AVal.constant 0)
                     Sg.Uniform("ProvThreshold",     AVal.constant 1.0f)
-                    Sg.Uniform("FalloffZoneOnly",   AVal.constant 0)
                     Sg.Uniform("MeshDatasetError",  AVal.constant 0.0f)
                     Sg.Uniform("MeshAlgoResidual",  AVal.constant 0.0f)
                     Sg.Uniform("DiffAlgoAfter",     AVal.constant 0.0f)
@@ -504,7 +494,7 @@ module MeshView =
         ) |> AList.toASet
 
     let buildFusionNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
-        let blobCount, blobs, blobFalloffs = pinBlobUniforms model
+        let blobCount, blobs = pinBlobUniforms model
         // Before any registration the meshes aren't aligned, so fusing is
         // meaningless: show only the reference mesh (fusionNotice explains).
         let hasRegistered =
@@ -559,7 +549,6 @@ module MeshView =
             Sg.Proj proj
             Sg.Uniform("BlobCount",    blobCount)
             Sg.Uniform("Blobs",        blobs)
-            Sg.Uniform("BlobFalloffs", blobFalloffs)
             nodes
         }
 

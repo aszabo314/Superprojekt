@@ -174,7 +174,7 @@ module GuiWorkflow =
 
         // ── 3.2 correspondence pins ────────────────────────────────────
         // (pinId, label, host, dots (mesh, colourHex, state), accepted, M,
-        // reliability, worst coarse residual, centre, falloff)
+        // reliability, worst coarse residual, centre, radius)
         let corrRows =
             AVal.custom (fun t ->
                 let pins = pinsVal.GetValue t
@@ -203,7 +203,7 @@ module GuiWorkflow =
                         Some (id, p.Name,
                               (p.HostMeshName |> Option.map (Cards.numbered order)), dots, accepted,
                               List.length input.VisibleMovingMeshes,
-                              resid, p.Centre, p.FalloffRadius)
+                              resid, p.Centre, p.InnerRadius)
                     | _ -> None)
                 |> IndexList.ofList)
 
@@ -218,7 +218,7 @@ module GuiWorkflow =
                     else None)
                 |> IndexList.ofList)
 
-        let pinRow (id, label : string, host : string option, dots, accepted, total, resid, centre, falloff) =
+        let pinRow (id, label : string, host : string option, dots, accepted, total, resid, centre, radius) =
             div {
                 Class "wfp-row wfp-pin-row"
                 // Hover → highlight this pin's rings in 3D (UI→3D linking).
@@ -229,7 +229,7 @@ module GuiWorkflow =
                     Attribute("title", "Select pin and frame it in the viewport")
                     Dom.OnClick(fun _ ->
                         env.Emit [ScanPinMsg (SelectPin (Some id))]
-                        flyTo (FlyToSphere(centre, falloff)))
+                        flyTo (FlyToSphere(centre, radius)))
                     span { Class "wfp-pin-label"; label }
                     span {
                         Class "wfp-pin-host"

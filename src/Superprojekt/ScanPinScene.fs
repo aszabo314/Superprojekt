@@ -155,8 +155,7 @@ module ScanPinScene =
         // draw at α 0.6 / 1.5 px, the selected pin at α 1.0 / 2.5 px. Normal
         // depth testing on purpose: foreground geometry occludes the curves,
         // which is the spatial cue. The old filled translucent shells are gone;
-        // the white falloff-radius outline only shows while the radius sliders
-        // are live (AdjustingPin) so the falloff slider still has feedback.
+        // the equator ring is the live feedback for the inner-radius slider.
         // Study gating: the sphere–surface contact rings are their own
         // feature; the equator ring stays (it is the pin's footprint cue).
         let contactRingsOn = model.Study |> AVal.map (fun s -> Study.featureVisible s "contactRings")
@@ -164,8 +163,6 @@ module ScanPinScene =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
-                let isAdjusting =
-                    model.ScanPins.Placement |> AVal.map (fun pl -> pl = AdjustingPin id)
                 let ringData =
                     pinVal |> AVal.map (fun po ->
                         po |> Option.map (fun p ->
@@ -218,19 +215,6 @@ module ScanPinScene =
                                             for i in 0 .. rp.Length - 2 do
                                                 out.Add(rp.[i], rp.[i + 1], col, width)
                             out.ToArray())
-                let falloffSegs =
-                    AVal.custom (fun t ->
-                        if not (isAdjusting.GetValue t) then [||]
-                        else
-                            match pinsVal.GetValue t |> HashMap.tryFind id with
-                            | Some p ->
-                                let cc = model.CommonCentroid.GetValue t
-                                let scale = datasetScale.GetValue t
-                                PinGeometry.buildSphereOutline
-                                    (ScanPin.renderCentre cc scale p.Centre)
-                                    (ScanPin.renderLength scale p.FalloffRadius)
-                                    (V4d(1.0, 1.0, 1.0, 0.55)) 1.0
-                            | None -> [||])
                 ASet.ofList [
                     sg {
                         Sg.Active notFullscreen
@@ -240,15 +224,6 @@ module ScanPinScene =
                         Sg.BlendMode (AVal.constant BlendMode.Blend)
                         Sg.NoEvents
                         Lines.render segs
-                    }
-                    sg {
-                        Sg.Active notFullscreen
-                        Sg.View view
-                        Sg.Proj proj
-                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                        Sg.BlendMode (AVal.constant BlendMode.Blend)
-                        Sg.NoEvents
-                        Lines.render falloffSegs
                     }
                 ])
 
@@ -513,7 +488,7 @@ module ScanPinScene =
                                 let glyphW = if isHover then 3.5 else 1.2
                                 let lineW = if isHover then 3.0 else 1.0
                                 let p = ScanPin.renderCentre cc scale c.Point
-                                let glyphR = ScanPin.renderLength scale (max 0.05 (c.FalloffRadius * (if isHover then 0.1 else 0.06)))
+                                let glyphR = ScanPin.renderLength scale (max 0.05 (c.InnerRadius * (if isHover then 0.1 else 0.06)))
                                 for (i, j) in tetraEdges do
                                     out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, col, glyphW)
                                 match HashMap.tryFind c.PinId pins

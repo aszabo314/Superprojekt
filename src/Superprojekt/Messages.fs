@@ -66,7 +66,6 @@ type Message =
     | SetMeshDatasetError of string * float option
     | SetHeatmapMode of HeatmapMode
     | SetProvenanceThreshold of float
-    | ToggleFalloffZoneOnly
     | ToggleFusionMode
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]

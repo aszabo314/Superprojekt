@@ -246,7 +246,7 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
-                            // Isolate pins: ghost everything outside the pins' falloff regions.
+                            // Isolate pins: ghost everything outside the pins' radius regions.
                             // Auto-suspended while placing an anchor (terrain stays visible);
                             // the toggle reflects the temporary hold and is inert during it.
                             let placing =

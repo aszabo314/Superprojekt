@@ -684,7 +684,7 @@ type AnchorCandidate = {
     Mesh               : string
     Point              : V3d
     ProjectionDistance : float
-    FalloffRadius      : float
+    InnerRadius        : float
     Decision           : AnchorDecision
 }
 

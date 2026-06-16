@@ -73,9 +73,9 @@ module Persistence =
             p.DatasetColors |> Map.toSeq
             |> Seq.map (fun (k, v) -> sprintf "%s:%s" (q k) (c4bJ v))
             |> String.concat ","
-        sprintf "{\"id\":%s,\"name\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"createdAt\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
+        sprintf "{\"id\":%s,\"name\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"createdAt\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
             (q (guid.ToString())) (q p.Name) (pinPhaseTag p.Phase) (v3 p.Centre)
-            (f p.InnerRadius) (f p.FalloffRadius) (corrJ p.Correspondence)
+            (f p.InnerRadius) (corrJ p.Correspondence)
             (match p.HostMeshName with Some n -> q n | None -> "null")
             colors (q (p.CreatedAt.ToString("O")))
             p.ProbeLockOrder (ProbeXRange.tag p.ProbeXRange)
@@ -130,10 +130,10 @@ module Persistence =
             match model.HeatmapMode with
             | HeatDiff -> model.HeatmapPrev
             | m -> m
-        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"heatmapMode\":\"%s\",\"provThreshold\":%s,\"falloffZoneOnly\":%b,\"fusion\":%b,\"renderMode\":\"%s\"}"
+        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"heatmapMode\":\"%s\",\"provThreshold\":%s,\"fusion\":%b,\"renderMode\":\"%s\"}"
             model.GhostSilhouette (f model.GhostOpacity) (f model.ShadingStrength)
             (f model.SlopeThresholdDeg) model.AnchorGhostMode (HeatmapMode.tag persistedHeatmap)
-            (f model.ProvenanceThreshold) model.FalloffZoneOnly model.FusionMode
+            (f model.ProvenanceThreshold) model.FusionMode
             (renderModeTag model.RenderingMode)) |> ignore
         sb.Append(",\"camera\":{") |> ignore
         let cam = model.Camera
@@ -211,7 +211,6 @@ module Persistence =
             Phase = pinPhaseOf (e.GetProperty("phase").GetString())
             Centre = rV3 (e.GetProperty("centre"))
             InnerRadius = e.GetProperty("inner").GetDouble()
-            FalloffRadius = ScanPin.falloffFor (e.GetProperty("inner").GetDouble())
             Correspondence = rCorrespondence e
             HostMeshName = host
             CreatedAt = createdAt
@@ -382,7 +381,6 @@ module Persistence =
                     HeatmapMode = heatmapMode
                     HeatmapPrev = (match heatmapMode with HeatDiff -> HeatOff | m -> m)
                     ProvenanceThreshold = sOrElseF "provThreshold" model.ProvenanceThreshold
-                    FalloffZoneOnly = sOrElseB "falloffZoneOnly" model.FalloffZoneOnly
                     FusionMode = sOrElseB "fusion" model.FusionMode
                     RenderingMode = renderMode
                     Camera = cam

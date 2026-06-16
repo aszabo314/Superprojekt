@@ -301,8 +301,6 @@ module GuiPanels =
                             showWhenNot previewOn
                             "Diff needs a pending registration preview."
                         }
-                        compactToggle "Falloff zones only" model.FalloffZoneOnly (fun () ->
-                            env.Emit [ToggleFalloffZoneOnly])
                         inlineLogSlider "Threshold" 0.0001 10.0 (fun v ->
                             if v < 0.01 then sprintf "%.1fmm" (v * 1000.0)
                             else sprintf "%.2fm" v) model.ProvenanceThreshold (fun v ->

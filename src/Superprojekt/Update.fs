@@ -142,12 +142,12 @@ module Update =
                             | Some c ->
                                 c.Anchors |> Map.filter (fun _ a -> a.Accepted && a.Source <> AnchorAuto)
                             | None -> Map.empty
-                        pin.Id, pin.Centre, pin.FalloffRadius, pin.HostMeshName, keep)
+                        pin.Id, pin.Centre, pin.InnerRadius, pin.HostMeshName, keep)
                 task {
                     try
                         let! perPin =
                             jobs
-                            |> List.map (fun (pinId, centre, falloff, host, keep) -> async {
+                            |> List.map (fun (pinId, centre, radius, host, keep) -> async {
                                 let! refAnchor =
                                     if host = Some refMesh then async.Return (Some (centre, 0.0))
                                     else async {
@@ -171,7 +171,7 @@ module Update =
                                             let noProjection = {
                                                 PinId = pinId; Mesh = mesh; Point = ra
                                                 ProjectionDistance = System.Double.PositiveInfinity
-                                                FalloffRadius = falloff
+                                                InnerRadius = radius
                                                 Decision = AnchorReject
                                             }
                                             try
@@ -185,7 +185,7 @@ module Update =
                                                         {
                                                             PinId = pinId; Mesh = mesh; Point = world
                                                             ProjectionDistance = (world - ra).Length
-                                                            FalloffRadius = falloff
+                                                            InnerRadius = radius
                                                             Decision = AnchorUndecided
                                                         }
                                                     | None -> noProjection
@@ -495,9 +495,9 @@ module Update =
                         model.ScanPins.Pins |> HashMap.toSeq
                         |> Seq.choose (fun (_, pin) ->
                             if pin.Phase = PinPhase.Committed then
-                                // pin.Centre and pin.FalloffRadius are
+                                // pin.Centre and pin.InnerRadius are
                                 // already world-space metres.
-                                Some (pin.Id, (pin.Centre, pin.FalloffRadius, 1.0))
+                                Some (pin.Id, (pin.Centre, pin.InnerRadius, 1.0))
                             else None)
                         |> Array.ofSeq
                     let anchors =
@@ -918,8 +918,6 @@ module Update =
                 { model with HeatmapMode = m; HeatmapPrev = m }
         | SetProvenanceThreshold v ->
             { model with ProvenanceThreshold = v }
-        | ToggleFalloffZoneOnly ->
-            { model with FalloffZoneOnly = not model.FalloffZoneOnly }
         | ToggleFusionMode ->
             { model with FusionMode = not model.FusionMode }
 
@@ -1123,7 +1121,7 @@ module Update =
                                                 PinId = p.Id
                                                 OriginalCentre = p.Centre
                                                 OriginalHostMesh = p.HostMeshName
-                                                FalloffRadius = p.FalloffRadius
+                                                InnerRadius = p.InnerRadius
                                                 ProjectedCentre = r.point
                                                 ProjectionDistance = dist
                                                 TargetMesh = target
@@ -1135,7 +1133,7 @@ module Update =
                                                 PinId = p.Id
                                                 OriginalCentre = p.Centre
                                                 OriginalHostMesh = p.HostMeshName
-                                                FalloffRadius = p.FalloffRadius
+                                                InnerRadius = p.InnerRadius
                                                 ProjectedCentre = p.Centre
                                                 ProjectionDistance = System.Double.PositiveInfinity
                                                 TargetMesh = target

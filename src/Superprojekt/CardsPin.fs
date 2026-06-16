@@ -688,8 +688,8 @@ module CardsPin =
                                 match cOpt, po with
                                 | Some c, Some pin ->
                                     match c.RefAnchor with
-                                    | Some _ when c.RefDistance > 2.0 * pin.FalloffRadius ->
-                                        sprintf "⚠ reference anchor %.2f m off the pin (> 2× falloff)" c.RefDistance
+                                    | Some _ when c.RefDistance > 2.0 * pin.InnerRadius ->
+                                        sprintf "⚠ reference anchor %.2f m off the pin (> 2× radius)" c.RefDistance
                                     | Some _ when c.RefDistance > 0.0 ->
                                         sprintf "reference anchor projected, Δ %.3f m" c.RefDistance
                                     | Some _ -> "reference anchor = pin centre"
@@ -697,7 +697,7 @@ module CardsPin =
                                 | _ -> "")
                             (corr, selectedPin) ||> AVal.map2 (fun cOpt po ->
                                 match cOpt, po with
-                                | Some c, Some pin when c.RefAnchor.IsSome && c.RefDistance > 2.0 * pin.FalloffRadius ->
+                                | Some c, Some pin when c.RefAnchor.IsSome && c.RefDistance > 2.0 * pin.InnerRadius ->
                                     Some (Class "pc-corr-ref-warn")
                                 | _ -> None)
                         }

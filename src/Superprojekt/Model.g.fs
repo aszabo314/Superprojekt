@@ -1,5 +1,5 @@
-//016a303f-cb9b-e7f4-b724-5ace06af89df
-//351b0bb9-0dae-78ca-0ed7-c96545007c75
+//08a427fe-0170-f62f-f46c-ef217269eefc
+//cdd0877c-9a37-e132-27ad-5143127ddce5
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -60,7 +60,6 @@ type AdaptiveModel(value : Model) =
     let _HeatmapMode_ = FSharp.Data.Adaptive.cval(value.HeatmapMode)
     let _HeatmapPrev_ = FSharp.Data.Adaptive.cval(value.HeatmapPrev)
     let _ProvenanceThreshold_ = FSharp.Data.Adaptive.cval(value.ProvenanceThreshold)
-    let _FalloffZoneOnly_ = FSharp.Data.Adaptive.cval(value.FalloffZoneOnly)
     let _FusionMode_ = FSharp.Data.Adaptive.cval(value.FusionMode)
     let _PanoramaOpen_ = FSharp.Data.Adaptive.cval(value.PanoramaOpen)
     let _Panoramas_ = FSharp.Data.Adaptive.cval(value.Panoramas)
@@ -139,7 +138,6 @@ type AdaptiveModel(value : Model) =
             _HeatmapMode_.Value <- value.HeatmapMode
             _HeatmapPrev_.Value <- value.HeatmapPrev
             _ProvenanceThreshold_.Value <- value.ProvenanceThreshold
-            _FalloffZoneOnly_.Value <- value.FalloffZoneOnly
             _FusionMode_.Value <- value.FusionMode
             _PanoramaOpen_.Value <- value.PanoramaOpen
             _Panoramas_.Value <- value.Panoramas
@@ -211,7 +209,6 @@ type AdaptiveModel(value : Model) =
     member __.HeatmapMode = _HeatmapMode_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
     member __.HeatmapPrev = _HeatmapPrev_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
     member __.ProvenanceThreshold = _ProvenanceThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.FalloffZoneOnly = _FalloffZoneOnly_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.FusionMode = _FusionMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PanoramaOpen = _PanoramaOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.Panoramas = _Panoramas_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Panorama>>

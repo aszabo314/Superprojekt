@@ -171,7 +171,7 @@ module GuiOverlays =
                     let anchors =
                         pinsMap |> HashMap.toSeq
                         |> Seq.choose (fun (_, p) ->
-                            if p.Phase = PinPhase.Committed then Some (p.Centre, p.FalloffRadius)
+                            if p.Phase = PinPhase.Committed then Some (p.Centre, p.InnerRadius)
                             else None)
                         |> Array.ofSeq
                     let mesh = layer |> Option.defaultValue ""
@@ -200,7 +200,7 @@ module GuiOverlays =
                             let anchors =
                                 pinsMap |> HashMap.toSeq
                                 |> Seq.choose (fun (_, p) ->
-                                    if p.Phase = PinPhase.Committed then Some (p.Centre, p.FalloffRadius)
+                                    if p.Phase = PinPhase.Committed then Some (p.Centre, p.InnerRadius)
                                     else None)
                                 |> Array.ofSeq
                             // committed-pose position of the hovered point

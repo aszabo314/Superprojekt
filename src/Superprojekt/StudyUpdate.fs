@@ -243,7 +243,7 @@ module StudyUpdate =
         | HideAllMeshes | JumpToMesh _ | SetRenderingMode _ -> Some "meshPanel"
         | ToggleWorkflowPanel | NavTo _ | FlyTo _ -> Some "workflowPanel"
         | SetMeshSensorType _ | SetMeshDatasetError _
-        | SetProvenanceThreshold _ | ToggleFalloffZoneOnly -> Some "errorMetadata"
+        | SetProvenanceThreshold _ -> Some "errorMetadata"
         | _ -> None
 
     // Whole subsystems with no feature id are Full-mode only (§5 hidden list).

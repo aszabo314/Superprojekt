@@ -36,17 +36,15 @@ module MeshShader =
         // dot(xyz, p) + w <= 0 for all. count = 0 → no restriction.
         member x.LassoPlaneCount : int     = x?LassoPlaneCount
         member x.LassoPlanes     : Arr<N<32>, V4f> = x?LassoPlanes
-        // Pin blobs in render space: Blobs = (cx,cy,cz,innerR),
-        // BlobFalloffs = (falloffR,0,0,0). AnchorGhost = 0 disables the blob
-        // alpha filter; the arrays stay uploaded for provenance conditioning.
+        // Pin blobs in render space: Blobs = (cx,cy,cz,innerR). AnchorGhost = 0
+        // disables the blob alpha filter; the array stays uploaded so the
+        // provenance conditioning (Gaussian σ = innerR) can still loop over it.
         member x.BlobCount       : int     = x?BlobCount
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
-        member x.BlobFalloffs    : Arr<N<32>, V4f> = x?BlobFalloffs
         member x.AnchorGhost     : int     = x?AnchorGhost
         // 0 = off, 1 = provenance sources, 2 = registration diff.
         member x.HeatmapMode       : int     = x?HeatmapMode
         member x.ProvThreshold     : float32 = x?ProvThreshold
-        member x.FalloffZoneOnly   : int     = x?FalloffZoneOnly
         member x.MeshDatasetError  : float32 = x?MeshDatasetError
         member x.MeshAlgoResidual  : float32 = x?MeshAlgoResidual
         // Registration diff mode (HeatmapMode = 2): signed change of the
@@ -123,39 +121,25 @@ module MeshShader =
                         let d = pl.X * wp.X + pl.Y * wp.Y + pl.Z * wp.Z + pl.W
                         if d > 0.0f then inside <- false
                 lassoMask <- if inside then 1.0f else 0.0f
-            let mutable blobMax = 0.0f
-            let mutable inHardCore = false
             let mutable inAnyBlob = false
             let bc = uniform.BlobCount
             if bc > 0 then
                 for i in 0 .. MaxBlobs - 1 do
                     if i < bc then
                         let b      = uniform.Blobs.[i]
-                        let f      = uniform.BlobFalloffs.[i]
                         let inner  = b.W
-                        let outer  = f.X
                         let dx = wp.X - b.X
                         let dy = wp.Y - b.Y
                         let dz = wp.Z - b.Z
                         let d  = sqrt (dx*dx + dy*dy + dz*dz)
-                        let w =
-                            if d <= inner then
-                                inHardCore <- true
-                                inAnyBlob  <- true
-                                1.0f
-                            elif d <= outer && outer > inner then
-                                inAnyBlob <- true
-                                let t = (d - inner) / (outer - inner)
-                                exp (-3.0f * t)
-                            else 0.0f
-                        if w > blobMax then blobMax <- w
+                        if d <= inner then inAnyBlob <- true
             let lassoActive  = lc > 0
             let blobsActive  = bc > 0 && uniform.AnchorGhost <> 0
             let lassoComponent =
                 if lassoActive then lassoMask else 1.0f
             let blobComponent =
                 if blobsActive then
-                    if inAnyBlob then blobMax else 0.0f
+                    if inAnyBlob then 1.0f else 0.0f
                 else 1.0f
             let maskFactor = lassoComponent * blobComponent
             let ghost = uniform.GhostOpacity
@@ -165,10 +149,10 @@ module MeshShader =
             else
                 alpha <- ghost
             if alpha < 1e-4f then discard()
-            // Clamp non-hard-core fragments below opaqueThreshold so the
-            // depth-write branch can't flip mid-falloff (occlusion ring).
+            // Clamp ghost/outside fragments below opaqueThreshold so the
+            // depth-write branch only fires for fully-solid surface.
             let lassoFull = (lc = 0) || lassoMask >= 1.0f
-            let blobFull  = (not blobsActive) || inHardCore
+            let blobFull  = (not blobsActive) || inAnyBlob
             let fullySolid = lassoFull && blobFull
             if uniform.MeshActive && not fullySolid then
                 alpha <- min alpha (opaqueThreshold - 0.01f)
@@ -207,78 +191,76 @@ module MeshShader =
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
             if uniform.HeatmapMode = 1 && aboveGhost then
-                let zoneOk = uniform.FalloffZoneOnly = 0 || inAnyBlob
-                if zoneOk then
-                    let mutable wSum = 0.0f
-                    let mutable validCount = 0
+                let mutable wSum = 0.0f
+                let mutable validCount = 0
+                for i in 0 .. MaxBlobs - 1 do
+                    if i < bc then
+                        let bi = uniform.Blobs.[i]
+                        let sigma = bi.W
+                        if sigma > 1e-6f then
+                            let dx = wp.X - bi.X
+                            let dy = wp.Y - bi.Y
+                            let dz = wp.Z - bi.Z
+                            let d2 = dx*dx + dy*dy + dz*dz
+                            let w = exp (-d2 / (2.0f * sigma * sigma))
+                            if w > 0.05f then
+                                wSum <- wSum + w
+                                validCount <- validCount + 1
+                let mutable maxCos = 0.0f
+                if validCount >= 2 then
                     for i in 0 .. MaxBlobs - 1 do
                         if i < bc then
                             let bi = uniform.Blobs.[i]
-                            let sigma = uniform.BlobFalloffs.[i].X
-                            if sigma > 1e-6f then
-                                let dx = wp.X - bi.X
-                                let dy = wp.Y - bi.Y
-                                let dz = wp.Z - bi.Z
-                                let d2 = dx*dx + dy*dy + dz*dz
-                                let w = exp (-d2 / (2.0f * sigma * sigma))
-                                if w > 0.05f then
-                                    wSum <- wSum + w
-                                    validCount <- validCount + 1
-                    let mutable maxCos = 0.0f
-                    if validCount >= 2 then
-                        for i in 0 .. MaxBlobs - 1 do
-                            if i < bc then
-                                let bi = uniform.Blobs.[i]
-                                let sigmaI = uniform.BlobFalloffs.[i].X
-                                if sigmaI > 1e-6f then
-                                    let dxI = wp.X - bi.X
-                                    let dyI = wp.Y - bi.Y
-                                    let dzI = wp.Z - bi.Z
-                                    let dI2 = dxI*dxI + dyI*dyI + dzI*dzI
-                                    let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
-                                    if wI > 0.05f then
-                                        let lenI = sqrt dI2
-                                        if lenI > 1e-9f then
-                                            let nix = (bi.X - wp.X) / lenI
-                                            let niy = (bi.Y - wp.Y) / lenI
-                                            let niz = (bi.Z - wp.Z) / lenI
-                                            for j in 0 .. MaxBlobs - 1 do
-                                                if j > i && j < bc then
-                                                    let bj = uniform.Blobs.[j]
-                                                    let sigmaJ = uniform.BlobFalloffs.[j].X
-                                                    if sigmaJ > 1e-6f then
-                                                        let dxJ = wp.X - bj.X
-                                                        let dyJ = wp.Y - bj.Y
-                                                        let dzJ = wp.Z - bj.Z
-                                                        let dJ2 = dxJ*dxJ + dyJ*dyJ + dzJ*dzJ
-                                                        let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
-                                                        if wJ > 0.05f then
-                                                            let lenJ = sqrt dJ2
-                                                            if lenJ > 1e-9f then
-                                                                let njx = (bj.X - wp.X) / lenJ
-                                                                let njy = (bj.Y - wp.Y) / lenJ
-                                                                let njz = (bj.Z - wp.Z) / lenJ
-                                                                let dotV = nix*njx + niy*njy + niz*njz
-                                                                let cAbs = abs dotV
-                                                                if cAbs > maxCos then maxCos <- cAbs
-                    let mutable cond = 1e6f
-                    if validCount >= 2 then
-                        let angDiv = 1.0f - maxCos
-                        let raw = 1.0f / (wSum * angDiv + 1e-3f)
-                        cond <- if raw > 1e6f then 1e6f else raw
-                    let d = uniform.MeshDatasetError
-                    let a = uniform.MeshAlgoResidual
-                    let cScaled = cond * 0.01f
-                    let total = max d (max a cScaled)
-                    if total >= uniform.ProvThreshold then
-                        let datasetCol = V3f(0.376f, 0.647f, 0.980f) // #60a5fa
-                        let algoCol    = V3f(0.961f, 0.620f, 0.044f) // #f59e0b
-                        let condCol    = V3f(0.655f, 0.545f, 0.913f) // #a78bfa
-                        let domCol =
-                            if d >= a && d >= cScaled then datasetCol
-                            elif a >= cScaled then algoCol
-                            else condCol
-                        baseRgb <- domCol
+                            let sigmaI = bi.W
+                            if sigmaI > 1e-6f then
+                                let dxI = wp.X - bi.X
+                                let dyI = wp.Y - bi.Y
+                                let dzI = wp.Z - bi.Z
+                                let dI2 = dxI*dxI + dyI*dyI + dzI*dzI
+                                let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
+                                if wI > 0.05f then
+                                    let lenI = sqrt dI2
+                                    if lenI > 1e-9f then
+                                        let nix = (bi.X - wp.X) / lenI
+                                        let niy = (bi.Y - wp.Y) / lenI
+                                        let niz = (bi.Z - wp.Z) / lenI
+                                        for j in 0 .. MaxBlobs - 1 do
+                                            if j > i && j < bc then
+                                                let bj = uniform.Blobs.[j]
+                                                let sigmaJ = bj.W
+                                                if sigmaJ > 1e-6f then
+                                                    let dxJ = wp.X - bj.X
+                                                    let dyJ = wp.Y - bj.Y
+                                                    let dzJ = wp.Z - bj.Z
+                                                    let dJ2 = dxJ*dxJ + dyJ*dyJ + dzJ*dzJ
+                                                    let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
+                                                    if wJ > 0.05f then
+                                                        let lenJ = sqrt dJ2
+                                                        if lenJ > 1e-9f then
+                                                            let njx = (bj.X - wp.X) / lenJ
+                                                            let njy = (bj.Y - wp.Y) / lenJ
+                                                            let njz = (bj.Z - wp.Z) / lenJ
+                                                            let dotV = nix*njx + niy*njy + niz*njz
+                                                            let cAbs = abs dotV
+                                                            if cAbs > maxCos then maxCos <- cAbs
+                let mutable cond = 1e6f
+                if validCount >= 2 then
+                    let angDiv = 1.0f - maxCos
+                    let raw = 1.0f / (wSum * angDiv + 1e-3f)
+                    cond <- if raw > 1e6f then 1e6f else raw
+                let d = uniform.MeshDatasetError
+                let a = uniform.MeshAlgoResidual
+                let cScaled = cond * 0.01f
+                let total = max d (max a cScaled)
+                if total >= uniform.ProvThreshold then
+                    let datasetCol = V3f(0.376f, 0.647f, 0.980f) // #60a5fa
+                    let algoCol    = V3f(0.961f, 0.620f, 0.044f) // #f59e0b
+                    let condCol    = V3f(0.655f, 0.545f, 0.913f) // #a78bfa
+                    let domCol =
+                        if d >= a && d >= cScaled then datasetCol
+                        elif a >= cScaled then algoCol
+                        else condCol
+                    baseRgb <- domCol
             // Registration diff (HeatmapMode = 2, only meaningful while a
             // solve preview is pending): per-fragment signed change of the
             // combined error (preview − committed). Dataset error cancels;
@@ -301,7 +283,7 @@ module MeshShader =
                 for i in 0 .. MaxBlobs - 1 do
                     if i < bc then
                         let bi = uniform.Blobs.[i]
-                        let sigma = uniform.BlobFalloffs.[i].X
+                        let sigma = bi.W
                         if sigma > 1e-6f then
                             let dxP = wp.X - bi.X
                             let dyP = wp.Y - bi.Y
@@ -322,12 +304,12 @@ module MeshShader =
                 for i in 0 .. MaxBlobs - 1 do
                     if i < bc then
                         let bi = uniform.Blobs.[i]
-                        let sigmaI = uniform.BlobFalloffs.[i].X
+                        let sigmaI = bi.W
                         if sigmaI > 1e-6f then
                             for j in 0 .. MaxBlobs - 1 do
                                 if j > i && j < bc then
                                     let bj = uniform.Blobs.[j]
-                                    let sigmaJ = uniform.BlobFalloffs.[j].X
+                                    let sigmaJ = bj.W
                                     if sigmaJ > 1e-6f then
                                         if validP >= 2 then
                                             let dI2 = (wp.X-bi.X)*(wp.X-bi.X) + (wp.Y-bi.Y)*(wp.Y-bi.Y) + (wp.Z-bi.Z)*(wp.Z-bi.Z)
@@ -446,7 +428,7 @@ module FusionShader =
             for i in 0 .. MeshShader.MaxBlobs - 1 do
                 if i < bc then
                     let bi = uniform.Blobs.[i]
-                    let sigma = uniform.BlobFalloffs.[i].X
+                    let sigma = bi.W
                     if sigma > 1e-6f then
                         let dx = wp.X - bi.X
                         let dy = wp.Y - bi.Y
@@ -461,7 +443,7 @@ module FusionShader =
                 for i in 0 .. MeshShader.MaxBlobs - 1 do
                     if i < bc then
                         let bi = uniform.Blobs.[i]
-                        let sigmaI = uniform.BlobFalloffs.[i].X
+                        let sigmaI = bi.W
                         if sigmaI > 1e-6f then
                             let dxI = wp.X - bi.X
                             let dyI = wp.Y - bi.Y
@@ -477,7 +459,7 @@ module FusionShader =
                                     for j in 0 .. MeshShader.MaxBlobs - 1 do
                                         if j > i && j < bc then
                                             let bj = uniform.Blobs.[j]
-                                            let sigmaJ = uniform.BlobFalloffs.[j].X
+                                            let sigmaJ = bj.W
                                             if sigmaJ > 1e-6f then
                                                 let dxJ = wp.X - bj.X
                                                 let dyJ = wp.Y - bj.Y

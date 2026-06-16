@@ -414,7 +414,7 @@ module View =
                             let anchors =
                                 AVal.force (model.ScanPins.Pins |> AMap.toAVal) |> HashMap.toSeq
                                 |> Seq.choose (fun (_, pn) ->
-                                    if pn.Phase = PinPhase.Committed then Some (pn.Centre, pn.FalloffRadius) else None)
+                                    if pn.Phase = PinPhase.Committed then Some (pn.Centre, pn.InnerRadius) else None)
                                 |> Array.ofSeq
                             async {
                                 let! hits =

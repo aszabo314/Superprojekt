@@ -22,10 +22,9 @@ type ContactRingState =
     | RingsRunning
     | RingsReady of Map<string, V3d[][]>
 
-// All ScanPin geometry is metric world-space; InnerRadius and FalloffRadius
-// are independent (FalloffRadius is fixed; see ScanPin.fixedFalloffRadius).
-// Render-space conversion happens at pipeline boundaries. Probe: cached M3C2
-// result, recomputed lazily after invalidation (ProbeNone).
+// All ScanPin geometry is metric world-space (InnerRadius is the pin's
+// hard-core radius). Render-space conversion happens at pipeline boundaries.
+// Probe: cached M3C2 result, recomputed lazily after invalidation (ProbeNone).
 // Human-readable short pin names (adjective + noun), derived deterministically
 // from the pin id so the same pin always gets the same name.
 module PinNames =
@@ -47,7 +46,6 @@ type ScanPin = {
     Phase                : PinPhase
     Centre               : V3d
     InnerRadius          : float
-    FalloffRadius        : float
     // Optional registration correspondence anchors.
     Correspondence       : Correspondence option
     HostMeshName         : string option
@@ -118,11 +116,8 @@ module ScanPinModel =
         { sp with Pins = pins }
 
 module ScanPin =
-    // Falloff is a fixed 1.2 m soft margin *beyond* the inner radius (no GUI
-    // slider — it tracks the inner radius). Probe-cylinder length is fixed too.
-    let fixedFalloffDelta = 1.2
+    // Probe-cylinder length is fixed (no GUI slider).
     let fixedProbeLength   = 20.0
-    let falloffFor (innerRadius : float) = innerRadius + fixedFalloffDelta
 
     // World-space (metric) → render-space (post centroid translate, post scale).
     let renderCentre (commonCentroid : V3d) (datasetScale : float) (worldCentre : V3d) =

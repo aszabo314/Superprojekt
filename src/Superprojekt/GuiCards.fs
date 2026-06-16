@@ -571,7 +571,7 @@ module GuiCards =
 
     // Anchor auto-seed review modal (clone of the retarget review): one row
     // per (pin × mesh) seeded anchor with the projection distance; rows with
-    // Δ > 2× falloff or no projection are flagged. Apply marks accepted.
+    // Δ > 2× radius or no projection are flagged. Apply marks accepted.
     let anchorReviewCard (env : Env<Message>) (model : AdaptiveModel) =
         let dragState : cval<(V2d * V2d) option> = cval None
         let committedPos = cval (V2d(360.0, 70.0))
@@ -622,7 +622,7 @@ module GuiCards =
                     Class "retarget-list"
                     candidatesAList |> AList.map (fun c ->
                         let infinite = System.Double.IsInfinity c.ProjectionDistance
-                        let highRisk = infinite || c.ProjectionDistance > 2.0 * c.FalloffRadius
+                        let highRisk = infinite || c.ProjectionDistance > 2.0 * c.InnerRadius
                         let distLabel =
                             if infinite then "no projection"
                             else sprintf "Δ %.3fm" c.ProjectionDistance
@@ -728,7 +728,7 @@ module GuiCards =
                     Class "retarget-list"
                     candidatesAList |> AList.map (fun c ->
                         let infinite = System.Double.IsInfinity c.ProjectionDistance
-                        let highRisk = infinite || c.ProjectionDistance > 2.0 * c.FalloffRadius
+                        let highRisk = infinite || c.ProjectionDistance > 2.0 * c.InnerRadius
                         let distLabel =
                             if infinite then "no projection"
                             else sprintf "Δ %.3fm" c.ProjectionDistance

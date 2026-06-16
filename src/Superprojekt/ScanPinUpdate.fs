@@ -24,7 +24,7 @@ module ScanPinUpdate =
     let activeScale (model : Model) =
         DatasetScale.active model.ActiveDataset model.DatasetScales
 
-    // Metric default hard-core radius (falloff is fixed; see ScanPin).
+    // Metric default hard-core radius.
     let defaultInnerRadius (_ : Model) = 5.0
 
     // centre is in world-space metres.
@@ -36,7 +36,6 @@ module ScanPinUpdate =
             Phase                = PinPhase.Placement
             Centre               = worldCentre
             InnerRadius          = inner
-            FalloffRadius        = ScanPin.falloffFor inner
             Correspondence       = None
             HostMeshName         = model.ActivePickingLayer
             CreatedAt            = System.DateTime.UtcNow
@@ -82,13 +81,12 @@ module ScanPinUpdate =
             | _ -> sp
 
         // InnerRadius is the "hard truth" (full opacity + probe weight inside).
-        // FalloffRadius is fixed (ScanPin.fixedFalloffRadius), not edited here.
         | SetInnerRadius r ->
             match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
                 if pin.Phase = PinPhase.Placement then
                     let r' = max 0.01 r
-                    { pin with InnerRadius = r'; FalloffRadius = ScanPin.falloffFor r'; Probe = ProbeNone; ContactRings = RingsNone }
+                    { pin with InnerRadius = r'; Probe = ProbeNone; ContactRings = RingsNone }
                 else pin)
             | None -> sp
 

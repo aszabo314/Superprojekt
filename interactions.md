@@ -237,8 +237,8 @@ place pins by clicking inside the panorama view (§11).
 | Inner radius | log slider 0.01–10 000 m; the hard-truth core (full opacity & probe weight) |
 | Position (m) | X / Y / Z numeric fields — move the pin while adjusting |
 
-Falloff radius (1.2 m) and probe-cylinder length (20 m) are fixed (no
-sliders). Changing the radius/position immediately invalidates the pin's
+Falloff radius (inner + 1.2 m) and probe-cylinder length (20 m) are fixed
+(no sliders). Changing the radius/position immediately invalidates the pin's
 probe and contact rings; both recompute lazily (§8.4).
 
 **Pin list** (left panel): one row per pin — click the coordinates to

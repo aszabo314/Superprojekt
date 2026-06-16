@@ -36,7 +36,7 @@ module ScanPinUpdate =
             Phase                = PinPhase.Placement
             Centre               = worldCentre
             InnerRadius          = inner
-            FalloffRadius        = ScanPin.fixedFalloffRadius
+            FalloffRadius        = ScanPin.falloffFor inner
             Correspondence       = None
             HostMeshName         = model.ActivePickingLayer
             CreationCameraState  = cam
@@ -88,7 +88,8 @@ module ScanPinUpdate =
             match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
                 if pin.Phase = PinPhase.Placement then
-                    { pin with InnerRadius = max 0.01 r; Probe = ProbeNone; ContactRings = RingsNone }
+                    let r' = max 0.01 r
+                    { pin with InnerRadius = r'; FalloffRadius = ScanPin.falloffFor r'; Probe = ProbeNone; ContactRings = RingsNone }
                 else pin)
             | None -> sp
 

@@ -110,9 +110,11 @@ module ScanPinModel =
         { sp with Pins = pins }
 
 module ScanPin =
-    // Falloff radius and probe-cylinder length are fixed (no GUI sliders).
-    let fixedFalloffRadius = 1.2
-    let fixedProbeLength    = 20.0
+    // Falloff is a fixed 1.2 m soft margin *beyond* the inner radius (no GUI
+    // slider — it tracks the inner radius). Probe-cylinder length is fixed too.
+    let fixedFalloffDelta = 1.2
+    let fixedProbeLength   = 20.0
+    let falloffFor (innerRadius : float) = innerRadius + fixedFalloffDelta
 
     // World-space (metric) → render-space (post centroid translate, post scale).
     let renderCentre (commonCentroid : V3d) (datasetScale : float) (worldCentre : V3d) =

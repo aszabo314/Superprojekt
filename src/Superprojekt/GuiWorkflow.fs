@@ -220,6 +220,9 @@ module GuiWorkflow =
         let pinRow (id, label : string, host : string option, dots, accepted, total, resid, centre, falloff) =
             div {
                 Class "wfp-row wfp-pin-row"
+                // Hover → highlight this pin's rings in 3D (UI→3D linking).
+                Dom.OnMouseEnter(fun _ -> env.Emit [SetWorkflowPinHover (Some id)])
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetWorkflowPinHover None])
                 div {
                     Class "wfp-rowmain"
                     Attribute("title", "Select pin and frame it in the viewport")
@@ -257,6 +260,12 @@ module GuiWorkflow =
                         let residTxt = match resid with Some r -> sprintf "r %.3f" r | None -> "r —"
                         residTxt
                     }
+                }
+                button {
+                    Class "mb"
+                    Attribute("title", "Re-open the anchor review (re-projects anchors onto the meshes)")
+                    Dom.OnClick(fun _ -> env.Emit [NavTo (OpenAnchorReview None)])
+                    "⟳"
                 }
                 button {
                     Class "mb"

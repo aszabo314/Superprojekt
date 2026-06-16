@@ -300,6 +300,12 @@ type Model =
         ChartHoverMesh        : string option
         ChartStickyMesh       : string option
 
+        // UI→3D hover highlight: a pin row in the registration workflow card,
+        // and an individual (pin × mesh) candidate row in the anchor-review
+        // dialog. None = nothing hovered.
+        WorkflowPinHover      : ScanPinId option
+        ReviewAnchorHover     : (ScanPinId * string) option
+
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
         LassoCardPos        : V2d option
@@ -409,6 +415,8 @@ module Model =
             ChartCursor           = None
             ChartHoverMesh        = None
             ChartStickyMesh       = None
+            WorkflowPinHover      = None
+            ReviewAnchorHover     = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             LassoCardPos        = None

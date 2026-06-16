@@ -102,6 +102,8 @@ type Message =
     | ClearHoverProbe
     | SetChartCursor of ChartCursor option
     | SetChartHoverMesh of string option
+    | SetWorkflowPinHover of ScanPinId option
+    | SetReviewAnchorHover of (ScanPinId * string) option
     | ChartColumnClick of meshName:string
     | ClearChartSticky
     | TogglePanorama

@@ -636,6 +636,9 @@ module GuiCards =
                              | _ -> "")
                         div {
                             Class baseClass
+                            // Hover → highlight this candidate's glyph in 3D.
+                            Dom.OnMouseEnter(fun _ -> env.Emit [SetReviewAnchorHover (Some (c.PinId, c.Mesh))])
+                            Dom.OnMouseLeave(fun _ -> env.Emit [SetReviewAnchorHover None])
                             span { Class "retarget-pin"; pinLabel }
                             span { Class "retarget-pin"; Cards.shortName c.Mesh }
                             span {

@@ -705,10 +705,10 @@ module Update =
                             setAnchor c.PinId c.Mesh c.Point AnchorAuto sp
                         else sp)
                         model.ScanPins
-                { model with ScanPins = sp; AnchorReview = AnchorReviewIdle; AnchorReviewFilter = None }
+                { model with ScanPins = sp; AnchorReview = AnchorReviewIdle; AnchorReviewFilter = None; ReviewAnchorHover = None }
             | _ -> model
         | CancelAnchorReview ->
-            { model with AnchorReview = AnchorReviewIdle; AnchorReviewFilter = None }
+            { model with AnchorReview = AnchorReviewIdle; AnchorReviewFilter = None; ReviewAnchorHover = None }
         | SetAnchor(pinId, mesh, point, source) ->
             { model with ScanPins = setAnchor pinId mesh point source model.ScanPins }
         | StartAnchorPick(pinId, mesh) ->
@@ -1244,6 +1244,10 @@ module Update =
             if model.ChartCursor = c then model else { model with ChartCursor = c }
         | SetChartHoverMesh m ->
             if model.ChartHoverMesh = m then model else { model with ChartHoverMesh = m }
+        | SetWorkflowPinHover h ->
+            if model.WorkflowPinHover = h then model else { model with WorkflowPinHover = h }
+        | SetReviewAnchorHover h ->
+            if model.ReviewAnchorHover = h then model else { model with ReviewAnchorHover = h }
         | ChartColumnClick mesh ->
             let sticky = if model.ChartStickyMesh = Some mesh then None else Some mesh
             { model with ChartStickyMesh = sticky }
@@ -1262,7 +1266,7 @@ module Update =
         | StudiesLoaded studies ->
             { model with StudiesAvailable = studies |> Array.toList }
         | ToggleWorkflowPanel ->
-            { model with WorkflowPanelOpen = not model.WorkflowPanelOpen }
+            { model with WorkflowPanelOpen = not model.WorkflowPanelOpen; WorkflowPinHover = None }
         | SetRegistrationCardOpen v ->
             { model with RegistrationCardOpen = v }
         // Workflow panel §4: keep orientation (phi/theta untouched), animate

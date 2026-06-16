@@ -181,11 +181,16 @@ module ScanPinScene =
                         | None -> [||]
                         | Some (centre, radius, axis, colour, rings) ->
                             let sel = isSelected.GetValue t
+                            // Hovering the pin's row in the workflow card lights
+                            // its rings up thick + bright (UI→3D linking).
+                            let hovered = model.WorkflowPinHover.GetValue t = Some id
                             let cc = model.CommonCentroid.GetValue t
                             let scale = datasetScale.GetValue t
                             let vis = model.MeshVisible.GetValue t
-                            let col = V4d(colour, (if sel then 1.0 else 0.6))
-                            let width = if sel then 2.5 else 1.5
+                            let col =
+                                if hovered then V4d(colour * 0.45 + V3d.III * 0.55, 1.0)
+                                else V4d(colour, (if sel then 1.0 else 0.6))
+                            let width = if hovered then 4.0 elif sel then 2.5 else 1.5
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             let cR = ScanPin.renderCentre cc scale centre
                             let rR = ScanPin.renderLength scale radius
@@ -490,22 +495,31 @@ module ScanPinScene =
                         let cc = model.CommonCentroid.GetValue t
                         let scale = datasetScale.GetValue t
                         let pins = pinsVal.GetValue t
+                        // Hovering a candidate row in the review dialog lights
+                        // its glyph + connector up thick + bright (UI→3D).
+                        let hover = model.ReviewAnchorHover.GetValue t
                         let out = ResizeArray<V3d * V3d * V4d * float>()
                         for c in cands do
                             if System.Double.IsFinite c.ProjectionDistance then
-                                let col =
+                                let isHover = hover = Some (c.PinId, c.Mesh)
+                                let baseCol, a =
                                     match c.Decision with
-                                    | AnchorAccept    -> V4d(0.13, 0.70, 0.36, 0.95)
-                                    | AnchorReject    -> V4d(0.86, 0.15, 0.15, 0.75)
-                                    | AnchorUndecided -> V4d(0.85, 0.47, 0.02, 0.95)
+                                    | AnchorAccept    -> V3d(0.13, 0.70, 0.36), 0.95
+                                    | AnchorReject    -> V3d(0.86, 0.15, 0.15), 0.75
+                                    | AnchorUndecided -> V3d(0.85, 0.47, 0.02), 0.95
+                                let col =
+                                    if isHover then V4d(baseCol * 0.45 + V3d.III * 0.55, 1.0)
+                                    else V4d(baseCol, a)
+                                let glyphW = if isHover then 3.5 else 1.2
+                                let lineW = if isHover then 3.0 else 1.0
                                 let p = ScanPin.renderCentre cc scale c.Point
-                                let glyphR = ScanPin.renderLength scale (max 0.05 (c.FalloffRadius * 0.06))
+                                let glyphR = ScanPin.renderLength scale (max 0.05 (c.FalloffRadius * (if isHover then 0.1 else 0.06)))
                                 for (i, j) in tetraEdges do
-                                    out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, col, 1.2)
+                                    out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, col, glyphW)
                                 match HashMap.tryFind c.PinId pins
                                       |> Option.bind ScanPin.correspondence
                                       |> Option.bind (fun cr -> cr.RefAnchor) with
-                                | Some ra -> out.Add(p, ScanPin.renderCentre cc scale ra, col, 1.0)
+                                | Some ra -> out.Add(p, ScanPin.renderCentre cc scale ra, col, lineW)
                                 | None -> ()
                         out.ToArray()
                     | _ -> [||])

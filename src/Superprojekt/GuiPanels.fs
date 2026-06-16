@@ -210,12 +210,6 @@ module GuiPanels =
                                 | None -> "(removed)")
                         }
                         button {
-                            Class "mb"; Attribute("title", "Focus")
-                            Dom.OnClick(fun _ ->
-                                env.Emit [ScanPinMsg (SelectPin (Some id)); ScanPinMsg (FocusPin id)])
-                            "⌖"
-                        }
-                        button {
                             Class "mb"; Attribute("title", "Edit")
                             showWhen (pinVal |> AVal.map (function Some p -> p.Phase = PinPhase.Committed | None -> false))
                             Dom.OnClick(fun _ -> env.Emit [EditPin id])

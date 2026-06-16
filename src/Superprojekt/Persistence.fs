@@ -67,20 +67,17 @@ module Persistence =
     let private pinPhaseOf = function
         | "committed" -> PinPhase.Committed
         | _ -> PinPhase.Placement
-    let private camSnapJ (c : CameraSnapshot) =
-        sprintf "{\"center\":%s,\"r\":%s,\"phi\":%s,\"theta\":%s}"
-            (v3 c.Center) (f c.Radius) (f c.Phi) (f c.Theta)
     let private pinJ (p : ScanPin) =
         let (ScanPinId.ScanPinId guid) = p.Id
         let colors =
             p.DatasetColors |> Map.toSeq
             |> Seq.map (fun (k, v) -> sprintf "%s:%s" (q k) (c4bJ v))
             |> String.concat ","
-        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"camera\":%s,\"createdAt\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
+        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"createdAt\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
             (q (guid.ToString())) (pinPhaseTag p.Phase) (v3 p.Centre)
             (f p.InnerRadius) (f p.FalloffRadius) (corrJ p.Correspondence)
             (match p.HostMeshName with Some n -> q n | None -> "null")
-            colors (camSnapJ p.CreationCameraState) (q (p.CreatedAt.ToString("O")))
+            colors (q (p.CreatedAt.ToString("O")))
             p.ProbeLockOrder (ProbeXRange.tag p.ProbeXRange)
 
     let serialize (model : Model) : string =
@@ -186,13 +183,6 @@ module Persistence =
     let private rPin (e : JsonElement) =
         let idStr = e.GetProperty("id").GetString()
         let id = ScanPinId.ScanPinId (Guid.Parse idStr)
-        let camE = e.GetProperty("camera")
-        let cam = {
-            Center = rV3 (camE.GetProperty("center"))
-            Radius = camE.GetProperty("r").GetDouble()
-            Phi = camE.GetProperty("phi").GetDouble()
-            Theta = camE.GetProperty("theta").GetDouble()
-        }
         let colorsE = e.GetProperty("colors")
         let colors =
             colorsE.EnumerateObject() |> Seq.map (fun p -> p.Name, rC4b p.Value) |> Map.ofSeq
@@ -220,7 +210,6 @@ module Persistence =
             FalloffRadius = ScanPin.falloffFor (e.GetProperty("inner").GetDouble())
             Correspondence = rCorrespondence e
             HostMeshName = host
-            CreationCameraState = cam
             CreatedAt = createdAt
             DatasetColors = colors
             Probe = ProbeNone

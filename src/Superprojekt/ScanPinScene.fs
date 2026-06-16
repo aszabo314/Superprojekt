@@ -141,9 +141,6 @@ module ScanPinScene =
                             if sel = Some id then env.Emit [ScanPinMsg (SelectPin None)]
                             else env.Emit [ScanPinMsg (SelectPin (Some id))]
                             false)
-                    Sg.OnDoubleTap(fun _ ->
-                        env.Emit [ScanPinMsg (FocusPin id)]
-                        false)
                     Sg.VertexAttributes(
                         HashMap.ofList [ string DefaultSemantic.Positions, BufferView(markerPosBuf, typeof<V3f>) ])
                     Sg.Index(BufferView(markerIdxBuf, typeof<int>))

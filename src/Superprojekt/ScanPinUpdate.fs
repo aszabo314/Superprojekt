@@ -30,7 +30,6 @@ module ScanPinUpdate =
     // centre is in world-space metres.
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
         let inner   = defaultInnerRadius model
-        let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
         {
             Id                   = id
             Phase                = PinPhase.Placement
@@ -39,7 +38,6 @@ module ScanPinUpdate =
             FalloffRadius        = ScanPin.falloffFor inner
             Correspondence       = None
             HostMeshName         = model.ActivePickingLayer
-            CreationCameraState  = cam
             CreatedAt            = System.DateTime.UtcNow
             DatasetColors        = assignColors model.MeshNames
             Probe                = ProbeNone
@@ -103,8 +101,7 @@ module ScanPinUpdate =
         | CommitPin ->
             match ScanPinModel.activePlacementId sp with
             | Some id ->
-                let cam = { Center = model.Camera.center; Radius = model.Camera.radius; Phi = model.Camera.phi; Theta = model.Camera.theta }
-                let sp = sp |> updatePin id (fun pin -> { pin with Phase = PinPhase.Committed; CreationCameraState = cam })
+                let sp = sp |> updatePin id (fun pin -> { pin with Phase = PinPhase.Committed })
                 { sp with Placement = PlacementIdle }
             | None -> sp
 
@@ -116,8 +113,6 @@ module ScanPinUpdate =
 
         | SelectPin id ->
             { sp with SelectedPin = id }
-
-        | FocusPin _ -> sp
 
         // Stale guard: results only land while the pin is still ProbeRunning;
         // anything that invalidated the probe in the meantime wins.
@@ -160,12 +155,6 @@ module ScanPinUpdate =
                 { model with MenuOpen = restored; SavedMenuOpen = None }
             else model
         match msg with
-        | FocusPin id ->
-            match HashMap.tryFind id sp.Pins with
-            | Some pin ->
-                let c = pin.CreationCameraState
-                env.Emit [CameraMessage (OrbitMessage.SetTarget(true, c.Center, c.Radius, c.Phi, c.Theta))]
-            | None -> ()
         | PlaceAnchor _ ->
             match ScanPinModel.activePlacementId sp' with
             | Some id ->

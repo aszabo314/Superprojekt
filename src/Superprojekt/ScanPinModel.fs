@@ -13,13 +13,6 @@ type PinPhase =
     | Placement
     | Committed
 
-type CameraSnapshot = {
-    Center : V3d
-    Radius : float
-    Phi    : float
-    Theta  : float
-}
-
 // Sphere–surface contact rings (per mesh, registered world-space metres),
 // computed server-side and cached on the pin. Invalidated (→ RingsNone, lazy
 // recompute) by radius / centre / registration-transform changes; mesh
@@ -42,7 +35,6 @@ type ScanPin = {
     // Optional registration correspondence anchors.
     Correspondence       : Correspondence option
     HostMeshName         : string option
-    CreationCameraState  : CameraSnapshot
     CreatedAt            : DateTime
     DatasetColors        : Map<string, C4b>
     Probe                : ProbeState

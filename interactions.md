@@ -242,9 +242,8 @@ Falloff radius (inner + 1.2 m) and probe-cylinder length (20 m) are fixed
 probe and contact rings; both recompute lazily (§8.4).
 
 **Pin list** (left panel): one row per pin — click the coordinates to
-select/deselect (opens/closes its card), **⌖** focus (flies the camera back
-to the view saved at creation), **✎** edit (reopens the adjust flyout for a
-committed pin), **✕** delete.
+select/deselect (opens/closes its card), **✎** edit (reopens the adjust
+flyout for a committed pin), **✕** delete.
 
 **3D feedback per pin:** a small clickable marker dot at the centre; a thin
 **equator ring** (radius = InnerRadius, ⊥ the pin's probe axis) plus the
@@ -564,9 +563,9 @@ Gear popover → **💾 Save** downloads a JSON file through the browser;
 **📂 Load** opens a file picker and applies one. No server-side store.
 
 **Persisted (workspace JSON v2):** active dataset name, camera pose, all
-pins (centre, radii, phase, payload incl. line traces, patch data and the
-**correspondence anchors** with source + accepted state, host mesh,
-colours, creation camera, probe length/lock/range settings), mesh
+pins (centre, inner radius, phase, the **correspondence anchors** with
+source + accepted state, host mesh, colours, probe lock/range settings),
+mesh
 transforms, the **registration history** (full steps with before/after
 transforms), mesh visibility, sensor types, dataset-error overrides, the
 lasso (polygon, planes, enabled flag), registration mode + reference mesh,

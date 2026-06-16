@@ -162,7 +162,6 @@ and ScanPinMessage =
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
-    | FocusPin of ScanPinId
     | ProbeComputed of ScanPinId * ProbeResult
     | ProbeFailed of ScanPinId * string
     | ProbePreviewComputed of ScanPinId * ProbeResult

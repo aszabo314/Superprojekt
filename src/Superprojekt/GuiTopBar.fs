@@ -116,7 +116,7 @@ module GuiTopBar =
                 model.WorkflowPanelOpen |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
                 Attribute("title", "Registration workflow: readiness, anchors, status and error stats in one panel")
                 Dom.OnClick(fun _ -> env.Emit [ToggleWorkflowPanel])
-                "⚲ Workflow"
+                "⚲ Registration"
             }
 
             button {

@@ -453,7 +453,10 @@ module MeshView =
                     Sg.NoEvents
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
                     Sg.Uniform("MeshActive",      AVal.constant false)
-                    Sg.Uniform("GhostOpacity",    AVal.constant 0.2f)
+                    // Slate committed-pose ghost obeys the opacity slider too
+                    // (its slate MeshColor is what distinguishes it, not a
+                    // fixed alpha).
+                    Sg.Uniform("GhostOpacity",    model.GhostOpacity |> AVal.map float32)
                     Sg.Uniform("RenderingMode",   AVal.constant 1)
                     Sg.Uniform("MeshColor",       AVal.constant (V4f(0.45f, 0.49f, 0.55f, 1.0f)))
                     Sg.Uniform("ShadingStrength", AVal.constant 0.0f)

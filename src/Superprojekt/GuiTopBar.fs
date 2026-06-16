@@ -128,15 +128,15 @@ module GuiTopBar =
 
             // Spring-loaded reference peek: while held, ghost every mesh except
             // the reference (★). Transient importance override — never mutates
-            // the eye toggles. Disabled until a reference is designated.
+            // the eye toggles. Always live (the reference defaults to the first
+            // mesh on load); pointer-leave/up both release so it can't stick.
             button {
                 Class "tb-btn"
                 model.ReferencePeekHeld |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                model.Registration |> AVal.map (fun r ->
-                    if r.ReferenceMesh.IsNone then Some (Attribute("disabled", "disabled")) else None)
                 Attribute("title", "Peek reference: hold to show only the reference mesh (hotkey: R)")
                 Dom.OnPointerDown((fun _ -> env.Emit [SetReferencePeek true]), pointerCapture = true)
                 Dom.OnPointerUp((fun _ -> env.Emit [SetReferencePeek false]), pointerCapture = true)
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetReferencePeek false])
                 "👁 Peek"
             }
 

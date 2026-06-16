@@ -243,6 +243,11 @@ module Update =
                 MeshOrder        = indices
                 MeshesLoaded     = HashSet.empty
                 SceneBounds      = Box3d.Invalid
+                // Default the registration reference to the first mesh so the
+                // reference-peek (and registration UI) work out of the box.
+                Registration     =
+                    { model.Registration with
+                        ReferenceMesh = if centroids.Length > 0 then Some (fst centroids.[0]) else None }
                 DatasetCentroids =
                     let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) model.DatasetCentroids
                     if dataset <> "" then Map.add dataset common perMesh else perMesh }

@@ -4,12 +4,6 @@ open Aardvark.Base
 
 module PinGeometry =
 
-    let axisFrame (axis : V3d) =
-        let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-        let right = Vec.cross axis up |> Vec.normalize
-        let fwd = Vec.cross right axis |> Vec.normalize
-        right, fwd
-
     let buildIcosphere (subdivisions : int) : V3f[] * int[] =
         let phi = (1.0 + sqrt 5.0) * 0.5
         let a = 1.0 / sqrt (1.0 + phi * phi)
@@ -59,15 +53,6 @@ module PinGeometry =
             arr
         positions, indices
 
-    let appendPolylineSegments
-            (segs : ResizeArray<V3d * V3d * V4d * float>)
-            (pts : V3d[]) (color : V4d) (widthPx : float) =
-        for i in 0 .. pts.Length - 2 do
-            let a = pts.[i]
-            let b = pts.[i + 1]
-            if (b - a).LengthSquared > 1e-20 then
-                segs.Add((a, b, color, widthPx))
-
     let buildSphereOutline (centre : V3d) (radius : float) (color : V4d) (widthPx : float) =
         let n = 64
         let segs = ResizeArray<V3d * V3d * V4d * float>(3 * n)
@@ -81,38 +66,4 @@ module PinGeometry =
         circle V3d.IOO V3d.OIO
         circle V3d.IOO V3d.OOI
         circle V3d.OIO V3d.OOI
-        segs.ToArray()
-
-    let buildPatchFootprint
-            (centre : V3d) (radius : float)
-            (refDirWorld : V3d) (normalWorld : V3d)
-            (color : V4d) (widthPx : float) =
-        let n = 64
-        let nNorm =
-            let l = normalWorld.Length
-            if l > 1e-9 then normalWorld / l else V3d.OOI
-        let refN =
-            let r = refDirWorld - nNorm * Vec.dot refDirWorld nNorm
-            let l = r.Length
-            if l > 1e-9 then r / l
-            else
-                let alt = if abs nNorm.X < 0.9 then V3d.IOO else V3d.OIO
-                let r = alt - nNorm * Vec.dot alt nNorm
-                let l2 = r.Length
-                if l2 > 1e-9 then r / l2 else V3d.IOO
-        let leftN = Vec.cross nNorm refN |> Vec.normalize
-        let segs = ResizeArray<V3d * V3d * V4d * float>(n + 3)
-        for i in 0 .. n - 1 do
-            let a0 = float i       / float n * Constant.PiTimesTwo
-            let a1 = float (i + 1) / float n * Constant.PiTimesTwo
-            let p0 = centre + (refN * cos a0 + leftN * sin a0) * radius
-            let p1 = centre + (refN * cos a1 + leftN * sin a1) * radius
-            segs.Add((p0, p1, color, widthPx))
-        let tip = centre + refN * radius
-        let arrowCol = V4d(0.06, 0.09, 0.16, 0.95)
-        segs.Add((centre, tip, arrowCol, widthPx + 0.5))
-        let backRef  = refN  * (radius * 0.10)
-        let backLeft = leftN * (radius * 0.06)
-        segs.Add((tip, tip - backRef + backLeft, arrowCol, widthPx + 0.5))
-        segs.Add((tip, tip - backRef - backLeft, arrowCol, widthPx + 0.5))
         segs.ToArray()

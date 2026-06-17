@@ -16,17 +16,54 @@ type Message =
     | SetShadingStrength of float
     | SetSlopeThresholdDeg of float
     | ToggleAnchorGhostMode
+    // 3D sectioning / cutaway.
+    | SetReferencePeek of bool
+    | SetClipPlanes of ClipPlane list
+    | ToggleCutaway
+    | SetCutawayMode of ClipMode
+    | ToggleClipAboveIso
+    // Lock the chart-driven iso-plane at a signed distance into ClipPlanes.
+    | LockIsoPlane of float
+    | ToggleRuler
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
+    // Stage 2 · Fine (ICP). Solves land in PendingReg, not MeshTransforms.
     | RunRegistration
-    | RegistrationComplete of string * Trafo3d * float[] * float[]
-    | RegistrationFailed of string
-    | ResetMeshTransforms
+    | FineSolved of mesh:string * world:Trafo3d * convergence:float[] * residuals:float[]
+    | FineFailed of mesh:string * reason:string
+    // Stage 1 · Coarse (landmarks via /query/lsq-pairs).
+    | SolveCoarse
+    | CoarseSolved of mesh:string * worldDelta:M44d * pairResiduals:(ScanPinId * float)[] * rmsBefore:float * eigenvalues:float[] * collinear:bool
+    | CoarseFailed of mesh:string * reason:string
+    // Pending-preview lifecycle + history.
+    | CommitRegistration
+    | DiscardRegistration
+    | RollbackRegStep
+    | ResetRegistration
+    // Correspondence anchors.
+    | ToggleCorrespondence of ScanPinId
+    | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * candidates:AnchorCandidate[]
+    | AnchorSeedFailed of string
+    | SetAnchorDecision of ScanPinId * mesh:string * AnchorDecision
+    | ApplyAnchorReview
+    | CancelAnchorReview
+    | SetAnchor of ScanPinId * mesh:string * point:V3d * source:AnchorSource
+    | StartAnchorPick of ScanPinId * mesh:string
+    | CancelAnchorPick
+    | AnchorPickHit of world:V3d
+    // Patch small-multiples picker.
+    | OpenPatchPicker of ScanPinId
+    | ClosePatchPicker
+    | TogglePatchShaded
+    | PatchPickerReady of pinId:ScanPinId * normal:V3d * refDir:V3d * radius:float * entries:PatchPickerEntry list
+    | PatchPickerFailed of string
+    | PatchPickerClick of mesh:string * u:float * v:float * h:float
+    | ShowToast of string
+    | ClearToast
     | SetMeshSensorType of string * SensorType
     | SetMeshDatasetError of string * float option
-    | ToggleProvenanceHeatmap
+    | SetHeatmapMode of HeatmapMode
     | SetProvenanceThreshold of float
-    | ToggleFalloffZoneOnly
     | ToggleFusionMode
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]
@@ -34,15 +71,12 @@ type Message =
     | SetDatasetScale    of string * float
     | ScanPinMsg              of ScanPinMessage
     | JumpToMesh of string
-    | ToggleColorMode
     | CardMsg of CardMessage
-    | ExploreMsg of ExploreModeMessage
     | SetRenderingMode of RenderingMode
     | ToggleMeshSolo of string
     | ShowAllMeshes
     | HideAllMeshes
     | ResetCamera
-    | SetExploreCardPos of V2d
     | SetLassoCardPos of V2d
     | ToggleGearPopover
     | EditPin of ScanPinId
@@ -60,24 +94,54 @@ type Message =
     | SetRetargetDecision of ScanPinId * RetargetDecision
     | CommitRetarget
     | CancelRetarget
+    | HoverProbeAt of screenPx:V2d * world:V3d
+    | HoverProbeResult of ProbeState
+    | ClearHoverProbe
+    | SetChartCursor of ChartCursor option
+    | SetChartHoverMesh of string option
+    | SetWorkflowPinHover of ScanPinId option
+    | SetReviewAnchorHover of (ScanPinId * string) option
+    | ChartColumnClick of meshName:string
+    | ClearChartSticky
     | TogglePanorama
     | PanoramasGenerated of Panorama list
     | SelectPanorama of int
     | SetPanoramaMode of PanoramaMode
     | SetPanoramaBlend of float
     | FlyToPanorama of int
+    | StudiesLoaded of string[]
+    | ToggleWorkflowPanel
+    // Workflow panel: camera fly-to (aspect supplied by the view — fovY
+    // derives from the fixed 90° horizontal fov) and navigation actions.
+    | FlyTo of FlyToTarget * aspect:float
+    | NavTo of NavAction
+    | StudyMsg of StudyMessage
 
-and ExploreSignal =
-    | FeatureConfidenceSignal
-    | DisagreementSignal
-
-and ExploreModeMessage =
-    | SetExploreEnabled of bool
-    | SetReferenceAxisMode of ReferenceAxisMode
-    | SetSignalEnabled of ExploreSignal * bool
-    | SetSignalThreshold of ExploreSignal * float
-    | SetSignalColor of ExploreSignal * C4f
-    | SetMixMode of MixMode
+and StudyMessage =
+    // Session lifecycle (§1/§10): real entry via /s/{token}, demo entry from
+    // the gear popover, exit only for demo sessions.
+    | StudyJoin of token:string
+    | StudyStartDemo of studyId:string * StudyCondition
+    | StudySessionStarted of StudySessionInit
+    | StudySessionFailed of message:string
+    | StudyExitDemo
+    // Runtime (§4): Next gating, instruction overlay, tutorial gold flow.
+    | StudyNext
+    | StudyReopenOverlay
+    | StudyCloseOverlay
+    | StudyGoldResult of questionId:string * correct:bool * screened:bool
+    | StudyCompletionCode of string
+    | StudyCompletionFailed of string
+    | StudySetAsFinal
+    // Answer drafts (§7): post immediately on change, again on Next.
+    | StudySetChoice of questionId:string * option_:int
+    | StudySetNumber of questionId:string * value:float
+    | StudySetText of questionId:string * text:string
+    | StudySetGridItem of questionId:string * item:int * value:float
+    | StudySetConfidence of questionId:string * confidence:int
+    | StudyArmSceneClick of questionId:string
+    | StudyCancelSceneClick
+    | StudySceneClickHit of world:V3d
 
 and CardMessage =
     | BringToFront of CardId
@@ -91,16 +155,13 @@ and ScanPinMessage =
     | CancelPlacement
     | PlaceAnchor of worldCentre:V3d
     | SetInnerRadius of float
-    // Delta added to InnerRadius to get FalloffRadius — slider is relative.
-    | SetFalloffDelta of float
+    // Move the pin being adjusted (numeric position fields in the flyout).
+    | RepositionPin of ScanPinId * V3d
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
-    | FocusPin of ScanPinId
-    | ChangePayloadType of ScanPinId * PayloadKind
-    | SetReliabilityWeight of ScanPinId * float
-    | SetLineMode of ScanPinId * LineMode
-    | IsolineComputed of ScanPinId * V3d[] * elevation:float
-    | RidgeComputed of ScanPinId * V3d[] * scalars:float[]
-    | LineCrossMeshComputed of ScanPinId * meshName:string * V3d[] * scalars:float[]
-    | PatchComputed of ScanPinId * (V2d * V3d)[] * refDir:V3d * normal:V3d
+    | ProbeComputed of ScanPinId * ProbeResult
+    | ProbeFailed of ScanPinId * string
+    | ProbePreviewComputed of ScanPinId * ProbeResult
+    | ProbePreviewFailed of ScanPinId * string
+    | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>

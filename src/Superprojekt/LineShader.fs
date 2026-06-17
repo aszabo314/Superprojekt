@@ -3,6 +3,15 @@ namespace Superprojekt
 open Aardvark.Base
 open Aardvark.Rendering
 
+module Shader =
+    open FShade
+
+    type UniformScope with
+        member x.FlatColor : V4f = x?FlatColor
+
+    let flatColor (_v : Effects.Vertex) =
+        fragment { return uniform.FlatColor }
+
 module Lines =
     open Aardvark.Dom
     open FSharp.Data.Adaptive

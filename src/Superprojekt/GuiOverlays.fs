@@ -8,6 +8,7 @@ open Aardvark.Dom
 module GuiOverlays =
 
     let meshWheelLabel (model : AdaptiveModel) (cursorScreen : aval<V2d option>) =
+        let meshOrderMap = model.MeshOrder.Content
         div {
             Class "mesh-wheel-label"
             (model.ActivePickingLayer, cursorScreen) ||> AVal.map2 (fun layer cOpt ->
@@ -18,28 +19,151 @@ module GuiOverlays =
                         Top  (sprintf "%.0fpx" (pos.Y - 10.0))
                     ])
                 | _ -> Some (Style [Display "none"]))
-            model.ActivePickingLayer |> AVal.map (function
-                | Some name -> Cards.shortName name
+            (model.ActivePickingLayer, meshOrderMap) ||> AVal.map2 (fun layer order ->
+                match layer with
+                | Some name -> Cards.numbered order name
                 | None -> "")
         }
 
-    // Surface-probe readout for error provenance. Visible only when the
-    // ProvenanceHeatmap toggle is on and the cursor is on a surface. Reuses
-    // Provenance.sourcesAt — the same routine that paints the per-pin card
-    // and the global heatmap — so the three numbers and the stacked bar
-    // agree with what the user sees in the viewport.
+    // Measurement rulers: one HTML label per accepted anchor↔reference of the
+    // selected pin, at the connector midpoint. Default shows the distance
+    // (the live pair gap = the per-pair residual once a solve preview shrinks
+    // the gap); the title carries the endpoints. HTML so it is always legible
+    // and depth-tested against overlays, not meshes.
+    let rulerOverlay (model : AdaptiveModel) (view : aval<Trafo3d>) (viewportSize : aval<V2i>) =
+        let projectToScreen (p : V3d) (viewTrafo : Trafo3d) (vp : V2i) =
+            let aspect = float vp.X / max 1.0 (float vp.Y)
+            let proj = Frustum.perspective 90.0 1.0 5000.0 aspect |> Frustum.projTrafo
+            let h = (proj.Forward * viewTrafo.Forward) * V4d(p, 1.0)
+            if h.W < 0.1 then None
+            else
+                let ndc = h.XYZ / h.W
+                if abs ndc.X > 1.2 || abs ndc.Y > 1.2 then None
+                else Some (V2d((ndc.X * 0.5 + 0.5) * float vp.X, (1.0 - (ndc.Y * 0.5 + 0.5)) * float vp.Y))
+        // Single JSON attribute updated per frame; observedRender fully
+        // rebuilds the label set each change (and dedups when unchanged) —
+        // no per-frame AList churn / stuck DOM nodes.
+        let json =
+            AVal.custom (fun t ->
+                let items =
+                    if not (model.RulerActive.GetValue t) then []
+                    else
+                        let sel =
+                            match model.ScanPins.Placement.GetValue t with
+                            | AdjustingPin id -> Some id
+                            | _ -> model.ScanPins.SelectedPin.GetValue t
+                        match sel |> Option.bind (fun id -> HashMap.tryFind id ((model.ScanPins.Pins |> AMap.toAVal).GetValue t)) with
+                        | Some pin ->
+                            match ScanPin.correspondence pin with
+                            | Some corr when corr.Enabled ->
+                                match corr.RefAnchor with
+                                | Some refA ->
+                                    let pending = model.PendingReg.GetValue t
+                                    let transforms = model.MeshTransforms.GetValue t
+                                    let scales = model.DatasetScales.GetValue t
+                                    let cc = model.CommonCentroid.GetValue t
+                                    let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
+                                    let vtr = view.GetValue t
+                                    let vp = viewportSize.GetValue t
+                                    let refR = ScanPin.renderCentre cc s refA
+                                    corr.Anchors |> Map.toList |> List.choose (fun (mesh, a) ->
+                                        if not a.Accepted then None
+                                        else
+                                            let hasDelta = (PendingRegistration.delta mesh pending).IsSome
+                                            let aw =
+                                                match PendingRegistration.delta mesh pending with
+                                                | Some d ->
+                                                    let scale = DatasetScale.forMesh scales mesh
+                                                    let cT = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
+                                                    let wb = RigidTransform.renderToWorld scale cc cT
+                                                    let wa = RigidTransform.renderToWorld scale cc (RegLog.effective cT d)
+                                                    (wb.Inverse * wa).Forward.TransformPos a.Point
+                                                | None -> a.Point
+                                            let mid = (ScanPin.renderCentre cc s aw + refR) * 0.5
+                                            match projectToScreen mid vtr vp with
+                                            | Some px -> Some (mesh, px, (aw - refA).Length, hasDelta)
+                                            | None -> None)
+                                | None -> []
+                            | _ -> []
+                        | None -> []
+                let order = model.MeshOrder.Content.GetValue t
+                let sb = System.Text.StringBuilder()
+                sb.Append("{\"labels\":[") |> ignore
+                items |> List.iteri (fun i (mesh, px, dist, hasDelta) ->
+                    if i > 0 then sb.Append(',') |> ignore
+                    let title =
+                        (sprintf "%s <-> reference: %.3f m (%s)" (Cards.numbered order mesh) dist
+                            (if hasDelta then "residual" else "pre-alignment gap"))
+                            .Replace("\\", "").Replace("\"", "'")
+                    sb.Append(sprintf "{\"x\":%.0f,\"y\":%.0f,\"t\":\"%.3f m\",\"title\":\"%s\"}" px.X px.Y dist title) |> ignore)
+                sb.Append("]}") |> ignore
+                sb.ToString())
+        div {
+            Class "ruler-overlay"
+            json |> AVal.map (fun j -> Some (Attribute("data-ruler", j)))
+            Primitives.observedRender "data-ruler" "{\"labels\":[]}" [
+                "  var labels = (d.labels) || [];"
+                "  labels.forEach(function(l){"
+                "    var div = document.createElement('div');"
+                "    div.className = 'ruler-label';"
+                "    div.style.left = l.x + 'px'; div.style.top = l.y + 'px';"
+                "    if(l.title) div.title = l.title;"
+                "    div.textContent = l.t;"
+                "    el.appendChild(div);"
+                "  });"
+            ]
+        }
+
+    // Ctrl-click hover probe: compressed ridgeline at the cursor,
+    // kept inside the viewport; dismissed by Escape / click / timeout.
+    let hoverProbeTooltip (model : AdaptiveModel) (viewportSize : aval<V2i>) =
+        let posStyle =
+            (model.HoverProbe, viewportSize) ||> AVal.map2 (fun hp vp ->
+                match hp with
+                | Some h ->
+                    let x = max 0.0 (min (h.ScreenPos.X + 14.0) (float vp.X - 256.0))
+                    let y = max 0.0 (min (h.ScreenPos.Y + 14.0) (float vp.Y - 190.0))
+                    Some (Style [
+                        Left (sprintf "%.0fpx" x)
+                        Top  (sprintf "%.0fpx" y)
+                    ])
+                | None -> Some (Style [Display "none"]))
+        let colors =
+            model.MeshOrder |> AMap.toAVal |> AVal.map (fun order ->
+                order |> HashMap.toSeq
+                |> Seq.map (fun (n, i) -> n, Primitives.meshColor i)
+                |> Map.ofSeq)
+        let orderMap = model.MeshOrder |> AMap.toAVal
+        let json =
+            (model.HoverProbe, colors, orderMap) |||> AVal.map3 (fun hp cols order ->
+                match hp with
+                | Some h -> CardsPin.probeStateJson true None cols order None h.Probe
+                | None -> "{\"status\":\"none\"}")
+        div {
+            Class "hover-probe-tip"
+            posStyle
+            json |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
+            Primitives.observedRender "data-ridge" "{}" CardsPin.ridgelineJs
+        }
+
+    // Heatmap probe under the cursor. Sources mode reuses
+    // Provenance.sourcesAt so the numbers agree with the shader; Diff mode
+    // shows the signed combined-error change and the detection limit (LoD).
     let provenanceHoverOverlay
             (model : AdaptiveModel)
             (hoverWorld : aval<V3d option>)
             (cursorScreen : aval<V2d option>) =
+        // (cursor px, mesh label, numbers line, bar json)
         let payload =
             AVal.custom (fun t ->
-                let on = model.ProvenanceHeatmap.GetValue t
+                let mode = model.HeatmapMode.GetValue t
                 let cOpt = cursorScreen.GetValue t
                 let wOpt = hoverWorld.GetValue t
                 let layer = model.ActivePickingLayer.GetValue t
-                match on, cOpt, wOpt with
-                | true, Some px, Some w ->
+                let order = model.MeshOrder.Content.GetValue t
+                match mode, cOpt, wOpt with
+                | HeatOff, _, _ | _, None, _ | _, _, None -> None
+                | HeatProvenance, Some px, Some w ->
                     let sensors   = model.MeshSensorTypes.GetValue t
                     let overrides = model.MeshDatasetErrors.GetValue t
                     let algo      = model.MeshAlgorithmResidual.GetValue t
@@ -47,17 +171,73 @@ module GuiOverlays =
                     let anchors =
                         pinsMap |> HashMap.toSeq
                         |> Seq.choose (fun (_, p) ->
-                            if p.Phase = PinPhase.Committed then Some (p.Centre, p.FalloffRadius)
+                            if p.Phase = PinPhase.Committed then Some (p.Centre, p.InnerRadius)
                             else None)
                         |> Array.ofSeq
                     let mesh = layer |> Option.defaultValue ""
                     let d, a, c = Provenance.sourcesAt mesh overrides sensors algo w anchors
-                    Some (px, d, a, c, layer)
+                    let label =
+                        match layer with
+                        | Some name -> Cards.numbered order name
+                        | None -> "— no layer —"
+                    let cM = c * 0.01
+                    let total = max 1e-6 (d + a + cM)
+                    let bar =
+                        sprintf "[%.1f,%.1f,%.1f]"
+                            (d / total * 100.0) (a / total * 100.0) (cM / total * 100.0)
+                    Some (px, label, sprintf "D %.3fm • A %.3fm • C %.0f" d a c, bar)
+                | HeatDiff, Some px, Some w ->
+                    match layer with
+                    | None -> Some (px, "— no layer —", "wheel-cycle onto a mesh layer for Δ", "[]")
+                    | Some mesh ->
+                        let pending = model.PendingReg.GetValue t
+                        match pending |> Option.bind (fun pr -> Map.tryFind mesh pr.Results) with
+                        | None -> Some (px, Cards.numbered order mesh, "no pending delta for this mesh", "[]")
+                        | Some res ->
+                            let sensors   = model.MeshSensorTypes.GetValue t
+                            let overrides = model.MeshDatasetErrors.GetValue t
+                            let pinsMap   = (model.ScanPins.Pins |> AMap.toAVal).GetValue t
+                            let anchors =
+                                pinsMap |> HashMap.toSeq
+                                |> Seq.choose (fun (_, p) ->
+                                    if p.Phase = PinPhase.Committed then Some (p.Centre, p.InnerRadius)
+                                    else None)
+                                |> Array.ofSeq
+                            // committed-pose position of the hovered point
+                            let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
+                            let cc = model.CommonCentroid.GetValue t
+                            let committed =
+                                Map.tryFind mesh (model.MeshTransforms.GetValue t)
+                                |> Option.defaultValue Trafo3d.Identity
+                            let wb = RigidTransform.renderToWorld scale cc committed
+                            let wa = RigidTransform.renderToWorld scale cc (RegLog.effective committed res.Delta)
+                            let deltaW = wb.Inverse * wa
+                            let wc = deltaW.Backward.TransformPos w
+                            let condP = Provenance.localConditioning w anchors
+                            let condC = Provenance.localConditioning wc anchors
+                            let algoBefore =
+                                Map.tryFind mesh (model.MeshAlgorithmResidual.GetValue t)
+                                |> Option.defaultValue 0.0
+                            let combinedP = res.RmsAfter + 0.01 * min (condP * 0.01) 50.0
+                            let combinedC = algoBefore + 0.01 * min (condC * 0.01) 50.0
+                            let dd = combinedP - combinedC
+                            let sigmaRef =
+                                match (model.Registration.GetValue t).ReferenceMesh with
+                                | Some r -> Provenance.datasetError overrides sensors r
+                                | None -> 0.0
+                            let sigmaM = Provenance.datasetError overrides sensors mesh
+                            let lod = 1.96 * sqrt (sigmaRef * sigmaRef + sigmaM * sigmaM)
+                            let verdict =
+                                if abs dd < lod then "below detection"
+                                elif dd < 0.0 then "improved"
+                                else "degraded"
+                            Some (px, Cards.numbered order mesh,
+                                  sprintf "Δ %+.4f m • LoD %.4f m • %s" dd lod verdict, "[]")
                 | _ -> None)
         let visStyle =
             payload |> AVal.map (fun p ->
                 match p with
-                | Some (px, _, _, _, _) ->
+                | Some (px, _, _, _) ->
                     Some (Style [
                         Left (sprintf "%.0fpx" (px.X + 16.0))
                         Top  (sprintf "%.0fpx" (px.Y + 18.0))
@@ -65,23 +245,15 @@ module GuiOverlays =
                 | None -> Some (Style [Display "none"]))
         let label =
             payload |> AVal.map (function
-                | Some (_, _, _, _, Some name) -> Cards.shortName name
-                | Some (_, _, _, _, None)      -> "— no layer —"
-                | None                          -> "")
+                | Some (_, l, _, _) -> l
+                | None -> "")
         let nums =
             payload |> AVal.map (function
-                | Some (_, d, a, c, _) ->
-                    sprintf "D %.3fm • A %.3fm • C %.0f" d a c
+                | Some (_, _, n, _) -> n
                 | None -> "")
         let barAttr =
             payload |> AVal.map (function
-                | Some (_, d, a, c, _) ->
-                    let cM = c * 0.01
-                    let total = max 1e-6 (d + a + cM)
-                    let pd = d / total * 100.0
-                    let pa = a / total * 100.0
-                    let pc = cM / total * 100.0
-                    Some (Attribute("data-prov", sprintf "[%.1f,%.1f,%.1f]" pd pa pc))
+                | Some (_, _, _, bar) -> Some (Attribute("data-prov", bar))
                 | None -> Some (Attribute("data-prov", "[]")))
         div {
             Class "prov-hover"
@@ -90,41 +262,39 @@ module GuiOverlays =
             div {
                 Class "pc-bar prov-hover-bar"
                 barAttr
-                OnBoot [
-                    "(function(){"
-                    "var el = __THIS__;"
-                    "var last = '';"
-                    "function render(){"
-                    "  var raw = el.getAttribute('data-prov') || '[]';"
-                    "  if(raw === last) return; last = raw;"
-                    "  try { var arr = JSON.parse(raw); } catch(e) { return; }"
-                    "  el.innerHTML = '';"
-                    "  if(!arr || arr.length < 3) return;"
-                    "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
-                    "  arr.forEach(function(p, i){"
-                    "    var d = document.createElement('div');"
-                    "    d.style.width = p + '%';"
-                    "    d.style.background = colours[i];"
-                    "    d.style.height = '100%';"
-                    "    el.appendChild(d);"
-                    "  });"
-                    "}"
-                    "render();"
-                    "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-prov']});"
-                    "})();"
-                ]
+                Primitives.observedRender "data-prov" "[]" Primitives.provBarJs
             }
             div { Class "prov-hover-nums"; nums }
         }
 
-    // Shown while fusion mode is on but no registration has run yet — fusing
-    // unaligned meshes is meaningless, so the fusion pass shows the reference
-    // mesh alone and this banner tells the user to register.
+    // Thin banner while a registration solve preview is pending (spec §6).
+    let previewBanner (model : AdaptiveModel) (setSwap : bool -> unit) =
+        div {
+            Class "preview-banner"
+            Primitives.showWhen (model.PendingReg |> AVal.map PendingRegistration.isPreview)
+            span { Class "preview-banner-text"; "Previewing unregistered result — commit or discard" }
+            // Hold to compare: render-time swap to the committed (before) pose.
+            button {
+                Class "preview-banner-swap"
+                Attribute("title", "Hold to compare: shows the committed (before) pose while held")
+                Dom.OnPointerDown((fun _ -> setSwap true), pointerCapture = true)
+                Dom.OnPointerUp((fun _ -> setSwap false), pointerCapture = true)
+                "⇄ Hold: before"
+            }
+        }
+
+    // Transient feedback for blocked/failed actions (auto-clears).
+    let toast (model : AdaptiveModel) =
+        div {
+            Class "app-toast"
+            Primitives.showWhen (model.Toast |> AVal.map Option.isSome)
+            model.Toast |> AVal.map (Option.defaultValue "")
+        }
+
     let fusionNotice (model : AdaptiveModel) =
         div {
             Class "fusion-notice"
-            (model.FusionMode, model.MeshTransforms) ||> AVal.map2 (fun f m ->
-                if f && Map.isEmpty m then None else Some (Style [Display "none"]))
+            Primitives.showWhen ((model.FusionMode, model.MeshTransforms) ||> AVal.map2 (fun f m -> f && Map.isEmpty m))
             "◈ Fusion shows the reference mesh until you register. Run a registration to fuse the visible meshes by lowest error."
         }
 
@@ -146,22 +316,13 @@ module GuiOverlays =
         div {
             Class "lasso-overlay"
             stateJson |> AVal.map (fun j -> Some (Attribute("data-lasso", j)))
-            OnBoot [
-                "(function(){"
-                "var el = __THIS__;"
-                "var last = '';"
-                "var ns = 'http://www.w3.org/2000/svg';"
-                "function poly(points, attrs){"
-                "  var p = document.createElementNS(ns, 'polyline');"
-                "  p.setAttribute('points', points.map(function(pt){return pt[0]+','+pt[1];}).join(' '));"
-                "  for(var k in attrs) p.setAttribute(k, attrs[k]);"
-                "  return p;"
-                "}"
-                "function render(){"
-                "  var raw = el.getAttribute('data-lasso') || '{}';"
-                "  if(raw === last) return; last = raw;"
-                "  try { var d = JSON.parse(raw); } catch(e) { return; }"
-                "  el.innerHTML = '';"
+            Primitives.observedRender "data-lasso" "{}" [
+                "  function poly(points, attrs){"
+                "    var p = document.createElementNS(ns, 'polyline');"
+                "    p.setAttribute('points', points.map(function(pt){return pt[0]+','+pt[1];}).join(' '));"
+                "    for(var k in attrs) p.setAttribute(k, attrs[k]);"
+                "    return p;"
+                "  }"
                 "  var svg = document.createElementNS(ns, 'svg');"
                 "  svg.setAttribute('class','lasso-svg');"
                 "  var rect = el.getBoundingClientRect();"
@@ -178,19 +339,15 @@ module GuiOverlays =
                 "      svg.appendChild(c);"
                 "    });"
                 "    if(d.c && d.c.length > 0){"
-                "      var last = d.d[d.d.length-1];"
+                "      var lastPt = d.d[d.d.length-1];"
                 "      var line = document.createElementNS(ns, 'line');"
-                "      line.setAttribute('x1', last[0]); line.setAttribute('y1', last[1]);"
+                "      line.setAttribute('x1', lastPt[0]); line.setAttribute('y1', lastPt[1]);"
                 "      line.setAttribute('x2', d.c[0][0]); line.setAttribute('y2', d.c[0][1]);"
                 "      line.setAttribute('stroke','#0f172a'); line.setAttribute('stroke-width','1');"
                 "      line.setAttribute('stroke-dasharray','4,4');"
                 "      svg.appendChild(line);"
                 "    }"
                 "  }"
-                "}"
-                "render();"
-                "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-lasso']});"
-                "})();"
             ]
         }
 
@@ -267,22 +424,13 @@ module GuiOverlays =
         div {
             Class "orient-indicator"
             axisJson |> AVal.map (fun json -> Some (Attribute("data-axes", json)))
-            OnBoot [
-                "(function(){"
-                "var el = __THIS__;"
-                "var last = '';"
-                "var ns = 'http://www.w3.org/2000/svg';"
-                "var W = 60, H = 60, L = 22, cx = W/2, cy = H/2;"
-                "function render() {"
-                "  var raw = el.getAttribute('data-axes') || '[]';"
-                "  if(raw === last) return; last = raw;"
-                "  try { var arr = JSON.parse(raw); } catch(e) { return; }"
-                "  el.innerHTML = '';"
+            Primitives.observedRender "data-axes" "[]" [
+                "  var W = 60, H = 60, L = 22, cx = W/2, cy = H/2;"
                 "  var svg = document.createElementNS(ns, 'svg');"
                 "  svg.setAttribute('width', W); svg.setAttribute('height', H);"
                 "  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);"
-                "  arr.sort(function(a,b){return a.z - b.z;});"
-                "  arr.forEach(function(a){"
+                "  d.sort(function(a,b){return a.z - b.z;});"
+                "  d.forEach(function(a){"
                 "    var ex = cx + a.x * L, ey = cy - a.y * L;"
                 "    var ln = document.createElementNS(ns, 'line');"
                 "    ln.setAttribute('x1', cx); ln.setAttribute('y1', cy);"
@@ -303,18 +451,13 @@ module GuiOverlays =
                 "    }"
                 "  });"
                 "  el.appendChild(svg);"
-                "}"
-                "render();"
-                "new MutationObserver(render).observe(el, {attributes:true,attributeFilter:['data-axes']});"
-                "})();"
             ]
         }
 
     let fullscreenInfo (model : AdaptiveModel) =
         div {
             Class "fullscreen-info"
-            model.FullscreenOn |> AVal.map (fun on ->
-                if not on then Some (Style [Display "none"]) else None)
+            Primitives.showWhen model.FullscreenOn
             model.ActiveDataset |> AVal.map (fun ds ->
                 match ds with
                 | Some d -> div { Class "fullscreen-info-title"; d }
@@ -322,6 +465,8 @@ module GuiOverlays =
             model.MeshNames |> AList.map (fun name ->
                 let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                 div {
-                    order |> AVal.map (fun o -> sprintf "%d  %s" (o + 1) (Cards.shortName name))
+                    (order, model.Registration) ||> AVal.map2 (fun o reg ->
+                        let star = if reg.ReferenceMesh = Some name then " ★" else ""
+                        sprintf "%d  %s%s" (o + 1) (Cards.shortName name) star)
                 })
         }

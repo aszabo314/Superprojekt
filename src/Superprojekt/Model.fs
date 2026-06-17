@@ -6,25 +6,36 @@ open Adaptify
 open Aardvark.Dom
 open FSharp.Data.Adaptive
 
-type ReferenceAxisMode =
-    | AlongWorldZ
-    | AlongCameraView
-
-type SignalState = {
-    Enabled   : bool
-    Threshold : float
-    Color     : C4f
-}
-
-type MixMode =
-    | SideBySide
-    | Blended
-    | Alternating
-
 type RenderingMode =
     | Textured
     | Shaded
     | SlopeColor
+
+module DatasetScale =
+    let forMesh (scales : Map<string, float>) (meshName : string) =
+        let i = meshName.IndexOf '/'
+        let ds = if i >= 0 then meshName.[.. i - 1] else meshName
+        Map.tryFind ds scales |> Option.defaultValue 1.0
+
+    let active (activeDataset : string option) (scales : Map<string, float>) =
+        activeDataset |> Option.bind (fun d -> Map.tryFind d scales) |> Option.defaultValue 1.0
+
+// MeshTransforms stores render-space trafos; world-space rigid transforms
+// (server queries, persistence of ICP results) convert through these.
+module RigidTransform =
+    let worldToRender (scale : float) (cc : V3d) (worldT : Trafo3d) =
+        Trafo3d.Scale(1.0 / scale)
+        * Trafo3d.Translation(cc)
+        * worldT
+        * Trafo3d.Translation(-cc)
+        * Trafo3d.Scale(scale)
+
+    let renderToWorld (scale : float) (cc : V3d) (renderT : Trafo3d) =
+        Trafo3d.Translation(-cc)
+        * Trafo3d.Scale(scale)
+        * renderT
+        * Trafo3d.Scale(1.0 / scale)
+        * Trafo3d.Translation(cc)
 
 type MeshSoloState =
     | NoSolo
@@ -40,12 +51,10 @@ type SensorType =
 type RegistrationMode =
     | TraditionalIcp
     | RegionRestrictedIcp
-    | PointPairPlusRefinement
 
 type RegistrationState = {
     Mode             : RegistrationMode
     ReferenceMesh    : string option
-    LastResiduals    : float[]
     Running          : bool
 }
 
@@ -53,7 +62,6 @@ module RegistrationState =
     let initial = {
         Mode           = TraditionalIcp
         ReferenceMesh  = None
-        LastResiduals  = [||]
         Running        = false
     }
 
@@ -66,7 +74,7 @@ type RetargetCandidate = {
     PinId              : ScanPinId
     OriginalCentre     : V3d
     OriginalHostMesh   : string option
-    FalloffRadius      : float
+    InnerRadius        : float
     ProjectedCentre    : V3d
     ProjectionDistance : float
     TargetMesh         : string
@@ -100,15 +108,6 @@ type PanoramaMode =
     | PanoRender
     | PanoBlend
 
-type ExploreMode =
-    {
-        Enabled            : bool
-        FeatureConfidence  : SignalState
-        Disagreement       : SignalState
-        MixMode            : MixMode
-        HighlightAlpha     : float
-    }
-
 type LassoDraft =
     { Vertices : V2d[] }
 
@@ -118,6 +117,32 @@ type LassoVolume =
         ScreenPolygon : V2d[]
         CommitVpSize  : V2i
     }
+
+// 3D sectioning / cutaway. One clip-plane subsystem; the four spec modes
+// (reference peek / anchor cutaway / iso-plane / focus box) are
+// parameterizations of this. Origin/Normal/Axis are metric world-space and
+// converted to render space at the pipeline boundary (like pins/cursor).
+//   Half-space rule (shared): a mesh fragment is hidden/ghosted where
+//   dot(p − origin, normal) > 0 — the producer points Normal at the half to
+//   remove (toward the camera for the cutaway, up for iso clip-above).
+//   CameraRelative recomputes Normal per frame: the plane contains Axis and
+//   its normal = component of (toward-camera) orthogonal to Axis (Axis = 0 →
+//   face the camera directly).
+type ClipMode =
+    | ClipHide          // discard the removed half
+    | ClipGhost         // drop the removed half to context/ghost alpha
+    | ClipSectionCap    // discard (optional flat cap not rendered yet)
+
+type ClipPlane = {
+    Origin         : V3d
+    Normal         : V3d
+    Axis           : V3d
+    Mode           : ClipMode
+    CameraRelative : bool
+}
+
+module ClipMode =
+    let toInt = function ClipHide -> 0 | ClipGhost -> 1 | ClipSectionCap -> 2
 
 module Provenance =
     let defaultDatasetError (sensor : SensorType) =
@@ -181,24 +206,6 @@ module Provenance =
         elif a >= cScaled then 1
         else 2
 
-module ExploreMode =
-    let initial =
-        {
-            Enabled = false
-            FeatureConfidence = {
-                Enabled   = true
-                Threshold = 0.3
-                Color     = C4f(1.0f, 0.55f, 0.10f, 1.0f)
-            }
-            Disagreement = {
-                Enabled   = true
-                Threshold = 0.05
-                Color     = C4f(0.15f, 0.55f, 1.0f, 1.0f)
-            }
-            MixMode        = Blended
-            HighlightAlpha = 0.9
-        }
-
 [<ModelType>]
 type Model =
     {
@@ -234,16 +241,44 @@ type Model =
         LassoVolume  : LassoVolume option
         LassoEnabled : bool
 
+        // 3D sectioning (0..2 active planes) + spring-loaded reference peek.
+        // ClipPlanes holds manually-locked planes (iso-plane lock); the
+        // anchor cutaway is derived live from the selected pin + camera.
+        ClipPlanes        : ClipPlane list
+        ReferencePeekHeld : bool
+        CutawayActive     : bool
+        CutawayMode       : ClipMode
+        // While hovering the violin, also clip the meshes above the live
+        // iso-plane (lets the user see into the section). Alt-click locks it.
+        ClipAboveIso      : bool
+        // Labelled anchor↔reference rulers for the selected pin (HTML overlay).
+        RulerActive       : bool
+
         MeshTransforms        : Map<string, Trafo3d>
         Registration          : RegistrationState
         Retarget              : RetargetState
 
+        // Ensemble registration: uncommitted solve preview, committed history,
+        // correspondence-anchor flows (auto-seed review, one-shot 3D pick,
+        // patch small-multiples picker).
+        PendingReg            : PendingRegistration option
+        RegistrationLog       : RegStep list
+        // Workflow-panel nav: filters the anchor-review modal to one mesh.
+        AnchorReviewFilter    : string option
+        // Last solve diagnostics per mesh (workflow panel) — persisted.
+        LastSolve             : Map<string, LastSolveEntry>
+        AnchorReview          : AnchorReviewState
+        AnchorPick            : AnchorPickState option
+        PatchPicker           : PatchPickerState option
+        Toast                 : string option
+
         MeshSensorTypes       : Map<string, SensorType>
         MeshDatasetErrors     : Map<string, float>
         MeshAlgorithmResidual : Map<string, float>
-        ProvenanceHeatmap     : bool
+        HeatmapMode           : HeatmapMode
+        // Mode to restore when HeatDiff auto-reverts on commit/discard.
+        HeatmapPrev           : HeatmapMode
         ProvenanceThreshold   : float
-        FalloffZoneOnly       : bool
 
         FusionMode            : bool
 
@@ -254,17 +289,65 @@ type Model =
         PanoramaBlend         : float
 
         ScanPins              : ScanPinModel
-        ReferenceAxis         : ReferenceAxisMode
-        Explore               : ExploreMode
-        ColorMode             : bool
         CardSystem            : CardSystemModel
+        HoverProbe            : HoverProbeState option
+
+        // 2D-3D linking of the pin-card violin chart: chart-hover elevation
+        // cursor (drives the 3D slicing plane) and mesh-column highlight
+        // (hover = transient, sticky = until clicked elsewhere).
+        ChartCursor           : ChartCursor option
+        ChartHoverMesh        : string option
+        ChartStickyMesh       : string option
+
+        // UI→3D hover highlight: a pin row in the registration workflow card,
+        // and an individual (pin × mesh) candidate row in the anchor-review
+        // dialog. None = nothing hovered.
+        WorkflowPinHover      : ScanPinId option
+        ReviewAnchorHover     : (ScanPinId * string) option
 
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
-        ExploreCardPos      : V2d option
         LassoCardPos        : V2d option
         GearPopoverOpen     : bool
+
+        // User-study mode: None = Full app; Some shell = study pages /
+        // running session (chrome replaced, features gated).
+        Study               : StudyShell option
+        StudiesAvailable    : string list
+
+        // Registration panel open state (model-side so navigation actions can
+        // open it; session-only).
+        WorkflowPanelOpen   : bool
     }
+
+// Committed vs effective (committed ∘ pending-delta) transforms, in render and
+// world space. Every server query and scene-graph consumer goes through these
+// so the preview pose is consistent everywhere.
+module ModelTransforms =
+    let committedRender (model : Model) (mesh : string) =
+        Map.tryFind mesh model.MeshTransforms |> Option.defaultValue Trafo3d.Identity
+
+    let effectiveRender (model : Model) (mesh : string) =
+        let c = committedRender model mesh
+        match PendingRegistration.delta mesh model.PendingReg with
+        | Some d -> RegLog.effective c d
+        | None -> c
+
+    let private toWorld (model : Model) (mesh : string) (renderT : Trafo3d) =
+        RigidTransform.renderToWorld
+            (DatasetScale.forMesh model.DatasetScales mesh) model.CommonCentroid renderT
+
+    let committedWorld (model : Model) (mesh : string) =
+        toWorld model mesh (committedRender model mesh)
+
+    let effectiveWorld (model : Model) (mesh : string) =
+        toWorld model mesh (effectiveRender model mesh)
+
+    // World-space delta a commit (before → after, render space) applies to a
+    // mesh — used to re-base correspondence anchors so they stay on the
+    // surface across commit and rollback.
+    let worldDelta (model : Model) (mesh : string) (before : Trafo3d) (after : Trafo3d) =
+        (toWorld model mesh before).Inverse * toWorld model mesh after
 
 module Model =
     let initial =
@@ -294,15 +377,29 @@ module Model =
             LassoDrawing = None
             LassoVolume  = None
             LassoEnabled = true
+            ClipPlanes        = []
+            ReferencePeekHeld = false
+            CutawayActive     = false
+            CutawayMode       = ClipGhost
+            ClipAboveIso      = false
+            RulerActive       = false
             MeshTransforms        = Map.empty
             Registration          = RegistrationState.initial
             Retarget              = RetargetState.initial
+            PendingReg            = None
+            RegistrationLog       = []
+            AnchorReviewFilter    = None
+            LastSolve             = Map.empty
+            AnchorReview          = AnchorReviewIdle
+            AnchorPick            = None
+            PatchPicker           = None
+            Toast                 = None
             MeshSensorTypes       = Map.empty
             MeshDatasetErrors     = Map.empty
             MeshAlgorithmResidual = Map.empty
-            ProvenanceHeatmap     = false
+            HeatmapMode           = HeatOff
+            HeatmapPrev           = HeatOff
             ProvenanceThreshold   = 0.01
-            FalloffZoneOnly       = false
             FusionMode            = false
             PanoramaOpen          = false
             Panoramas             = []
@@ -310,13 +407,18 @@ module Model =
             PanoramaMode          = PanoRender
             PanoramaBlend         = 0.5
             ScanPins              = ScanPinModel.initial
-            ReferenceAxis         = AlongWorldZ
-            Explore               = ExploreMode.initial
-            ColorMode             = false
             CardSystem            = CardSystemModel.initial
+            HoverProbe            = None
+            ChartCursor           = None
+            ChartHoverMesh        = None
+            ChartStickyMesh       = None
+            WorkflowPinHover      = None
+            ReviewAnchorHover     = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
-            ExploreCardPos      = None
             LassoCardPos        = None
             GearPopoverOpen     = false
+            Study               = None
+            StudiesAvailable    = []
+            WorkflowPanelOpen   = false
         }

@@ -8,37 +8,48 @@ open Aardvark.Dom
 module Cards =
 
     let shortName = CardsPin.shortName
+    let numbered = CardsPin.numbered
 
-    let c4bToHex = CardsPin.c4bToHex
+    // Shared chrome for every floating card. A drag is held in a local
+    // cval<(cardPos, grabOffset) option>; `pos` is the card's current position
+    // (grab offset is computed from it on pointer-down) and `onCommit` gets
+    // the final position on release.
+    let cardDragHandle (title : aval<string>) (pos : aval<V2d>) (dragState : cval<(V2d * V2d) option>) (onCommit : V2d -> unit) =
+        div {
+            Class "card-drag-handle"
+            Dom.OnPointerDown((fun e ->
+                if e.Button = Button.Left then
+                    let cardPos = AVal.force pos
+                    let grab = V2d(float e.ClientPosition.X, float e.ClientPosition.Y) - cardPos
+                    transact (fun () -> dragState.Value <- Some (cardPos, grab))
+            ), pointerCapture = true)
+            Dom.OnPointerMove(fun e ->
+                match dragState.GetValue() with
+                | Some (_, grab) ->
+                    let p = V2d(float e.ClientPosition.X, float e.ClientPosition.Y) - grab
+                    transact (fun () -> dragState.Value <- Some (p, grab))
+                | None -> ())
+            Dom.OnPointerUp((fun _ ->
+                match dragState.GetValue() with
+                | Some (p, _) ->
+                    transact (fun () -> dragState.Value <- None)
+                    onCommit p
+                | None -> ()
+            ), pointerCapture = true)
+            title
+        }
 
-    let parseFloat (s : string) =
-        match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
-        | true, v -> Some v
-        | _ -> None
+    // Current position of a floating card: live drag position while dragging,
+    // committed position otherwise.
+    let cardPos (committed : aval<V2d>) (dragState : cval<(V2d * V2d) option>) : aval<V2d> =
+        (committed, dragState :> aval<_>) ||> AVal.map2 (fun c d ->
+            match d with Some (p, _) -> p | None -> c)
 
-    let checkedIf (v : aval<bool>) =
-        v |> AVal.map (fun on -> if on then Some (Attribute("checked", "checked")) else None)
-
-    let niceTicks (lo : float) (hi : float) (targetCount : int) : float[] * float =
-        let range = hi - lo
-        if range <= 1e-12 || targetCount < 1 then [||], 1.0
-        else
-            let rough = range / float targetCount
-            let mag = 10.0 ** floor (log10 rough)
-            let norm = rough / mag
-            let nice =
-                if norm < 1.5 then 1.0
-                elif norm < 3.0 then 2.0
-                elif norm < 7.0 then 5.0
-                else 10.0
-            let step = nice * mag
-            let start = ceil (lo / step) * step
-            let ticks = ResizeArray<float>()
-            let mutable v = start
-            while v <= hi + 0.5 * step do
-                if v >= lo - 1e-9 && v <= hi + 1e-9 then ticks.Add v
-                v <- v + step
-            ticks.ToArray(), step
+    // display:none when hidden, fixed-position Left/Top when shown.
+    let cardStyle (visible : aval<bool>) (pos : aval<V2d>) =
+        (visible, pos) ||> AVal.map2 (fun on p ->
+            if not on then Some (Style [Display "none"])
+            else Some (Style [Left (sprintf "%.0fpx" p.X); Top (sprintf "%.0fpx" p.Y)]))
 
     let private projectToScreen (anchor : V3d) (viewTrafo : Trafo3d) (vpSize : V2i) =
         let aspect = float vpSize.X / max 1.0 (float vpSize.Y)
@@ -65,7 +76,6 @@ module Cards =
         (vpSize : V2i)
         : V2d option =
         match card.Attachment with
-        | CardDragging(pos, _) -> Some pos
         | CardDetached pos -> Some pos
         | CardAttached ->
             match card.Anchor with
@@ -76,7 +86,7 @@ module Cards =
                     Some (clampToViewport pos card.Size (V2d vpSize))
                 | None -> None
 
-    let renderCards (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) =
+    let renderCards (env : Env<Message>) (model : AdaptiveModel) (viewTrafo : aval<Trafo3d>) (vpSize : aval<V2i>) (hoverWorld : aval<V3d option>) (patchHover : cval<PatchHover option>) =
         let allPinsVal = model.ScanPins.Pins |> AMap.toAVal
         let activePlacementId =
             model.ScanPins.Placement |> AVal.map (function
@@ -89,8 +99,6 @@ module Cards =
                 id |> Option.bind (fun id -> HashMap.tryFind id pins))
 
         let cardsSnapshot = model.CardSystem.Cards |> AMap.toAVal
-
-        let dragState = cval<(CardId * V2d * V2d) option> None
 
         let collapsedSet = cval (HashSet.empty<CardId>)
 
@@ -105,16 +113,6 @@ module Cards =
                         | None -> ()
                 dict)
 
-        let effectivePositions =
-            (cardPositions, dragState :> aval<_>)
-            ||> AVal.map2 (fun baseDict drag ->
-                match drag with
-                | None -> baseDict
-                | Some (dragId, dragPos, _) ->
-                    let dict = System.Collections.Generic.Dictionary<CardId, V2d>(baseDict)
-                    dict.[dragId] <- dragPos
-                    dict)
-
         div {
             Class "card-overlay"
 
@@ -128,10 +126,16 @@ module Cards =
             |> AList.ofAVal
             |> AList.map (fun cardId ->
                 let cardVal = cardsSnapshot |> AVal.map (fun cards -> HashMap.tryFind cardId cards)
-                let effectivePos = effectivePositions |> AVal.map (fun dict ->
+                let dragState = cval<(V2d * V2d) option> None
+                let basePos = cardPositions |> AVal.map (fun dict ->
                     match dict.TryGetValue(cardId) with
                     | true, pos -> Some pos
                     | _ -> None)
+                let effectivePos =
+                    (basePos, dragState :> aval<_>) ||> AVal.map2 (fun b d ->
+                        match d with
+                        | Some (p, _) -> Some p
+                        | None -> b)
 
                 let isCollapsed =
                     (collapsedSet :> aval<_>) |> AVal.map (fun s -> HashSet.contains cardId s)
@@ -174,43 +178,19 @@ module Cards =
                             | Some c -> match c.Attachment with CardDetached _ -> true | _ -> false
                             | None -> false)
 
-                        div {
-                            Class "card-drag-handle"
-                            Dom.OnPointerDown((fun e ->
-                                if e.Button = Button.Left then
-                                    let cardPos =
-                                        match AVal.force effectivePos with
-                                        | Some p -> p
-                                        | None -> V2d.Zero
-                                    let grabOffset = V2d(float e.ClientPosition.X, float e.ClientPosition.Y) - cardPos
-                                    transact (fun () -> dragState.Value <- Some (cardId, cardPos, grabOffset))
-                            ), pointerCapture = true)
-                            Dom.OnPointerMove(fun e ->
-                                match dragState.GetValue() with
-                                | Some (id, _, offset) when id = cardId ->
-                                    let newPos = V2d(float e.ClientPosition.X, float e.ClientPosition.Y) - offset
-                                    transact (fun () -> dragState.Value <- Some (id, newPos, offset))
-                                | _ -> ())
-                            Dom.OnPointerUp((fun _ ->
-                                match dragState.GetValue() with
-                                | Some (id, pos, _) when id = cardId ->
-                                    transact (fun () -> dragState.Value <- None)
-                                    env.Emit [CardMsg (BringToFront id); CardMsg (FinishDrag(id, pos))]
-                                | _ -> ()
-                            ), pointerCapture = true)
-
-                            selectedPin |> AVal.map (fun po ->
+                        cardDragHandle
+                            (selectedPin |> AVal.map (fun po ->
                                 match po with
-                                | Some pin ->
-                                    let p = pin.Centre
-                                    sprintf "Pin  (%.1f, %.1f, %.1f) m" p.X p.Y p.Z
-                                | None -> "Pin")
-                        }
+                                | Some pin -> sprintf "Pin · %s" pin.Name
+                                | None -> "Pin"))
+                            (effectivePos |> AVal.map (Option.defaultValue V2d.Zero))
+                            dragState
+                            (fun p -> env.Emit [CardMsg (BringToFront cardId); CardMsg (FinishDrag(cardId, p))])
 
                         button {
                             Class "card-btn-reattach"
                             Attribute("title", "Reattach to pin")
-                            isDetached |> AVal.map (fun d -> if d then None else Some (Style [Display "none"]))
+                            Primitives.showWhen isDetached
                             Dom.OnClick(fun _ -> env.Emit [CardMsg (RedockCard cardId)])
                             "\U0001F4CC"
                         }
@@ -234,9 +214,8 @@ module Cards =
 
                     div {
                         Class "card-body"
-                        isCollapsed |> AVal.map (fun c ->
-                            if c then Some (Style [Display "none"]) else None)
-                        CardsPin.pinCardBody env model selectedPin
+                        Primitives.showWhenNot isCollapsed
+                        CardsPin.pinCardBody env model selectedPin hoverWorld patchHover
                     }
                 }
             )

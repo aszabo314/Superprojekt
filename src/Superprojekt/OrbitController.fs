@@ -8,6 +8,32 @@ open Aardvark.Application
 open Superprojekt
 open Aardvark.Dom
 
+type OrbitMessage =
+    | PointerDown of id : int * button : Button * isTouch : bool * pos : V2i
+    | PointerUp   of id : int * isTouch : bool * V2i
+    | PointerMove of id : int * button : Button * isTouch : bool * V2i
+    | Wheel       of shift : bool * delta : V2d
+
+    | Rendered
+    | SetTargetCenter of user : bool * AnimationKind * V3d
+    | SetTargetPhi    of user : bool * float
+    | SetTargetTheta  of user : bool * float
+    | SetTargetRadius of user : bool * float
+    | SetTarget       of user : bool * center : V3d * radius : float * phi : float * theta : float
+
+    | SetPhi    of float
+    | SetTheta  of float
+    | SetRadius of float
+    | SetCenter of V3d
+
+    | Set of center : V3d * radius : float * phi : float * theta : float
+
+    | UpdateCenter of V3d
+
+    | SetSpeed of float
+
+    | Nothing
+
 [<CompilationRepresentation(CompilationRepresentationFlags.ModuleSuffix)>]
 module OrbitState =
     let clamp (min : float) (max : float) (value : float) =

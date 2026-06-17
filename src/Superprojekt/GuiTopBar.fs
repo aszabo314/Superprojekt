@@ -10,6 +10,12 @@ module GuiTopBar =
     open Primitives
 
     let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) =
+        // §6 guards: these actions are blocked while a registration preview
+        // is pending (the reducer also rejects them; this is the affordance).
+        let previewOn = model.PendingReg |> AVal.map PendingRegistration.isPreview
+        let previewDisabled =
+            previewOn |> AVal.map (fun p ->
+                if p then Some (Attribute("disabled", "disabled")) else None)
         div {
             Class "top-bar"
             button {
@@ -33,31 +39,24 @@ module GuiTopBar =
                 }
                 div {
                     Class "tb-dataset-menu"
-                    (datasetOpen :> aval<_>) |> AVal.map (fun o ->
-                        if o then None else Some (Style [Display "none"]))
+                    showWhen (datasetOpen :> aval<_>)
                     model.Datasets |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun dataset ->
                         let isActive = model.ActiveDataset |> AVal.map (fun a -> a = Some dataset)
                         button {
                             Class "tb-dataset-item"
                             isActive |> AVal.map (fun on -> if on then Some (Class "active") else None)
+                            previewDisabled
+                            previewOn |> AVal.map (fun p ->
+                                if p then Some (Attribute("title", "Dataset switch is blocked while previewing a registration result"))
+                                else None)
                             Dom.OnClick(fun _ ->
-                                transact (fun () -> datasetOpen.Value <- false)
-                                env.Emit [SetActiveDataset dataset]
-                                ServerActions.loadDataset env dataset)
+                                if not (AVal.force previewOn) then
+                                    transact (fun () -> datasetOpen.Value <- false)
+                                    env.Emit [SetActiveDataset dataset]
+                                    ServerActions.loadDataset env dataset)
                             dataset
                         })
                 }
-            }
-
-            let exploreEnabled = model.Explore |> AVal.map (fun e -> e.Enabled)
-            button {
-                Class "tb-btn"
-                exploreEnabled |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Toggle explore heatmap")
-                Dom.OnClick(fun _ ->
-                    let cur = AVal.force exploreEnabled
-                    env.Emit [ExploreMsg (SetExploreEnabled (not cur))])
-                "◉ Explore"
             }
 
             let lassoActive =
@@ -80,7 +79,11 @@ module GuiTopBar =
             button {
                 Class "tb-btn"
                 placementActive |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Place anchor — click on a surface (Esc cancels)")
+                previewDisabled
+                previewOn |> AVal.map (fun p ->
+                    Some (Attribute("title",
+                        if p then "Pin placement is blocked while previewing a registration result"
+                        else "Place anchor — click on a surface (Esc cancels)")))
                 Dom.OnClick(fun _ ->
                     let active = AVal.force placementActive
                     if active then env.Emit [ScanPinMsg CancelPlacement]
@@ -91,7 +94,11 @@ module GuiTopBar =
             button {
                 Class "tb-btn"
                 model.FusionMode |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Fusion mesh: per-pixel best mesh from the registered ensemble")
+                previewDisabled
+                previewOn |> AVal.map (fun p ->
+                    Some (Attribute("title",
+                        if p then "Fusion is blocked while previewing a registration result"
+                        else "Fusion mesh: per-pixel best mesh from the registered ensemble")))
                 Dom.OnClick(fun _ -> env.Emit [ToggleFusionMode])
                 "◈ Fusion"
             }
@@ -105,10 +112,32 @@ module GuiTopBar =
             }
 
             button {
+                Class "tb-btn"
+                model.WorkflowPanelOpen |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Registration: readiness, anchors, status and error stats in one panel")
+                Dom.OnClick(fun _ -> env.Emit [ToggleWorkflowPanel])
+                "⚲ Registration"
+            }
+
+            button {
                 Class "tb-btn tb-btn-icon"
                 Attribute("title", "Reset camera")
                 Dom.OnClick(fun _ -> env.Emit [ResetCamera])
                 "⟲"
+            }
+
+            // Spring-loaded reference peek: while held, ghost every mesh except
+            // the reference (★). Transient importance override — never mutates
+            // the eye toggles. Always live (the reference defaults to the first
+            // mesh on load); pointer-leave/up both release so it can't stick.
+            button {
+                Class "tb-btn"
+                model.ReferencePeekHeld |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                Attribute("title", "Peek reference: hold to show only the reference mesh (hotkey: R)")
+                Dom.OnPointerDown((fun _ -> env.Emit [SetReferencePeek true]), pointerCapture = true)
+                Dom.OnPointerUp((fun _ -> env.Emit [SetReferencePeek false]), pointerCapture = true)
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetReferencePeek false])
+                "👁 Peek"
             }
 
             div {
@@ -131,7 +160,7 @@ module GuiTopBar =
                     }
                     div {
                         Class "tb-gear-popover"
-                        model.GearPopoverOpen |> AVal.map (fun o -> if o then None else Some (Style [Display "none"]))
+                        showWhen model.GearPopoverOpen
                         div {
                             Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Retarget" }
@@ -139,10 +168,12 @@ module GuiTopBar =
                                 Class "tb-gear-btn-row"
                                 button {
                                     Class "tb-gear-btn"
-                                    Attribute("title", "Project all pins onto the active picking layer (use wheel-zoom to pick the target mesh first)")
-                                    model.ActivePickingLayer |> AVal.map (function
-                                        | Some _ -> None
-                                        | None -> Some (Attribute("disabled", "disabled")))
+                                    previewOn |> AVal.map (fun p ->
+                                        Some (Attribute("title",
+                                            if p then "Retarget is blocked while previewing a registration result"
+                                            else "Project all pins onto the active picking layer (hold Option/Alt and scroll to pick the target mesh first)")))
+                                    (model.ActivePickingLayer, previewOn) ||> AVal.map2 (fun l p ->
+                                        if l.IsNone || p then Some (Attribute("disabled", "disabled")) else None)
                                     Dom.OnClick(fun _ ->
                                         match AVal.force model.ActivePickingLayer with
                                         | Some target -> env.Emit [StartRetarget target]
@@ -180,15 +211,26 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
-                            span { Class "lp-sublabel"; "Reference axis" }
-                            compactButtonBar [
-                                "World Z",
-                                    (model.ReferenceAxis |> AVal.map (fun m -> m = AlongWorldZ)),
-                                    (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongWorldZ)])
-                                "Camera",
-                                    (model.ReferenceAxis |> AVal.map (fun m -> m = AlongCameraView)),
-                                    (fun () -> env.Emit [ExploreMsg (SetReferenceAxisMode AlongCameraView)])
-                            ]
+                            showWhen (model.StudiesAvailable |> AVal.map (List.isEmpty >> not))
+                            span { Class "lp-sublabel"; "Preview study mode" }
+                            let demoCond = cval CondFull
+                            div {
+                                Class "tb-gear-btn-row"
+                                button {
+                                    Class "tb-gear-btn"
+                                    Attribute("title", "Condition for the preview session (FULL = all charts, NUM = numbers only)")
+                                    Dom.OnClick(fun _ -> transact (fun () ->
+                                        demoCond.Value <- (match demoCond.Value with CondFull -> CondNum | CondNum -> CondFull)))
+                                    (demoCond :> aval<_>) |> AVal.map (fun c -> sprintf "Condition: %s ⇄" (StudyCondition.tag c))
+                                }
+                                model.StudiesAvailable |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun studyId ->
+                                    button {
+                                        Class "tb-gear-btn"
+                                        Attribute("title", "Enter this study as a demo session (telemetry flagged demo, exit any time)")
+                                        Dom.OnClick(fun _ -> env.Emit [StudyMsg (StudyStartDemo(studyId, demoCond.Value))])
+                                        sprintf "▶ %s" studyId
+                                    })
+                            }
                         }
                         div {
                             Class "tb-gear-row"
@@ -204,8 +246,15 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
-                            compactToggle "Anchor-blob ghost" model.AnchorGhostMode (fun () ->
-                                env.Emit [ToggleAnchorGhostMode])
+                            // Isolate pins: ghost everything outside the pins' radius regions.
+                            // Auto-suspended while placing an anchor (terrain stays visible);
+                            // the toggle reflects the temporary hold and is inert during it.
+                            let placing =
+                                model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
+                            let isoEffective =
+                                (model.AnchorGhostMode, placing) ||> AVal.map2 (fun on p -> on && not p)
+                            compactToggle "Isolate pins" isoEffective (fun () ->
+                                if not (AVal.force placing) then env.Emit [ToggleAnchorGhostMode])
                         }
                         div {
                             Class "tb-gear-row"
@@ -236,9 +285,12 @@ module GuiTopBar =
                             Class "tb-gear-mesh-info"
                             model.MeshNames |> AList.map (fun name ->
                                 let centroid = model.DatasetCentroids |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue V3d.Zero)
+                                let numName =
+                                    model.MeshOrder |> AMap.tryFind name |> AVal.map (fun o ->
+                                        sprintf "%d  %s" ((Option.defaultValue 0 o) + 1) (Cards.shortName name))
                                 div {
                                     Class "tb-gear-mesh-row"
-                                    span { Class "tb-gear-mesh-name"; Cards.shortName name }
+                                    span { Class "tb-gear-mesh-name"; numName }
                                     span {
                                         Class "tb-gear-mesh-coord"
                                         centroid |> AVal.map (fun c ->

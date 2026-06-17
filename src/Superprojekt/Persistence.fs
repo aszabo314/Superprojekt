@@ -50,45 +50,16 @@ module Persistence =
     let private regModeTag = function
         | TraditionalIcp -> "traditional"
         | RegionRestrictedIcp -> "region"
-        | PointPairPlusRefinement -> "point-pair"
     let private regModeOf = function
         | "region" -> RegionRestrictedIcp
-        | "point-pair" -> PointPairPlusRefinement
         | _ -> TraditionalIcp
     let private renderModeTag = function
         | Textured -> "textured" | Shaded -> "shaded" | SlopeColor -> "slope"
     let private renderModeOf = function
         | "shaded" -> Shaded | "slope" -> SlopeColor | _ -> Textured
-    let private refAxisTag = function
-        | AlongWorldZ -> "world-z" | AlongCameraView -> "camera"
-    let private refAxisOf = function
-        | "camera" -> AlongCameraView | _ -> AlongWorldZ
 
-    let private lineModeJ = function
-        | ElevationIsoline e -> sprintf "{\"k\":\"elev\",\"e\":%s}" (f e)
-        | CurvatureRidge -> "{\"k\":\"ridge\"}"
-    let private payloadJ = function
-        | Point p -> sprintf "{\"k\":\"point\",\"rel\":%s}" (f p.ReliabilityWeight)
-        | Line l ->
-            let pts = l.Points |> Array.map v3 |> String.concat ","
-            let scs = l.ScalarVals |> Array.map f |> String.concat ","
-            let traces =
-                l.CrossMeshTraces |> Map.toSeq |> Seq.map (fun (mesh, (mpts, mscs)) ->
-                    sprintf "{\"mesh\":%s,\"pts\":[%s],\"scs\":[%s]}"
-                        (q mesh)
-                        (mpts |> Array.map v3 |> String.concat ",")
-                        (mscs |> Array.map f |> String.concat ","))
-                |> String.concat ","
-            sprintf "{\"k\":\"line\",\"mode\":%s,\"pts\":[%s],\"scs\":[%s],\"traces\":[%s]}"
-                (lineModeJ l.Mode) pts scs traces
-        | Patch p ->
-            let pts =
-                p.ProjectedPoints |> Array.map (fun (a, b) ->
-                    sprintf "[%s,%s,%s,%s,%s]" (f a.X) (f a.Y) (f b.X) (f b.Y) (f b.Z))
-                |> String.concat ","
-            sprintf "{\"k\":\"patch\",\"center\":%s,\"r\":%s,\"src\":%s,\"pts\":[%s],\"north\":%s,\"refDir\":%s,\"normal\":%s}"
-                (v3 p.CenterOnMesh) (f p.Radius) (q p.SourceMeshName)
-                pts (v2 p.CompassNorth) (v3 p.RefDirWorld) (v3 p.NormalWorld)
+    let private corrJ (c : Correspondence option) =
+        match c with Some c -> RegJson.correspondenceJ c | None -> "null"
 
     let private pinPhaseTag = function
         | PinPhase.Placement -> "placement"
@@ -96,25 +67,22 @@ module Persistence =
     let private pinPhaseOf = function
         | "committed" -> PinPhase.Committed
         | _ -> PinPhase.Placement
-    let private camSnapJ (c : CameraSnapshot) =
-        sprintf "{\"center\":%s,\"r\":%s,\"phi\":%s,\"theta\":%s}"
-            (v3 c.Center) (f c.Radius) (f c.Phi) (f c.Theta)
     let private pinJ (p : ScanPin) =
         let (ScanPinId.ScanPinId guid) = p.Id
         let colors =
             p.DatasetColors |> Map.toSeq
             |> Seq.map (fun (k, v) -> sprintf "%s:%s" (q k) (c4bJ v))
             |> String.concat ","
-        sprintf "{\"id\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"falloff\":%s,\"payload\":%s,\"host\":%s,\"colors\":{%s},\"camera\":%s,\"createdAt\":%s}"
-            (q (guid.ToString())) (pinPhaseTag p.Phase) (v3 p.Centre)
-            (f p.InnerRadius) (f p.FalloffRadius) (payloadJ p.Payload)
+        sprintf "{\"id\":%s,\"name\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"createdAt\":%s}"
+            (q (guid.ToString())) (q p.Name) (pinPhaseTag p.Phase) (v3 p.Centre)
+            (f p.InnerRadius) (corrJ p.Correspondence)
             (match p.HostMeshName with Some n -> q n | None -> "null")
-            colors (camSnapJ p.CreationCameraState) (q (p.CreatedAt.ToString("O")))
+            colors (q (p.CreatedAt.ToString("O")))
 
     let serialize (model : Model) : string =
         let sb = StringBuilder()
         sb.Append("{") |> ignore
-        sb.Append("\"version\":1,") |> ignore
+        sb.Append("\"version\":3,") |> ignore
         sb.Append("\"dataset\":") |> ignore
         sb.Append(match model.ActiveDataset with Some d -> q d | None -> "null") |> ignore
         sb.Append(",\"pins\":[") |> ignore
@@ -149,11 +117,23 @@ module Persistence =
         sb.Append(regModeTag model.Registration.Mode) |> ignore
         sb.Append("\",\"refMesh\":") |> ignore
         sb.Append(match model.Registration.ReferenceMesh with Some m -> q m | None -> "null") |> ignore
-        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"provHeatmap\":%b,\"provThreshold\":%s,\"falloffZoneOnly\":%b,\"fusion\":%b,\"renderMode\":\"%s\",\"refAxis\":\"%s\",\"color\":%b}"
+        // PendingReg is deliberately NOT persisted — a preview never survives
+        // a save/load cycle, only committed steps do.
+        sb.Append(",\"regLog\":") |> ignore
+        sb.Append(RegJson.regLogJ model.RegistrationLog) |> ignore
+        sb.Append(",\"lastSolve\":") |> ignore
+        sb.Append(RegJson.lastSolveJ model.LastSolve) |> ignore
+        // Diff mode only exists while a preview is pending; persist the mode
+        // it would revert to instead.
+        let persistedHeatmap =
+            match model.HeatmapMode with
+            | HeatDiff -> model.HeatmapPrev
+            | m -> m
+        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"heatmapMode\":\"%s\",\"provThreshold\":%s,\"fusion\":%b,\"renderMode\":\"%s\"}"
             model.GhostSilhouette (f model.GhostOpacity) (f model.ShadingStrength)
-            (f model.SlopeThresholdDeg) model.AnchorGhostMode model.ProvenanceHeatmap
-            (f model.ProvenanceThreshold) model.FalloffZoneOnly model.FusionMode
-            (renderModeTag model.RenderingMode) (refAxisTag model.ReferenceAxis) model.ColorMode) |> ignore
+            (f model.SlopeThresholdDeg) model.AnchorGhostMode (HeatmapMode.tag persistedHeatmap)
+            (f model.ProvenanceThreshold) model.FusionMode
+            (renderModeTag model.RenderingMode)) |> ignore
         sb.Append(",\"camera\":{") |> ignore
         let cam = model.Camera
         sb.Append(sprintf "\"center\":%s,\"phi\":%s,\"theta\":%s,\"radius\":%s,\"sky\":%s"
@@ -189,51 +169,19 @@ module Persistence =
         | true, v -> Some v
         | _       -> None
 
-    let private rLineMode (e : JsonElement) =
-        match e.GetProperty("k").GetString() with
-        | "ridge" -> CurvatureRidge
-        | _ -> ElevationIsoline (e.GetProperty("e").GetDouble())
-    let private rPayload (e : JsonElement) =
-        match e.GetProperty("k").GetString() with
-        | "point" ->
-            Point { ReliabilityWeight = e.GetProperty("rel").GetDouble() }
-        | "line" ->
-            let mode = rLineMode (e.GetProperty("mode"))
-            let pts = e.GetProperty("pts").EnumerateArray() |> Seq.map rV3 |> Array.ofSeq
-            let scs = e.GetProperty("scs").EnumerateArray() |> Seq.map (fun x -> x.GetDouble()) |> Array.ofSeq
-            let traces =
-                e.GetProperty("traces").EnumerateArray() |> Seq.map (fun t ->
-                    let m = t.GetProperty("mesh").GetString()
-                    let ps = t.GetProperty("pts").EnumerateArray() |> Seq.map rV3 |> Array.ofSeq
-                    let ss = t.GetProperty("scs").EnumerateArray() |> Seq.map (fun x -> x.GetDouble()) |> Array.ofSeq
-                    m, (ps, ss))
-                |> Map.ofSeq
-            Line { Mode = mode; Points = pts; ScalarVals = scs; CrossMeshTraces = traces }
-        | _ ->
-            let pts =
-                e.GetProperty("pts").EnumerateArray() |> Seq.map (fun p ->
-                    let a = p.EnumerateArray() |> Seq.map (fun x -> x.GetDouble()) |> Array.ofSeq
-                    V2d(a.[0], a.[1]), V3d(a.[2], a.[3], a.[4]))
-                |> Array.ofSeq
-            Patch {
-                CenterOnMesh = rV3 (e.GetProperty("center"))
-                Radius = e.GetProperty("r").GetDouble()
-                SourceMeshName = e.GetProperty("src").GetString()
-                ProjectedPoints = pts
-                CompassNorth = rV2 (e.GetProperty("north"))
-                RefDirWorld = rV3 (e.GetProperty("refDir"))
-                NormalWorld = rV3 (e.GetProperty("normal"))
-            }
+    // Correspondence, read from the new flat field and falling back to a
+    // legacy "payload" object (removed line/patch payloads load as plain pins).
+    let private rCorrespondence (e : JsonElement) =
+        let fromObj o =
+            match tryProp "corr" o with
+            | Some v when v.ValueKind <> JsonValueKind.Null -> Some (RegJson.readCorrespondence v)
+            | _ -> None
+        match fromObj e with
+        | Some c -> Some c
+        | None -> tryProp "payload" e |> Option.bind fromObj
     let private rPin (e : JsonElement) =
         let idStr = e.GetProperty("id").GetString()
         let id = ScanPinId.ScanPinId (Guid.Parse idStr)
-        let camE = e.GetProperty("camera")
-        let cam = {
-            Center = rV3 (camE.GetProperty("center"))
-            Radius = camE.GetProperty("r").GetDouble()
-            Phi = camE.GetProperty("phi").GetDouble()
-            Theta = camE.GetProperty("theta").GetDouble()
-        }
         let colorsE = e.GetProperty("colors")
         let colors =
             colorsE.EnumerateObject() |> Seq.map (fun p -> p.Name, rC4b p.Value) |> Map.ofSeq
@@ -247,16 +195,20 @@ module Persistence =
             | _ -> DateTime.UtcNow
         {
             Id = id
+            Name =
+                match tryProp "name" e with
+                | Some v when v.ValueKind = JsonValueKind.String -> v.GetString()
+                | _ -> PinNames.generate id
             Phase = pinPhaseOf (e.GetProperty("phase").GetString())
             Centre = rV3 (e.GetProperty("centre"))
             InnerRadius = e.GetProperty("inner").GetDouble()
-            FalloffRadius = e.GetProperty("falloff").GetDouble()
-            Payload = rPayload (e.GetProperty("payload"))
+            Correspondence = rCorrespondence e
             HostMeshName = host
-            CorrespondenceLinkId = None
-            CreationCameraState = cam
             CreatedAt = createdAt
             DatasetColors = colors
+            Probe = ProbeNone
+            ProbePreview = ProbeNone
+            ContactRings = RingsNone
         }
 
     type ParseError = string
@@ -336,6 +288,15 @@ module Persistence =
                 | Some e when e.ValueKind = JsonValueKind.Null -> None
                 | Some e -> Some (e.GetString())
                 | None -> model.Registration.ReferenceMesh
+            let regLog =
+                match tryProp "regLog" r with
+                | Some e -> RegJson.readRegLog e
+                | None -> []
+            // version 3; older workspaces default to empty diagnostics
+            let lastSolve =
+                match tryProp "lastSolve" r with
+                | Some e -> RegJson.readLastSolve e
+                | None -> Map.empty
             let settings =
                 match tryProp "settings" r with
                 | Some e -> e
@@ -355,8 +316,14 @@ module Persistence =
                 | None -> fallback
             let renderMode =
                 renderModeOf (sOrElseS "renderMode" (renderModeTag model.RenderingMode))
-            let refAxis =
-                refAxisOf (sOrElseS "refAxis" (refAxisTag model.ReferenceAxis))
+            // Version 2 writes heatmapMode; version 1 wrote a provHeatmap bool.
+            let heatmapMode =
+                match tryProp "heatmapMode" settings with
+                | Some v -> HeatmapMode.ofTag (v.GetString())
+                | None ->
+                    match tryProp "provHeatmap" settings with
+                    | Some v -> if v.GetBoolean() then HeatProvenance else HeatOff
+                    | None -> model.HeatmapMode
             let cam =
                 match tryProp "camera" r with
                 | Some ce ->
@@ -387,19 +354,24 @@ module Persistence =
                     MeshDatasetErrors = datasetErrors
                     LassoEnabled = lassoEnabled
                     LassoVolume = lassoVolume
-                    Registration = { model.Registration with Mode = regMode; ReferenceMesh = refMesh }
+                    Registration = { model.Registration with Mode = regMode; ReferenceMesh = refMesh; Running = false }
+                    RegistrationLog = regLog
+                    LastSolve = lastSolve
+                    // Transient registration state never survives a load.
+                    PendingReg = None
+                    AnchorReview = AnchorReviewIdle
+                    AnchorPick = None
+                    PatchPicker = None
                     GhostSilhouette = sOrElseB "ghostSilhouette" model.GhostSilhouette
                     GhostOpacity = sOrElseF "ghostOpacity" model.GhostOpacity
                     ShadingStrength = sOrElseF "shading" model.ShadingStrength
                     SlopeThresholdDeg = sOrElseF "slopeDeg" model.SlopeThresholdDeg
                     AnchorGhostMode = sOrElseB "anchorGhost" model.AnchorGhostMode
-                    ProvenanceHeatmap = sOrElseB "provHeatmap" model.ProvenanceHeatmap
+                    HeatmapMode = heatmapMode
+                    HeatmapPrev = (match heatmapMode with HeatDiff -> HeatOff | m -> m)
                     ProvenanceThreshold = sOrElseF "provThreshold" model.ProvenanceThreshold
-                    FalloffZoneOnly = sOrElseB "falloffZoneOnly" model.FalloffZoneOnly
                     FusionMode = sOrElseB "fusion" model.FusionMode
                     RenderingMode = renderMode
-                    ReferenceAxis = refAxis
-                    ColorMode = sOrElseB "color" model.ColorMode
                     Camera = cam
             }
         with ex -> Result.Error ex.Message

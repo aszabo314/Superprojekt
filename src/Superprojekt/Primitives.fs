@@ -21,6 +21,12 @@ module Primitives =
         | true, v -> Some v
         | _ -> None
 
+    let showWhen (v : aval<bool>) =
+        v |> AVal.map (fun on -> if on then None else Some (Class "hidden"))
+
+    let showWhenNot (v : aval<bool>) =
+        v |> AVal.map (fun on -> if on then Some (Class "hidden") else None)
+
     let compactToggle (labelText : string) (value : aval<bool>) (onToggle : unit -> unit) =
         div {
             Class "ct"
@@ -112,75 +118,112 @@ module Primitives =
             }
             div {
                 Class "cs-body"
-                (expanded :> aval<bool>) |> AVal.map (fun e ->
-                    if e then None else Some (Style [Display "none"]))
+                showWhen (expanded :> aval<bool>)
                 body
             }
         }
 
-    let inlineRangeSliderA
-            (labelText : string)
-            (minV : aval<float>) (maxV : aval<float>) (stepV : aval<float>)
-            (format : (float -> float -> string) option)
-            (valueMin : aval<float>) (valueMax : aval<float>)
-            (onChange : float -> float -> unit) =
-        let attrStep = stepV |> AVal.map (fun v -> Some (Attribute("step", sprintf "%.6g" v)))
-        let attrMin  = minV  |> AVal.map (fun v -> Some (Attribute("min",  sprintf "%.6g" v)))
-        let attrMax  = maxV  |> AVal.map (fun v -> Some (Attribute("max",  sprintf "%.6g" v)))
-        div {
-            Class "irs"
-            span { Class "irs-label"; labelText }
-            div {
-                Class "irs-tracks"
-                div { Class "irs-track-line" }
-                input {
-                    Class "irs-range irs-min"
-                    Attribute("type", "range")
-                    attrMin; attrMax; attrStep
-                    valueMin |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.6g" v)))
-                    Dom.OnInput(fun e ->
-                        match parseFloat e.Value with
-                        | Some v ->
-                            let hi = AVal.force valueMax
-                            onChange (min v hi) hi
-                        | None -> ())
-                }
-                input {
-                    Class "irs-range irs-max"
-                    Attribute("type", "range")
-                    attrMin; attrMax; attrStep
-                    valueMax |> AVal.map (fun v -> Some (Attribute("value", sprintf "%.6g" v)))
-                    Dom.OnInput(fun e ->
-                        match parseFloat e.Value with
-                        | Some v ->
-                            let lo = AVal.force valueMin
-                            onChange lo (max v lo)
-                        | None -> ())
-                }
-            }
-            match format with
-            | Some fmt ->
-                span {
-                    Class "irs-readout"
-                    (valueMin, valueMax) ||> AVal.map2 fmt
-                }
-            | None -> ()
-        }
+    // OnBoot wrapper for attribute-driven SVG/DOM rendering: parses the JSON
+    // attribute into `d`, clears the element, runs `body`, and re-renders on
+    // attribute mutation (the Aardvark.Dom CE has no yield!, so dynamic markup
+    // goes through JS).
+    let observedRender (attr : string) (fallback : string) (body : string list) =
+        OnBoot (
+            [ "(function(){"
+              "var el = __THIS__;"
+              "var ns = 'http://www.w3.org/2000/svg';"
+              "var last = '';"
+              "function render(){"
+              sprintf "var raw = el.getAttribute('%s') || '%s';" attr fallback
+              "if(raw === last) return; last = raw;"
+              "var d; try { d = JSON.parse(raw); } catch(e) { return; }"
+              "el.innerHTML = '';" ]
+            @ body @
+            [ "}"
+              "render();"
+              sprintf "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['%s']});" attr
+              "})();" ])
 
-    let inlineRangeSlider
-            (labelText : string)
-            (minV : float) (maxV : float) (stepV : float)
-            (format : float -> float -> string)
-            (valueMin : aval<float>) (valueMax : aval<float>)
-            (onChange : float -> float -> unit) =
-        inlineRangeSliderA labelText
-            (AVal.constant minV) (AVal.constant maxV) (AVal.constant stepV)
-            (Some format) valueMin valueMax onChange
+    let provBarJs = [
+        "if(!d || d.length < 3) return;"
+        "var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
+        "d.forEach(function(p, i){"
+        "  var s = document.createElement('div');"
+        "  s.style.width = p + '%';"
+        "  s.style.background = colours[i];"
+        "  s.style.height = '100%';"
+        "  el.appendChild(s);"
+        "});" ]
 
-    let miniButton (icon : string) (tooltip : string) (onClick : unit -> unit) =
-        button {
-            Class "mb"
-            Attribute("title", tooltip)
-            Dom.OnClick(fun _ -> onClick ())
-            icon
-        }
+// View-side feature gating for study mode (§5): in Full mode everything is
+// visible; in a study session visible = phase.allowedFeatures minus the
+// condition's disabledFeatures.
+module StudyGate =
+
+    let studyActive (model : AdaptiveModel) : aval<bool> =
+        model.Study |> AVal.map Study.isActive
+
+    let featureOn (model : AdaptiveModel) (featureId : string) : aval<bool> =
+        model.Study |> AVal.map (fun s -> Study.featureVisible s featureId)
+
+// Readiness-engine adapter: builds the engine input from individual model
+// leaves (per the adaptive-performance rules — never the whole record), so
+// the registration card and the workflow panel share one source of truth.
+module ReadinessView =
+
+    open FSharp.Data.Adaptive
+
+    let input (model : AdaptiveModel) : aval<ReadinessInput> =
+        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let meshNamesVal = model.MeshNames |> AList.toAVal
+        AVal.custom (fun t ->
+            let pins = pinsVal.GetValue t
+            let reg = model.Registration.GetValue t
+            let names = meshNamesVal.GetValue t |> IndexList.toList
+            let visible = model.MeshVisible.GetValue t
+            let pending = PendingRegistration.isPreview (model.PendingReg.GetValue t)
+            let log = model.RegistrationLog.GetValue t
+            let movingVisible =
+                match reg.ReferenceMesh with
+                | Some r ->
+                    names |> List.filter (fun n ->
+                        n <> r && (Map.tryFind n visible |> Option.defaultValue true))
+                | None -> []
+            let enabledPins =
+                pins |> HashMap.toList
+                |> List.choose (fun (id, p) ->
+                    match ScanPin.correspondence p with
+                    | Some c when c.Enabled && p.Phase = PinPhase.Committed ->
+                        let rel = 1.0
+                        let accepted =
+                            movingVisible
+                            |> List.filter (fun m ->
+                                match Map.tryFind m c.Anchors with
+                                | Some a -> a.Accepted
+                                | None -> false)
+                            |> Set.ofList
+                        Some {
+                            Id            = id
+                            Label         = p.Name
+                            RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, max 0.01 rel)
+                            Accepted      = accepted
+                            AcceptedTotal =
+                                c.Anchors |> Map.toList
+                                |> List.filter (fun (_, a) -> a.Accepted) |> List.length
+                            Unresolved    = List.length movingVisible - Set.count accepted
+                        }
+                    | _ -> None)
+            {
+                ReferenceMesh       = reg.ReferenceMesh
+                VisibleMovingMeshes = movingVisible
+                EnabledPins         = enabledPins
+                HasPending          = pending
+                HasCommittedStep    = not (List.isEmpty log)
+                FineModeLabel       =
+                    match reg.Mode with
+                    | TraditionalIcp -> "Traditional ICP"
+                    | RegionRestrictedIcp -> "Region-restricted"
+            })
+
+    let diagnostics (model : AdaptiveModel) : aval<ReadinessInput * StageDiagnostics> =
+        input model |> AVal.map (fun i -> i, Readiness.compute i)

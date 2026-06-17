@@ -8,141 +8,20 @@ module GuiCards =
 
     open Primitives
 
-    let private cardDragHandle (title : string) (pos : aval<V2d>) (dragState : cval<(V2d * V2d) option>) (onCommit : V2d -> unit) =
-        div {
-            Class "card-drag-handle"
-            Dom.OnPointerDown((fun e ->
-                if e.Button = Button.Left then
-                    let cardPos = AVal.force pos
-                    let grab = V2d(float e.ClientPosition.X, float e.ClientPosition.Y) - cardPos
-                    transact (fun () -> dragState.Value <- Some (cardPos, grab))
-            ), pointerCapture = true)
-            Dom.OnPointerMove(fun e ->
-                match dragState.GetValue() with
-                | Some (_, grab) ->
-                    let p = V2d(float e.ClientPosition.X, float e.ClientPosition.Y) - grab
-                    transact (fun () -> dragState.Value <- Some (p, grab))
-                | None -> ())
-            Dom.OnPointerUp((fun _ ->
-                match dragState.GetValue() with
-                | Some (p, _) ->
-                    transact (fun () -> dragState.Value <- None)
-                    onCommit p
-                | None -> ()
-            ), pointerCapture = true)
-            title
-        }
-
-    let exploreCard (env : Env<Message>) (model : AdaptiveModel) =
-        let dragState : cval<(V2d * V2d) option> = cval None
-        let defaultPos = V2d(200.0, 44.0)
-        let pos =
-            (model.ExploreCardPos, dragState :> aval<_>)
-            ||> AVal.map2 (fun saved drag ->
-                match drag with
-                | Some (p, _) -> p
-                | None -> saved |> Option.defaultValue defaultPos)
-        let visible = model.Explore |> AVal.map (fun e -> e.Enabled)
-        div {
-            Class "card explore-card"
-            (visible, pos) ||> AVal.map2 (fun on p ->
-                if not on then Some (Style [Display "none"])
-                else Some (Style [
-                    Left (sprintf "%.0fpx" p.X)
-                    Top (sprintf "%.0fpx" p.Y)
-                ]))
-            div {
-                Class "card-titlebar"
-                cardDragHandle "Explore" pos dragState (fun p -> env.Emit [SetExploreCardPos p])
-                button {
-                    Class "card-btn-close"
-                    Attribute("title", "Close (disable explore mode)")
-                    Dom.OnClick(fun _ -> env.Emit [ExploreMsg (SetExploreEnabled false)])
-                    "×"
-                }
-            }
-            div {
-                Class "card-body explore-card-body"
-                let fcEnabled = model.Explore |> AVal.map (fun e -> e.FeatureConfidence.Enabled)
-                let fcThresh  = model.Explore |> AVal.map (fun e -> e.FeatureConfidence.Threshold)
-                let dgEnabled = model.Explore |> AVal.map (fun e -> e.Disagreement.Enabled)
-                let dgThresh  = model.Explore |> AVal.map (fun e -> e.Disagreement.Threshold)
-                let bothOn    = (fcEnabled, dgEnabled) ||> AVal.map2 (&&)
-                let mix       = model.Explore |> AVal.map (fun e -> e.MixMode)
-                div {
-                    Class "explore-signal-row"
-                    compactToggle "Feature confidence" fcEnabled (fun () ->
-                        let on = AVal.force fcEnabled
-                        env.Emit [ExploreMsg (SetSignalEnabled(FeatureConfidenceSignal, not on))])
-                    div {
-                        Class "explore-signal-controls"
-                        fcEnabled |> AVal.map (fun on ->
-                            if on then None else Some (Style [Display "none"]))
-                        inlineSlider "Sensitivity" 0.0 1.0 0.01 (sprintf "%.2f") fcThresh (fun v ->
-                            env.Emit [ExploreMsg (SetSignalThreshold(FeatureConfidenceSignal, v))])
-                    }
-                }
-                div {
-                    Class "explore-signal-row"
-                    compactToggle "Disagreement" dgEnabled (fun () ->
-                        let on = AVal.force dgEnabled
-                        env.Emit [ExploreMsg (SetSignalEnabled(DisagreementSignal, not on))])
-                    div {
-                        Class "explore-signal-controls"
-                        dgEnabled |> AVal.map (fun on ->
-                            if on then None else Some (Style [Display "none"]))
-                        inlineLogSlider "Sensitivity" 0.001 10.0 (fun v ->
-                            if v < 0.1 then sprintf "%.0f mm" (v * 1000.0)
-                            else sprintf "%.2f m" v) dgThresh (fun v ->
-                            env.Emit [ExploreMsg (SetSignalThreshold(DisagreementSignal, v))])
-                    }
-                }
-                div {
-                    Class "explore-mix-row"
-                    bothOn |> AVal.map (fun on ->
-                        if on then None else Some (Style [Display "none"]))
-                    span { Class "lp-sublabel"; "Mix" }
-                    compactButtonBar [
-                        "Blended",      mix |> AVal.map (fun m -> m = Blended),
-                            (fun () -> env.Emit [ExploreMsg (SetMixMode Blended)])
-                        "Side-by-side", mix |> AVal.map (fun m -> m = SideBySide),
-                            (fun () -> env.Emit [ExploreMsg (SetMixMode SideBySide)])
-                        "Alternating",  mix |> AVal.map (fun m -> m = Alternating),
-                            (fun () -> env.Emit [ExploreMsg (SetMixMode Alternating)])
-                    ]
-                }
-            }
-        }
-
     let lassoCard (env : Env<Message>) (model : AdaptiveModel) =
         let dragState : cval<(V2d * V2d) option> = cval None
-        let defaultPos = V2d(340.0, 44.0)
-        let pos =
-            (model.LassoCardPos, dragState :> aval<_>)
-            ||> AVal.map2 (fun saved drag ->
-                match drag with
-                | Some (p, _) -> p
-                | None -> saved |> Option.defaultValue defaultPos)
+        let committed = model.LassoCardPos |> AVal.map (Option.defaultValue (V2d(340.0, 44.0)))
+        let pos = Cards.cardPos committed dragState
         let drawing   = model.LassoDrawing |> AVal.map Option.isSome
         let committed = model.LassoVolume  |> AVal.map Option.isSome
         let enabled   = model.LassoEnabled
         let visible   = (drawing, committed) ||> AVal.map2 (||)
-        // Show only when this button's predicate is true.
-        let showWhen (a : aval<bool>) =
-            a |> AVal.map (fun on -> if on then None else Some (Style [Display "none"]))
-        let showWhenNot (a : aval<bool>) =
-            a |> AVal.map (fun on -> if on then Some (Style [Display "none"]) else None)
         div {
             Class "card lasso-card"
-            (visible, pos) ||> AVal.map2 (fun on p ->
-                if not on then Some (Style [Display "none"])
-                else Some (Style [
-                    Left (sprintf "%.0fpx" p.X)
-                    Top (sprintf "%.0fpx" p.Y)
-                ]))
+            Cards.cardStyle visible pos
             div {
                 Class "card-titlebar"
-                cardDragHandle "Lasso" pos dragState (fun p -> env.Emit [SetLassoCardPos p])
+                Cards.cardDragHandle (AVal.constant "Lasso") pos dragState (fun p -> env.Emit [SetLassoCardPos p])
                 button {
                     Class "card-btn-close"
                     Attribute("title", "Clear lasso")
@@ -192,165 +71,31 @@ module GuiCards =
             }
         }
 
-    let registrationCard (env : Env<Message>) (model : AdaptiveModel) (openCval : cval<bool>) =
-        let dragState : cval<(V2d * V2d) option> = cval None
-        let defaultPos = V2d(200.0, 280.0)
-        let pos =
-            dragState :> aval<_> |> AVal.map (function
-                | Some (p, _) -> p
-                | None -> defaultPos)
-        div {
-            Class "card registration-card"
-            (openCval :> aval<_>, pos) ||> AVal.map2 (fun open_ p ->
-                if not open_ then Some (Style [Display "none"])
-                else Some (Style [
-                    Left (sprintf "%.0fpx" p.X)
-                    Top (sprintf "%.0fpx" p.Y)
-                ]))
-            div {
-                Class "card-titlebar"
-                cardDragHandle "Registration" pos dragState (fun _ -> ())
-                button {
-                    Class "card-btn-close"
-                    Attribute("title", "Close")
-                    Dom.OnClick(fun _ -> transact (fun () -> openCval.Value <- false))
-                    "×"
-                }
-            }
-            div {
-                Class "card-body registration-card-body"
-                let mode       = model.Registration |> AVal.map (fun r -> r.Mode)
-                let refMeshOpt = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
-                let running    = model.Registration |> AVal.map (fun r -> r.Running)
-                let resi       = model.Registration |> AVal.map (fun r -> r.LastResiduals)
-                div { Class "lp-sublabel"; "Solve mode" }
-                compactButtonBar [
-                    "Traditional ICP",
-                        mode |> AVal.map (fun m -> m = TraditionalIcp),
-                        (fun () -> env.Emit [SetRegistrationMode TraditionalIcp])
-                    "Region-restricted",
-                        mode |> AVal.map (fun m -> m = RegionRestrictedIcp),
-                        (fun () -> env.Emit [SetRegistrationMode RegionRestrictedIcp])
-                    "Point-pair",
-                        mode |> AVal.map (fun m -> m = PointPairPlusRefinement),
-                        (fun () -> ())
-                ]
-                div { Class "lp-sublabel"; "Reference mesh" }
-                div {
-                    Class "lp-mesh-list"
-                    model.MeshNames |> AList.map (fun n ->
-                        let isRef = refMeshOpt |> AVal.map ((=) (Some n))
-                        button {
-                            Class "lp-mesh-btn"
-                            isRef |> AVal.map (fun on ->
-                                if on then Some (Class "cbb-btn-active") else None)
-                            Dom.OnClick(fun _ ->
-                                let cur = AVal.force refMeshOpt
-                                env.Emit [SetReferenceMesh (if cur = Some n then None else Some n)])
-                            Cards.shortName n
-                        })
-                }
-                div {
-                    Class "lp-commit-row"
-                    button {
-                        Class "lp-commit"
-                        Dom.OnClick(fun _ -> env.Emit [RunRegistration])
-                        running |> AVal.map (fun r ->
-                            if r then Some (Attribute("disabled", "disabled")) else None)
-                        running |> AVal.map (fun r -> if r then "Solving…" else "▶ Run")
-                    }
-                    button {
-                        Class "lp-discard"
-                        Attribute("title", "Reset all mesh transforms to identity")
-                        Dom.OnClick(fun _ -> env.Emit [ResetMeshTransforms])
-                        "↺ Reset"
-                    }
-                }
-                div { Class "lp-sublabel"; "Residuals" }
-                div {
-                    Class "reg-residual-stats"
-                    resi |> AVal.map (fun (r : float[]) ->
-                        if r.Length = 0 then "No solve yet"
-                        else
-                            let n = r.Length
-                            let mean = (r |> Array.sum) / float n
-                            let var = (r |> Array.sumBy (fun x -> (x - mean) ** 2.0)) / float n
-                            let rms = sqrt ((r |> Array.sumBy (fun x -> x * x)) / float n)
-                            sprintf "n=%d • mean %.3fm • RMS %.3fm • σ %.3f" n mean rms (sqrt var))
-                }
-                div {
-                    Class "reg-residual-histogram"
-                    resi |> AVal.map (fun (r : float[]) ->
-                        if r.Length < 2 then Some (Attribute("data-hist", "{}"))
-                        else
-                            let bins = 20
-                            let lo = Array.min r
-                            let hi = Array.max r
-                            let span = max 1e-6 (hi - lo)
-                            let counts = Array.zeroCreate<int> bins
-                            for v in r do
-                                let bi = min (bins - 1) (max 0 (int ((v - lo) / span * float bins)))
-                                counts.[bi] <- counts.[bi] + 1
-                            let maxCount = Array.max counts |> max 1
-                            let bars =
-                                counts
-                                |> Array.mapi (fun i c -> sprintf "[%d,%d]" i c)
-                                |> String.concat ","
-                            Some (Attribute("data-hist", sprintf "{\"max\":%d,\"bins\":%d,\"lo\":%.4f,\"hi\":%.4f,\"counts\":[%s]}" maxCount bins lo hi bars)))
-                    OnBoot [
-                        "(function(){"
-                        "var el = __THIS__;"
-                        "var last = '';"
-                        "function render(){"
-                        "  var raw = el.getAttribute('data-hist') || '{}';"
-                        "  if(raw === last) return; last = raw;"
-                        "  try { var d = JSON.parse(raw); } catch(e) { return; }"
-                        "  el.innerHTML = '';"
-                        "  if(!d.counts || d.counts.length === 0){ el.textContent = '—'; return; }"
-                        "  var w = 240, h = 50;"
-                        "  var ns = 'http://www.w3.org/2000/svg';"
-                        "  var svg = document.createElementNS(ns,'svg');"
-                        "  svg.setAttribute('width', w); svg.setAttribute('height', h);"
-                        "  var bw = w / d.bins;"
-                        "  d.counts.forEach(function(b){"
-                        "    var r = document.createElementNS(ns,'rect');"
-                        "    var bh = (b[1] / d.max) * (h - 8);"
-                        "    r.setAttribute('x', b[0] * bw);"
-                        "    r.setAttribute('y', h - bh);"
-                        "    r.setAttribute('width', bw - 1);"
-                        "    r.setAttribute('height', bh);"
-                        "    r.setAttribute('fill', '#1a56db');"
-                        "    svg.appendChild(r);"
-                        "  });"
-                        "  el.appendChild(svg);"
-                        "}"
-                        "render();"
-                        "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-hist']});"
-                        "})();"
-                    ]
-                }
-            }
-        }
+    // Unicode sparkline of an ICP convergence series (print-appropriate, no
+    // extra JS / GPU resources).
+    let spark (xs : float[]) =
+        if xs.Length < 2 then ""
+        else
+            let xs = if xs.Length > 24 then xs.[xs.Length - 24 ..] else xs
+            let mn = Array.min xs
+            let mx = Array.max xs
+            let blocks = [| '▁'; '▂'; '▃'; '▄'; '▅'; '▆'; '▇'; '█' |]
+            xs
+            |> Array.map (fun v ->
+                let t = if mx - mn < 1e-12 then 0.0 else (v - mn) / (mx - mn)
+                blocks.[min 7 (int (t * 7.999))])
+            |> System.String
 
-    // Panorama panel. The card chrome is always mounted (hidden when closed);
-    // the nested renderControl — which drives the expensive cube capture — is
-    // mounted only while open, via an alist gated on PanoramaOpen, so it
-    // allocates and renders nothing when the panel is hidden.
+    // The nested renderControl (expensive cube capture) is mounted only while
+    // the panel is open, via an alist gated on PanoramaOpen.
     let panoramaCard (env : Env<Message>) (model : AdaptiveModel) =
         let dragState : cval<(V2d * V2d) option> = cval None
-        // Local committed position — without this the card snaps back to the
-        // default on pointer-up (the shared drag handle reverts dragState to
-        // None on release, and there is no persisted model field for it).
         let committedPos = cval (V2d(360.0, 80.0))
-        let pos =
-            (committedPos :> aval<_>, dragState :> aval<_>) ||> AVal.map2 (fun committed drag ->
-                match drag with
-                | Some (p, _) -> p
-                | None -> committed)
+        let pos = Cards.cardPos (committedPos :> aval<_>) dragState
         let mode = model.PanoramaMode
 
-        // Selected panorama pose (world eye + yaw), matching PanoramaView's
-        // fallback so markers and click-to-place agree with what is rendered.
+        // Pose must match PanoramaView's fallback so markers and click-to-place
+        // agree with what is rendered.
         let poseW =
             (model.Panoramas, model.SelectedPanorama, model.SceneBounds)
             |||> AVal.map3 (fun ps i sb ->
@@ -371,10 +116,8 @@ module GuiCards =
                 let! size = RenderControl.ViewportSize
                 Sg.View (AVal.constant Trafo3d.Identity)
                 Sg.Proj (AVal.constant Trafo3d.Identity)
-                // Click-to-place: in anchor-placement mode, turn the click into a
-                // world ray through the cylindrical pose and raycast every
-                // visible mesh server-side; the nearest hit becomes the anchor
-                // (and its mesh the active layer / host).
+                // Click-to-place: ray through the cylindrical pose, nearest
+                // server-side hit becomes the anchor.
                 Dom.OnPointerDown(fun e ->
                     if e.Button = Button.Left then
                         match AVal.force model.ScanPins.Placement with
@@ -387,27 +130,17 @@ module GuiCards =
                                 let eyeW, yaw = AVal.force poseW
                                 let phi = yaw + ndcX * Constant.Pi
                                 let dirW = V3d(cos phi, sin phi, ndcY * vScale).Normalized
-                                let visible = AVal.force model.MeshVisible
-                                let names =
-                                    model.MeshNames |> AList.toAVal |> AVal.force |> IndexList.toList
-                                    |> List.filter (fun n -> Map.tryFind n visible |> Option.defaultValue true)
+                                let names = MeshView.visibleMeshNames model
                                 if not (List.isEmpty names) then
                                     async {
-                                        let! hits =
-                                            names
-                                            |> List.map (fun name ->
-                                                async {
-                                                    let! h = Query.rayHit ApiConfig.apiBase.Value name 0 eyeW dirW
-                                                    return h |> Option.map (fun hit -> hit.t, hit.point, name)
-                                                })
-                                            |> Async.Parallel
+                                        let! hits = Query.rayHitMany ApiConfig.apiBase.Value names (fun _ -> eyeW, dirW)
                                         let best =
                                             hits |> Array.choose id
-                                            |> Array.sortBy (fun (t, _, _) -> t)
+                                            |> Array.sortBy (fun (_, h) -> h.t)
                                             |> Array.tryHead
                                         match best with
-                                        | Some (_, pt, name) ->
-                                            env.Emit [SetActivePickingLayer (Some name); ScanPinMsg (PlaceAnchor pt)]
+                                        | Some (name, h) ->
+                                            env.Emit [SetActivePickingLayer (Some name); ScanPinMsg (PlaceAnchor h.point)]
                                         | None -> ()
                                     } |> Async.Start
                         | _ -> ())
@@ -418,9 +151,7 @@ module GuiCards =
             |> AVal.map (fun o -> if o then IndexList.single rc else IndexList.empty)
             |> AList.ofAVal
 
-        // Committed pins projected into cylindrical panorama space as overlay
-        // markers (percentage-positioned, so resolution-independent). Only pins
-        // inside the panel's FOV are emitted.
+        // Committed pins projected into cylindrical space as overlay markers.
         let markers =
             (model.ScanPins.Pins |> AMap.toAVal, poseW) ||> AVal.map2 (fun pins (eyeW, yaw) ->
                 pins
@@ -444,15 +175,11 @@ module GuiCards =
 
         div {
             Class "card panorama-card"
-            (model.PanoramaOpen, pos) ||> AVal.map2 (fun on p ->
-                if not on then Some (Style [Display "none"])
-                else Some (Style [
-                    Left (sprintf "%.0fpx" p.X)
-                    Top (sprintf "%.0fpx" p.Y)
-                ]))
+            Cards.cardStyle model.PanoramaOpen pos
             div {
                 Class "card-titlebar"
-                cardDragHandle "Panorama" pos dragState (fun p -> transact (fun () -> committedPos.Value <- p))
+                Cards.cardDragHandle (AVal.constant "Panorama") pos dragState (fun p ->
+                    transact (fun () -> committedPos.Value <- p))
                 button {
                     Class "card-btn-close"
                     Attribute("title", "Close")
@@ -475,7 +202,7 @@ module GuiCards =
                 }
                 div {
                     Class "pano-blend-row"
-                    mode |> AVal.map (fun m -> if m = PanoBlend then None else Some (Style [Display "none"]))
+                    showWhen (mode |> AVal.map ((=) PanoBlend))
                     inlineSlider "Blend" 0.0 1.0 0.01 (sprintf "%.2f") model.PanoramaBlend (fun v ->
                         env.Emit [SetPanoramaBlend v])
                 }
@@ -500,19 +227,138 @@ module GuiCards =
             }
         }
 
-    let registrationToggleButton (openCval : cval<bool>) =
+    // Floating opener for the registration panel — used in study mode, which
+    // has no top bar (the full-app top bar carries its own ⚲ Registration).
+    let registrationToggleButton (env : Env<Message>) (model : AdaptiveModel) =
         button {
             Class "tb-btn"
-            Attribute("title", "Registration solver")
-            Dom.OnClick(fun _ ->
-                transact (fun () -> openCval.Value <- not openCval.Value))
-            "⚙ Registration"
+            model.WorkflowPanelOpen |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+            Attribute("title", "Registration: readiness, anchors, status and error stats")
+            Dom.OnClick(fun _ -> env.Emit [ToggleWorkflowPanel])
+            "⚲ Registration"
+        }
+
+    // Anchor auto-seed review modal (clone of the retarget review): one row
+    // per (pin × mesh) seeded anchor with the projection distance; rows with
+    // Δ > 2× radius or no projection are flagged. Apply marks accepted.
+    let anchorReviewCard (env : Env<Message>) (model : AdaptiveModel) =
+        let dragState : cval<(V2d * V2d) option> = cval None
+        let committedPos = cval (V2d(360.0, 70.0))
+        let pos = Cards.cardPos (committedPos :> aval<_>) dragState
+        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let meshOrderMap = model.MeshOrder.Content
+        let candidatesAList =
+            (model.AnchorReview, model.AnchorReviewFilter) ||> AVal.map2 (fun review filt ->
+                match review with
+                | AnchorReviewing cs ->
+                    match filt with
+                    | Some mesh -> cs |> Array.filter (fun c -> c.Mesh = mesh) |> IndexList.ofArray
+                    | None -> IndexList.ofArray cs
+                | _ -> IndexList.empty)
+            |> AList.ofAVal
+        let title =
+            (model.AnchorReview, model.AnchorReviewFilter, meshOrderMap) |||> AVal.map3 (fun review filt order ->
+                match review with
+                | AnchorReviewSeeding -> "Seeding correspondence anchors…"
+                | AnchorReviewing cs ->
+                    match filt with
+                    | Some mesh ->
+                        let n = cs |> Array.filter (fun c -> c.Mesh = mesh) |> Array.length
+                        sprintf "Anchor review — %s (%d anchors)" (Cards.numbered order mesh) n
+                    | None -> sprintf "Anchor review (%d anchors)" cs.Length
+                | _ -> "Anchor review")
+        let progressNote =
+            model.AnchorReview |> AVal.map (function
+                | AnchorReviewSeeding -> "Projecting reference anchors onto the other meshes…"
+                | _ -> "")
+        div {
+            Class "card anchor-review-card"
+            Cards.cardStyle (model.AnchorReview |> AVal.map (function AnchorReviewIdle -> false | _ -> true)) pos
+            div {
+                Class "card-titlebar"
+                Cards.cardDragHandle title pos dragState (fun p -> transact (fun () -> committedPos.Value <- p))
+                button {
+                    Class "card-btn-close"
+                    Attribute("title", "Close (anchors stay unaccepted)")
+                    Dom.OnClick(fun _ -> env.Emit [CancelAnchorReview])
+                    "×"
+                }
+            }
+            div {
+                Class "card-body retarget-card-body"
+                div { Class "retarget-empty"; progressNote }
+                div {
+                    Class "retarget-list"
+                    candidatesAList |> AList.map (fun c ->
+                        let infinite = System.Double.IsInfinity c.ProjectionDistance
+                        let highRisk = infinite || c.ProjectionDistance > 2.0 * c.InnerRadius
+                        let distLabel =
+                            if infinite then "no projection"
+                            else sprintf "Δ %.3fm" c.ProjectionDistance
+                        let pinLabel =
+                            pinsVal |> AVal.map (fun pins ->
+                                match HashMap.tryFind c.PinId pins with
+                                | Some p -> p.Name
+                                | None -> "(removed)")
+                        let baseClass =
+                            "retarget-row" +
+                            (if highRisk then " retarget-row-risk" else "") +
+                            (match c.Decision with
+                             | AnchorAccept -> " retarget-row-accepted"
+                             | AnchorReject -> " retarget-row-rejected"
+                             | _ -> "")
+                        div {
+                            Class baseClass
+                            // Hover → highlight this candidate's glyph in 3D.
+                            Dom.OnMouseEnter(fun _ -> env.Emit [SetReviewAnchorHover (Some (c.PinId, c.Mesh))])
+                            Dom.OnMouseLeave(fun _ -> env.Emit [SetReviewAnchorHover None])
+                            span { Class "retarget-pin"; pinLabel }
+                            span { Class "retarget-pin"; meshOrderMap |> AVal.map (fun o -> Cards.numbered o c.Mesh) }
+                            span {
+                                Class "retarget-dist"
+                                Attribute("title", "Pre-alignment distance from the pin to this mesh's surface (the work the registration has to close) — not the residual error")
+                                distLabel
+                            }
+                            div {
+                                Class "retarget-actions"
+                                button {
+                                    Class "retarget-btn-accept"
+                                    Attribute("title", "Accept this anchor")
+                                    Dom.OnClick(fun _ -> env.Emit [SetAnchorDecision(c.PinId, c.Mesh, AnchorAccept)])
+                                    "✓"
+                                }
+                                button {
+                                    Class "retarget-btn-reject"
+                                    Attribute("title", "Reject (stays unaccepted; pick later in patches / 3D / violin)")
+                                    Dom.OnClick(fun _ -> env.Emit [SetAnchorDecision(c.PinId, c.Mesh, AnchorReject)])
+                                    "✕"
+                                }
+                            }
+                        })
+                }
+                div {
+                    Class "retarget-commit-row"
+                    showWhen (model.AnchorReview |> AVal.map (function AnchorReviewing _ -> true | _ -> false))
+                    button {
+                        Class "lp-commit"
+                        Attribute("title", "Mark accepted anchors as usable for the coarse solve")
+                        Dom.OnClick(fun _ -> env.Emit [ApplyAnchorReview])
+                        "Apply"
+                    }
+                    button {
+                        Class "lp-discard"
+                        Dom.OnClick(fun _ -> env.Emit [CancelAnchorReview])
+                        "Cancel"
+                    }
+                }
+            }
         }
 
     // Retarget review card. Shown while RetargetState is RetargetProjecting
     // (waiting on server) or RetargetReviewing (user picks accept/reject per
     // pin). Hidden on RetargetIdle.
     let retargetCard (env : Env<Message>) (model : AdaptiveModel) =
+        let meshOrderMap = model.MeshOrder.Content
         let candidatesAList =
             model.Retarget
             |> AVal.map (function
@@ -520,9 +366,10 @@ module GuiCards =
                 | _ -> IndexList.empty)
             |> AList.ofAVal
         let title =
-            model.Retarget |> AVal.map (function
+            (model.Retarget, meshOrderMap) ||> AVal.map2 (fun rt order ->
+                match rt with
                 | RetargetProjecting target ->
-                    sprintf "Retarget to %s — projecting…" (Cards.shortName target)
+                    sprintf "Retarget to %s — projecting…" (Cards.numbered order target)
                 | RetargetReviewing cs ->
                     sprintf "Retarget review (%d pins)" cs.Length
                 | _ -> "Retarget")
@@ -532,9 +379,7 @@ module GuiCards =
                 | _ -> "")
         div {
             Class "card retarget-card"
-            model.Retarget |> AVal.map (function
-                | RetargetIdle -> Some (Style [Display "none"])
-                | _ -> None)
+            showWhen (model.Retarget |> AVal.map (function RetargetIdle -> false | _ -> true))
             div {
                 Class "card-titlebar"
                 span { Class "card-title"; title }
@@ -552,7 +397,7 @@ module GuiCards =
                     Class "retarget-list"
                     candidatesAList |> AList.map (fun c ->
                         let infinite = System.Double.IsInfinity c.ProjectionDistance
-                        let highRisk = infinite || c.ProjectionDistance > 2.0 * c.FalloffRadius
+                        let highRisk = infinite || c.ProjectionDistance > 2.0 * c.InnerRadius
                         let distLabel =
                             if infinite then "no projection"
                             else sprintf "Δ %.3fm" c.ProjectionDistance
@@ -567,7 +412,8 @@ module GuiCards =
                             Class baseClass
                             span {
                                 Class "retarget-pin"
-                                c.OriginalHostMesh |> Option.defaultValue "—" |> Cards.shortName
+                                meshOrderMap |> AVal.map (fun o ->
+                                    c.OriginalHostMesh |> Option.map (Cards.numbered o) |> Option.defaultValue "—")
                             }
                             span { Class "retarget-dist"; distLabel }
                             div {
@@ -589,9 +435,7 @@ module GuiCards =
                 }
                 div {
                     Class "retarget-commit-row"
-                    model.Retarget |> AVal.map (function
-                        | RetargetReviewing _ -> None
-                        | _ -> Some (Style [Display "none"]))
+                    showWhen (model.Retarget |> AVal.map (function RetargetReviewing _ -> true | _ -> false))
                     button {
                         Class "lp-commit"
                         Attribute("title", "Apply accepted projections")

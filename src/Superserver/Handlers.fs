@@ -8,7 +8,6 @@ open Giraffe
 open Aardvark.Base
 open Aardvark.Embree
 open QueryHandlers
-open BatchHandlers
 
 let datasetsHandler : HttpHandler =
     fun next ctx -> task {
@@ -110,11 +109,19 @@ let webApp : HttpHandler =
         routef "/api/datasets/%s/mesh/%s/%i"                    (fun (d,n,i) -> meshHandler(d,n,i))
         routef "/api/datasets/%s/mesh/%s"                       (fun (d,n)   -> meshCountHandler(d,n))
         route  "/api/query/ray"                                 >=> rayHandler
-        route  "/api/query/ray-batch"                           >=> rayBatchHandler
         route  "/api/query/closest"                             >=> closestHandler
-        route  "/api/query/isoline"                             >=> isolineHandler
-        route  "/api/query/curvature-ridge"                     >=> curvatureRidgeHandler
         route  "/api/query/patch"                               >=> patchHandler
+        route  "/api/query/contact-rings"                       >=> contactRingsHandler
         route  "/api/query/icp"                                 >=> icpHandler
-        route  "/api/query/grid-eval"                           >=> gridEvalHandler
+        route  "/api/query/lsq-pairs"                           >=> lsqPairsHandler
+        route  "/api/query/probe"                               >=> probeHandler
+        route  "/api/study/session"                             >=> POST >=> StudyHandlers.sessionHandler
+        route  "/api/study/list"                                >=> GET  >=> StudyHandlers.listHandler
+        routef "/api/study/%s/events"                           (fun sid -> POST >=> StudyHandlers.eventsHandler sid)
+        routef "/api/study/%s/answers"                          (fun sid -> POST >=> StudyHandlers.answersHandler sid)
+        routef "/api/study/%s/transforms"                       (fun sid -> POST >=> StudyHandlers.transformsHandler sid)
+        routef "/api/study/%s/workspace"                        (fun sid -> POST >=> StudyHandlers.workspaceHandler sid)
+        routef "/api/study/%s/advance"                          (fun sid -> POST >=> StudyHandlers.advanceHandler sid)
+        routef "/api/study/%s/complete"                         (fun sid -> GET  >=> StudyHandlers.completeHandler sid)
+        routef "/api/study/%s/tokens"                           (fun studyId -> POST >=> StudyHandlers.tokensHandler studyId)
     ]

@@ -5,83 +5,6 @@ open Aardvark.Base
 open Aardvark.Embree
 open MeshCache
 
-type GridCellStats = { Average: float; Q1: float; Q3: float; Min: float; Max: float; Variance: float }
-type DatasetStats = { MeshName: string; ZMin: float; ZQ1: float; ZMedian: float; ZQ3: float; ZMax: float; ZVariance: float }
-type GridEvalResult = { Resolution: int; Cells: (int * int * GridCellStats)[]; DatasetStats: DatasetStats[] }
-
-let private percentile (sorted : float[]) (p : float) =
-    if sorted.Length = 0 then nan
-    elif sorted.Length = 1 then sorted.[0]
-    else
-        let idx = p * float (sorted.Length - 1)
-        let lo = int (floor idx)
-        let hi = min (lo + 1) (sorted.Length - 1)
-        let f = idx - float lo
-        sorted.[lo] * (1.0 - f) + sorted.[hi] * f
-
-let private computeStats (values : float[]) =
-    if values.Length = 0 then None
-    else
-        let sorted = values |> Array.sort
-        let avg = values |> Array.average
-        let var = if values.Length > 1 then values |> Array.sumBy (fun v -> (v - avg) * (v - avg)) |> fun s -> s / float (values.Length - 1) else 0.0
-        Some { Average = avg; Q1 = percentile sorted 0.25; Q3 = percentile sorted 0.75; Min = sorted.[0]; Max = sorted.[sorted.Length - 1]; Variance = var }
-
-let evaluateGrid (dataset : string) (anchor : V3d) (axis : V3d) (radius : float) (resolution : int) (extFwd : float) (extBack : float) : GridEvalResult =
-    let axis = axis |> Vec.normalize
-    let up = if abs axis.Z > 0.9 then V3d.OIO else V3d.OOI
-    let right = Vec.cross axis up |> Vec.normalize
-    let fwd = Vec.cross right axis |> Vec.normalize
-    let rayDir = V3f axis
-    let rayLen = float32 (extFwd + extBack)
-
-    let meshNames = MeshLoader.meshNames dataset
-    let meshParts =
-        meshNames |> Array.collect (fun name ->
-            let count = MeshLoader.meshCount dataset name
-            [| for i in 0 .. count - 1 -> name, i, get dataset name i |])
-
-    let cellSize = 2.0 * radius / float resolution
-    let r2 = radius * radius
-
-    let cells = ResizeArray<int * int * GridCellStats>()
-
-    let perDatasetHeights = meshNames |> Array.map (fun _ -> ResizeArray<float>())
-    let meshNameIndex = meshNames |> Array.mapi (fun i n -> n, i) |> Map.ofArray
-
-    for gu in 0 .. resolution - 1 do
-        for gv in 0 .. resolution - 1 do
-            let u = -radius + (float gu + 0.5) * cellSize
-            let v = -radius + (float gv + 0.5) * cellSize
-            if u * u + v * v <= r2 then
-                let rayOriginWorld = anchor + right * u + fwd * v - axis * extBack
-                let allHeights = ResizeArray<float>()
-                for name, _partIdx, lm in meshParts do
-                    let c = lm.parsed.centroid
-                    let orig = V3f(rayOriginWorld - c)
-                    let mutable hit = RayHit()
-                    if lm.scene.Intersect(orig, rayDir, &hit) && hit.T <= rayLen then
-                        let h = float hit.T - extBack
-                        allHeights.Add h
-                        let di = meshNameIndex.[name]
-                        perDatasetHeights.[di].Add h
-                match computeStats (allHeights.ToArray()) with
-                | Some stats -> cells.Add(gu, gv, stats)
-                | None -> ()
-
-    let dsStats =
-        meshNames |> Array.mapi (fun i name ->
-            let vals = perDatasetHeights.[i].ToArray()
-            if vals.Length = 0 then
-                { MeshName = name; ZMin = nan; ZQ1 = nan; ZMedian = nan; ZQ3 = nan; ZMax = nan; ZVariance = nan }
-            else
-                let sorted = vals |> Array.sort
-                let avg = vals |> Array.average
-                let var = if vals.Length > 1 then vals |> Array.sumBy (fun v -> (v - avg) * (v - avg)) |> fun s -> s / float (vals.Length - 1) else 0.0
-                { MeshName = name; ZMin = sorted.[0]; ZQ1 = percentile sorted 0.25; ZMedian = percentile sorted 0.5; ZQ3 = percentile sorted 0.75; ZMax = sorted.[sorted.Length - 1]; ZVariance = var })
-
-    { Resolution = resolution; Cells = cells.ToArray(); DatasetStats = dsStats }
-
 type IcpResult = {
     Transform     : M44d
     Convergence   : float[]
@@ -139,7 +62,18 @@ module private IcpMath =
             let K = skew k
             M33d.Identity + K * sin theta + K * K * (1.0 - cos theta)
 
+    // Linearizes the rotation around the weighted correspondence centroid:
+    // with raw UTM-scale world coordinates the lever arm is ~5e6 m, the
+    // normal matrix is hopelessly ill-conditioned, and the small-angle step
+    // diverges. Solved in the recentred frame, recomposed to a world map.
     let icpStep (pairs : ResizeArray<struct (V3d * V3d * float)>) =
+        let mutable cSum = V3d.Zero
+        let mutable cW = 0.0
+        for i in 0 .. pairs.Count - 1 do
+            let struct (ai, _, wi) = pairs.[i]
+            cSum <- cSum + ai * wi
+            cW <- cW + wi
+        let c = if cW > 0.0 then cSum / cW else V3d.Zero
         let A = Array2D.zeroCreate<float> 6 6
         let B = Array.zeroCreate<float> 6
         let mutable rmsSum = 0.0
@@ -147,13 +81,14 @@ module private IcpMath =
         let J = Array2D.zeroCreate<float> 3 6
         for i in 0 .. pairs.Count - 1 do
             let struct (ai, bi, wi) = pairs.[i]
+            let al = ai - c
             let r0 = ai.X - bi.X
             let r1 = ai.Y - bi.Y
             let r2 = ai.Z - bi.Z
 
-            J.[0, 0] <- 0.0;     J.[0, 1] <- ai.Z;   J.[0, 2] <- -ai.Y; J.[0, 3] <- 1.0; J.[0, 4] <- 0.0; J.[0, 5] <- 0.0
-            J.[1, 0] <- -ai.Z;   J.[1, 1] <- 0.0;    J.[1, 2] <-  ai.X; J.[1, 3] <- 0.0; J.[1, 4] <- 1.0; J.[1, 5] <- 0.0
-            J.[2, 0] <-  ai.Y;   J.[2, 1] <- -ai.X;  J.[2, 2] <-  0.0;  J.[2, 3] <- 0.0; J.[2, 4] <- 0.0; J.[2, 5] <- 1.0
+            J.[0, 0] <- 0.0;     J.[0, 1] <- al.Z;   J.[0, 2] <- -al.Y; J.[0, 3] <- 1.0; J.[0, 4] <- 0.0; J.[0, 5] <- 0.0
+            J.[1, 0] <- -al.Z;   J.[1, 1] <- 0.0;    J.[1, 2] <-  al.X; J.[1, 3] <- 0.0; J.[1, 4] <- 1.0; J.[1, 5] <- 0.0
+            J.[2, 0] <-  al.Y;   J.[2, 1] <- -al.X;  J.[2, 2] <-  0.0;  J.[2, 3] <- 0.0; J.[2, 4] <- 0.0; J.[2, 5] <- 1.0
             for a in 0 .. 5 do
                 for b in 0 .. 5 do
                     A.[a, b] <- A.[a, b] + wi * (J.[0, a] * J.[0, b] + J.[1, a] * J.[1, b] + J.[2, a] * J.[2, b])
@@ -167,16 +102,52 @@ module private IcpMath =
         let omega = V3d(x.[0], x.[1], x.[2])
         let t = V3d(x.[3], x.[4], x.[5])
         let R = rotFromOmega omega
-        R, t, sqrt (rmsSum / max 1.0 wSum)
+        // p ↦ R(p − c) + c + t, expressed as a world map p ↦ R·p + tWorld.
+        // The centroid c maps to c + t, so the actual displacement this step
+        // is |t| — NOT |tWorld|, which is inflated by (I−R)c for any rotation
+        // about a far-from-origin centroid even when the mesh barely moves.
+        let tWorld = c - R * c + t
+        R, tWorld, sqrt (rmsSum / max 1.0 wSum), t.Length
+
+// Abort rather than return a divergent pose: a fine-ICP step that displaces
+// the mesh centroid by more than a few combined mesh-extents is runaway
+// (overlap starvation), not a legitimate gap-closing step. Generous so only
+// absurd motions trip it.
+let divergenceGate (refDiag : float) (movDiag : float) = max 100.0 (3.0 * (refDiag + movDiag))
+let isRunawayStep (stepDisplacement : float) (gate : float) =
+    not (System.Double.IsFinite stepDisplacement) || stepDisplacement > gate
+
+// Reference is "small" relative to the mover when its bbox diagonal is under
+// this fraction of the mover's — the overlap-starvation regime where naive
+// closest-point ICP drags the mover (the study's flung-mesh defect).
+let smallReferenceRegime (refDiag : float) (movDiag : float) =
+    refDiag > 1e-6 && movDiag > 1e-6 && refDiag / movDiag < 0.4
 
 let runIcp
         (lmRef : LoadedMesh) (lmMov : LoadedMesh)
         (initial : M44d) (sampleStride : int) (maxIter : int)
         (anchorWeights : (V3d -> float) option) (regionEps : float)
-        : IcpResult =
+        : Result<IcpResult, string> =
     let movPos = lmMov.parsed.positions
     let movCentroid = lmMov.parsed.centroid
     let refCentroid = lmRef.parsed.centroid
+
+    let refBox = lmRef.parsed.bbox
+    let movBox = lmMov.parsed.bbox
+    let refDiag = if refBox.IsInvalid then 0.0 else refBox.Size.Length
+    let movDiag = if movBox.IsInvalid then 0.0 else movBox.Size.Length
+    let smallRef = smallReferenceRegime refDiag movDiag
+    let gate = divergenceGate refDiag movDiag
+    // Restrict moving samples to the reference's world region (+ margin) so
+    // far-away, non-overlapping points can't form biasing correspondences.
+    let refWorldBox =
+        if refBox.IsInvalid then Box3d.Invalid
+        else
+            let m = 0.5 * refDiag
+            let mv = V3d(m, m, m)
+            Box3d(refCentroid + refBox.Min - mv, refCentroid + refBox.Max + mv)
+    let inRegion (p : V3d) =
+        not smallRef || refWorldBox.IsInvalid || refWorldBox.Contains p
 
     let stride = max 1 sampleStride
     let sampleCount = (movPos.Length + stride - 1) / stride
@@ -194,9 +165,10 @@ let runIcp
     let convergence = ResizeArray<float>(maxIter)
     let mutable finalResiduals : float[] = [||]
     let mutable converged = false
+    let mutable aborted = false
     let mutable lastRms = System.Double.MaxValue
     let mutable iter = 0
-    while iter < maxIter && not converged do
+    while iter < maxIter && not converged && not aborted do
         let pairs = ResizeArray<struct (V3d * V3d * float)>(samplesWorld.Length)
         for s in samplesWorld do
             let aMoved = currR * s + currTr
@@ -204,7 +176,7 @@ let runIcp
                 match anchorWeights with
                 | Some f -> f aMoved
                 | None -> 1.0
-            if w > regionEps then
+            if w > regionEps && inRegion aMoved then
                 let res = lmRef.scene.GetClosestPoint(V3f(aMoved - refCentroid))
                 if res.IsValid then
                     let bWorld = V3d(res.Point) + refCentroid
@@ -212,23 +184,45 @@ let runIcp
         if pairs.Count < 6 then
             iter <- maxIter
         else
-            let Rd, td, rms = icpStep pairs
-            convergence.Add rms
-            currR <- Rd * currR
-            currTr <- Rd * currTr + td
-            if iter = maxIter - 1 || abs (lastRms - rms) < 1e-7 then
-                finalResiduals <-
-                    pairs |> Seq.map (fun (struct (a, b, _)) ->
-                        let a' = Rd * a + td
-                        (a' - b).Length)
-                    |> Array.ofSeq
-                if abs (lastRms - rms) < 1e-7 then converged <- true
-            lastRms <- rms
-            iter <- iter + 1
+            // Trimmed correspondences: with partial overlap, closest-point
+            // pairs from non-overlapping regions bias the solve — gate at
+            // 3× the median pair distance.
+            let pairs =
+                if pairs.Count < 12 then pairs
+                else
+                    let dists = pairs |> Seq.map (fun (struct (a, b, _)) -> (a - b).Length) |> Array.ofSeq
+                    let sorted = Array.copy dists
+                    Array.sortInPlace sorted
+                    let gate = max (3.0 * sorted.[sorted.Length / 2]) 1e-6
+                    let filtered = ResizeArray<struct (V3d * V3d * float)>(pairs.Count)
+                    for i in 0 .. pairs.Count - 1 do
+                        if dists.[i] <= gate then filtered.Add pairs.[i]
+                    if filtered.Count >= 6 then filtered else pairs
+            let Rd, td, rms, stepDisp = icpStep pairs
+            // Divergence guard: a runaway step (overlap-starved fit) aborts
+            // before the flung pose is ever applied or returned.
+            if isRunawayStep stepDisp gate then
+                aborted <- true
+            else
+                convergence.Add rms
+                currR <- Rd * currR
+                currTr <- Rd * currTr + td
+                if iter = maxIter - 1 || abs (lastRms - rms) < 1e-7 then
+                    finalResiduals <-
+                        pairs |> Seq.map (fun (struct (a, b, _)) ->
+                            let a' = Rd * a + td
+                            (a' - b).Length)
+                        |> Array.ofSeq
+                    if abs (lastRms - rms) < 1e-7 then converged <- true
+                lastRms <- rms
+                iter <- iter + 1
 
-    let finalT =
-        M44d(currR.M00, currR.M01, currR.M02, currTr.X,
-             currR.M10, currR.M11, currR.M12, currTr.Y,
-             currR.M20, currR.M21, currR.M22, currTr.Z,
-             0.0, 0.0, 0.0, 1.0)
-    { Transform = finalT; Convergence = convergence.ToArray(); Residuals = finalResiduals }
+    if aborted then
+        Result.Error "insufficient overlap — fine ICP diverged; try region-restricted mode or a tighter reference region"
+    else
+        let finalT =
+            M44d(currR.M00, currR.M01, currR.M02, currTr.X,
+                 currR.M10, currR.M11, currR.M12, currTr.Y,
+                 currR.M20, currR.M21, currR.M22, currTr.Z,
+                 0.0, 0.0, 0.0, 1.0)
+        Result.Ok { Transform = finalT; Convergence = convergence.ToArray(); Residuals = finalResiduals }

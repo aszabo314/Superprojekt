@@ -5,107 +5,57 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Adaptify
 
-[<RequireQualifiedAccess>]
-type ScanPinId = ScanPinId of Guid with
-    static member create () = ScanPinId (Guid.NewGuid())
+// ScanPinId moved to RegistrationModel.fs (shared with the registration
+// types so the pure registration state machine stays WASM-free for tests).
 
 [<RequireQualifiedAccess>]
 type PinPhase =
     | Placement
     | Committed
 
-type CameraSnapshot = {
-    Center : V3d
-    Radius : float
-    Phi    : float
-    Theta  : float
-}
+// Sphere–surface contact rings (per mesh, registered world-space metres),
+// computed server-side and cached on the pin. Invalidated (→ RingsNone, lazy
+// recompute) by radius / centre / registration-transform changes; mesh
+// visibility only gates rendering, never the cache.
+type ContactRingState =
+    | RingsNone
+    | RingsRunning
+    | RingsReady of Map<string, V3d[][]>
 
-type PointPayload = {
-    ReliabilityWeight : float
-}
+// All ScanPin geometry is metric world-space (InnerRadius is the pin's
+// hard-core radius). Render-space conversion happens at pipeline boundaries.
+// Probe: cached M3C2 result, recomputed lazily after invalidation (ProbeNone).
+// Human-readable short pin names (adjective + noun), derived deterministically
+// from the pin id so the same pin always gets the same name.
+module PinNames =
+    let private adjectives =
+        [| "Amber"; "Brisk"; "Calm"; "Dusky"; "Early"; "Fleet"; "Grave"; "Hazel"
+           "Ivory"; "Jolly"; "Keen"; "Lush"; "Misty"; "Noble"; "Olive"; "Pale"
+           "Quiet"; "Rusty"; "Slate"; "Tawny"; "Umber"; "Vivid"; "Wry"; "Zesty" |]
+    let private nouns =
+        [| "Otter"; "Finch"; "Cedar"; "Ridge"; "Delta"; "Heron"; "Maple"; "Quartz"
+           "Birch"; "Coral"; "Dune"; "Ember"; "Fjord"; "Gull"; "Holly"; "Inlet"
+           "Jasper"; "Knoll"; "Larch"; "Moss"; "Nook"; "Reef"; "Spruce"; "Thorn" |]
+    let generate (ScanPinId.ScanPinId g : ScanPinId) =
+        let h = g.GetHashCode() &&& 0x7FFFFFFF
+        sprintf "%s %s" adjectives.[h % adjectives.Length] nouns.[(h / adjectives.Length) % nouns.Length]
 
-type LineMode =
-    | ElevationIsoline of elevation:float
-    | CurvatureRidge
-
-type LinePayload = {
-    Mode            : LineMode
-    Points          : V3d[]
-    ScalarVals      : float[]
-    CrossMeshTraces : Map<string, V3d[] * float[]>
-}
-
-type PatchPayload = {
-    CenterOnMesh    : V3d
-    Radius          : float
-    SourceMeshName  : string
-    ProjectedPoints : (V2d * V3d)[]
-    CompassNorth    : V2d
-    RefDirWorld     : V3d
-    NormalWorld     : V3d
-}
-
-type PayloadType =
-    | Point of PointPayload
-    | Line  of LinePayload
-    | Patch of PatchPayload
-
-type PayloadKind =
-    | PointKind
-    | LineKind
-    | PatchKind
-
-module PayloadType =
-    let kind = function
-        | Point _ -> PointKind
-        | Line  _ -> LineKind
-        | Patch _ -> PatchKind
-
-    let defaultFor (radius : float) (centre : V3d) (host : string option) (kind : PayloadKind) =
-        match kind with
-        | PointKind ->
-            Point { ReliabilityWeight = 1.0 }
-        | LineKind ->
-            Line {
-                Mode            = ElevationIsoline centre.Z
-                Points          = [||]
-                ScalarVals      = [||]
-                CrossMeshTraces = Map.empty
-            }
-        | PatchKind ->
-            Patch {
-                CenterOnMesh    = centre
-                Radius          = radius
-                SourceMeshName  = host |> Option.defaultValue ""
-                ProjectedPoints = [||]
-                CompassNorth    = V2d(1.0, 0.0)
-                RefDirWorld     = V3d.OIO
-                NormalWorld     = V3d.OOI
-            }
-
-[<RequireQualifiedAccess>]
-type CorrespondenceLinkId = CorrespondenceLinkId of Guid
-
-// All ScanPin geometry is METRIC (world-space):
-//   • Centre        : V3d  — anchor point in absolute world coordinates (metres)
-//   • InnerRadius   : float — hard-truth core; α = 1 and full evaluation weight inside (metres)
-//   • FalloffRadius : float — exponential decay beyond InnerRadius; α/weight → 0 by FalloffRadius (metres)
-// InnerRadius and FalloffRadius are independent; changing one (or the global
-// GhostOpacity) must not move the other. Render-space conversions happen at
-// pipeline boundaries via ((wp - centroid) * datasetScale).
 type ScanPin = {
     Id                   : ScanPinId
+    Name                 : string
     Phase                : PinPhase
     Centre               : V3d
     InnerRadius          : float
-    FalloffRadius        : float
-    Payload              : PayloadType
+    // Optional registration correspondence anchors.
+    Correspondence       : Correspondence option
     HostMeshName         : string option
-    CorrespondenceLinkId : CorrespondenceLinkId option
-    CreationCameraState  : CameraSnapshot
     CreatedAt            : DateTime
     DatasetColors        : Map<string, C4b>
+    Probe                : ProbeState
+    // Second probe under the effective preview transforms while a
+    // registration solve is pending (split violin). Never persisted.
+    ProbePreview         : ProbeState
+    ContactRings         : ContactRingState
 }
 
 type PlacementState =
@@ -137,7 +87,36 @@ module ScanPinModel =
         | PlacementIdle -> false
         | _ -> true
 
+    // Probe invalidation: identical pins are returned as-is so the
+    // adaptive map diff sees no change.
+    let invalidateProbes (sp : ScanPinModel) =
+        let pins =
+            sp.Pins |> HashMap.map (fun _ p ->
+                match p.Probe with
+                | ProbeNone -> p
+                | _ -> { p with Probe = ProbeNone })
+        { sp with Pins = pins }
+
+    let invalidateRings (sp : ScanPinModel) =
+        let pins =
+            sp.Pins |> HashMap.map (fun _ p ->
+                match p.ContactRings with
+                | RingsNone -> p
+                | _ -> { p with ContactRings = RingsNone })
+        { sp with Pins = pins }
+
+    let invalidatePreviewProbes (sp : ScanPinModel) =
+        let pins =
+            sp.Pins |> HashMap.map (fun _ p ->
+                match p.ProbePreview with
+                | ProbeNone -> p
+                | _ -> { p with ProbePreview = ProbeNone })
+        { sp with Pins = pins }
+
 module ScanPin =
+    // Probe-cylinder length is fixed (no GUI slider).
+    let fixedProbeLength   = 20.0
+
     // World-space (metric) → render-space (post centroid translate, post scale).
     let renderCentre (commonCentroid : V3d) (datasetScale : float) (worldCentre : V3d) =
         (worldCentre - commonCentroid) * datasetScale
@@ -147,6 +126,36 @@ module ScanPin =
     // Metric distance/radius → render-space.
     let renderLength (datasetScale : float) (metricLength : float) =
         metricLength * datasetScale
+
+    // The pin's reference axis: probe normal when available, world-up
+    // otherwise (correct for heightfields).
+    let axis (p : ScanPin) =
+        match p.Probe with
+        | ProbeReady r -> r.Normal
+        | _ -> V3d.OOI
+
+    let correspondence (p : ScanPin) = p.Correspondence
+
+    let withCorrespondence (c : Correspondence option) (p : ScanPin) =
+        { p with Correspondence = c }
+
+    // The probe that matches what's on screen: the preview probe while a
+    // registration preview is pending (and ready), the committed one otherwise.
+    let effectiveProbe (previewPending : bool) (p : ScanPin) =
+        if previewPending then
+            match p.ProbePreview with
+            | ProbeReady _ -> p.ProbePreview
+            | _ -> p.Probe
+        else p.Probe
+
+// Elevation cursor driven by hovering a pin card's violin chart: a signed
+// distance (metres) along the pin's probe axis. Extended = Alt held, the 3D
+// slicing plane grows from pin-radius disk to scene-wide.
+type ChartCursor = {
+    PinId    : ScanPinId
+    Distance : float
+    Extended : bool
+}
 
 [<RequireQualifiedAccess>]
 type CardId = CardId of Guid with
@@ -158,7 +167,6 @@ type CardAnchor =
 type CardAttachment =
     | CardAttached
     | CardDetached of screenPos:V2d
-    | CardDragging of cardPos:V2d * grabOffset:V2d
 
 type CardContent =
     | PinCard of ScanPinId
@@ -176,13 +184,11 @@ type Card = {
 [<ModelType>]
 type CardSystemModel = {
     Cards       : HashMap<CardId, Card>
-    DraggedCard : CardId option
     NextZOrder  : int
 }
 
 module CardSystemModel =
     let initial = {
         Cards       = HashMap.empty
-        DraggedCard = None
         NextZOrder  = 1
     }

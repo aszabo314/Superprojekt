@@ -1,5 +1,5 @@
-//d6dfd164-4982-ed03-d514-9a648ca12314
-//7884d215-529f-6bf3-a489-bdb887788217
+//c13595c9-504a-5047-63f3-22268c8c31f7
+//57ca5b16-664e-6839-ec7f-0f2c595bb443
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -37,15 +37,29 @@ type AdaptiveModel(value : Model) =
     let _LassoDrawing_ = FSharp.Data.Adaptive.cval(value.LassoDrawing)
     let _LassoVolume_ = FSharp.Data.Adaptive.cval(value.LassoVolume)
     let _LassoEnabled_ = FSharp.Data.Adaptive.cval(value.LassoEnabled)
+    let _ClipPlanes_ = FSharp.Data.Adaptive.cval(value.ClipPlanes)
+    let _ReferencePeekHeld_ = FSharp.Data.Adaptive.cval(value.ReferencePeekHeld)
+    let _CutawayActive_ = FSharp.Data.Adaptive.cval(value.CutawayActive)
+    let _CutawayMode_ = FSharp.Data.Adaptive.cval(value.CutawayMode)
+    let _ClipAboveIso_ = FSharp.Data.Adaptive.cval(value.ClipAboveIso)
+    let _RulerActive_ = FSharp.Data.Adaptive.cval(value.RulerActive)
     let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _Retarget_ = FSharp.Data.Adaptive.cval(value.Retarget)
+    let _PendingReg_ = FSharp.Data.Adaptive.cval(value.PendingReg)
+    let _RegistrationLog_ = FSharp.Data.Adaptive.cval(value.RegistrationLog)
+    let _AnchorReviewFilter_ = FSharp.Data.Adaptive.cval(value.AnchorReviewFilter)
+    let _LastSolve_ = FSharp.Data.Adaptive.cval(value.LastSolve)
+    let _AnchorReview_ = FSharp.Data.Adaptive.cval(value.AnchorReview)
+    let _AnchorPick_ = FSharp.Data.Adaptive.cval(value.AnchorPick)
+    let _PatchPicker_ = FSharp.Data.Adaptive.cval(value.PatchPicker)
+    let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
     let _MeshSensorTypes_ = FSharp.Data.Adaptive.cval(value.MeshSensorTypes)
     let _MeshDatasetErrors_ = FSharp.Data.Adaptive.cval(value.MeshDatasetErrors)
     let _MeshAlgorithmResidual_ = FSharp.Data.Adaptive.cval(value.MeshAlgorithmResidual)
-    let _ProvenanceHeatmap_ = FSharp.Data.Adaptive.cval(value.ProvenanceHeatmap)
+    let _HeatmapMode_ = FSharp.Data.Adaptive.cval(value.HeatmapMode)
+    let _HeatmapPrev_ = FSharp.Data.Adaptive.cval(value.HeatmapPrev)
     let _ProvenanceThreshold_ = FSharp.Data.Adaptive.cval(value.ProvenanceThreshold)
-    let _FalloffZoneOnly_ = FSharp.Data.Adaptive.cval(value.FalloffZoneOnly)
     let _FusionMode_ = FSharp.Data.Adaptive.cval(value.FusionMode)
     let _PanoramaOpen_ = FSharp.Data.Adaptive.cval(value.PanoramaOpen)
     let _Panoramas_ = FSharp.Data.Adaptive.cval(value.Panoramas)
@@ -53,15 +67,20 @@ type AdaptiveModel(value : Model) =
     let _PanoramaMode_ = FSharp.Data.Adaptive.cval(value.PanoramaMode)
     let _PanoramaBlend_ = FSharp.Data.Adaptive.cval(value.PanoramaBlend)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
-    let _ReferenceAxis_ = FSharp.Data.Adaptive.cval(value.ReferenceAxis)
-    let _Explore_ = FSharp.Data.Adaptive.cval(value.Explore)
-    let _ColorMode_ = FSharp.Data.Adaptive.cval(value.ColorMode)
     let _CardSystem_ = AdaptiveCardSystemModel(value.CardSystem)
+    let _HoverProbe_ = FSharp.Data.Adaptive.cval(value.HoverProbe)
+    let _ChartCursor_ = FSharp.Data.Adaptive.cval(value.ChartCursor)
+    let _ChartHoverMesh_ = FSharp.Data.Adaptive.cval(value.ChartHoverMesh)
+    let _ChartStickyMesh_ = FSharp.Data.Adaptive.cval(value.ChartStickyMesh)
+    let _WorkflowPinHover_ = FSharp.Data.Adaptive.cval(value.WorkflowPinHover)
+    let _ReviewAnchorHover_ = FSharp.Data.Adaptive.cval(value.ReviewAnchorHover)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
-    let _ExploreCardPos_ = FSharp.Data.Adaptive.cval(value.ExploreCardPos)
     let _LassoCardPos_ = FSharp.Data.Adaptive.cval(value.LassoCardPos)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
+    let _Study_ = FSharp.Data.Adaptive.cval(value.Study)
+    let _StudiesAvailable_ = FSharp.Data.Adaptive.cval(value.StudiesAvailable)
+    let _WorkflowPanelOpen_ = FSharp.Data.Adaptive.cval(value.WorkflowPanelOpen)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -95,15 +114,29 @@ type AdaptiveModel(value : Model) =
             _LassoDrawing_.Value <- value.LassoDrawing
             _LassoVolume_.Value <- value.LassoVolume
             _LassoEnabled_.Value <- value.LassoEnabled
+            _ClipPlanes_.Value <- value.ClipPlanes
+            _ReferencePeekHeld_.Value <- value.ReferencePeekHeld
+            _CutawayActive_.Value <- value.CutawayActive
+            _CutawayMode_.Value <- value.CutawayMode
+            _ClipAboveIso_.Value <- value.ClipAboveIso
+            _RulerActive_.Value <- value.RulerActive
             _MeshTransforms_.Value <- value.MeshTransforms
             _Registration_.Value <- value.Registration
             _Retarget_.Value <- value.Retarget
+            _PendingReg_.Value <- value.PendingReg
+            _RegistrationLog_.Value <- value.RegistrationLog
+            _AnchorReviewFilter_.Value <- value.AnchorReviewFilter
+            _LastSolve_.Value <- value.LastSolve
+            _AnchorReview_.Value <- value.AnchorReview
+            _AnchorPick_.Value <- value.AnchorPick
+            _PatchPicker_.Value <- value.PatchPicker
+            _Toast_.Value <- value.Toast
             _MeshSensorTypes_.Value <- value.MeshSensorTypes
             _MeshDatasetErrors_.Value <- value.MeshDatasetErrors
             _MeshAlgorithmResidual_.Value <- value.MeshAlgorithmResidual
-            _ProvenanceHeatmap_.Value <- value.ProvenanceHeatmap
+            _HeatmapMode_.Value <- value.HeatmapMode
+            _HeatmapPrev_.Value <- value.HeatmapPrev
             _ProvenanceThreshold_.Value <- value.ProvenanceThreshold
-            _FalloffZoneOnly_.Value <- value.FalloffZoneOnly
             _FusionMode_.Value <- value.FusionMode
             _PanoramaOpen_.Value <- value.PanoramaOpen
             _Panoramas_.Value <- value.Panoramas
@@ -111,15 +144,20 @@ type AdaptiveModel(value : Model) =
             _PanoramaMode_.Value <- value.PanoramaMode
             _PanoramaBlend_.Value <- value.PanoramaBlend
             _ScanPins_.Update(value.ScanPins)
-            _ReferenceAxis_.Value <- value.ReferenceAxis
-            _Explore_.Value <- value.Explore
-            _ColorMode_.Value <- value.ColorMode
             _CardSystem_.Update(value.CardSystem)
+            _HoverProbe_.Value <- value.HoverProbe
+            _ChartCursor_.Value <- value.ChartCursor
+            _ChartHoverMesh_.Value <- value.ChartHoverMesh
+            _ChartStickyMesh_.Value <- value.ChartStickyMesh
+            _WorkflowPinHover_.Value <- value.WorkflowPinHover
+            _ReviewAnchorHover_.Value <- value.ReviewAnchorHover
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
-            _ExploreCardPos_.Value <- value.ExploreCardPos
             _LassoCardPos_.Value <- value.LassoCardPos
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
+            _Study_.Value <- value.Study
+            _StudiesAvailable_.Value <- value.StudiesAvailable
+            _WorkflowPanelOpen_.Value <- value.WorkflowPanelOpen
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -146,15 +184,29 @@ type AdaptiveModel(value : Model) =
     member __.LassoDrawing = _LassoDrawing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoDraft>>
     member __.LassoVolume = _LassoVolume_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LassoVolume>>
     member __.LassoEnabled = _LassoEnabled_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ClipPlanes = _ClipPlanes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<ClipPlane>>
+    member __.ReferencePeekHeld = _ReferencePeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.CutawayActive = _CutawayActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.CutawayMode = _CutawayMode_ :> FSharp.Data.Adaptive.aval<ClipMode>
+    member __.ClipAboveIso = _ClipAboveIso_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.RulerActive = _RulerActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.Retarget = _Retarget_ :> FSharp.Data.Adaptive.aval<RetargetState>
+    member __.PendingReg = _PendingReg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PendingRegistration>>
+    member __.RegistrationLog = _RegistrationLog_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<RegStep>>
+    member __.AnchorReviewFilter = _AnchorReviewFilter_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.LastSolve = _LastSolve_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, LastSolveEntry>>
+    member __.AnchorReview = _AnchorReview_ :> FSharp.Data.Adaptive.aval<AnchorReviewState>
+    member __.AnchorPick = _AnchorPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<AnchorPickState>>
+    member __.PatchPicker = _PatchPicker_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PatchPickerState>>
+    member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MeshSensorTypes = _MeshSensorTypes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, SensorType>>
     member __.MeshDatasetErrors = _MeshDatasetErrors_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
     member __.MeshAlgorithmResidual = _MeshAlgorithmResidual_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
-    member __.ProvenanceHeatmap = _ProvenanceHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.HeatmapMode = _HeatmapMode_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
+    member __.HeatmapPrev = _HeatmapPrev_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
     member __.ProvenanceThreshold = _ProvenanceThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.FalloffZoneOnly = _FalloffZoneOnly_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.FusionMode = _FusionMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PanoramaOpen = _PanoramaOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.Panoramas = _Panoramas_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Panorama>>
@@ -162,13 +214,18 @@ type AdaptiveModel(value : Model) =
     member __.PanoramaMode = _PanoramaMode_ :> FSharp.Data.Adaptive.aval<PanoramaMode>
     member __.PanoramaBlend = _PanoramaBlend_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ScanPins = _ScanPins_
-    member __.ReferenceAxis = _ReferenceAxis_ :> FSharp.Data.Adaptive.aval<ReferenceAxisMode>
-    member __.Explore = _Explore_ :> FSharp.Data.Adaptive.aval<ExploreMode>
-    member __.ColorMode = _ColorMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CardSystem = _CardSystem_
+    member __.HoverProbe = _HoverProbe_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<HoverProbeState>>
+    member __.ChartCursor = _ChartCursor_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ChartCursor>>
+    member __.ChartHoverMesh = _ChartHoverMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.ChartStickyMesh = _ChartStickyMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.WorkflowPinHover = _WorkflowPinHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
+    member __.ReviewAnchorHover = _ReviewAnchorHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
-    member __.ExploreCardPos = _ExploreCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>
     member __.LassoCardPos = _LassoCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.Study = _Study_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<StudyShell>>
+    member __.StudiesAvailable = _StudiesAvailable_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
+    member __.WorkflowPanelOpen = _WorkflowPanelOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

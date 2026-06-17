@@ -55,8 +55,6 @@ type ScanPin = {
     // Second probe under the effective preview transforms while a
     // registration solve is pending (split violin). Never persisted.
     ProbePreview         : ProbeState
-    ProbeLockOrder       : bool
-    ProbeXRange          : ProbeXRange
     ContactRings         : ContactRingState
 }
 

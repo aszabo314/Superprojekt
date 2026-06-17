@@ -1,5 +1,5 @@
-//08a427fe-0170-f62f-f46c-ef217269eefc
-//cdd0877c-9a37-e132-27ad-5143127ddce5
+//c13595c9-504a-5047-63f3-22268c8c31f7
+//57ca5b16-664e-6839-ec7f-0f2c595bb443
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -81,7 +81,6 @@ type AdaptiveModel(value : Model) =
     let _Study_ = FSharp.Data.Adaptive.cval(value.Study)
     let _StudiesAvailable_ = FSharp.Data.Adaptive.cval(value.StudiesAvailable)
     let _WorkflowPanelOpen_ = FSharp.Data.Adaptive.cval(value.WorkflowPanelOpen)
-    let _RegistrationCardOpen_ = FSharp.Data.Adaptive.cval(value.RegistrationCardOpen)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -159,7 +158,6 @@ type AdaptiveModel(value : Model) =
             _Study_.Value <- value.Study
             _StudiesAvailable_.Value <- value.StudiesAvailable
             _WorkflowPanelOpen_.Value <- value.WorkflowPanelOpen
-            _RegistrationCardOpen_.Value <- value.RegistrationCardOpen
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -230,5 +228,4 @@ type AdaptiveModel(value : Model) =
     member __.Study = _Study_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<StudyShell>>
     member __.StudiesAvailable = _StudiesAvailable_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
     member __.WorkflowPanelOpen = _WorkflowPanelOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.RegistrationCardOpen = _RegistrationCardOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

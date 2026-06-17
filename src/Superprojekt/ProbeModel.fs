@@ -58,13 +58,6 @@ type ProbeState =
     | ProbeReady of ProbeResult
     | ProbeError of string
 
-type ProbeXRange =
-    | ProbeXAuto
-    | ProbeXHalf
-    | ProbeXTwo
-    | ProbeXTen
-    | ProbeXFit
-
 // Transient Ctrl-click probe: one global slot, never
 // cached, cleared on Escape / click elsewhere / timeout.
 type HoverProbeState = {
@@ -73,33 +66,3 @@ type HoverProbeState = {
     Probe     : ProbeState
 }
 
-module ProbeXRange =
-    let window (r : ProbeResult) = function
-        | ProbeXAuto -> r.XAuto
-        | ProbeXHalf -> Range1d(-0.5, 0.5)
-        | ProbeXTwo  -> Range1d(-2.0, 2.0)
-        | ProbeXTen  -> Range1d(-10.0, 10.0)
-        | ProbeXFit  -> r.XFit
-
-    let label = function
-        | ProbeXAuto -> "auto"
-        | ProbeXHalf -> "±0.5"
-        | ProbeXTwo  -> "±2"
-        | ProbeXTen  -> "±10"
-        | ProbeXFit  -> "fit"
-
-    let tag = function
-        | ProbeXAuto -> "auto"
-        | ProbeXHalf -> "half"
-        | ProbeXTwo  -> "two"
-        | ProbeXTen  -> "ten"
-        | ProbeXFit  -> "fit"
-
-    let ofTag = function
-        | "half" -> ProbeXHalf
-        | "two"  -> ProbeXTwo
-        | "ten"  -> ProbeXTen
-        | "fit"  -> ProbeXFit
-        | _      -> ProbeXAuto
-
-    let all = [ ProbeXAuto; ProbeXHalf; ProbeXTwo; ProbeXTen; ProbeXFit ]

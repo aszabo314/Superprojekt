@@ -321,21 +321,18 @@ module CardsPin =
     // preview: the probe under the effective preview transforms while a
     // registration solve is pending — rows become paired half-violins
     // (committed left, preview right) with a median-shift arrow.
-    let probeRidgeJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (r : ProbeResult) =
-        let win = ProbeXRange.window r xRange
+    let probeRidgeJson (mini : bool) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (r : ProbeResult) =
+        // y-range is always auto; columns are always sorted by significance.
         let win =
             match preview with
-            | Some p ->
-                let w2 = ProbeXRange.window p xRange
-                Range1d(min win.Min w2.Min, max win.Max w2.Max)
-            | None -> win
+            | Some p -> Range1d(min r.XAuto.Min p.XAuto.Min, max r.XAuto.Max p.XAuto.Max)
+            | None -> r.XAuto
         let colorHex name =
             match Map.tryFind name colors with
             | Some c -> c4bToHex c
             | None -> "#1a56db"
         let rows =
-            if lockOrder then r.Distributions
-            else r.Distributions |> Array.sortBy (fun d -> (if d.Count = 0 then 1 else 0), abs d.Median)
+            r.Distributions |> Array.sortBy (fun d -> (if d.Count = 0 then 1 else 0), abs d.Median)
         let appendKde (sb : System.Text.StringBuilder) (kde : (float * float)[]) =
             kde |> Array.iteri (fun j (x, y) ->
                 if j > 0 then sb.Append(',') |> ignore
@@ -372,9 +369,9 @@ module CardsPin =
         sb.Append("]}") |> ignore
         sb.ToString()
 
-    let probeStateJson (mini : bool) (lockOrder : bool) (xRange : ProbeXRange) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (probe : ProbeState) =
+    let probeStateJson (mini : bool) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (probe : ProbeState) =
         match probe with
-        | ProbeReady r -> probeRidgeJson mini lockOrder xRange sticky colors order preview r
+        | ProbeReady r -> probeRidgeJson mini sticky colors order preview r
         | ProbeError e -> sprintf "{\"status\":\"error\",\"reason\":\"%s\"}" (e.Replace("\\", "/").Replace("\"", "'"))
         | ProbeNone | ProbeRunning -> "{\"status\":\"running\"}"
 
@@ -387,11 +384,8 @@ module CardsPin =
         let isPoint = AVal.constant true
         let showOnly = Primitives.showWhen
 
-        let centreText = selectedPin |> AVal.map (function
-            | Some p -> sprintf "(%.2f, %.2f, %.2f) m" p.Centre.X p.Centre.Y p.Centre.Z
-            | None -> "—")
-        let innerText = selectedPin |> AVal.map (function
-            | Some p -> sprintf "%.2f m" p.InnerRadius
+        let readoutText = selectedPin |> AVal.map (function
+            | Some p -> sprintf "(%.2f, %.2f, %.2f) m · R %.2f m" p.Centre.X p.Centre.Y p.Centre.Z p.InnerRadius
             | None -> "—")
         div {
             Class "pin-card-body"
@@ -403,13 +397,7 @@ module CardsPin =
                     Class "pc-readout"
                     div {
                         Class "pc-readout-row"
-                        span { Class "pc-key"; "Centre" }
-                        span { Class "pc-val"; centreText }
-                    }
-                    div {
-                        Class "pc-readout-row"
-                        span { Class "pc-key"; "Inner R" }
-                        span { Class "pc-val"; innerText }
+                        span { Class "pc-val"; readoutText }
                     }
                 }
                 // M3C2 probe: ridgeline, x-range / lock-order controls,
@@ -443,7 +431,7 @@ module CardsPin =
                                     | ProbeReady r -> Some r
                                     | _ -> None
                                 else None
-                            probeStateJson false pin.ProbeLockOrder pin.ProbeXRange sticky pin.DatasetColors order preview pin.Probe
+                            probeStateJson false sticky pin.DatasetColors order preview pin.Probe
                         | None -> "{\"status\":\"none\"}")
                 // 3D → chart: the elevation cursor line at the 3D hover
                 // point's signed distance along the probe axis, shown only
@@ -516,14 +504,6 @@ module CardsPin =
                     | _ -> ()
                 let sources =
                     probeResult |> AVal.map (Option.map (fun r -> r.Sources))
-                let srcText =
-                    sources |> AVal.map (function
-                        | Some s -> sprintf "Data: %.3f m | Algo: %.3f m | Cond: %.4f m" s.DatasetError s.AlgorithmResid s.LocalConditioning
-                        | None -> "")
-                let emitForPin (mk : ScanPinId -> ScanPinMessage) =
-                    match AVal.force selectedPin with
-                    | Some p -> env.Emit [ScanPinMsg (mk p.Id)]
-                    | None -> ()
                 div {
                     Class "pc-probe"
                     div {
@@ -545,19 +525,15 @@ module CardsPin =
                         Attribute("type", "text")
                         Dom.OnInput(fun e -> onChartEvent e.Value)
                     }
+                    // Channel legend folded into a hover tooltip on the chart
+                    // (no always-on descriptive text line).
                     div {
                         Class "pc-ridge"
                         showOnly violinOn
+                        Attribute("title", "y = signed distance along the reference's local surface normal (0 = reference). Width = precision / roughness (shared density scale). Median tick = bias. Grey band = ±LoD95 detection limit; a median inside it is not significant (n.s.). Two lobes = two surfaces, not noise.")
                         probeJson |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
                         cursor3d |> AVal.map (fun j -> Some (Attribute("data-cursor", j)))
                         Primitives.observedRender "data-ridge" "{}" ridgelineJs
-                    }
-                    // Channel legend (OQ-1): what each violin channel encodes.
-                    div {
-                        Class "pc-violin-legend"
-                        showOnly violinOn
-                        Attribute("title", "y = signed distance along the reference's local surface normal (0 = reference). Width = precision / roughness (shared density scale). Median tick = bias. Grey band = ±LoD95 detection limit; a median inside it is not significant (n.s.). Two lobes = two surfaces, not noise.")
-                        "y: distance along normal · width: roughness · tick: bias · band: ±LoD95 (n.s. inside)"
                     }
                     // NUM replacement: per-mesh signed-distance numbers from
                     // the same probe, plus registration RMS before/after.
@@ -612,22 +588,10 @@ module CardsPin =
                         }
                     }
                     div {
-                        Class "pc-probe-controls"
-                        showOnly ((probeResult |> AVal.map Option.isSome, violinOn) ||> AVal.map2 (&&))
-                        Primitives.compactButtonBar
-                            (ProbeXRange.all |> List.map (fun xr ->
-                                ProbeXRange.label xr,
-                                (selectedPin |> AVal.map (function Some p -> p.ProbeXRange = xr | None -> false)),
-                                (fun () -> emitForPin (fun id -> SetProbeXRange(id, xr)))))
-                        Primitives.compactToggle "Lock order"
-                            (selectedPin |> AVal.map (function Some p -> p.ProbeLockOrder | None -> false))
-                            (fun () -> emitForPin ToggleProbeLockOrder)
-                    }
-                    div {
                         Class "pc-probe-caption"
                         (probeResult, meshOrderMap) ||> AVal.map2 (fun rr order ->
                             match rr with
-                            | Some r -> sprintf "ref %s · cylinder L %.1f m" (numbered order r.ReferenceMesh) r.Length
+                            | Some r -> sprintf "ref %s" (numbered order r.ReferenceMesh)
                             | None -> "")
                     }
                     div {
@@ -645,7 +609,6 @@ module CardsPin =
                         span { Class "pc-legend-item pc-bar-algorithm"; "Algorithm" }
                         span { Class "pc-legend-item pc-bar-conditioning"; "Conditioning" }
                     }
-                    div { Class "pc-provenance-readout"; srcText }
                 }
                 // Ensemble-registration correspondence: anchor status per
                 // mesh, residuals of the last coarse solve, fallback picks.
@@ -661,24 +624,16 @@ module CardsPin =
                     Class "pc-corr"
                     div {
                         Class "pc-probe-head"
-                        span { Class "pc-section-title"; "Correspondence" }
+                        span {
+                            Class "pc-section-title"
+                            // glossary kept as hover help, not an always-on line
+                            Attribute("title", "Landmark = one real spot in the world. Anchor = that landmark's mark on each individual mesh (one per mesh). Pin = the marker you drop to define the landmark and gather its anchors.")
+                            "Correspondence"
+                        }
                     }
                     // The one-click exclude/include toggle (sets enabled).
                     Primitives.compactToggle "Use as registration landmark" corrEnabled (fun () ->
                         emitForPinTop ToggleCorrespondence)
-                    // Micro-glossary (WP19): the three terms, standardized.
-                    div {
-                        Class "pc-glossary"
-                        Attribute("title", "Landmark = one real spot in the world. Anchor = that landmark's mark on each individual mesh (one per mesh). Pin = the marker you drop to define the landmark and gather its anchors. Map analogy: the place, the pins stuck through each transparency, and the act of pinning.")
-                        "landmark = one real spot · anchor = its mark on each mesh · pin = the marker you drop"
-                    }
-                    // Fresh-pin hint: distinguishes the influence zone from a
-                    // clickable picking area, shown until correspondence is on.
-                    div {
-                        Class "pc-fresh-hint"
-                        Primitives.showWhenNot corrEnabled
-                        "This pin marks one spot. Enable the landmark toggle to match it across meshes and pick an anchor per mesh."
-                    }
                     div {
                         Class "pc-corr-body"
                         showOnly corrEnabled
@@ -764,15 +719,6 @@ module CardsPin =
                                 Dom.OnClick(fun _ ->
                                     env.Emit [SetCutawayMode (match AVal.force model.CutawayMode with ClipGhost -> ClipHide | _ -> ClipGhost)])
                                 model.CutawayMode |> AVal.map (function ClipHide -> "hide" | _ -> "ghost")
-                            }
-                            // Focus box (Mode D): cutaway + top iso-plane at once.
-                            button {
-                                Class "tb-gear-btn"
-                                (model.CutawayActive, model.ClipPlanes) ||> AVal.map2 (fun ca cp ->
-                                    if ca && not (List.isEmpty cp) then Some (Class "btn-active") else None)
-                                Attribute("title", "Focus anchors: cut from the front and clip from the top at once, isolating this pin's anchor neighbourhood")
-                                Dom.OnClick(fun _ -> env.Emit [FocusAnchors])
-                                "⊡ Focus"
                             }
                             // Anchor↔reference rulers (distance / residual labels).
                             button {

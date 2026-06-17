@@ -24,8 +24,6 @@ type Message =
     | ToggleClipAboveIso
     // Lock the chart-driven iso-plane at a signed distance into ClipPlanes.
     | LockIsoPlane of float
-    // Focus box (Mode D): cutaway (front) + locked top iso-plane at once.
-    | FocusAnchors
     | ToggleRuler
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
@@ -113,7 +111,6 @@ type Message =
     | FlyToPanorama of int
     | StudiesLoaded of string[]
     | ToggleWorkflowPanel
-    | SetRegistrationCardOpen of bool
     // Workflow panel: camera fly-to (aspect supplied by the view — fovY
     // derives from the fixed 90° horizontal fov) and navigation actions.
     | FlyTo of FlyToTarget * aspect:float
@@ -168,5 +165,3 @@ and ScanPinMessage =
     | ProbePreviewComputed of ScanPinId * ProbeResult
     | ProbePreviewFailed of ScanPinId * string
     | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>
-    | ToggleProbeLockOrder of ScanPinId
-    | SetProbeXRange of ScanPinId * ProbeXRange

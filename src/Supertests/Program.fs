@@ -638,8 +638,8 @@ let readinessTests () =
         (d.Coarse |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "pending"))
     check "pending blocks fine"
         (d.Fine |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "pending"))
-    check "pending action focuses the pending block"
-        (d.Coarse |> List.exists (fun x -> x.Action = Some (FocusRegistrationCard SectionPending)))
+    check "pending blocker carries no nav action"
+        (d.Coarse |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "pending" && x.Action = None))
     check "pending kills both Ready entries" (ready d.Coarse @ ready d.Fine |> List.isEmpty)
 
 // ────────────────────── Workflow panel: fly-to math ────────────────────────

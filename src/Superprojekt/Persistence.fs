@@ -73,12 +73,11 @@ module Persistence =
             p.DatasetColors |> Map.toSeq
             |> Seq.map (fun (k, v) -> sprintf "%s:%s" (q k) (c4bJ v))
             |> String.concat ","
-        sprintf "{\"id\":%s,\"name\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"createdAt\":%s,\"probeLock\":%b,\"probeRange\":\"%s\"}"
+        sprintf "{\"id\":%s,\"name\":%s,\"phase\":\"%s\",\"centre\":%s,\"inner\":%s,\"corr\":%s,\"host\":%s,\"colors\":{%s},\"createdAt\":%s}"
             (q (guid.ToString())) (q p.Name) (pinPhaseTag p.Phase) (v3 p.Centre)
             (f p.InnerRadius) (corrJ p.Correspondence)
             (match p.HostMeshName with Some n -> q n | None -> "null")
             colors (q (p.CreatedAt.ToString("O")))
-            p.ProbeLockOrder (ProbeXRange.tag p.ProbeXRange)
 
     let serialize (model : Model) : string =
         let sb = StringBuilder()
@@ -194,14 +193,6 @@ module Persistence =
             match e.GetProperty("createdAt").GetString() |> DateTime.TryParse with
             | true, dt -> dt
             | _ -> DateTime.UtcNow
-        let probeLock =
-            match tryProp "probeLock" e with
-            | Some v -> v.GetBoolean()
-            | None -> false
-        let probeRange =
-            match tryProp "probeRange" e with
-            | Some v -> ProbeXRange.ofTag (v.GetString())
-            | None -> ProbeXAuto
         {
             Id = id
             Name =
@@ -217,8 +208,6 @@ module Persistence =
             DatasetColors = colors
             Probe = ProbeNone
             ProbePreview = ProbeNone
-            ProbeLockOrder = probeLock
-            ProbeXRange = probeRange
             ContactRings = RingsNone
         }
 

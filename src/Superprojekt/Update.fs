@@ -327,28 +327,6 @@ module Update =
                 if same then { model with ClipPlanes = [] }
                 else { model with ClipPlanes = [plane] }
             | None -> model
-        | FocusAnchors ->
-            // Toggle the focus box: cutaway (front, camera-relative) + a
-            // locked top iso-plane at the pin centre = a corner that isolates
-            // the anchor neighbourhood.
-            if model.CutawayActive && not (List.isEmpty model.ClipPlanes) then
-                { model with CutawayActive = false; ClipPlanes = [] }
-            else
-                let pid =
-                    match model.ScanPins.Placement with
-                    | AdjustingPin id -> Some id
-                    | _ -> model.ScanPins.SelectedPin
-                match pid |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
-                | Some pin ->
-                    let pv = PendingRegistration.isPreview model.PendingReg
-                    let axis =
-                        match ScanPin.effectiveProbe pv pin with
-                        | ProbeReady r -> r.Normal
-                        | _ -> ScanPin.axis pin
-                    let plane = { Origin = pin.Centre; Normal = axis; Axis = V3d.Zero
-                                  Mode = ClipSectionCap; CameraRelative = false }
-                    { model with CutawayActive = true; ClipPlanes = [plane] }
-                | None -> model
         | ToggleRuler ->
             { model with RulerActive = not model.RulerActive }
 
@@ -1265,8 +1243,6 @@ module Update =
             { model with StudiesAvailable = studies |> Array.toList }
         | ToggleWorkflowPanel ->
             { model with WorkflowPanelOpen = not model.WorkflowPanelOpen; WorkflowPinHover = None }
-        | SetRegistrationCardOpen v ->
-            { model with RegistrationCardOpen = v }
         // Workflow panel §4: keep orientation (phi/theta untouched), animate
         // centre + radius so the target subtends ~25 % of the viewport
         // height. User navigation input overrides the animation (existing
@@ -1292,12 +1268,6 @@ module Update =
                 env.Emit [ScanPinMsg (SelectPin (Some pinId))]
                 pulse ".pc-corr"
                 model
-            | FocusRegistrationCard section ->
-                pulse (match section with
-                       | SectionStage -> ".registration-card .reg-readiness"
-                       | SectionPending -> ".registration-card .reg-pending"
-                       | SectionHistory -> ".registration-card .reg-history")
-                { model with RegistrationCardOpen = true }
             | HighlightReferenceColumn ->
                 pulse ".left-panel .mesh-list"
                 { model with MenuOpen = true }

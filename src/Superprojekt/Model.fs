@@ -315,10 +315,9 @@ type Model =
         Study               : StudyShell option
         StudiesAvailable    : string list
 
-        // Registration workflow panel + registration card open state
-        // (model-side so navigation actions can open them; session-only).
+        // Registration panel open state (model-side so navigation actions can
+        // open it; session-only).
         WorkflowPanelOpen   : bool
-        RegistrationCardOpen : bool
     }
 
 // Committed vs effective (committed ∘ pending-delta) transforms, in render and
@@ -422,5 +421,4 @@ module Model =
             Study               = None
             StudiesAvailable    = []
             WorkflowPanelOpen   = false
-            RegistrationCardOpen = false
         }

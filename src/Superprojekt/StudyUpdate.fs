@@ -223,8 +223,7 @@ module StudyUpdate =
                         | OrbitMessage.PointerUp _ | OrbitMessage.Wheel _) -> Some "navigation"
         | SetActivePickingLayer (Some _) -> Some "layerCycle"
         | ScanPinMsg (EnterAnchorPlacement | PlaceAnchor _ | CommitPin) -> Some "pinPlace"
-        | ScanPinMsg (SetInnerRadius _ | RepositionPin _
-                     | ToggleProbeLockOrder _ | SetProbeXRange _ | DeletePin _) -> Some "pinEdit"
+        | ScanPinMsg (SetInnerRadius _ | RepositionPin _ | DeletePin _) -> Some "pinEdit"
         | EditPin _ -> Some "pinEdit"
         | CardMsg (CreateCardsForPin _) -> Some "pinCard"
         | HoverProbeAt _ -> Some "hoverProbe"
@@ -241,7 +240,7 @@ module StudyUpdate =
         | PatchPickerClick _ -> Some "coarseSolve"
         | ToggleMenu | SetVisible _ | ToggleMeshSolo _ | ShowAllMeshes
         | HideAllMeshes | JumpToMesh _ | SetRenderingMode _ -> Some "meshPanel"
-        | ToggleWorkflowPanel | NavTo _ | FlyTo _ -> Some "workflowPanel"
+        | ToggleWorkflowPanel | NavTo _ | FlyTo _ -> Some "registrationCard"
         | SetMeshSensorType _ | SetMeshDatasetError _
         | SetProvenanceThreshold _ -> Some "errorMetadata"
         | _ -> None

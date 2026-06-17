@@ -724,12 +724,12 @@ module View =
             GuiCards.lassoCard env model
             div {
                 Primitives.showWhen (StudyGate.featureOn model "registrationCard")
-                GuiCards.registrationCard env model
-                GuiCards.registrationToggleButton env model
-            }
-            div {
-                Primitives.showWhen (StudyGate.featureOn model "workflowPanel")
                 GuiWorkflow.workflowPanel env model (viewportSize :> aval<V2i>)
+                // study mode has no top bar — floating opener for the panel
+                div {
+                    Primitives.showWhen (StudyGate.studyActive model)
+                    GuiCards.registrationToggleButton env model
+                }
             }
             GuiCards.retargetCard env model
             GuiCards.anchorReviewCard env model

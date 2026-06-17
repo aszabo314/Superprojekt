@@ -42,8 +42,6 @@ module ScanPinUpdate =
             DatasetColors        = assignColors model.MeshNames
             Probe                = ProbeNone
             ProbePreview         = ProbeNone
-            ProbeLockOrder       = false
-            ProbeXRange          = ProbeXAuto
             ContactRings         = RingsNone
         }
 
@@ -134,12 +132,6 @@ module ScanPinUpdate =
         | ContactRingsComputed(id, rings) ->
             sp |> updatePin id (fun pin ->
                 if pin.ContactRings = RingsRunning then { pin with ContactRings = RingsReady rings } else pin)
-
-        | ToggleProbeLockOrder id ->
-            sp |> updatePin id (fun pin -> { pin with ProbeLockOrder = not pin.ProbeLockOrder })
-
-        | SetProbeXRange(id, r) ->
-            sp |> updatePin id (fun pin -> { pin with ProbeXRange = r })
 
     let handleMsg (env : Env<Message>) (model : Model) (msg : ScanPinMessage) =
         let sp = model.ScanPins

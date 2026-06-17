@@ -4,9 +4,11 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-// Registration workflow panel (spec §3): a pure view over the model. Every
-// mutation dispatches an existing message; the panel never issues server
-// queries. Standard floating-card chrome, four collapsible sections.
+// The Registration panel (formerly the "workflow panel"): the single
+// registration surface. A near-pure view over the model — every mutation
+// dispatches an existing message and it never issues server queries itself,
+// except the folded-in fine-ICP mode toggle and history rollback/reset.
+// Standard floating-card chrome, four collapsible sections.
 module GuiWorkflow =
 
     open Primitives
@@ -306,21 +308,11 @@ module GuiWorkflow =
                 |> IndexList.ofList)
             |> AList.ofAVal
 
-        let historyLine =
-            model.RegistrationLog |> AVal.map (fun log ->
-                match log with
-                | [] -> "No registration committed yet."
-                | step :: _ ->
-                    let outs = step.Outputs |> Map.toList |> List.map snd
-                    let rms =
-                        if List.isEmpty outs then "—"
-                        else
-                            sprintf "RMS %.3f→%.3f"
-                                (outs |> List.averageBy (fun o -> o.RmsBefore))
-                                (outs |> List.averageBy (fun o -> o.RmsAfter))
-                    sprintf "#%d %s %s · %s   (%d step%s)"
-                        step.Step (stageLabel step.Stage) step.Mode rms
-                        (List.length log) (if List.length log = 1 then "" else "s"))
+        let mode = model.Registration |> AVal.map (fun r -> r.Mode)
+        let logList =
+            model.RegistrationLog
+            |> AVal.map (fun log -> log |> List.mapi (fun i s -> i, s) |> IndexList.ofList)
+            |> AList.ofAVal
 
         // per visible moving mesh: last committed before/after + stage +
         // RMS-after series across committed steps (oldest → newest)
@@ -432,7 +424,7 @@ module GuiWorkflow =
             Cards.cardStyle model.WorkflowPanelOpen pos
             div {
                 Class "card-titlebar"
-                Cards.cardDragHandle (AVal.constant "Registration workflow") pos dragState (fun p ->
+                Cards.cardDragHandle (AVal.constant "Registration") pos dragState (fun p ->
                     transact (fun () -> committedPos.Value <- p))
                 button {
                     Class "card-btn-close"
@@ -534,14 +526,65 @@ module GuiWorkflow =
                                     | None -> ()
                                 })
                         }
+                        // Fine ICP mode (folded from the old registration card).
+                        div {
+                            showWhen (StudyGate.featureOn model "fineSolve")
+                            compactButtonBar [
+                                "Traditional ICP",
+                                    (mode |> AVal.map (fun m -> m = TraditionalIcp)),
+                                    (fun () -> env.Emit [SetRegistrationMode TraditionalIcp])
+                                "Region-restricted",
+                                    (mode |> AVal.map (fun m -> m = RegionRestrictedIcp)),
+                                    (fun () -> env.Emit [SetRegistrationMode RegionRestrictedIcp])
+                            ]
+                        }
+                        // History (newest first; only the newest step rolls back).
                         div {
                             Class "wfp-history"
-                            span { Class "wfp-history-line"; historyLine }
-                            button {
-                                Class "mb"
-                                Attribute("title", "Open the registration card's history")
-                                Dom.OnClick(fun _ -> env.Emit [NavTo (FocusRegistrationCard SectionHistory)])
-                                "▤"
+                            div {
+                                Class "reg-history-list"
+                                logList |> AList.map (fun (idx, step) ->
+                                    let rms =
+                                        let outs = step.Outputs |> Map.toList |> List.map snd
+                                        if List.isEmpty outs then "—"
+                                        else
+                                            let b = outs |> List.averageBy (fun o -> o.RmsBefore)
+                                            let a = outs |> List.averageBy (fun o -> o.RmsAfter)
+                                            sprintf "%.3f → %.3f m" b a
+                                    div {
+                                        Class "reg-history-row"
+                                        span {
+                                            Class "reg-history-label"
+                                            sprintf "#%d %s %s · RMS %s" step.Step (stageLabel step.Stage) step.Mode rms
+                                        }
+                                        button {
+                                            Class "mb"
+                                            Primitives.showWhen (StudyGate.featureOn model "rollback")
+                                            if idx <> 0 then Attribute("disabled", "disabled")
+                                            Attribute("title",
+                                                (if idx = 0 then "Roll this step back"
+                                                 else "Only the newest step can be rolled back"))
+                                            Dom.OnClick(fun _ -> env.Emit [RollbackRegStep])
+                                            "↩"
+                                        }
+                                    })
+                            }
+                            div {
+                                Class "lp-commit-row"
+                                button {
+                                    Class "lp-discard"
+                                    Primitives.showWhen (StudyGate.featureOn model "rollback")
+                                    Attribute("title", "Roll back every registration step (identity transforms, empty history)")
+                                    Dom.OnClick(fun _ -> env.Emit [ResetRegistration])
+                                    "↺ Reset"
+                                }
+                                button {
+                                    Class "lp-commit"
+                                    Primitives.showWhen (StudyGate.studyActive model)
+                                    Attribute("title", "Post the current committed transforms as your final result")
+                                    Dom.OnClick(fun _ -> env.Emit [StudyMsg StudySetAsFinal])
+                                    "★ Set as final"
+                                }
                             }
                         }
                     })

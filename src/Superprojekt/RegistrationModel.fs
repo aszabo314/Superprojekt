@@ -315,15 +315,9 @@ type Severity =
     | Ready
     | Info
 
-type RegCardSection =
-    | SectionStage
-    | SectionPending
-    | SectionHistory
-
 type NavAction =
     | OpenAnchorReview of meshFilter : string option
     | SelectPinOpenCard of ScanPinId
-    | FocusRegistrationCard of RegCardSection
     | HighlightReferenceColumn
     | RunCoarse
     | RunFine
@@ -386,10 +380,10 @@ module Readiness =
             l.Add { Severity = severity; Text = text; Action = action }
 
         if input.HasPending then
-            // blocks both stages — first so it leads either list
+            // blocks both stages — first so it leads either list. The panel
+            // shows the pending commit/discard inline, so no nav action.
             for l in [ coarse; fine ] do
-                add l Blocker "Commit or discard the pending result first"
-                    (Some (FocusRegistrationCard SectionPending))
+                add l Blocker "Commit or discard the pending result first" None
 
         if input.ReferenceMesh.IsNone then
             add coarse Blocker "Designate a reference mesh (★)" (Some HighlightReferenceColumn)

@@ -16,6 +16,24 @@ type LoadedMesh =
 
 let private cache = ConcurrentDictionary<struct(string * string * int), LoadedMesh>()
 
+// Aardvark's BbTree build is recursive. Non-uniformly sampled photogrammetry
+// meshes (e.g. JOB) drive it deep enough to overflow a thread-pool thread's
+// 1 MB stack, which takes the whole process down (StackOverflow is uncatchable).
+// Build on a dedicated thread with a large stack so build depth is never fatal.
+let private buildBbTree (boxes : Box3d[]) : BbTree =
+    let mutable tree = Unchecked.defaultof<BbTree>
+    let mutable err : exn = null
+    let work =
+        Threading.ThreadStart(fun () ->
+            try tree <- BbTree(boxes, BbTree.BuildFlags.CreateBoxArrays)
+            with e -> err <- e)
+    let t = Threading.Thread(work, 1 <<< 30)
+    t.IsBackground <- true
+    t.Start()
+    t.Join()
+    if not (isNull err) then raise err
+    tree
+
 let get (dataset : string) (name : string) (index : int) : LoadedMesh =
     cache.GetOrAdd(struct(dataset, name, index), fun _ ->
         Log.line "loading mesh %s/%s/%d" dataset name index
@@ -33,7 +51,7 @@ let get (dataset : string) (name : string) (index : int) : LoadedMesh =
                 let p2 = V3d pm.positions.[pm.indices.[ti * 3 + 2]]
                 Box3d(Fun.Min(p0, Fun.Min(p1, p2)), Fun.Max(p0, Fun.Max(p1, p2)))
             )
-        let bvh = BbTree(triBoxes, BbTree.BuildFlags.CreateBoxArrays)
+        let bvh = buildBbTree triBoxes
         { parsed = pm; device = device; geometry = geom; scene = scene; bvh = bvh }
     )
 

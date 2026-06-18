@@ -42,11 +42,9 @@ type Message =
     | ResetRegistration
     // Correspondence anchors.
     | ToggleCorrespondence of ScanPinId
-    | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * candidates:AnchorCandidate[]
+    // Seeded correspondence markers apply immediately (no review modal).
+    | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[]
     | AnchorSeedFailed of string
-    | SetAnchorDecision of ScanPinId * mesh:string * AnchorDecision
-    | ApplyAnchorReview
-    | CancelAnchorReview
     | SetAnchor of ScanPinId * mesh:string * point:V3d * source:AnchorSource
     | StartAnchorPick of ScanPinId * mesh:string
     | CancelAnchorPick
@@ -100,7 +98,6 @@ type Message =
     | SetChartCursor of ChartCursor option
     | SetChartHoverMesh of string option
     | SetWorkflowPinHover of ScanPinId option
-    | SetReviewAnchorHover of (ScanPinId * string) option
     | ChartColumnClick of meshName:string
     | ClearChartSticky
     | TogglePanorama

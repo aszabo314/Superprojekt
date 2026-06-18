@@ -29,10 +29,11 @@ module AnchorSource =
         | "patch2d" -> AnchorPatch2D | "pick3d" -> AnchorPick3D
         | "violin" -> AnchorViolinAxial | _ -> AnchorAuto
 
+// One correspondence marker point per (pin × moving mesh). A stored marker is
+// an applied correspondence — there is no separate accept/reject state.
 type MeshAnchor = {
     Point    : V3d
     Source   : AnchorSource
-    Accepted : bool
 }
 
 type Correspondence = {
@@ -316,7 +317,7 @@ type Severity =
     | Info
 
 type NavAction =
-    | OpenAnchorReview of meshFilter : string option
+    | ReseedCorrespondence of meshFilter : string option
     | SelectPinOpenCard of ScanPinId
     | HighlightReferenceColumn
     | RunCoarse
@@ -397,13 +398,13 @@ module Readiness =
             for mesh, n in counts do
                 if n < 3 then
                     add coarse Blocker
-                        (sprintf "%s: needs %d more accepted anchor(s)" mesh (3 - n))
-                        (Some (OpenAnchorReview (Some mesh)))
+                        (sprintf "%s: needs %d more correspondence marker(s)" mesh (3 - n))
+                        (Some (ReseedCorrespondence (Some mesh)))
 
         for pin in input.EnabledPins do
             if pin.Unresolved > 0 then
                 add coarse Warning
-                    (sprintf "Pin %s: %d anchor(s) unresolved" pin.Label pin.Unresolved)
+                    (sprintf "Pin %s: %d mesh(es) without a marker" pin.Label pin.Unresolved)
                     (Some (SelectPinOpenCard pin.Id))
 
         if List.length input.EnabledPins >= 3 && lambdaRatioOf input < 1e-3 then
@@ -477,7 +478,7 @@ module RegJson =
         let anchors =
             c.Anchors |> Map.toSeq
             |> Seq.map (fun (m, a) ->
-                sprintf "%s:{\"p\":%s,\"src\":%s,\"acc\":%b}" (q m) (v3 a.Point) (q (AnchorSource.tag a.Source)) a.Accepted)
+                sprintf "%s:{\"p\":%s,\"src\":%s}" (q m) (v3 a.Point) (q (AnchorSource.tag a.Source)))
             |> String.concat ","
         let residuals =
             c.Residuals |> Map.toSeq
@@ -497,7 +498,6 @@ module RegJson =
                     p.Name, {
                         Point    = rV3 (p.Value.GetProperty "p")
                         Source   = AnchorSource.ofTag (p.Value.GetProperty("src").GetString())
-                        Accepted = p.Value.GetProperty("acc").GetBoolean()
                     })
                 |> Map.ofSeq
             | None -> Map.empty
@@ -666,28 +666,7 @@ module HeatmapMode =
     let tag = function HeatOff -> "off" | HeatProvenance -> "prov" | HeatDiff -> "diff"
     let ofTag = function "prov" -> HeatProvenance | "diff" -> HeatDiff | _ -> HeatOff
 
-// Auto-seed review (spec §4) — clone of the retarget review flow, one row per
-// (pin × mesh) seeded anchor.
-type AnchorDecision =
-    | AnchorUndecided
-    | AnchorAccept
-    | AnchorReject
-
-type AnchorCandidate = {
-    PinId              : ScanPinId
-    Mesh               : string
-    Point              : V3d
-    ProjectionDistance : float
-    InnerRadius        : float
-    Decision           : AnchorDecision
-}
-
-type AnchorReviewState =
-    | AnchorReviewIdle
-    | AnchorReviewSeeding
-    | AnchorReviewing of AnchorCandidate[]
-
-// One-shot 3D anchor pick (spec §8.1).
+// One-shot 3D correspondence-marker pick (spec §8.1).
 type AnchorPickState = {
     PinId : ScanPinId
     Mesh  : string

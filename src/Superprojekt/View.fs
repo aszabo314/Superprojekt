@@ -139,15 +139,6 @@ module View =
                     let origin = pts |> Array.minBy (fun p -> (p - camWorld).LengthSquared)
                     Some { Origin = origin; Normal = axis; Axis = axis; Mode = mode; CameraRelative = true }
             AVal.custom (fun t ->
-                // Auto-cutaway during anchor review so the candidates show
-                // despite occluders (Mode B, over all candidate points).
-                match model.AnchorReview.GetValue t with
-                | AnchorReviewing cands when cands.Length >= 2 ->
-                    let pts =
-                        cands |> Array.choose (fun c ->
-                            if System.Double.IsFinite c.ProjectionDistance then Some c.Point else None)
-                    camCutaway pts ClipGhost t
-                | _ ->
                 if not (model.CutawayActive.GetValue t) then None
                 else
                     match effectiveId.GetValue t with
@@ -163,17 +154,15 @@ module View =
                                 let cc = model.CommonCentroid.GetValue t
                                 let pts =
                                     corr.Anchors |> Map.toSeq
-                                    |> Seq.choose (fun (mesh, a) ->
-                                        if not a.Accepted then None
-                                        else
+                                    |> Seq.map (fun (mesh, a) ->
                                             match PendingRegistration.delta mesh pending with
                                             | Some d ->
                                                 let scale = DatasetScale.forMesh scales mesh
                                                 let c = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
                                                 let wb = RigidTransform.renderToWorld scale cc c
                                                 let wa = RigidTransform.renderToWorld scale cc (RegLog.effective c d)
-                                                Some ((wb.Inverse * wa).Forward.TransformPos a.Point)
-                                            | None -> Some a.Point)
+                                                (wb.Inverse * wa).Forward.TransformPos a.Point
+                                            | None -> a.Point)
                                     |> Array.ofSeq
                                 // Direction is anchored to the pin axis (probe
                                 // normal), not a PCA of the anchors — the PCA is
@@ -732,7 +721,6 @@ module View =
                 }
             }
             GuiCards.retargetCard env model
-            GuiCards.anchorReviewCard env model
             GuiCards.panoramaCard env model
             GuiOverlays.previewBanner model (fun b -> transact (fun () -> previewSwap.Value <- b))
             GuiOverlays.toast model

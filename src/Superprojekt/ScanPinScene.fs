@@ -273,7 +273,6 @@ module ScanPinScene =
                             let glyphR =
                                 ScanPin.renderLength scaleActive (max 0.05 (pin.InnerRadius * 0.12))
                             for KeyValue(mesh, a) in corr.Anchors do
-                                if a.Accepted then
                                     let pWorld =
                                         match worldDeltaOf mesh with
                                         | Some d -> d.Forward.TransformPos a.Point
@@ -453,63 +452,6 @@ module ScanPinScene =
                 }
             ]
 
-        // Review candidate anchors (WP16): during AnchorReviewing, draw each
-        // candidate as a hollow tetra glyph in a pending colour (amber
-        // undecided / green accept / red reject) with a connector to its pin's
-        // reference anchor — visible before Apply, so the review modal's
-        // decisions can be judged in 3D (Mode B cutaway is auto-active).
-        let reviewCandidates =
-            let tetra =
-                let s = 1.0 / sqrt 3.0
-                [| V3d(s, s, s); V3d(s, -s, -s); V3d(-s, s, -s); V3d(-s, -s, s) |]
-            let tetraEdges = [| 0, 1; 0, 2; 0, 3; 1, 2; 1, 3; 2, 3 |]
-            let segs =
-                AVal.custom (fun t ->
-                    match model.AnchorReview.GetValue t with
-                    | AnchorReviewing cands ->
-                        let cc = model.CommonCentroid.GetValue t
-                        let scale = datasetScale.GetValue t
-                        let pins = pinsVal.GetValue t
-                        // Hovering a candidate row in the review dialog lights
-                        // its glyph + connector up thick + bright (UI→3D).
-                        let hover = model.ReviewAnchorHover.GetValue t
-                        let out = ResizeArray<V3d * V3d * V4d * float>()
-                        for c in cands do
-                            if System.Double.IsFinite c.ProjectionDistance then
-                                let isHover = hover = Some (c.PinId, c.Mesh)
-                                let baseCol, a =
-                                    match c.Decision with
-                                    | AnchorAccept    -> V3d(0.13, 0.70, 0.36), 0.95
-                                    | AnchorReject    -> V3d(0.86, 0.15, 0.15), 0.75
-                                    | AnchorUndecided -> V3d(0.85, 0.47, 0.02), 0.95
-                                let col =
-                                    if isHover then V4d(baseCol * 0.45 + V3d.III * 0.55, 1.0)
-                                    else V4d(baseCol, a)
-                                let glyphW = if isHover then 3.5 else 1.2
-                                let lineW = if isHover then 3.0 else 1.0
-                                let p = ScanPin.renderCentre cc scale c.Point
-                                let glyphR = ScanPin.renderLength scale (max 0.05 (c.InnerRadius * (if isHover then 0.1 else 0.06)))
-                                for (i, j) in tetraEdges do
-                                    out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, col, glyphW)
-                                match HashMap.tryFind c.PinId pins
-                                      |> Option.bind ScanPin.correspondence
-                                      |> Option.bind (fun cr -> cr.RefAnchor) with
-                                | Some ra -> out.Add(p, ScanPin.renderCentre cc scale ra, col, lineW)
-                                | None -> ()
-                        out.ToArray()
-                    | _ -> [||])
-            ASet.ofList [
-                sg {
-                    Sg.Active notFullscreen
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.NoEvents
-                    Lines.render segs
-                }
-            ]
-
         // Patch-picker 2D→3D linking (patchHover is a view-local cval set by
         // the cell JS — pointer moves never touch the reducer): while a patch
         // cell is hovered, every sampled vertex inside the cell's current
@@ -658,4 +600,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; reviewCandidates; patchLink; studyFlags])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; patchLink; studyFlags])

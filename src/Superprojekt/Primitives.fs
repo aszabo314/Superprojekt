@@ -195,22 +195,17 @@ module ReadinessView =
                     match ScanPin.correspondence p with
                     | Some c when c.Enabled && p.Phase = PinPhase.Committed ->
                         let rel = 1.0
-                        let accepted =
+                        let marked =
                             movingVisible
-                            |> List.filter (fun m ->
-                                match Map.tryFind m c.Anchors with
-                                | Some a -> a.Accepted
-                                | None -> false)
+                            |> List.filter (fun m -> Map.containsKey m c.Anchors)
                             |> Set.ofList
                         Some {
                             Id            = id
                             Label         = p.Name
                             RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, max 0.01 rel)
-                            Accepted      = accepted
-                            AcceptedTotal =
-                                c.Anchors |> Map.toList
-                                |> List.filter (fun (_, a) -> a.Accepted) |> List.length
-                            Unresolved    = List.length movingVisible - Set.count accepted
+                            Accepted      = marked
+                            AcceptedTotal = c.Anchors.Count
+                            Unresolved    = List.length movingVisible - Set.count marked
                         }
                     | _ -> None)
             {

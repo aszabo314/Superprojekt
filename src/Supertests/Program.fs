@@ -213,8 +213,8 @@ let regJsonTests () =
         RefDistance = 0.125
         Anchors     =
             Map.ofList [
-                "ds/B", { Point = V3d(10.0, 20.0, 30.0); Source = AnchorPatch2D; Accepted = true }
-                "ds/C", { Point = V3d(-1.0, 2.5, 3.75); Source = AnchorAuto; Accepted = false }
+                "ds/B", { Point = V3d(10.0, 20.0, 30.0); Source = AnchorPatch2D }
+                "ds/C", { Point = V3d(-1.0, 2.5, 3.75); Source = AnchorAuto }
             ]
         Residuals   = Map.ofList [ "ds/B", 0.042 ]
     }
@@ -599,10 +599,10 @@ let readinessTests () =
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 2 }
     check "pair deficit blocker per mesh"
-        (d.Coarse |> List.filter (fun x -> x.Severity = Blocker && x.Text.Contains "more accepted") |> List.length = 2)
+        (d.Coarse |> List.filter (fun x -> x.Severity = Blocker && x.Text.Contains "more correspondence marker") |> List.length = 2)
     check "deficit counts the gap" (d.Coarse |> List.exists (fun x -> x.Text.Contains "needs 1 more"))
-    check "deficit action opens filtered review"
-        (d.Coarse |> List.exists (fun x -> x.Action = Some (OpenAnchorReview (Some "A"))))
+    check "deficit action reseeds the filtered mesh"
+        (d.Coarse |> List.exists (fun x -> x.Action = Some (ReseedCorrespondence (Some "A"))))
     check "2 pins not ready" (ready d.Coarse |> List.isEmpty)
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 3 }
@@ -620,8 +620,8 @@ let readinessTests () =
 
     let pinU = mkRPin "pu" (Some (V3d(9.0, 1.0, 2.0), 1.0)) [ "A" ] 2
     let d = Readiness.compute { baseInput with EnabledPins = pinU :: pinsN 3 }
-    check "unresolved anchors → warning"
-        (d.Coarse |> List.exists (fun x -> x.Severity = Warning && x.Text.Contains "unresolved"))
+    check "missing-marker mesh → warning"
+        (d.Coarse |> List.exists (fun x -> x.Severity = Warning && x.Text.Contains "without a marker"))
     check "unresolved action opens the pin card"
         (d.Coarse |> List.exists (fun x -> x.Action = Some (SelectPinOpenCard pinU.Id)))
 

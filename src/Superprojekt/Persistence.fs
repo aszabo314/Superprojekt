@@ -359,7 +359,6 @@ module Persistence =
                     LastSolve = lastSolve
                     // Transient registration state never survives a load.
                     PendingReg = None
-                    AnchorReview = AnchorReviewIdle
                     AnchorPick = None
                     PatchPicker = None
                     GhostSilhouette = sOrElseB "ghostSilhouette" model.GhostSilhouette

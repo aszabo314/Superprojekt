@@ -1,5 +1,5 @@
-//c13595c9-504a-5047-63f3-22268c8c31f7
-//57ca5b16-664e-6839-ec7f-0f2c595bb443
+//2e25abb2-109a-8492-4bd5-72ac0a5799aa
+//eebefe33-2922-7cbc-81a0-00d2503af00f
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -48,9 +48,7 @@ type AdaptiveModel(value : Model) =
     let _Retarget_ = FSharp.Data.Adaptive.cval(value.Retarget)
     let _PendingReg_ = FSharp.Data.Adaptive.cval(value.PendingReg)
     let _RegistrationLog_ = FSharp.Data.Adaptive.cval(value.RegistrationLog)
-    let _AnchorReviewFilter_ = FSharp.Data.Adaptive.cval(value.AnchorReviewFilter)
     let _LastSolve_ = FSharp.Data.Adaptive.cval(value.LastSolve)
-    let _AnchorReview_ = FSharp.Data.Adaptive.cval(value.AnchorReview)
     let _AnchorPick_ = FSharp.Data.Adaptive.cval(value.AnchorPick)
     let _PatchPicker_ = FSharp.Data.Adaptive.cval(value.PatchPicker)
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
@@ -73,7 +71,6 @@ type AdaptiveModel(value : Model) =
     let _ChartHoverMesh_ = FSharp.Data.Adaptive.cval(value.ChartHoverMesh)
     let _ChartStickyMesh_ = FSharp.Data.Adaptive.cval(value.ChartStickyMesh)
     let _WorkflowPinHover_ = FSharp.Data.Adaptive.cval(value.WorkflowPinHover)
-    let _ReviewAnchorHover_ = FSharp.Data.Adaptive.cval(value.ReviewAnchorHover)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _LassoCardPos_ = FSharp.Data.Adaptive.cval(value.LassoCardPos)
@@ -125,9 +122,7 @@ type AdaptiveModel(value : Model) =
             _Retarget_.Value <- value.Retarget
             _PendingReg_.Value <- value.PendingReg
             _RegistrationLog_.Value <- value.RegistrationLog
-            _AnchorReviewFilter_.Value <- value.AnchorReviewFilter
             _LastSolve_.Value <- value.LastSolve
-            _AnchorReview_.Value <- value.AnchorReview
             _AnchorPick_.Value <- value.AnchorPick
             _PatchPicker_.Value <- value.PatchPicker
             _Toast_.Value <- value.Toast
@@ -150,7 +145,6 @@ type AdaptiveModel(value : Model) =
             _ChartHoverMesh_.Value <- value.ChartHoverMesh
             _ChartStickyMesh_.Value <- value.ChartStickyMesh
             _WorkflowPinHover_.Value <- value.WorkflowPinHover
-            _ReviewAnchorHover_.Value <- value.ReviewAnchorHover
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
             _LassoCardPos_.Value <- value.LassoCardPos
@@ -195,9 +189,7 @@ type AdaptiveModel(value : Model) =
     member __.Retarget = _Retarget_ :> FSharp.Data.Adaptive.aval<RetargetState>
     member __.PendingReg = _PendingReg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PendingRegistration>>
     member __.RegistrationLog = _RegistrationLog_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<RegStep>>
-    member __.AnchorReviewFilter = _AnchorReviewFilter_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.LastSolve = _LastSolve_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, LastSolveEntry>>
-    member __.AnchorReview = _AnchorReview_ :> FSharp.Data.Adaptive.aval<AnchorReviewState>
     member __.AnchorPick = _AnchorPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<AnchorPickState>>
     member __.PatchPicker = _PatchPicker_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PatchPickerState>>
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
@@ -220,7 +212,6 @@ type AdaptiveModel(value : Model) =
     member __.ChartHoverMesh = _ChartHoverMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.ChartStickyMesh = _ChartStickyMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.WorkflowPinHover = _WorkflowPinHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
-    member __.ReviewAnchorHover = _ReviewAnchorHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.LassoCardPos = _LassoCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>

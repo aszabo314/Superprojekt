@@ -263,11 +263,8 @@ type Model =
         // patch small-multiples picker).
         PendingReg            : PendingRegistration option
         RegistrationLog       : RegStep list
-        // Workflow-panel nav: filters the anchor-review modal to one mesh.
-        AnchorReviewFilter    : string option
         // Last solve diagnostics per mesh (workflow panel) — persisted.
         LastSolve             : Map<string, LastSolveEntry>
-        AnchorReview          : AnchorReviewState
         AnchorPick            : AnchorPickState option
         PatchPicker           : PatchPickerState option
         Toast                 : string option
@@ -299,11 +296,9 @@ type Model =
         ChartHoverMesh        : string option
         ChartStickyMesh       : string option
 
-        // UI→3D hover highlight: a pin row in the registration workflow card,
-        // and an individual (pin × mesh) candidate row in the anchor-review
-        // dialog. None = nothing hovered.
+        // UI→3D hover highlight: a pin row in the registration panel. None =
+        // nothing hovered.
         WorkflowPinHover      : ScanPinId option
-        ReviewAnchorHover     : (ScanPinId * string) option
 
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
@@ -388,9 +383,7 @@ module Model =
             Retarget              = RetargetState.initial
             PendingReg            = None
             RegistrationLog       = []
-            AnchorReviewFilter    = None
             LastSolve             = Map.empty
-            AnchorReview          = AnchorReviewIdle
             AnchorPick            = None
             PatchPicker           = None
             Toast                 = None
@@ -413,7 +406,6 @@ module Model =
             ChartHoverMesh        = None
             ChartStickyMesh       = None
             WorkflowPinHover      = None
-            ReviewAnchorHover     = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             LassoCardPos        = None

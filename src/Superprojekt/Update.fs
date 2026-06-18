@@ -58,7 +58,7 @@ module Update =
 
     let private setAnchor (id : ScanPinId) (mesh : string) (point : V3d) (source : AnchorSource) (sp : ScanPinModel) =
         sp |> updateCorr id (fun c ->
-            { c with Anchors = Map.add mesh { Point = point; Source = source; Accepted = true } c.Anchors })
+            { c with Anchors = Map.add mesh { Point = point; Source = source } c.Anchors })
 
     // Anchors are stored world-space at current committed poses; committing or
     // rolling back a step re-bases every anchor on a moved mesh by the
@@ -115,11 +115,11 @@ module Update =
             | Some c when c.Enabled -> Some id
             | _ -> None)
 
-    // §4 anchor auto-seed. refAnchor = pin centre (host = reference) or its
-    // closest-point projection onto the reference; per other loaded mesh, the
-    // closest point to the refAnchor. Accepted non-Auto anchors are never
-    // overwritten. One parallel fan-out; results land via AnchorsSeeded and
-    // open the review modal.
+    // §4 correspondence auto-seed. refAnchor = pin centre (host = reference) or
+    // its closest-point projection onto the reference; per other loaded mesh,
+    // the closest point to the refAnchor. Manually-picked (non-Auto) markers
+    // are never overwritten. One parallel fan-out; results land via
+    // AnchorsSeeded and apply immediately (no review modal).
     let private seedAnchors (env : Env<Message>) (model : Model) (pinIds : ScanPinId list) : Model =
         match model.Registration.ReferenceMesh with
         | None -> model
@@ -139,15 +139,14 @@ module Update =
                     pins |> List.map (fun pin ->
                         let keep =
                             match ScanPin.correspondence pin with
-                            | Some c ->
-                                c.Anchors |> Map.filter (fun _ a -> a.Accepted && a.Source <> AnchorAuto)
+                            | Some c -> c.Anchors |> Map.filter (fun _ a -> a.Source <> AnchorAuto)
                             | None -> Map.empty
-                        pin.Id, pin.Centre, pin.InnerRadius, pin.HostMeshName, keep)
+                        pin.Id, pin.Centre, pin.HostMeshName, keep)
                 task {
                     try
                         let! perPin =
                             jobs
-                            |> List.map (fun (pinId, centre, radius, host, keep) -> async {
+                            |> List.map (fun (pinId, centre, host, keep) -> async {
                                 let! refAnchor =
                                     if host = Some refMesh then async.Return (Some (centre, 0.0))
                                     else async {
@@ -165,46 +164,30 @@ module Update =
                                     let targets =
                                         meshes |> List.filter (fun m ->
                                             m <> refMesh && not (Map.containsKey m keep))
-                                    let! candidates =
+                                    let! seeded =
                                         targets
                                         |> List.map (fun mesh -> async {
-                                            let noProjection = {
-                                                PinId = pinId; Mesh = mesh; Point = ra
-                                                ProjectionDistance = System.Double.PositiveInfinity
-                                                InnerRadius = radius
-                                                Decision = AnchorReject
-                                            }
                                             try
                                                 let t = Map.tryFind mesh trafos |> Option.defaultValue Trafo3d.Identity
                                                 let cOwn = t.Backward.TransformPos ra
                                                 let! res = Query.closestPoint ApiConfig.apiBase.Value mesh 0 cOwn
-                                                return
-                                                    match res with
-                                                    | Some r ->
-                                                        let world = t.Forward.TransformPos r.point
-                                                        {
-                                                            PinId = pinId; Mesh = mesh; Point = world
-                                                            ProjectionDistance = (world - ra).Length
-                                                            InnerRadius = radius
-                                                            Decision = AnchorUndecided
-                                                        }
-                                                    | None -> noProjection
-                                            with _ -> return noProjection
+                                                return res |> Option.map (fun r -> pinId, mesh, t.Forward.TransformPos r.point)
+                                            with _ -> return None
                                         })
                                         |> Async.Parallel
-                                    return (pinId, Some (ra, dist), candidates)
+                                    return (pinId, Some (ra, dist), seeded |> Array.choose id)
                             })
                             |> Async.Parallel
                             |> Async.StartAsTask
                         let refUpdates =
                             perPin |> Array.choose (fun (pinId, raOpt, _) ->
                                 raOpt |> Option.map (fun (ra, d) -> pinId, ra, d))
-                        let candidates = perPin |> Array.collect (fun (_, _, cs) -> cs)
-                        env.Emit [AnchorsSeeded(refUpdates, candidates)]
+                        let seeded = perPin |> Array.collect (fun (_, _, s) -> s)
+                        env.Emit [AnchorsSeeded(refUpdates, seeded)]
                     with ex ->
                         env.Emit [AnchorSeedFailed ex.Message]
                 } |> ignore
-                { model with AnchorReview = AnchorReviewSeeding }
+                model
 
     let private updateCore (env : Env<Message>) (model : Model) (msg : Message) =
         // §6 state guards: while a solve preview is pending, actions that
@@ -340,10 +323,11 @@ module Update =
                 invalidateProbes { model with Registration = { model.Registration with ReferenceMesh = mesh } }
             match mesh with
             | Some _ -> seedAnchors env model (correspondenceEnabledIds model)
-            | None -> { model with AnchorReview = AnchorReviewIdle }
+            | None -> model
 
-        // Stage 1 · Coarse: weighted landmark solve per visible moving mesh
-        // with ≥3 accepted pairs, in parallel; results land in PendingReg.
+        // Stage 1 · Correspondence alignment: weighted rigid solve per visible
+        // moving mesh with ≥3 correspondence-marker pairs, in parallel; results
+        // land in PendingReg.
         | SolveCoarse ->
             let reg = model.Registration
             match reg.ReferenceMesh with
@@ -365,8 +349,8 @@ module Update =
                     enabledPins
                     |> List.choose (fun (pinId, ra, rel, anchors) ->
                         match Map.tryFind mesh anchors with
-                        | Some a when a.Accepted -> Some (pinId, ra, a.Point, rel)
-                        | _ -> None)
+                        | Some a -> Some (pinId, ra, a.Point, rel)
+                        | None -> None)
                     |> Array.ofList
                 let solvable, unsolved =
                     visibleMoving |> List.partition (fun m -> (pairsFor m).Length >= 3)
@@ -376,7 +360,7 @@ module Update =
                         CoarseInputs (
                             enabledPins
                             |> List.map (fun (pinId, _, rel, anchors) ->
-                                pinId, rel, anchors |> Map.filter (fun _ a -> a.Accepted) |> Map.map (fun _ a -> a.Source))
+                                pinId, rel, anchors |> Map.map (fun _ a -> a.Source))
                             |> Array.ofList)
                     for mesh in solvable do
                         let pairs = pairsFor mesh
@@ -401,7 +385,7 @@ module Update =
                     { model with
                         PendingReg = Some {
                             Stage    = StageCoarse
-                            Mode     = "landmarks"
+                            Mode     = "correspondence"
                             Inputs   = inputs
                             Results  = Map.empty
                             Unsolved = unsolved
@@ -641,57 +625,30 @@ module Update =
                 let model = { model with ScanPins = sp }
                 if next.Enabled then
                     if model.Registration.ReferenceMesh.IsSome then seedAnchors env model [pinId]
-                    else showToast env "Designate a reference mesh (★) to seed anchors" model
+                    else showToast env "Designate a reference mesh (★) to seed correspondence markers" model
                 else model
             | None -> model
-        | AnchorsSeeded(refUpdates, candidates) ->
+        | AnchorsSeeded(refUpdates, seeded) ->
             let sp =
                 refUpdates |> Array.fold (fun sp (pinId, ra, dist) ->
                     updateCorr pinId (fun c -> { c with RefAnchor = Some ra; RefDistance = dist }) sp)
                     model.ScanPins
-            // Seeded anchors land immediately (Auto, unaccepted); the review
-            // modal then flips `accepted` per decision.
+            // Seeded correspondence markers apply immediately (Auto source).
             let sp =
-                candidates |> Array.fold (fun sp c ->
-                    if System.Double.IsInfinity c.ProjectionDistance then sp
-                    else
-                        updateCorr c.PinId (fun corr ->
-                            { corr with Anchors = Map.add c.Mesh { Point = c.Point; Source = AnchorAuto; Accepted = false } corr.Anchors }) sp)
+                seeded |> Array.fold (fun sp (pinId, mesh, point) ->
+                    updateCorr pinId (fun corr ->
+                        { corr with Anchors = Map.add mesh { Point = point; Source = AnchorAuto } corr.Anchors }) sp)
                     sp
-            { model with
-                ScanPins = sp
-                AnchorReview = if candidates.Length > 0 then AnchorReviewing candidates else AnchorReviewIdle }
+            { model with ScanPins = sp }
         | AnchorSeedFailed reason ->
-            showToast env "Anchor seeding failed — see debug log"
+            showToast env "Correspondence seeding failed — see debug log"
                 { model with
-                    AnchorReview = AnchorReviewIdle
-                    DebugLog = model.DebugLog.InsertAt(0, sprintf "anchor seeding failed: %s" reason) }
-        | SetAnchorDecision(pinId, mesh, decision) ->
-            match model.AnchorReview with
-            | AnchorReviewing cs ->
-                let updated =
-                    cs |> Array.map (fun c ->
-                        if c.PinId = pinId && c.Mesh = mesh then { c with Decision = decision } else c)
-                { model with AnchorReview = AnchorReviewing updated }
-            | _ -> model
-        | ApplyAnchorReview ->
-            match model.AnchorReview with
-            | AnchorReviewing cs ->
-                let sp =
-                    cs |> Array.fold (fun sp c ->
-                        if c.Decision = AnchorAccept && not (System.Double.IsInfinity c.ProjectionDistance) then
-                            setAnchor c.PinId c.Mesh c.Point AnchorAuto sp
-                        else sp)
-                        model.ScanPins
-                { model with ScanPins = sp; AnchorReview = AnchorReviewIdle; AnchorReviewFilter = None; ReviewAnchorHover = None }
-            | _ -> model
-        | CancelAnchorReview ->
-            { model with AnchorReview = AnchorReviewIdle; AnchorReviewFilter = None; ReviewAnchorHover = None }
+                    DebugLog = model.DebugLog.InsertAt(0, sprintf "correspondence seeding failed: %s" reason) }
         | SetAnchor(pinId, mesh, point, source) ->
             { model with ScanPins = setAnchor pinId mesh point source model.ScanPins }
         | StartAnchorPick(pinId, mesh) ->
             if PendingRegistration.isPreview model.PendingReg then
-                showToast env "Anchor picking is disabled while a solve preview is pending" model
+                showToast env "Correspondence-marker picking is disabled while a solve preview is pending" model
             else
                 { model with AnchorPick = Some { PinId = pinId; Mesh = mesh } }
         | CancelAnchorPick ->
@@ -714,9 +671,7 @@ module Update =
                         candidates
                         |> List.tryFind (fun m ->
                             Some m <> refMesh && m <> ap.Mesh
-                            && (match Map.tryFind m corr.Anchors with
-                                | Some a -> not a.Accepted
-                                | None -> false))
+                            && not (Map.containsKey m corr.Anchors))
                     | None -> None
                 { model with
                     ScanPins = sp
@@ -941,7 +896,6 @@ module Update =
                     LassoVolume = None
                     LassoEnabled = true
                     PendingReg = None
-                    AnchorReview = AnchorReviewIdle
                     AnchorPick = None
                     PatchPicker = None
                     Toast = None
@@ -1222,8 +1176,6 @@ module Update =
             if model.ChartHoverMesh = m then model else { model with ChartHoverMesh = m }
         | SetWorkflowPinHover h ->
             if model.WorkflowPinHover = h then model else { model with WorkflowPinHover = h }
-        | SetReviewAnchorHover h ->
-            if model.ReviewAnchorHover = h then model else { model with ReviewAnchorHover = h }
         | ChartColumnClick mesh ->
             let sticky = if model.ChartStickyMesh = Some mesh then None else Some mesh
             { model with ChartStickyMesh = sticky }
@@ -1261,9 +1213,8 @@ module Update =
             let pulse (selector : string) =
                 try JSRuntime.Instance.InvokeVoid("SuperPulse", selector) with _ -> ()
             match action with
-            | OpenAnchorReview meshFilter ->
-                seedAnchors env { model with AnchorReviewFilter = meshFilter }
-                    (correspondenceEnabledIds model)
+            | ReseedCorrespondence _ ->
+                seedAnchors env model (correspondenceEnabledIds model)
             | SelectPinOpenCard pinId ->
                 env.Emit [ScanPinMsg (SelectPin (Some pinId))]
                 pulse ".pc-corr"

@@ -153,7 +153,7 @@ module GuiWorkflow =
                 span {
                     Class "wfp-chip wfp-chip-cond"
                     showWhen condWarn
-                    Attribute("title", "Last solve flagged near-collinear anchors — rotation weakly constrained")
+                    Attribute("title", "Last solve flagged near-collinear correspondence markers — rotation weakly constrained")
                     "⚠"
                 }
                 span {
@@ -193,9 +193,8 @@ module GuiWorkflow =
                             input.VisibleMovingMeshes |> List.map (fun m ->
                                 let state =
                                     match Map.tryFind m c.Anchors with
-                                    | Some a when a.Accepted -> 2   // filled
-                                    | Some _ -> 1                   // hollow (seeded)
-                                    | None -> 0                     // red ring (missing)
+                                    | Some _ -> 2   // filled (marker present)
+                                    | None -> 0     // red ring (missing)
                                 Cards.numbered order m, colourOf m, state)
                         let accepted = dots |> List.filter (fun (_, _, st) -> st = 2) |> List.length
                         let resid =
@@ -243,14 +242,12 @@ module GuiWorkflow =
                             span {
                                 Class (match state with
                                        | 2 -> "wfp-dot wfp-dot-filled"
-                                       | 1 -> "wfp-dot wfp-dot-hollow"
                                        | _ -> "wfp-dot wfp-dot-missing")
                                 Attribute("title",
                                     sprintf "%s — %s" mesh
                                         (match state with
-                                         | 2 -> "accepted"
-                                         | 1 -> "seeded, not accepted"
-                                         | _ -> "no anchor"))
+                                         | 2 -> "marker present"
+                                         | _ -> "no marker"))
                                 // border + fill via currentColor (the Css API
                                 // has no BorderColor; colour is data-driven)
                                 Style [ Css.Color (if state = 0 then "#dc2626" else colour) ]
@@ -266,13 +263,13 @@ module GuiWorkflow =
                 }
                 button {
                     Class "mb"
-                    Attribute("title", "Re-open the anchor review (re-projects anchors onto the meshes)")
-                    Dom.OnClick(fun _ -> env.Emit [NavTo (OpenAnchorReview None)])
+                    Attribute("title", "Re-seed correspondence markers (re-projects onto the meshes)")
+                    Dom.OnClick(fun _ -> env.Emit [NavTo (ReseedCorrespondence None)])
                     "⟳"
                 }
                 button {
                     Class "mb"
-                    Attribute("title", "Exclude from the correspondence solve")
+                    Attribute("title", "Demote to a measure-only scanpin (drops it from the solve)")
                     Dom.OnClick(fun _ -> env.Emit [ToggleCorrespondence id])
                     "⊘"
                 }
@@ -473,7 +470,7 @@ module GuiWorkflow =
                                     span { Class "wfp-pin-label"; label }
                                     button {
                                         Class "mb"
-                                        Attribute("title", "Enable as correspondence landmark (auto-seeds anchors)")
+                                        Attribute("title", "Make this a registration pin (auto-seeds correspondence markers)")
                                         Dom.OnClick(fun _ -> env.Emit [ToggleCorrespondence id])
                                         "＋"
                                     }

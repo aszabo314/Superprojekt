@@ -160,7 +160,6 @@ module StudyEvents =
                 add "anchorSet" (obj' [ "pinId", j (string pid); "mesh", j mesh
                                         "source", j (string source) ])
             | AnchorPickHit _ -> add "anchorSet" (obj' [ "source", j "pick3d" ])
-            | ApplyAnchorReview -> add "anchorAccepted" "{}"
             | ToggleCorrespondence _ -> add "correspondenceToggled" "{}"
             | RunRegistration ->
                 let cur =
@@ -235,7 +234,7 @@ module StudyUpdate =
         | CommitRegistration -> Some "commit"
         | RollbackRegStep | ResetRegistration -> Some "rollback"
         | DiscardRegistration | SetReferenceMesh _ -> Some "registrationCard"
-        | ToggleCorrespondence _ | SetAnchorDecision _ | ApplyAnchorReview
+        | ToggleCorrespondence _
         | SetAnchor _ | StartAnchorPick _ | OpenPatchPicker _
         | PatchPickerClick _ -> Some "coarseSolve"
         | ToggleMenu | SetVisible _ | ToggleMeshSolo _ | ShowAllMeshes
@@ -310,7 +309,6 @@ module StudyUpdate =
             LassoVolume = None
             LassoEnabled = true
             PendingReg = None
-            AnchorReview = AnchorReviewIdle
             AnchorPick = None
             PatchPicker = None
             Toast = None

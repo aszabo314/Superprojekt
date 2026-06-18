@@ -67,8 +67,6 @@ module GuiOverlays =
                                     let vp = viewportSize.GetValue t
                                     let refR = ScanPin.renderCentre cc s refA
                                     corr.Anchors |> Map.toList |> List.choose (fun (mesh, a) ->
-                                        if not a.Accepted then None
-                                        else
                                             let hasDelta = (PendingRegistration.delta mesh pending).IsSome
                                             let aw =
                                                 match PendingRegistration.delta mesh pending with

@@ -304,7 +304,7 @@ module CardsPin =
     // Three-source stacked bar for a data-srcs = [d,a,c] attribute.
     let probeBarJs = [
         "  if(!d || d.length < 3) return;"
-        "  var labels = ['Dataset error (sensor / reconstruction)','Algorithm residual (registration, correlated across the mesh)','Local conditioning (geometric observability of the anchor)'];"
+        "  var labels = ['Dataset error (sensor / reconstruction)','Algorithm residual (registration, correlated across the mesh)','Local conditioning (geometric observability of the marker)'];"
         "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
         "  var total = d[0] + d[1] + d[2];"
         "  if(total <= 0) return;"
@@ -478,7 +478,7 @@ module CardsPin =
                         // double-transformed on commit, so block like the
                         // other pickers.
                         if AVal.force previewActive then
-                            env.Emit [ShowToast "Anchor picking is disabled while a solve preview is pending"]
+                            env.Emit [ShowToast "Correspondence-marker picking is disabled while a solve preview is pending"]
                         else
                             match AVal.force selectedPin, parseInvariant parts.[1] with
                             | Some pin, Some dv when parts.[2] <> "" ->
@@ -627,12 +627,12 @@ module CardsPin =
                         span {
                             Class "pc-section-title"
                             // glossary kept as hover help, not an always-on line
-                            Attribute("title", "Landmark = one real spot in the world. Anchor = that landmark's mark on each individual mesh (one per mesh). Pin = the marker you drop to define the landmark and gather its anchors.")
+                            Attribute("title", "A correspondence is one real spot in the world, marked on each mesh by a correspondence marker point (one per mesh). Making a pin a registration pin gathers those markers and feeds them to the solve.")
                             "Correspondence"
                         }
                     }
-                    // The one-click exclude/include toggle (sets enabled).
-                    Primitives.compactToggle "Use as registration landmark" corrEnabled (fun () ->
+                    // The one-click toggle: registration pin ⟺ has a correspondence.
+                    Primitives.compactToggle "Make this a registration pin" corrEnabled (fun () ->
                         emitForPinTop ToggleCorrespondence)
                     div {
                         Class "pc-corr-body"
@@ -644,11 +644,11 @@ module CardsPin =
                                 | Some c, Some pin ->
                                     match c.RefAnchor with
                                     | Some _ when c.RefDistance > 2.0 * pin.InnerRadius ->
-                                        sprintf "⚠ reference anchor %.2f m off the pin (> 2× radius)" c.RefDistance
+                                        sprintf "⚠ reference marker %.2f m off the pin (> 2× radius)" c.RefDistance
                                     | Some _ when c.RefDistance > 0.0 ->
-                                        sprintf "reference anchor projected, Δ %.3f m" c.RefDistance
-                                    | Some _ -> "reference anchor = pin centre"
-                                    | None -> "no reference anchor yet — designate a ★ reference mesh"
+                                        sprintf "reference marker projected, Δ %.3f m" c.RefDistance
+                                    | Some _ -> "reference marker = pin centre"
+                                    | None -> "no reference marker yet — designate a ★ reference mesh"
                                 | _ -> "")
                             (corr, selectedPin) ||> AVal.map2 (fun cOpt po ->
                                 match cOpt, po with
@@ -671,11 +671,10 @@ module CardsPin =
                                     span {
                                         Class "pc-corr-acc"
                                         anchor |> AVal.map (function
-                                            | Some a when a.Accepted -> Some (Class "pc-corr-acc-on")
-                                            | _ -> None)
+                                            | Some _ -> Some (Class "pc-corr-acc-on")
+                                            | None -> None)
                                         anchor |> AVal.map (function
-                                            | Some a when a.Accepted -> sprintf "✓ %s" (AnchorSource.label a.Source)
-                                            | Some a -> sprintf "○ %s" (AnchorSource.label a.Source)
+                                            | Some a -> sprintf "✓ %s" (AnchorSource.label a.Source)
                                             | None -> "—")
                                     }
                                     span {
@@ -686,7 +685,7 @@ module CardsPin =
                                     }
                                     button {
                                         Class "mb"
-                                        Attribute("title", "Pick this anchor in 3D — one click on this mesh (Esc cancels)")
+                                        Attribute("title", "Pick this correspondence marker in 3D — one click on this mesh (Esc cancels)")
                                         Dom.OnClick(fun _ ->
                                             match AVal.force selectedPin with
                                             | Some p -> env.Emit [StartAnchorPick(p.Id, mesh)]
@@ -699,16 +698,16 @@ module CardsPin =
                             Class "pc-corr-actions"
                             button {
                                 Class "tb-gear-btn"
-                                Attribute("title", "Pick anchors in co-oriented surface patches")
+                                Attribute("title", "Pick correspondence markers in co-oriented surface patches")
                                 Dom.OnClick(fun _ -> emitForPinTop OpenPatchPicker)
                                 "▦ Pick in patches"
                             }
-                            // Anchor cutaway (Mode B): section through this
-                            // pin's accepted anchors, facing the camera.
+                            // Cutaway (Mode B): section through this pin's
+                            // correspondence markers, facing the camera.
                             button {
                                 Class "tb-gear-btn"
                                 model.CutawayActive |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
-                                Attribute("title", "Cutaway: slice the meshes through this pin's anchors, facing the camera (needs ≥2 accepted anchors)")
+                                Attribute("title", "Cutaway: slice the meshes through this pin's correspondence markers, facing the camera (needs ≥2 markers)")
                                 Dom.OnClick(fun _ -> env.Emit [ToggleCutaway])
                                 model.CutawayActive |> AVal.map (fun on -> if on then "✂ Cutaway ✓" else "✂ Cutaway")
                             }
@@ -720,11 +719,11 @@ module CardsPin =
                                     env.Emit [SetCutawayMode (match AVal.force model.CutawayMode with ClipGhost -> ClipHide | _ -> ClipGhost)])
                                 model.CutawayMode |> AVal.map (function ClipHide -> "hide" | _ -> "ghost")
                             }
-                            // Anchor↔reference rulers (distance / residual labels).
+                            // Marker↔reference rulers (distance / residual labels).
                             button {
                                 Class "tb-gear-btn"
                                 model.RulerActive |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
-                                Attribute("title", "Rulers: label each accepted anchor↔reference distance (the pair gap; shrinks to the residual after a solve)")
+                                Attribute("title", "Rulers: label each correspondence marker↔reference distance (the pair gap; shrinks to the residual after a solve)")
                                 Dom.OnClick(fun _ -> env.Emit [ToggleRuler])
                                 "📏 Rulers"
                             }
@@ -902,7 +901,7 @@ module CardsPin =
                                     "    var gb = mkCanvas(), gt = mkCanvas();"
                                     "    wrap.appendChild(box);"
                                     "    el.appendChild(wrap);"
-                                    "    wrap.title = 'scroll = zoom, drag = pan, click the zoom label to reset' + (e.ref ? '' : ', click = set anchor');"
+                                    "    wrap.title = 'scroll = zoom, drag = pan, click the zoom label to reset' + (e.ref ? '' : ', click = set marker');"
                                     "    var order = [];"
                                     "    var tr3 = e.tris || [];"
                                     "    for(var i = 0; i + 2 < tr3.length; i += 3){ order.push([tr3[i], tr3[i+1], tr3[i+2]]); }"

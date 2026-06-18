@@ -32,8 +32,8 @@ module GuiWorkflow =
         | Severity.Ready -> "✔"
 
     let private stageLabel = function
-        | StageCoarse -> "coarse"
-        | StageFine -> "fine"
+        | StageCoarse -> "Stage 1"
+        | StageFine -> "Stage 2"
 
     let private hex (c : C4b) = sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B)
 
@@ -288,7 +288,7 @@ module GuiWorkflow =
             (model.PendingReg, meshOrderMap) ||> AVal.map2 (fun pr order ->
                 match pr with
                 | Some pr when not (Map.isEmpty pr.Results) ->
-                    let stage = match pr.Stage with StageCoarse -> "coarse" | StageFine -> "fine"
+                    let stage = match pr.Stage with StageCoarse -> "Stage 1 (correspondence)" | StageFine -> "Stage 2 (fine ICP)"
                     let line =
                         pr.Results |> Map.toList
                         |> List.map (fun (m, r) ->
@@ -306,6 +306,9 @@ module GuiWorkflow =
             |> AList.ofAVal
 
         let mode = model.Registration |> AVal.map (fun r -> r.Mode)
+        // Stage 2 (fine ICP) only becomes a control once a Stage-1 result is
+        // committed — before that it is not a co-equal option (C1).
+        let hasCommitted = model.RegistrationLog |> AVal.map (List.isEmpty >> not)
         let logList =
             model.RegistrationLog
             |> AVal.map (fun log -> log |> List.mapi (fun i s -> i, s) |> IndexList.ofList)
@@ -505,6 +508,10 @@ module GuiWorkflow =
                             }
                         }
                         div {
+                            Class "wfp-stage-label"
+                            "Stage 1 · Correspondence alignment"
+                        }
+                        div {
                             Class "wfp-diag-list"
                             diagList |> AList.map (fun d ->
                                 div {
@@ -523,9 +530,16 @@ module GuiWorkflow =
                                     | None -> ()
                                 })
                         }
-                        // Fine ICP mode (folded from the old registration card).
+                        // Stage 2 · Fine ICP — optional, and only a control once
+                        // a Stage-1 result is committed (C1).
                         div {
-                            showWhen (StudyGate.featureOn model "fineSolve")
+                            Class "wfp-stage2"
+                            showWhen ((StudyGate.featureOn model "fineSolve", hasCommitted) ||> AVal.map2 (&&))
+                            div { Class "wfp-stage-label"; "Stage 2 · Fine ICP (optional)" }
+                            div {
+                                Class "wfp-stage-note"
+                                "Optional refinement; weights toward your correspondences (region-restricted) or all overlap (traditional)."
+                            }
                             compactButtonBar [
                                 "Traditional ICP",
                                     (mode |> AVal.map (fun m -> m = TraditionalIcp)),

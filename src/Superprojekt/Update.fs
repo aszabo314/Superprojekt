@@ -15,6 +15,9 @@ module Update =
         new System.Threading.CancellationTokenSource()
     let mutable private patchPickerCts : System.Threading.CancellationTokenSource =
         new System.Threading.CancellationTokenSource()
+    // C3: surface the registration requirements the first time a registration
+    // pin is made this session (auto-open the panel once).
+    let mutable private requirementsSurfaced = false
 
     let private invalidateProbes (model : Model) =
         { model with
@@ -624,6 +627,13 @@ module Update =
                         Pins = HashMap.add pinId { pin with Correspondence = Some next } model.ScanPins.Pins }
                 let model = { model with ScanPins = sp }
                 if next.Enabled then
+                    // C3: first registration pin of the session surfaces the
+                    // readiness/requirements by opening the panel once.
+                    let model =
+                        if not requirementsSurfaced then
+                            requirementsSurfaced <- true
+                            { model with WorkflowPanelOpen = true }
+                        else model
                     if model.Registration.ReferenceMesh.IsSome then seedAnchors env model [pinId]
                     else showToast env "Designate a reference mesh (★) to seed correspondence markers" model
                 else model
@@ -655,10 +665,20 @@ module Update =
             { model with AnchorPick = None }
         | AnchorPickHit world ->
             match model.AnchorPick with
+            | Some ap when model.Registration.ReferenceMesh = Some ap.Mesh ->
+                // Editing the reference marker (F10): a 3D pick on the reference
+                // mesh moves RefAnchor (the marker every pair is measured from).
+                let dist =
+                    match HashMap.tryFind ap.PinId model.ScanPins.Pins with
+                    | Some pin -> (world - pin.Centre).Length
+                    | None -> 0.0
+                let sp =
+                    updateCorr ap.PinId (fun c -> { c with RefAnchor = Some world; RefDistance = dist }) model.ScanPins
+                { model with ScanPins = sp; AnchorPick = None }
             | Some ap ->
                 let sp = setAnchor ap.PinId ap.Mesh world AnchorPick3D model.ScanPins
-                // Auto-advance to the next mesh (panel order, continuing after
-                // the current one) with an unaccepted anchor for this pin.
+                // Auto-advance to the next moving mesh (panel order, continuing
+                // after the current one) that still has no marker for this pin.
                 let next =
                     match HashMap.tryFind ap.PinId sp.Pins |> Option.bind ScanPin.correspondence with
                     | Some corr ->

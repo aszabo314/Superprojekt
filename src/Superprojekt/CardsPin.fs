@@ -638,23 +638,41 @@ module CardsPin =
                         Class "pc-corr-body"
                         showOnly corrEnabled
                         div {
+                            Class "pc-corr-hint"
+                            "Registration needs ≥3 registration pins, each with a marker on every moving mesh."
+                        }
+                        div {
                             Class "pc-corr-ref"
-                            (corr, selectedPin) ||> AVal.map2 (fun cOpt po ->
-                                match cOpt, po with
-                                | Some c, Some pin ->
-                                    match c.RefAnchor with
-                                    | Some _ when c.RefDistance > 2.0 * pin.InnerRadius ->
-                                        sprintf "⚠ reference marker %.2f m off the pin (> 2× radius)" c.RefDistance
-                                    | Some _ when c.RefDistance > 0.0 ->
-                                        sprintf "reference marker projected, Δ %.3f m" c.RefDistance
-                                    | Some _ -> "reference marker = pin centre"
-                                    | None -> "no reference marker yet — designate a ★ reference mesh"
-                                | _ -> "")
                             (corr, selectedPin) ||> AVal.map2 (fun cOpt po ->
                                 match cOpt, po with
                                 | Some c, Some pin when c.RefAnchor.IsSome && c.RefDistance > 2.0 * pin.InnerRadius ->
                                     Some (Class "pc-corr-ref-warn")
                                 | _ -> None)
+                            span {
+                                (corr, selectedPin) ||> AVal.map2 (fun cOpt po ->
+                                    match cOpt, po with
+                                    | Some c, Some pin ->
+                                        match c.RefAnchor with
+                                        | Some _ when c.RefDistance > 2.0 * pin.InnerRadius ->
+                                            sprintf "⚠ reference marker %.2f m off the pin (> 2× radius)" c.RefDistance
+                                        | Some _ when c.RefDistance > 0.0 ->
+                                            sprintf "reference marker projected, Δ %.3f m" c.RefDistance
+                                        | Some _ -> "reference marker = pin centre"
+                                        | None -> "no reference marker yet — designate a ★ reference mesh"
+                                    | _ -> "")
+                            }
+                            // F10: the reference marker is editable too — pick it
+                            // on the reference mesh in 3D.
+                            button {
+                                Class "mb"
+                                Primitives.showWhen (refMeshOpt |> AVal.map Option.isSome)
+                                Attribute("title", "Pick / move the reference marker in 3D — click the reference mesh (Esc cancels)")
+                                Dom.OnClick(fun _ ->
+                                    match AVal.force selectedPin, AVal.force refMeshOpt with
+                                    | Some p, Some refMesh -> env.Emit [StartAnchorPick(p.Id, refMesh)]
+                                    | _ -> ())
+                                "⊕"
+                            }
                         }
                         div {
                             Class "pc-corr-rows"

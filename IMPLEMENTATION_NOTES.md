@@ -73,5 +73,9 @@ Status values: **done** / **reconciled** (built, but differs from the literal sp
 | §0 cull: anchor-review modal | done | `AnchorReview*` types/state/messages/card all removed; seeds apply immediately |
 | §0 rename (F11) | done | surface text: "landmark"/"anchor" → "registration pin"/"correspondence marker"; coarse mode label "landmarks"→"correspondence" |
 | §0 registration-pin ⟺ correspondence | reconciled | kept internal `Enabled` flag as the switch (decision #2); demote via ⊘ |
+| C1 legible staging | done | "Stage 1 · Correspondence alignment" / "Stage 2 · Fine ICP (optional)" labels; coarse Ready text + history relabelled; fine-mode toggle hidden until a Stage-1 commit (`hasCommitted`) + one-line note |
+| C2 default-apply, no gate | done | landed in WP1 (no modal) |
+| C2 F10 editable reference marker | done | ⊕ on the reference row → `StartAnchorPick` on the reference mesh; `AnchorPickHit` moves `RefAnchor` when the picked mesh is the reference |
+| C3 requirements early | done | first registration pin of the session auto-opens the panel (`requirementsSurfaced` flag) + inline hint in the pin card |
 </content>
 </invoke>

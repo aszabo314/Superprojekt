@@ -421,12 +421,12 @@ module Readiness =
 
         let coarseBlocked = coarse |> Seq.exists (fun d -> d.Severity = Blocker)
         if not coarseBlocked && counts |> List.exists (fun (_, n) -> n >= 3) then
-            add coarse Ready "Ready for coarse solve" (Some RunCoarse)
+            add coarse Ready "Ready for correspondence alignment" (Some RunCoarse)
 
         let fineBlocked = fine |> Seq.exists (fun d -> d.Severity = Blocker)
         if not fineBlocked then
             if not input.HasCommittedStep then
-                add fine Info "Run coarse first (recommended)" None
+                add fine Info "Run correspondence alignment first (recommended)" None
             elif not (List.isEmpty input.VisibleMovingMeshes) then
                 add fine Ready (sprintf "Ready for fine ICP (%s)" input.FineModeLabel) (Some RunFine)
 

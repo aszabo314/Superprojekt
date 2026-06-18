@@ -610,7 +610,7 @@ let readinessTests () =
     check "coarse Ready action" ((ready d.Coarse |> List.head).Action = Some RunCoarse)
     check "no coarse blockers when clear" (d.Coarse |> List.forall (fun x -> x.Severity <> Blocker))
     check "fine info before any commit"
-        (d.Fine |> List.exists (fun x -> x.Severity = Severity.Info && x.Text.Contains "coarse first"))
+        (d.Fine |> List.exists (fun x -> x.Severity = Severity.Info && x.Text.Contains "alignment first"))
     check "fine not ready before commit" (ready d.Fine |> List.isEmpty)
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 3; HasCommittedStep = true }

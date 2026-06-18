@@ -63,6 +63,8 @@ type ProbeState =
 type HoverProbeState = {
     ScreenPos : V2d
     Anchor    : V3d
+    // Probe-cylinder radius (metres) so the transient 3D body can be drawn.
+    Radius    : float
     Probe     : ProbeState
 }
 

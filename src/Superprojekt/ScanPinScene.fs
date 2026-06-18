@@ -227,6 +227,49 @@ module ScanPinScene =
                     }
                 ])
 
+        // A1: transient 3D body for the Ctrl+click hover probe — the same
+        // vocabulary as a placed pin (equator ring sized to the probe radius +
+        // a short axis line along the local normal) so a spot-check reads as a
+        // region probe in 3D, not just a tooltip. Cleared by the existing
+        // HoverProbe cascade (Esc / click / timeout).
+        let hoverProbeBody =
+            let segs =
+                AVal.custom (fun t ->
+                    match model.HoverProbe.GetValue t with
+                    | Some h ->
+                        match h.Probe with
+                        | ProbeReady r ->
+                            let cc = model.CommonCentroid.GetValue t
+                            let scale = datasetScale.GetValue t
+                            let cR = ScanPin.renderCentre cc scale h.Anchor
+                            let rR = ScanPin.renderLength scale h.Radius
+                            let nN = if r.Normal.Length > 1e-9 then r.Normal.Normalized else V3d.OOI
+                            let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
+                            let v = Vec.cross nN u
+                            let col = V4d(0.031, 0.569, 0.698, 0.95)
+                            let out = ResizeArray<V3d * V3d * V4d * float>()
+                            let segsN = 48
+                            for i in 0 .. segsN - 1 do
+                                let a0 = float i / float segsN * Constant.PiTimesTwo
+                                let a1 = float (i + 1) / float segsN * Constant.PiTimesTwo
+                                out.Add(cR + (u * cos a0 + v * sin a0) * rR,
+                                        cR + (u * cos a1 + v * sin a1) * rR, col, 2.0)
+                            out.Add(cR - nN * rR, cR + nN * rR, V4d(0.031, 0.569, 0.698, 0.7), 1.5)
+                            out.ToArray()
+                        | _ -> [||]
+                    | None -> [||])
+            ASet.ofList [
+                sg {
+                    Sg.Active notFullscreen
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render segs
+                }
+            ]
+
         // Correspondence visuals (always, not only during preview): accepted
         // anchors as small wireframe tetrahedra in the mesh palette colour
         // plus a thin line to the pin's reference anchor. Both follow the
@@ -600,4 +643,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; patchLink; studyFlags])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; hoverProbeBody; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; patchLink; studyFlags])

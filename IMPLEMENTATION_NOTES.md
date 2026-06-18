@@ -80,5 +80,6 @@ Status values: **done** / **reconciled** (built, but differs from the literal sp
 | B1 LoD = verdict | done | labelled band legend ("±LoD₉₅ detection limit") + per-mesh plain-language verdict line (significant / within noise n.s.) below the chart |
 | B2 strip readable | done | x-axis label "signed median offset (m)" + legend line; dot hover now also pulses the pin's rings in 3D (SetWorkflowPinHover); dot click already selects the pin |
 | B3 residual vs significance | done | caption: "Band = change significance. Alignment quality is the RMS residual in the Registration panel." |
+| A1 hover probe 3D body | done (needs browser check) | `HoverProbeState.Radius` added; `ScanPinScene.hoverProbeBody` draws an equator ring (probe radius) + short axis line (local normal) at the hit point in the accent colour; cleared by the existing cascade. Line geometry only — no shader change, but render not visually verified here |
 </content>
 </invoke>

@@ -1179,7 +1179,7 @@ module Update =
                         if not token.IsCancellationRequested then
                             env.Emit [HoverProbeResult (ProbeError ex.Message)]
                 } |> ignore
-                { model with HoverProbe = Some { ScreenPos = screenPx; Anchor = world; Probe = ProbeRunning } }
+                { model with HoverProbe = Some { ScreenPos = screenPx; Anchor = world; Radius = radius; Probe = ProbeRunning } }
         | HoverProbeResult st ->
             match model.HoverProbe with
             | Some h when h.Probe = ProbeRunning -> { model with HoverProbe = Some { h with Probe = st } }

@@ -1,5 +1,12 @@
 # Session-2 Implementation Notes
 
+**STATUS: iteration complete.** All spec items implemented across §0 + Parts A–E
+(A2 verified in browser by the participant); the only unbuilt piece is the
+optional A4 ridge/curvature emphasis (stretch, behind-a-flag). Branch
+`s2-scanpin-iteration`, 14 WP/fix commits off `master`, build clean, tests
+143/143. See the browser-verification checklist below for the GPU-dependent
+parts still worth a visual confirm (A3 ruler + brush).
+
 Living log for `ScanPin_session2_implementation_spec.md`. Per-item status at the bottom.
 Status values: **done** / **reconciled** (built, but differs from the literal spec — reason given) /
 **deferred** / **not-reproduced** (for bugs).

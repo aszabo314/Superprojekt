@@ -90,5 +90,9 @@ Status values: **done** / **reconciled** (built, but differs from the literal sp
 | E-F18 patch zoom-to-fit | done | first view zooms so the farthest sampled vertex reaches the circle edge (per-cell `views[id]` seed) |
 | E-F14 patch picker prominence | done | inline hint + accent-bordered "▦ Pick in patches" button when a pin is a registration pin |
 | E-F2 hover mini chart | done | numeric median ± half-IQR per moving mesh under the mini violin; y-scale already auto (XAuto). Largely subsumed by A1 |
+| A4 pick guide | done (needs browser check) | during a 3D marker pick, the reference marker's normal is drawn as a guide line (+ small cross) — the predicted landing is where it meets the target mesh |
+| A4 live landing marker / ridge emphasis | deferred | needs a per-cursor-move raycast (landing point) and local curvature (ridge emphasis); the guide line already shows the intersection visually |
+| A2 signed-distance surface color map | NOT STARTED — needs decision | requires new per-region/per-vertex signed-distance data on the GPU (server endpoint + shader colormap) OR extending the probe to return per-sample positions for point rendering; rendering cannot be visually verified in this environment |
+| A3 violin pick → 3D ruler + range brush | NOT STARTED — depends on A2 | the chart→3D elevation cursor exists; turning it into a measured ruler + a range brush over the contributing 3D samples needs A2's per-sample machinery |
 </content>
 </invoke>

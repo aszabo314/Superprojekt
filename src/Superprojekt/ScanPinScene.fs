@@ -227,6 +227,48 @@ module ScanPinScene =
                     }
                 ])
 
+        // A4: during a correspondence-marker 3D pick, draw the reference
+        // marker's normal as a guide line — the predicted correspondence is
+        // where this line meets the target mesh, so the user picks along it.
+        let pickGuide =
+            let segs =
+                AVal.custom (fun t ->
+                    match model.AnchorPick.GetValue t with
+                    | Some ap ->
+                        let pins = pinsVal.GetValue t
+                        match HashMap.tryFind ap.PinId pins with
+                        | Some pin ->
+                            match ScanPin.correspondence pin |> Option.bind (fun c -> c.RefAnchor) with
+                            | Some ra ->
+                                let cc = model.CommonCentroid.GetValue t
+                                let scale = datasetScale.GetValue t
+                                let nN = let a = ScanPin.axis pin in if a.Length > 1e-9 then a.Normalized else V3d.OOI
+                                let raR = ScanPin.renderCentre cc scale ra
+                                let len = ScanPin.renderLength scale (max 0.5 (pin.InnerRadius * 4.0))
+                                let cross = ScanPin.renderLength scale (max 0.1 (pin.InnerRadius * 0.25))
+                                let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
+                                let v = Vec.cross nN u
+                                let col = V4d(0.031, 0.569, 0.698, 0.85)
+                                let out = ResizeArray<V3d * V3d * V4d * float>()
+                                out.Add(raR - nN * len, raR + nN * len, col, 1.5)
+                                out.Add(raR - u * cross, raR + u * cross, col, 1.5)
+                                out.Add(raR - v * cross, raR + v * cross, col, 1.5)
+                                out.ToArray()
+                            | None -> [||]
+                        | None -> [||]
+                    | None -> [||])
+            ASet.ofList [
+                sg {
+                    Sg.Active notFullscreen
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render segs
+                }
+            ]
+
         // A1: transient 3D body for the Ctrl+click hover probe — the same
         // vocabulary as a placed pin (equator ring sized to the probe radius +
         // a short axis line along the local normal) so a spot-check reads as a
@@ -643,4 +685,4 @@ module ScanPinScene =
                 }
             ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; hoverProbeBody; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; patchLink; studyFlags])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; hoverProbeBody; pickGuide; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; patchLink; studyFlags])

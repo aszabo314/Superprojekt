@@ -94,5 +94,21 @@ Status values: **done** / **reconciled** (built, but differs from the literal sp
 | A4 live landing marker / ridge emphasis | deferred | needs a per-cursor-move raycast (landing point) and local curvature (ridge emphasis); the guide line already shows the intersection visually |
 | A2 signed-distance surface color map | done (NEEDS BROWSER CHECK) | user chose the canonical shader paint. New server endpoint `POST /api/query/region-distance` returns per-vertex signed M3C2 distance (cloud-to-mesh, signed by ref normal) in the served vertex order → aligns with the client buffer by construction. Client: `Model.SurfaceDistOn` + `SurfaceDistance` map; lazy debounced fetch (`ensureSurfaceDistance`, generation-guarded); `SurfaceDist` vertex attribute + `DistanceEncoding`/`DistLoD`/`DistScale` uniforms; diverging blue↔red colormap centred at 0 with ±LoD→neutral in `MeshShader.shade` (float32-clean). Per-selected-mesh only (soloed = chart-sticky column). Toggle = "⬢ 3D map" in the pin-card chart head. **Shader render + endpoint must be verified in a browser.** |
 | A3 violin pick → 3D ruler + range brush | NOT STARTED — build on verified A2 | ruler (F4) extends the existing elevation cursor; range brush (F7) can reuse A2's `SurfaceDist` attribute (shader emphasis of the brushed interval). Deferred so A2's shader is verified before stacking more unverifiable shader work |
+
+## Browser-verification checklist (the parts a build/test can't confirm)
+Run the app (restart the server first — it predates the new endpoint) and check:
+1. **A2 surface map** — open a pin card, enable **⬢ 3D map**, click a violin
+   column: that mesh paints blue↔red signed distance (0 = reference, near-zero
+   neutral). Only one mesh paints at a time. Confirm the GLSL compiles (no
+   `'double' … reserved word` in the browser console) — the shader is written
+   float32-only but only the in-browser compile is authoritative.
+2. **A1 hover body** — Ctrl+click terrain: a ring + axis line appears at the hit.
+3. **A4 pick guide** — start a ⊕ marker pick: the reference-normal guide line
+   shows where the correspondence should land.
+4. **F12 cutaway** — toggle ✂ on a pin with markers; orbit: markers + their
+   surface stay on the revealed side.
+5. **F15/F16 patches** — open the patch picker on VictoriaCrater (huge atlases
+   were shrunk): cells are textured (not black) and clipped to the circle with
+   hatched no-coverage areas.
 </content>
 </invoke>

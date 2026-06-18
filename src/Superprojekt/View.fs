@@ -128,16 +128,6 @@ module View =
             let effectiveId =
                 (model.ScanPins.Placement, model.ScanPins.SelectedPin) ||> AVal.map2 (fun pl sel ->
                     match pl with AdjustingPin id -> Some id | _ -> sel)
-            let camCutaway (pts : V3d[]) (mode : ClipMode) t =
-                if pts.Length < 2 then None
-                else
-                    let cc = model.CommonCentroid.GetValue t
-                    let axis = RegConditioning.dominantAxis pts
-                    let camLocRender = (model.Camera.view.GetValue t).Location
-                    let s = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
-                    let camWorld = ScanPin.worldCentre cc s camLocRender
-                    let origin = pts |> Array.minBy (fun p -> (p - camWorld).LengthSquared)
-                    Some { Origin = origin; Normal = axis; Axis = axis; Mode = mode; CameraRelative = true }
             AVal.custom (fun t ->
                 if not (model.CutawayActive.GetValue t) then None
                 else
@@ -176,7 +166,22 @@ module View =
                                 let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
                                 let camWorld = ScanPin.worldCentre cc s camLocRender
                                 let origin = originPts |> Array.minBy (fun p -> (p - camWorld).LengthSquared)
-                                Some { Origin = origin; Normal = axis; Axis = axis
+                                // F12: push the cut plane camera-ward of the nearest
+                                // marker by the pin radius so the markers and their
+                                // immediate surface are never clipped (the plane
+                                // slides around the protected region). Offset along the
+                                // same camera-facing, axis-perpendicular normal the
+                                // shader recomputes per frame.
+                                let fwd = (model.Camera.view.GetValue t).Forward
+                                let nAxis = if axis.Length > 1e-9 then axis.Normalized else V3d.OOI
+                                let toCam = -fwd
+                                let nPerp =
+                                    let m = toCam - nAxis * Vec.dot toCam nAxis
+                                    if m.Length > 1e-9 then m.Normalized
+                                    elif toCam.Length > 1e-9 then toCam.Normalized
+                                    else V3d.OOI
+                                let protectedOrigin = origin + nPerp * pin.InnerRadius
+                                Some { Origin = protectedOrigin; Normal = axis; Axis = axis
                                        Mode = model.CutawayMode.GetValue t; CameraRelative = true }
                             | _ -> None
                         | None -> None)

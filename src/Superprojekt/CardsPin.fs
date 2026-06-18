@@ -215,7 +215,7 @@ module CardsPin =
         "        if(qb > qa) ln(cx, sy(qa), cx, sy(qb), r.color, '2.5', null, '0.9');"
         "      }"
         "    }"
-        "    if(!mini) txt(cx, H - 4, grey ? '–' : 'n=' + r.count, 'middle', grey ? '#94a3b8' : '#475569', '8');"
+        "    if(!mini) txt(cx, H - 4, grey ? '–' : ((r.far ? 'far · ' : '') + 'n=' + r.count), 'middle', grey ? '#94a3b8' : (r.far ? '#b45309' : '#475569'), '8');"
         "    if(!mini && d.sticky && d.sticky === r.id){"
         "      var st = document.createElementNS(ns,'rect');"
         "      st.setAttribute('x', x0 + 1.5); st.setAttribute('y', plotY0 + 1.5);"
@@ -350,10 +350,18 @@ module CardsPin =
         let sb = System.Text.StringBuilder()
         sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"ymin\":%.5g,\"ymax\":%.5g,\"refstd\":%.5g,\"sticky\":\"%s\",\"rows\":["
                     mini win.Min win.Max refStd (sticky |> Option.defaultValue "")) |> ignore
+        // F5: a surface caught only because the 20 m probe cylinder is long —
+        // its samples sit far down the axis from the pin centre — is flagged
+        // non-local (axial offset from centre = RefOffset + median), so it is
+        // not read as real local disagreement.
+        let halfLen = r.Length * 0.5
         rows |> Array.iteri (fun i d ->
             if i > 0 then sb.Append(',') |> ignore
-            sb.Append(sprintf "{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"std\":%.5g,\"samples\":["
-                        d.MeshName (numbered order d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3 d.Std) |> ignore
+            let far =
+                d.MeshName <> r.ReferenceMesh && halfLen > 1e-6
+                && abs (d.Median + r.RefOffset) > 0.6 * halfLen
+            sb.Append(sprintf "{\"id\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"count\":%d,\"median\":%.5g,\"q1\":%.5g,\"q3\":%.5g,\"std\":%.5g,\"far\":%b,\"samples\":["
+                        d.MeshName (numbered order d.MeshName) (colorHex d.MeshName) d.Count d.Median d.Q1 d.Q3 d.Std far) |> ignore
             appendSamples sb d.Samples
             sb.Append("],\"kde\":[") |> ignore
             appendKde sb d.Kde
@@ -701,14 +709,22 @@ module CardsPin =
                                     | _ -> "")
                             }
                             // F10: the reference marker is editable too — pick it
-                            // on the reference mesh in 3D.
+                            // on the reference mesh in 3D. F8: re-click cancels.
+                            let refPickActive =
+                                (model.AnchorPick, selectedPin, refMeshOpt) |||> AVal.map3 (fun ap sp rm ->
+                                    match ap, sp, rm with
+                                    | Some a, Some p, Some refMesh -> a.PinId = p.Id && a.Mesh = refMesh
+                                    | _ -> false)
                             button {
                                 Class "mb"
                                 Primitives.showWhen (refMeshOpt |> AVal.map Option.isSome)
-                                Attribute("title", "Pick / move the reference marker in 3D — click the reference mesh (Esc cancels)")
+                                refPickActive |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
+                                Attribute("title", "Pick / move the reference marker in 3D — click the reference mesh (click again or Esc to cancel)")
                                 Dom.OnClick(fun _ ->
                                     match AVal.force selectedPin, AVal.force refMeshOpt with
-                                    | Some p, Some refMesh -> env.Emit [StartAnchorPick(p.Id, refMesh)]
+                                    | Some p, Some refMesh ->
+                                        if AVal.force refPickActive then env.Emit [CancelAnchorPick]
+                                        else env.Emit [StartAnchorPick(p.Id, refMesh)]
                                     | _ -> ())
                                 "⊕"
                             }
@@ -740,12 +756,21 @@ module CardsPin =
                                             | Some r -> sprintf "%.3f m" r
                                             | None -> "")
                                     }
+                                    let pickActive =
+                                        (model.AnchorPick, selectedPin) ||> AVal.map2 (fun ap sp ->
+                                            match ap, sp with
+                                            | Some a, Some p -> a.PinId = p.Id && a.Mesh = mesh
+                                            | _ -> false)
                                     button {
+                                        // F8: re-click cancels the live pick (toggle).
                                         Class "mb"
-                                        Attribute("title", "Pick this correspondence marker in 3D — one click on this mesh (Esc cancels)")
+                                        pickActive |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
+                                        Attribute("title", "Pick this correspondence marker in 3D — one click on this mesh (click again or Esc to cancel)")
                                         Dom.OnClick(fun _ ->
                                             match AVal.force selectedPin with
-                                            | Some p -> env.Emit [StartAnchorPick(p.Id, mesh)]
+                                            | Some p ->
+                                                if AVal.force pickActive then env.Emit [CancelAnchorPick]
+                                                else env.Emit [StartAnchorPick(p.Id, mesh)]
                                             | None -> ())
                                         "⊕"
                                     }
@@ -965,8 +990,10 @@ module CardsPin =
                                     "    order.sort(function(a, b){"
                                     "      return (e.pts[a[0]][2] + e.pts[a[1]][2] + e.pts[a[2]][2]) - (e.pts[b[0]][2] + e.pts[b[1]][2] + e.pts[b[2]][2]);"
                                     "    });"
+                                    // F15: an atlas that fails to load (CORS / decode / 0-size)
+                                    // must fall back to shaded height, never a black cell.
                                     "    var img = null;"
-                                    "    if(e.atlas){ var im = new Image(); im.onload = function(){ img = im; requestDraw(); }; im.src = e.atlas; }"
+                                    "    if(e.atlas){ var im = new Image(); im.onload = function(){ if(im.width > 0 && im.height > 0) img = im; requestDraw(); }; im.onerror = function(){ img = null; requestDraw(); }; im.src = e.atlas; }"
                                     "    function k(){ return maxR / d.r * st.z; }"
                                     "    function sx(u){ return c0 + (u - st.cx) * k(); }"
                                     "    function sy(v){ return c0 - (v - st.cy) * k(); }"
@@ -985,8 +1012,14 @@ module CardsPin =
                                     "    }"
                                     "    function drawBase(){"
                                     "      gb.clearRect(0, 0, size, size);"
-                                    "      gb.beginPath(); gb.arc(sx(0), sy(0), d.r * k(), 0, 6.2832);"
-                                    "      gb.fillStyle = '#f8fafc'; gb.fill();"
+                                    // F16: clip the surface to the pin footprint circle and hatch
+                                    // the uncovered area, so partial overlap reads as 'no coverage
+                                    // here', not 'not drawn'.
+                                    "      gb.save();"
+                                    "      gb.beginPath(); gb.arc(sx(0), sy(0), d.r * k(), 0, 6.2832); gb.clip();"
+                                    "      gb.fillStyle = '#f1f5f9'; gb.fillRect(0, 0, size, size);"
+                                    "      gb.strokeStyle = '#e2e8f0'; gb.lineWidth = 1;"
+                                    "      for(var hx = -size; hx < size * 2; hx += 8){ gb.beginPath(); gb.moveTo(hx, 0); gb.lineTo(hx - size, size); gb.stroke(); }"
                                     "      var shaded = d.shaded || !img;"
                                     "      order.forEach(function(tr){"
                                     "        var p0 = e.pts[tr[0]], p1 = e.pts[tr[1]], p2 = e.pts[tr[2]];"
@@ -1020,6 +1053,7 @@ module CardsPin =
                                     "          gb.beginPath(); gb.arc(x, y, 1.7, 0, 6.2832); gb.fillStyle = hcol(p[2]); gb.fill();"
                                     "        });"
                                     "      }"
+                                    "      gb.restore();"
                                     "      gb.beginPath(); gb.arc(sx(0), sy(0), d.r * k(), 0, 6.2832);"
                                     "      gb.strokeStyle = e.ref ? '#b45309' : '#cbd5e1'; gb.lineWidth = e.ref ? 2 : 1; gb.stroke();"
                                     "      var chx = sx(e.cross[0]), chy = sy(e.cross[1]);"

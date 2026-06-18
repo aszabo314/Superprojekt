@@ -81,5 +81,10 @@ Status values: **done** / **reconciled** (built, but differs from the literal sp
 | B2 strip readable | done | x-axis label "signed median offset (m)" + legend line; dot hover now also pulses the pin's rings in 3D (SetWorkflowPinHover); dot click already selects the pin |
 | B3 residual vs significance | done | caption: "Band = change significance. Alignment quality is the RMS residual in the Registration panel." |
 | A1 hover probe 3D body | done (needs browser check) | `HoverProbeState.Radius` added; `ScanPinScene.hoverProbeBody` draws an equator ring (probe radius) + short axis line (local normal) at the hit point in the accent colour; cleared by the existing cascade. Line geometry only — no shader change, but render not visually verified here |
+| D-F8 ⊕ pick toggle | done | both ⊕ buttons (per-mesh + reference) toggle the live pick + reflect active state (btn-active); re-click emits CancelAnchorPick |
+| D-F12 cutaway clips markers | reconciled (needs browser check) | cut plane is pushed camera-ward of the nearest marker by the pin radius along the shader's camera-facing normal, so markers + their immediate surface stay on the revealed side. Plane-placement fix (not a per-fragment cylinder protect) — simpler, no shader change. Removed the now-dead `camCutaway` helper |
+| D-F15 black patch | done | atlas `Image` gets `onerror` + a 0-dimension guard → falls back to shaded-height, never a black cell |
+| D-F16 partial footprint | done | the surface is clipped to the pin circle and the uncovered area is hatched (`#f1f5f9` + diagonals) so partial overlap reads as "no coverage here", with the circle outline on top |
+| D-F5 non-local samples | done | violin flags a distribution whose surface sits >0.6·half-length down the axis from the pin centre (`RefOffset + median`) as `far` — amber "far · n=…" badge |
 </content>
 </invoke>

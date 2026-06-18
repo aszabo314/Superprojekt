@@ -1,5 +1,5 @@
-//2e25abb2-109a-8492-4bd5-72ac0a5799aa
-//eebefe33-2922-7cbc-81a0-00d2503af00f
+//edb1328a-26a2-12ed-f7ac-7489b3e35dac
+//6900d1f6-97d3-22f9-37c7-cb2d09fe11e0
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -58,6 +58,8 @@ type AdaptiveModel(value : Model) =
     let _HeatmapMode_ = FSharp.Data.Adaptive.cval(value.HeatmapMode)
     let _HeatmapPrev_ = FSharp.Data.Adaptive.cval(value.HeatmapPrev)
     let _ProvenanceThreshold_ = FSharp.Data.Adaptive.cval(value.ProvenanceThreshold)
+    let _SurfaceDistOn_ = FSharp.Data.Adaptive.cval(value.SurfaceDistOn)
+    let _SurfaceDistance_ = FSharp.Data.Adaptive.cval(value.SurfaceDistance)
     let _FusionMode_ = FSharp.Data.Adaptive.cval(value.FusionMode)
     let _PanoramaOpen_ = FSharp.Data.Adaptive.cval(value.PanoramaOpen)
     let _Panoramas_ = FSharp.Data.Adaptive.cval(value.Panoramas)
@@ -132,6 +134,8 @@ type AdaptiveModel(value : Model) =
             _HeatmapMode_.Value <- value.HeatmapMode
             _HeatmapPrev_.Value <- value.HeatmapPrev
             _ProvenanceThreshold_.Value <- value.ProvenanceThreshold
+            _SurfaceDistOn_.Value <- value.SurfaceDistOn
+            _SurfaceDistance_.Value <- value.SurfaceDistance
             _FusionMode_.Value <- value.FusionMode
             _PanoramaOpen_.Value <- value.PanoramaOpen
             _Panoramas_.Value <- value.Panoramas
@@ -199,6 +203,8 @@ type AdaptiveModel(value : Model) =
     member __.HeatmapMode = _HeatmapMode_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
     member __.HeatmapPrev = _HeatmapPrev_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
     member __.ProvenanceThreshold = _ProvenanceThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.SurfaceDistOn = _SurfaceDistOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.SurfaceDistance = _SurfaceDistance_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.FusionMode = _FusionMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PanoramaOpen = _PanoramaOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.Panoramas = _Panoramas_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Panorama>>

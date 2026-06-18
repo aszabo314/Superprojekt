@@ -282,6 +282,33 @@ module Query =
                 }
         }
 
+    // Per-vertex signed distance of a target mesh to the reference, in the
+    // target's served vertex order (A2 surface color-map). Transforms are
+    // world-space rigid M44 (Forward), matching the probe convention.
+    let regionDistance
+            (serverUrl : string)
+            (targetName : string) (targetIndex : int)
+            (refName : string) (refIndex : int)
+            (targetTransform : M44d) (refTransform : M44d)
+            : Async<float32[]> =
+        async {
+            let m44 (m : M44d) =
+                System.String.Join(",",
+                    [| m.M00; m.M01; m.M02; m.M03
+                       m.M10; m.M11; m.M12; m.M13
+                       m.M20; m.M21; m.M22; m.M23
+                       m.M30; m.M31; m.M32; m.M33 |]
+                    |> Array.map (sprintf "%.17g"))
+            let json =
+                sprintf """{"targetName":"%s","targetIndex":%d,"refName":"%s","refIndex":%d,"targetTransform":[%s],"refTransform":[%s]}"""
+                    targetName targetIndex refName refIndex (m44 targetTransform) (m44 refTransform)
+            let! r = post serverUrl "/query/region-distance" json
+            return
+                r.GetProperty("dist").EnumerateArray()
+                |> Seq.map (fun e -> float32 (e.GetDouble()))
+                |> Seq.toArray
+        }
+
     let rayHitMany (serverUrl : string) (names : string list) (rayFor : string -> V3d * V3d) =
         names
         |> List.map (fun name ->

@@ -279,6 +279,48 @@ module MeshView =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
+            // A2: per-vertex signed distance for this mesh (None unless it is
+            // the soloed/encoded mesh). Projected early so a refetch of the
+            // encoded mesh doesn't churn the other meshes' buffers.
+            let myDist = model.SurfaceDistance |> AVal.map (Map.tryFind name)
+            let distBuf =
+                (myDist, loaded.pos) ||> AVal.map2 (fun d _pos ->
+                    match d with
+                    | Some arr -> ArrayBuffer arr :> IBuffer
+                    | None ->
+                        match loaded.mesh.Value with
+                        | Some md -> ArrayBuffer (Array.zeroCreate<float32> md.positions.Length) :> IBuffer
+                        | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
+            let distEncoding =
+                (model.SurfaceDistOn, model.ChartStickyMesh, myDist) |||> AVal.map3 (fun on sticky d ->
+                    if on && sticky = Some name && Option.isSome d then 1 else 0)
+            // Saturated end of the diverging map: robust (95th pct |d|).
+            let distScale =
+                myDist |> AVal.map (function
+                    | Some arr ->
+                        let valid = arr |> Array.choose (fun x -> if abs x < 1e20f then Some (abs x) else None)
+                        if valid.Length = 0 then 1.0f
+                        else
+                            Array.sortInPlace valid
+                            max 1e-3f valid.[int (0.95 * float (valid.Length - 1))]
+                    | None -> 1.0f)
+            // Detection limit (neutral mid) from the selected pin's probe, if
+            // any: 1.96·√(σ_ref² + σ_mesh²); 0 → no neutral band.
+            let distLoD =
+                (model.ScanPins.SelectedPin, model.ScanPins.Pins |> AMap.toAVal)
+                ||> AVal.map2 (fun sel pins ->
+                    match sel |> Option.bind (fun id -> HashMap.tryFind id pins) with
+                    | Some p ->
+                        match p.Probe with
+                        | ProbeReady r ->
+                            let stdOf m =
+                                r.Distributions |> Array.tryFind (fun d -> d.MeshName = m)
+                                |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
+                            let refStd = stdOf r.ReferenceMesh
+                            let mStd = stdOf name
+                            1.96 * sqrt (refStd*refStd + mStd*mStd) |> float32
+                        | _ -> 0.0f
+                    | None -> 0.0f)
             let meshDatasetErr =
                 (model.MeshSensorTypes, model.MeshDatasetErrors)
                 ||> AVal.map2 (fun sensors overrides ->
@@ -416,11 +458,15 @@ module MeshView =
                     Sg.Uniform("ClipPlane1",           clipPlane1)
                     Sg.Uniform("ClipMode0",            clipMode0)
                     Sg.Uniform("ClipMode1",            clipMode1)
+                    Sg.Uniform("DistanceEncoding",     distEncoding)
+                    Sg.Uniform("DistLoD",              distLoD)
+                    Sg.Uniform("DistScale",            distScale)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
                             string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
                             string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
+                            "SurfaceDist",                                  BufferView(distBuf, typeof<float32>)
                         ]
                     )
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
@@ -480,11 +526,15 @@ module MeshView =
                     Sg.Uniform("ClipPlane1",           clipPlane1)
                     Sg.Uniform("ClipMode0",            clipMode0)
                     Sg.Uniform("ClipMode1",            clipMode1)
+                    Sg.Uniform("DistanceEncoding",     AVal.constant 0)
+                    Sg.Uniform("DistLoD",              AVal.constant 0.0f)
+                    Sg.Uniform("DistScale",            AVal.constant 1.0f)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
                             string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
                             string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
+                            "SurfaceDist",                                  BufferView(distBuf, typeof<float32>)
                         ]
                     )
                     Sg.Index(BufferView(loaded.idx, typeof<int>))

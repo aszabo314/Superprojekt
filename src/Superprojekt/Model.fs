@@ -277,6 +277,13 @@ type Model =
         HeatmapPrev           : HeatmapMode
         ProvenanceThreshold   : float
 
+        // A2: per-mesh signed-distance surface colour map. When on, the
+        // soloed (chart-sticky) mesh is painted with its per-vertex signed
+        // M3C2 distance to the reference. SurfaceDistance holds the fetched
+        // per-vertex arrays (aligned with the served geometry), keyed by mesh.
+        SurfaceDistOn         : bool
+        SurfaceDistance       : Map<string, float32[]>
+
         FusionMode            : bool
 
         PanoramaOpen          : bool
@@ -390,6 +397,8 @@ module Model =
             MeshSensorTypes       = Map.empty
             MeshDatasetErrors     = Map.empty
             MeshAlgorithmResidual = Map.empty
+            SurfaceDistOn         = false
+            SurfaceDistance       = Map.empty
             HeatmapMode           = HeatOff
             HeatmapPrev           = HeatOff
             ProvenanceThreshold   = 0.01

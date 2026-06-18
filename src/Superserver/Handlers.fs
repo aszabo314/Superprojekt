@@ -115,6 +115,7 @@ let webApp : HttpHandler =
         route  "/api/query/icp"                                 >=> icpHandler
         route  "/api/query/lsq-pairs"                           >=> lsqPairsHandler
         route  "/api/query/probe"                               >=> probeHandler
+        route  "/api/query/region-distance"                     >=> regionDistanceHandler
         route  "/api/study/session"                             >=> POST >=> StudyHandlers.sessionHandler
         route  "/api/study/list"                                >=> GET  >=> StudyHandlers.listHandler
         routef "/api/study/%s/events"                           (fun sid -> POST >=> StudyHandlers.eventsHandler sid)

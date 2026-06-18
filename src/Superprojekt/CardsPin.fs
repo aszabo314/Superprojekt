@@ -547,6 +547,15 @@ module CardsPin =
                             Dom.OnClick(fun _ -> env.Emit [ToggleClipAboveIso])
                             "⊟ slice"
                         }
+                        // A2: paint the soloed mesh's signed distance in 3D.
+                        button {
+                            Class "tb-gear-btn"
+                            showOnly violinOn
+                            model.SurfaceDistOn |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
+                            Attribute("title", "Paint signed distance on the surface in 3D — click a violin column to pick the mesh (per-mesh diverging map, 0 = reference, near-zero = neutral)")
+                            Dom.OnClick(fun _ -> env.Emit [ToggleSurfaceDistance])
+                            "⬢ 3D map"
+                        }
                     }
                     input {
                         Class "pc-ridge-bus"

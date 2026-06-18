@@ -46,6 +46,20 @@ type ProbeRequest = {
     MaxPointsPerMesh : int
 }
 
+// Per-vertex signed distance of a target mesh to a reference mesh, in the
+// target's served vertex order (so the client can bind it as a vertex
+// attribute aligned with the geometry it renders). Transforms are world-space
+// rigid M44 (Forward), matching the probe convention.
+[<CLIMutable>]
+type RegionDistanceRequest = {
+    TargetName       : string
+    TargetIndex      : int
+    RefName          : string
+    RefIndex         : int
+    TargetTransform  : float[]
+    RefTransform     : float[]
+}
+
 [<CLIMutable>]
 type IcpRequest = {
     ReferenceName    : string
@@ -102,6 +116,56 @@ let closestHandler : HttpHandler =
             else
                 return! json {| found = false |} next ctx
         with ex -> return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+let private mat16 (a : float[]) =
+    if not (isNull a) && a.Length = 16 then
+        M44d(a.[0],  a.[1],  a.[2],  a.[3],
+             a.[4],  a.[5],  a.[6],  a.[7],
+             a.[8],  a.[9],  a.[10], a.[11],
+             a.[12], a.[13], a.[14], a.[15])
+    else M44d.Identity
+
+// Per-vertex signed M3C2-style distance (cloud-to-mesh), signed by the
+// reference surface normal at the closest point. Vertices with no valid
+// closest point get a large sentinel the shader treats as "no encoding".
+let regionDistanceHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<RegionDistanceRequest>()
+            let lmT = loadMesh req.TargetName req.TargetIndex
+            let lmR = loadMesh req.RefName req.RefIndex
+            let tT  = mat16 req.TargetTransform
+            let rInv = (mat16 req.RefTransform).Inverse
+            let cT  = lmT.parsed.centroid
+            let cR  = lmR.parsed.centroid
+            let pos = lmT.parsed.positions
+            let refPos = lmR.parsed.positions
+            let refIdx = lmR.parsed.indices
+            let dist = Array.zeroCreate<float32> pos.Length
+            System.Threading.Tasks.Parallel.For(0, pos.Length, fun i ->
+                let vWorld = tT.TransformPos (V3d pos.[i] + cT)
+                let vRefLocal = rInv.TransformPos vWorld - cR
+                let res = lmR.scene.GetClosestPoint(V3f vRefLocal)
+                if res.IsValid then
+                    let cp = V3d res.Point
+                    let pid = int res.PrimID
+                    if pid * 3 + 2 < refIdx.Length then
+                        let p0 = V3d refPos.[refIdx.[pid*3]]
+                        let p1 = V3d refPos.[refIdx.[pid*3+1]]
+                        let p2 = V3d refPos.[refIdx.[pid*3+2]]
+                        let nrm = Vec.cross (p1 - p0) (p2 - p0)
+                        let nl  = nrm.Length
+                        let s   = if nl > 1e-12 && Vec.dot (vRefLocal - cp) (nrm / nl) < 0.0 then -1.0 else 1.0
+                        dist.[i] <- float32 (s * sqrt (float res.DistanceSquared))
+                    else dist.[i] <- float32 (sqrt (float res.DistanceSquared))
+                else dist.[i] <- 1e30f) |> ignore
+            log.LogInformation("region-distance {Target} vs {Ref}: {Verts} verts", req.TargetName, req.RefName, pos.Length)
+            return! json {| dist = dist |} next ctx
+        with ex ->
+            log.LogError(ex, "region-distance failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
 let patchHandler : HttpHandler =

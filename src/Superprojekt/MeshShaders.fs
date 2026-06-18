@@ -78,11 +78,19 @@ module MeshShader =
         member x.ClipPlane1     : V4f = x?ClipPlane1
         member x.ClipMode0      : int = x?ClipMode0
         member x.ClipMode1      : int = x?ClipMode1
+        // A2 per-mesh signed-distance surface colour map. 1 = paint the
+        // SurfaceDist vertex attribute with a diverging map (0 = reference);
+        // |d| < DistLoD → neutral mid (not significant); DistScale normalizes
+        // the saturated ends. SurfaceDist = 1e30 sentinel → keep base colour.
+        member x.DistanceEncoding : int     = x?DistanceEncoding
+        member x.DistLoD          : float32 = x?DistLoD
+        member x.DistScale        : float32 = x?DistScale
 
     type FragIn = {
         [<Color>]                              c  : V4f
         [<Semantic("Normals")>]                n  : V3f
         [<Semantic("WorldPosition")>]          wp : V4f
+        [<Semantic("SurfaceDist")>]            sd : float32
         [<FragCoord>]                          fc : V4f
     }
 
@@ -363,6 +371,25 @@ module MeshShader =
                     baseRgb <-
                         if tt >= 0.0f then midCol2 * (1.0f - tt) + redCol2 * tt
                         else midCol2 * (1.0f + tt) + blueCol2 * (-tt)
+            // A2: per-mesh signed-distance surface colour map (the canonical
+            // M3C2 depiction). Diverging blue (below ref) ↔ red (above ref)
+            // centred at 0; within ±DistLoD the fragment reads neutral, so
+            // "not significant" looks near-neutral in 3D too.
+            if uniform.DistanceEncoding = 1 && aboveGhost then
+                let d = v.sd
+                if abs d < 1e20f then
+                    let lod = max 1e-6f uniform.DistLoD
+                    let neutral = V3f(0.945f, 0.961f, 0.976f) // #f1f5f9
+                    if abs d < lod then
+                        baseRgb <- neutral
+                    else
+                        let scale = max 1e-6f uniform.DistScale
+                        let tt = clamp -1.0f 1.0f (d / scale)
+                        let belowCol = V3f(0.149f, 0.388f, 0.922f) // #2563eb (negative)
+                        let aboveCol = V3f(0.863f, 0.149f, 0.149f) // #dc2626 (positive)
+                        baseRgb <-
+                            if tt >= 0.0f then neutral * (1.0f - tt) + aboveCol * tt
+                            else neutral * (1.0f + tt) + belowCol * (-tt)
             // Contact-line highlight at the active slicing plane: darken the
             // intersected mesh, brighten a smoothstep band within
             // CursorHighlightWidth of the plane (accent #0891b2 — the slicing

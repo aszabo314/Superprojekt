@@ -19,10 +19,22 @@ module Update =
     // pin is made this session (auto-open the panel once).
     let mutable private requirementsSurfaced = false
 
+    // A2 surface-distance fetch bookkeeping. A generation counter bumps on
+    // every invalidation; the postlude issues at most one fetch per generation
+    // (debounced), so it never spams while a fetch is in flight.
+    let mutable private surfaceDistCts = new System.Threading.CancellationTokenSource()
+    let mutable private surfaceDistGen = 0
+    let mutable private surfaceDistReqGen = -1
+    let private bumpSurfaceDist () = surfaceDistGen <- surfaceDistGen + 1
+
     let private invalidateProbes (model : Model) =
+        // A2 surface map shares the same invalidation triggers (reference /
+        // transforms / visibility) — drop it so it re-fetches lazily.
+        if not (Map.isEmpty model.SurfaceDistance) then bumpSurfaceDist ()
         { model with
             ScanPins = ScanPinModel.invalidateProbes model.ScanPins
-            HoverProbe = None }
+            HoverProbe = None
+            SurfaceDistance = Map.empty }
 
     // Contact rings only depend on pin geometry + registration transforms —
     // NOT on visibility (which gates rendering only), so this is applied on
@@ -871,6 +883,16 @@ module Update =
                 { model with HeatmapMode = m; HeatmapPrev = m }
         | SetProvenanceThreshold v ->
             { model with ProvenanceThreshold = v }
+        | ToggleSurfaceDistance ->
+            // toggling clears the cache so it re-fetches for the current
+            // soloed mesh / pose (the postlude ensureSurfaceDistance refills).
+            bumpSurfaceDist ()
+            { model with SurfaceDistOn = not model.SurfaceDistOn; SurfaceDistance = Map.empty }
+        | SurfaceDistanceComputed(mesh, dist) ->
+            // drop if the soloed mesh moved on since the fetch was issued.
+            if model.SurfaceDistOn && model.ChartStickyMesh = Some mesh then
+                { model with SurfaceDistance = Map.add mesh dist model.SurfaceDistance }
+            else model
         | ToggleFusionMode ->
             { model with FusionMode = not model.FusionMode }
 
@@ -1198,9 +1220,12 @@ module Update =
             if model.WorkflowPinHover = h then model else { model with WorkflowPinHover = h }
         | ChartColumnClick mesh ->
             let sticky = if model.ChartStickyMesh = Some mesh then None else Some mesh
-            { model with ChartStickyMesh = sticky }
+            // soloed mesh changed → the surface map (keyed by it) is stale.
+            bumpSurfaceDist ()
+            { model with ChartStickyMesh = sticky; SurfaceDistance = Map.empty }
         | ClearChartSticky ->
-            if model.ChartStickyMesh.IsNone then model else { model with ChartStickyMesh = None }
+            if model.ChartStickyMesh.IsNone then model
+            else (bumpSurfaceDist (); { model with ChartStickyMesh = None; SurfaceDistance = Map.empty })
         | TogglePanorama ->
             { model with PanoramaOpen = not model.PanoramaOpen }
         | PanoramasGenerated ps ->
@@ -1281,11 +1306,43 @@ module Update =
                 else after
             if List.isEmpty after.ClipPlanes then after else { after with ClipPlanes = [] }
 
+    // A2 postlude: when the surface colour-map is on and a column is soloed,
+    // lazily fetch the per-vertex signed distance for that mesh (committed
+    // pose), debounced, at most once per invalidation generation.
+    let private ensureSurfaceDistance (env : Env<Message>) (model : Model) : Model =
+        if not model.SurfaceDistOn then model
+        else
+            match model.ChartStickyMesh, model.Registration.ReferenceMesh with
+            | Some mesh, Some refMesh
+                  when mesh <> refMesh
+                       && not (Map.containsKey mesh model.SurfaceDistance)
+                       && surfaceDistReqGen <> surfaceDistGen
+                       && (Map.tryFind mesh model.MeshVisible |> Option.defaultValue true) ->
+                surfaceDistReqGen <- surfaceDistGen
+                let targetT = (ModelTransforms.committedWorld model mesh).Forward
+                let refT = (ModelTransforms.committedWorld model refMesh).Forward
+                surfaceDistCts.Cancel()
+                surfaceDistCts <- new System.Threading.CancellationTokenSource()
+                let token = surfaceDistCts.Token
+                task {
+                    try
+                        do! System.Threading.Tasks.Task.Delay(120, token)
+                        let! dist =
+                            Query.regionDistance ApiConfig.apiBase.Value mesh 0 refMesh 0 targetT refT
+                            |> Async.StartAsTask
+                        if not token.IsCancellationRequested then
+                            env.Emit [SurfaceDistanceComputed(mesh, dist)]
+                    with _ -> ()
+                } |> ignore
+                model
+            | _ -> model
+
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         let updated =
             updateCore env model msg
             |> ScanPinUpdate.ensureProbe env
             |> ScanPinUpdate.ensureProbePreview env
             |> ScanPinUpdate.ensureRings env
+            |> ensureSurfaceDistance env
             |> clearSectioningOnPinChange model
         StudyUpdate.postlude env model updated msg

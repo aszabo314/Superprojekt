@@ -62,6 +62,9 @@ type Message =
     | SetMeshDatasetError of string * float option
     | SetHeatmapMode of HeatmapMode
     | SetProvenanceThreshold of float
+    // A2: per-mesh signed-distance surface colour map.
+    | ToggleSurfaceDistance
+    | SurfaceDistanceComputed of mesh:string * float32[]
     | ToggleFusionMode
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]

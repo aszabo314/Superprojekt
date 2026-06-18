@@ -62,8 +62,9 @@ module GuiWorkflow =
         "    tx(4, cy+3, r.name, 'start', '#0f172a');"
         "    if(r.lod>0){ var bx0=Math.max(plotL, sx(-r.lod)), bx1=Math.min(plotR, sx(r.lod)); if(bx1>bx0){ var bnd=document.createElementNS(ns,'rect'); bnd.setAttribute('x',bx0); bnd.setAttribute('y',cy-5); bnd.setAttribute('width',bx1-bx0); bnd.setAttribute('height',10); bnd.setAttribute('fill','#94a3b8'); bnd.setAttribute('fill-opacity','0.16'); svg.appendChild(bnd); } }"
         "    ln(plotL, cy, plotR, cy, '#e2e8f0','1');"
-        "    (r.marks||[]).forEach(function(m){ var cxp=Math.max(plotL,Math.min(plotR,sx(m.x))); var c=document.createElementNS(ns,'circle'); c.setAttribute('cx',cxp.toFixed(1)); c.setAttribute('cy',cy); c.setAttribute('r','3.2'); c.setAttribute('fill',m.sig?r.color:'#cbd5e1'); c.setAttribute('stroke','#334155'); c.setAttribute('stroke-width','0.5'); c.style.cursor='pointer'; var ttl=document.createElementNS(ns,'title'); ttl.textContent=m.label+': '+m.x.toFixed(3)+' m'+(m.sig?'':' (n.s.)'); c.appendChild(ttl); c.addEventListener('pointerenter',function(){ send('hover|'+r.mesh); }); c.addEventListener('pointerleave',function(){ send('out'); }); c.addEventListener('click',function(){ send('click|'+m.id); }); svg.appendChild(c); });"
+        "    (r.marks||[]).forEach(function(m){ var cxp=Math.max(plotL,Math.min(plotR,sx(m.x))); var c=document.createElementNS(ns,'circle'); c.setAttribute('cx',cxp.toFixed(1)); c.setAttribute('cy',cy); c.setAttribute('r','3.2'); c.setAttribute('fill',m.sig?r.color:'#cbd5e1'); c.setAttribute('stroke','#334155'); c.setAttribute('stroke-width','0.5'); c.style.cursor='pointer'; var ttl=document.createElementNS(ns,'title'); ttl.textContent=m.label+': '+m.x.toFixed(3)+' m'+(m.sig?'':' (n.s.)'); c.appendChild(ttl); c.addEventListener('pointerenter',function(){ send('hover|'+r.mesh+'|'+m.id); }); c.addEventListener('pointerleave',function(){ send('out'); }); c.addEventListener('click',function(){ send('click|'+m.id); }); svg.appendChild(c); });"
         "  });"
+        "  tx(plotL + (plotR-plotL)/2, H-2, 'signed median offset (m)', 'middle', '#64748b');"
         "  el.appendChild(svg);"
     ]
 
@@ -410,8 +411,17 @@ module GuiWorkflow =
         let onMedStripEvent (v : string) =
             let parts = v.Split('|')
             match parts.[0] with
-            | "hover" when parts.Length >= 2 -> env.Emit [SetChartHoverMesh (Some parts.[1])]
-            | "out" -> env.Emit [SetChartHoverMesh None]
+            | "hover" when parts.Length >= 2 ->
+                // hover a dot → highlight the mesh column and pulse the pin's
+                // rings in 3D (the probing the user already did).
+                let pinHover =
+                    if parts.Length >= 3 then
+                        match System.Guid.TryParse parts.[2] with
+                        | true, g -> Some (ScanPinId.ScanPinId g)
+                        | _ -> None
+                    else None
+                env.Emit [SetChartHoverMesh (Some parts.[1]); SetWorkflowPinHover pinHover]
+            | "out" -> env.Emit [SetChartHoverMesh None; SetWorkflowPinHover None]
             | "click" when parts.Length >= 2 ->
                 match System.Guid.TryParse parts.[1] with
                 | true, g -> env.Emit [ScanPinMsg (SelectPin (Some (ScanPinId.ScanPinId g)))]
@@ -649,6 +659,10 @@ module GuiWorkflow =
                             Class "wfp-medstrip"
                             medStripJson |> AVal.map (fun j -> Some (Attribute("data-medstrip", j)))
                             Primitives.observedRender "data-medstrip" "{}" medStripJs
+                        }
+                        div {
+                            Class "wfp-medstrip-legend"
+                            "Flat row across pins = uniform offset (alignment) · spread = varying change · grey band = ±LoD₉₅"
                         }
                     })
             }

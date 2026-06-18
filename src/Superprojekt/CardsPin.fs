@@ -504,6 +504,26 @@ module CardsPin =
                     | _ -> ()
                 let sources =
                     probeResult |> AVal.map (Option.map (fun r -> r.Sources))
+                // B1: a plain-language significance verdict per moving mesh,
+                // read against the detection limit (not eyeballed off the band).
+                let lodVerdict =
+                    (probeResult, meshOrderMap) ||> AVal.map2 (fun rr order ->
+                        match rr with
+                        | Some r ->
+                            let refStd =
+                                r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
+                                |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
+                            r.Distributions
+                            |> Array.filter (fun d -> d.Count > 0 && d.MeshName <> r.ReferenceMesh)
+                            |> Array.map (fun d ->
+                                let lod = 1.96 * sqrt (refStd*refStd + d.Std*d.Std)
+                                let isSig = abs d.Median >= lod
+                                let txt =
+                                    if isSig then sprintf "%s  %+.2f m — significant" (numbered order d.MeshName) d.Median
+                                    else sprintf "%s  within noise (n.s.)" (numbered order d.MeshName)
+                                txt, isSig)
+                            |> IndexList.ofArray
+                        | None -> IndexList.empty)
                 div {
                     Class "pc-probe"
                     div {
@@ -534,6 +554,25 @@ module CardsPin =
                         probeJson |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
                         cursor3d |> AVal.map (fun j -> Some (Attribute("data-cursor", j)))
                         Primitives.observedRender "data-ridge" "{}" ridgelineJs
+                    }
+                    // B1: explicit band label + per-mesh verdict.
+                    div {
+                        Class "pc-lod-legend"
+                        showOnly violinOn
+                        span { Class "pc-lod-swatch" }
+                        span { "±LoD₉₅ detection limit — a median inside the band is not significant" }
+                    }
+                    div {
+                        Class "pc-verdict"
+                        showOnly violinOn
+                        lodVerdict |> AList.ofAVal |> AList.map (fun (txt, isSig) ->
+                            div { Class (if isSig then "pc-verdict-sig" else "pc-verdict-ns"); txt })
+                    }
+                    // B3: keep the two readings distinct — significance vs residual.
+                    div {
+                        Class "pc-verdict-cap"
+                        showOnly violinOn
+                        "Band = change significance. Alignment quality is the RMS residual in the Registration panel."
                     }
                     // NUM replacement: per-mesh signed-distance numbers from
                     // the same probe, plus registration RMS before/after.

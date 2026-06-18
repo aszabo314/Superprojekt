@@ -77,5 +77,8 @@ Status values: **done** / **reconciled** (built, but differs from the literal sp
 | C2 default-apply, no gate | done | landed in WP1 (no modal) |
 | C2 F10 editable reference marker | done | ⊕ on the reference row → `StartAnchorPick` on the reference mesh; `AnchorPickHit` moves `RefAnchor` when the picked mesh is the reference |
 | C3 requirements early | done | first registration pin of the session auto-opens the panel (`requirementsSurfaced` flag) + inline hint in the pin card |
+| B1 LoD = verdict | done | labelled band legend ("±LoD₉₅ detection limit") + per-mesh plain-language verdict line (significant / within noise n.s.) below the chart |
+| B2 strip readable | done | x-axis label "signed median offset (m)" + legend line; dot hover now also pulses the pin's rings in 3D (SetWorkflowPinHover); dot click already selects the pin |
+| B3 residual vs significance | done | caption: "Band = change significance. Alignment quality is the RMS residual in the Registration panel." |
 </content>
 </invoke>

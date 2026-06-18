@@ -441,34 +441,48 @@ module ScanPinScene =
                                     let cc = model.CommonCentroid.GetValue t
                                     let scale = datasetScale.GetValue t
                                     let centre = ScanPin.renderCentre cc scale (pin.Centre + r.Normal * (cur.Distance + r.RefOffset))
+                                    // F4: the reference surface (chart d = 0) is at
+                                    // RefOffset along the axis — the ruler runs from
+                                    // there to the picked distance.
+                                    let refCentre = ScanPin.renderCentre cc scale (pin.Centre + r.Normal * r.RefOffset)
                                     let radiusWorld =
                                         if cur.Extended then
                                             let sb = model.SceneBounds.GetValue t
                                             if sb.IsInvalid then pin.InnerRadius * 50.0
                                             else sb.Size.Length * 0.75
                                         else pin.InnerRadius
-                                    Some (centre, r.Normal, ScanPin.renderLength scale radiusWorld)
+                                    Some (centre, refCentre, r.Normal,
+                                          ScanPin.renderLength scale radiusWorld,
+                                          ScanPin.renderLength scale pin.InnerRadius)
                                 | _ -> None
                             | None -> None)
             let active =
                 (notFullscreen, planeParams) ||> AVal.map2 (fun nf p -> nf && Option.isSome p)
             let trafo =
                 planeParams |> AVal.map (function
-                    | Some (c, n, r) -> Trafo3d.Scale r * Trafo3d.RotateInto(V3d.OOI, n) * Trafo3d.Translation c
+                    | Some (c, _, n, r, _) -> Trafo3d.Scale r * Trafo3d.RotateInto(V3d.OOI, n) * Trafo3d.Translation c
                     | None -> Trafo3d.Scale 0.0)
             let rimSegs =
                 planeParams |> AVal.map (function
-                    | Some (c, n, r) ->
+                    | Some (c, refC, n, r, innerR) ->
                         let nN = n.Normalized
                         let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
                         let v = Vec.cross nN u
                         let segs = 64
-                        Array.init segs (fun i ->
-                            let a0 = float i / float segs * Constant.PiTimesTwo
-                            let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
-                            (c + (u * cos a0 + v * sin a0) * r,
-                             c + (u * cos a1 + v * sin a1) * r,
-                             cursorPlaneRim, 1.5))
+                        let rim =
+                            Array.init segs (fun i ->
+                                let a0 = float i / float segs * Constant.PiTimesTwo
+                                let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
+                                (c + (u * cos a0 + v * sin a0) * r,
+                                 c + (u * cos a1 + v * sin a1) * r,
+                                 cursorPlaneRim, 1.5))
+                        // F4 ruler: reference → picked distance, with end ticks.
+                        let tk = innerR * 0.3
+                        let ruler =
+                            [| refC, c, cursorPlaneRim, 2.0
+                               refC - u * tk, refC + u * tk, cursorPlaneRim, 2.0
+                               refC - v * tk, refC + v * tk, cursorPlaneRim, 2.0 |]
+                        Array.append rim ruler
                     | None -> [||])
             ASet.ofList [
                 sg {

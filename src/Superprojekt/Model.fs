@@ -283,6 +283,10 @@ type Model =
         // per-vertex arrays (aligned with the served geometry), keyed by mesh.
         SurfaceDistOn         : bool
         SurfaceDistance       : Map<string, float32[]>
+        // A3 range brush: a signed-distance interval brushed on the violin;
+        // on the encoded mesh, fragments inside it stay vivid and the rest are
+        // de-emphasised (focus+context). None = no brush.
+        SurfaceDistBrush      : (float * float) option
 
         FusionMode            : bool
 
@@ -399,6 +403,7 @@ module Model =
             MeshAlgorithmResidual = Map.empty
             SurfaceDistOn         = false
             SurfaceDistance       = Map.empty
+            SurfaceDistBrush      = None
             HeatmapMode           = HeatOff
             HeatmapPrev           = HeatOff
             ProvenanceThreshold   = 0.01

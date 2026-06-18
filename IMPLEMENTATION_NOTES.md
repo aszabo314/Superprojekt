@@ -93,7 +93,7 @@ Status values: **done** / **reconciled** (built, but differs from the literal sp
 | A4 pick guide | done (needs browser check) | during a 3D marker pick, the reference marker's normal is drawn as a guide line (+ small cross) — the predicted landing is where it meets the target mesh |
 | A4 live landing marker / ridge emphasis | deferred | needs a per-cursor-move raycast (landing point) and local curvature (ridge emphasis); the guide line already shows the intersection visually |
 | A2 signed-distance surface color map | done + VERIFIED in browser | user chose the canonical shader paint. New server endpoint `POST /api/query/region-distance` returns per-vertex signed M3C2 distance (cloud-to-mesh, signed by ref normal) in the served vertex order → aligns with the client buffer by construction. Client: `Model.SurfaceDistOn` + `SurfaceDistance` map; lazy debounced fetch (`ensureSurfaceDistance`, generation-guarded); `SurfaceDist` vertex attribute + `DistanceEncoding`/`DistLoD`/`DistScale` uniforms; diverging blue↔red colormap centred at 0 with ±LoD→neutral in `MeshShader.shade` (float32-clean). Per-selected-mesh only (soloed = chart-sticky column). Toggle = "⬢ 3D map" in the pin-card chart head. **Shader render + endpoint must be verified in a browser.** |
-| A3 violin pick → 3D ruler + range brush | NOT STARTED — build on verified A2 | ruler (F4) extends the existing elevation cursor; range brush (F7) can reuse A2's `SurfaceDist` attribute (shader emphasis of the brushed interval). Deferred so A2's shader is verified before stacking more unverifiable shader work |
+| A3 violin pick → 3D ruler + range brush | done (NEEDS BROWSER CHECK) | **F4 ruler**: the chart→3D elevation cursor now draws a measured ruler line from the reference surface (chart d=0, at RefOffset along the axis) to the picked distance, with end ticks; the value is read from the linked chart cursor label (an on-geometry 3D numeric label is the only deferred sub-part). **F7 range brush**: drag a y-interval on the violin (when ⬢ 3D map is on) → `SetSurfaceDistBrush`; the encoded mesh's shader keeps in-band `SurfaceDist` vivid and washes the rest to context grey (focus+context, reuses A2's attribute). Brush gated on `brushon` flag in the chart JSON; cleared on plain click / sticky change / 3D-map off. Shader render needs browser verification. |
 
 ## Browser-verification checklist (the parts a build/test can't confirm)
 Run the app (restart the server first — it predates the new endpoint) and check:
@@ -110,5 +110,10 @@ Run the app (restart the server first — it predates the new endpoint) and chec
 5. **F15/F16 patches** — open the patch picker on VictoriaCrater (huge atlases
    were shrunk): cells are textured (not black) and clipped to the circle with
    hatched no-coverage areas.
+6. **A3 ruler (F4)** — hover the violin with a pin card open: a ruler line runs
+   from the reference surface to the picked distance in 3D (with end ticks).
+7. **A3 range brush (F7)** — with ⬢ 3D map on and a column soloed, *drag* a
+   vertical interval on the violin: the soloed mesh keeps that distance band
+   vivid and washes the rest to grey. A plain click clears the brush.
 </content>
 </invoke>

@@ -260,11 +260,37 @@ module CardsPin =
         "    var flush = function(){ raf = 0; if(pend !== null && pend !== lastSent){ lastSent = pend; send(pend); } };"
         "    var queue = function(s){ pend = s; if(!raf) raf = requestAnimationFrame(flush); };"
         "    function colAt(x){ var i = Math.floor((x - axisW) / colW); return (i >= 0 && i < n) ? i : -1; }"
-        "    svg.addEventListener('pointerenter', function(){ el._hovering = true; });"
-        "    svg.addEventListener('pointermove', function(ev){"
-        "      el._hovering = true;"
+        // A3 range brush (only when the 3D map is on): drag a y-interval on the
+        // plot to highlight the contributing surface band in 3D.
+        "    var brushRect = document.createElementNS(ns,'rect');"
+        "    brushRect.setAttribute('x', axisW); brushRect.setAttribute('width', svgW - axisW);"
+        "    brushRect.setAttribute('fill', accent); brushRect.setAttribute('fill-opacity','0.16');"
+        "    brushRect.setAttribute('stroke', accent); brushRect.setAttribute('stroke-opacity','0.6'); brushRect.setAttribute('stroke-width','1');"
+        "    brushRect.style.display = 'none'; svg.appendChild(brushRect);"
+        "    var brushing = false, brushY0 = 0, brushMoved = false;"
+        "    svg.addEventListener('pointerdown', function(ev){"
+        "      if(!d.brushon) return;"
         "      var rc = svg.getBoundingClientRect();"
         "      var x = ev.clientX - rc.left, y = ev.clientY - rc.top;"
+        "      if(y >= plotY0 && y <= plotY1 && x >= axisW && !ev.altKey && !ev.shiftKey){"
+        "        brushing = true; brushMoved = false; brushY0 = y;"
+        "        try { svg.setPointerCapture(ev.pointerId); } catch(e) {}"
+        "      }"
+        "    });"
+        "    svg.addEventListener('pointerenter', function(){ el._hovering = true; });"
+        "    svg.addEventListener('pointermove', function(ev){"
+        "      var rc = svg.getBoundingClientRect();"
+        "      var x = ev.clientX - rc.left, y = ev.clientY - rc.top;"
+        "      if(brushing){"
+        "        var yy = Math.max(plotY0, Math.min(plotY1, y));"
+        "        var lo = Math.min(brushY0, yy), hi = Math.max(brushY0, yy);"
+        "        if(Math.abs(yy - brushY0) > 3) brushMoved = true;"
+        "        brushRect.setAttribute('y', lo); brushRect.setAttribute('height', hi - lo); brushRect.style.display = '';"
+        "        setCursor(null); hoverRect.style.display = 'none';"
+        "        queue('brush|' + fromY(hi).toFixed(4) + '|' + fromY(lo).toFixed(4));"
+        "        return;"
+        "      }"
+        "      el._hovering = true;"
         "      if(y < plotY0 || y > plotY1 || x < axisW){"
         "        setCursor(null); hoverRect.style.display = 'none'; queue('out'); return;"
         "      }"
@@ -275,11 +301,19 @@ module CardsPin =
         "      else hoverRect.style.display = 'none';"
         "      queue('mv|' + dv.toFixed(4) + '|' + (ev.altKey ? '1' : '0') + '|' + (ci >= 0 ? rows[ci].id : ''));"
         "    });"
+        "    svg.addEventListener('pointerup', function(ev){"
+        "      if(brushing){"
+        "        brushing = false;"
+        "        try { svg.releasePointerCapture(ev.pointerId); } catch(e) {}"
+        "        if(!brushMoved){ brushRect.style.display = 'none'; send('brushclear'); }"
+        "      }"
+        "    });"
         "    svg.addEventListener('pointerleave', function(){"
         "      el._hovering = false; hoverRect.style.display = 'none';"
         "      applyCursorAttr(); queue('out');"
         "    });"
         "    svg.addEventListener('click', function(ev){"
+        "      if(brushMoved){ brushMoved = false; return; }"
         "      var rc = svg.getBoundingClientRect();"
         "      var x = ev.clientX - rc.left, y = ev.clientY - rc.top;"
         "      var ci = colAt(x);"
@@ -325,7 +359,7 @@ module CardsPin =
     // preview: the probe under the effective preview transforms while a
     // registration solve is pending — rows become paired half-violins
     // (committed left, preview right) with a median-shift arrow.
-    let probeRidgeJson (mini : bool) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (r : ProbeResult) =
+    let probeRidgeJson (mini : bool) (brushOn : bool) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (r : ProbeResult) =
         // y-range is always auto; columns are always sorted by significance.
         let win =
             match preview with
@@ -352,8 +386,8 @@ module CardsPin =
             r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
             |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
         let sb = System.Text.StringBuilder()
-        sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"ymin\":%.5g,\"ymax\":%.5g,\"refstd\":%.5g,\"sticky\":\"%s\",\"rows\":["
-                    mini win.Min win.Max refStd (sticky |> Option.defaultValue "")) |> ignore
+        sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"brushon\":%b,\"ymin\":%.5g,\"ymax\":%.5g,\"refstd\":%.5g,\"sticky\":\"%s\",\"rows\":["
+                    mini brushOn win.Min win.Max refStd (sticky |> Option.defaultValue "")) |> ignore
         // F5: a surface caught only because the 20 m probe cylinder is long —
         // its samples sit far down the axis from the pin centre — is flagged
         // non-local (axial offset from centre = RefOffset + median), so it is
@@ -381,9 +415,9 @@ module CardsPin =
         sb.Append("]}") |> ignore
         sb.ToString()
 
-    let probeStateJson (mini : bool) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (probe : ProbeState) =
+    let probeStateJson (mini : bool) (brushOn : bool) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (probe : ProbeState) =
         match probe with
-        | ProbeReady r -> probeRidgeJson mini sticky colors order preview r
+        | ProbeReady r -> probeRidgeJson mini brushOn sticky colors order preview r
         | ProbeError e -> sprintf "{\"status\":\"error\",\"reason\":\"%s\"}" (e.Replace("\\", "/").Replace("\"", "'"))
         | ProbeNone | ProbeRunning -> "{\"status\":\"running\"}"
 
@@ -431,8 +465,9 @@ module CardsPin =
                 let previewSplit =
                     (previewActive, StudyGate.featureOn model "splitViolinPreview") ||> AVal.map2 (&&)
                 let probeJson =
-                    let selOrder = (selectedPin, meshOrderMap) ||> AVal.map2 (fun po ord -> po, ord)
-                    (selOrder, model.ChartStickyMesh, previewSplit) |||> AVal.map3 (fun (po, order) sticky pv ->
+                    let selOrder =
+                        (selectedPin, meshOrderMap, model.SurfaceDistOn) |||> AVal.map3 (fun po ord sd -> po, ord, sd)
+                    (selOrder, model.ChartStickyMesh, previewSplit) |||> AVal.map3 (fun (po, order, brushOn) sticky pv ->
                         match po with
                         | Some pin ->
                             // Split violin while a solve preview is pending and
@@ -443,7 +478,7 @@ module CardsPin =
                                     | ProbeReady r -> Some r
                                     | _ -> None
                                 else None
-                            probeStateJson false sticky pin.DatasetColors order preview pin.Probe
+                            probeStateJson false brushOn sticky pin.DatasetColors order preview pin.Probe
                         | None -> "{\"status\":\"none\"}")
                 // 3D → chart: the elevation cursor line at the 3D hover
                 // point's signed distance along the probe axis, shown only
@@ -507,6 +542,14 @@ module CardsPin =
                             | _ -> ()
                     | "clickout" ->
                         env.Emit [ClearChartSticky]
+                    // A3 range brush: a y-interval on the violin → highlight the
+                    // contributing band on the soloed mesh's surface in 3D.
+                    | "brush" when parts.Length >= 3 ->
+                        match parseInvariant parts.[1], parseInvariant parts.[2] with
+                        | Some lo, Some hi -> env.Emit [SetSurfaceDistBrush (Some (lo, hi))]
+                        | _ -> ()
+                    | "brushclear" ->
+                        env.Emit [SetSurfaceDistBrush None]
                     // Alt-click the plot → lock the iso-plane (SectionCap)
                     // into ClipPlanes so it survives orbiting.
                     | "lock" when parts.Length >= 2 ->

@@ -66,6 +66,7 @@ type Message =
     | ToggleSurfaceDistance
     | SurfaceDistanceComputed of mesh:string * float32[]
     | SurfaceDistanceFailed of mesh:string * reason:string
+    | SetSurfaceDistBrush of (float * float) option
     | ToggleFusionMode
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]

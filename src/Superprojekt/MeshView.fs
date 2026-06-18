@@ -321,6 +321,13 @@ module MeshView =
                             1.96 * sqrt (refStd*refStd + mStd*mStd) |> float32
                         | _ -> 0.0f
                     | None -> 0.0f)
+            // A3 range brush for the encoded mesh: (on, lo, hi).
+            let distBrush =
+                (model.SurfaceDistBrush, model.SurfaceDistOn, model.ChartStickyMesh)
+                |||> AVal.map3 (fun b on sticky ->
+                    match b with
+                    | Some (lo, hi) when on && sticky = Some name -> 1, float32 lo, float32 hi
+                    | _ -> 0, 0.0f, 0.0f)
             let meshDatasetErr =
                 (model.MeshSensorTypes, model.MeshDatasetErrors)
                 ||> AVal.map2 (fun sensors overrides ->
@@ -461,6 +468,9 @@ module MeshView =
                     Sg.Uniform("DistanceEncoding",     distEncoding)
                     Sg.Uniform("DistLoD",              distLoD)
                     Sg.Uniform("DistScale",            distScale)
+                    Sg.Uniform("DistBrushOn",          distBrush |> AVal.map (fun (o, _, _) -> o))
+                    Sg.Uniform("DistBrushLo",          distBrush |> AVal.map (fun (_, l, _) -> l))
+                    Sg.Uniform("DistBrushHi",          distBrush |> AVal.map (fun (_, _, h) -> h))
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
@@ -529,6 +539,9 @@ module MeshView =
                     Sg.Uniform("DistanceEncoding",     AVal.constant 0)
                     Sg.Uniform("DistLoD",              AVal.constant 0.0f)
                     Sg.Uniform("DistScale",            AVal.constant 1.0f)
+                    Sg.Uniform("DistBrushOn",          AVal.constant 0)
+                    Sg.Uniform("DistBrushLo",          AVal.constant 0.0f)
+                    Sg.Uniform("DistBrushHi",          AVal.constant 0.0f)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)

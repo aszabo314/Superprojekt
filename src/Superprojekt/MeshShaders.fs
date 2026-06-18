@@ -85,6 +85,11 @@ module MeshShader =
         member x.DistanceEncoding : int     = x?DistanceEncoding
         member x.DistLoD          : float32 = x?DistLoD
         member x.DistScale        : float32 = x?DistScale
+        // A3 range brush: when on, SurfaceDist outside [Lo,Hi] is washed to
+        // context (focus+context); inside keeps the diverging colour.
+        member x.DistBrushOn      : int     = x?DistBrushOn
+        member x.DistBrushLo      : float32 = x?DistBrushLo
+        member x.DistBrushHi      : float32 = x?DistBrushHi
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -380,16 +385,20 @@ module MeshShader =
                 if abs d < 1e20f then
                     let lod = max 1e-6f uniform.DistLoD
                     let neutral = V3f(0.945f, 0.961f, 0.976f) // #f1f5f9
-                    if abs d < lod then
-                        baseRgb <- neutral
-                    else
+                    let mutable col = neutral
+                    if abs d >= lod then
                         let scale = max 1e-6f uniform.DistScale
                         let tt = clamp -1.0f 1.0f (d / scale)
                         let belowCol = V3f(0.149f, 0.388f, 0.922f) // #2563eb (negative)
                         let aboveCol = V3f(0.863f, 0.149f, 0.149f) // #dc2626 (positive)
-                        baseRgb <-
+                        col <-
                             if tt >= 0.0f then neutral * (1.0f - tt) + aboveCol * tt
                             else neutral * (1.0f + tt) + belowCol * (-tt)
+                    // A3 brush: out-of-band fragments wash to context grey.
+                    if uniform.DistBrushOn = 1 && (d < uniform.DistBrushLo || d > uniform.DistBrushHi) then
+                        baseRgb <- V3f(0.82f, 0.85f, 0.88f)
+                    else
+                        baseRgb <- col
             // Contact-line highlight at the active slicing plane: darken the
             // intersected mesh, brighten a smoothstep band within
             // CursorHighlightWidth of the plane (accent #0891b2 — the slicing

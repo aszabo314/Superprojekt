@@ -886,7 +886,7 @@ module Update =
         | ToggleSurfaceDistance ->
             bumpSurfaceDist ()
             if model.SurfaceDistOn then
-                { model with SurfaceDistOn = false; SurfaceDistance = Map.empty }
+                { model with SurfaceDistOn = false; SurfaceDistance = Map.empty; SurfaceDistBrush = None }
             else
                 // Turning on: the encoding paints the soloed (chart-sticky)
                 // mesh. Auto-pick one so the button does something immediately
@@ -925,6 +925,8 @@ module Update =
         | SurfaceDistanceFailed(_, reason) ->
             showToast env "Surface-distance query failed — is the server up to date? (restart it)"
                 { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "region-distance failed: %s" reason) }
+        | SetSurfaceDistBrush b ->
+            if model.SurfaceDistBrush = b then model else { model with SurfaceDistBrush = b }
         | ToggleFusionMode ->
             { model with FusionMode = not model.FusionMode }
 
@@ -1254,10 +1256,10 @@ module Update =
             let sticky = if model.ChartStickyMesh = Some mesh then None else Some mesh
             // soloed mesh changed → the surface map (keyed by it) is stale.
             bumpSurfaceDist ()
-            { model with ChartStickyMesh = sticky; SurfaceDistance = Map.empty }
+            { model with ChartStickyMesh = sticky; SurfaceDistance = Map.empty; SurfaceDistBrush = None }
         | ClearChartSticky ->
-            if model.ChartStickyMesh.IsNone then model
-            else (bumpSurfaceDist (); { model with ChartStickyMesh = None; SurfaceDistance = Map.empty })
+            if model.ChartStickyMesh.IsNone && model.SurfaceDistBrush.IsNone then model
+            else (bumpSurfaceDist (); { model with ChartStickyMesh = None; SurfaceDistance = Map.empty; SurfaceDistBrush = None })
         | TogglePanorama ->
             { model with PanoramaOpen = not model.PanoramaOpen }
         | PanoramasGenerated ps ->

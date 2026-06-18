@@ -293,7 +293,11 @@ module CardsPin =
         "    if(!el._docClick){"
         "      el._docClick = function(ev){"
         "        if(!document.contains(el)){ document.removeEventListener('click', el._docClick); el._docClick = null; return; }"
-        "        if(!el.contains(ev.target)) send('clickout');"
+        // Clear the sticky column only when the click lands outside the whole
+        // probe section — so the chart's own header controls (3D map, slice)
+        // don't count as 'click outside' and wipe the soloed column.
+        "        var box = el.closest('.pc-probe') || el;"
+        "        if(!box.contains(ev.target)) send('clickout');"
         "      };"
         "      document.addEventListener('click', el._docClick);"
         "    }"

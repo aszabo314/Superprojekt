@@ -776,10 +776,16 @@ module CardsPin =
                                     }
                                 })
                         }
+                        // F14: surface the patch picker — the occlusion-free way
+                        // to fix markers on overlapping meshes.
+                        div {
+                            Class "pc-corr-pick-hint"
+                            "Overlap hiding a marker? Pick it in 2D patches — nothing overlaps there."
+                        }
                         div {
                             Class "pc-corr-actions"
                             button {
-                                Class "tb-gear-btn"
+                                Class "tb-gear-btn pc-pick-patches"
                                 Attribute("title", "Pick correspondence markers in co-oriented surface patches")
                                 Dom.OnClick(fun _ -> emitForPinTop OpenPatchPicker)
                                 "▦ Pick in patches"
@@ -927,9 +933,14 @@ module CardsPin =
                                     "  var hmin = Infinity, hmax = -Infinity;"
                                     "  entries.forEach(function(e){ e.pts.forEach(function(p){ if(p[2] < hmin) hmin = p[2]; if(p[2] > hmax) hmax = p[2]; }); });"
                                     "  if(!(hmax > hmin)){ hmin = -0.5; hmax = 0.5; }"
+                                    // F17: perceptually-uniform sequential ramp (viridis)
+                                    // instead of the old magenta->blue gradient.
+                                    "  var VIR = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];"
                                     "  function hcol(h){"
                                     "    var t = Math.max(0, Math.min(1, (h - hmin) / (hmax - hmin)));"
-                                    "    return 'rgb(' + Math.round(255 * t) + ',' + (60 + Math.round(120 * t)) + ',' + Math.round(255 * (1 - t)) + ')';"
+                                    "    var x = t * 4, i = Math.min(3, Math.floor(x)), f = x - i;"
+                                    "    var a = VIR[i], b = VIR[i+1];"
+                                    "    return 'rgb(' + Math.round(a[0]+(b[0]-a[0])*f) + ',' + Math.round(a[1]+(b[1]-a[1])*f) + ',' + Math.round(a[2]+(b[2]-a[2])*f) + ')';"
                                     "  }"
                                     "  var send = function(s){"
                                     "    var pr = el.closest('.pc-patchpicker');"
@@ -949,7 +960,11 @@ module CardsPin =
                                     "  var ghost = null;"
                                     "  var ACC = '#0891b2';"
                                     "  entries.forEach(function(e){"
-                                    "    var st = views[e.id] = views[e.id] || {cx:0, cy:0, z:1};"
+                                    // F18: first view fits the populated footprint, not the
+                                    // full box — zoom so the farthest sampled vertex reaches
+                                    // the circle edge.
+                                    "    var st = views[e.id];"
+                                    "    if(!st){ var pr = 0; (e.pts||[]).forEach(function(p){ var l = Math.hypot(p[0], p[1]); if(l > pr) pr = l; }); var fz = pr > 1e-6 ? d.r / pr : 1; fz = Math.max(1, Math.min(12, fz)); st = views[e.id] = {cx:0, cy:0, z:fz}; }"
                                     "    var wrap = document.createElement('div');"
                                     "    wrap.className = 'pc-patch-cell' + (e.ref ? ' pc-patch-cell-ref' : '');"
                                     "    var head = document.createElement('div');"

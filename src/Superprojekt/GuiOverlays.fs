@@ -137,11 +137,32 @@ module GuiOverlays =
                 match hp with
                 | Some h -> CardsPin.probeStateJson true None cols order None h.Probe
                 | None -> "{\"status\":\"none\"}")
+        // F2: numeric median ± half-IQR per moving mesh under the mini chart.
+        let summary =
+            (model.HoverProbe, orderMap) ||> AVal.map2 (fun hp order ->
+                match hp with
+                | Some h ->
+                    match h.Probe with
+                    | ProbeReady r ->
+                        r.Distributions
+                        |> Array.filter (fun d -> d.Count > 0 && d.MeshName <> r.ReferenceMesh)
+                        |> Array.map (fun d ->
+                            sprintf "%s %+.2f±%.2f m" (Cards.numbered order d.MeshName) d.Median ((d.Q3 - d.Q1) * 0.5))
+                        |> IndexList.ofArray
+                    | _ -> IndexList.empty
+                | None -> IndexList.empty)
         div {
             Class "hover-probe-tip"
             posStyle
-            json |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
-            Primitives.observedRender "data-ridge" "{}" CardsPin.ridgelineJs
+            div {
+                Class "hover-probe-ridge"
+                json |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
+                Primitives.observedRender "data-ridge" "{}" CardsPin.ridgelineJs
+            }
+            div {
+                Class "hover-probe-nums"
+                summary |> AList.ofAVal |> AList.map (fun line -> div { line })
+            }
         }
 
     // Heatmap probe under the cursor. Sources mode reuses

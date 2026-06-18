@@ -86,5 +86,9 @@ Status values: **done** / **reconciled** (built, but differs from the literal sp
 | D-F15 black patch | done | atlas `Image` gets `onerror` + a 0-dimension guard → falls back to shaded-height, never a black cell |
 | D-F16 partial footprint | done | the surface is clipped to the pin circle and the uncovered area is hatched (`#f1f5f9` + diagonals) so partial overlap reads as "no coverage here", with the circle outline on top |
 | D-F5 non-local samples | done | violin flags a distribution whose surface sits >0.6·half-length down the axis from the pin centre (`RefOffset + median`) as `far` — amber "far · n=…" badge |
+| E-F17 perceptual colormap | done | patch `hcol` is now viridis (5-stop) instead of magenta→blue |
+| E-F18 patch zoom-to-fit | done | first view zooms so the farthest sampled vertex reaches the circle edge (per-cell `views[id]` seed) |
+| E-F14 patch picker prominence | done | inline hint + accent-bordered "▦ Pick in patches" button when a pin is a registration pin |
+| E-F2 hover mini chart | done | numeric median ± half-IQR per moving mesh under the mini violin; y-scale already auto (XAuto). Largely subsumed by A1 |
 </content>
 </invoke>

@@ -292,6 +292,8 @@ body.loaded { background: #f4f6f8; }
 .pc-corr { margin-top: 8px; border-top: 1px solid #e2e8f0; padding-top: 6px; }
 .pc-corr-body { margin-top: 4px; }
 .pc-corr-hint { font-size: 10.5px; color: #64748b; padding: 2px 0 4px 0; line-height: 1.3; }
+.pc-corr-pick-hint { font-size: 10px; color: #64748b; padding: 4px 0 2px 0; line-height: 1.3; }
+.pc-pick-patches { border-color: #1a56db !important; color: #1a56db !important; font-weight: 600; }
 .pc-corr-ref { font-size: 11px; color: #475569; padding: 2px 0; display: flex; align-items: center; gap: 4px; }
 .pc-corr-ref > span { flex: 1; }
 .pc-corr-ref-warn { color: #b45309; }
@@ -722,6 +724,11 @@ body.loaded { background: #f4f6f8; }
     box-shadow: 0 2px 12px rgba(0, 0, 0, 0.14);
     padding: 2px;
     z-index: 1200;
+}
+.hover-probe-nums {
+    font-family: 'SF Mono', 'Monaco', monospace;
+    font-size: 9.5px; color: #475569;
+    padding: 2px 4px 1px 4px; line-height: 1.35;
 }
 
 .mesh-wheel-label {

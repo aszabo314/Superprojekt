@@ -65,6 +65,7 @@ type Message =
     // A2: per-mesh signed-distance surface colour map.
     | ToggleSurfaceDistance
     | SurfaceDistanceComputed of mesh:string * float32[]
+    | SurfaceDistanceFailed of mesh:string * reason:string
     | ToggleFusionMode
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]

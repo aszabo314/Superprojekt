@@ -884,15 +884,47 @@ module Update =
         | SetProvenanceThreshold v ->
             { model with ProvenanceThreshold = v }
         | ToggleSurfaceDistance ->
-            // toggling clears the cache so it re-fetches for the current
-            // soloed mesh / pose (the postlude ensureSurfaceDistance refills).
             bumpSurfaceDist ()
-            { model with SurfaceDistOn = not model.SurfaceDistOn; SurfaceDistance = Map.empty }
+            if model.SurfaceDistOn then
+                { model with SurfaceDistOn = false; SurfaceDistance = Map.empty }
+            else
+                // Turning on: the encoding paints the soloed (chart-sticky)
+                // mesh. Auto-pick one so the button does something immediately
+                // (keep the current solo if it's a valid moving mesh, else the
+                // selected pin's host, else the first visible moving mesh).
+                match model.Registration.ReferenceMesh with
+                | None ->
+                    showToast env "Set a ★ reference mesh first to map signed distance" model
+                | Some refMesh ->
+                    let visibleMoving =
+                        model.MeshNames |> IndexList.toList
+                        |> List.filter (fun n ->
+                            n <> refMesh && (Map.tryFind n model.MeshVisible |> Option.defaultValue true))
+                    let chosen =
+                        match model.ChartStickyMesh with
+                        | Some m when List.contains m visibleMoving -> Some m
+                        | _ ->
+                            let host =
+                                model.ScanPins.SelectedPin
+                                |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins)
+                                |> Option.bind (fun p -> p.HostMeshName)
+                            match host with
+                            | Some h when List.contains h visibleMoving -> Some h
+                            | _ -> List.tryHead visibleMoving
+                    match chosen with
+                    | None ->
+                        showToast env "No visible moving mesh to map"
+                            { model with SurfaceDistOn = true; SurfaceDistance = Map.empty }
+                    | Some m ->
+                        { model with SurfaceDistOn = true; ChartStickyMesh = Some m; SurfaceDistance = Map.empty }
         | SurfaceDistanceComputed(mesh, dist) ->
             // drop if the soloed mesh moved on since the fetch was issued.
             if model.SurfaceDistOn && model.ChartStickyMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh dist model.SurfaceDistance }
             else model
+        | SurfaceDistanceFailed(_, reason) ->
+            showToast env "Surface-distance query failed — is the server up to date? (restart it)"
+                { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "region-distance failed: %s" reason) }
         | ToggleFusionMode ->
             { model with FusionMode = not model.FusionMode }
 
@@ -1332,7 +1364,11 @@ module Update =
                             |> Async.StartAsTask
                         if not token.IsCancellationRequested then
                             env.Emit [SurfaceDistanceComputed(mesh, dist)]
-                    with _ -> ()
+                    with
+                    | :? System.OperationCanceledException -> ()
+                    | ex ->
+                        if not token.IsCancellationRequested then
+                            env.Emit [SurfaceDistanceFailed(mesh, ex.Message)]
                 } |> ignore
                 model
             | _ -> model

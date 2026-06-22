@@ -301,7 +301,9 @@ body.loaded { background: #f4f6f8; }
 .pc-corr-row {
     display: flex; align-items: center; gap: 6px;
     font-size: 11px; line-height: 18px; color: #334155;
+    border-radius: 3px;
 }
+.pc-corr-row:hover { background: #eef2ff; }
 .pc-corr-mesh {
     flex: 1; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

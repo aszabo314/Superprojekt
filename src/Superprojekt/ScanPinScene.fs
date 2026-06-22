@@ -346,6 +346,7 @@ module ScanPinScene =
                                 | None -> None
                             deltaCache.[mesh] <- v
                             v
+                    let hover = model.CorrMarkerHover.GetValue t
                     let out = ResizeArray<V3d * V3d * V4d * float>()
                     for (_, pin) in HashMap.toSeq pins do
                         match ScanPin.correspondence pin with
@@ -358,19 +359,26 @@ module ScanPinScene =
                             let glyphR =
                                 ScanPin.renderLength scaleActive (max 0.05 (pin.InnerRadius * 0.12))
                             for KeyValue(mesh, a) in corr.Anchors do
+                                    // Hovering this marker's row in the pin card
+                                    // lights its glyph + ref line up thick + bright.
+                                    let hovered = hover = Some (pin.Id, mesh)
                                     let pWorld =
                                         match worldDeltaOf mesh with
                                         | Some d -> d.Forward.TransformPos a.Point
                                         | None -> a.Point
                                     let p = ScanPin.renderCentre cc scaleActive pWorld
-                                    let colour =
+                                    let baseCol =
                                         match Map.tryFind mesh pin.DatasetColors with
-                                        | Some c -> V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, alpha)
-                                        | None -> V4d(0.102, 0.337, 0.859, alpha)
+                                        | Some c -> V3d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0)
+                                        | None -> V3d(0.102, 0.337, 0.859)
+                                    let colour =
+                                        if hovered then V4d(baseCol * 0.45 + V3d.III * 0.55, 1.0)
+                                        else V4d(baseCol, alpha)
+                                    let w = if hovered then 4.0 else width
                                     for (i, j) in tetraEdges do
-                                        out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, colour, width)
+                                        out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, colour, w)
                                     match refR with
-                                    | Some r -> out.Add(p, r, colour, width)
+                                    | Some r -> out.Add(p, r, colour, w)
                                     | None -> ()
                         | _ -> ()
                     out.ToArray())

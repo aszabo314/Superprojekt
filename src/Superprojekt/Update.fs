@@ -1249,6 +1249,8 @@ module Update =
             if model.ChartHoverMesh = m then model else { model with ChartHoverMesh = m }
         | SetWorkflowPinHover h ->
             if model.WorkflowPinHover = h then model else { model with WorkflowPinHover = h }
+        | SetCorrMarkerHover h ->
+            if model.CorrMarkerHover = h then model else { model with CorrMarkerHover = h }
         | ChartColumnClick mesh ->
             let sticky = if model.ChartStickyMesh = Some mesh then None else Some mesh
             // soloed mesh changed → the surface map (keyed by it) is stale.
@@ -1332,6 +1334,8 @@ module Update =
         else
             let after =
                 if after.RulerActive then { after with RulerActive = false } else after
+            let after =
+                if after.CorrMarkerHover.IsSome then { after with CorrMarkerHover = None } else after
             if List.isEmpty after.ClipPlanes then after else { after with ClipPlanes = [] }
 
     // A2 postlude: when the surface colour-map is on and a column is soloed,

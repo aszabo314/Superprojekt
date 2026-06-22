@@ -103,6 +103,7 @@ type Message =
     | SetChartCursor of ChartCursor option
     | SetChartHoverMesh of string option
     | SetWorkflowPinHover of ScanPinId option
+    | SetCorrMarkerHover of (ScanPinId * string) option
     | ChartColumnClick of meshName:string
     | ClearChartSticky
     | TogglePanorama

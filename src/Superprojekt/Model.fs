@@ -296,6 +296,9 @@ type Model =
         // UI→3D hover highlight: a pin row in the registration panel. None =
         // nothing hovered.
         WorkflowPinHover      : ScanPinId option
+        // UI→3D hover highlight: a correspondence-marker row (pin + mesh) in
+        // the pin card's registration list. None = nothing hovered.
+        CorrMarkerHover       : (ScanPinId * string) option
 
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
@@ -406,6 +409,7 @@ module Model =
             ChartHoverMesh        = None
             ChartStickyMesh       = None
             WorkflowPinHover      = None
+            CorrMarkerHover       = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             LassoCardPos        = None

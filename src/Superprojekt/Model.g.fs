@@ -1,5 +1,5 @@
-//d422db11-6451-fa67-c139-cc9bb1bc03d5
-//a5481dc9-6023-e03f-391d-2512a7050c1d
+//3aed9013-cf0f-67a6-ce30-3a3b82e349e9
+//9a6dfbc0-defc-616f-73a0-bf5bd07967f9
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -74,6 +74,7 @@ type AdaptiveModel(value : Model) =
     let _ChartHoverMesh_ = FSharp.Data.Adaptive.cval(value.ChartHoverMesh)
     let _ChartStickyMesh_ = FSharp.Data.Adaptive.cval(value.ChartStickyMesh)
     let _WorkflowPinHover_ = FSharp.Data.Adaptive.cval(value.WorkflowPinHover)
+    let _CorrMarkerHover_ = FSharp.Data.Adaptive.cval(value.CorrMarkerHover)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _LassoCardPos_ = FSharp.Data.Adaptive.cval(value.LassoCardPos)
@@ -151,6 +152,7 @@ type AdaptiveModel(value : Model) =
             _ChartHoverMesh_.Value <- value.ChartHoverMesh
             _ChartStickyMesh_.Value <- value.ChartStickyMesh
             _WorkflowPinHover_.Value <- value.WorkflowPinHover
+            _CorrMarkerHover_.Value <- value.CorrMarkerHover
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
             _LassoCardPos_.Value <- value.LassoCardPos
@@ -221,6 +223,7 @@ type AdaptiveModel(value : Model) =
     member __.ChartHoverMesh = _ChartHoverMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.ChartStickyMesh = _ChartStickyMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.WorkflowPinHover = _WorkflowPinHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
+    member __.CorrMarkerHover = _CorrMarkerHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.LassoCardPos = _LassoCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>

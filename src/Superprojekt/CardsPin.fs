@@ -796,6 +796,13 @@ module CardsPin =
                                 div {
                                     Class "pc-corr-row"
                                     Primitives.showWhen isMoving
+                                    // Hovering the whole row highlights this mesh's
+                                    // correspondence marker in 3D (thick + bright).
+                                    Dom.OnMouseEnter(fun _ ->
+                                        match AVal.force selectedPin with
+                                        | Some p -> env.Emit [SetCorrMarkerHover (Some (p.Id, mesh))]
+                                        | None -> ())
+                                    Dom.OnMouseLeave(fun _ -> env.Emit [SetCorrMarkerHover None])
                                     span { Class "pc-corr-mesh"; meshOrderMap |> AVal.map (fun o -> numbered o mesh) }
                                     span {
                                         Class "pc-corr-acc"

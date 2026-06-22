@@ -158,13 +158,15 @@ type PatchResult = { Points : PatchPoint[]; Triangles : int[]; RefDirWorld : V3d
 // local plane fit and projects into the supplied frame (origin = centre) so the
 // patch small-multiples picker shares one co-oriented projection across meshes.
 //
-// withTriangles changes the output contract: (Px,Py) become the exact planar
-// orthographic projection onto the frame (consistent with the picker's
-// (u,v)→world inversion) instead of geodesic-polar unrolling; the maxPoints cap
-// keeps the geodesically nearest vertices (a connected disc) instead of stride
-// decimation; Triangles carries index triples into Points for triangles whose
-// corners all survived.
-let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (frame : (V3d * V3d) option) (withTriangles : bool) : PatchResult =
+// The data are height fields, so there is no overlap to disambiguate: the patch
+// is simply every triangle whose bbox overlaps the footprint sphere, projected
+// into the frame. (Px,Py) is the orthographic projection (origin = centre),
+// Triangles are index triples into Points. Mesh connectivity is irrelevant —
+// a fragmented multi-tile mesh fills the footprint exactly like a watertight
+// DEM. maxTris bounds the output via a uniform stride over the (spatially
+// grouped) BVH triangle order; under the cap a dense mesh thins evenly rather
+// than collapsing to a small core.
+let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxTris : int) (frame : (V3d * V3d) option) : PatchResult =
     let positions = lm.parsed.positions
     let uvs = lm.parsed.uvs
     let centroid = lm.parsed.centroid
@@ -178,134 +180,60 @@ let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (f
             if projX.Length > 1e-9 then Vec.normalize projX else V3d.IOO
 
     let triBuf = trianglesInSphere lm (V3f centreLocal) (float32 (radius * 1.2))
-    if triBuf.Length = 0 then
-        let n, r =
-            match frame with
-            | Some (n, r) ->
-                let nn = if n.Length > 1e-9 then n.Normalized else V3d.OOI
-                nn, orthoRef nn r
-            | None -> V3d.OOI, V3d.OIO
-        { Points = [||]; Triangles = [||]; RefDirWorld = r; NormalWorld = n }
-    else
-        let triCount = triBuf.Length / 3
+    let triCount = triBuf.Length / 3
 
-        let normal, refDir =
-            match frame with
-            | Some (n, r) ->
-                let nn = if n.Length > 1e-9 then n.Normalized else V3d.OOI
-                nn, orthoRef nn r
-            | None ->
-                let mutable nSum = V3d.Zero
-                for ti in 0 .. triCount - 1 do
-                    let p0 = V3d positions.[triBuf.[ti * 3]]
-                    let p1 = V3d positions.[triBuf.[ti * 3 + 1]]
-                    let p2 = V3d positions.[triBuf.[ti * 3 + 2]]
-                    nSum <- nSum + Vec.cross (p1 - p0) (p2 - p0)
-                let normal = if nSum.Length > 1e-9 then Vec.normalize nSum else V3d.OOI
-                normal, orthoRef normal V3d.OIO
-        let leftDir = Vec.cross normal refDir
+    let normal, refDir =
+        match frame with
+        | Some (n, r) ->
+            let nn = if n.Length > 1e-9 then n.Normalized else V3d.OOI
+            nn, orthoRef nn r
+        | None when triCount = 0 -> V3d.OOI, V3d.OIO
+        | None ->
+            let mutable nSum = V3d.Zero
+            for ti in 0 .. triCount - 1 do
+                let p0 = V3d positions.[triBuf.[ti * 3]]
+                let p1 = V3d positions.[triBuf.[ti * 3 + 1]]
+                let p2 = V3d positions.[triBuf.[ti * 3 + 2]]
+                nSum <- nSum + Vec.cross (p1 - p0) (p2 - p0)
+            let normal = if nSum.Length > 1e-9 then Vec.normalize nSum else V3d.OOI
+            normal, orthoRef normal V3d.OIO
+    let leftDir = Vec.cross normal refDir
 
-        let adj = System.Collections.Generic.Dictionary<int, ResizeArray<int>>()
-        let inline addEdge a b =
-            let mutable l = Unchecked.defaultof<ResizeArray<int>>
-            if adj.TryGetValue(a, &l) then ()
-            else
-                l <- ResizeArray<int>()
-                adj.[a] <- l
-            if not (l.Contains b) then l.Add b
-        for ti in 0 .. triCount - 1 do
-            let i0 = triBuf.[ti * 3]
-            let i1 = triBuf.[ti * 3 + 1]
-            let i2 = triBuf.[ti * 3 + 2]
-            addEdge i0 i1
-            addEdge i1 i0
-            addEdge i1 i2
-            addEdge i2 i1
-            addEdge i2 i0
-            addEdge i0 i2
+    // Footprint clip: keep a triangle if any corner falls inside the radius disc
+    // (the gathered sphere is slightly larger so straddling rim triangles fill
+    // the edge); trims the wasted annulus the client circle-clips away anyway.
+    let r2 = radius * radius
+    let inline planarIn v =
+        let dv = V3d positions.[v] - centreLocal
+        let px = Vec.dot dv refDir
+        let py = Vec.dot dv leftDir
+        px * px + py * py <= r2
 
-        let mutable seedV = -1
-        let mutable seedD2 = System.Double.MaxValue
-        for v in adj.Keys do
-            let d2 = (V3d positions.[v] - centreLocal).LengthSquared
-            if d2 < seedD2 then seedD2 <- d2; seedV <- v
-
-        if seedV < 0 then
-            { Points = [||]; Triangles = [||]; RefDirWorld = refDir; NormalWorld = normal }
-        else
-            let dist = System.Collections.Generic.Dictionary<int, float>()
-            let pq = System.Collections.Generic.PriorityQueue<int, float>()
-            dist.[seedV] <- 0.0
-            pq.Enqueue(seedV, 0.0)
-            while pq.Count > 0 do
-                let v = pq.Dequeue()
-                let mutable d = 0.0
-                if dist.TryGetValue(v, &d) then
-                    if d <= radius then
-                        let mutable nbrs = Unchecked.defaultof<ResizeArray<int>>
-                        if adj.TryGetValue(v, &nbrs) then
-                            let vp = V3d positions.[v]
-                            for n in nbrs do
-                                let np = V3d positions.[n]
-                                let alt = d + (np - vp).Length
-                                if alt <= radius then
-                                    let mutable cur = System.Double.MaxValue
-                                    let has = dist.TryGetValue(n, &cur)
-                                    if not has || alt < cur then
-                                        dist.[n] <- alt
-                                        pq.Enqueue(n, alt)
-
-            if withTriangles then
-                let kept =
-                    let all = dist |> Seq.toArray
-                    if all.Length <= maxPoints then all
-                    else
-                        all |> Array.sortBy (fun kv -> kv.Value) |> Array.truncate maxPoints
-                let indexOf = System.Collections.Generic.Dictionary<int, int>(kept.Length)
-                let pts =
-                    kept |> Array.mapi (fun i kv ->
-                        let v = kv.Key
-                        indexOf.[v] <- i
-                        let vp = V3d positions.[v]
-                        let dv = vp - centreLocal
-                        let dvTan = dv - normal * Vec.dot dv normal
-                        let world = vp + centroid
-                        let uv = if v < uvs.Length then V2d uvs.[v] else V2d.Zero
-                        { Px = Vec.dot dvTan refDir; Py = Vec.dot dvTan leftDir
-                          Wx = world.X; Wy = world.Y; Wz = world.Z; U = uv.X; V = uv.Y })
-                let tris = ResizeArray<int>(triCount * 3)
-                for ti in 0 .. triCount - 1 do
-                    let mutable a = 0
-                    let mutable b = 0
-                    let mutable c = 0
-                    if indexOf.TryGetValue(triBuf.[ti * 3], &a)
-                       && indexOf.TryGetValue(triBuf.[ti * 3 + 1], &b)
-                       && indexOf.TryGetValue(triBuf.[ti * 3 + 2], &c) then
-                        tris.Add a; tris.Add b; tris.Add c
-                { Points = pts; Triangles = tris.ToArray(); RefDirWorld = refDir; NormalWorld = normal }
-            else
-                let out = ResizeArray<PatchPoint>(dist.Count)
-                for kv in dist do
-                    let v = kv.Key
-                    let d = kv.Value
-                    let vp = V3d positions.[v]
-                    let dv = vp - centreLocal
-                    let dvTan = dv - normal * Vec.dot dv normal
-                    let world = vp + centroid
-                    let x = Vec.dot dvTan refDir
-                    let y = Vec.dot dvTan leftDir
-                    let bearing = atan2 y x
-                    let px = d * cos bearing
-                    let py = d * sin bearing
-                    let uv = if v < uvs.Length then V2d uvs.[v] else V2d.Zero
-                    out.Add { Px = px; Py = py; Wx = world.X; Wy = world.Y; Wz = world.Z; U = uv.X; V = uv.Y }
-
-                let pts = out.ToArray()
-
-                let final =
-                    if pts.Length <= maxPoints then pts
-                    else
-                        let stride = pts.Length / maxPoints
-                        let n = pts.Length / stride
-                        Array.init n (fun i -> pts.[i * stride])
-                { Points = final; Triangles = [||]; RefDirWorld = refDir; NormalWorld = normal }
+    let stride = if maxTris > 0 && triCount > maxTris then triCount / maxTris else 1
+    let indexOf = System.Collections.Generic.Dictionary<int, int>()
+    let pts = ResizeArray<PatchPoint>()
+    let emit v =
+        match indexOf.TryGetValue v with
+        | true, i -> i
+        | _ ->
+            let i = pts.Count
+            indexOf.[v] <- i
+            let vp = V3d positions.[v]
+            let dv = vp - centreLocal
+            let dvTan = dv - normal * Vec.dot dv normal
+            let world = vp + centroid
+            let uv = if v < uvs.Length then V2d uvs.[v] else V2d.Zero
+            pts.Add { Px = Vec.dot dvTan refDir; Py = Vec.dot dvTan leftDir
+                      Wx = world.X; Wy = world.Y; Wz = world.Z; U = uv.X; V = uv.Y }
+            i
+    let tris = ResizeArray<int>()
+    let mutable ti = 0
+    while ti < triCount do
+        let i0, i1, i2 = triBuf.[ti * 3], triBuf.[ti * 3 + 1], triBuf.[ti * 3 + 2]
+        if planarIn i0 || planarIn i1 || planarIn i2 then
+            let a = emit i0
+            let b = emit i1
+            let c = emit i2
+            tris.Add a; tris.Add b; tris.Add c
+        ti <- ti + stride
+    { Points = pts.ToArray(); Triangles = tris.ToArray(); RefDirWorld = refDir; NormalWorld = normal }

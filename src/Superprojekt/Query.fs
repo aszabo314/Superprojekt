@@ -143,7 +143,7 @@ module Query =
     // index triples (patch picker; (px,py) = planar frame projection). frame
     // directions are in the mesh's own frame; None = reference patch (local fit).
     let patchInFrame
-            (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int)
+            (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxTris : int)
             (frame : (V3d * V3d) option)
             : Async<(V2d * V3d * V2d)[] * int[] * V3d * V3d> =
         async {
@@ -151,8 +151,8 @@ module Query =
                 match frame with
                 | Some (n, r) -> sprintf ""","frameNormal":%s,"frameRefDir":%s""" (v3 n) (v3 r)
                 | None -> ""
-            let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d,"triangles":true%s}"""
-                        name (v3 centre) radius maxPoints frameJson
+            let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxTris":%d%s}"""
+                        name (v3 centre) radius maxTris frameJson
             let! r = post serverUrl "/query/patch" json
             let pts =
                 r.GetProperty("points").EnumerateArray() |> Seq.map (fun e ->

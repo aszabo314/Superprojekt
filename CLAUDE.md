@@ -188,7 +188,7 @@ GET  /api/datasets/{dataset}/mesh/{name}/{i}    → binary mesh
 GET  /api/datasets/{dataset}/mesh/{name}/{i}/atlas → JPEG
 POST /api/query/ray                             → { hit, t, point, triangleId }   Name = "dataset/mesh"
 POST /api/query/closest                         → { found, point, distanceSquared, triangleId }
-POST /api/query/patch                           → tangent + normal at a point, plus neighbour sample (optional frameNormal/frameRefDir override skips the plane fit; points carry per-vertex atlas UVs; optional triangles flag → planar projection + triangle index triples + nearest-by-geodesic cap instead of geodesic-polar + stride decimation). Used by the patch small-multiples anchor picker.
+POST /api/query/patch                           → every triangle whose bbox overlaps the footprint sphere, projected into the frame (planar px,py + per-vertex atlas UVs + index triples), clipped to the radius disc; connectivity-agnostic so fragmented multi-tile meshes fill the footprint like a watertight DEM (height fields → no overlap to disambiguate). Optional frameNormal/frameRefDir override skips the local plane fit; maxTris bounds the output via a uniform stride. Used by the patch small-multiples anchor picker.
 POST /api/query/contact-rings                   → sphere–surface intersection polylines (all rings, closed rings repeat the first point)
 POST /api/query/icp                             → ICP transform + convergence + residuals
 POST /api/query/lsq-pairs                       → weighted rigid landmark solve (delta onto reference + per-pair residuals + conditioning; 400 on <3 pairs)

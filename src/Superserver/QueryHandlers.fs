@@ -16,12 +16,12 @@ type ClosestRequest = { Name: string; Index: int; Point: float[] }
 
 [<CLIMutable>]
 type PatchRequest = {
-    Name: string; Centre: float[]; Radius: float; MaxPoints: int
+    Name: string; Centre: float[]; Radius: float
+    // Triangle budget; over it the patch thins by a uniform stride.
+    MaxTris: int
     // Optional shared-frame override (mesh-frame dirs); both must be present, else
     // null → local plane fit.
     FrameNormal: float[]; FrameRefDir: float[]
-    // true → planar projection + triangle index triples (absent binds false).
-    Triangles: bool
 }
 
 [<CLIMutable>]
@@ -175,13 +175,13 @@ let patchHandler : HttpHandler =
             let lm = loadMesh req.Name 0
             let centre = toV3d req.Centre
             let radius = if req.Radius <= 0.0 then 1.0 else req.Radius
-            let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
+            let maxTris = if req.MaxTris <= 0 then 200000 else req.MaxTris
             let frame =
                 if not (isNull req.FrameNormal) && req.FrameNormal.Length = 3
                    && not (isNull req.FrameRefDir) && req.FrameRefDir.Length = 3 then
                     Some (toV3d req.FrameNormal, toV3d req.FrameRefDir)
                 else None
-            let result = MeshAnalysis.patch lm centre radius maxPoints frame req.Triangles
+            let result = MeshAnalysis.patch lm centre radius maxTris frame
             let pts = result.Points |> Array.map (fun p -> [| p.Px; p.Py; p.Wx; p.Wy; p.Wz; p.U; p.V |])
             log.LogInformation("patch {Name} r={Radius:F2}: {Count} pts, {Tris} tris", req.Name, radius, pts.Length, result.Triangles.Length / 3)
             return! json {| points = pts; triangles = result.Triangles; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx

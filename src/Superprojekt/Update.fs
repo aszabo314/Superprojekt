@@ -507,7 +507,7 @@ module Update =
                             let refT = Map.tryFind refMesh trafos |> Option.defaultValue Trafo3d.Identity
                             let cRef = refT.Backward.TransformPos refAnchor
                             let! refPts, refTris, refDirM, normalM =
-                                Query.patchInFrame ApiConfig.apiBase.Value refMesh cRef radius 10000 None
+                                Query.patchInFrame ApiConfig.apiBase.Value refMesh cRef radius 200000 None
                                 |> Async.StartAsTask
                             let normalW = (refT.Forward.TransformDir normalM).Normalized
                             let refDirW =
@@ -550,7 +550,7 @@ module Update =
                                                 (t.Backward.TransformDir refDirW)
                                             let! pts, tris, _, _ =
                                                 Query.patchInFrame ApiConfig.apiBase.Value mesh
-                                                    (t.Backward.TransformPos cw) radius 10000 (Some frame)
+                                                    (t.Backward.TransformPos cw) radius 200000 (Some frame)
                                             let points =
                                                 pts |> Array.map (fun (uv2, wp, atlasUv) ->
                                                     let world = t.Forward.TransformPos wp

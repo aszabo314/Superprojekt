@@ -20,7 +20,7 @@ module GuiPanels =
             span {
                 Class "mesh-swatch"
                 colorVal |> AVal.map (fun c ->
-                    Some (Style [Css.Background (sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B))]))
+                    Some (Style [Css.Background (Primitives.c4bToRgbCss c)]))
             }
             span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
             span { Class "mesh-name"; Cards.shortName name }

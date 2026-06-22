@@ -8,7 +8,6 @@ module RenderPass =
     let passMinusOne = RenderPass.main
     let passZero = RenderPass.after "zero" RenderPassOrder.Arbitrary passMinusOne
     let passOne = RenderPass.after "one" RenderPassOrder.Arbitrary passZero
-    let passTwo = RenderPass.after "two" RenderPassOrder.Arbitrary passOne
 
 // Per-fragment ghosting rules are documented in CLAUDE.md ("Ghosting rules").
 [<ReflectedDefinition>]

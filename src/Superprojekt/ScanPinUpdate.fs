@@ -166,7 +166,7 @@ module ScanPinUpdate =
         let cc = model.CommonCentroid
         let renderAnchor (pin : ScanPin) = ScanPin.renderCentre cc scale pin.Centre
         if selChanged then
-            let effectiveId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
+            let effectiveId = ScanPinModel.effectivePinId sp'
             match effectiveId with
             | Some id ->
                 match HashMap.tryFind id sp'.Pins with
@@ -181,7 +181,7 @@ module ScanPinUpdate =
                 let cards = cs.Cards |> HashMap.map (fun _ c -> { c with Visible = false })
                 { model with CardSystem = { cs with Cards = cards } }
         else
-            let effectiveId = ScanPinModel.activePlacementId sp' |> Option.orElse sp'.SelectedPin
+            let effectiveId = ScanPinModel.effectivePinId sp'
             match effectiveId with
             | Some id ->
                 match HashMap.tryFind id sp'.Pins with
@@ -205,8 +205,7 @@ module ScanPinUpdate =
     let ensureProbe (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
         let effective =
-            ScanPinModel.activePlacementId sp
-            |> Option.orElse sp.SelectedPin
+            ScanPinModel.effectivePinId sp
             |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
         match effective with
         | Some pin when (match pin.Probe with ProbeNone -> true | _ -> false) ->
@@ -277,8 +276,7 @@ module ScanPinUpdate =
         else
             let sp = model.ScanPins
             let effective =
-                ScanPinModel.activePlacementId sp
-                |> Option.orElse sp.SelectedPin
+                ScanPinModel.effectivePinId sp
                 |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
             match effective with
             | Some pin when (match pin.ProbePreview with ProbeNone -> true | _ -> false) ->

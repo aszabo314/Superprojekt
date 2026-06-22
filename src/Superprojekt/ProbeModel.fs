@@ -6,7 +6,7 @@ open Aardvark.Base
 // N-mesh M3C2 probe results. All lengths in
 // metric world-space metres; the signed-distance axis is re-centred so 0 = the
 // reference mesh's median. Raw axis samples stay server-side — the client only
-// receives stats + the KDE curve evaluated over XFit.
+// receives stats + the KDE curve.
 type ProbeDistribution = {
     MeshName  : string
     Count     : int
@@ -15,41 +15,27 @@ type ProbeDistribution = {
     Q3        : float
     Std       : float
     Kde       : (float * float)[]
-    Bandwidth : float
     // Raw re-centred samples for the small-N strip (empty for large N).
     Samples   : float[]
-}
-
-type ProbeSourcesPerMesh = {
-    MeshName     : string
-    IqrMetres    : float
-    MedianOffset : float
-    PointCount   : int
 }
 
 type ProbeSources = {
     DatasetError      : float
     AlgorithmResid    : float
     LocalConditioning : float
-    PerMesh           : ProbeSourcesPerMesh[]
 }
 
 type ProbeResult = {
     ReferenceMesh : string
     Normal        : V3d
-    Planarity     : float
-    Planar        : bool
     Length        : float
-    AutoLength    : float
     // Axial offset (m along Normal from the pin centre) of chart y=0 = the
     // reference median. chart→3D: pin.Centre + Normal·(value + RefOffset);
     // 3D→chart: dot(q − pin.Centre, Normal) − RefOffset.
     RefOffset     : float
     XAuto         : Range1d
-    XFit          : Range1d
     Distributions : ProbeDistribution[]
     Sources       : ProbeSources
-    ComputedAt    : DateTime
 }
 
 type ProbeState =

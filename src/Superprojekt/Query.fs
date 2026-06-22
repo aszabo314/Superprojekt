@@ -232,7 +232,6 @@ module Query =
                             Q1        = d.GetProperty("q1").GetDouble()
                             Q3        = d.GetProperty("q3").GetDouble()
                             Std       = d.GetProperty("std").GetDouble()
-                            Bandwidth = d.GetProperty("bandwidth").GetDouble()
                             Kde       =
                                 d.GetProperty("kde").EnumerateArray()
                                 |> Seq.map (fun p ->
@@ -246,39 +245,22 @@ module Query =
                         })
                     |> Seq.toArray
                 let s = r.GetProperty("sources")
-                let perMesh =
-                    s.GetProperty("perMesh").EnumerateArray()
-                    |> Seq.map (fun p ->
-                        {
-                            MeshName     = p.GetProperty("name").GetString()
-                            IqrMetres    = p.GetProperty("iqr").GetDouble()
-                            MedianOffset = p.GetProperty("medianOffset").GetDouble()
-                            PointCount   = p.GetProperty("count").GetInt32()
-                        })
-                    |> Seq.toArray
-                let planarity = r.GetProperty("planarity").GetDouble()
                 return Result.Ok {
                     ReferenceMesh = referenceName
                     Normal        = readVec "normal"
-                    Planarity     = planarity
-                    Planar        = planarity <= 0.5
                     Length        = r.GetProperty("length").GetDouble()
-                    AutoLength    = r.GetProperty("autoLength").GetDouble()
                     RefOffset     =
                         (match r.TryGetProperty "refOffset" with
                          | true, v -> v.GetDouble()
                          | _ -> 0.0)
                     XAuto         = readRange "xAuto"
-                    XFit          = readRange "xFit"
                     Distributions = dists
                     Sources       =
                         {
                             DatasetError      = s.GetProperty("dataset").GetDouble()
                             AlgorithmResid    = s.GetProperty("algorithm").GetDouble()
                             LocalConditioning = s.GetProperty("conditioning").GetDouble()
-                            PerMesh           = perMesh
                         }
-                    ComputedAt    = System.DateTime.UtcNow
                 }
         }
 

@@ -35,7 +35,7 @@ module GuiWorkflow =
         | StageCoarse -> "Stage 1"
         | StageFine -> "Stage 2"
 
-    let private hex (c : C4b) = sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B)
+    let private hex = Primitives.c4bToRgbCss
 
     // Median-offset-across-pins strip (spec WP10): one row per moving mesh,
     // one mark per pin at its signed median offset, shared x-scale, ±LoD band.

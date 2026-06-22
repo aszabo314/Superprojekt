@@ -247,13 +247,13 @@ module StudyUpdate =
     // Whole subsystems with no feature id are Full-mode only (§5 hidden list).
     let private fullOnly (msg : Message) =
         match msg with
-        | ToggleFusionMode | TogglePanorama | SelectPanorama _ | SetPanoramaMode _
+        | ToggleFusionMode | TogglePanorama | SetPanoramaMode _
         | SetPanoramaBlend _ | FlyToPanorama _
         | LassoBegin | ToggleLassoEnabled
         | SaveWorkspace | LoadWorkspaceJson _
         | StartRetarget _ | SetRetargetDecision _ | CommitRetarget
-        | ToggleGearPopover | SetDatasetScale _
-        | ToggleFullscreen | ToggleGhostSilhouette | SetGhostOpacity _
+        | ToggleGearPopover
+        | ToggleGhostSilhouette | SetGhostOpacity _
         | ToggleAnchorGhostMode | SetShadingStrength _ | SetSlopeThresholdDeg _ -> true
         | _ -> false
 

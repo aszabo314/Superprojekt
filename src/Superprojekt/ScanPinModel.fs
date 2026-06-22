@@ -82,6 +82,16 @@ module ScanPinModel =
         | AdjustingPin id -> Some id
         | _ -> None
 
+    // The pin under inspection: the one being adjusted, else the selected one.
+    let effectivePinId (sp : ScanPinModel) =
+        activePlacementId sp |> Option.orElse sp.SelectedPin
+
+    // Adaptive form, built from the already-projected leaves (never the whole
+    // record) so it obeys the field-projection rule.
+    let effectivePinIdA (placement : aval<PlacementState>) (selected : aval<ScanPinId option>) =
+        (placement, selected) ||> AVal.map2 (fun pl sel ->
+            match pl with AdjustingPin id -> Some id | _ -> sel)
+
     let isPlacing (sp : ScanPinModel) =
         match sp.Placement with
         | PlacementIdle -> false

@@ -54,7 +54,7 @@ module View =
         let patchHover      = cval<PatchHover option> None
         let previewSwap     = cval false
 
-        let fullscreenActive = AVal.map2 (||) (spaceHeld :> aval<_>) model.FullscreenOn
+        let fullscreenActive = spaceHeld :> aval<bool>
 
         // Holding Option/Alt is the layer-isolation mode: the wheel cycles
         // the active picking layer and the meshes render isolated (active
@@ -77,10 +77,7 @@ module View =
         let cursorHighlight =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
-                (model.ScanPins.Placement, model.ScanPins.SelectedPin) ||> AVal.map2 (fun pl sel ->
-                    match pl with
-                    | AdjustingPin id -> Some id
-                    | _ -> sel)
+                ScanPinModel.effectivePinIdA model.ScanPins.Placement model.ScanPins.SelectedPin
             AVal.custom (fun t ->
                 let pv = PendingRegistration.isPreview (model.PendingReg.GetValue t)
                 let probeOf pid =
@@ -127,8 +124,7 @@ module View =
         let cutawayPlane =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
-                (model.ScanPins.Placement, model.ScanPins.SelectedPin) ||> AVal.map2 (fun pl sel ->
-                    match pl with AdjustingPin id -> Some id | _ -> sel)
+                ScanPinModel.effectivePinIdA model.ScanPins.Placement model.ScanPins.SelectedPin
             AVal.custom (fun t ->
                 if not (model.CutawayActive.GetValue t) then None
                 else
@@ -150,9 +146,7 @@ module View =
                                             | Some d ->
                                                 let scale = DatasetScale.forMesh scales mesh
                                                 let c = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
-                                                let wb = RigidTransform.renderToWorld scale cc c
-                                                let wa = RigidTransform.renderToWorld scale cc (RegLog.effective c d)
-                                                (wb.Inverse * wa).Forward.TransformPos a.Point
+                                                (RigidTransform.worldDeltaOf scale cc c d).Forward.TransformPos a.Point
                                             | None -> a.Point)
                                     |> Array.ofSeq
                                 let pts = if Array.isEmpty pts then [| pin.Centre |] else pts
@@ -187,8 +181,7 @@ module View =
         let liveIsoPlane =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
-                (model.ScanPins.Placement, model.ScanPins.SelectedPin) ||> AVal.map2 (fun pl sel ->
-                    match pl with AdjustingPin id -> Some id | _ -> sel)
+                ScanPinModel.effectivePinIdA model.ScanPins.Placement model.ScanPins.SelectedPin
             AVal.custom (fun t ->
                 if not (model.ClipAboveIso.GetValue t) then None
                 else
@@ -719,7 +712,6 @@ module View =
                 Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>) patchHover
             }
             GuiOverlays.rulerOverlay model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
-            GuiOverlays.fullscreenInfo model
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.orientationIndicator model
         }

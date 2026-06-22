@@ -73,9 +73,7 @@ module GuiOverlays =
                                                 | Some d ->
                                                     let scale = DatasetScale.forMesh scales mesh
                                                     let cT = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
-                                                    let wb = RigidTransform.renderToWorld scale cc cT
-                                                    let wa = RigidTransform.renderToWorld scale cc (RegLog.effective cT d)
-                                                    (wb.Inverse * wa).Forward.TransformPos a.Point
+                                                    (RigidTransform.worldDeltaOf scale cc cT d).Forward.TransformPos a.Point
                                                 | None -> a.Point
                                             let mid = (ScanPin.renderCentre cc s aw + refR) * 0.5
                                             match projectToScreen mid vtr vp with
@@ -228,9 +226,7 @@ module GuiOverlays =
                             let committed =
                                 Map.tryFind mesh (model.MeshTransforms.GetValue t)
                                 |> Option.defaultValue Trafo3d.Identity
-                            let wb = RigidTransform.renderToWorld scale cc committed
-                            let wa = RigidTransform.renderToWorld scale cc (RegLog.effective committed res.Delta)
-                            let deltaW = wb.Inverse * wa
+                            let deltaW = RigidTransform.worldDeltaOf scale cc committed res.Delta
                             let wc = deltaW.Backward.TransformPos w
                             let condP = Provenance.localConditioning w anchors
                             let condC = Provenance.localConditioning wc anchors
@@ -251,8 +247,7 @@ module GuiOverlays =
                                 elif dd < 0.0 then "improved"
                                 else "degraded"
                             Some (px, Cards.numbered order mesh,
-                                  sprintf "Δ %+.4f m • LoD %.4f m • %s" dd lod verdict, "[]")
-                | _ -> None)
+                                  sprintf "Δ %+.4f m • LoD %.4f m • %s" dd lod verdict, "[]"))
         let visStyle =
             payload |> AVal.map (fun p ->
                 match p with
@@ -471,21 +466,4 @@ module GuiOverlays =
                 "  });"
                 "  el.appendChild(svg);"
             ]
-        }
-
-    let fullscreenInfo (model : AdaptiveModel) =
-        div {
-            Class "fullscreen-info"
-            Primitives.showWhen model.FullscreenOn
-            model.ActiveDataset |> AVal.map (fun ds ->
-                match ds with
-                | Some d -> div { Class "fullscreen-info-title"; d }
-                | None   -> div { []  })
-            model.MeshNames |> AList.map (fun name ->
-                let order = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-                div {
-                    (order, model.Registration) ||> AVal.map2 (fun o reg ->
-                        let star = if reg.ReferenceMesh = Some name then " ★" else ""
-                        sprintf "%d  %s%s" (o + 1) (Cards.shortName name) star)
-                })
         }

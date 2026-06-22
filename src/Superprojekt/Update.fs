@@ -116,6 +116,22 @@ module Update =
                     | None -> card)
         { model with CardSystem = { model.CardSystem with Cards = cards } }
 
+    // World-space anchor deltas for one logged step: forward = commit
+    // (before→after), else the rollback inverse (after→before).
+    let private stepDeltas (forward : bool) (model : Model) (step : RegStep) =
+        step.Outputs |> Map.map (fun mesh o ->
+            let a, b = if forward then o.TransformBefore, o.TransformAfter
+                       else o.TransformAfter, o.TransformBefore
+            ModelTransforms.worldDelta model mesh a b)
+
+    // Swap a recomputed transform state back onto the model and re-base anchors.
+    let private applyRegState (st : RegTransformState) (deltas : Map<string, Trafo3d>) (model : Model) =
+        { model with
+            MeshTransforms = st.Transforms
+            MeshAlgorithmResidual = st.AlgoResiduals
+            RegistrationLog = st.Log
+            ScanPins = bakeAnchors deltas model.ScanPins }
+
     let private regState (model : Model) : RegTransformState =
         {
             Transforms    = model.MeshTransforms
@@ -277,8 +293,6 @@ module Update =
             let log = model.DebugLog.InsertAt(0, s)
             let log = if log.Count > 20 then IndexList.take 20 log else log
             { model with DebugLog = log }
-        | ToggleFullscreen ->
-            { model with FullscreenOn = not model.FullscreenOn }
         | ToggleGhostSilhouette ->
             { model with GhostSilhouette = not model.GhostSilhouette }
         | SetGhostOpacity v ->
@@ -301,10 +315,7 @@ module Update =
         | ToggleClipAboveIso ->
             { model with ClipAboveIso = not model.ClipAboveIso }
         | LockIsoPlane d ->
-            let pid =
-                match model.ScanPins.Placement with
-                | AdjustingPin id -> Some id
-                | _ -> model.ScanPins.SelectedPin
+            let pid = ScanPinModel.effectivePinId model.ScanPins
             match pid |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
             | Some pin ->
                 let pv = PendingRegistration.isPreview model.PendingReg
@@ -418,9 +429,6 @@ module Update =
                     Delta         = deltaRender
                     RmsBefore     = rmsBefore
                     RmsAfter      = rmsAfter
-                    Convergence   = [||]
-                    Collinear     = collinear
-                    PairResiduals = pairResiduals
                 }
                 let pr' = { pr with Results = Map.add mesh result pr.Results; Expected = max 0 (pr.Expected - 1) }
                 let sp =
@@ -528,9 +536,6 @@ module Update =
                     Delta         = deltaRender
                     RmsBefore     = rmsBefore
                     RmsAfter      = rmsAfter
-                    Convergence   = conv
-                    Collinear     = false
-                    PairResiduals = [||]
                 }
                 let pr' = { pr with Results = Map.add mesh result pr.Results; Expected = max 0 (pr.Expected - 1) }
                 let lastEntry = {
@@ -563,16 +568,9 @@ module Update =
                 let refMesh = model.Registration.ReferenceMesh |> Option.defaultValue ""
                 let step = RegLog.buildStep System.DateTime.UtcNow refMesh pr (regState model)
                 let st' = RegLog.commit step (regState model)
-                let worldDeltas =
-                    step.Outputs |> Map.map (fun mesh o ->
-                        ModelTransforms.worldDelta model mesh o.TransformBefore o.TransformAfter)
                 let model =
                     reanchorCards
-                        { model with
-                            MeshTransforms = st'.Transforms
-                            MeshAlgorithmResidual = st'.AlgoResiduals
-                            RegistrationLog = st'.Log
-                            ScanPins = bakeAnchors worldDeltas model.ScanPins
+                        { applyRegState st' (stepDeltas true model step) model with
                             Registration = { model.Registration with Running = false } }
                 // Registration-complete cascade: all probes + contact rings +
                 // algorithm RMS (already swapped in above).
@@ -585,19 +583,11 @@ module Update =
         | RollbackRegStep ->
             match RegLog.rollback (regState model) with
             | Some (st', step) ->
-                let worldDeltas =
-                    step.Outputs |> Map.map (fun mesh o ->
-                        // inverse of the committed delta: after → before
-                        ModelTransforms.worldDelta model mesh o.TransformAfter o.TransformBefore)
                 let model =
                     reanchorCards
-                        { model with
-                            MeshTransforms = st'.Transforms
-                            MeshAlgorithmResidual = st'.AlgoResiduals
-                            RegistrationLog = st'.Log
+                        { applyRegState st' (stepDeltas false model step) model with
                             // diagnostics of the rolled-back step are stale now
-                            LastSolve = LastSolve.afterRollback step model.LastSolve
-                            ScanPins = bakeAnchors worldDeltas model.ScanPins }
+                            LastSolve = LastSolve.afterRollback step model.LastSolve }
                 invalidateProbes (exitPreview model)
             | None -> model
         | ResetRegistration ->
@@ -607,15 +597,7 @@ module Update =
             let rec rollAll (model : Model) =
                 match RegLog.rollback (regState model) with
                 | Some (st', step) ->
-                    let worldDeltas =
-                        step.Outputs |> Map.map (fun mesh o ->
-                            ModelTransforms.worldDelta model mesh o.TransformAfter o.TransformBefore)
-                    rollAll
-                        { model with
-                            MeshTransforms = st'.Transforms
-                            MeshAlgorithmResidual = st'.AlgoResiduals
-                            RegistrationLog = st'.Log
-                            ScanPins = bakeAnchors worldDeltas model.ScanPins }
+                    rollAll (applyRegState st' (stepDeltas false model step) model)
                 | None -> model
             let model = reanchorCards (rollAll model)
             invalidateProbes (exitPreview
@@ -976,8 +958,6 @@ module Update =
                     Toast = None
                     HeatmapMode = (match model.HeatmapMode with HeatDiff -> model.HeatmapPrev | m -> m)
                     CardSystem = { model.CardSystem with Cards = model.CardSystem.Cards |> HashMap.map (fun _ c -> { c with Visible = false }) } }
-        | SetDatasetScale(dataset, scale) ->
-            { model with DatasetScales = Map.add dataset scale model.DatasetScales }
         | JumpToMesh meshName ->
             match Map.tryFind meshName model.DatasetCentroids with
             | Some centroid ->
@@ -1126,7 +1106,6 @@ module Update =
                                             let dist = sqrt (float r.distanceSquared)
                                             {
                                                 PinId = p.Id
-                                                OriginalCentre = p.Centre
                                                 OriginalHostMesh = p.HostMeshName
                                                 InnerRadius = p.InnerRadius
                                                 ProjectedCentre = r.point
@@ -1138,7 +1117,6 @@ module Update =
                                             // No projection — flag with a sentinel large distance
                                             {
                                                 PinId = p.Id
-                                                OriginalCentre = p.Centre
                                                 OriginalHostMesh = p.HostMeshName
                                                 InnerRadius = p.InnerRadius
                                                 ProjectedCentre = p.Centre
@@ -1261,10 +1239,6 @@ module Update =
             else (bumpSurfaceDist (); { model with ChartStickyMesh = None; SurfaceDistance = Map.empty; SurfaceDistBrush = None })
         | TogglePanorama ->
             { model with PanoramaOpen = not model.PanoramaOpen }
-        | PanoramasGenerated ps ->
-            { model with Panoramas = ps; SelectedPanorama = 0 }
-        | SelectPanorama i ->
-            { model with SelectedPanorama = i }
         | SetPanoramaMode m ->
             { model with PanoramaMode = m }
         | SetPanoramaBlend b ->
@@ -1324,10 +1298,7 @@ module Update =
     // the effective (selected/adjusting) pin changes — incl. a full deselect —
     // they reset. The cutaway is global (gear toggle) and just re-derives its
     // box from the new effective pin, so it is deliberately not reset here.
-    let private effectivePinId (m : Model) =
-        match m.ScanPins.Placement with
-        | AdjustingPin id -> Some id
-        | _ -> m.ScanPins.SelectedPin
+    let private effectivePinId (m : Model) = ScanPinModel.effectivePinId m.ScanPins
 
     let private clearSectioningOnPinChange (before : Model) (after : Model) =
         if effectivePinId before = effectivePinId after then after

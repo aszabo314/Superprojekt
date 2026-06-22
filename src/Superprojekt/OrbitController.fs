@@ -449,8 +449,6 @@ module OrbitController =
 
             model
 
-    let animationRunning (model : OrbitState) = model.animationRunning
-
     let getAttributes (env : Env<OrbitMessage>) =
         att {
             Dom.OnPointerDown((fun e ->

@@ -408,7 +408,6 @@ type StudyRuntime = {
     SceneClickArm : string option      // question id armed for a 3D pick
     Flags         : Map<string, V3d>   // marked scene points per question id
     CompletionCode : string option
-    CommitCount   : int                // labels commit#1, commit#2, …
     AdvancePosted : Set<string>        // "phaseId/stepId" already advanced
     // §10 reload: progress kept, scene reset — shown until the next step.
     ResumedNotice : bool
@@ -453,7 +452,6 @@ module StudyRuntime =
         SceneClickArm = None
         Flags         = Map.empty
         CompletionCode = None
-        CommitCount   = 0
         AdvancePosted = Set.empty
         ResumedNotice = false
     }

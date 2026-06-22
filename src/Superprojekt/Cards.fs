@@ -163,7 +163,7 @@ module Cards =
                                     match p.HostMeshName with
                                     | Some host ->
                                         match Map.tryFind host p.DatasetColors with
-                                        | Some c -> sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B)
+                                        | Some c -> Primitives.c4bToRgbCss c
                                         | None -> "#1a56db"
                                     | None -> "#1a56db"
                                 Some (Style [Css.Background bg])

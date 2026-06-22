@@ -75,6 +75,22 @@ module ScanPinScene =
             Sg.Render sphereIdxCnt
         }
 
+    // Orthonormal (u, v) basis spanning the plane ⊥ a (possibly unnormalized,
+    // possibly degenerate) normal, plus the normalized normal itself.
+    let private basisFromNormal (n : V3d) =
+        let nN = if n.Length > 1e-9 then n.Normalized else V3d.OOI
+        let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
+        nN, u, Vec.cross nN u
+
+    // Append a closed ring of `segs` line segments centred at c, radius r, in
+    // the (u, v) plane.
+    let private addRing (out : ResizeArray<V3d * V3d * V4d * float>)
+                        (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
+        for i in 0 .. segs - 1 do
+            let a0 = float i / float segs * Constant.PiTimesTwo
+            let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
+            out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
+
     let build
             (env : Env<Message>)
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
@@ -90,6 +106,18 @@ module ScanPinScene =
                 | None -> 1.0)
 
         let notFullscreen = AVal.map not fullscreenActive
+        // Shared chrome for every line overlay: alpha-blended, occluded by
+        // foreground geometry (the spatial cue), non-interactive.
+        let linesNode (active : aval<bool>) segs =
+            sg {
+                Sg.Active active
+                Sg.View view
+                Sg.Proj proj
+                Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                Lines.render segs
+            }
         let selectedId = model.ScanPins.SelectedPin
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
@@ -168,7 +196,7 @@ module ScanPinScene =
                         po |> Option.map (fun p ->
                             let colour =
                                 match p.HostMeshName |> Option.bind (fun h -> Map.tryFind h p.DatasetColors) with
-                                | Some c -> V3d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0)
+                                | Some c -> Primitives.c4bToV3d c
                                 | None -> V3d(0.102, 0.337, 0.859)
                             let rings = match p.ContactRings with RingsReady m -> m | _ -> Map.empty
                             p.Centre, p.InnerRadius, ScanPin.axis p, colour, rings))
@@ -191,15 +219,8 @@ module ScanPinScene =
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             let cR = ScanPin.renderCentre cc scale centre
                             let rR = ScanPin.renderLength scale radius
-                            let nN = if axis.Length > 1e-9 then axis.Normalized else V3d.OOI
-                            let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
-                            let v = Vec.cross nN u
-                            let segsN = 64
-                            for i in 0 .. segsN - 1 do
-                                let a0 = float i / float segsN * Constant.PiTimesTwo
-                                let a1 = float (i + 1) / float segsN * Constant.PiTimesTwo
-                                out.Add(cR + (u * cos a0 + v * sin a0) * rR,
-                                        cR + (u * cos a1 + v * sin a1) * rR, col, width)
+                            let nN, u, v = basisFromNormal axis
+                            addRing out cR u v rR col width 64
                             // 1 m (world) direction indicator along the pin
                             // axis — thin + semitransparent so it reads as
                             // orientation, not geometry. Points up until the
@@ -215,17 +236,7 @@ module ScanPinScene =
                                             for i in 0 .. rp.Length - 2 do
                                                 out.Add(rp.[i], rp.[i + 1], col, width)
                             out.ToArray())
-                ASet.ofList [
-                    sg {
-                        Sg.Active notFullscreen
-                        Sg.View view
-                        Sg.Proj proj
-                        Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                        Sg.BlendMode (AVal.constant BlendMode.Blend)
-                        Sg.NoEvents
-                        Lines.render segs
-                    }
-                ])
+                ASet.ofList [ linesNode notFullscreen segs ])
 
         // A4: during a correspondence-marker 3D pick, draw the reference
         // marker's normal as a guide line — the predicted correspondence is
@@ -242,12 +253,10 @@ module ScanPinScene =
                             | Some ra ->
                                 let cc = model.CommonCentroid.GetValue t
                                 let scale = datasetScale.GetValue t
-                                let nN = let a = ScanPin.axis pin in if a.Length > 1e-9 then a.Normalized else V3d.OOI
+                                let nN, u, v = basisFromNormal (ScanPin.axis pin)
                                 let raR = ScanPin.renderCentre cc scale ra
                                 let len = ScanPin.renderLength scale (max 0.5 (pin.InnerRadius * 4.0))
                                 let cross = ScanPin.renderLength scale (max 0.1 (pin.InnerRadius * 0.25))
-                                let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
-                                let v = Vec.cross nN u
                                 let col = V4d(0.031, 0.569, 0.698, 0.85)
                                 let out = ResizeArray<V3d * V3d * V4d * float>()
                                 out.Add(raR - nN * len, raR + nN * len, col, 1.5)
@@ -257,17 +266,7 @@ module ScanPinScene =
                             | None -> [||]
                         | None -> [||]
                     | None -> [||])
-            ASet.ofList [
-                sg {
-                    Sg.Active notFullscreen
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.NoEvents
-                    Lines.render segs
-                }
-            ]
+            ASet.ofList [ linesNode notFullscreen segs ]
 
         // A1: transient 3D body for the Ctrl+click hover probe — the same
         // vocabulary as a placed pin (equator ring sized to the probe radius +
@@ -285,32 +284,15 @@ module ScanPinScene =
                             let scale = datasetScale.GetValue t
                             let cR = ScanPin.renderCentre cc scale h.Anchor
                             let rR = ScanPin.renderLength scale h.Radius
-                            let nN = if r.Normal.Length > 1e-9 then r.Normal.Normalized else V3d.OOI
-                            let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
-                            let v = Vec.cross nN u
+                            let nN, u, v = basisFromNormal r.Normal
                             let col = V4d(0.031, 0.569, 0.698, 0.95)
                             let out = ResizeArray<V3d * V3d * V4d * float>()
-                            let segsN = 48
-                            for i in 0 .. segsN - 1 do
-                                let a0 = float i / float segsN * Constant.PiTimesTwo
-                                let a1 = float (i + 1) / float segsN * Constant.PiTimesTwo
-                                out.Add(cR + (u * cos a0 + v * sin a0) * rR,
-                                        cR + (u * cos a1 + v * sin a1) * rR, col, 2.0)
+                            addRing out cR u v rR col 2.0 48
                             out.Add(cR - nN * rR, cR + nN * rR, V4d(0.031, 0.569, 0.698, 0.7), 1.5)
                             out.ToArray()
                         | _ -> [||]
                     | None -> [||])
-            ASet.ofList [
-                sg {
-                    Sg.Active notFullscreen
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.NoEvents
-                    Lines.render segs
-                }
-            ]
+            ASet.ofList [ linesNode notFullscreen segs ]
 
         // Correspondence visuals (always, not only during preview): accepted
         // anchors as small wireframe tetrahedra in the mesh palette colour
@@ -340,9 +322,7 @@ module ScanPinScene =
                                 | Some d ->
                                     let scale = DatasetScale.forMesh scales mesh
                                     let c = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
-                                    let wb = RigidTransform.renderToWorld scale cc c
-                                    let wa = RigidTransform.renderToWorld scale cc (RegLog.effective c d)
-                                    Some (wb.Inverse * wa)
+                                    Some (RigidTransform.worldDeltaOf scale cc c d)
                                 | None -> None
                             deltaCache.[mesh] <- v
                             v
@@ -369,7 +349,7 @@ module ScanPinScene =
                                     let p = ScanPin.renderCentre cc scaleActive pWorld
                                     let baseCol =
                                         match Map.tryFind mesh pin.DatasetColors with
-                                        | Some c -> V3d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0)
+                                        | Some c -> Primitives.c4bToV3d c
                                         | None -> V3d(0.102, 0.337, 0.859)
                                     let colour =
                                         if hovered then V4d(baseCol * 0.45 + V3d.III * 0.55, 1.0)
@@ -382,17 +362,7 @@ module ScanPinScene =
                                     | None -> ()
                         | _ -> ()
                     out.ToArray())
-            ASet.ofList [
-                sg {
-                    Sg.Active notFullscreen
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.NoEvents
-                    Lines.render segs
-                }
-            ]
+            ASet.ofList [ linesNode notFullscreen segs ]
 
         let ghostPreview =
             let defaultR =
@@ -414,14 +384,7 @@ module ScanPinScene =
                     | None -> [||])
             ASet.ofList [
                 sphereShell view proj active trafo (AVal.constant (V4d(0.1, 0.34, 0.86, 0.18)))
-                sg {
-                    Sg.Active active
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Lines.render outlineSegs
-                }
+                linesNode active outlineSegs
             ]
 
         // Chart-hover elevation cursor: a translucent disk orthogonal to the
@@ -430,10 +393,7 @@ module ScanPinScene =
         // scene-wide bounds. Gated on the cursor pin's card being open.
         let cursorPlane =
             let effectiveId =
-                (model.ScanPins.Placement, selectedId) ||> AVal.map2 (fun pl sel ->
-                    match pl with
-                    | AdjustingPin id -> Some id
-                    | _ -> sel)
+                ScanPinModel.effectivePinIdA model.ScanPins.Placement selectedId
             let planeParams =
                 AVal.custom (fun t ->
                     match model.ChartCursor.GetValue t with
@@ -473,24 +433,15 @@ module ScanPinScene =
             let rimSegs =
                 planeParams |> AVal.map (function
                     | Some (c, refC, n, r, innerR) ->
-                        let nN = n.Normalized
-                        let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
-                        let v = Vec.cross nN u
-                        let segs = 64
-                        let rim =
-                            Array.init segs (fun i ->
-                                let a0 = float i / float segs * Constant.PiTimesTwo
-                                let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
-                                (c + (u * cos a0 + v * sin a0) * r,
-                                 c + (u * cos a1 + v * sin a1) * r,
-                                 cursorPlaneRim, 1.5))
+                        let _, u, v = basisFromNormal n
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        addRing out c u v r cursorPlaneRim 1.5 64
                         // F4 ruler: reference → picked distance, with end ticks.
                         let tk = innerR * 0.3
-                        let ruler =
-                            [| refC, c, cursorPlaneRim, 2.0
-                               refC - u * tk, refC + u * tk, cursorPlaneRim, 2.0
-                               refC - v * tk, refC + v * tk, cursorPlaneRim, 2.0 |]
-                        Array.append rim ruler
+                        out.Add(refC, c, cursorPlaneRim, 2.0)
+                        out.Add(refC - u * tk, refC + u * tk, cursorPlaneRim, 2.0)
+                        out.Add(refC - v * tk, refC + v * tk, cursorPlaneRim, 2.0)
+                        out.ToArray()
                     | None -> [||])
             ASet.ofList [
                 sg {
@@ -508,15 +459,7 @@ module ScanPinScene =
                     Sg.Index(BufferView(diskIdxBuf, typeof<int>))
                     Sg.Render diskIdxCnt
                 }
-                sg {
-                    Sg.Active active
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.NoEvents
-                    Lines.render rimSegs
-                }
+                linesNode active rimSegs
             ]
 
         // Locked iso-plane gizmo: a slate ring in the plane plus a short
@@ -537,27 +480,11 @@ module ScanPinScene =
                         for p in planes do
                             let c = ScanPin.renderCentre cc scale p.Origin
                             let r = ScanPin.renderLength scale rWorld
-                            let nN = if p.Normal.Length > 1e-9 then p.Normal.Normalized else V3d.OOI
-                            let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
-                            let v = Vec.cross nN u
-                            let segsN = 72
-                            for i in 0 .. segsN - 1 do
-                                let a0 = float i / float segsN * Constant.PiTimesTwo
-                                let a1 = float (i + 1) / float segsN * Constant.PiTimesTwo
-                                out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, 1.5)
+                            let nN, u, v = basisFromNormal p.Normal
+                            addRing out c u v r col 1.5 72
                             out.Add(c, c + nN * (r * 0.12), col, 1.5)
                         out.ToArray())
-            ASet.ofList [
-                sg {
-                    Sg.Active notFullscreen
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.NoEvents
-                    Lines.render segs
-                }
-            ]
+            ASet.ofList [ linesNode notFullscreen segs ]
 
         // Patch-picker 2D→3D linking (patchHover is a view-local cval set by
         // the cell JS — pointer moves never touch the reducer): while a patch
@@ -634,17 +561,7 @@ module ScanPinScene =
                             | _ -> Array.empty
                         | None -> Array.empty
                     | None -> Array.empty)
-            let node segs =
-                sg {
-                    Sg.Active notFullscreen
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.NoEvents
-                    Lines.render segs
-                }
-            ASet.ofList [node tickSegs; node markerSegs]
+            ASet.ofList [ linesNode notFullscreen tickSegs; linesNode notFullscreen markerSegs ]
 
         // Study flag markers (§7 sceneClick / §9 P5): config-planted flags of
         // the current phase in amber, the participant's marks in the linking
@@ -695,16 +612,6 @@ module ScanPinScene =
                     | _ ->
                         flagCache.Value <- None, Array.empty
                         Array.empty)
-            ASet.ofList [
-                sg {
-                    Sg.Active notFullscreen
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.NoEvents
-                    Lines.render segs
-                }
-            ]
+            ASet.ofList [ linesNode notFullscreen segs ]
 
         ASet.unionMany (ASet.ofList [pinDots; pinRings; hoverProbeBody; pickGuide; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; patchLink; studyFlags])

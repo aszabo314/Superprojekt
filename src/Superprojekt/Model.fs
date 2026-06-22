@@ -37,6 +37,13 @@ module RigidTransform =
         * Trafo3d.Scale(1.0 / scale)
         * Trafo3d.Translation(cc)
 
+    // World-space delta a pending render `delta` applies to a mesh at committed
+    // render pose `committed` (scale/cc = that mesh's render frame). Shared by
+    // the scene/overlay nodes that follow anchors under a solve preview.
+    let worldDeltaOf (scale : float) (cc : V3d) (committed : Trafo3d) (delta : Trafo3d) =
+        (renderToWorld scale cc committed).Inverse
+        * renderToWorld scale cc (RegLog.effective committed delta)
+
 type MeshSoloState =
     | NoSolo
     | Solo of name:string * restore:Map<string,bool>
@@ -72,7 +79,6 @@ type RetargetDecision =
 
 type RetargetCandidate = {
     PinId              : ScanPinId
-    OriginalCentre     : V3d
     OriginalHostMesh   : string option
     InnerRadius        : float
     ProjectedCentre    : V3d
@@ -186,12 +192,6 @@ module Provenance =
         let cErr = localConditioning worldPoint anchors
         dErr, aErr, cErr
 
-    let dominantSource (d : float) (a : float) (c : float) =
-        let cScaled = c * 0.01
-        if d >= a && d >= cScaled then 0
-        elif a >= cScaled then 1
-        else 2
-
 [<ModelType>]
 type Model =
     {
@@ -211,7 +211,6 @@ type Model =
         DatasetScales    : Map<string, float>
         DatasetCentroids : Map<string, V3d>
 
-        FullscreenOn         : bool
         GhostSilhouette      : bool
         GhostOpacity         : float
         ShadingStrength      : float
@@ -360,7 +359,6 @@ module Model =
             ActiveDataset    = None
             DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
             DatasetCentroids = Map.empty
-            FullscreenOn        = false
             GhostSilhouette     = true
             GhostOpacity        = 0.12
             ShadingStrength     = 0.15

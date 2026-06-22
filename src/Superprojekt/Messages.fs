@@ -10,7 +10,6 @@ type Message =
     | SetVisible         of string * bool
     | ToggleMenu
     | LogDebug           of string
-    | ToggleFullscreen
     | ToggleGhostSilhouette
     | SetGhostOpacity of float
     | SetShadingStrength of float
@@ -71,7 +70,6 @@ type Message =
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
-    | SetDatasetScale    of string * float
     | ScanPinMsg              of ScanPinMessage
     | JumpToMesh of string
     | CardMsg of CardMessage
@@ -107,8 +105,6 @@ type Message =
     | ChartColumnClick of meshName:string
     | ClearChartSticky
     | TogglePanorama
-    | PanoramasGenerated of Panorama list
-    | SelectPanorama of int
     | SetPanoramaMode of PanoramaMode
     | SetPanoramaBlend of float
     | FlyToPanorama of int

@@ -89,9 +89,6 @@ type PendingMeshResult = {
     Delta         : Trafo3d
     RmsBefore     : float
     RmsAfter      : float
-    Convergence   : float[]
-    Collinear     : bool
-    PairResiduals : (ScanPinId * float)[]
 }
 
 type PendingRegistration = {
@@ -338,8 +335,6 @@ type ReadinessPin = {
     RefAnchor     : (V3d * float) option
     // visible moving meshes with an accepted anchor for this pin
     Accepted      : Set<string>
-    // accepted anchors over all meshes (the registration card's count)
-    AcceptedTotal : int
     // visible moving meshes without an accepted anchor (missing/seeded/flagged)
     Unresolved    : int
 }

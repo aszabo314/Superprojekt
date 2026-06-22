@@ -11,8 +11,11 @@ module Primitives =
            C4b(152uy,78uy,163uy); C4b(255uy,127uy,0uy);  C4b(255uy,255uy,51uy)
            C4b(166uy,86uy,40uy);  C4b(247uy,129uy,191uy);C4b(153uy,153uy,153uy) |]
 
+    let c4bToV3d (c : C4b) = V3d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0)
+    let c4bToRgbCss (c : C4b) = sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B)
+
     let meshPaletteV4d =
-        meshPalette |> Array.map (fun c -> V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 1.0))
+        meshPalette |> Array.map (fun c -> V4d(c4bToV3d c, 1.0))
 
     let meshColor (idx : int) = meshPalette.[((idx % meshPalette.Length) + meshPalette.Length) % meshPalette.Length]
 
@@ -224,7 +227,6 @@ module ReadinessView =
                             Label         = p.Name
                             RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, max 0.01 rel)
                             Accepted      = marked
-                            AcceptedTotal = c.Anchors.Count
                             Unresolved    = List.length movingVisible - Set.count marked
                         }
                     | _ -> None)
@@ -239,6 +241,3 @@ module ReadinessView =
                     | TraditionalIcp -> "Traditional ICP"
                     | RegionRestrictedIcp -> "Region-restricted"
             })
-
-    let diagnostics (model : AdaptiveModel) : aval<ReadinessInput * StageDiagnostics> =
-        input model |> AVal.map (fun i -> i, Readiness.compute i)

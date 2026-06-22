@@ -153,8 +153,8 @@ let regLogTests () =
         Inputs   = CoarseInputs [| pin1, 1.0, Map.ofList [ "ds/B", AnchorAuto ] |]
         Results  =
             Map.ofList [
-                "ds/B", { Delta = trafoOfTranslation (V3d(0.5, 0.0, 0.0)); RmsBefore = 2.0; RmsAfter = 0.5; Convergence = [||]; Collinear = false; PairResiduals = [| pin1, 0.5 |] }
-                "ds/C", { Delta = trafoOfTranslation (V3d(0.0, -1.0, 0.0)); RmsBefore = 3.0; RmsAfter = 1.0; Convergence = [||]; Collinear = true; PairResiduals = [||] }
+                "ds/B", { Delta = trafoOfTranslation (V3d(0.5, 0.0, 0.0)); RmsBefore = 2.0; RmsAfter = 0.5 }
+                "ds/C", { Delta = trafoOfTranslation (V3d(0.0, -1.0, 0.0)); RmsBefore = 3.0; RmsAfter = 1.0 }
             ]
         Unsolved = []
         Expected = 0
@@ -566,7 +566,6 @@ let private mkRPin label refAnchor (accepted : string list) (total : int) : Read
       Label = label
       RefAnchor = refAnchor
       Accepted = Set.ofList accepted
-      AcceptedTotal = List.length accepted
       Unresolved = total - List.length accepted }
 
 let readinessTests () =

@@ -8,13 +8,12 @@ open Superprojekt
 
 module ScanPinUpdate =
 
-
     let mutable probeCts : System.Threading.CancellationTokenSource =
         new System.Threading.CancellationTokenSource()
     let mutable private probeOwner : ScanPinId option = None
 
-    // Contact-ring queries run per pin (several pins can recompute at once
-    // after a registration), so each pin gets its own debounce token.
+    // Contact-ring queries run per pin (several can recompute at once after a
+    // registration), so each pin gets its own debounce token.
     let private ringsCts =
         System.Collections.Generic.Dictionary<ScanPinId, System.Threading.CancellationTokenSource>()
 
@@ -27,7 +26,7 @@ module ScanPinUpdate =
     // Metric default hard-core radius.
     let defaultInnerRadius (_ : Model) = 5.0
 
-    // centre is in world-space metres.
+    // worldCentre is world-space metres.
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
         let inner   = defaultInnerRadius model
         {
@@ -78,7 +77,7 @@ module ScanPinUpdate =
                     SelectedPin = Some id }
             | _ -> sp
 
-        // InnerRadius is the "hard truth" (full opacity + probe weight inside).
+        // InnerRadius = the "hard truth" (full opacity + probe weight inside).
         | SetInnerRadius r ->
             match ScanPinModel.activePlacementId sp with
             | Some id -> sp |> updatePin id (fun pin ->
@@ -89,7 +88,7 @@ module ScanPinUpdate =
             | None -> sp
 
         | RepositionPin (id, centre) ->
-            // Move the pin live during adjustment; probe + rings recompute.
+            // Move live during adjustment; probe + rings recompute.
             if ScanPinModel.activePlacementId sp = Some id then
                 sp |> updatePin id (fun pin ->
                     { pin with Centre = centre; Probe = ProbeNone; ContactRings = RingsNone })
@@ -111,8 +110,7 @@ module ScanPinUpdate =
         | SelectPin id ->
             { sp with SelectedPin = id }
 
-        // Stale guard: results only land while the pin is still ProbeRunning;
-        // anything that invalidated the probe in the meantime wins.
+        // Stale guard: results only land while still ProbeRunning; any intervening invalidation wins.
         | ProbeComputed(id, result) ->
             sp |> updatePin id (fun pin ->
                 if pin.Probe = ProbeRunning then { pin with Probe = ProbeReady result } else pin)
@@ -159,9 +157,8 @@ module ScanPinUpdate =
         | _ -> ()
         let model = { model with ScanPins = sp' }
         let selChanged = sp'.SelectedPin <> sp.SelectedPin || ScanPinModel.activePlacementId sp' <> ScanPinModel.activePlacementId sp
-        // CardSystem anchor is fed to Cards.projectToScreen, which uses the
-        // viewTrafo over RENDER-space coordinates. Convert pin.Centre (metric)
-        // → render-space before stashing it as the card anchor.
+        // Cards.projectToScreen uses viewTrafo over RENDER-space; convert pin.Centre
+        // (metric) → render-space before stashing it as the card anchor.
         let scale = activeScale model
         let cc = model.CommonCentroid
         let renderAnchor (pin : ScanPin) = ScanPin.renderCentre cc scale pin.Centre
@@ -197,11 +194,9 @@ module ScanPinUpdate =
                 | None -> model
             | None -> model
 
-    // Lazy probe trigger, run as a postlude after every reducer step: the
-    // effective pin (selected or being adjusted — i.e. its card is open) with
-    // a Point payload and an invalidated probe gets one debounced server
-    // query. Slider drags coalesce; stale responses are dropped by the
-    // ProbeRunning guard above.
+    // Lazy probe trigger, postlude after every reducer step: the effective pin
+    // (card open) with an invalidated probe gets one debounced server query.
+    // Drags coalesce; stale responses dropped by the ProbeRunning guard above.
     let ensureProbe (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
         let effective =
@@ -221,8 +216,7 @@ module ScanPinUpdate =
                     model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
                     |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h visible))
                     |> Option.defaultValue (List.head visible)
-                // pin.Probe is always the committed-pose probe; the preview
-                // pose gets its own ProbePreview via ensureProbePreview.
+                // pin.Probe is always the committed-pose probe; the preview pose gets its own ProbePreview.
                 let meshes =
                     visible |> List.map (fun n -> n, (ModelTransforms.committedWorld model n).Forward)
                 let id = pin.Id
@@ -231,9 +225,8 @@ module ScanPinUpdate =
                 let length = ScanPin.fixedProbeLength
                 probeCts.Cancel()
                 probeCts <- new System.Threading.CancellationTokenSource()
-                // The cancelled task never emits, so a different pin whose
-                // probe was in flight would stay ProbeRunning forever — reset
-                // it to ProbeNone so it lazily recomputes when reselected.
+                // The cancelled task never emits, so a different pin's in-flight probe would stay
+                // ProbeRunning forever — reset it to ProbeNone so it lazily recomputes when reselected.
                 let sp =
                     match probeOwner with
                     | Some prev when prev <> id ->
@@ -263,10 +256,9 @@ module ScanPinUpdate =
                 { model with ScanPins = { sp with Pins = HashMap.add id { pin with Probe = ProbeRunning } sp.Pins } }
         | _ -> model
 
-    // Lazy preview-probe trigger (split violin): while a registration preview
-    // is pending, the effective pin additionally gets a probe under the
-    // effective (committed ∘ pending-delta) transforms. Same debounce and
-    // stale-guard discipline as ensureProbe, separate token.
+    // Lazy preview-probe trigger (split violin): while a preview is pending, the effective pin
+    // also gets a probe under effective (committed ∘ pending-delta) transforms.
+    // Same debounce + stale-guard discipline as ensureProbe, separate token.
     let mutable previewProbeCts : System.Threading.CancellationTokenSource =
         new System.Threading.CancellationTokenSource()
     let mutable private previewProbeOwner : ScanPinId option = None
@@ -327,14 +319,10 @@ module ScanPinUpdate =
                     { model with ScanPins = { sp with Pins = HashMap.add id { pin with ProbePreview = ProbeRunning } sp.Pins } }
             | _ -> model
 
-    // Lazy contact-ring trigger, run as a postlude after every reducer step:
-    // every pin whose rings were invalidated (RingsNone) gets one debounced
-    // server fan-out over ALL meshes — visibility only gates rendering, so
-    // toggling a mesh never recomputes. Registration transforms are rigid:
-    // the sphere is intersected in each mesh's own frame (inverse-transformed
-    // centre) and the rings mapped back to registered world space. Effective
-    // transforms: while a solve preview is pending the rings follow it
-    // (invalidation on pending changes recomputes them).
+    // Lazy contact-ring trigger, postlude after every reducer step: every RingsNone pin gets
+    // one debounced fan-out over ALL meshes (visibility only gates rendering, so toggling never
+    // recomputes). Transforms are rigid: sphere intersected in each mesh's own frame
+    // (inverse-transformed centre), rings mapped back. Effective transforms → rings follow a pending preview.
     let ensureRings (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
         let pending =

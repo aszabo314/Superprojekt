@@ -56,24 +56,21 @@ module View =
 
         let fullscreenActive = spaceHeld :> aval<bool>
 
-        // Holding Option/Alt is the layer-isolation mode: the wheel cycles
-        // the active picking layer and the meshes render isolated (active
-        // solid, rest ghosted) while the key is down. The selection itself
-        // outlives the key — it keeps steering picks (pin placement, hover
-        // probe, retarget, the registration one-shot anchor pick).
-        // Suspended while the chart cursor is live: Alt there extends the
-        // slicing plane scene-wide, which needs every mesh visible.
+        // Option/Alt = layer-isolation: wheel cycles the active picking layer,
+        // meshes render isolated (active solid, rest ghosted) while held. The
+        // selection outlives the key — it keeps steering picks. Suspended while
+        // the chart cursor is live (Alt there extends the slicing plane
+        // scene-wide, needing every mesh visible).
         let wheelIsolation =
             (altHeld :> aval<_>, model.ActivePickingLayer, model.ChartCursor) |||> AVal.map3 (fun held layer chart ->
                 if held && chart.IsNone then layer else None)
 
         let lassoActive = model.LassoDrawing |> AVal.map Option.isSome
 
-        // Slicing-plane highlight for the mesh shader. The chart-hover cursor
-        // wins (Alt-extended → unclipped, scene-wide); otherwise the 3D hover
-        // point drives it while inside the effective pin's probe cylinder
-        // (always clipped). Only the effective (card-open) pin contributes —
-        // one plane at a time, matching the chart cursor's single slot.
+        // Slicing-plane highlight for the mesh shader. Chart-hover cursor wins
+        // (Alt-extended → unclipped, scene-wide); else the 3D hover point drives
+        // it inside the effective pin's probe cylinder (always clipped). Only
+        // the effective (card-open) pin contributes — one plane at a time.
         let cursorHighlight =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
@@ -83,8 +80,8 @@ module View =
                 let probeOf pid =
                     HashMap.tryFind pid (pinsVal.GetValue t)
                     |> Option.bind (fun pin ->
-                        // Preview-pose probe while a solve preview is pending,
-                        // so the slicing plane matches the rendered meshes.
+                        // Preview-pose probe while previewing, so the slicing
+                        // plane matches the rendered meshes.
                         match ScanPin.effectiveProbe pv pin with
                         | ProbeReady r -> Some (pin, r)
                         | _ -> None)
@@ -115,12 +112,10 @@ module View =
                     | _ -> None)
 
         // Cutaway: the selected pin's correspondence markers define a z-aligned
-        // bounding box (x,y extent, tiny enlarge). The cut plane is whichever of
-        // the box's four upright faces the camera looks at most head-on; removing
-        // everything camera-ward of that face reveals the marker cross-section.
-        // As the camera orbits past the 45° diagonal the active face — and the
-        // side that is cut — switches. Global toggle (gear popover), on by
-        // default; the plane re-derives live as the camera moves.
+        // box; the cut plane is whichever of its four upright faces the camera
+        // looks at most head-on, removing everything camera-ward of it to reveal
+        // the marker cross-section (the cut side switches past the 45° diagonal).
+        // Global toggle (gear popover, default on); re-derives live with camera.
         let cutawayPlane =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
@@ -161,10 +156,9 @@ module View =
                                 let camWorld =
                                     ScanPin.worldCentre cc s (model.Camera.view.GetValue t).Location
                                 let toCam = V3d(camWorld.X - cx, camWorld.Y - cy, 0.0)
-                                // The four upright faces (outward normal, a point on
-                                // the face). Removing dot(p − origin, normal) > 0
-                                // discards everything beyond the chosen face — the
-                                // camera-side terrain in front of the markers.
+                                // Four upright faces (outward normal, point on
+                                // face). Removing dot(p − origin, normal) > 0
+                                // discards the camera-side terrain in front.
                                 let faces =
                                     [ V3d( 1.0, 0.0, 0.0), V3d(xmax, cy, 0.0)
                                       V3d(-1.0, 0.0, 0.0), V3d(xmin, cy, 0.0)
@@ -175,9 +169,9 @@ module View =
                             | _ -> None
                         | None -> None)
 
-        // Live "clip above" the chart-driven iso-plane (transient, follows the
-        // hover) — only when the ClipAboveIso toggle is on and no lock is
-        // present. Normal = +probe axis removes the half above the plane.
+        // Live "clip above" the chart-driven iso-plane (follows the hover), only
+        // when ClipAboveIso is on and no lock present. Normal = +probe axis
+        // removes the half above the plane.
         let liveIsoPlane =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
@@ -199,10 +193,9 @@ module View =
                     | _ -> None)
 
         // Resolved render-space clip-plane equations for the mesh shader.
-        // Effective set = the live cutaway (front) then any manually locked
-        // plane (iso-plane lock) or the live iso-plane, capped at 2. The stored
-        // metric normal is used directly (world axis dirs = render axis dirs
-        // under the uniform, axis-aligned scale); Origin is metric → render.
+        // Effective set = live cutaway (front) then any locked plane or the live
+        // iso-plane, capped at 2. Stored metric normal is used directly (world
+        // axis dirs = render axis dirs under the uniform scale); Origin metric→render.
         let clipUniforms =
             let datasetScaleA =
                 (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
@@ -244,8 +237,8 @@ module View =
                 "  if(document.visibilityState === 'hidden') studyFlush();"
                 "});"
                 "window.addEventListener('pagehide', studyFlush);"
-                // 1.5 s pulse outline for navigation actions (workflow §5);
-                // delayed slightly so just-opened targets are visible first.
+                // Pulse outline for nav actions (§5); delayed so just-opened
+                // targets are visible first.
                 "window.SuperPulse = function(selector){"
                 "  setTimeout(function(){"
                 "    var el = document.querySelector(selector);"
@@ -293,12 +286,11 @@ module View =
                 let! size = RenderControl.ViewportSize
                 let! client = RenderControl.ClientSize
 
-                // CSS-pixel canvas size for everything that mixes with DOM
-                // coordinates (cursor positions, HTML overlay placement).
-                // ViewportSize is framebuffer pixels = CSS × devicePixelRatio,
-                // so using it for overlay math pushes cards off-screen on
-                // hi-dpi displays. ClientSize is V2i.II until the first DOM
-                // event arrives — fall back to the framebuffer size until then.
+                // CSS-pixel size for anything mixing with DOM coords (cursor,
+                // overlay placement). ViewportSize is framebuffer px (CSS ×
+                // devicePixelRatio) → pushes cards off-screen on hi-dpi; use
+                // ClientSize, falling back to framebuffer until the first DOM
+                // event (ClientSize is V2i.II until then).
                 let overlaySize =
                     (client, size) ||> AVal.map2 (fun c v ->
                         if c.X > 1 && c.Y > 1 then c else v)
@@ -312,10 +304,7 @@ module View =
 
                 OrbitController.getAttributes (Env.map CameraMessage env)
 
-                let mutable initial = true
                 RenderControl.OnRendered(fun _ ->
-                    if initial then
-                        initial <- false
                     StudyTelemetry.frameTick ()
                     let s = AVal.force overlaySize
                     if viewportSize.Value <> s then
@@ -329,10 +318,9 @@ module View =
                         Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo
                     )
 
-                // When ActivePickingLayer is set, prefer that layer's surface
-                // over the frontmost surface — but only if the cursor ray
-                // actually intersects the layer's bounding box. Falls back to
-                // the GPU frontmost pick otherwise. Result is async because
+                // With ActivePickingLayer set, prefer that layer's surface over
+                // the frontmost — but only if the cursor ray hits the layer's
+                // bbox; else fall back to the GPU frontmost pick. Async because
                 // the layer-specific raycast goes through the server.
                 let resolveLayerPick (frontmost : V3d option) : Async<V3d option> =
                     let activeLayer = AVal.force model.ActivePickingLayer
@@ -361,10 +349,9 @@ module View =
                                     | None -> return frontmost
                                 }
 
-                // Fusion picking: the composite is a flat quad, so the GPU pick
-                // can't see the meshes. Raycast every visible mesh server-side
-                // and keep the lowest combined-error hit (same winner as the
-                // offscreen depth test).
+                // Fusion picking: the composite is a flat quad so the GPU pick
+                // can't see meshes. Raycast every visible mesh server-side, keep
+                // the lowest combined-error hit (= offscreen depth-test winner).
                 let resolveFusionPick () : Async<(V3d * string) option> =
                     match cursorScreen.Value with
                     | None -> async.Return None
@@ -416,9 +403,8 @@ module View =
                         transact (fun () -> altHeld.Value <- e.Alt)
                 )
 
-                // hoverCoord would otherwise keep its last on-canvas value
-                // while the pointer sits over an HTML overlay (cards), which
-                // freezes a stale 3D→chart elevation-cursor line.
+                // Clear hoverCoord on leave, else it keeps its last on-canvas
+                // value over an HTML overlay and freezes a stale 3D→chart line.
                 Dom.OnMouseLeave(fun _ ->
                     if hoverCoord.Value.IsSome then
                         transact (fun () -> hoverCoord.Value <- None)
@@ -430,11 +416,10 @@ module View =
                         // plain wheel = camera zoom, always
                         env.Emit [CameraMessage (OrbitMessage.Wheel(false, delta))]
                     else
-                        // Option/Alt + wheel = cycle the isolated layer.
-                        // Prefer the meshes stacked under the cursor; with
-                        // fewer than two there the gesture still works over
-                        // all visible meshes in panel order (the old
-                        // under-cursor-only rule made the wheel feel dead).
+                        // Option/Alt + wheel = cycle the isolated layer. Prefer
+                        // meshes stacked under the cursor; with fewer than two
+                        // there, fall back to all visible meshes in panel order
+                        // (under-cursor-only made the wheel feel dead).
                         if altHeld.Value <> true then
                             transact (fun () -> altHeld.Value <- true)
                         let cursorPx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
@@ -462,8 +447,8 @@ module View =
                             else
                                 AVal.force model.MeshNames.Content |> IndexList.toArray |> Array.filter isVisible
                         // While a one-shot anchor pick is live the cycle
-                        // retargets it, so the reference mesh is skipped
-                        // (anchors never land on the reference).
+                        // retargets it, skipping the reference (anchors never
+                        // land on the reference).
                         let anchorPick = AVal.force model.AnchorPick
                         let candidates =
                             match anchorPick with
@@ -483,8 +468,7 @@ module View =
                                     | Some i -> candidates.[((i + dir) % n + n) % n]
                                     | None -> candidates.[if dir > 0 then 0 else n - 1]
                             env.Emit [SetActivePickingLayer (Some next)]
-                            // reuse the selection for the registration pick:
-                            // the live anchor pick follows the isolated layer
+                            // live anchor pick follows the isolated layer
                             match anchorPick with
                             | Some ap when ap.Mesh <> next ->
                                 env.Emit [StartAnchorPick(ap.PinId, next)]
@@ -531,9 +515,9 @@ module View =
                     else
                     match AVal.force model.AnchorPick with
                     | Some _ ->
-                        // One-shot anchor pick: only the target mesh writes
-                        // depth (everything else is ghosted), so a depth-gated
-                        // hit IS the target surface. Bypasses layer-resolve.
+                        // One-shot anchor pick: only the target mesh writes depth
+                        // (rest ghosted), so a depth-gated hit IS the target
+                        // surface. Bypasses layer-resolve.
                         if e.Location.Depth < 0.9999 then
                             env.Emit [AnchorPickHit (worldFromRender model e.WorldPosition)]
                         true
@@ -571,9 +555,9 @@ module View =
                             env.Emit [ClearHoverProbe]
                         let placement = AVal.force model.ScanPins.Placement
                         if AVal.force model.FusionMode then
-                            // Fusion: resolve the winner mesh + point on the CPU,
-                            // set it as the active layer so a placed pin inherits
-                            // it as host, then place / focus.
+                            // Fusion: CPU-resolve the winner mesh + point, set it
+                            // as the active layer so a placed pin inherits it as
+                            // host, then place / focus.
                             async {
                                 let! resolved = resolveFusionPick ()
                                 match placement, resolved with
@@ -634,8 +618,8 @@ module View =
                 | "Alt" ->
                     if not altHeld.Value then transact (fun () -> altHeld.Value <- true)
                 | " " ->
-                    // Hold-space fullscreen is a Full-mode review tool; in a
-                    // study it would blank the pins/cards mid-task.
+                    // Hold-space fullscreen is Full-mode only (would blank
+                    // pins/cards mid-task in a study).
                     if not (Study.isActive (AVal.force model.Study)) then
                         transact (fun () -> spaceHeld.Value <- true)
                 | "r" | "R" ->

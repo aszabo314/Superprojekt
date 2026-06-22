@@ -117,14 +117,12 @@ module Persistence =
         sb.Append(regModeTag model.Registration.Mode) |> ignore
         sb.Append("\",\"refMesh\":") |> ignore
         sb.Append(match model.Registration.ReferenceMesh with Some m -> q m | None -> "null") |> ignore
-        // PendingReg is deliberately NOT persisted — a preview never survives
-        // a save/load cycle, only committed steps do.
+        // PendingReg is NOT persisted — only committed steps survive a save/load.
         sb.Append(",\"regLog\":") |> ignore
         sb.Append(RegJson.regLogJ model.RegistrationLog) |> ignore
         sb.Append(",\"lastSolve\":") |> ignore
         sb.Append(RegJson.lastSolveJ model.LastSolve) |> ignore
-        // Diff mode only exists while a preview is pending; persist the mode
-        // it would revert to instead.
+        // Diff mode only exists during a preview; persist the revert-to mode.
         let persistedHeatmap =
             match model.HeatmapMode with
             | HeatDiff -> model.HeatmapPrev
@@ -169,8 +167,8 @@ module Persistence =
         | true, v -> Some v
         | _       -> None
 
-    // Correspondence, read from the new flat field and falling back to a
-    // legacy "payload" object (removed line/patch payloads load as plain pins).
+    // Correspondence: new flat "corr" field, falling back to a legacy "payload"
+    // object (removed line/patch payloads load as plain pins).
     let private rCorrespondence (e : JsonElement) =
         let fromObj o =
             match tryProp "corr" o with
@@ -213,8 +211,8 @@ module Persistence =
 
     type ParseError = string
 
-    // Apply a parsed workspace to the existing model. Fields not present in
-    // the JSON are left at the current model value (forward-compatible).
+    // Apply a parsed workspace; fields absent from the JSON keep the current
+    // model value (forward-compatible).
     let apply (json : string) (model : Model) : Result<Model, ParseError> =
         try
             let doc = JsonDocument.Parse json
@@ -300,7 +298,7 @@ module Persistence =
             let settings =
                 match tryProp "settings" r with
                 | Some e -> e
-                | None -> r // empty fallback won't match any keys
+                | None -> r // fallback matches no keys
 
             let sOrElseB name fallback =
                 match tryProp name settings with

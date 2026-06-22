@@ -31,13 +31,13 @@ module MeshShader =
         member x.ShadingStrength : float32 = x?ShadingStrength
         // sin(threshold angle) for SlopeColor.
         member x.SlopeThreshold  : float32 = x?SlopeThreshold
-        // Outward-facing half-space planes V4f(nx,ny,nz,d); inside iff
-        // dot(xyz, p) + w <= 0 for all. count = 0 → no restriction.
+        // Outward half-space planes V4f(nx,ny,nz,d); inside iff dot(xyz,p)+w<=0
+        // for all. count = 0 → no restriction.
         member x.LassoPlaneCount : int     = x?LassoPlaneCount
         member x.LassoPlanes     : Arr<N<32>, V4f> = x?LassoPlanes
         // Pin blobs in render space: Blobs = (cx,cy,cz,innerR). AnchorGhost = 0
-        // disables the blob alpha filter; the array stays uploaded so the
-        // provenance conditioning (Gaussian σ = innerR) can still loop over it.
+        // disables the blob alpha filter but the array stays uploaded — the
+        // provenance conditioning (Gaussian σ = innerR) still loops over it.
         member x.BlobCount       : int     = x?BlobCount
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
         member x.AnchorGhost     : int     = x?AnchorGhost
@@ -46,19 +46,17 @@ module MeshShader =
         member x.ProvThreshold     : float32 = x?ProvThreshold
         member x.MeshDatasetError  : float32 = x?MeshDatasetError
         member x.MeshAlgoResidual  : float32 = x?MeshAlgoResidual
-        // Registration diff mode (HeatmapMode = 2): signed change of the
-        // combined error between the committed and the previewed pose.
-        // DiffInvDelta maps a preview-pose render position back to its
-        // committed-pose position; algo residuals come per mesh from the
-        // pending solve; DiffSigmaRef is the reference's dataset error.
+        // Registration diff (HeatmapMode = 2): signed combined-error change
+        // committed→preview. DiffInvDelta maps a preview-pose render position
+        // back to its committed-pose position; algo residuals come per mesh
+        // from the pending solve; DiffSigmaRef is the reference's dataset error.
         member x.DiffAlgoBefore    : float32 = x?DiffAlgoBefore
         member x.DiffAlgoAfter     : float32 = x?DiffAlgoAfter
         member x.DiffInvDelta      : M44f    = x?DiffInvDelta
         member x.DiffSigmaRef      : float32 = x?DiffSigmaRef
-        // Contact-line highlight at the elevation-cursor slicing plane, all
-        // in render space. CursorActive is per-mesh (bbox-vs-plane gate);
-        // CursorClip restricts the band to the probe cylinder (off while the
-        // chart cursor is Alt-extended scene-wide).
+        // Contact-line highlight at the elevation-cursor plane (render space).
+        // CursorActive is per-mesh (bbox-vs-plane gate); CursorClip restricts
+        // the band to the probe cylinder (off when Alt-extended scene-wide).
         member x.CursorActive         : int     = x?CursorActive
         member x.CursorPlaneOrigin    : V3f     = x?CursorPlaneOrigin
         member x.CursorPlaneNormal    : V3f     = x?CursorPlaneNormal
@@ -69,16 +67,14 @@ module MeshShader =
         member x.CursorPinRadius      : float32 = x?CursorPinRadius
         member x.CursorCylLength      : float32 = x?CursorCylLength
         // 3D sectioning: up to two render-space plane equations
-        // V4f(nx,ny,nz, -dot(n,renderOrigin)); a fragment with
-        // dot(n,wp)+w > 0 is on the removed (camera-side) half. Mode:
-        // 0 = Hide/SectionCap (discard), 1 = Ghost (drop to ghost alpha).
+        // V4f(nx,ny,nz,-dot(n,renderOrigin)); dot(n,wp)+w > 0 is the removed
+        // (camera-side) half.
         member x.ClipPlaneCount : int = x?ClipPlaneCount
         member x.ClipPlane0     : V4f = x?ClipPlane0
         member x.ClipPlane1     : V4f = x?ClipPlane1
-        // A2 per-mesh signed-distance surface colour map. 1 = paint the
-        // SurfaceDist vertex attribute with a diverging map (0 = reference);
-        // |d| < DistLoD → neutral mid (not significant); DistScale normalizes
-        // the saturated ends. SurfaceDist = 1e30 sentinel → keep base colour.
+        // A2 per-mesh signed-distance map. 1 = paint SurfaceDist with a
+        // diverging map (0 = reference); |d| < DistLoD → neutral mid; DistScale
+        // normalizes the saturated ends; SurfaceDist = 1e30 → keep base colour.
         member x.DistanceEncoding : int     = x?DistanceEncoding
         member x.DistLoD          : float32 = x?DistLoD
         member x.DistScale        : float32 = x?DistScale
@@ -104,8 +100,8 @@ module MeshShader =
     let shade (v : FragIn) =
         fragment {
             let wp = v.wp.XYZ
-            // 3D sectioning (mesh geometry only; overlays are never clipped):
-            // the camera-side half (dot(n,wp)+w > 0) is discarded.
+            // 3D sectioning (mesh only; overlays never clipped): the
+            // camera-side half (dot(n,wp)+w > 0) is discarded.
             let cpc = uniform.ClipPlaneCount
             if cpc >= 1 then
                 let p = uniform.ClipPlane0
@@ -153,8 +149,8 @@ module MeshShader =
             else
                 alpha <- ghost
             if alpha < 1e-4f then discard()
-            // Clamp ghost/outside fragments below opaqueThreshold so the
-            // depth-write branch only fires for fully-solid surface.
+            // α-gated depth: clamp ghost/outside fragments below opaqueThreshold
+            // so only fully-solid surface writes natural depth (below).
             let lassoFull = (lc = 0) || lassoMask >= 1.0f
             let blobFull  = (not blobsActive) || inAnyBlob
             let fullySolid = lassoFull && blobFull
@@ -181,7 +177,7 @@ module MeshShader =
                     let s = t * t * (3.0f - 2.0f * t)
                     blueCol * (1.0f - s) + hotCol * s
             // Ghost-level fragments always use the solid mesh colour so the
-            // silhouette reads uniformly regardless of rendering mode.
+            // silhouette reads uniformly regardless of mode.
             let aboveGhost = alpha > ghost + 1e-4f
             let mutable baseRgb =
                 if not aboveGhost then uniform.MeshColor.XYZ
@@ -259,13 +255,11 @@ module MeshShader =
                         elif a >= cScaled then algoCol
                         else condCol
                     baseRgb <- domCol
-            // Registration diff (HeatmapMode = 2, only meaningful while a
-            // solve preview is pending): per-fragment signed change of the
-            // combined error (preview − committed). Dataset error cancels;
-            // algorithm residual changes per mesh, conditioning changes with
-            // the fragment's pose. Fragments below the detection limit
-            // 1.96·√(σ_ref² + σ_M²) drop to context/ghost level; the rest get
-            // a diverging blue (improved) / red (degraded) map.
+            // Registration diff (HeatmapMode = 2, only meaningful during a
+            // solve preview): signed combined-error change (preview − committed)
+            // per fragment. Dataset error cancels; algo residual + conditioning
+            // vary. Below the detection limit 1.96·√(σ_ref² + σ_M²) → context
+            // /ghost; the rest get a diverging blue (improved) / red (degraded).
             if uniform.HeatmapMode = 2 && aboveGhost then
                 let wpc4 = uniform.DiffInvDelta * V4f(wp.X, wp.Y, wp.Z, 1.0f)
                 let wpcx = wpc4.X
@@ -361,10 +355,9 @@ module MeshShader =
                     baseRgb <-
                         if tt >= 0.0f then midCol2 * (1.0f - tt) + redCol2 * tt
                         else midCol2 * (1.0f + tt) + blueCol2 * (-tt)
-            // A2: per-mesh signed-distance surface colour map (the canonical
-            // M3C2 depiction). Diverging blue (below ref) ↔ red (above ref)
-            // centred at 0; within ±DistLoD the fragment reads neutral, so
-            // "not significant" looks near-neutral in 3D too.
+            // A2: per-mesh signed-distance map (canonical M3C2). Diverging blue
+            // (below ref) ↔ red (above ref) centred at 0; within ±DistLoD reads
+            // neutral so "not significant" looks near-neutral in 3D too.
             if uniform.DistanceEncoding = 1 && aboveGhost then
                 let d = v.sd
                 if abs d < 1e20f then
@@ -384,12 +377,10 @@ module MeshShader =
                         baseRgb <- V3f(0.82f, 0.85f, 0.88f)
                     else
                         baseRgb <- col
-            // Contact-line highlight at the active slicing plane: darken the
-            // intersected mesh, brighten a smoothstep band within
-            // CursorHighlightWidth of the plane (accent #0891b2 — the slicing
-            // plane's colour), optionally clipped to the probe cylinder.
-            // Ghost-level fragments are skipped so the silhouette colour
-            // stays uniform.
+            // Contact-line highlight at the slicing plane: darken the mesh,
+            // brighten a smoothstep band within CursorHighlightWidth of the
+            // plane (accent #0891b2), optionally clipped to the probe cylinder.
+            // Ghost fragments skipped so the silhouette colour stays uniform.
             if uniform.CursorActive <> 0 && aboveGhost then
                 let co = uniform.CursorPlaneOrigin
                 let cn = uniform.CursorPlaneNormal
@@ -421,9 +412,9 @@ module MeshShader =
             }
         }
 
-// Writes combined provenance error as gl_FragDepth so the lowest-error mesh
-// wins the offscreen LessOrEqual depth test. Conditioning is the same
-// density × angular-diversity heuristic as the heatmap.
+// Writes combined provenance error as depth so the lowest-error mesh wins the
+// offscreen LessOrEqual test. Conditioning = same density × angular-diversity
+// heuristic as the heatmap.
 [<ReflectedDefinition>]
 module FusionShader =
     open MeshShader

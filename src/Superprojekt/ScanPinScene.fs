@@ -51,8 +51,7 @@ module ScanPinScene =
     let private diskIdxBuf = AVal.constant (ArrayBuffer diskIdx :> IBuffer)
     let private diskIdxCnt = AVal.constant diskIdx.Length
 
-    // Accent colour for the 2D-3D elevation cursor (#0891b2) — deliberately
-    // distinct from every entry of the categorical mesh palette.
+    // 2D-3D elevation-cursor accent (#0891b2) — distinct from the mesh palette.
     let private cursorPlaneFill = V4f(0.031f, 0.569f, 0.698f, 0.28f)
     let private cursorPlaneRim  = V4d(0.031, 0.569, 0.698, 0.85)
 
@@ -75,15 +74,14 @@ module ScanPinScene =
             Sg.Render sphereIdxCnt
         }
 
-    // Orthonormal (u, v) basis spanning the plane ⊥ a (possibly unnormalized,
-    // possibly degenerate) normal, plus the normalized normal itself.
+    // Orthonormal (u, v) basis ⊥ a (possibly unnormalized/degenerate) normal,
+    // plus the normalized normal itself.
     let private basisFromNormal (n : V3d) =
         let nN = if n.Length > 1e-9 then n.Normalized else V3d.OOI
         let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
         nN, u, Vec.cross nN u
 
-    // Append a closed ring of `segs` line segments centred at c, radius r, in
-    // the (u, v) plane.
+    // Append a closed ring of `segs` segments (centre c, radius r) in the (u,v) plane.
     let private addRing (out : ResizeArray<V3d * V3d * V4d * float>)
                         (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
         for i in 0 .. segs - 1 do
@@ -124,9 +122,8 @@ module ScanPinScene =
         let placementActive =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
-        // Pin centres and radii are stored in metric world-space; the scene
-        // graph works in render-space (post centroid translate, post dataset
-        // scale). Project every pin coordinate before using it as a trafo.
+        // Pin centres/radii are metric world-space; the scene graph is render-
+        // space (post centroid translate + dataset scale). Project before use.
         let renderCentreOpt =
             (model.CommonCentroid, datasetScale) ||> AVal.map2 (fun cc s ->
                 fun (w : V3d) -> ScanPin.renderCentre cc s w)
@@ -176,16 +173,12 @@ module ScanPinScene =
                 }
             )
 
-        // Pin influence visuals: a thin equator ring (⊥ the pin's probe axis,
-        // radius = InnerRadius) plus the sphere–surface contact rings per
-        // visible mesh, all in the pin's categorical colour (host-mesh palette
-        // colour — the same one on the card's colour bar). Unselected pins
-        // draw at α 0.6 / 1.5 px, the selected pin at α 1.0 / 2.5 px. Normal
-        // depth testing on purpose: foreground geometry occludes the curves,
-        // which is the spatial cue. The old filled translucent shells are gone;
-        // the equator ring is the live feedback for the inner-radius slider.
-        // Study gating: the sphere–surface contact rings are their own
-        // feature; the equator ring stays (it is the pin's footprint cue).
+        // Pin influence visuals: a thin equator ring (⊥ probe axis, radius =
+        // InnerRadius) + sphere–surface contact rings per visible mesh, in the
+        // pin's categorical colour. Unselected α 0.6 / 1.5 px, selected α 1.0 /
+        // 2.5 px. Normal depth testing on purpose — occlusion is the spatial
+        // cue. Study gating: contact rings are their own feature; the equator
+        // ring stays (the footprint cue + inner-radius slider feedback).
         let contactRingsOn = model.Study |> AVal.map (fun s -> Study.featureVisible s "contactRings")
         let pinRings =
             pinIdSet |> ASet.collect (fun id ->
@@ -206,8 +199,8 @@ module ScanPinScene =
                         | None -> [||]
                         | Some (centre, radius, axis, colour, rings) ->
                             let sel = isSelected.GetValue t
-                            // Hovering the pin's row in the workflow card lights
-                            // its rings up thick + bright (UI→3D linking).
+                            // Workflow-card row hover lights the rings up thick
+                            // + bright (UI→3D linking).
                             let hovered = model.WorkflowPinHover.GetValue t = Some id
                             let cc = model.CommonCentroid.GetValue t
                             let scale = datasetScale.GetValue t
@@ -221,10 +214,9 @@ module ScanPinScene =
                             let rR = ScanPin.renderLength scale radius
                             let nN, u, v = basisFromNormal axis
                             addRing out cR u v rR col width 64
-                            // 1 m (world) direction indicator along the pin
-                            // axis — thin + semitransparent so it reads as
-                            // orientation, not geometry. Points up until the
-                            // probe's PCA normal lands, like the equator ring.
+                            // 1 m direction indicator along the pin axis — thin
+                            // + semitransparent (orientation, not geometry).
+                            // Points up until the probe's PCA normal lands.
                             let axisCol = V4d(colour, (if sel then 0.5 else 0.35))
                             out.Add(cR, cR + nN * ScanPin.renderLength scale 1.0, axisCol, 1.0)
                             for KeyValue(mesh, meshRings) in rings do
@@ -238,9 +230,8 @@ module ScanPinScene =
                             out.ToArray())
                 ASet.ofList [ linesNode notFullscreen segs ])
 
-        // A4: during a correspondence-marker 3D pick, draw the reference
-        // marker's normal as a guide line — the predicted correspondence is
-        // where this line meets the target mesh, so the user picks along it.
+        // A4: during a 3D marker pick, draw the reference marker's normal as a
+        // guide — the predicted correspondence is where it meets the target.
         let pickGuide =
             let segs =
                 AVal.custom (fun t ->
@@ -268,11 +259,9 @@ module ScanPinScene =
                     | None -> [||])
             ASet.ofList [ linesNode notFullscreen segs ]
 
-        // A1: transient 3D body for the Ctrl+click hover probe — the same
-        // vocabulary as a placed pin (equator ring sized to the probe radius +
-        // a short axis line along the local normal) so a spot-check reads as a
-        // region probe in 3D, not just a tooltip. Cleared by the existing
-        // HoverProbe cascade (Esc / click / timeout).
+        // A1: transient 3D body for the Ctrl+click hover probe — same vocabulary
+        // as a placed pin (equator ring + short axis line) so a spot-check reads
+        // as a region probe, not a tooltip. Cleared by the HoverProbe cascade.
         let hoverProbeBody =
             let segs =
                 AVal.custom (fun t ->
@@ -294,10 +283,9 @@ module ScanPinScene =
                     | None -> [||])
             ASet.ofList [ linesNode notFullscreen segs ]
 
-        // Correspondence visuals (always, not only during preview): accepted
-        // anchors as small wireframe tetrahedra in the mesh palette colour
-        // plus a thin line to the pin's reference anchor. Both follow the
-        // effective preview transforms while a solve preview is pending.
+        // Correspondence visuals (always, not only during preview): markers as
+        // small wireframe tetrahedra in the mesh palette colour + a thin line
+        // to the reference anchor. Both follow the effective preview transforms.
         let anchorGlyphs =
             let tetra =
                 let s = 1.0 / sqrt 3.0
@@ -339,8 +327,8 @@ module ScanPinScene =
                             let glyphR =
                                 ScanPin.renderLength scaleActive (max 0.05 (pin.InnerRadius * 0.12))
                             for KeyValue(mesh, a) in corr.Anchors do
-                                    // Hovering this marker's row in the pin card
-                                    // lights its glyph + ref line up thick + bright.
+                                    // Pin-card row hover lights this glyph + ref
+                                    // line up thick + bright.
                                     let hovered = hover = Some (pin.Id, mesh)
                                     let pWorld =
                                         match worldDeltaOf mesh with
@@ -387,10 +375,9 @@ module ScanPinScene =
                 linesNode active outlineSegs
             ]
 
-        // Chart-hover elevation cursor: a translucent disk orthogonal to the
-        // pin's probe axis (NOT world-up — they only coincide for
-        // heightfields) at the hovered signed distance. Alt extends it to
-        // scene-wide bounds. Gated on the cursor pin's card being open.
+        // Chart-hover elevation cursor: a translucent disk ⊥ the pin's probe
+        // axis (NOT world-up — they coincide only for heightfields) at the
+        // hovered distance. Alt extends to scene bounds. Gated on card open.
         let cursorPlane =
             let effectiveId =
                 ScanPinModel.effectivePinIdA model.ScanPins.Placement selectedId
@@ -409,8 +396,8 @@ module ScanPinScene =
                                     let cc = model.CommonCentroid.GetValue t
                                     let scale = datasetScale.GetValue t
                                     let centre = ScanPin.renderCentre cc scale (pin.Centre + r.Normal * (cur.Distance + r.RefOffset))
-                                    // F4: the reference surface (chart d = 0) is at
-                                    // RefOffset along the axis — the ruler runs from
+                                    // F4: reference surface (chart d = 0) is at
+                                    // RefOffset along the axis — ruler runs from
                                     // there to the picked distance.
                                     let refCentre = ScanPin.renderCentre cc scale (pin.Centre + r.Normal * r.RefOffset)
                                     let radiusWorld =
@@ -462,9 +449,8 @@ module ScanPinScene =
                 linesNode active rimSegs
             ]
 
-        // Locked iso-plane gizmo: a slate ring in the plane plus a short
-        // normal stub, drawn for every committed ClipPlane so the persistent
-        // section plane stays legible while orbiting.
+        // Locked iso-plane gizmo: a slate ring + short normal stub per committed
+        // ClipPlane so the section plane stays legible while orbiting.
         let clipGizmos =
             let col = V4d(0.27, 0.31, 0.39, 0.85)
             let segs =
@@ -486,16 +472,13 @@ module ScanPinScene =
                         out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 
-        // Patch-picker 2D→3D linking (patchHover is a view-local cval set by
-        // the cell JS — pointer moves never touch the reducer): while a patch
-        // cell is hovered, every sampled vertex inside the cell's current
-        // pan/zoom viewport gets a short tick along the shared frame normal,
-        // and the live cursor gets a jack glyph at the exact surface point —
-        // both in the chart-linking accent. The frame is orthonormal, so
-        // world = centre + u·refDir + v·left + h·normal reconstructs vertex
-        // positions exactly. Ticks are memoized (entries compared by
-        // reference) and return the same array while unchanged, so a plain
-        // pointer move only rebuilds the 3-segment marker.
+        // Patch-picker 2D→3D linking (patchHover is a view-local cval set by the
+        // cell JS — pointer moves never touch the reducer): while a cell is
+        // hovered, sampled vertices inside its pan/zoom viewport get a tick
+        // along the frame normal and the cursor gets a jack glyph, both in the
+        // accent. Frame is orthonormal, so world = centre + u·refDir + v·left +
+        // h·normal is exact. Ticks memoized (entries compared by reference) so a
+        // plain pointer move only rebuilds the 3-segment marker.
         let patchLink =
             let accentTick = V4d(0.031, 0.569, 0.698, 0.45)
             let accentMark = V4d(0.031, 0.569, 0.698, 0.95)
@@ -564,13 +547,10 @@ module ScanPinScene =
             ASet.ofList [ linesNode notFullscreen tickSegs; linesNode notFullscreen markerSegs ]
 
         // Study flag markers (§7 sceneClick / §9 P5): config-planted flags of
-        // the current phase in amber, the participant's marks in the linking
-        // accent. One Lines node, pole + diamond head sized in world metres
-        // and converted at the boundary like every other pin visual. The
-        // model.Study leaf changes on every study reducer step (answer
-        // drafts, predicate counts), so the result is memoized on the actual
-        // inputs and the same array reference is returned while they are
-        // unchanged — the equality cut keeps the line buffer untouched.
+        // the current phase in amber, the participant's marks in the accent.
+        // One Lines node, pole + diamond sized in world metres. model.Study
+        // changes on every reducer step, so the result is memoized on the actual
+        // inputs (equality cut keeps the line buffer untouched while unchanged).
         let studyFlags =
             let flagCache : ((string * int * Map<string, V3d> * V3d * float * Box3d) option * (V3d * V3d * V4d * float)[]) ref =
                 ref (None, Array.empty)

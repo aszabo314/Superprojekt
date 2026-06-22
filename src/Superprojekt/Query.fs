@@ -83,8 +83,8 @@ module Query =
                 sprintf """{"referenceName":"%s","movingName":"%s","initialTransform":%s,"sampleStride":%d,"maxIterations":%d,"anchorCentres":%s,"anchorSigmas":%s,"anchorWeights":%s,"regionEps":%.17g}"""
                     referenceName movingName initJson sampleStride maxIterations centresFlat sigmasFlat weightsFlat regionEps
             let! r = post serverUrl "/query/icp" json
-            // Abort (e.g. insufficient overlap) comes back as {ok:false,reason}
-            // with no transform — surface it as a failure (→ FineFailed).
+            // Abort (e.g. insufficient overlap) → {ok:false,reason} with no
+            // transform; surface as a failure (→ FineFailed).
             let hasTransform = match r.TryGetProperty "transform" with true, _ -> true | _ -> false
             if not hasTransform then
                 let reason = match r.TryGetProperty "reason" with true, rp -> rp.GetString() | _ -> "ICP failed"
@@ -107,9 +107,9 @@ module Query =
             return trafo, conv, resi
         }
 
-    // Weighted rigid landmark solve (coarse registration). pairs =
-    // (refPoint, movingPoint, weight) in world space at current poses.
-    // Returns (worldDelta, perPairResiduals, covEigenvalues, collinearityWarning).
+    // Weighted rigid landmark solve (coarse registration). pairs = (refPoint,
+    // movingPoint, weight) in world space at current poses. Returns (worldDelta,
+    // perPairResiduals, covEigenvalues, collinearityWarning).
     let lsqPairs (serverUrl : string) (movingName : string) (pairs : (V3d * V3d * float)[])
             : Async<M44d * float[] * float[] * bool> =
         async {
@@ -139,10 +139,9 @@ module Query =
             return delta, residuals, eigen, collinear
         }
 
-    // Patch sampler with the shared-frame override, per-point atlas UVs and
-    // triangle index triples (patch small-multiples picker; (px,py) are the
-    // planar frame projection in this mode). frame directions are in the
-    // mesh's own frame; pass None for the reference patch (local plane fit).
+    // Patch sampler with shared-frame override, per-point atlas UVs and triangle
+    // index triples (patch picker; (px,py) = planar frame projection). frame
+    // directions are in the mesh's own frame; None = reference patch (local fit).
     let patchInFrame
             (serverUrl : string) (name : string) (centre : V3d) (radius : float) (maxPoints : int)
             (frame : (V3d * V3d) option)

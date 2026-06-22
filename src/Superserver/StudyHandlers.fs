@@ -1,9 +1,8 @@
 module StudyHandlers
 
-// HTTP surface of study mode (spec §3/§11). Stores + scoring live in
-// StudyStore; config parsing/validation in StudyConfig. The secret file and
-// scores are deliberately reachable through NO route here, and studies/ sits
-// outside wwwroot so static hosting can't serve it either.
+// HTTP surface of study mode (§3/§11). Stores + scoring in StudyStore; config
+// parsing/validation in StudyConfig. Secret file + scores are reachable through
+// NO route, and studies/ sits outside wwwroot so static hosting can't serve it.
 
 open System
 open System.Net
@@ -62,8 +61,8 @@ let private studyOfSid (sid : string) : (LoadedStudy * string) option =
                 Some (study, StudyStore.dataDirOf rootDir id)
             | None -> None
 
-// WriteStringAsync IS the pipeline result — discarding its task and calling
-// next would race the body write against the response completion.
+// WriteStringAsync IS the pipeline result — discarding its task and calling next
+// would race the body write against response completion.
 let private jsonText (s : string) : HttpHandler =
     fun (_ : HttpFunc) (ctx : HttpContext) ->
         ctx.SetContentType "application/json; charset=utf-8"

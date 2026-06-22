@@ -5,8 +5,8 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Superprojekt
 
-// Moved here from Update.fs so the study lifecycle (which switches datasets)
-// can share it; callers are unchanged.
+// Here (not Update.fs) so the study lifecycle, which switches datasets, can
+// share it; callers are unchanged.
 module ServerActions =
 
     let loadDataset (env : Env<Message>) (dataset : string) =
@@ -28,8 +28,7 @@ module ServerActions =
                 env.Emit [DatasetsLoaded datasets]
                 match StudyBoot.entryToken with
                 | Some token ->
-                    // /s/{token}: no default dataset — the study session
-                    // decides what loads.
+                    // /s/{token}: no default dataset — the session decides.
                     env.Emit [StudyMsg (StudyJoin token)]
                 | None ->
                     try
@@ -43,9 +42,9 @@ module ServerActions =
             with _ -> ()
         } |> ignore
 
-// Telemetry-event derivation: one central diff over (model before, model
-// after, message) so the reducer branches stay clean. The same event stream
-// feeds the predicate engine and (SWP8) the telemetry batcher.
+// Telemetry-event derivation: one central diff over (before, after, message)
+// so reducer branches stay clean. The stream feeds both the predicate engine
+// and the telemetry batcher.
 module StudyEvents =
 
     let private j (s : string) =
@@ -82,7 +81,7 @@ module StudyEvents =
             |> String.concat ","
         sprintf "{\"perMesh\":{%s}}" perMesh
 
-    // Pin centre vs the coarse non-secret moving-region outline (§9 P2).
+    // Pin centre vs the coarse non-secret moving-region outline.
     let private committedPinInMoving (before : Model) (after : Model) (cfg : StudyConfigPublic) =
         if cfg.MovingPolygon.Length < 3 then false
         else
@@ -149,9 +148,9 @@ module StudyEvents =
             | ScanPinMsg (PlaceAnchor _) -> add "pinPlaced" "{}"
             | ScanPinMsg CommitPin ->
                 add "pinCommitted" "{}"
-                // §9 P2: the soft warning targets registration landmarks —
-                // in the measurement phase placing pins ON the moving region
-                // is the task, so gate on the solve feature being available.
+                // Soft warning targets registration landmarks — in the
+                // measurement phase, placing pins ON the moving region is the
+                // task, so gate on the solve feature being available.
                 if committedPinInMoving before after s.Config
                    && Study.featureVisibleIn s "coarseSolve" then
                     add "pinInMoving" "{}"
@@ -200,8 +199,8 @@ module StudyEvents =
             | StudyMsg StudySetAsFinal -> add "finalRestored" "{}"
             | _ -> ()
 
-            // solver completion (the per-mesh result messages count down
-            // Expected; the milestone fires when the last one lands)
+            // solver completion (per-mesh results count down Expected; the
+            // milestone fires when the last one lands)
             if solveFinished StageCoarse before after then
                 add "coarseSolved" (rmsPayload after.PendingReg.Value)
                 add "previewShown" "{}"
@@ -213,9 +212,9 @@ module StudyEvents =
 
 module StudyUpdate =
 
-    // §5 update-level guard: a user-action message originating from a gated
-    // feature no-ops with a toast while a study runs. Result messages
-    // (solver callbacks, loads) and study/runtime messages always pass.
+    // Update-level guard: a user-action message from a gated feature no-ops
+    // with a toast while a study runs. Result messages (solver callbacks,
+    // loads) and study/runtime messages always pass.
     let private messageGate (msg : Message) : string option =
         match msg with
         | CameraMessage (OrbitMessage.PointerDown _ | OrbitMessage.PointerMove _
@@ -244,7 +243,7 @@ module StudyUpdate =
         | SetProvenanceThreshold _ -> Some "errorMetadata"
         | _ -> None
 
-    // Whole subsystems with no feature id are Full-mode only (§5 hidden list).
+    // Whole subsystems with no feature id are Full-mode only.
     let private fullOnly (msg : Message) =
         match msg with
         | ToggleFusionMode | TogglePanorama | SetPanoramaMode _
@@ -275,8 +274,8 @@ module StudyUpdate =
             | Result.Error e -> env.Emit [StudyMsg (StudySessionFailed e)]
         } |> ignore
 
-    // Resume = the step after the last advanced one (§10); a fully-advanced
-    // session stays on its last step (complete is fetched there).
+    // Resume = the step after the last advanced one; a fully-advanced session
+    // stays on its last step (complete is fetched there).
     let private resumePosition (cfg : StudyConfigPublic) (lastStep : (string * string) option) =
         match lastStep with
         | None -> 0, 0
@@ -290,12 +289,11 @@ module StudyUpdate =
                     |> Option.defaultValue 0
                 Study.nextPosition cfg pi si |> Option.defaultValue (pi, si)
 
-    // Deterministic clean state on study entry/exit and on phase dataset
-    // switches: everything a dataset switch resets, plus registration state
-    // (a participant always starts from identity transforms — tutorial
-    // registration must never leak into the main task's history, reference
-    // or commit#n labels) and mesh visibility (a demo started from Full mode
-    // must not inherit hidden meshes).
+    // Deterministic clean state on study entry/exit and phase dataset switches:
+    // everything a dataset switch resets, plus registration state (always start
+    // from identity — tutorial registration must never leak into the main
+    // task's history/reference/commit#n labels) and mesh visibility (a demo
+    // started from Full mode must not inherit hidden meshes).
     let private resetScene (model : Model) =
         { model with
             MeshVisible = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, true) |> Map.ofSeq
@@ -341,9 +339,9 @@ module StudyUpdate =
         | AGrid g ->
             "{" + (g |> Map.toList |> List.map (fun (i, x) -> sprintf "\"%d\":%s" i (x.ToString("G17", inv))) |> String.concat ",") + "}"
 
-    // §7: answers post immediately on change (idempotent upsert by question
-    // id) and again on Next. Tutorial gold responses come back as
-    // StudyGoldResult — the single server→client correctness channel.
+    // Answers post immediately on change (idempotent upsert by question id) and
+    // again on Next. Tutorial gold responses come back as StudyGoldResult — the
+    // single server→client correctness channel.
     let private submitAnswerNow (env : Env<Message>) (sid : string) (qid : string) (draft : AnswerDraft) =
         match draft.Value with
         | None -> ()
@@ -360,10 +358,10 @@ module StudyUpdate =
                 | _ -> ()
             } |> ignore
 
-    // Change-driven posts are coalesced per question (500 ms) so per-keystroke
-    // text input and slider drags don't flood the server, and transient radio
-    // selections don't burn tutorial-gold attempts (every *posted* wrong
-    // answer counts toward the screen-out threshold). Next posts immediately.
+    // Change-driven posts are coalesced per question (500 ms) so keystrokes and
+    // slider drags don't flood the server, and transient radio selections don't
+    // burn tutorial-gold attempts (every *posted* wrong answer counts toward
+    // the screen-out threshold). Next posts immediately.
     let private answerCts = System.Collections.Generic.Dictionary<string, System.Threading.CancellationTokenSource>()
 
     let private cancelPendingAnswer (qid : string) =
@@ -409,8 +407,8 @@ module StudyUpdate =
                 { s.Runtime with AnswersDraft = Map.add qid draft s.Runtime.AnswersDraft })
         | _ -> model
 
-    // World-space committed transforms of every loaded mesh — the payload of
-    // /transforms posts (labels commit#n / final).
+    // World-space committed transforms of every loaded mesh — the /transforms
+    // post payload (labels commit#n / final).
     let postTransforms (model : Model) (sid : string) (label : string) =
         let perMesh =
             model.MeshNames |> IndexList.toList
@@ -465,14 +463,14 @@ module StudyUpdate =
                 |> Option.defaultValue init.Config.DatasetTutorial
             let model = resetScene { model with Study = Some (StudyActive session); MenuOpen = false }
             switchDataset env model dataset
-            // Resuming directly onto the final step: the entry transition
-            // that normally fetches the code never fires (the `final`
-            // transforms from the pre-reload life satisfy the server check).
+            // Resuming directly onto the final step: the entry transition that
+            // normally fetches the code never fires (the pre-reload `final`
+            // transforms satisfy the server check).
             if isLastPosition init.Config phaseIx stepIx then
                 fetchCompletion env init.SessionId
             model
         | StudyExitDemo ->
-            // Demo sessions only — real sessions have no way back (§1).
+            // Demo sessions only — real sessions have no way back.
             match model.Study with
             | Some (StudyActive s) when s.Demo ->
                 StudyTelemetry.stop ()
@@ -487,10 +485,10 @@ module StudyUpdate =
                 resetScene { model with Study = None }
             | _ -> model
 
-        // §4 Next: enabled iff StepSatisfied; posts the advance mirror, moves
-        // on, switches dataset on phase boundaries that declare one. The
-        // tick guard absorbs double-clicks — without it a second click lands
-        // on the (instantly satisfied) next instruction step and skips it.
+        // Next: enabled iff StepSatisfied; posts the advance mirror, moves on,
+        // switches dataset on phase boundaries that declare one. The tick guard
+        // absorbs double-clicks — otherwise a second click lands on the
+        // (instantly satisfied) next instruction step and skips it.
         | StudyNext ->
             match model.Study with
             | Some (StudyActive s) when s.Runtime.StepSatisfied
@@ -502,7 +500,7 @@ module StudyUpdate =
                 | Some phase, Some step ->
                     StudyApi.postAdvance ApiConfig.apiBase.Value s.SessionId phase.Id step.Id
                     |> Async.Ignore |> Async.Start
-                    // final value wins server-side by timestamp (§7) — posted
+                    // final value wins server-side by timestamp — posted
                     // immediately, superseding any pending debounced post
                     match Study.effectiveQuestion cfg step with
                     | Some qu ->
@@ -526,8 +524,8 @@ module StudyUpdate =
                                 SceneClickArm = None
                                 ResumedNotice = false
                                 AdvancePosted = Set.add (phase.Id + "/" + step.Id) rt.AdvancePosted
-                                // predicate counts are cumulative per
-                                // dataset epoch (see Predicate in StudyModel.fs)
+                                // predicate counts are cumulative per dataset
+                                // epoch (see Predicate in StudyModel.fs)
                                 EventCounts = if datasetSwitch then Map.empty else rt.EventCounts }
                         let rt' = Study.reevaluate cfg rt' (Study.isTutorialPhase cfg pIx)
                         let model = { model with Study = Some (StudyActive { s with Runtime = rt' }) }
@@ -539,13 +537,13 @@ module StudyUpdate =
                             match dsAfter with
                             | Some ds -> switchDataset env model ds
                             | None -> ()
-                        // entering the exit phase = "final": post transforms
-                        // + auto-upload the workspace (§8/§10)
+                        // entering the exit phase = "final": post transforms +
+                        // auto-upload the workspace
                         if pIx <> rt.PhaseIx && isExitPhase cfg pIx then
                             postTransforms model s.SessionId "final"
                             StudyApi.postWorkspace ApiConfig.apiBase.Value s.SessionId (Persistence.serialize model)
                             |> Async.Ignore |> Async.Start
-                        // the last step shows the completion code (§9 P6)
+                        // the last step shows the completion code
                         if isLastPosition cfg pIx sIx && rt'.CompletionCode.IsNone then
                             fetchCompletion env s.SessionId
                         model
@@ -557,8 +555,8 @@ module StudyUpdate =
         | StudyCloseOverlay ->
             updateRuntime model (fun s -> { s.Runtime with OverlayOpen = false })
 
-        // §4 tutorial gold: correctness is server-evaluated; 2 fails on one
-        // check re-show the relevant tutorial step, the 3rd screens out.
+        // tutorial gold: correctness is server-evaluated; 2 fails re-show the
+        // relevant tutorial step, the 3rd screens out.
         | StudyGoldResult (qid, correct, screened) ->
             match model.Study with
             | Some (StudyActive s) ->
@@ -585,8 +583,8 @@ module StudyUpdate =
         | StudyCompletionFailed reason ->
             { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "completion refused: %s" reason) }
 
-        // §9 P4: "Set as final" exists only in study mode; posts final
-        // transforms and fires the finalRestored event (via StudyEvents).
+        // "Set as final" exists only in study mode; posts final transforms and
+        // fires the finalRestored event (via StudyEvents).
         | StudySetAsFinal ->
             match model.Study with
             | Some (StudyActive s) ->
@@ -633,9 +631,9 @@ module StudyUpdate =
             | _ -> model
 
     // Update-loop postlude (runs after every reducer step while a study is
-    // active): derive telemetry events, feed the predicate counts, advance
-    // Seq milestones, refresh StepSatisfied — and fire the transforms post
-    // that §8 ties to commits.
+    // active): derive telemetry events, feed predicate counts, advance Seq
+    // milestones, refresh StepSatisfied — and fire the commit-tied transforms
+    // post.
     let postlude (env : Env<Message>) (before : Model) (after : Model) (msg : Message) : Model =
         match after.Study with
         | Some (StudyActive s) ->

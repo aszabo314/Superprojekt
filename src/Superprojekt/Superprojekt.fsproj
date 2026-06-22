@@ -38,6 +38,7 @@
     <Compile Include="StudyUpdate.fs" />
     <Compile Include="CardUpdate.fs" />
     <Compile Include="ScanPinUpdate.fs" />
+    <Compile Include="UpdateHelpers.fs" />
     <Compile Include="Update.fs" />
     <Compile Include="MeshShaders.fs" />
     <Compile Include="MeshView.fs" />
@@ -45,6 +46,7 @@
     <Compile Include="PanoramaView.fs" />
     <Compile Include="ScanPinScene.fs" />
     <Compile Include="SceneGraph.fs" />
+    <Compile Include="CardCharts.fs" />
     <Compile Include="CardsPin.fs" />
     <Compile Include="Cards.fs" />
     <Compile Include="GuiTopBar.fs" />

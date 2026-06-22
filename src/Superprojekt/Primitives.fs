@@ -147,9 +147,8 @@ module Primitives =
         }
 
     // OnBoot wrapper for attribute-driven SVG/DOM rendering: parses the JSON
-    // attribute into `d`, clears the element, runs `body`, and re-renders on
-    // attribute mutation (the Aardvark.Dom CE has no yield!, so dynamic markup
-    // goes through JS).
+    // attribute into `d`, clears, runs `body`, re-renders on mutation. Dynamic
+    // markup goes through JS because the Aardvark.Dom CE has no yield!.
     let observedRender (attr : string) (fallback : string) (body : string list) =
         OnBoot (
             [ "(function(){"
@@ -178,9 +177,8 @@ module Primitives =
         "  el.appendChild(s);"
         "});" ]
 
-// View-side feature gating for study mode (§5): in Full mode everything is
-// visible; in a study session visible = phase.allowedFeatures minus the
-// condition's disabledFeatures.
+// View-side feature gating (§5): Full mode = all visible; study session =
+// phase.allowedFeatures minus the condition's disabledFeatures.
 module StudyGate =
 
     let studyActive (model : AdaptiveModel) : aval<bool> =
@@ -190,8 +188,8 @@ module StudyGate =
         model.Study |> AVal.map (fun s -> Study.featureVisible s featureId)
 
 // Readiness-engine adapter: builds the engine input from individual model
-// leaves (per the adaptive-performance rules — never the whole record), so
-// the registration card and the workflow panel share one source of truth.
+// leaves (adaptive-performance rule — never the whole record), shared by the
+// registration card and the workflow panel.
 module ReadinessView =
 
     open FSharp.Data.Adaptive
@@ -217,7 +215,6 @@ module ReadinessView =
                 |> List.choose (fun (id, p) ->
                     match ScanPin.correspondence p with
                     | Some c when c.Enabled && p.Phase = PinPhase.Committed ->
-                        let rel = 1.0
                         let marked =
                             movingVisible
                             |> List.filter (fun m -> Map.containsKey m c.Anchors)
@@ -225,7 +222,7 @@ module ReadinessView =
                         Some {
                             Id            = id
                             Label         = p.Name
-                            RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, max 0.01 rel)
+                            RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, 1.0)
                             Accepted      = marked
                             Unresolved    = List.length movingVisible - Set.count marked
                         }

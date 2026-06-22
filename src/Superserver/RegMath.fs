@@ -12,10 +12,9 @@ type LsqResult = {
     CollinearityWarning : bool      // λ2/λ1 < 1e-3
 }
 
-// Local geometric observability deficiency of a point neighbourhood, from its
-// covariance eigenvalues: 1 − λmin/λmax. A near-planar/degenerate patch
-// (λmin≈0) → ≈1 (weakly conditioned for a 3D solve); an isotropic patch
-// (λmin≈λmax) → ≈0. Shared formula with the probe's local-conditioning source.
+// Geometric observability deficiency from covariance eigenvalues: 1 − λmin/λmax.
+// Near-planar patch → ≈1 (weakly conditioned for a 3D solve), isotropic → ≈0.
+// Shared formula with the probe's local-conditioning source.
 let observabilityDeficiency (eigenvalues : float[]) =
     if eigenvalues.Length = 0 then 1.0
     else
@@ -23,8 +22,8 @@ let observabilityDeficiency (eigenvalues : float[]) =
         let mx = Array.max eigenvalues
         if mx > 1e-30 then max 0.0 (min 1.0 (1.0 - mn / mx)) else 1.0
 
-// Jacobi eigen decomposition of a symmetric 3×3.
-// Returns eigenvalues (descending) and matching eigenvectors (columns).
+// Jacobi eigen decomposition of a symmetric 3×3 → eigenvalues (descending) +
+// matching eigenvectors (columns).
 let symEigen3 (m : M33d) : float[] * V3d[] =
     let a = [| [| m.M00; m.M01; m.M02 |]; [| m.M10; m.M11; m.M12 |]; [| m.M20; m.M21; m.M22 |] |]
     let v = [| [| 1.0; 0.0; 0.0 |]; [| 0.0; 1.0; 0.0 |]; [| 0.0; 0.0; 1.0 |] |]
@@ -90,8 +89,8 @@ let solveRigid (pairs : (V3d * V3d * float)[]) : LsqResult option =
                           w * dm.Y * dr.X, w * dm.Y * dr.Y, w * dm.Y * dr.Z,
                           w * dm.Z * dr.X, w * dm.Z * dr.Y, w * dm.Z * dr.Z)
 
-        // SVD H = UΣVᵀ via eigen decomposition of HᵀH = VΣ²Vᵀ; U completed
-        // orthonormally where σ vanishes (planar / collinear sets).
+        // SVD H = UΣVᵀ via eigen of HᵀH = VΣ²Vᵀ; U completed orthonormally
+        // where σ vanishes (planar / collinear sets).
         let hth = h.Transposed * h
         let lams, vCols = symEigen3 hth
         let sigmas = lams |> Array.map (fun l -> sqrt (max 0.0 l))

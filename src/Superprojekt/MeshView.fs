@@ -18,9 +18,9 @@ type LoadedMesh =
         mesh : MeshData option ref
     }
 
-// Elevation-cursor slicing-plane highlight parameters, world-space metres.
-// Built in View.fs from the chart cursor (priority) or the 3D hover point
-// inside the effective pin's probe cylinder; None = highlight off.
+// Elevation-cursor slicing-plane highlight (world-space metres). Built in
+// View.fs from the chart cursor (priority) or the 3D hover point inside the
+// effective pin's probe cylinder; None = off.
 type CursorHighlight =
     {
         Origin    : V3d
@@ -81,13 +81,11 @@ module MeshView =
         let base_ =
             (commonCentroid, loaded.centroid, meshScale) |||> AVal.map3 (fun common mesh scale ->
                 Trafo3d.Translation(mesh - common) * Trafo3d.Scale(scale))
-        // Trafo composition is postfix (a * b applies a first): base maps
-        // mesh-local → render space, THEN the registration trafo (a
-        // render-space map, see RigidTransform) applies. The previous `t * b`
-        // order applied the render-space map to mesh-local coordinates —
-        // invisible for translations at dataset scale 1, but wrong for
-        // scaled datasets and large landmark rotations, and inconsistent
-        // with every renderToWorld-based query path.
+        // Postfix composition (a * b applies a first): base maps mesh-local →
+        // render space, THEN the registration trafo (a render-space map). Don't
+        // flip to `t * b` — it applies the render-space map to mesh-local
+        // coords, wrong for scaled datasets / large rotations and inconsistent
+        // with the renderToWorld query paths.
         (base_, meshTransform) ||> AVal.map2 (fun b t -> b * t)
 
     let private scaleFor (model : AdaptiveModel) (name : string) =
@@ -111,9 +109,9 @@ module MeshView =
         model.MeshNames |> AList.toAVal |> AVal.force |> IndexList.toList
         |> List.filter (fun n -> Map.tryFind n visible |> Option.defaultValue true)
 
-    // Pin anchor blobs as a 32-slot uniform array, converted metric → render
-    // space here (centre in xyz, inner radius in w). Shared by the mesh shader
-    // (isolation + provenance) and the fusion shader (conditioning).
+    // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
+    // inner radius w). Shared by the mesh shader (isolation + provenance) and
+    // the fusion shader (conditioning).
     let private pinBlobUniforms (model : AdaptiveModel) =
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
@@ -150,8 +148,8 @@ module MeshView =
                 names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
         let palette = Primitives.meshPaletteV4d
 
-        // LassoEnabled gates the count to 0 so a disabled lasso has no effect
-        // while the volume is kept for re-enabling.
+        // LassoEnabled gates count to 0 (disabled = no effect) while the volume
+        // is kept for re-enabling.
         let lassoPlaneCount =
             (model.LassoVolume, model.LassoEnabled) ||> AVal.map2 (fun lv on ->
                 match lv with
@@ -173,8 +171,8 @@ module MeshView =
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
-        // Cursor-plane uniforms shared by every mesh, converted metric →
-        // render space once. CursorActive is the only per-mesh one (below).
+        // Cursor-plane uniforms shared by every mesh (metric → render once).
+        // CursorActive is the only per-mesh one (below).
         let cursorRender =
             let datasetScaleA =
                 (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
@@ -196,15 +194,11 @@ module MeshView =
         let cursorPinR   = cursorRender |> AVal.map (fun (_, _, _, _, r, _, _) -> r)
         let cursorCylLen = cursorRender |> AVal.map (fun (_, _, _, _, _, l, _) -> l)
         let cursorWidth  = cursorRender |> AVal.map (fun (_, _, _, _, _, _, w) -> w)
-        // Chart column highlight (hover wins over sticky): the highlighted
-        // mesh renders normally, every other mesh drops to the shader's
-        // uniform-ghost path (MeshActive=false) at a fixed 0.2 alpha —
-        // independent of the GhostSilhouette toggle, because this is an
-        // explicit user gesture.
-        // Suspended during anchor placement so the chart-sticky/hover column
-        // can't ghost (and thus make un-pickable) the rest of the terrain you
-        // are trying to drop the next pin on — the same rationale as the
-        // isolation auto-suspend below.
+        // Chart column highlight (hover wins over sticky): highlighted mesh
+        // normal, others drop to the uniform-ghost path (MeshActive=false) at
+        // fixed 0.2 α — independent of GhostSilhouette (explicit gesture).
+        // Suspended during anchor placement so the column can't ghost (and
+        // un-pick) the terrain you're aiming at — same as the isolation suspend.
         let chartHighlight =
             (model.ChartHoverMesh, model.ChartStickyMesh, model.ScanPins.Placement)
             |||> AVal.map3 (fun hov sticky pl ->
@@ -212,14 +206,12 @@ module MeshView =
                 | AnchorPlacement -> None
                 | _ -> hov |> Option.orElse sticky)
         // Reference peek (spring-loaded): while held with a reference set, the
-        // reference is the only solid mesh — a transient importance override,
-        // never touching the persistent eye state. No-op without a reference.
+        // reference is the only solid mesh — transient, no eye-state mutation.
         let peekTarget =
             (model.ReferencePeekHeld, model.Registration) ||> AVal.map2 (fun held reg ->
                 if held then reg.ReferenceMesh else None)
         // Auto-suspend pin isolation while placing an anchor so the terrain
-        // stays visible for aiming (restored automatically when placement
-        // ends — no model mutation).
+        // stays visible for aiming (auto-restored, no model mutation).
         let anchorGhost =
             (model.AnchorGhostMode, model.ScanPins.Placement) ||> AVal.map2 (fun on pl ->
                 match pl with
@@ -240,11 +232,10 @@ module MeshView =
             model.ProvenanceThreshold |> AVal.map float32
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
-            // One-shot 3D anchor pick: the target mesh is the only solid one
-            // (forced visible), the reference shows at α 0.3, everything else
-            // ghosts — all shader-level, so nothing needs restoring after.
-            // Holding Option/Alt isolates the wheel-selected picking layer
-            // the same way (the pick mode wins when both are active).
+            // One-shot 3D anchor pick: target mesh solid (forced visible),
+            // reference at α 0.3, everything else ghosts — all shader-level.
+            // Option/Alt isolates the wheel-selected picking layer the same way
+            // (pick mode wins when both active).
             let isActive =
                 AVal.custom (fun t ->
                     match model.AnchorPick.GetValue t with
@@ -263,23 +254,21 @@ module MeshView =
                             | Some hm -> vis && hm = name
                             | None -> vis)
             let scale = scaleFor model name
-            // Effective pose: committed ∘ pending preview delta. While the
-            // before/after swap is held, render the committed pose instead
-            // (pure render-time selection — no model mutation).
+            // Effective pose = committed ∘ pending preview delta; while the
+            // before/after swap is held, render the committed pose instead.
             let meshT =
                 (effectiveMeshT model name, committedMeshT model name, previewSwap)
                 |||> AVal.map3 (fun eff comm swap -> if swap then comm else eff)
             // Inactive meshes still render (as ghost); gate only on load state
-            // and fusion mode (the fusion composite replaces the normal pass).
+            // and fusion mode (the composite replaces the normal pass).
             let renderEnabled =
                 (loaded.fvc, model.FusionMode) ||> AVal.map2 (fun c f -> c > 3 && not f)
             let meshColor =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
-            // A2: per-vertex signed distance for this mesh (None unless it is
-            // the soloed/encoded mesh). Projected early so a refetch of the
-            // encoded mesh doesn't churn the other meshes' buffers.
+            // A2: per-vertex signed distance for this mesh (None unless soloed/
+            // encoded). Projected early so a refetch doesn't churn other meshes.
             let myDist = model.SurfaceDistance |> AVal.map (Map.tryFind name)
             let distBuf =
                 (myDist, loaded.pos) ||> AVal.map2 (fun d _pos ->
@@ -302,8 +291,8 @@ module MeshView =
                             Array.sortInPlace valid
                             max 1e-3f valid.[int (0.95 * float (valid.Length - 1))]
                     | None -> 1.0f)
-            // Detection limit (neutral mid) from the selected pin's probe, if
-            // any: 1.96·√(σ_ref² + σ_mesh²); 0 → no neutral band.
+            // Detection limit (neutral mid) from the selected pin's probe:
+            // 1.96·√(σ_ref² + σ_mesh²); 0 → no neutral band.
             let distLoD =
                 (model.ScanPins.SelectedPin, model.ScanPins.Pins |> AMap.toAVal)
                 ||> AVal.map2 (fun sel pins ->
@@ -334,20 +323,19 @@ module MeshView =
                 model.MeshAlgorithmResidual
                 |> AVal.map (fun m ->
                     Map.tryFind name m |> Option.defaultValue 0.0 |> float32)
-            // Diff-mode inputs: per-mesh algo residual before/after the
-            // pending solve, and the inverse preview delta that maps a
-            // preview-pose fragment back to its committed-pose position.
-            // Meshes without a pending delta diff to zero (→ masked).
+            // Diff-mode inputs: per-mesh algo residual before/after the pending
+            // solve + the inverse preview delta (preview-pose fragment →
+            // committed-pose). No pending delta → diffs to zero (masked).
             let diffData =
                 (model.PendingReg, model.MeshAlgorithmResidual) ||> AVal.map2 (fun pending algo ->
                     let before = Map.tryFind name algo |> Option.defaultValue 0.0 |> float32
                     match pending |> Option.bind (fun pr -> Map.tryFind name pr.Results) with
                     | Some r -> float32 r.RmsAfter, before, M44f r.Delta.Backward
                     | None -> before, before, M44f.Identity)
-            // "All meshes the plane intersects": the cursor effect (darken +
-            // band) only activates on meshes whose registered-world bbox
-            // touches the highlight slab — and, when clipped, the cylinder's
-            // bounding sphere. World-metric math; conservative on rotation.
+            // "All meshes the plane intersects": the cursor effect activates
+            // only on meshes whose registered-world bbox touches the highlight
+            // slab — and, when clipped, the cylinder's bounding sphere.
+            // World-metric math; conservative on rotation.
             let cursorActive =
                 AVal.custom (fun t ->
                     match cursor.GetValue t with
@@ -407,10 +395,9 @@ module MeshView =
                     }
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
                     Sg.Uniform("MeshActive",      isActive)
-                    // GhostSilhouette off → 0 → the shader's ghost path
-                    // discards. Anchor-pick mode wins over the chart-column
-                    // highlight; both are explicit user gestures with fixed
-                    // alphas independent of the silhouette toggle.
+                    // GhostSilhouette off → 0 → ghost path discards. Anchor-pick
+                    // wins over chart-column highlight; both are explicit
+                    // gestures with fixed alphas, independent of the toggle.
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
                             match model.AnchorPick.GetValue t with
@@ -478,10 +465,9 @@ module MeshView =
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
                     Sg.Render loaded.fvc
                 }
-            // While this mesh has a pending preview delta, additionally show
-            // its committed pose through the shader's uniform-ghost path with
-            // a distinct slate tint. Ghost fragments write far depth, so
-            // picks pass through to the previewed surface.
+            // While this mesh has a pending preview delta, also show its
+            // committed pose via the uniform-ghost path in a slate tint. Ghost
+            // fragments write far depth so picks pass through to the preview.
             let ghostActive =
                 (renderEnabled, model.PendingReg, previewSwap) |||> AVal.map3 (fun r pending swap ->
                     r && (not swap) && (PendingRegistration.delta name pending |> Option.isSome))
@@ -498,8 +484,7 @@ module MeshView =
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
                     Sg.Uniform("MeshActive",      AVal.constant false)
                     // Slate committed-pose ghost obeys the opacity slider too
-                    // (its slate MeshColor is what distinguishes it, not a
-                    // fixed alpha).
+                    // (its slate MeshColor distinguishes it, not a fixed alpha).
                     Sg.Uniform("GhostOpacity",    model.GhostOpacity |> AVal.map float32)
                     Sg.Uniform("RenderingMode",   AVal.constant 1)
                     Sg.Uniform("MeshColor",       AVal.constant (V4f(0.45f, 0.49f, 0.55f, 1.0f)))
@@ -552,8 +537,8 @@ module MeshView =
 
     let buildFusionNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
         let blobCount, blobs = pinBlobUniforms model
-        // Before any registration the meshes aren't aligned, so fusing is
-        // meaningless: show only the reference mesh (fusionNotice explains).
+        // Before registration the meshes aren't aligned, so fusing is
+        // meaningless: show only the reference mesh.
         let hasRegistered =
             model.MeshTransforms |> AVal.map (fun m -> not (Map.isEmpty m))
         let refMesh =

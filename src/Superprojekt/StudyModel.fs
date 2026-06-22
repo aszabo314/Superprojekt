@@ -1,9 +1,8 @@
 namespace Superprojekt
 
-// User-study mode: shared, WASM-free model types — config DTOs + parser,
-// predicate engine, feature ids, telemetry event types. Compiled into the
-// client, the server (config validation) and Supertests, so keep this file
-// free of Aardvark.Dom / ASP.NET dependencies.
+// User-study shared, WASM-free model types — config DTOs + parser, predicate
+// engine, feature ids, telemetry event types. Compiled into client, server
+// (config validation) and Supertests, so keep it free of Aardvark.Dom / ASP.NET.
 
 open System
 open System.Text.Json
@@ -18,7 +17,7 @@ module StudyCondition =
     let ofTag (s : string) = if s = "NUM" then CondNum else CondFull
 
 module StudyFeature =
-    // Fixed feature-id list (spec §5) — config validation rejects unknown ids.
+    // Fixed feature-id list — config validation rejects unknown ids.
     let all =
         [ "navigation"; "layerCycle"; "pinPlace"; "pinEdit"; "pinCard"
           "violinChart"; "hoverProbe"; "heatmap"; "heatmapDiff"
@@ -31,8 +30,8 @@ module StudyFeature =
         [ "viewport"; "pinButton"; "pinList"; "registrationCard"; "meshPanel" ]
 
 module StudyEvent =
-    // Fixed telemetry event-type list (spec §8) plus the config-only synthetic
-    // types referenced by §9 predicates.
+    // Fixed telemetry event-type list plus the config-only synthetic types
+    // referenced by predicates.
     let all =
         [ "sessionStart"; "sessionResumed"; "phaseEnter"; "stepEnter"
           "stepComplete"; "orbit"; "zoom"; "layerCycled"; "soloToggled"
@@ -58,13 +57,12 @@ type Predicate =
     | PAnswerSubmitted of questionId : string
 
 module Predicate =
-    // Event counts are cumulative since the last dataset switch — per-step
-    // resets would break later-phase predicates that count solves from
-    // earlier phases, while fully-cumulative counts would let tutorial
-    // events satisfy main-task milestones. Seq nodes additionally keep a
-    // monotone progress counter per structural path: stage k is only
-    // evaluated once stages 0..k-1 completed, and a completed stage never
-    // un-completes (so a re-shown tutorial step keeps its progress).
+    // Event counts are cumulative since the last dataset switch: per-step resets
+    // would break later-phase predicates counting earlier-phase solves, while
+    // fully-cumulative counts would let tutorial events satisfy main-task
+    // milestones. Seq nodes also keep a monotone per-path progress counter:
+    // stage k evaluates only once 0..k-1 completed, and a completed stage never
+    // un-completes (a re-shown tutorial step keeps its progress).
 
     let rec private satisfiedAt
             (counts : Map<string, int>)
@@ -116,7 +114,7 @@ module Predicate =
     let satisfied counts answered (p : Predicate) (progress : Map<string, int>) =
         satisfiedAt counts answered progress "r" p
 
-    // Every event type / question id referenced — for config validation.
+    // Event types / question ids referenced (config validation).
     let rec references (p : Predicate) : (string list * string list) =
         match p with
         | PAlways -> [], []
@@ -187,8 +185,8 @@ type StudyStep = {
     Completion : Predicate
     Question   : StudyQuestion option
     Optional   : bool
-    // Tutorial gold questions: step shown again after 2 fails (defaults to
-    // the nearest preceding guidedAction).
+    // Tutorial gold: step re-shown after 2 fails (default = nearest preceding
+    // guidedAction).
     RetryStepId : string option
 }
 
@@ -209,8 +207,8 @@ type StudyConfigPublic = {
     DisabledFeatures : Map<string, string list>   // condition tag → feature ids
     Phases           : StudyPhase list
     Questionnaires   : Map<string, string[]>
-    // Coarse, non-secret outline of the moving region (world XY metres) for
-    // the soft pin-placement warning (§9 P2).
+    // Coarse, non-secret moving-region outline (world XY m) for the soft
+    // pin-placement warning.
     MovingPolygon    : V2d[]
 }
 
@@ -235,7 +233,7 @@ module StudyConfig =
         e.EnumerateArray() |> Seq.map (fun x -> x.GetString()) |> Array.ofSeq
 
     let likertPoints (questionnaireKey : string) =
-        // §7: SUS 10×5-pt, Raw-TLX 6 sliders 0–100, ICE-T 7-pt.
+        // SUS 5-pt, Raw-TLX 0–100 sliders, ICE-T 7-pt.
         match questionnaireKey with
         | "sus" -> 5
         | "tlx" -> 101
@@ -409,7 +407,7 @@ type StudyRuntime = {
     Flags         : Map<string, V3d>   // marked scene points per question id
     CompletionCode : string option
     AdvancePosted : Set<string>        // "phaseId/stepId" already advanced
-    // §10 reload: progress kept, scene reset — shown until the next step.
+    // Reload: progress kept, scene reset — shown until the next step.
     ResumedNotice : bool
 }
 
@@ -500,11 +498,10 @@ module Study =
         match shell with Some (StudyActive _) -> true | _ -> false
 
     // Questionnaire steps synthesize their grid question from the config's
-    // questionnaires map (sus → 5-pt, tlx → 0–100 sliders, icet → 7-pt).
-    // Cached per config so callers always get the SAME instance — views key
-    // widget subtrees on the question value, and a fresh record per
-    // evaluation would only be saved by structural equality of its inner
-    // array, which the adaptive delta machinery does not guarantee.
+    // questionnaires map. Cached per config so callers get the SAME instance —
+    // views key widget subtrees on the question value, and a fresh record per
+    // evaluation wouldn't be structurally stable under the adaptive delta
+    // machinery.
     let private synthesized =
         System.Runtime.CompilerServices.ConditionalWeakTable<StudyConfigPublic, Collections.Generic.Dictionary<string, StudyQuestion>>()
 
@@ -547,9 +544,8 @@ module Study =
 
     let private seqKey (rt : StudyRuntime) = sprintf "%d:%d" rt.PhaseIx rt.StepIx
 
-    // Re-evaluate the current step's completion after events/answers changed:
-    // advances Seq milestones (monotone, survives step re-entry) and updates
-    // StepSatisfied per the §4 gating rules.
+    // Re-evaluate the current step after events/answers changed: advances Seq
+    // milestones (monotone, survives re-entry) and updates StepSatisfied.
     let reevaluate (cfg : StudyConfigPublic) (rt : StudyRuntime) (tutorialGoldGate : bool) =
         match stepAt cfg rt.PhaseIx rt.StepIx with
         | None -> { rt with StepSatisfied = false }
@@ -584,8 +580,8 @@ module Study =
                 Map.add t ((Map.tryFind t m |> Option.defaultValue 0) + 1) m) rt.EventCounts
         { rt with EventCounts = counts }
 
-    // Whether the phase at `ix` is on the tutorial dataset (gold answers gate
-    // progress only there, §4).
+    // Whether phase `ix` is on the tutorial dataset (gold answers gate
+    // progress only there).
     let isTutorialPhase (cfg : StudyConfigPublic) (phaseIx : int) =
         match datasetAtPhase cfg phaseIx, cfg.DatasetTutorial with
         | Some d, t -> d = t
@@ -600,8 +596,8 @@ module Study =
             elif phaseIx + 1 < List.length cfg.Phases then Some (phaseIx + 1, 0)
             else None
 
-    // Flat config order of steps as (phaseId, stepId) — server advance
-    // validation and resume use the same order.
+    // Flat config order of steps as (phaseId, stepId) — server advance/resume
+    // use the same order.
     let stepOrder (cfg : StudyConfigPublic) =
         cfg.Phases |> List.collect (fun ph -> ph.Steps |> List.map (fun st -> ph.Id, st.Id))
 

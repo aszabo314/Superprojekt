@@ -26,10 +26,9 @@ module GuiOverlays =
         }
 
     // Measurement rulers: one HTML label per accepted anchor↔reference of the
-    // selected pin, at the connector midpoint. Default shows the distance
-    // (the live pair gap = the per-pair residual once a solve preview shrinks
-    // the gap); the title carries the endpoints. HTML so it is always legible
-    // and depth-tested against overlays, not meshes.
+    // selected pin at the connector midpoint, showing the distance (live pair
+    // gap = per-pair residual once a preview shrinks it); title carries the
+    // endpoints. HTML so it stays legible and depth-tested against overlays.
     let rulerOverlay (model : AdaptiveModel) (view : aval<Trafo3d>) (viewportSize : aval<V2i>) =
         let projectToScreen (p : V3d) (viewTrafo : Trafo3d) (vp : V2i) =
             let aspect = float vp.X / max 1.0 (float vp.Y)
@@ -40,9 +39,8 @@ module GuiOverlays =
                 let ndc = h.XYZ / h.W
                 if abs ndc.X > 1.2 || abs ndc.Y > 1.2 then None
                 else Some (V2d((ndc.X * 0.5 + 0.5) * float vp.X, (1.0 - (ndc.Y * 0.5 + 0.5)) * float vp.Y))
-        // Single JSON attribute updated per frame; observedRender fully
-        // rebuilds the label set each change (and dedups when unchanged) —
-        // no per-frame AList churn / stuck DOM nodes.
+        // Single JSON attribute per frame; observedRender rebuilds the label set
+        // on change (dedups when unchanged) — no per-frame AList churn.
         let json =
             AVal.custom (fun t ->
                 let items =
@@ -155,7 +153,7 @@ module GuiOverlays =
             div {
                 Class "hover-probe-ridge"
                 json |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
-                Primitives.observedRender "data-ridge" "{}" CardsPin.ridgelineJs
+                Primitives.observedRender "data-ridge" "{}" CardCharts.ridgelineJs
             }
             div {
                 Class "hover-probe-nums"
@@ -163,9 +161,9 @@ module GuiOverlays =
             }
         }
 
-    // Heatmap probe under the cursor. Sources mode reuses
-    // Provenance.sourcesAt so the numbers agree with the shader; Diff mode
-    // shows the signed combined-error change and the detection limit (LoD).
+    // Heatmap probe under the cursor. Sources mode reuses Provenance.sourcesAt
+    // so the numbers agree with the shader; Diff shows the signed combined-error
+    // change and the detection limit (LoD).
     let provenanceHoverOverlay
             (model : AdaptiveModel)
             (hoverWorld : aval<V3d option>)

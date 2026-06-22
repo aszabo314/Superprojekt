@@ -1,10 +1,9 @@
 module StudyStore
 
 // File-based study stores (no DB): per study `studies/{id}/data/` holds
-// sessions.jsonl, events-{sid}.jsonl, answers-{sid}.jsonl, advance-{sid}.jsonl,
-// transforms-{sid}.jsonl, workspace-{sid}.json, scores-{sid}.json. Append-only;
-// writes serialized per session / per study via named locks. All functions
-// take explicit paths so Supertests can run them against a temp dir.
+// sessions / events / answers / advance / transforms JSONL + workspace/scores
+// JSON. Append-only; writes serialized per session/study via named locks. All
+// functions take explicit paths so Supertests can run against a temp dir.
 
 open System
 open System.IO
@@ -125,9 +124,8 @@ type SessionStart =
     | Resumed of SessionRecord
     | Refused of status : int * message : string
 
-// Balanced assignment (§3): count non-demo sessions with status active or
-// completed per condition, assign the smaller (tie → random); atomic under
-// the per-study sessions lock.
+// Balanced assignment (§3): count non-demo active/completed sessions per
+// condition, assign the smaller (tie → random); atomic under the sessions lock.
 let private balancedCondition (sessions : SessionRecord list) (rnd : Random) =
     let counted = sessions |> List.filter (fun s -> not s.Demo && (s.Status = "active" || s.Status = "completed"))
     let nFull = counted |> List.filter (fun s -> s.Condition = CondFull) |> List.length
@@ -165,8 +163,7 @@ let createSession
                 if not (readTokens tokensFile |> Array.contains tok) then
                     Refused (403, "invalid token")
                 else
-                    // One token = one session (§10): an existing session for
-                    // this token resumes if active, refuses otherwise.
+                    // One token = one session (§10): resume if active, else refuse.
                     match sessions |> List.tryFind (fun s -> s.Token = Some tok) with
                     | Some existing when existing.Status = "active" -> Resumed existing
                     | Some existing when existing.Status = "screened" -> Refused (409, "screened")
@@ -218,10 +215,9 @@ type AnswerOutcome = {
     Screened : bool
 }
 
-// Append the answer; for tutorial-phase gold questions also evaluate
-// correctness (the single exception to "scores never reach the client", §4)
-// and screen out after `goldFailThreshold` distinct wrong submissions of one
-// check.
+// Append the answer; for tutorial-phase gold questions also evaluate correctness
+// (the single exception to "scores never reach the client", §4) and screen out
+// after `goldFailThreshold` distinct wrong submissions of one check.
 let appendAnswer
         (study : LoadedStudy)
         (dataDir : string)
@@ -283,8 +279,7 @@ let advancedSteps (dataDir : string) (sid : string) =
         e.GetProperty("phaseId").GetString(), e.GetProperty("stepId").GetString())
 
 // Order-validated progress mirror: accept only the next step in config order
-// (or an idempotent repeat of an already-recorded one, which the tutorial
-// retry path produces).
+// (or an idempotent repeat of a recorded one, as the tutorial retry path emits).
 let recordAdvance
         (study : LoadedStudy)
         (dataDir : string)

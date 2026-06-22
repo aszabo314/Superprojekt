@@ -28,8 +28,8 @@ type ProbeDistribution = {
     Std       : float
     Bandwidth : float
     Kde       : float[][]
-    // Raw re-centred samples for the small-N strip (KDE fabricates shape
-    // below ~20 points); only sent for small distributions to bound payload.
+    // Raw re-centred samples for the small-N strip (KDE fabricates shape below
+    // ~20 pts); only sent for small distributions to bound payload.
     Samples   : float[]
 }
 
@@ -40,9 +40,9 @@ type ProbeResult = {
     Planarity         : float
     Length            : float
     AutoLength        : float
-    // Axial offset (metres along Normal, from the pin centre) of chart y=0:
-    // the distributions are re-centred so 0 = the reference median, which sits
-    // at pin.Centre + Normal·RefOffset in 3D. The chart↔3D linking must add it.
+    // Axial offset (m along Normal from the pin centre) of chart y=0: distros
+    // are re-centred so 0 = ref median, sitting at centre + Normal·RefOffset in
+    // 3D — the chart↔3D linking must add it.
     RefOffset         : float
     XAuto             : float * float
     XFit              : float * float
@@ -131,10 +131,9 @@ let private estimateNormal (mi : ProbeMeshInput) (centre : V3d) (radius : float)
         let nWorld = (mi.Transform.TransformDir nLocal).Normalized
         let nWorld = if nWorld.Z < 0.0 then -nWorld else nWorld
         let planarity = if l1 > 1e-30 then l0 / l1 else 1.0
-        // Local geometric observability: λmin/λmax of the neighbourhood
-        // covariance. A near-planar/degenerate patch (λmin≈0) is weakly
-        // conditioned for a 3D registration solve → deficiency ≈ 1; an
-        // isotropic (corner-like) patch → ≈ 0. Same formula as
+        // Geometric observability deficiency (1 − λmin/λmax of the
+        // neighbourhood covariance): near-planar patch → ≈1 (weakly conditioned
+        // for a 3D solve), isotropic → ≈0. Same formula as
         // RegMath.observabilityDeficiency (unit-tested).
         let condDeficiency = if l2 > 1e-30 then max 0.0 (min 1.0 (1.0 - l0 / l2)) else 1.0
         Some (nWorld, planarity, condDeficiency)
@@ -158,8 +157,8 @@ let private autoLengthAlong (meshes : ProbeMeshInput[]) (axis : V3d) =
     if hi > lo then min 100.0 (1.1 * (hi - lo)) else 10.0
 
 // Signed axial coordinates of cylinder hits. Deterministic barycentric-lattice
-// sampling of triangle interiors so low-res meshes still produce distributions
-// the lattice density targets maxPoints over the candidate area.
+// sampling of triangle interiors (density targets maxPoints over the candidate
+// area) so low-res meshes still produce distributions.
 let private sampleAlongAxis (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (radius : float) (halfLen : float) (maxPoints : int) =
     let pm = mi.Lm.parsed
     let inv = mi.Transform.Inverse
@@ -307,7 +306,7 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
                       Samples = if a.Length < 40 then a else [||] })
             // Three-source decomposition: dataset = IQR of the union,
             // algorithm = RMS of non-reference median offsets, conditioning =
-            // c_scale / (n_present · mean points) with c_scale = 1.
+            // radius × observability deficiency (below).
             let union =
                 let all = Array.concat sorted
                 Array.sortInPlace all
@@ -322,10 +321,9 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
             let algorithmResid =
                 if offsets.Length = 0 then 0.0
                 else sqrt ((offsets |> Array.sumBy (fun o -> o * o)) / float offsets.Length)
-            // Local conditioning: in-plane positional uncertainty of the
-            // anchor neighbourhood ≈ pin radius scaled by the geometric
-            // observability deficiency (degenerate/planar → ~radius,
-            // isotropic → ~0). Geometric, not a sample-count heuristic.
+            // Local conditioning: in-plane positional uncertainty ≈ pin radius
+            // scaled by the geometric observability deficiency (planar →
+            // ~radius, isotropic → ~0). Geometric, not a sample-count heuristic.
             let conditioning = args.Radius * condDeficiency
             let perMesh =
                 dists |> Array.map (fun d ->

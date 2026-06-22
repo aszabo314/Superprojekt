@@ -5,8 +5,8 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Adaptify
 
-// ScanPinId moved to RegistrationModel.fs (shared with the registration
-// types so the pure registration state machine stays WASM-free for tests).
+// ScanPinId is in RegistrationModel.fs (shared so the registration state
+// machine stays WASM-free for tests).
 
 [<RequireQualifiedAccess>]
 type PinPhase =
@@ -14,19 +14,16 @@ type PinPhase =
     | Committed
 
 // Sphere–surface contact rings (per mesh, registered world-space metres),
-// computed server-side and cached on the pin. Invalidated (→ RingsNone, lazy
-// recompute) by radius / centre / registration-transform changes; mesh
-// visibility only gates rendering, never the cache.
+// server-computed, cached on the pin. Invalidated (→ RingsNone, lazy recompute)
+// by radius / centre / registration-transform changes; mesh visibility only
+// gates rendering, never the cache.
 type ContactRingState =
     | RingsNone
     | RingsRunning
     | RingsReady of Map<string, V3d[][]>
 
-// All ScanPin geometry is metric world-space (InnerRadius is the pin's
-// hard-core radius). Render-space conversion happens at pipeline boundaries.
-// Probe: cached M3C2 result, recomputed lazily after invalidation (ProbeNone).
 // Human-readable short pin names (adjective + noun), derived deterministically
-// from the pin id so the same pin always gets the same name.
+// from the pin id so a pin always gets the same name.
 module PinNames =
     let private adjectives =
         [| "Amber"; "Brisk"; "Calm"; "Dusky"; "Early"; "Fleet"; "Grave"; "Hazel"
@@ -40,6 +37,8 @@ module PinNames =
         let h = g.GetHashCode() &&& 0x7FFFFFFF
         sprintf "%s %s" adjectives.[h % adjectives.Length] nouns.[(h / adjectives.Length) % nouns.Length]
 
+// Geometry is metric world-space (InnerRadius = hard-core radius); render-space
+// conversion happens at pipeline boundaries.
 type ScanPin = {
     Id                   : ScanPinId
     Name                 : string
@@ -52,8 +51,8 @@ type ScanPin = {
     CreatedAt            : DateTime
     DatasetColors        : Map<string, C4b>
     Probe                : ProbeState
-    // Second probe under the effective preview transforms while a
-    // registration solve is pending (split violin). Never persisted.
+    // Second probe under effective preview transforms while a solve is pending
+    // (split violin). Never persisted.
     ProbePreview         : ProbeState
     ContactRings         : ContactRingState
 }
@@ -86,8 +85,7 @@ module ScanPinModel =
     let effectivePinId (sp : ScanPinModel) =
         activePlacementId sp |> Option.orElse sp.SelectedPin
 
-    // Adaptive form, built from the already-projected leaves (never the whole
-    // record) so it obeys the field-projection rule.
+    // Adaptive form, built from already-projected leaves (field-projection rule).
     let effectivePinIdA (placement : aval<PlacementState>) (selected : aval<ScanPinId option>) =
         (placement, selected) ||> AVal.map2 (fun pl sel ->
             match pl with AdjustingPin id -> Some id | _ -> sel)
@@ -97,8 +95,8 @@ module ScanPinModel =
         | PlacementIdle -> false
         | _ -> true
 
-    // Probe invalidation: identical pins are returned as-is so the
-    // adaptive map diff sees no change.
+    // Invalidation: unchanged pins are returned as-is so the adaptive map
+    // diff sees no change.
     let invalidateProbes (sp : ScanPinModel) =
         let pins =
             sp.Pins |> HashMap.map (fun _ p ->
@@ -149,8 +147,8 @@ module ScanPin =
     let withCorrespondence (c : Correspondence option) (p : ScanPin) =
         { p with Correspondence = c }
 
-    // The probe that matches what's on screen: the preview probe while a
-    // registration preview is pending (and ready), the committed one otherwise.
+    // The probe matching what's on screen: preview probe while a preview is
+    // pending (and ready), committed one otherwise.
     let effectiveProbe (previewPending : bool) (p : ScanPin) =
         if previewPending then
             match p.ProbePreview with
@@ -158,9 +156,9 @@ module ScanPin =
             | _ -> p.Probe
         else p.Probe
 
-// Elevation cursor driven by hovering a pin card's violin chart: a signed
-// distance (metres) along the pin's probe axis. Extended = Alt held, the 3D
-// slicing plane grows from pin-radius disk to scene-wide.
+// Elevation cursor from hovering a pin card's violin: a signed distance (m)
+// along the pin's probe axis. Extended = Alt held, the 3D slicing plane grows
+// from pin-radius disk to scene-wide.
 type ChartCursor = {
     PinId    : ScanPinId
     Distance : float

@@ -10,10 +10,7 @@ module Cards =
     let shortName = CardsPin.shortName
     let numbered = CardsPin.numbered
 
-    // Shared chrome for every floating card. A drag is held in a local
-    // cval<(cardPos, grabOffset) option>; `pos` is the card's current position
-    // (grab offset is computed from it on pointer-down) and `onCommit` gets
-    // the final position on release.
+    // Shared chrome for every floating card. Drag held in a local cval<(cardPos, grabOffset) option>; onCommit fires the final pos on release.
     let cardDragHandle (title : aval<string>) (pos : aval<V2d>) (dragState : cval<(V2d * V2d) option>) (onCommit : V2d -> unit) =
         div {
             Class "card-drag-handle"
@@ -39,13 +36,11 @@ module Cards =
             title
         }
 
-    // Current position of a floating card: live drag position while dragging,
-    // committed position otherwise.
+    // Floating-card position: live drag pos while dragging, committed pos otherwise.
     let cardPos (committed : aval<V2d>) (dragState : cval<(V2d * V2d) option>) : aval<V2d> =
         (committed, dragState :> aval<_>) ||> AVal.map2 (fun c d ->
             match d with Some (p, _) -> p | None -> c)
 
-    // display:none when hidden, fixed-position Left/Top when shown.
     let cardStyle (visible : aval<bool>) (pos : aval<V2d>) =
         (visible, pos) ||> AVal.map2 (fun on p ->
             if not on then Some (Style [Display "none"])
@@ -99,9 +94,7 @@ module Cards =
                 id |> Option.bind (fun id -> HashMap.tryFind id pins))
 
         let cardsSnapshot = model.CardSystem.Cards |> AMap.toAVal
-
         let collapsedSet = cval (HashSet.empty<CardId>)
-
         let cardPositions =
             (cardsSnapshot, viewTrafo, vpSize)
             |||> AVal.map3 (fun cards vt sz ->

@@ -1,9 +1,8 @@
 module StudyConfig
 
-// Study definitions on disk: studies/{studyId}/config.json (public, served to
-// the client) + secret.json (never served: planted answers, TRE check points,
-// gold thresholds). Parsing + startup validation live here, Giraffe-free, so
-// Supertests can compile this file directly.
+// Study definitions on disk: studies/{studyId}/config.json (public, served) +
+// secret.json (never served: planted answers, TRE check points, gold
+// thresholds). Parsing + startup validation, Giraffe-free for Supertests.
 
 open System
 open System.IO
@@ -154,8 +153,8 @@ let validate
         if q.Gold && not (Map.containsKey q.Id secret.Answers) then
             err "gold question '%s' has no secret answer" q.Id
 
-    // The public file must not smuggle planted answers — reject suspicious
-    // keys outright (the served JSON is this file verbatim).
+    // The public file (served verbatim) must not smuggle planted answers —
+    // reject suspicious keys outright.
     let rec scanKeys (e : JsonElement) =
         match e.ValueKind with
         | JsonValueKind.Object ->
@@ -199,9 +198,8 @@ let loadStudy (datasetExists : string -> bool) (dir : string) : Result<LoadedStu
     with ex -> Result.Error [ ex.Message ]
 
 // Discover + validate every study under a root; invalid studies are refused
-// (reasons returned for the caller to log) and never served. The
-// MeshLoader-backed cache lives in StudyHandlers so this file stays
-// compilable in Supertests.
+// (reasons returned for the caller to log) and never served. The cache lives in
+// StudyHandlers so this file stays compilable in Supertests.
 let loadAll (datasetExists : string -> bool) (root : string) =
     let mutable ok = Map.empty
     let rejected = ResizeArray()

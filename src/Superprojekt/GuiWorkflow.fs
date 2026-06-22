@@ -4,11 +4,9 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-// The Registration panel (formerly the "workflow panel"): the single
-// registration surface. A near-pure view over the model — every mutation
-// dispatches an existing message and it never issues server queries itself,
-// except the folded-in fine-ICP mode toggle and history rollback/reset.
-// Standard floating-card chrome, four collapsible sections.
+// The Registration panel: the single registration surface. A near-pure view —
+// every mutation dispatches an existing message, never issues server queries
+// itself. Standard floating-card chrome, four collapsible sections.
 module GuiWorkflow =
 
     open Primitives
@@ -37,11 +35,10 @@ module GuiWorkflow =
 
     let private hex = Primitives.c4bToRgbCss
 
-    // Median-offset-across-pins strip (spec WP10): one row per moving mesh,
-    // one mark per pin at its signed median offset, shared x-scale, ±LoD band.
-    // A flat row (marks aligned) ⇒ a rigid/datum offset (H-A); a varying row
-    // ⇒ spatially-varying real change (H-B). Marks post hover/click to the
-    // .wfp-medstrip-bus for 3D + pin linking.
+    // Median-offset-across-pins strip (WP10): one row per moving mesh, one mark
+    // per pin at its signed median offset, shared x-scale, ±LoD band. Flat row
+    // ⇒ rigid/datum offset (H-A); varying ⇒ real spatial change (H-B). Marks
+    // post hover/click to .wfp-medstrip-bus for 3D + pin linking.
     let private medStripJs = [
         "  if(!d || !d.rows || d.rows.length === 0){ var p=document.createElement('div'); p.className='wfp-medstrip-empty'; p.textContent='No per-pin medians yet (enable correspondence pins and probe).'; el.appendChild(p); return; }"
         "  var rows = d.rows;"
@@ -89,8 +86,8 @@ module GuiWorkflow =
             let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
             let colorVal = idxVal |> AVal.map meshColor
             // chip: Reference / Fine ✓ / Coarse ✓ / Skipped / Unregistered /
-            // Hidden — committed stages from the log, Skipped = a solve ran
-            // but this visible moving mesh lacked the 3 accepted pairs.
+            // Hidden — committed stages from the log; Skipped = a solve ran but
+            // this visible moving mesh lacked the 3 accepted pairs.
             let chip =
                 AVal.custom (fun t ->
                     let visible =
@@ -177,7 +174,7 @@ module GuiWorkflow =
 
         // ── 3.2 correspondence pins ────────────────────────────────────
         // (pinId, label, host, dots (mesh, colourHex, state), accepted, M,
-        // reliability, worst coarse residual, centre, radius)
+        // worst coarse residual, centre, radius)
         let corrRows =
             AVal.custom (fun t ->
                 let pins = pinsVal.GetValue t
@@ -194,8 +191,8 @@ module GuiWorkflow =
                             input.VisibleMovingMeshes |> List.map (fun m ->
                                 let state =
                                     match Map.tryFind m c.Anchors with
-                                    | Some _ -> 2   // filled (marker present)
-                                    | None -> 0     // red ring (missing)
+                                    | Some _ -> 2   // filled = marker present
+                                    | None -> 0     // red ring = missing
                                 Cards.numbered order m, colourOf m, state)
                         let accepted = dots |> List.filter (fun (_, _, st) -> st = 2) |> List.length
                         let resid =
@@ -223,7 +220,7 @@ module GuiWorkflow =
         let pinRow (id, label : string, host : string option, dots, accepted, total, resid, centre, radius) =
             div {
                 Class "wfp-row wfp-pin-row"
-                // Hover → highlight this pin's rings in 3D (UI→3D linking).
+                // Hover → highlight this pin's rings in 3D.
                 Dom.OnMouseEnter(fun _ -> env.Emit [SetWorkflowPinHover (Some id)])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetWorkflowPinHover None])
                 div {
@@ -249,8 +246,8 @@ module GuiWorkflow =
                                         (match state with
                                          | 2 -> "marker present"
                                          | _ -> "no marker"))
-                                // border + fill via currentColor (the Css API
-                                // has no BorderColor; colour is data-driven)
+                                // border + fill via currentColor (Css API has
+                                // no BorderColor; colour is data-driven)
                                 Style [ Css.Color (if state = 0 then "#dc2626" else colour) ]
                             }
                     }
@@ -350,9 +347,8 @@ module GuiWorkflow =
                     sprintf "mean %.3f · max %.3f · meshes solved %d/%d"
                         (List.average solved) (List.max solved) (List.length solved) total)
 
-        // Median-offset-across-pins strip data (WP10): per moving mesh, the
-        // signed median offset at each enabled committed-probe pin + a
-        // representative ±LoD band.
+        // Median-offset strip data (WP10): per moving mesh, signed median
+        // offset at each enabled committed-probe pin + a representative ±LoD band.
         let medStripJson =
             AVal.custom (fun t ->
                 let pins = pinsVal.GetValue t
@@ -412,8 +408,7 @@ module GuiWorkflow =
             let parts = v.Split('|')
             match parts.[0] with
             | "hover" when parts.Length >= 2 ->
-                // hover a dot → highlight the mesh column and pulse the pin's
-                // rings in 3D (the probing the user already did).
+                // hover a dot → highlight the mesh column + pulse the pin's rings.
                 let pinHover =
                     if parts.Length >= 3 then
                         match System.Guid.TryParse parts.[2] with
@@ -540,8 +535,8 @@ module GuiWorkflow =
                                     | None -> ()
                                 })
                         }
-                        // Stage 2 · Fine ICP — optional, and only a control once
-                        // a Stage-1 result is committed (C1).
+                        // Stage 2 · Fine ICP — optional, only a control once a
+                        // Stage-1 result is committed (C1).
                         div {
                             Class "wfp-stage2"
                             showWhen ((StudyGate.featureOn model "fineSolve", hasCommitted) ||> AVal.map2 (&&))

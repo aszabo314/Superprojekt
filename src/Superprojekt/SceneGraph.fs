@@ -15,9 +15,8 @@ module SceneGraph =
     let private boxIdx =
         [| 0;1;2; 0;2;3;  5;4;7; 5;7;6;  4;0;3; 4;3;7;  1;5;6; 1;6;2;  0;4;5; 0;5;1;  3;2;6; 3;6;7 |]
 
-    // Coordinate-cross centre block. Always-on-top: depth test disabled and
-    // drawn in passOne after the opaque mesh pass, so it overlays everything.
-    // Alpha-blended.
+    // Coordinate-cross centre block. Always-on-top: DepthTest.None, passOne
+    // after the opaque mesh pass; alpha-blended.
     let private axisBox (color : V4d) (trafo : Trafo3d) =
         sg {
             Sg.Pass RenderPass.passOne
@@ -34,8 +33,7 @@ module SceneGraph =
             Sg.Render (AVal.constant boxIdx.Length)
         }
 
-    // Origin cross + tick segments + axis-tip and integer-metre labels.
-    // Always-on-top: depth test disabled, drawn in passOne after meshes.
+    // Origin cross + tick segments. Always-on-top: DepthTest.None, passOne.
     let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
         let axisLength = 3.0
         let tickSpacing = 0.25
@@ -130,8 +128,8 @@ module SceneGraph =
             @ labelNodes yColor V3d.OIO V3d.IOO textTrafoY
             @ labelNodes zColor V3d.OOI V3d.IOO textTrafoZ)
 
-    // Persistent subtle marker of the reference mesh (★): its bbox edges in
-    // the accent colour, normally depth-tested so it stays unobtrusive.
+    // Subtle reference-mesh marker (★): its bbox edges in the accent colour,
+    // depth-tested so it stays unobtrusive.
     let private referenceOutline (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (model : AdaptiveModel) =
         let col = V4d(0.102, 0.337, 0.859, 0.5)
         let segs =
@@ -188,23 +186,17 @@ module SceneGraph =
         let loadFinished (name : string) =
             env.Emit [ LoadFinished name ]
 
-        // Single forward render pass into the main framebuffer:
-        //   • Meshes: shader writes (rgb, α) and α-gated gl_FragDepth — opaque
-        //     fragments (α ≥ 0.99) write their natural depth, transparent
-        //     fragments write 1.0 (far). All passZero geometry shares one
-        //     depth buffer.
-        //   • Pin geometry: depth-tested against the mesh depth so it fades
-        //     behind opaque surfaces; alpha-blended.
-        //   • Coordinate cross + labels: passOne with DepthTest.None — always
-        //     on top.
+        // Single forward pass into the main framebuffer:
+        //   • Meshes: (rgb, α) + α-gated depth — opaque (α ≥ 0.99) write natural
+        //     depth, the rest write 1.0 (far). All passZero shares one buffer.
+        //   • Pin geometry: depth-tested against the mesh depth; alpha-blended.
+        //   • Cross + labels: passOne, DepthTest.None — always on top.
         //
-        // Sg.DepthMask is intentionally NEVER set anywhere in the scene graph:
-        // it is buggy in this Aardvark/WebGL build and silently breaks the
-        // depth pipeline when used. Every node therefore writes depth using
-        // whatever its shader produces; the visible ordering is steered via
-        // Sg.DepthTest + Sg.Pass alone. This violates the textbook
-        // "translucent should not write depth" rule but is the only
-        // combination that actually renders correctly here.
+        // Sg.DepthMask is intentionally NEVER set: it is buggy in this
+        // Aardvark/WebGL build and silently breaks the depth pipeline. Every
+        // node writes depth from its shader; ordering is steered via
+        // Sg.DepthTest + Sg.Pass alone. Violates the textbook "translucent
+        // shouldn't write depth" rule but is the only combination that works.
 
         let meshScene  = MeshView.buildScene loadFinished cursorHighlight clipUniforms previewSwap wheelIsolation model
         let fusionScene = FusionView.build info model view proj

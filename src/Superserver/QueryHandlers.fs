@@ -17,8 +17,8 @@ type ClosestRequest = { Name: string; Index: int; Point: float[] }
 [<CLIMutable>]
 type PatchRequest = {
     Name: string; Centre: float[]; Radius: float; MaxPoints: int
-    // Optional shared-frame override (mesh-frame directions); both must be
-    // present to take effect. Absent fields bind to null → local plane fit.
+    // Optional shared-frame override (mesh-frame dirs); both must be present, else
+    // null → local plane fit.
     FrameNormal: float[]; FrameRefDir: float[]
     // true → planar projection + triangle index triples (absent binds false).
     Triangles: bool
@@ -46,10 +46,9 @@ type ProbeRequest = {
     MaxPointsPerMesh : int
 }
 
-// Per-vertex signed distance of a target mesh to a reference mesh, in the
-// target's served vertex order (so the client can bind it as a vertex
-// attribute aligned with the geometry it renders). Transforms are world-space
-// rigid M44 (Forward), matching the probe convention.
+// Per-vertex signed distance target→reference, in the target's served vertex
+// order (so the client binds it as an aligned vertex attribute). Transforms are
+// world-space rigid M44 (Forward), matching the probe convention.
 [<CLIMutable>]
 type RegionDistanceRequest = {
     TargetName       : string
@@ -126,9 +125,9 @@ let private mat16 (a : float[]) =
              a.[12], a.[13], a.[14], a.[15])
     else M44d.Identity
 
-// Per-vertex signed M3C2-style distance (cloud-to-mesh), signed by the
-// reference surface normal at the closest point. Vertices with no valid
-// closest point get a large sentinel the shader treats as "no encoding".
+// Per-vertex signed M3C2-style distance (cloud-to-mesh), signed by the ref
+// surface normal at the closest point. No closest point → large sentinel the
+// shader treats as "no encoding".
 let regionDistanceHandler : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"
@@ -269,9 +268,8 @@ let probeHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
-// Weighted rigid landmark solve for the coarse registration stage.
-// Points arrive in world space at current poses; the returned transform is a
-// delta mapping current-world moving points onto the reference.
+// Weighted rigid landmark solve (coarse stage). Points arrive in world space at
+// current poses; the returned transform is a delta mapping them onto the ref.
 let lsqPairsHandler : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"

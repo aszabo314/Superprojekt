@@ -16,10 +16,9 @@ type LoadedMesh =
 
 let private cache = ConcurrentDictionary<struct(string * string * int), LoadedMesh>()
 
-// Aardvark's BbTree build is recursive. Non-uniformly sampled photogrammetry
-// meshes (e.g. JOB) drive it deep enough to overflow a thread-pool thread's
-// 1 MB stack, which takes the whole process down (StackOverflow is uncatchable).
-// Build on a dedicated thread with a large stack so build depth is never fatal.
+// BbTree build is recursive; non-uniform photogrammetry meshes can overflow a
+// thread-pool thread's 1 MB stack (uncatchable, kills the process). Build on a
+// dedicated large-stack thread so deep recursion is never fatal.
 let private buildBbTree (boxes : Box3d[]) : BbTree =
     let mutable tree = Unchecked.defaultof<BbTree>
     let mutable err : exn = null
@@ -52,8 +51,7 @@ let get (dataset : string) (name : string) (index : int) : LoadedMesh =
                 Box3d(Fun.Min(p0, Fun.Min(p1, p2)), Fun.Max(p0, Fun.Max(p1, p2)))
             )
         let bvh = buildBbTree triBoxes
-        { parsed = pm; device = device; geometry = geom; scene = scene; bvh = bvh }
-    )
+        { parsed = pm; device = device; geometry = geom; scene = scene; bvh = bvh })
 
 let traverseBvh (indices : int[]) (bbt : BbTree) (overlaps : Box3d -> bool) =
     let result = ResizeArray<int>()
@@ -101,5 +99,3 @@ let trianglesInSphere (lm : LoadedMesh) (center : V3f) (radius : float32) =
         let dy = max 0.0 (max (b.Min.Y - c.Y) (c.Y - b.Max.Y))
         let dz = max 0.0 (max (b.Min.Z - c.Z) (c.Z - b.Max.Z))
         dx*dx + dy*dy + dz*dz <= r2)
-
-

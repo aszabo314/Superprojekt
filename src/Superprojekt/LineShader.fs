@@ -35,9 +35,8 @@ module Lines =
             let mutable tLo = 0.0f
             let mutable tHi = 1.0f
 
-            // Clip the segment against the 6 view-frustum half-spaces.
-            // For each plane: parametric intersection t = -(p·o + p.w) / (p·d);
-            // dir > 0 → entering at t → tighten tHi; dir < 0 → exiting at t → tighten tLo.
+            // Clip against the 6 frustum half-spaces: t = -(p·o + p.w)/(p·d);
+            // dir > 0 → entering → tighten tHi; dir < 0 → exiting → tighten tLo.
             let pl0  = -m.R3 - m.R0
             let dir0 = Vec.dot pl0.XYZ d
             let tp0  = (pl0.W + Vec.dot pl0.XYZ o) / -dir0
@@ -171,12 +170,10 @@ module Lines =
         let count    = buffers |> AVal.map (fun (_,_,_,_,_,n) -> if n = 0 then 0 else 6 * n)
         p0Arr, p1Arr, colArr, widthArr, idxArr, count
 
-    // Straight forward-rendered alpha-blended lines: emits (rgb, α) on the
-    // standard Color attachment. Callers steer ordering via Sg.DepthTest and
-    // Sg.Pass — typical use is DepthTest=LessOrEqual so lines fade behind
-    // opaque meshes. Sg.DepthMask is intentionally never used anywhere in
-    // this project (see SceneGraph.build for the reason), so line fragments
-    // also write to the depth buffer; ordering is good enough in practice.
+    // Forward-rendered alpha-blended lines (rgb, α) on the Color attachment;
+    // callers steer ordering via Sg.DepthTest/Sg.Pass (typically LessOrEqual so
+    // lines fade behind opaque meshes). Sg.DepthMask is never used (see
+    // SceneGraph.build), so line fragments also write depth — good enough here.
     let render (segments : aval<(V3d * V3d * V4d * float)[]>) =
         let p0Arr, p1Arr, colArr, widthArr, idxArr, count = buildBuffers segments
         sg {

@@ -10,8 +10,8 @@ module GuiTopBar =
     open Primitives
 
     let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) =
-        // §6 guards: these actions are blocked while a registration preview
-        // is pending (the reducer also rejects them; this is the affordance).
+        // §6 guards: these actions are blocked while a preview is pending (the
+        // reducer also rejects them; this is just the affordance).
         let previewOn = model.PendingReg |> AVal.map PendingRegistration.isPreview
         let previewDisabled =
             previewOn |> AVal.map (fun p ->
@@ -127,9 +127,8 @@ module GuiTopBar =
             }
 
             // Spring-loaded reference peek: while held, ghost every mesh except
-            // the reference (★). Transient importance override — never mutates
-            // the eye toggles. Always live (the reference defaults to the first
-            // mesh on load); pointer-leave/up both release so it can't stick.
+            // the reference (★). Transient — never mutates the eye toggles.
+            // Pointer-leave/up both release so it can't stick.
             button {
                 Class "tb-btn"
                 model.ReferencePeekHeld |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
@@ -246,9 +245,9 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
-                            // Isolate pins: ghost everything outside the pins' radius regions.
-                            // Auto-suspended while placing an anchor (terrain stays visible);
-                            // the toggle reflects the temporary hold and is inert during it.
+                            // Isolate pins: ghost everything outside the pins'
+                            // radius regions. Auto-suspended (and inert) while
+                            // placing an anchor, so the terrain stays visible.
                             let placing =
                                 model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
                             let isoEffective =
@@ -258,9 +257,9 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
-                            // Cutaway: clip the terrain in front of the selected
-                            // registration pin's correspondence box (nearest upright
-                            // face), revealing the marker cross-section.
+                            // Cutaway: clip terrain in front of the selected pin's
+                            // correspondence box (nearest upright face) to reveal
+                            // the marker cross-section.
                             compactToggle "Cutaway" model.CutawayActive (fun () ->
                                 env.Emit [ToggleCutaway])
                         }

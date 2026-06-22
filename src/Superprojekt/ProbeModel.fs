@@ -3,10 +3,9 @@ namespace Superprojekt
 open System
 open Aardvark.Base
 
-// N-mesh M3C2 probe results. All lengths in
-// metric world-space metres; the signed-distance axis is re-centred so 0 = the
-// reference mesh's median. Raw axis samples stay server-side — the client only
-// receives stats + the KDE curve.
+// N-mesh M3C2 probe results. Lengths in metric world-space metres; the
+// signed-distance axis is re-centred so 0 = the reference median. Raw samples
+// stay server-side — the client gets stats + the KDE curve.
 type ProbeDistribution = {
     MeshName  : string
     Count     : int
@@ -44,12 +43,12 @@ type ProbeState =
     | ProbeReady of ProbeResult
     | ProbeError of string
 
-// Transient Ctrl-click probe: one global slot, never
-// cached, cleared on Escape / click elsewhere / timeout.
+// Transient Ctrl-click probe: one global slot, never cached, cleared on Escape
+// / click elsewhere / timeout.
 type HoverProbeState = {
     ScreenPos : V2d
     Anchor    : V3d
-    // Probe-cylinder radius (metres) so the transient 3D body can be drawn.
+    // Probe-cylinder radius (m) so the transient 3D body can be drawn.
     Radius    : float
     Probe     : ProbeState
 }

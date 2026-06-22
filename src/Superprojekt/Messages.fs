@@ -41,7 +41,7 @@ type Message =
     | ResetRegistration
     // Correspondence anchors.
     | ToggleCorrespondence of ScanPinId
-    // Seeded correspondence markers apply immediately (no review modal).
+    // Seeded markers apply immediately (no review modal).
     | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[]
     | AnchorSeedFailed of string
     | SetAnchor of ScanPinId * mesh:string * point:V3d * source:AnchorSource
@@ -110,21 +110,21 @@ type Message =
     | FlyToPanorama of int
     | StudiesLoaded of string[]
     | ToggleWorkflowPanel
-    // Workflow panel: camera fly-to (aspect supplied by the view — fovY
-    // derives from the fixed 90° horizontal fov) and navigation actions.
+    // Workflow panel: camera fly-to (aspect from the view; fovY from the fixed
+    // 90° horizontal fov) + navigation actions.
     | FlyTo of FlyToTarget * aspect:float
     | NavTo of NavAction
     | StudyMsg of StudyMessage
 
 and StudyMessage =
-    // Session lifecycle (§1/§10): real entry via /s/{token}, demo entry from
-    // the gear popover, exit only for demo sessions.
+    // Session lifecycle: real entry via /s/{token}, demo entry from the gear
+    // popover, exit only for demo sessions.
     | StudyJoin of token:string
     | StudyStartDemo of studyId:string * StudyCondition
     | StudySessionStarted of StudySessionInit
     | StudySessionFailed of message:string
     | StudyExitDemo
-    // Runtime (§4): Next gating, instruction overlay, tutorial gold flow.
+    // Runtime: Next gating, instruction overlay, tutorial gold flow.
     | StudyNext
     | StudyReopenOverlay
     | StudyCloseOverlay
@@ -132,7 +132,7 @@ and StudyMessage =
     | StudyCompletionCode of string
     | StudyCompletionFailed of string
     | StudySetAsFinal
-    // Answer drafts (§7): post immediately on change, again on Next.
+    // Answer drafts: post immediately on change, again on Next.
     | StudySetChoice of questionId:string * option_:int
     | StudySetNumber of questionId:string * value:float
     | StudySetText of questionId:string * text:string

@@ -24,8 +24,7 @@ module GuiPanels =
             }
             span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
             span { Class "mesh-name"; Cards.shortName name }
-            // Single-selection reference toggle, two-way bound to the
-            // registration card's reference selector.
+            // Reference toggle, two-way bound to the registration card.
             button {
                 Class "mb mb-ref"
                 isRef |> AVal.map (fun r -> if r then Some (Class "mb-on") else None)
@@ -114,8 +113,8 @@ module GuiPanels =
         div {
             flyoutClass |> AVal.map (fun c -> Some (Class c))
             div { Class "lp-section-title"; "Adjust Anchor" }
-            // In study mode the fine-tuning controls need the pinEdit
-            // feature; placing + committing alone only needs pinPlace.
+            // Fine-tuning controls need pinEdit; placing + committing only
+            // needs pinPlace.
             div {
             showWhen (StudyGate.featureOn model "pinEdit")
             let innerR =
@@ -125,8 +124,7 @@ module GuiPanels =
 
             let pinId = activePlacementId
 
-            // Numeric reposition: set the pin centre live while adjusting, so
-            // position and size can be dialled in together.
+            // Numeric reposition: set the pin centre live while adjusting.
             let centre =
                 activePin |> AVal.map (Option.map (fun p -> p.Centre) >> Option.defaultValue V3d.Zero)
             let posInput (lbl : string) (get : V3d -> float) (upd : V3d -> float -> V3d) =

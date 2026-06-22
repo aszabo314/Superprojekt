@@ -4,7 +4,7 @@ open Aardvark.Base
 open System.Text
 open System.Text.Json
 
-// Set once in Program.fs before Boot.run: the /s/{token} study entry route.
+// Set once in Program.fs before Boot.run from the /s/{token} entry route.
 module StudyBoot =
     let mutable entryToken : string option = None
 

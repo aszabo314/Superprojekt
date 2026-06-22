@@ -151,8 +151,7 @@ module GuiStudy =
 
     // ── instruction overlay / guided tooltip ───────────────────────────
 
-    // Minimal body rendering: blank-line separated paragraphs (the config
-    // copy is placeholder English, edited by the researcher later).
+    // Body rendering: blank-line separated paragraphs.
     let private bodyParagraphs (body : string) =
         body.Replace("\r\n", "\n").Split([| "\n\n" |], System.StringSplitOptions.RemoveEmptyEntries)
         |> Array.map (fun p -> p.Trim())
@@ -286,9 +285,8 @@ module GuiStudy =
         }
 
     let private questionWidget (env : Env<Message>) (session : aval<StudySession option>) =
-        // Key the widget subtree on the (config-static) question alone — the
-        // session changes on every runtime update and rebuilding the subtree
-        // would reset input focus mid-typing.
+        // Key the subtree on the (config-static) question alone — the session
+        // changes every runtime update and a rebuild resets input focus mid-type.
         let stepQ =
             session |> AVal.map (fun s ->
                 s |> Option.bind (fun s ->
@@ -355,11 +353,9 @@ module GuiStudy =
                                 match d.Value with
                                 | Some (ANumber v) -> Some (Attribute("value", sprintf "%g" v))
                                 | _ -> None)
-                            // OnChange (commit on blur/Enter), not OnInput —
-                            // a per-keystroke draft writes the value
-                            // attribute back and rewrites "1." to "1" while
-                            // typing (same reason inlineSlider's text input
-                            // uses OnChange).
+                            // OnChange (blur/Enter), not OnInput — a per-keystroke
+                            // draft writes the value attr back and rewrites "1."
+                            // to "1" mid-type (as inlineSlider's text input).
                             Dom.OnChange(fun e ->
                                 parseFloatInv e.Value
                                 |> Option.iter (fun v -> env.Emit [StudyMsg (StudySetNumber(q.Id, v))]))

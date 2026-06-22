@@ -33,7 +33,7 @@ module GuiCards =
                 Class "card-body lasso-card-body"
                 div {
                     Class "lp-clip-actions"
-                    // ◉/○ — toggle filter on/off without clearing the polygon.
+                    // ◉/○ toggle filter without clearing the polygon.
                     button {
                         Class "mb"
                         showWhen committed
@@ -43,7 +43,6 @@ module GuiCards =
                         Dom.OnClick(fun _ -> env.Emit [ToggleLassoEnabled])
                         enabled |> AVal.map (fun on -> if on then "◉" else "○")
                     }
-                    // ✎ — clear and start a new lasso.
                     button {
                         Class "mb"
                         showWhenNot drawing
@@ -51,7 +50,6 @@ module GuiCards =
                         Dom.OnClick(fun _ -> env.Emit [LassoClear; LassoBegin])
                         "✎"
                     }
-                    // ⊘ — cancel an in-progress drawing.
                     button {
                         Class "mb"
                         showWhen drawing
@@ -59,7 +57,6 @@ module GuiCards =
                         Dom.OnClick(fun _ -> env.Emit [LassoCancel])
                         "⊘"
                     }
-                    // ✕ — clear committed lasso.
                     button {
                         Class "mb"
                         showWhen committed
@@ -71,8 +68,7 @@ module GuiCards =
             }
         }
 
-    // Unicode sparkline of an ICP convergence series (print-appropriate, no
-    // extra JS / GPU resources).
+    // Unicode sparkline of an ICP convergence series (print-appropriate, no JS/GPU).
     let spark (xs : float[]) =
         if xs.Length < 2 then ""
         else
@@ -86,16 +82,14 @@ module GuiCards =
                 blocks.[min 7 (int (t * 7.999))])
             |> System.String
 
-    // The nested renderControl (expensive cube capture) is mounted only while
-    // the panel is open, via an alist gated on PanoramaOpen.
+    // The nested renderControl (expensive cube capture) is mounted only while open, via an alist gated on PanoramaOpen.
     let panoramaCard (env : Env<Message>) (model : AdaptiveModel) =
         let dragState : cval<(V2d * V2d) option> = cval None
         let committedPos = cval (V2d(360.0, 80.0))
         let pos = Cards.cardPos (committedPos :> aval<_>) dragState
         let mode = model.PanoramaMode
 
-        // Pose must match PanoramaView's fallback so markers and click-to-place
-        // agree with what is rendered.
+        // Pose must match PanoramaView's fallback so markers + click-to-place agree with what is rendered.
         let poseW =
             (model.Panoramas, model.SelectedPanorama, model.SceneBounds)
             |||> AVal.map3 (fun ps i sb ->
@@ -105,8 +99,7 @@ module GuiCards =
                     let c = if sb.IsValid then sb.Center + V3d(0.0, 0.0, 2.0) else V3d.Zero
                     c, 0.0)
 
-        // vScale must match PanoReproject's PanoVScale uniform (1.0).
-        let vScale = 1.0
+        let vScale = 1.0 // must match PanoReproject's PanoVScale uniform
 
         let rc =
             renderControl {
@@ -116,8 +109,7 @@ module GuiCards =
                 let! size = RenderControl.ViewportSize
                 Sg.View (AVal.constant Trafo3d.Identity)
                 Sg.Proj (AVal.constant Trafo3d.Identity)
-                // Click-to-place: ray through the cylindrical pose, nearest
-                // server-side hit becomes the anchor.
+                // Click-to-place: ray through the cylindrical pose, nearest server hit becomes the anchor.
                 Dom.OnPointerDown(fun e ->
                     if e.Button = Button.Left then
                         match AVal.force model.ScanPins.Placement with
@@ -227,8 +219,7 @@ module GuiCards =
             }
         }
 
-    // Floating opener for the registration panel — used in study mode, which
-    // has no top bar (the full-app top bar carries its own ⚲ Registration).
+    // Floating registration-panel opener for study mode (no top bar there).
     let registrationToggleButton (env : Env<Message>) (model : AdaptiveModel) =
         button {
             Class "tb-btn"
@@ -238,9 +229,7 @@ module GuiCards =
             "⚲ Registration"
         }
 
-    // Retarget review card. Shown while RetargetState is RetargetProjecting
-    // (waiting on server) or RetargetReviewing (user picks accept/reject per
-    // pin). Hidden on RetargetIdle.
+    // Retarget review card: shown while RetargetProjecting / RetargetReviewing, hidden on RetargetIdle.
     let retargetCard (env : Env<Message>) (model : AdaptiveModel) =
         let meshOrderMap = model.MeshOrder.Content
         let candidatesAList =

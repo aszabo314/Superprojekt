@@ -17,9 +17,7 @@ module CardsPin =
             if si > 0 then date + "_" + mesh.[si + 1 ..] else date
         else mesh
 
-    // Mesh names are easy to confuse (long, similar prefixes), so every list
-    // / chart prefixes the mesh's stable order number (1-based, matches the
-    // palette colour index in the mesh panel).
+    // Prefix the mesh's stable 1-based order number (matches the panel palette index) — names are easy to confuse.
     let numbered (order : HashMap<string, int>) (name : string) =
         match HashMap.tryFind name order with
         | Some i -> sprintf "%d  %s" (i + 1) (shortName name)
@@ -28,339 +26,9 @@ module CardsPin =
     let c4bToHex (c : C4b) =
         sprintf "#%02x%02x%02x" c.R c.G c.B
 
-    // Vertical violin chart for a data-ridge JSON attribute: signed distance
-    // on the y axis (positive up, 0 = reference median), one column per mesh.
-    // d.mini renders the compressed hover-probe variant (colour squares, no
-    // badges, no interaction). The full variant is interactive:
-    //   • pointer in the plot area → elevation cursor line + 'mv|d|alt|mesh'
-    //     events to the .pc-ridge-bus input (picked up by Dom.OnInput)
-    //   • column click → 'click|mesh' (sticky highlight, toggles)
-    //   • document-level click outside the chart → 'clickout'
-    //   • the data-cursor attribute ({"d":…}, driven from 3D hover) moves the
-    //     same cursor line without re-rendering the chart.
-    let ridgelineJs = [
-        "  function placeholder(t){ var p = document.createElement('div'); p.className = 'pin-card-empty'; p.textContent = t; el.appendChild(p); }"
-        "  if(!d.status || d.status === 'none'){ placeholder('No probe for this payload.'); return; }"
-        "  if(d.status === 'running'){ placeholder('Probing…'); return; }"
-        "  if(d.status === 'error'){ placeholder('Probe failed: ' + (d.reason || '')); return; }"
-        "  var mini = !!d.mini;"
-        "  var rows = d.rows || [];"
-        "  var n = rows.length;"
-        "  if(n === 0){ placeholder('No meshes.'); return; }"
-        "  var accent = '#0891b2';"
-        "  var SMALL_N = 20;"
-        "  var w = mini ? 240 : Math.max(220, el.clientWidth || 296);"
-        "  var axisW = mini ? 34 : 80;"
-        "  var headerH = mini ? 16 : 24;"
-        "  var badgeH = mini ? 10 : 16;"
-        "  var H = mini ? 150 : 280;"
-        "  var minCol = mini ? 24 : 40;"
-        "  var colW = Math.max(minCol, (w - axisW) / n);"
-        "  var svgW = Math.ceil(axisW + colW * n);"
-        "  var y0 = d.ymin, y1 = d.ymax;"
-        "  if(!(y1 > y0)){ y0 = -0.1; y1 = 0.1; }"
-        "  var plotY0 = headerH, plotY1 = H - badgeH;"
-        "  var ih = plotY1 - plotY0;"
-        "  function sy(v){ return plotY0 + (y1 - v) / (y1 - y0) * ih; }"
-        "  function fromY(py){ return y1 - (py - plotY0) / ih * (y1 - y0); }"
-        "  var maxDen = 0;"
-        "  rows.forEach(function(r){"
-        "    (r.kde || []).forEach(function(p){ if(p[0] >= y0 && p[0] <= y1 && p[1] > maxDen) maxDen = p[1]; });"
-        "    (r.kde2 || []).forEach(function(p){ if(p[0] >= y0 && p[0] <= y1 && p[1] > maxDen) maxDen = p[1]; });"
-        "  });"
-        "  function desat(hex){"
-        "    var n = parseInt(hex.slice(1), 16);"
-        "    var r0 = (n >> 16) & 255, g0 = (n >> 8) & 255, b0 = n & 255;"
-        "    var m = (r0 + g0 + b0) / 3, f = 0.65;"
-        "    return 'rgb(' + Math.round(r0 + (m - r0) * f) + ',' + Math.round(g0 + (m - g0) * f) + ',' + Math.round(b0 + (m - b0) * f) + ')';"
-        "  }"
-        "  var svg = document.createElementNS(ns,'svg');"
-        "  svg.setAttribute('class','ridge-plot');"
-        "  svg.setAttribute('width', svgW); svg.setAttribute('height', H);"
-        "  svg.setAttribute('viewBox', '0 0 ' + svgW + ' ' + H);"
-        "  function ln(xa,ya,xb,yb,stroke,sw,dash,op){"
-        "    var l = document.createElementNS(ns,'line');"
-        "    l.setAttribute('x1',xa); l.setAttribute('y1',ya); l.setAttribute('x2',xb); l.setAttribute('y2',yb);"
-        "    l.setAttribute('stroke',stroke); l.setAttribute('stroke-width',sw);"
-        "    if(dash) l.setAttribute('stroke-dasharray',dash);"
-        "    if(op) l.setAttribute('stroke-opacity',op);"
-        "    svg.appendChild(l); return l;"
-        "  }"
-        "  function txt(x,y,s,anchor,fill,size){"
-        "    var t = document.createElementNS(ns,'text');"
-        "    t.setAttribute('x',x); t.setAttribute('y',y);"
-        "    t.setAttribute('text-anchor', anchor || 'middle');"
-        "    t.setAttribute('font-family','SF Mono, Monaco, monospace');"
-        "    t.setAttribute('font-size', size || '9');"
-        "    t.setAttribute('fill', fill || '#475569');"
-        "    t.textContent = s; svg.appendChild(t); return t;"
-        "  }"
-        "  var frame = document.createElementNS(ns,'rect');"
-        "  frame.setAttribute('x', axisW); frame.setAttribute('y', plotY0);"
-        "  frame.setAttribute('width', svgW - axisW); frame.setAttribute('height', ih);"
-        "  frame.setAttribute('fill','#f8fafc'); frame.setAttribute('stroke','#cbd5e1'); frame.setAttribute('stroke-width','1');"
-        "  svg.appendChild(frame);"
-        "  var hoverRect = document.createElementNS(ns,'rect');"
-        "  hoverRect.setAttribute('y', plotY0); hoverRect.setAttribute('height', ih);"
-        "  hoverRect.setAttribute('fill', accent); hoverRect.setAttribute('fill-opacity','0.08');"
-        "  hoverRect.style.display = 'none';"
-        "  svg.appendChild(hoverRect);"
-        "  var rawStep = (y1 - y0) / 4;"
-        "  var pow = Math.pow(10, Math.floor(Math.log(rawStep) / Math.LN10));"
-        "  var ms = rawStep / pow;"
-        "  var step = (ms >= 5 ? 5 : ms >= 2 ? 2 : 1) * pow;"
-        "  var dec = Math.max(0, -Math.floor(Math.log(step) / Math.LN10 + 1e-9));"
-        "  for(var tv = Math.ceil(y0 / step) * step; tv <= y1 + step * 0.001; tv += step){"
-        "    ln(axisW - 3, sy(tv), axisW, sy(tv), '#94a3b8', '1');"
-        "    txt(axisW - 5, sy(tv) + 3, tv.toFixed(dec), 'end', '#475569', mini ? '8' : '9');"
-        "  }"
-        "  if(0 >= y0 && 0 <= y1) ln(axisW, sy(0), svgW, sy(0), '#64748b', '1', '3,3', '0.7');"
-        "  if(!mini){"
-        "    var at = txt(10, plotY0 + ih / 2, 'offset (m)', 'middle', '#64748b');"
-        "    at.setAttribute('transform', 'rotate(-90 10 ' + (plotY0 + ih / 2) + ')');"
-        "  }"
-        "  rows.forEach(function(r, i){"
-        "    var x0 = axisW + i * colW, cx = x0 + colW / 2;"
-        "    var grey = r.count === 0;"
-        "    if(mini){"
-        "      var swm = document.createElementNS(ns,'rect');"
-        "      swm.setAttribute('x', cx - 2.5); swm.setAttribute('y', 4);"
-        "      swm.setAttribute('width', 5); swm.setAttribute('height', 5);"
-        "      swm.setAttribute('fill', grey ? '#cbd5e1' : r.color);"
-        "      svg.appendChild(swm);"
-        "    } else {"
-        "      var maxChars = Math.max(3, Math.floor((colW - 16) / 5.4));"
-        "      var nm = r.name.length > maxChars ? r.name.slice(0, maxChars - 1) + '…' : r.name;"
-        "      var sx0 = cx - (nm.length * 5.4 + 11) / 2;"
-        "      var swr = document.createElementNS(ns,'rect');"
-        "      swr.setAttribute('x', sx0); swr.setAttribute('y', 8);"
-        "      swr.setAttribute('width', 7); swr.setAttribute('height', 7);"
-        "      swr.setAttribute('fill', grey ? '#cbd5e1' : r.color);"
-        "      svg.appendChild(swr);"
-        "      txt(sx0 + 11, 15, nm, 'start', grey ? '#94a3b8' : '#0f172a');"
-        "    }"
-        "    if(!grey){"
-        "      var refstd = d.refstd || 0;"
-        "      var lod = 1.96 * Math.sqrt(refstd*refstd + (r.std||0)*(r.std||0));"
-        "      if(lod > 0){ var bl=Math.max(y0,-lod), bh=Math.min(y1,lod); if(bh>bl){ var bnd=document.createElementNS(ns,'rect'); bnd.setAttribute('x',x0+1); bnd.setAttribute('y',sy(bh)); bnd.setAttribute('width',colW-2); bnd.setAttribute('height',Math.max(0,sy(bl)-sy(bh))); bnd.setAttribute('fill','#94a3b8'); bnd.setAttribute('fill-opacity','0.16'); svg.appendChild(bnd); } }"
-        "      var hw = colW * 0.42;"
-        "      var split = !!(r.kde2 && r.kde2.length > 1);"
-        "      function halfArea(kdeRaw, sign, colour){"
-        "        var kd = (kdeRaw || []).filter(function(p){ return p[0] >= y0 && p[0] <= y1; });"
-        "        if(kd.length < 2 || maxDen <= 0) return;"
-        "        var path = '';"
-        "        kd.forEach(function(p, k){"
-        "          path += (k === 0 ? 'M' : 'L') + (cx + sign * p[1] / maxDen * hw).toFixed(1) + ',' + sy(p[0]).toFixed(1);"
-        "        });"
-        "        path += 'L' + cx + ',' + sy(kd[kd.length - 1][0]).toFixed(1);"
-        "        path += 'L' + cx + ',' + sy(kd[0][0]).toFixed(1) + 'Z';"
-        "        var area = document.createElementNS(ns,'path');"
-        "        area.setAttribute('d', path);"
-        "        area.setAttribute('fill', colour); area.setAttribute('fill-opacity','0.4');"
-        "        area.setAttribute('stroke', colour); area.setAttribute('stroke-width','1');"
-        "        svg.appendChild(area);"
-        "      }"
-        "      if(split){"
-        "        var dcol = desat(r.color);"
-        "        halfArea(r.kde, -1, dcol);"
-        "        halfArea(r.kde2, 1, r.color);"
-        "        if(r.median >= y0 && r.median <= y1) ln(cx - colW * 0.3, sy(r.median), cx, sy(r.median), dcol, '1.5');"
-        "        if(r.median2 >= y0 && r.median2 <= y1) ln(cx, sy(r.median2), cx + colW * 0.3, sy(r.median2), r.color, '1.5');"
-        "        var qa1 = Math.max(r.q1, y0), qb1 = Math.min(r.q3, y1);"
-        "        if(qb1 > qa1) ln(cx - 2, sy(qa1), cx - 2, sy(qb1), dcol, '2', null, '0.9');"
-        "        var qa2 = Math.max(r.q12, y0), qb2 = Math.min(r.q32, y1);"
-        "        if(qb2 > qa2) ln(cx + 2, sy(qa2), cx + 2, sy(qb2), r.color, '2', null, '0.9');"
-        "        var ym1 = sy(Math.max(y0, Math.min(y1, r.median)));"
-        "        var ym2 = sy(Math.max(y0, Math.min(y1, r.median2)));"
-        "        if(Math.abs(ym2 - ym1) > 0.5){"
-        "          ln(cx, ym1, cx, ym2, '#0f172a', '1');"
-        "          var adir = ym2 > ym1 ? 1 : -1;"
-        "          ln(cx, ym2, cx - 3, ym2 - adir * 4, '#0f172a', '1');"
-        "          ln(cx, ym2, cx + 3, ym2 - adir * 4, '#0f172a', '1');"
-        "        }"
-        "        var dvv = r.median2 - r.median;"
-        "        txt(cx + 5, (ym1 + ym2) / 2 + 3, 'Δ' + (dvv >= 0 ? '+' : '') + dvv.toFixed(3), 'start', '#0f172a', '8');"
-        "      } else {"
-        "        var kde = (r.kde || []).filter(function(p){ return p[0] >= y0 && p[0] <= y1; });"
-        "        if(r.count > 0 && r.count < SMALL_N){"
-        "          (r.samples || []).forEach(function(sv, si){"
-        "            if(sv < y0 || sv > y1) return;"
-        "            var jx = cx + (((si * 7) % 11) / 11 - 0.5) * hw * 1.1;"
-        "            var dot = document.createElementNS(ns,'circle');"
-        "            dot.setAttribute('cx', jx.toFixed(1)); dot.setAttribute('cy', sy(sv).toFixed(1));"
-        "            dot.setAttribute('r','1.7'); dot.setAttribute('fill', r.color); dot.setAttribute('fill-opacity','0.75');"
-        "            svg.appendChild(dot);"
-        "          });"
-        "        } else if(kde.length > 1 && maxDen > 0){"
-        "          var path = '';"
-        "          kde.forEach(function(p, k){"
-        "            path += (k === 0 ? 'M' : 'L') + (cx + p[1] / maxDen * hw).toFixed(1) + ',' + sy(p[0]).toFixed(1);"
-        "          });"
-        "          for(var k = kde.length - 1; k >= 0; k--){"
-        "            path += 'L' + (cx - kde[k][1] / maxDen * hw).toFixed(1) + ',' + sy(kde[k][0]).toFixed(1);"
-        "          }"
-        "          path += 'Z';"
-        "          var area = document.createElementNS(ns,'path');"
-        "          area.setAttribute('d', path);"
-        "          area.setAttribute('fill', r.color); area.setAttribute('fill-opacity','0.4');"
-        "          area.setAttribute('stroke', r.color); area.setAttribute('stroke-width','1');"
-        "          svg.appendChild(area);"
-        "        }"
-        "        var sig = Math.abs(r.median) >= lod;"
-        "        if(r.median >= y0 && r.median <= y1){"
-        "          ln(cx - colW * 0.3, sy(r.median), cx + colW * 0.3, sy(r.median), sig ? r.color : '#94a3b8', sig ? '1.5' : '1', sig ? null : '2,2');"
-        "          if(!sig) txt(cx + colW * 0.3 + 1, sy(r.median) + 3, 'n.s.', 'start', '#94a3b8', '7');"
-        "        }"
-        "        var qa = Math.max(r.q1, y0), qb = Math.min(r.q3, y1);"
-        "        if(qb > qa) ln(cx, sy(qa), cx, sy(qb), r.color, '2.5', null, '0.9');"
-        "      }"
-        "    }"
-        "    if(!mini) txt(cx, H - 4, grey ? '–' : ((r.far ? 'far · ' : '') + 'n=' + r.count), 'middle', grey ? '#94a3b8' : (r.far ? '#b45309' : '#475569'), '8');"
-        "    if(!mini && d.sticky && d.sticky === r.id){"
-        "      var st = document.createElementNS(ns,'rect');"
-        "      st.setAttribute('x', x0 + 1.5); st.setAttribute('y', plotY0 + 1.5);"
-        "      st.setAttribute('width', colW - 3); st.setAttribute('height', ih - 3);"
-        "      st.setAttribute('fill','none'); st.setAttribute('stroke','#0f172a'); st.setAttribute('stroke-width','2');"
-        "      svg.appendChild(st);"
-        "    }"
-        "  });"
-        "  var cursor = ln(axisW, plotY0, svgW, plotY0, accent, '1.5');"
-        "  cursor.style.display = 'none';"
-        "  var cursorLabel = txt(svgW - 3, plotY0, '', 'end', accent, '8');"
-        "  cursorLabel.style.display = 'none';"
-        "  function setCursor(dv){"
-        "    if(dv === null || dv < y0 || dv > y1){ cursor.style.display = 'none'; cursorLabel.style.display = 'none'; return; }"
-        "    var y = sy(dv);"
-        "    cursor.setAttribute('y1', y); cursor.setAttribute('y2', y);"
-        "    cursor.style.display = '';"
-        "    cursorLabel.setAttribute('y', y - 3);"
-        "    cursorLabel.textContent = (dv >= 0 ? '+' : '') + dv.toFixed(2) + ' m';"
-        "    cursorLabel.style.display = '';"
-        "  }"
-        "  el._hovering = false;"
-        "  function applyCursorAttr(){"
-        "    if(el._hovering) return;"
-        "    var raw = el.getAttribute('data-cursor') || '{}';"
-        "    var c; try { c = JSON.parse(raw); } catch(e) { return; }"
-        "    setCursor(typeof c.d === 'number' ? c.d : null);"
-        "  }"
-        "  el._applyCursorAttr = applyCursorAttr;"
-        "  if(!el._cursorObs){"
-        "    el._cursorObs = new MutationObserver(function(){ if(el._applyCursorAttr) el._applyCursorAttr(); });"
-        "    el._cursorObs.observe(el, {attributes:true, attributeFilter:['data-cursor']});"
-        "  }"
-        "  applyCursorAttr();"
-        "  if(!mini){"
-        "    var send = function(s){"
-        "      var pr = el.closest('.pc-probe');"
-        "      var b = pr ? pr.querySelector('.pc-ridge-bus') : null;"
-        "      if(b){ b.value = s; b.dispatchEvent(new Event('input', {bubbles:true})); }"
-        "    };"
-        "    var lastSent = '', pend = null, raf = 0;"
-        "    var flush = function(){ raf = 0; if(pend !== null && pend !== lastSent){ lastSent = pend; send(pend); } };"
-        "    var queue = function(s){ pend = s; if(!raf) raf = requestAnimationFrame(flush); };"
-        "    function colAt(x){ var i = Math.floor((x - axisW) / colW); return (i >= 0 && i < n) ? i : -1; }"
-        // A3 range brush (only when the 3D map is on): drag a y-interval on the
-        // plot to highlight the contributing surface band in 3D.
-        "    var brushRect = document.createElementNS(ns,'rect');"
-        "    brushRect.setAttribute('x', axisW); brushRect.setAttribute('width', svgW - axisW);"
-        "    brushRect.setAttribute('fill', accent); brushRect.setAttribute('fill-opacity','0.16');"
-        "    brushRect.setAttribute('stroke', accent); brushRect.setAttribute('stroke-opacity','0.6'); brushRect.setAttribute('stroke-width','1');"
-        "    brushRect.style.display = 'none'; svg.appendChild(brushRect);"
-        "    var brushing = false, brushY0 = 0, brushMoved = false;"
-        "    svg.addEventListener('pointerdown', function(ev){"
-        "      if(!d.brushon) return;"
-        "      var rc = svg.getBoundingClientRect();"
-        "      var x = ev.clientX - rc.left, y = ev.clientY - rc.top;"
-        "      if(y >= plotY0 && y <= plotY1 && x >= axisW && !ev.altKey && !ev.shiftKey){"
-        "        brushing = true; brushMoved = false; brushY0 = y;"
-        "        try { svg.setPointerCapture(ev.pointerId); } catch(e) {}"
-        "      }"
-        "    });"
-        "    svg.addEventListener('pointerenter', function(){ el._hovering = true; });"
-        "    svg.addEventListener('pointermove', function(ev){"
-        "      var rc = svg.getBoundingClientRect();"
-        "      var x = ev.clientX - rc.left, y = ev.clientY - rc.top;"
-        "      if(brushing){"
-        "        var yy = Math.max(plotY0, Math.min(plotY1, y));"
-        "        var lo = Math.min(brushY0, yy), hi = Math.max(brushY0, yy);"
-        "        if(Math.abs(yy - brushY0) > 3) brushMoved = true;"
-        "        brushRect.setAttribute('y', lo); brushRect.setAttribute('height', hi - lo); brushRect.style.display = '';"
-        "        setCursor(null); hoverRect.style.display = 'none';"
-        "        queue('brush|' + fromY(hi).toFixed(4) + '|' + fromY(lo).toFixed(4));"
-        "        return;"
-        "      }"
-        "      el._hovering = true;"
-        "      if(y < plotY0 || y > plotY1 || x < axisW){"
-        "        setCursor(null); hoverRect.style.display = 'none'; queue('out'); return;"
-        "      }"
-        "      var dv = fromY(y);"
-        "      var ci = colAt(x);"
-        "      setCursor(dv);"
-        "      if(ci >= 0){ hoverRect.setAttribute('x', axisW + ci * colW); hoverRect.setAttribute('width', colW); hoverRect.style.display = ''; }"
-        "      else hoverRect.style.display = 'none';"
-        "      queue('mv|' + dv.toFixed(4) + '|' + (ev.altKey ? '1' : '0') + '|' + (ci >= 0 ? rows[ci].id : ''));"
-        "    });"
-        "    svg.addEventListener('pointerup', function(ev){"
-        "      if(brushing){"
-        "        brushing = false;"
-        "        try { svg.releasePointerCapture(ev.pointerId); } catch(e) {}"
-        "        if(!brushMoved){ brushRect.style.display = 'none'; send('brushclear'); }"
-        "      }"
-        "    });"
-        "    svg.addEventListener('pointerleave', function(){"
-        "      el._hovering = false; hoverRect.style.display = 'none';"
-        "      applyCursorAttr(); queue('out');"
-        "    });"
-        "    svg.addEventListener('click', function(ev){"
-        "      if(brushMoved){ brushMoved = false; return; }"
-        "      var rc = svg.getBoundingClientRect();"
-        "      var x = ev.clientX - rc.left, y = ev.clientY - rc.top;"
-        "      var ci = colAt(x);"
-        "      if(y >= plotY0 && y <= plotY1 && ci >= 0){"
-        "        lastSent = '';"
-        "        if(ev.altKey) send('lock|' + fromY(y).toFixed(4));"
-        "        else if(ev.shiftKey) send('apick|' + fromY(y).toFixed(4) + '|' + rows[ci].id);"
-        "        else send('click|' + rows[ci].id);"
-        "      }"
-        "    });"
-        "    if(!el._docClick){"
-        "      el._docClick = function(ev){"
-        "        if(!document.contains(el)){ document.removeEventListener('click', el._docClick); el._docClick = null; return; }"
-        // Clear the sticky column only when the click lands outside the whole
-        // probe section — so the chart's own header controls (3D map, slice)
-        // don't count as 'click outside' and wipe the soloed column.
-        "        var box = el.closest('.pc-probe') || el;"
-        "        if(!box.contains(ev.target)) send('clickout');"
-        "      };"
-        "      document.addEventListener('click', el._docClick);"
-        "    }"
-        "  }"
-        "  el.appendChild(svg);"
-    ]
-
-    // Three-source stacked bar for a data-srcs = [d,a,c] attribute.
-    let probeBarJs = [
-        "  if(!d || d.length < 3) return;"
-        "  var labels = ['Dataset error (sensor / reconstruction)','Algorithm residual (registration, correlated across the mesh)','Local conditioning (geometric observability of the marker)'];"
-        "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
-        "  var total = d[0] + d[1] + d[2];"
-        "  if(total <= 0) return;"
-        "  d.forEach(function(v, i){"
-        "    var s = document.createElement('div');"
-        "    s.style.width = (v / total * 100) + '%';"
-        "    s.style.background = colours[i];"
-        "    s.style.height = '100%';"
-        "    s.title = labels[i] + ': ' + v.toFixed(4) + ' m';"
-        "    el.appendChild(s);"
-        "  });"
-    ]
-
-    // preview: the probe under the effective preview transforms while a
-    // registration solve is pending — rows become paired half-violins
-    // (committed left, preview right) with a median-shift arrow.
+    // preview = probe under effective preview transforms while a solve is pending — rows become paired half-violins (committed left, preview right) with a median-shift arrow.
     let probeRidgeJson (mini : bool) (brushOn : bool) (sticky : string option) (colors : Map<string, C4b>) (order : HashMap<string, int>) (preview : ProbeResult option) (r : ProbeResult) =
-        // y-range is always auto; columns are always sorted by significance.
+        // y-range always auto; columns always sorted by significance.
         let win =
             match preview with
             | Some p -> Range1d(min r.XAuto.Min p.XAuto.Min, max r.XAuto.Max p.XAuto.Max)
@@ -379,19 +47,14 @@ module CardsPin =
             s |> Array.iteri (fun j x ->
                 if j > 0 then sb.Append(',') |> ignore
                 sb.Append(sprintf "%.4g" x) |> ignore)
-        // σ_ref = the reference mesh's roughness (std of its re-centred
-        // distances); feeds the per-mesh detection-limit band lod95 =
-        // 1.96·√(σ_ref² + σ_mesh²).
+        // σ_ref = reference roughness (std of re-centred distances); feeds the per-mesh band lod95 = 1.96·√(σ_ref² + σ_mesh²).
         let refStd =
             r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
             |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
         let sb = System.Text.StringBuilder()
         sb.Append(sprintf "{\"status\":\"ready\",\"mini\":%b,\"brushon\":%b,\"ymin\":%.5g,\"ymax\":%.5g,\"refstd\":%.5g,\"sticky\":\"%s\",\"rows\":["
                     mini brushOn win.Min win.Max refStd (sticky |> Option.defaultValue "")) |> ignore
-        // F5: a surface caught only because the 20 m probe cylinder is long —
-        // its samples sit far down the axis from the pin centre — is flagged
-        // non-local (axial offset from centre = RefOffset + median), so it is
-        // not read as real local disagreement.
+        // F5: flag a surface caught only by the long 20 m cylinder as non-local (axial offset = RefOffset + median), not real local disagreement.
         let halfLen = r.Length * 0.5
         rows |> Array.iteri (fun i d ->
             if i > 0 then sb.Append(',') |> ignore
@@ -446,8 +109,7 @@ module CardsPin =
                         span { Class "pc-val"; readoutText }
                     }
                 }
-                // M3C2 probe: ridgeline, x-range / lock-order controls,
-                // three-source stacked bar.
+                // M3C2 probe: ridgeline, x-range / lock-order controls, three-source bar.
                 let probe =
                     selectedPin |> AVal.map (function
                         | Some p -> Some p.Probe
@@ -457,8 +119,7 @@ module CardsPin =
                         | Some (ProbeReady r) -> Some r
                         | _ -> None)
                 let previewActive = model.PendingReg |> AVal.map PendingRegistration.isPreview
-                // §5 NUM condition: violin chart replaced by an RMS table,
-                // split-violin preview and three-source bar hidden.
+                // §5 NUM: violin chart → RMS table; split-violin preview + three-source bar hidden.
                 let violinOn = StudyGate.featureOn model "violinChart"
                 let barOn = StudyGate.featureOn model "threeSourceBar"
                 let meshOrderMap = model.MeshOrder.Content
@@ -470,8 +131,7 @@ module CardsPin =
                     (selOrder, model.ChartStickyMesh, previewSplit) |||> AVal.map3 (fun (po, order, brushOn) sticky pv ->
                         match po with
                         | Some pin ->
-                            // Split violin while a solve preview is pending and
-                            // the preview probe is in.
+                            // Split violin while a solve preview is pending and the preview probe is in.
                             let preview =
                                 if pv then
                                     match pin.ProbePreview with
@@ -480,11 +140,7 @@ module CardsPin =
                                 else None
                             probeStateJson false brushOn sticky pin.DatasetColors order preview pin.Probe
                         | None -> "{\"status\":\"none\"}")
-                // 3D → chart: the elevation cursor line at the 3D hover
-                // point's signed distance along the probe axis, shown only
-                // while the hover point sits inside the probe cylinder.
-                // Under a pending preview the preview-pose probe wins, so the
-                // linking matches the on-screen geometry.
+                // 3D → chart: cursor line at the 3D hover point's signed distance along the probe axis, only while inside the cylinder. Under a pending preview the preview-pose probe wins (linking matches on-screen geometry).
                 let cursor3d =
                     (hoverWorld, selectedPin, previewActive) |||> AVal.map3 (fun hw po pv ->
                         match hw, po with
@@ -499,8 +155,7 @@ module CardsPin =
                                 else "{}"
                             | _ -> "{}"
                         | _ -> "{}")
-                // Chart → model: the chart JS posts pointer interactions to
-                // this hidden input (synthetic 'input' events).
+                // Chart → model: chart JS posts pointer interactions to a hidden input (synthetic 'input' events).
                 let onChartEvent (v : string) =
                     let parts = v.Split('|')
                     match parts.[0] with
@@ -515,15 +170,9 @@ module CardsPin =
                         env.Emit [SetChartCursor None; SetChartHoverMesh None]
                     | "click" when parts.Length >= 2 ->
                         env.Emit [ChartColumnClick parts.[1]]
-                    // Shift+click on mesh M's column at signed distance d:
-                    // anchors[M] = refAnchor + d·probeAxis (ViolinAxial,
-                    // accepted). Only with correspondence enabled, never on
-                    // the reference column.
+                    // Shift+click mesh M's column at distance d: anchors[M] = refAnchor + d·probeAxis (ViolinAxial). Correspondence-enabled only, never the reference column.
                     | "apick" when parts.Length >= 3 ->
-                        // Anchors are committed-pose world points — picking
-                        // one against previewed geometry would get
-                        // double-transformed on commit, so block like the
-                        // other pickers.
+                        // Anchors are committed-pose world points; picking against previewed geometry double-transforms on commit, so block like the other pickers.
                         if AVal.force previewActive then
                             env.Emit [ShowToast "Correspondence-marker picking is disabled while a solve preview is pending"]
                         else
@@ -542,16 +191,14 @@ module CardsPin =
                             | _ -> ()
                     | "clickout" ->
                         env.Emit [ClearChartSticky]
-                    // A3 range brush: a y-interval on the violin → highlight the
-                    // contributing band on the soloed mesh's surface in 3D.
+                    // A3 range brush: y-interval → highlight that band on the soloed mesh's surface in 3D.
                     | "brush" when parts.Length >= 3 ->
                         match parseInvariant parts.[1], parseInvariant parts.[2] with
                         | Some lo, Some hi -> env.Emit [SetSurfaceDistBrush (Some (lo, hi))]
                         | _ -> ()
                     | "brushclear" ->
                         env.Emit [SetSurfaceDistBrush None]
-                    // Alt-click the plot → lock the iso-plane (SectionCap)
-                    // into ClipPlanes so it survives orbiting.
+                    // Alt-click the plot → lock the iso-plane into ClipPlanes so it survives orbiting.
                     | "lock" when parts.Length >= 2 ->
                         match parseInvariant parts.[1] with
                         | Some dv -> env.Emit [LockIsoPlane dv]
@@ -559,8 +206,7 @@ module CardsPin =
                     | _ -> ()
                 let sources =
                     probeResult |> AVal.map (Option.map (fun r -> r.Sources))
-                // B1: a plain-language significance verdict per moving mesh,
-                // read against the detection limit (not eyeballed off the band).
+                // B1: plain-language significance verdict per moving mesh, read against the detection limit.
                 let lodVerdict =
                     (probeResult, meshOrderMap) ||> AVal.map2 (fun rr order ->
                         match rr with
@@ -584,8 +230,7 @@ module CardsPin =
                     div {
                         Class "pc-probe-head"
                         span { Class "pc-section-title"; "Distance probe" }
-                        // Iso-plane sectioning: clip above the hovered plane;
-                        // Alt-click the chart locks it (survives orbit).
+                        // Iso-plane sectioning: clip above the hovered plane; Alt-click the chart locks it.
                         button {
                             Class "tb-gear-btn"
                             showOnly violinOn
@@ -609,15 +254,14 @@ module CardsPin =
                         Attribute("type", "text")
                         Dom.OnInput(fun e -> onChartEvent e.Value)
                     }
-                    // Channel legend folded into a hover tooltip on the chart
-                    // (no always-on descriptive text line).
+                    // Channel legend folded into the chart's hover tooltip (no always-on text line).
                     div {
                         Class "pc-ridge"
                         showOnly violinOn
                         Attribute("title", "y = signed distance along the reference's local surface normal (0 = reference). Width = precision / roughness (shared density scale). Median tick = bias. Grey band = ±LoD95 detection limit; a median inside it is not significant (n.s.). Two lobes = two surfaces, not noise.")
                         probeJson |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
                         cursor3d |> AVal.map (fun j -> Some (Attribute("data-cursor", j)))
-                        Primitives.observedRender "data-ridge" "{}" ridgelineJs
+                        Primitives.observedRender "data-ridge" "{}" CardCharts.ridgelineJs
                     }
                     // B1: explicit band label + per-mesh verdict.
                     div {
@@ -638,8 +282,7 @@ module CardsPin =
                         showOnly violinOn
                         "Band = change significance. Alignment quality is the RMS residual in the Registration panel."
                     }
-                    // NUM replacement: per-mesh signed-distance numbers from
-                    // the same probe, plus registration RMS before/after.
+                    // NUM replacement: per-mesh signed-distance numbers + registration RMS before/after.
                     div {
                         Class "pc-rms-table"
                         Primitives.showWhenNot violinOn
@@ -703,7 +346,7 @@ module CardsPin =
                         sources |> AVal.map (function
                             | Some s -> Some (Attribute("data-srcs", sprintf "[%.6g,%.6g,%.6g]" s.DatasetError s.AlgorithmResid s.LocalConditioning))
                             | None -> Some (Attribute("data-srcs", "[]")))
-                        Primitives.observedRender "data-srcs" "[]" probeBarJs
+                        Primitives.observedRender "data-srcs" "[]" CardCharts.probeBarJs
                     }
                     div {
                         Class "pc-bar-legend"
@@ -713,8 +356,7 @@ module CardsPin =
                         span { Class "pc-legend-item pc-bar-conditioning"; "Conditioning" }
                     }
                 }
-                // Ensemble-registration correspondence: anchor status per
-                // mesh, residuals of the last coarse solve, fallback picks.
+                // Ensemble-registration correspondence: per-mesh anchor status, last coarse-solve residuals, fallback picks.
                 let corr =
                     selectedPin |> AVal.map (fun po -> po |> Option.bind ScanPin.correspondence)
                 let corrEnabled = corr |> AVal.map (function Some c -> c.Enabled | None -> false)
@@ -729,7 +371,6 @@ module CardsPin =
                         Class "pc-probe-head"
                         span {
                             Class "pc-section-title"
-                            // glossary kept as hover help, not an always-on line
                             Attribute("title", "A correspondence is one real spot in the world, marked on each mesh by a correspondence marker point (one per mesh). Making a pin a registration pin gathers those markers and feeds them to the solve.")
                             "Correspondence"
                         }
@@ -764,8 +405,7 @@ module CardsPin =
                                         | None -> "no reference marker yet — designate a ★ reference mesh"
                                     | _ -> "")
                             }
-                            // F10: the reference marker is editable too — pick it
-                            // on the reference mesh in 3D. F8: re-click cancels.
+                            // F10: reference marker is editable — pick on the reference mesh in 3D. F8: re-click cancels.
                             let refPickActive =
                                 (model.AnchorPick, selectedPin, refMeshOpt) |||> AVal.map3 (fun ap sp rm ->
                                     match ap, sp, rm with
@@ -796,8 +436,7 @@ module CardsPin =
                                 div {
                                     Class "pc-corr-row"
                                     Primitives.showWhen isMoving
-                                    // Hovering the whole row highlights this mesh's
-                                    // correspondence marker in 3D (thick + bright).
+                                    // Row hover highlights this mesh's correspondence marker in 3D (thick + bright).
                                     Dom.OnMouseEnter(fun _ ->
                                         match AVal.force selectedPin with
                                         | Some p -> env.Emit [SetCorrMarkerHover (Some (p.Id, mesh))]
@@ -839,8 +478,7 @@ module CardsPin =
                                     }
                                 })
                         }
-                        // F14: surface the patch picker — the occlusion-free way
-                        // to fix markers on overlapping meshes.
+                        // F14: surface the patch picker — occlusion-free marker fixing on overlapping meshes.
                         div {
                             Class "pc-corr-pick-hint"
                             "Overlap hiding a marker? Pick it in 2D patches — nothing overlaps there."
@@ -862,9 +500,7 @@ module CardsPin =
                                 "📏 Rulers"
                             }
                         }
-                        // Patch small-multiples picker: one orthographic
-                        // footprint per visible mesh in the shared reference
-                        // frame; clicking sets that mesh's anchor.
+                        // Patch small-multiples picker: one orthographic footprint per visible mesh in the shared reference frame; click sets that mesh's anchor.
                         let pickerOpen =
                             (model.PatchPicker, selectedPin) ||> AVal.map2 (fun pp po ->
                                 match pp, po with
@@ -907,12 +543,8 @@ module CardsPin =
                                         sb.Append("]}") |> ignore
                                         sb.ToString()
                                 | _ -> "{\"status\":\"none\"}")
-                        // Bus protocol from the cell JS:
-                        //   pk|mesh|u|v|h            click pick (h = barycentric height on the hit triangle)
-                        //   hv|mesh|cx|cy|z[|u|v|h]  hovered cell + its pan/zoom viewport, optional live cursor
-                        //   out                      pointer left the cell
-                        // pk goes through the reducer; hv/out only touch the
-                        // view-local cval (no reducer churn on pointer moves).
+                        // Cell-JS bus protocol: pk|mesh|u|v|h (click pick, h = barycentric height), hv|mesh|cx|cy|z[|u|v|h] (hovered cell + pan/zoom viewport + optional cursor), out.
+                        // pk → reducer; hv/out only touch the view-local cval (no reducer churn on pointer moves).
                         let setPatchHover (next : PatchHover option) =
                             if patchHover.Value <> next then
                                 transact (fun () -> patchHover.Value <- next)
@@ -965,12 +597,8 @@ module CardsPin =
                                 Class "pc-patch-grid"
                                 pickerJson |> AVal.map (fun j -> Some (Attribute("data-patches", j)))
                                 Primitives.observedRender "data-patches" "{}" [
-                                    // Canvas small-multiples: textured/shaded triangles, restricted
-                                    // pan/zoom per cell, triangle hit-test picking and 2D↔3D hover
-                                    // linking. Per-mesh viewport state survives re-renders on
-                                    // el.__ppv; two stacked canvases per cell (base = surface,
-                                    // overlay = cursor/vertex marks) so pointer moves never redraw
-                                    // the triangles.
+                                    // Canvas small-multiples: textured/shaded triangles, per-cell pan/zoom, triangle hit-test picking, 2D↔3D hover linking.
+                                    // Per-mesh viewport state survives re-renders on el.__ppv; two stacked canvases per cell (base = surface, overlay = cursor/marks) so pointer moves never redraw triangles.
                                     "  function placeholder(t){ var p = document.createElement('div'); p.className = 'pin-card-empty'; p.textContent = t; el.appendChild(p); }"
                                     "  if(!d.status || d.status === 'none'){ return; }"
                                     "  if(d.status === 'running'){ placeholder('Sampling patches…'); return; }"
@@ -979,8 +607,7 @@ module CardsPin =
                                     "  var hmin = Infinity, hmax = -Infinity;"
                                     "  entries.forEach(function(e){ e.pts.forEach(function(p){ if(p[2] < hmin) hmin = p[2]; if(p[2] > hmax) hmax = p[2]; }); });"
                                     "  if(!(hmax > hmin)){ hmin = -0.5; hmax = 0.5; }"
-                                    // F17: perceptually-uniform sequential ramp (viridis)
-                                    // instead of the old magenta->blue gradient.
+                                    // F17: viridis (perceptually-uniform) height ramp.
                                     "  var VIR = [[68,1,84],[59,82,139],[33,145,140],[94,201,98],[253,231,37]];"
                                     "  function hcol(h){"
                                     "    var t = Math.max(0, Math.min(1, (h - hmin) / (hmax - hmin)));"
@@ -1006,9 +633,7 @@ module CardsPin =
                                     "  var ghost = null;"
                                     "  var ACC = '#0891b2';"
                                     "  entries.forEach(function(e){"
-                                    // F18: first view fits the populated footprint, not the
-                                    // full box — zoom so the farthest sampled vertex reaches
-                                    // the circle edge.
+                                    // F18: first view fits the populated footprint (farthest sampled vertex reaches the circle edge), not the full box.
                                     "    var st = views[e.id];"
                                     "    if(!st){ var pr = 0; (e.pts||[]).forEach(function(p){ var l = Math.hypot(p[0], p[1]); if(l > pr) pr = l; }); var fz = pr > 1e-6 ? d.r / pr : 1; fz = Math.max(1, Math.min(12, fz)); st = views[e.id] = {cx:0, cy:0, z:fz}; }"
                                     "    var wrap = document.createElement('div');"
@@ -1051,8 +676,7 @@ module CardsPin =
                                     "    order.sort(function(a, b){"
                                     "      return (e.pts[a[0]][2] + e.pts[a[1]][2] + e.pts[a[2]][2]) - (e.pts[b[0]][2] + e.pts[b[1]][2] + e.pts[b[2]][2]);"
                                     "    });"
-                                    // F15: an atlas that fails to load (CORS / decode / 0-size)
-                                    // must fall back to shaded height, never a black cell.
+                                    // F15: an atlas that fails to load (CORS / decode / 0-size) falls back to shaded height, never a black cell.
                                     "    var img = null;"
                                     "    if(e.atlas){ var im = new Image(); im.onload = function(){ if(im.width > 0 && im.height > 0) img = im; requestDraw(); }; im.onerror = function(){ img = null; requestDraw(); }; im.src = e.atlas; }"
                                     "    function k(){ return maxR / d.r * st.z; }"
@@ -1073,9 +697,7 @@ module CardsPin =
                                     "    }"
                                     "    function drawBase(){"
                                     "      gb.clearRect(0, 0, size, size);"
-                                    // F16: clip the surface to the pin footprint circle and hatch
-                                    // the uncovered area, so partial overlap reads as 'no coverage
-                                    // here', not 'not drawn'.
+                                    // F16: clip to the footprint circle + hatch the uncovered area, so partial overlap reads as 'no coverage', not 'not drawn'.
                                     "      gb.save();"
                                     "      gb.beginPath(); gb.arc(sx(0), sy(0), d.r * k(), 0, 6.2832); gb.clip();"
                                     "      gb.fillStyle = '#f1f5f9'; gb.fillRect(0, 0, size, size);"
@@ -1229,9 +851,7 @@ module CardsPin =
                                     "      cursor = h === null ? null : [uv[0], uv[1], h];"
                                     "      hvSend(); setGhost();"
                                     "    }, {passive: false});"
-                                    // Reset lives on the zoom label, NOT on dblclick — a
-                                    // double-click on a pickable cell would fire the anchor
-                                    // pick twice before the reset.
+                                    // Reset lives on the zoom label, NOT dblclick — dblclick on a pickable cell would fire the anchor pick twice first.
                                     "    zl.addEventListener('click', function(){"
                                     "      st.cx = 0; st.cy = 0; st.z = 1;"
                                     "      clampView(); requestDraw(); hvSend();"
@@ -1247,3 +867,4 @@ module CardsPin =
             }
 
         }
+

@@ -12,7 +12,7 @@ let main _ =
 
         let query = Window.Location.GetQuery()
 
-        // Study entry route /s/{token} (the server serves index.html for it).
+        // Study entry route /s/{token} (server serves index.html for it).
         let path = Window.Location.Path
         if path.StartsWith "/s/" && path.Length > 3 then
             StudyBoot.entryToken <- Some (path.Substring(3).Trim('/'))

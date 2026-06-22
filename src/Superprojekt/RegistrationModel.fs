@@ -10,8 +10,8 @@ type ScanPinId = ScanPinId of Guid with
     static member create () = ScanPinId (Guid.NewGuid())
 
 // Correspondence anchors: one per (pin × moving mesh), world-space at the
-// mesh's current *committed* pose. Commit/rollback re-base the points by the
-// applied world delta so they stay on the surface.
+// mesh's *committed* pose. Commit/rollback re-base them by the applied world
+// delta so they stay on the surface.
 type AnchorSource =
     | AnchorAuto
     | AnchorPatch2D
@@ -29,8 +29,8 @@ module AnchorSource =
         | "patch2d" -> AnchorPatch2D | "pick3d" -> AnchorPick3D
         | "violin" -> AnchorViolinAxial | _ -> AnchorAuto
 
-// One correspondence marker point per (pin × moving mesh). A stored marker is
-// an applied correspondence — there is no separate accept/reject state.
+// One correspondence marker per (pin × moving mesh); a stored marker is
+// applied (no separate accept/reject state).
 type MeshAnchor = {
     Point    : V3d
     Source   : AnchorSource
@@ -56,8 +56,8 @@ module Correspondence =
         Residuals   = Map.empty
     }
 
-// Registration history. Transforms are render-space (the MeshTransforms
-// convention); rollback restores TransformBefore verbatim.
+// Registration history. Transforms are render-space; rollback restores
+// TransformBefore verbatim.
 type RegStage = StageCoarse | StageFine
 
 type RegInputs =
@@ -82,8 +82,7 @@ type RegStep = {
     Outputs       : Map<string, RegStepOutput>
 }
 
-// Uncommitted solve result (the spec's pendingDelta plus everything the
-// pending-result table needs). Effective preview pose = committed * Delta
+// Uncommitted solve result. Effective preview pose = committed * Delta
 // (Trafo3d composition is postfix: committed applies first).
 type PendingMeshResult = {
     Delta         : Trafo3d
@@ -101,7 +100,7 @@ type PendingRegistration = {
 }
 
 module PendingRegistration =
-    // "pendingDelta non-empty" in spec terms: at least one solved mesh.
+    // Preview active ⇔ at least one solved mesh.
     let isPreview (p : PendingRegistration option) =
         match p with Some pr -> not (Map.isEmpty pr.Results) | None -> false
 
@@ -161,7 +160,7 @@ module RegLog =
         | [] -> None
 
 // λ2/λ1 of a weighted 3D point spread (client-side conditioning pre-check for
-// the coarse readiness line; the authoritative value comes from the server).
+// the readiness line; the authoritative value comes from the server).
 module RegConditioning =
     let private jacobiEigenvalues (m : M33d) =
         let a = [|
@@ -242,8 +241,8 @@ module RegConditioning =
                 yz <- yz + d.Y * d.Z
                 zz <- zz + d.Z * d.Z
             let cov = M33d(xx, xy, xz, xy, yy, yz, xz, yz, zz)
-            // seed with the coordinate axis of largest variance (never
-            // orthogonal to the dominant eigenvector for non-degenerate sets)
+            // seed with the coordinate axis of largest variance (not orthogonal
+            // to the dominant eigenvector for non-degenerate sets)
             let mutable v =
                 if xx >= yy && xx >= zz then V3d.IOO
                 elif yy >= zz then V3d.OIO
@@ -260,11 +259,10 @@ module RegConditioning =
 
     let isCollinear (eigenvalues : float[]) = lambdaRatio eigenvalues < 1e-3
 
-// JSON (de)serialization of the new workspace pieces, kept here (instead of
+// JSON (de)serialization of the new workspace pieces, kept here (not
 // Persistence.fs) so the round-trip is unit-testable outside the WASM project.
-// Last solve diagnostics per mesh (workflow panel §1) — set on every solve
-// response (pending or committed), survives commit, cleared for a mesh when
-// the step that produced it is rolled back.
+// LastSolveEntry: per-mesh diagnostics set on every solve response, survives
+// commit, cleared for a mesh when its producing step is rolled back.
 type SolveConditioning = {
     Eigenvalues         : float[]
     CollinearityWarning : bool
@@ -284,7 +282,7 @@ module LastSolve =
         step.Outputs |> Map.fold (fun acc mesh _ -> Map.remove mesh acc) m
 
 // Camera fly-to (workflow panel §4): pure math, unit-tested. Targets are
-// world-space; the reducer converts to render space at the boundary.
+// world-space; reducer converts to render space at the boundary.
 type FlyToTarget =
     | FlyToSphere of centre : V3d * radius : float
     | FlyToBounds of Box3d
@@ -305,7 +303,7 @@ module FlyToMath =
 
 // ───────────── readiness engine (workflow panel §2, shared) ─────────────
 // Pure over a dedicated input DTO so Supertests can table-drive it; the
-// adaptive adapter lives in Primitives.ReadinessView.
+// adaptive adapter is in Primitives.ReadinessView.
 
 type Severity =
     | Blocker
@@ -331,11 +329,10 @@ type Diagnostic = {
 type ReadinessPin = {
     Id            : ScanPinId
     Label         : string
-    // accepted reference anchor position + reliability (collinearity input)
+    // accepted reference anchor + reliability (collinearity input)
     RefAnchor     : (V3d * float) option
-    // visible moving meshes with an accepted anchor for this pin
+    // visible moving meshes with / without an accepted anchor for this pin
     Accepted      : Set<string>
-    // visible moving meshes without an accepted anchor (missing/seeded/flagged)
     Unresolved    : int
 }
 
@@ -367,8 +364,7 @@ module Readiness =
         |> RegConditioning.spreadEigenvalues
         |> RegConditioning.lambdaRatio
 
-    // Rules evaluated in order, all matching emitted (§2); display layers
-    // sort by severity.
+    // Rules evaluated in order, all matches emitted; display sorts by severity.
     let compute (input : ReadinessInput) : StageDiagnostics =
         let coarse = ResizeArray<Diagnostic>()
         let fine = ResizeArray<Diagnostic>()
@@ -376,8 +372,7 @@ module Readiness =
             l.Add { Severity = severity; Text = text; Action = action }
 
         if input.HasPending then
-            // blocks both stages — first so it leads either list. The panel
-            // shows the pending commit/discard inline, so no nav action.
+            // blocks both stages, listed first; commit/discard is inline (no nav action).
             for l in [ coarse; fine ] do
                 add l Blocker "Commit or discard the pending result first" None
 
@@ -650,8 +645,8 @@ module RegJson =
             })
         |> Map.ofSeq
 
-// Heatmap modes: the old boolean toggle plus the registration diff mode
-// (spec §8.3, only meaningful while a solve preview is pending).
+// Heatmap modes; HeatDiff (registration diff) only meaningful while a solve
+// preview is pending.
 type HeatmapMode =
     | HeatOff
     | HeatProvenance
@@ -661,17 +656,16 @@ module HeatmapMode =
     let tag = function HeatOff -> "off" | HeatProvenance -> "prov" | HeatDiff -> "diff"
     let ofTag = function "prov" -> HeatProvenance | "diff" -> HeatDiff | _ -> HeatOff
 
-// One-shot 3D correspondence-marker pick (spec §8.1).
+// One-shot 3D correspondence-marker pick.
 type AnchorPickState = {
     PinId : ScanPinId
     Mesh  : string
 }
 
-// Patch small-multiples picker (spec §7.2). Points are (patch-plane uv,
-// height along the shared frame normal, atlas texture uv); since (refDir,
-// left, normal) is orthonormal, world = Centre + u·refDir + v·left + h·normal
-// exactly — world positions are never stored, they are reconstructed.
-// Triangles are flat index triples into Points.
+// Patch small-multiples picker. Points are (patch-plane uv, height along the
+// shared frame normal, atlas uv); since (refDir, left, normal) is orthonormal,
+// world = Centre + u·refDir + v·left + h·normal exactly — world positions are
+// reconstructed, never stored. Triangles are flat index triples into Points.
 type PatchPickerEntry = {
     Mesh      : string
     Centre    : V3d
@@ -692,10 +686,9 @@ type PatchPickerState = {
 }
 
 // Transient 2D→3D linking state for the patch picker, view-local (cval — the
-// reducer never sees pointer moves). Centre/Zoom describe the cell's current
-// pan/zoom viewport in patch coordinates so the 3D vertex ticks can be
-// restricted to what the hovered cell actually shows; Point is the live
-// cursor position on the triangulated surface (planar uv + height).
+// reducer never sees pointer moves). Centre/Zoom = the cell's pan/zoom viewport
+// in patch coords (restricts 3D vertex ticks to what the cell shows); Point =
+// live cursor position on the triangulated surface (planar uv + height).
 type PatchHover = {
     Mesh   : string
     Centre : V2d

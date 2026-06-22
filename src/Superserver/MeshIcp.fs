@@ -62,10 +62,9 @@ module private IcpMath =
             let K = skew k
             M33d.Identity + K * sin theta + K * K * (1.0 - cos theta)
 
-    // Linearizes the rotation around the weighted correspondence centroid:
-    // with raw UTM-scale world coordinates the lever arm is ~5e6 m, the
-    // normal matrix is hopelessly ill-conditioned, and the small-angle step
-    // diverges. Solved in the recentred frame, recomposed to a world map.
+    // Linearizes rotation around the weighted correspondence centroid: raw
+    // UTM-scale coords give a ~5e6 m lever arm, an ill-conditioned normal
+    // matrix, and a divergent step. Solved recentred, recomposed to a world map.
     let icpStep (pairs : ResizeArray<struct (V3d * V3d * float)>) =
         let mutable cSum = V3d.Zero
         let mutable cW = 0.0
@@ -102,24 +101,22 @@ module private IcpMath =
         let omega = V3d(x.[0], x.[1], x.[2])
         let t = V3d(x.[3], x.[4], x.[5])
         let R = rotFromOmega omega
-        // p ↦ R(p − c) + c + t, expressed as a world map p ↦ R·p + tWorld.
-        // The centroid c maps to c + t, so the actual displacement this step
-        // is |t| — NOT |tWorld|, which is inflated by (I−R)c for any rotation
-        // about a far-from-origin centroid even when the mesh barely moves.
+        // p ↦ R(p−c)+c+t as a world map p ↦ R·p + tWorld. The centroid maps to
+        // c+t, so this step's displacement is |t| — NOT |tWorld|, which (I−R)c
+        // inflates for any rotation about a far-from-origin centroid.
         let tWorld = c - R * c + t
         R, tWorld, sqrt (rmsSum / max 1.0 wSum), t.Length
 
-// Abort rather than return a divergent pose: a fine-ICP step that displaces
-// the mesh centroid by more than a few combined mesh-extents is runaway
-// (overlap starvation), not a legitimate gap-closing step. Generous so only
-// absurd motions trip it.
+// Abort rather than return a divergent pose: a step displacing the centroid by
+// more than a few combined mesh-extents is overlap-starvation runaway, not a
+// gap-closing step. Generous so only absurd motions trip it.
 let divergenceGate (refDiag : float) (movDiag : float) = max 100.0 (3.0 * (refDiag + movDiag))
 let isRunawayStep (stepDisplacement : float) (gate : float) =
     not (System.Double.IsFinite stepDisplacement) || stepDisplacement > gate
 
-// Reference is "small" relative to the mover when its bbox diagonal is under
-// this fraction of the mover's — the overlap-starvation regime where naive
-// closest-point ICP drags the mover (the study's flung-mesh defect).
+// Reference is "small" when its bbox diagonal is under this fraction of the
+// mover's — the overlap-starvation regime where naive closest-point ICP drags
+// the mover (the study's flung-mesh defect).
 let smallReferenceRegime (refDiag : float) (movDiag : float) =
     refDiag > 1e-6 && movDiag > 1e-6 && refDiag / movDiag < 0.4
 
@@ -139,7 +136,7 @@ let runIcp
     let smallRef = smallReferenceRegime refDiag movDiag
     let gate = divergenceGate refDiag movDiag
     // Restrict moving samples to the reference's world region (+ margin) so
-    // far-away, non-overlapping points can't form biasing correspondences.
+    // far-away non-overlapping points can't form biasing correspondences.
     let refWorldBox =
         if refBox.IsInvalid then Box3d.Invalid
         else
@@ -184,9 +181,8 @@ let runIcp
         if pairs.Count < 6 then
             iter <- maxIter
         else
-            // Trimmed correspondences: with partial overlap, closest-point
-            // pairs from non-overlapping regions bias the solve — gate at
-            // 3× the median pair distance.
+            // Trimmed correspondences: with partial overlap, pairs from
+            // non-overlapping regions bias the solve — gate at 3× median dist.
             let pairs =
                 if pairs.Count < 12 then pairs
                 else
@@ -199,8 +195,8 @@ let runIcp
                         if dists.[i] <= gate then filtered.Add pairs.[i]
                     if filtered.Count >= 6 then filtered else pairs
             let Rd, td, rms, stepDisp = icpStep pairs
-            // Divergence guard: a runaway step (overlap-starved fit) aborts
-            // before the flung pose is ever applied or returned.
+            // Divergence guard: a runaway step aborts before the flung pose is
+            // ever applied or returned.
             if isRunawayStep stepDisp gate then
                 aborted <- true
             else

@@ -2,9 +2,9 @@ namespace Superprojekt
 
 open FSharp.Data.Adaptive
 open Aardvark.Base
+open FSharp.Data.Adaptive
 open Adaptify
 open Aardvark.Dom
-open FSharp.Data.Adaptive
 
 type RenderingMode =
     | Textured
@@ -20,8 +20,8 @@ module DatasetScale =
     let active (activeDataset : string option) (scales : Map<string, float>) =
         activeDataset |> Option.bind (fun d -> Map.tryFind d scales) |> Option.defaultValue 1.0
 
-// MeshTransforms stores render-space trafos; world-space rigid transforms
-// (server queries, persistence of ICP results) convert through these.
+// MeshTransforms are render-space; world-space rigid transforms (server
+// queries, ICP persistence) convert through these.
 module RigidTransform =
     let worldToRender (scale : float) (cc : V3d) (worldT : Trafo3d) =
         Trafo3d.Scale(1.0 / scale)
@@ -37,9 +37,9 @@ module RigidTransform =
         * Trafo3d.Scale(1.0 / scale)
         * Trafo3d.Translation(cc)
 
-    // World-space delta a pending render `delta` applies to a mesh at committed
-    // render pose `committed` (scale/cc = that mesh's render frame). Shared by
-    // the scene/overlay nodes that follow anchors under a solve preview.
+    // World-space delta a pending render `delta` applies at committed render
+    // pose `committed`. Used by scene/overlay nodes following anchors under a
+    // solve preview.
     let worldDeltaOf (scale : float) (cc : V3d) (committed : Trafo3d) (delta : Trafo3d) =
         (renderToWorld scale cc committed).Inverse
         * renderToWorld scale cc (RegLog.effective committed delta)
@@ -95,10 +95,9 @@ type RetargetState =
 module RetargetState =
     let initial = RetargetIdle
 
-// A synthetic panorama: a camera pose in metric world-space from which the
-// scene is rendered to a cubemap and reprojected cylindrically. No real
-// imagery exists for any dataset, so one is generated per dataset on load at
-// the scene bbox centre plus a couple of metres up.
+// Synthetic panorama: a metric world-space camera pose rendered to a cubemap
+// and reprojected cylindrically. No real imagery exists — one is generated per
+// dataset on load at the scene bbox centre plus a couple of metres up.
 type Panorama = {
     Name     : string
     EyeWorld : V3d     // metric world-space eye position
@@ -124,13 +123,10 @@ type LassoVolume =
         CommitVpSize  : V2i
     }
 
-// 3D sectioning / cutaway. One clip-plane subsystem; the cutaway and the
-// iso-plane (live + locked) are parameterizations of this. Origin/Normal are
-// metric world-space and converted to render space at the pipeline boundary
-// (like pins/cursor).
-//   Half-space rule (shared): a mesh fragment is discarded where
-//   dot(p − origin, normal) > 0 — the producer points Normal at the half to
-//   remove (toward the camera for the cutaway, up for iso clip-above).
+// 3D sectioning / cutaway: one clip-plane subsystem (cutaway + live/locked
+// iso-plane are parameterizations). Origin/Normal metric world-space, converted
+// at the pipeline boundary. Half-space rule: discard where
+// dot(p − origin, normal) > 0 — Normal points at the half to remove.
 type ClipPlane = {
     Origin : V3d
     Normal : V3d
@@ -228,13 +224,13 @@ type Model =
         LassoEnabled : bool
 
         // 3D sectioning (0..2 active planes) + spring-loaded reference peek.
-        // ClipPlanes holds manually-locked planes (iso-plane lock); the
-        // cutaway is derived live from the selected pin's correspondence box.
+        // ClipPlanes = manually-locked planes (iso-plane lock); cutaway is
+        // derived live from the selected pin's correspondence box.
         ClipPlanes        : ClipPlane list
         ReferencePeekHeld : bool
         CutawayActive     : bool
-        // While hovering the violin, also clip the meshes above the live
-        // iso-plane (lets the user see into the section). Alt-click locks it.
+        // Clip meshes above the live iso-plane while hovering the violin (see
+        // into the section). Alt-click locks it.
         ClipAboveIso      : bool
         // Labelled anchor↔reference rulers for the selected pin (HTML overlay).
         RulerActive       : bool
@@ -244,8 +240,7 @@ type Model =
         Retarget              : RetargetState
 
         // Ensemble registration: uncommitted solve preview, committed history,
-        // correspondence-anchor flows (auto-seed review, one-shot 3D pick,
-        // patch small-multiples picker).
+        // correspondence-anchor flows.
         PendingReg            : PendingRegistration option
         RegistrationLog       : RegStep list
         // Last solve diagnostics per mesh (workflow panel) — persisted.
@@ -262,15 +257,14 @@ type Model =
         HeatmapPrev           : HeatmapMode
         ProvenanceThreshold   : float
 
-        // A2: per-mesh signed-distance surface colour map. When on, the
-        // soloed (chart-sticky) mesh is painted with its per-vertex signed
-        // M3C2 distance to the reference. SurfaceDistance holds the fetched
-        // per-vertex arrays (aligned with the served geometry), keyed by mesh.
+        // A2: per-mesh signed-distance surface colour map — the soloed mesh is
+        // painted with its per-vertex signed M3C2 distance to the reference.
+        // SurfaceDistance holds the fetched per-vertex arrays (aligned with the
+        // served geometry), keyed by mesh.
         SurfaceDistOn         : bool
         SurfaceDistance       : Map<string, float32[]>
         // A3 range brush: a signed-distance interval brushed on the violin;
-        // on the encoded mesh, fragments inside it stay vivid and the rest are
-        // de-emphasised (focus+context). None = no brush.
+        // fragments inside it stay vivid, the rest wash out (focus+context).
         SurfaceDistBrush      : (float * float) option
 
         FusionMode            : bool
@@ -285,18 +279,16 @@ type Model =
         CardSystem            : CardSystemModel
         HoverProbe            : HoverProbeState option
 
-        // 2D-3D linking of the pin-card violin chart: chart-hover elevation
-        // cursor (drives the 3D slicing plane) and mesh-column highlight
-        // (hover = transient, sticky = until clicked elsewhere).
+        // Pin-card violin 2D-3D linking: chart-hover elevation cursor (drives
+        // the 3D slicing plane) + mesh-column highlight (hover transient,
+        // sticky until clicked elsewhere).
         ChartCursor           : ChartCursor option
         ChartHoverMesh        : string option
         ChartStickyMesh       : string option
 
-        // UI→3D hover highlight: a pin row in the registration panel. None =
-        // nothing hovered.
+        // UI→3D hover highlights (None = nothing hovered): a pin row in the
+        // registration panel, and a correspondence-marker row (pin + mesh).
         WorkflowPinHover      : ScanPinId option
-        // UI→3D hover highlight: a correspondence-marker row (pin + mesh) in
-        // the pin card's registration list. None = nothing hovered.
         CorrMarkerHover       : (ScanPinId * string) option
 
         RenderingMode       : RenderingMode
@@ -304,19 +296,19 @@ type Model =
         LassoCardPos        : V2d option
         GearPopoverOpen     : bool
 
-        // User-study mode: None = Full app; Some shell = study pages /
-        // running session (chrome replaced, features gated).
+        // User-study mode: None = Full app; Some shell = study pages / running
+        // session (chrome replaced, features gated).
         Study               : StudyShell option
         StudiesAvailable    : string list
 
-        // Registration panel open state (model-side so navigation actions can
-        // open it; session-only).
+        // Registration panel open state (model-side so nav actions can open it;
+        // session-only).
         WorkflowPanelOpen   : bool
     }
 
-// Committed vs effective (committed ∘ pending-delta) transforms, in render and
-// world space. Every server query and scene-graph consumer goes through these
-// so the preview pose is consistent everywhere.
+// Committed vs effective (committed ∘ pending-delta) transforms, render and
+// world space. Every query and scene-graph consumer goes through these so the
+// preview pose is consistent everywhere.
 module ModelTransforms =
     let committedRender (model : Model) (mesh : string) =
         Map.tryFind mesh model.MeshTransforms |> Option.defaultValue Trafo3d.Identity
@@ -337,9 +329,9 @@ module ModelTransforms =
     let effectiveWorld (model : Model) (mesh : string) =
         toWorld model mesh (effectiveRender model mesh)
 
-    // World-space delta a commit (before → after, render space) applies to a
-    // mesh — used to re-base correspondence anchors so they stay on the
-    // surface across commit and rollback.
+    // World-space delta a commit (before → after, render space) applies —
+    // re-bases correspondence anchors so they stay on the surface across
+    // commit/rollback.
     let worldDelta (model : Model) (mesh : string) (before : Trafo3d) (after : Trafo3d) =
         (toWorld model mesh before).Inverse * toWorld model mesh after
 

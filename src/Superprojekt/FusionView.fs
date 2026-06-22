@@ -7,9 +7,8 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open FShade
 
-// Fullscreen-quad composite: samples the offscreen fusion colour texture and
-// writes it to the main framebuffer. The quad is supplied in NDC (clip space)
-// so the vertex stage is a pure pass-through — no view/proj.
+// Fullscreen-quad composite: samples the offscreen fusion colour texture into
+// the main framebuffer. Quad is in NDC, so the vertex stage is pass-through.
 [<ReflectedDefinition>]
 module FusionComposite =
     open FShade
@@ -46,10 +45,9 @@ module FusionView =
            V3f( 1.0f,  1.0f, 0.0f); V3f(-1.0f, 1.0f, 0.0f) |]
     let private quadIdx = [| 0; 1; 2; 0; 2; 3 |]
 
-    // Build the offscreen fusion pass + the composite node that draws its
-    // colour output into the main framebuffer. The offscreen render task is
-    // lazy: it only runs when the composite node is Active (FusionMode on) and
-    // its colour-texture uniform gets pulled during the main render.
+    // Offscreen fusion pass + the composite node that draws its colour output
+    // into the main framebuffer. Lazy: the offscreen task only runs when the
+    // composite is Active (FusionMode on) and its colour uniform is pulled.
     let build
         (info : Aardvark.Dom.RenderControlInfo)
         (model : AdaptiveModel)

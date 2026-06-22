@@ -113,9 +113,7 @@ type OrbitState =
         speed           : float
 
         pick : V2d -> option<V3d>
-
     } with
-
         member model.animationRunning =
             let dphi    = model.targetPhi   - model.phi
             let dtheta  = model.targetTheta - model.theta

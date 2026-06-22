@@ -35,9 +35,8 @@ module PanoReproject =
         [<Semantic("PanoNdc")>] ndc : V2f
     }
 
-    // All-float32: WebGL2 (ESSL3) has no double precision, so every value here
-    // must stay float32 — using F# `float`, `Constant.Pi` or `V3d` makes FShade
-    // emit `double`/`dvec3` and the shader fails to compile.
+    // All-float32: WebGL2 (ESSL3) has no fp64, so `float`/`Constant.Pi`/`V3d`
+    // make FShade emit `double`/`dvec3` and the shader fails to compile.
     type UniformScope with
         member x.PanoYaw    : float32 = x?PanoYaw
         member x.PanoVScale : float32 = x?PanoVScale
@@ -52,9 +51,8 @@ module PanoReproject =
     let fragment (v : Vtx) =
         fragment {
             let phi = v.ndc.X * piF + uniform.PanoYaw
-            // Cylindrical: the vertical screen coordinate maps to a height on the
-            // unit cylinder, so vertical world lines stay straight (no pole
-            // pinching as in an equirectangular map).
+            // Cylindrical: vertical screen → cylinder height, so vertical world
+            // lines stay straight (no equirectangular pole pinching).
             let h   = v.ndc.Y * uniform.PanoVScale
             let dir = V3f(cos phi, sin phi, h) |> Vec.normalize
             let a = photoCube.SampleLevel(dir, 0.0f)
@@ -70,8 +68,8 @@ module PanoramaView =
            V3f( 1.0f,  1.0f, 0.0f); V3f(-1.0f, 1.0f, 0.0f) |]
     let private quadIdx = [| 0; 1; 2; 0; 2; 3 |]
 
-    // Six 90°-FOV cube-face projections, in the face order panorama.fs used so
-    // the captured cube matches the samplerCube convention.
+    // Six 90°-FOV cube-face projections, ordered to match the samplerCube
+    // convention.
     let private faceProjs =
         let p = Frustum.perspective 90.0 0.1 10000.0 1.0 |> Frustum.projTrafo
         [| p

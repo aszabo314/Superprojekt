@@ -5,18 +5,17 @@ open Aardvark.Base
 open Aardvark.Embree
 open MeshCache
 
-// Sphere–surface contact rings: the level set of |p − centre| − radius over
-// the mesh surface, traced by marching-squares edge keys + linking, restricted
-// to BVH candidate triangles. Returns every ring (a pin sphere can touch a
-// surface in several places); closed rings repeat their first point so
-// rendering has no gap. Points are world-space.
+// Sphere–surface contact rings: level set of |p − centre| − radius traced by
+// marching-squares edge keys + linking over BVH candidate triangles. Returns
+// every ring (a pin sphere can touch a surface in several places); closed rings
+// repeat their first point so rendering has no gap. Points are world-space.
 let contactRings (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) : V3d[][] =
     let positions = lm.parsed.positions
     let centroid = lm.parsed.centroid
     let cLocal = centre - centroid
 
-    // A sign-changing edge has at least one vertex inside the sphere, so its
-    // triangle's bbox overlaps the sphere — the BVH query loses nothing.
+    // A sign-changing edge has a vertex inside the sphere → its triangle bbox
+    // overlaps the sphere, so the BVH candidate query loses nothing.
     let triBuf = trianglesInSphere lm (V3f cLocal) (float32 radius)
     let triCount = triBuf.Length / 3
 
@@ -38,9 +37,8 @@ let contactRings (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : 
             if (d0 > 0.0) <> (d1 > 0.0) then
                 let p0 = V3d positions.[i0]
                 let p1 = V3d positions.[i1]
-                // Exact sphere–segment intersection; with a sign change there
-                // is exactly one root in [0,1]. Linear interpolation fallback
-                // for numerically degenerate edges.
+                // Exact sphere–segment root (one root in [0,1] given a sign
+                // change); linear-interp fallback for degenerate edges.
                 let dir = p1 - p0
                 let m = p0 - cLocal
                 let a = Vec.dot dir dir
@@ -156,17 +154,15 @@ let contactRings (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : 
 type PatchPoint = { Px : float; Py : float; Wx : float; Wy : float; Wz : float; U : float; V : float }
 type PatchResult = { Points : PatchPoint[]; Triangles : int[]; RefDirWorld : V3d; NormalWorld : V3d }
 
-// frame: optional (normal, refDir) override in the mesh's own frame — when
-// present the local plane fit is skipped and points are projected into the
-// supplied frame (origin = centre). Used by the patch small-multiples picker
-// so every mesh shares one co-oriented projection.
+// frame: optional (normal, refDir) override in the mesh's own frame — skips the
+// local plane fit and projects into the supplied frame (origin = centre) so the
+// patch small-multiples picker shares one co-oriented projection across meshes.
 //
-// withTriangles changes the output contract: (Px, Py) become the planar
-// orthographic projection onto the frame (exact orthonormal decomposition,
-// consistent with the picker's (u,v) → world inversion) instead of the
-// geodesic-polar unrolling, the maxPoints cap keeps the geodesically nearest
-// vertices (a smaller connected disc) instead of stride decimation, and
-// Triangles carries index triples into Points for every mesh triangle whose
+// withTriangles changes the output contract: (Px,Py) become the exact planar
+// orthographic projection onto the frame (consistent with the picker's
+// (u,v)→world inversion) instead of geodesic-polar unrolling; the maxPoints cap
+// keeps the geodesically nearest vertices (a connected disc) instead of stride
+// decimation; Triangles carries index triples into Points for triangles whose
 // corners all survived.
 let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (frame : (V3d * V3d) option) (withTriangles : bool) : PatchResult =
     let positions = lm.parsed.positions
@@ -181,9 +177,7 @@ let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (f
             let projX = V3d.IOO - normal * Vec.dot V3d.IOO normal
             if projX.Length > 1e-9 then Vec.normalize projX else V3d.IOO
 
-    let triBuf =
-        trianglesInSphere lm (V3f centreLocal) (float32 (radius * 1.2))
-
+    let triBuf = trianglesInSphere lm (V3f centreLocal) (float32 (radius * 1.2))
     if triBuf.Length = 0 then
         let n, r =
             match frame with
@@ -207,8 +201,7 @@ let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) (f
                     let p1 = V3d positions.[triBuf.[ti * 3 + 1]]
                     let p2 = V3d positions.[triBuf.[ti * 3 + 2]]
                     nSum <- nSum + Vec.cross (p1 - p0) (p2 - p0)
-                let normal =
-                    if nSum.Length > 1e-9 then Vec.normalize nSum else V3d.OOI
+                let normal = if nSum.Length > 1e-9 then Vec.normalize nSum else V3d.OOI
                 normal, orthoRef normal V3d.OIO
         let leftDir = Vec.cross normal refDir
 

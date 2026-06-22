@@ -1,5 +1,5 @@
-//4c00550e-87bc-603c-b8a6-a116b01fe09c
-//40e71c47-53d3-a61b-a0ee-497eacc4b82e
+//2d5dd97e-24ef-4870-752a-da542286f2d3
+//db78157b-456a-0a84-5a8b-472481b38ce3
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -31,6 +31,7 @@ type AdaptiveModel(value : Model) =
     let _ShadingStrength_ = FSharp.Data.Adaptive.cval(value.ShadingStrength)
     let _SlopeThresholdDeg_ = FSharp.Data.Adaptive.cval(value.SlopeThresholdDeg)
     let _AnchorGhostMode_ = FSharp.Data.Adaptive.cval(value.AnchorGhostMode)
+    let _QuickPinRadius_ = FSharp.Data.Adaptive.cval(value.QuickPinRadius)
     let _SceneBounds_ = FSharp.Data.Adaptive.cval(value.SceneBounds)
     let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
     let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
@@ -108,6 +109,7 @@ type AdaptiveModel(value : Model) =
             _ShadingStrength_.Value <- value.ShadingStrength
             _SlopeThresholdDeg_.Value <- value.SlopeThresholdDeg
             _AnchorGhostMode_.Value <- value.AnchorGhostMode
+            _QuickPinRadius_.Value <- value.QuickPinRadius
             _SceneBounds_.Value <- value.SceneBounds
             _MeshBounds_.Value <- value.MeshBounds
             _ActivePickingLayer_.Value <- value.ActivePickingLayer
@@ -178,6 +180,7 @@ type AdaptiveModel(value : Model) =
     member __.ShadingStrength = _ShadingStrength_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.SlopeThresholdDeg = _SlopeThresholdDeg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.AnchorGhostMode = _AnchorGhostMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.QuickPinRadius = _QuickPinRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.SceneBounds = _SceneBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>
     member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>

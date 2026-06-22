@@ -289,6 +289,8 @@ module Update =
             { model with SlopeThresholdDeg = v }
         | ToggleAnchorGhostMode ->
             { model with AnchorGhostMode = not model.AnchorGhostMode }
+        | SetQuickPinRadius v ->
+            { model with QuickPinRadius = max 0.01 v }
         | SetReferencePeek held ->
             if model.ReferencePeekHeld = held then model
             else { model with ReferencePeekHeld = held }
@@ -1207,9 +1209,7 @@ module Update =
                     model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
                     |> Option.orElse (model.ActivePickingLayer |> Option.filter (fun l -> List.contains l visible))
                     |> Option.defaultValue (List.head visible)
-                let radius =
-                    if model.SceneBounds.IsInvalid then 5.0
-                    else max 0.5 (model.SceneBounds.Size.Length * 0.05)
+                let radius = max 0.01 model.QuickPinRadius
                 // Effective transforms: under a pending preview the hover
                 // probe reflects what is on screen.
                 let meshes =

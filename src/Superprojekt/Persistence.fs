@@ -129,9 +129,9 @@ module Persistence =
             match model.HeatmapMode with
             | HeatDiff -> model.HeatmapPrev
             | m -> m
-        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"heatmapMode\":\"%s\",\"provThreshold\":%s,\"fusion\":%b,\"renderMode\":\"%s\"}"
+        sb.Append(sprintf ",\"settings\":{\"ghostSilhouette\":%b,\"ghostOpacity\":%s,\"shading\":%s,\"slopeDeg\":%s,\"anchorGhost\":%b,\"quickPinRadius\":%s,\"heatmapMode\":\"%s\",\"provThreshold\":%s,\"fusion\":%b,\"renderMode\":\"%s\"}"
             model.GhostSilhouette (f model.GhostOpacity) (f model.ShadingStrength)
-            (f model.SlopeThresholdDeg) model.AnchorGhostMode (HeatmapMode.tag persistedHeatmap)
+            (f model.SlopeThresholdDeg) model.AnchorGhostMode (f model.QuickPinRadius) (HeatmapMode.tag persistedHeatmap)
             (f model.ProvenanceThreshold) model.FusionMode
             (renderModeTag model.RenderingMode)) |> ignore
         sb.Append(",\"camera\":{") |> ignore
@@ -366,6 +366,7 @@ module Persistence =
                     ShadingStrength = sOrElseF "shading" model.ShadingStrength
                     SlopeThresholdDeg = sOrElseF "slopeDeg" model.SlopeThresholdDeg
                     AnchorGhostMode = sOrElseB "anchorGhost" model.AnchorGhostMode
+                    QuickPinRadius = sOrElseF "quickPinRadius" model.QuickPinRadius
                     HeatmapMode = heatmapMode
                     HeatmapPrev = (match heatmapMode with HeatDiff -> HeatOff | m -> m)
                     ProvenanceThreshold = sOrElseF "provThreshold" model.ProvenanceThreshold

@@ -16,6 +16,7 @@ type Message =
     | SetShadingStrength of float
     | SetSlopeThresholdDeg of float
     | ToggleAnchorGhostMode
+    | SetQuickPinRadius of float
     // 3D sectioning / cutaway.
     | SetReferencePeek of bool
     | SetClipPlanes of ClipPlane list

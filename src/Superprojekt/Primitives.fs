@@ -64,6 +64,26 @@ module Primitives =
             }
         }
 
+    let numberInput
+            (labelText : string)
+            (minV : float) (maxV : float) (stepV : float)
+            (format : float -> string)
+            (value : aval<float>)
+            (onChange : float -> unit) =
+        div {
+            Class "is"
+            span { Class "is-label"; labelText }
+            input {
+                Class "is-value"
+                Attribute("type", "number")
+                Attribute("min",  sprintf "%.6g" minV)
+                Attribute("max",  sprintf "%.6g" maxV)
+                Attribute("step", sprintf "%.6g" stepV)
+                value |> AVal.map (fun v -> Some (Attribute("value", format v)))
+                Dom.OnChange(fun e -> parseFloat e.Value |> Option.iter onChange)
+            }
+        }
+
     let inlineLogSlider
             (labelText : string)
             (minV : float) (maxV : float)

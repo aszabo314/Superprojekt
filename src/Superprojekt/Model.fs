@@ -231,6 +231,7 @@ type Model =
         ShadingStrength      : float
         SlopeThresholdDeg    : float
         AnchorGhostMode      : bool
+        QuickPinRadius       : float
 
         SceneBounds    : Box3d
         MeshBounds     : Map<string, Box3d>
@@ -377,6 +378,7 @@ module Model =
             ShadingStrength     = 0.15
             SlopeThresholdDeg   = 15.0
             AnchorGhostMode     = true
+            QuickPinRadius      = 0.125
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             ActivePickingLayer = None

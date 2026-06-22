@@ -268,6 +268,11 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            numberInput "Quick-pin radius (m)" 0.01 50.0 0.005 (sprintf "%.3f") model.QuickPinRadius (fun v ->
+                                env.Emit [SetQuickPinRadius v])
+                        }
+                        div {
+                            Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Dataset" }
                             span {
                                 Class "tb-gear-val"

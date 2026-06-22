@@ -135,7 +135,7 @@ module MeshView =
     // Smoothstep half-width of the contact-line highlight band (metres) and
     // the darkening applied to the rest of an intersected mesh.
     [<Literal>]
-    let private cursorHighlightWidth = 0.2
+    let private cursorHighlightWidth = 0.02
     [<Literal>]
     let private cursorDarken = 0.85f
 

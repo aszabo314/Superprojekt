@@ -180,7 +180,7 @@ module SceneGraph =
         (placementHover : aval<V3d option>)
         (patchHover : aval<PatchHover option>)
         (cursorHighlight : aval<CursorHighlight option>)
-        (clipUniforms : aval<int * V4f * V4f * int * int>)
+        (clipUniforms : aval<int * V4f * V4f>)
         (previewSwap : aval<bool>)
         (wheelIsolation : aval<string option>)
         (model : AdaptiveModel) =

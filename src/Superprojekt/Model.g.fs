@@ -1,5 +1,5 @@
-//2d5dd97e-24ef-4870-752a-da542286f2d3
-//db78157b-456a-0a84-5a8b-472481b38ce3
+//d422db11-6451-fa67-c139-cc9bb1bc03d5
+//a5481dc9-6023-e03f-391d-2512a7050c1d
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -41,7 +41,6 @@ type AdaptiveModel(value : Model) =
     let _ClipPlanes_ = FSharp.Data.Adaptive.cval(value.ClipPlanes)
     let _ReferencePeekHeld_ = FSharp.Data.Adaptive.cval(value.ReferencePeekHeld)
     let _CutawayActive_ = FSharp.Data.Adaptive.cval(value.CutawayActive)
-    let _CutawayMode_ = FSharp.Data.Adaptive.cval(value.CutawayMode)
     let _ClipAboveIso_ = FSharp.Data.Adaptive.cval(value.ClipAboveIso)
     let _RulerActive_ = FSharp.Data.Adaptive.cval(value.RulerActive)
     let _MeshTransforms_ = FSharp.Data.Adaptive.cval(value.MeshTransforms)
@@ -119,7 +118,6 @@ type AdaptiveModel(value : Model) =
             _ClipPlanes_.Value <- value.ClipPlanes
             _ReferencePeekHeld_.Value <- value.ReferencePeekHeld
             _CutawayActive_.Value <- value.CutawayActive
-            _CutawayMode_.Value <- value.CutawayMode
             _ClipAboveIso_.Value <- value.ClipAboveIso
             _RulerActive_.Value <- value.RulerActive
             _MeshTransforms_.Value <- value.MeshTransforms
@@ -190,7 +188,6 @@ type AdaptiveModel(value : Model) =
     member __.ClipPlanes = _ClipPlanes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<ClipPlane>>
     member __.ReferencePeekHeld = _ReferencePeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CutawayActive = _CutawayActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.CutawayMode = _CutawayMode_ :> FSharp.Data.Adaptive.aval<ClipMode>
     member __.ClipAboveIso = _ClipAboveIso_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.RulerActive = _RulerActive_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshTransforms = _MeshTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>

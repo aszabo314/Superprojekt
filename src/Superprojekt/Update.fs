@@ -298,8 +298,6 @@ module Update =
             { model with ClipPlanes = planes }
         | ToggleCutaway ->
             { model with CutawayActive = not model.CutawayActive }
-        | SetCutawayMode m ->
-            { model with CutawayMode = m }
         | ToggleClipAboveIso ->
             { model with ClipAboveIso = not model.ClipAboveIso }
         | LockIsoPlane d ->
@@ -317,8 +315,7 @@ module Update =
                     | ProbeReady r -> r.Normal, r.RefOffset
                     | _ -> ScanPin.axis pin, 0.0
                 let origin = pin.Centre + axis * (d + refOffset)
-                let plane = { Origin = origin; Normal = axis; Axis = V3d.Zero
-                              Mode = ClipSectionCap; CameraRelative = false }
+                let plane = { Origin = origin; Normal = axis }
                 // Alt-click the same spot releases; a new spot relocks.
                 let same =
                     match List.tryHead model.ClipPlanes with
@@ -1321,11 +1318,10 @@ module Update =
                 model
             | None -> model
 
-    // Cutaway / rulers / locked iso-plane are scoped to the pin under
-    // inspection: when the effective (selected/adjusting) pin changes — incl.
-    // a full deselect — they reset, so the section can't "follow" the next
-    // selection or stay stuck with no pin (the toggles themselves don't move
-    // the effective pin, so they keep working).
+    // Rulers / locked iso-plane are scoped to the pin under inspection: when
+    // the effective (selected/adjusting) pin changes — incl. a full deselect —
+    // they reset. The cutaway is global (gear toggle) and just re-derives its
+    // box from the new effective pin, so it is deliberately not reset here.
     let private effectivePinId (m : Model) =
         match m.ScanPins.Placement with
         | AdjustingPin id -> Some id
@@ -1335,9 +1331,7 @@ module Update =
         if effectivePinId before = effectivePinId after then after
         else
             let after =
-                if after.CutawayActive || after.RulerActive then
-                    { after with CutawayActive = false; RulerActive = false }
-                else after
+                if after.RulerActive then { after with RulerActive = false } else after
             if List.isEmpty after.ClipPlanes then after else { after with ClipPlanes = [] }
 
     // A2 postlude: when the surface colour-map is on and a column is soloed,

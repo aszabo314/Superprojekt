@@ -118,31 +118,17 @@ type LassoVolume =
         CommitVpSize  : V2i
     }
 
-// 3D sectioning / cutaway. One clip-plane subsystem; the four spec modes
-// (reference peek / anchor cutaway / iso-plane / focus box) are
-// parameterizations of this. Origin/Normal/Axis are metric world-space and
-// converted to render space at the pipeline boundary (like pins/cursor).
-//   Half-space rule (shared): a mesh fragment is hidden/ghosted where
+// 3D sectioning / cutaway. One clip-plane subsystem; the cutaway and the
+// iso-plane (live + locked) are parameterizations of this. Origin/Normal are
+// metric world-space and converted to render space at the pipeline boundary
+// (like pins/cursor).
+//   Half-space rule (shared): a mesh fragment is discarded where
 //   dot(p − origin, normal) > 0 — the producer points Normal at the half to
 //   remove (toward the camera for the cutaway, up for iso clip-above).
-//   CameraRelative recomputes Normal per frame: the plane contains Axis and
-//   its normal = component of (toward-camera) orthogonal to Axis (Axis = 0 →
-//   face the camera directly).
-type ClipMode =
-    | ClipHide          // discard the removed half
-    | ClipGhost         // drop the removed half to context/ghost alpha
-    | ClipSectionCap    // discard (optional flat cap not rendered yet)
-
 type ClipPlane = {
-    Origin         : V3d
-    Normal         : V3d
-    Axis           : V3d
-    Mode           : ClipMode
-    CameraRelative : bool
+    Origin : V3d
+    Normal : V3d
 }
-
-module ClipMode =
-    let toInt = function ClipHide -> 0 | ClipGhost -> 1 | ClipSectionCap -> 2
 
 module Provenance =
     let defaultDatasetError (sensor : SensorType) =
@@ -244,11 +230,10 @@ type Model =
 
         // 3D sectioning (0..2 active planes) + spring-loaded reference peek.
         // ClipPlanes holds manually-locked planes (iso-plane lock); the
-        // anchor cutaway is derived live from the selected pin + camera.
+        // cutaway is derived live from the selected pin's correspondence box.
         ClipPlanes        : ClipPlane list
         ReferencePeekHeld : bool
         CutawayActive     : bool
-        CutawayMode       : ClipMode
         // While hovering the violin, also clip the meshes above the live
         // iso-plane (lets the user see into the section). Alt-click locks it.
         ClipAboveIso      : bool
@@ -387,8 +372,7 @@ module Model =
             LassoEnabled = true
             ClipPlanes        = []
             ReferencePeekHeld = false
-            CutawayActive     = false
-            CutawayMode       = ClipGhost
+            CutawayActive     = true
             ClipAboveIso      = false
             RulerActive       = false
             MeshTransforms        = Map.empty

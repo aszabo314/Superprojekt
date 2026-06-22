@@ -21,7 +21,6 @@ type Message =
     | SetReferencePeek of bool
     | SetClipPlanes of ClipPlane list
     | ToggleCutaway
-    | SetCutawayMode of ClipMode
     | ToggleClipAboveIso
     // Lock the chart-driven iso-plane at a signed distance into ClipPlanes.
     | LockIsoPlane of float

@@ -117,12 +117,13 @@ module View =
                             else None)
                     | _ -> None)
 
-        // Anchor cutaway (Mode B): a live camera-relative section plane for the
-        // selected pin. The plane contains the pin axis (probe normal) and its
-        // normal is recomputed per frame (clipUniforms below) as the camera
-        // orbits; origin = the anchor nearest the camera so the anchors + the
-        // surface behind them stay revealed. The review auto-cutaway still uses
-        // a PCA over all candidate points (no single pin axis there).
+        // Cutaway: the selected pin's correspondence markers define a z-aligned
+        // bounding box (x,y extent, tiny enlarge). The cut plane is whichever of
+        // the box's four upright faces the camera looks at most head-on; removing
+        // everything camera-ward of that face reveals the marker cross-section.
+        // As the camera orbits past the 45° diagonal the active face — and the
+        // side that is cut — switches. Global toggle (gear popover), on by
+        // default; the plane re-derives live as the camera moves.
         let cutawayPlane =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
@@ -154,42 +155,35 @@ module View =
                                                 (wb.Inverse * wa).Forward.TransformPos a.Point
                                             | None -> a.Point)
                                     |> Array.ofSeq
-                                // Direction is anchored to the pin axis (probe
-                                // normal), not a PCA of the anchors — the PCA is
-                                // ill-conditioned when the anchors cluster, which
-                                // made the cut wobble. Origin = the point nearest
-                                // the camera (anchors if any, else the centre) so
-                                // it lands on the far/revealed side of the cut.
-                                let originPts = if Array.isEmpty pts then [| pin.Centre |] else pts
-                                let axis = ScanPin.axis pin
-                                let camLocRender = (model.Camera.view.GetValue t).Location
+                                let pts = if Array.isEmpty pts then [| pin.Centre |] else pts
+                                let tol = 0.5
+                                let xmin = (pts |> Array.map (fun p -> p.X) |> Array.min) - tol
+                                let xmax = (pts |> Array.map (fun p -> p.X) |> Array.max) + tol
+                                let ymin = (pts |> Array.map (fun p -> p.Y) |> Array.min) - tol
+                                let ymax = (pts |> Array.map (fun p -> p.Y) |> Array.max) + tol
+                                let cx = (xmin + xmax) * 0.5
+                                let cy = (ymin + ymax) * 0.5
                                 let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
-                                let camWorld = ScanPin.worldCentre cc s camLocRender
-                                let origin = originPts |> Array.minBy (fun p -> (p - camWorld).LengthSquared)
-                                // F12: push the cut plane camera-ward of the nearest
-                                // marker by the pin radius so the markers and their
-                                // immediate surface are never clipped (the plane
-                                // slides around the protected region). Offset along the
-                                // same camera-facing, axis-perpendicular normal the
-                                // shader recomputes per frame.
-                                let fwd = (model.Camera.view.GetValue t).Forward
-                                let nAxis = if axis.Length > 1e-9 then axis.Normalized else V3d.OOI
-                                let toCam = -fwd
-                                let nPerp =
-                                    let m = toCam - nAxis * Vec.dot toCam nAxis
-                                    if m.Length > 1e-9 then m.Normalized
-                                    elif toCam.Length > 1e-9 then toCam.Normalized
-                                    else V3d.OOI
-                                let protectedOrigin = origin + nPerp * pin.InnerRadius
-                                Some { Origin = protectedOrigin; Normal = axis; Axis = axis
-                                       Mode = model.CutawayMode.GetValue t; CameraRelative = true }
+                                let camWorld =
+                                    ScanPin.worldCentre cc s (model.Camera.view.GetValue t).Location
+                                let toCam = V3d(camWorld.X - cx, camWorld.Y - cy, 0.0)
+                                // The four upright faces (outward normal, a point on
+                                // the face). Removing dot(p − origin, normal) > 0
+                                // discards everything beyond the chosen face — the
+                                // camera-side terrain in front of the markers.
+                                let faces =
+                                    [ V3d( 1.0, 0.0, 0.0), V3d(xmax, cy, 0.0)
+                                      V3d(-1.0, 0.0, 0.0), V3d(xmin, cy, 0.0)
+                                      V3d( 0.0, 1.0, 0.0), V3d(cx, ymax, 0.0)
+                                      V3d( 0.0,-1.0, 0.0), V3d(cx, ymin, 0.0) ]
+                                let normal, origin = faces |> List.maxBy (fun (n, _) -> Vec.dot n toCam)
+                                Some { Origin = origin; Normal = normal }
                             | _ -> None
                         | None -> None)
 
-        // Mode C live "clip above" the chart-driven iso-plane (transient,
-        // follows the hover) — only when the ClipAboveIso toggle is on and no
-        // lock is present. SectionCap with normal = +probe axis removes the
-        // half above the plane.
+        // Live "clip above" the chart-driven iso-plane (transient, follows the
+        // hover) — only when the ClipAboveIso toggle is on and no lock is
+        // present. Normal = +probe axis removes the half above the plane.
         let liveIsoPlane =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
@@ -206,22 +200,19 @@ module View =
                             match ScanPin.effectiveProbe pv pin with
                             | ProbeReady r ->
                                 Some { Origin = pin.Centre + r.Normal * (cur.Distance + r.RefOffset)
-                                       Normal = r.Normal; Axis = V3d.Zero
-                                       Mode = ClipSectionCap; CameraRelative = false }
+                                       Normal = r.Normal }
                             | _ -> None
                         | None -> None
                     | _ -> None)
 
         // Resolved render-space clip-plane equations for the mesh shader.
-        // Effective set = the live anchor cutaway (front) then any manually
-        // locked planes (iso-plane lock), capped at 2 (focus box = both).
-        // CameraRelative planes recompute their normal each frame from the
-        // camera forward (the plane contains Axis and faces the camera);
-        // static planes use the stored metric normal. Origin metric → render.
+        // Effective set = the live cutaway (front) then any manually locked
+        // plane (iso-plane lock) or the live iso-plane, capped at 2. The stored
+        // metric normal is used directly (world axis dirs = render axis dirs
+        // under the uniform, axis-aligned scale); Origin is metric → render.
         let clipUniforms =
             let datasetScaleA =
                 (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-            let camForward = model.Camera.view |> AVal.map (fun cv -> cv.Forward)
             AVal.custom (fun t ->
                 let cut = cutawayPlane.GetValue t |> Option.toList
                 let locked = model.ClipPlanes.GetValue t
@@ -229,25 +220,14 @@ module View =
                 let planes = cut @ locked @ iso
                 let cc = model.CommonCentroid.GetValue t
                 let s = datasetScaleA.GetValue t
-                let fwd = camForward.GetValue t
                 let resolve (cp : ClipPlane) =
-                    let n =
-                        if cp.CameraRelative then
-                            let toCam = -fwd
-                            if cp.Axis.Length > 1e-9 then
-                                let a = cp.Axis.Normalized
-                                let m = toCam - a * (Vec.dot toCam a)
-                                if m.Length > 1e-9 then m.Normalized else toCam.Normalized
-                            else toCam.Normalized
-                        elif cp.Normal.Length > 1e-9 then cp.Normal.Normalized
-                        else V3d.OOI
+                    let n = if cp.Normal.Length > 1e-9 then cp.Normal.Normalized else V3d.OOI
                     let ro = ScanPin.renderCentre cc s cp.Origin
-                    V4f(float32 n.X, float32 n.Y, float32 n.Z, float32 (-(Vec.dot n ro))),
-                    ClipMode.toInt cp.Mode
+                    V4f(float32 n.X, float32 n.Y, float32 n.Z, float32 (-(Vec.dot n ro)))
                 match planes |> List.truncate 2 |> List.map resolve with
-                | [] -> 0, V4f.Zero, V4f.Zero, 0, 0
-                | [ (p0, m0) ] -> 1, p0, V4f.Zero, m0, 0
-                | (p0, m0) :: (p1, m1) :: _ -> 2, p0, p1, m0, m1)
+                | [] -> 0, V4f.Zero, V4f.Zero
+                | [ p0 ] -> 1, p0, V4f.Zero
+                | p0 :: p1 :: _ -> 2, p0, p1)
 
         body {
             OnBoot [

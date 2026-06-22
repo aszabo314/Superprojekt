@@ -258,6 +258,14 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            // Cutaway: clip the terrain in front of the selected
+                            // registration pin's correspondence box (nearest upright
+                            // face), revealing the marker cross-section.
+                            compactToggle "Cutaway" model.CutawayActive (fun () ->
+                                env.Emit [ToggleCutaway])
+                        }
+                        div {
+                            Class "tb-gear-row"
                             inlineSlider "Shading strength" 0.0 1.0 0.01 (sprintf "%.2f") model.ShadingStrength (fun v ->
                                 env.Emit [SetShadingStrength v])
                         }

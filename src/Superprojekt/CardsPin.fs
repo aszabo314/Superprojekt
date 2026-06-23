@@ -89,6 +89,232 @@ module CardsPin =
         | true, v -> Some v
         | _ -> None
 
+    // ── Correspondence detail view (orthographic, SVG) ────────────────────
+    // World geometry + per-marker symbolic patch → JSON; the SVG renderer (JS
+    // below) only projects / pans / zooms. Positions are emitted RELATIVE to the
+    // frame centroid (the look-at) so JSON stays compact + precise despite the
+    // huge UTM origin; directions (strike/down/north) are absolute unit vectors.
+    let private buildDetailJson
+            (pin : ScanPin) (c : Correspondence) (order : HashMap<string,int>)
+            (grids : Map<string, ElevGridState>) (trans : Map<string, Trafo3d>)
+            (pending : PendingRegistration option) (refMesh : string option)
+            (cc : V3d) (scales : Map<string, float>) : string =
+        let committedRender mesh = Map.tryFind mesh trans |> Option.defaultValue Trafo3d.Identity
+        let effRender mesh =
+            let cm = committedRender mesh
+            match PendingRegistration.delta mesh pending with
+            | Some d -> RegLog.effective cm d
+            | None -> cm
+        let toWorld mesh (r : Trafo3d) = RigidTransform.renderToWorld (DatasetScale.forMesh scales mesh) cc r
+        let committedWorld mesh = toWorld mesh (committedRender mesh)
+        let effWorld mesh = toWorld mesh (effRender mesh)
+        // own-frame point (committed pose) → current pose (committed ∘ pending)
+        let curWorld mesh (p : V3d) =
+            let own = (committedWorld mesh).Backward.TransformPos p
+            (effWorld mesh).Forward.TransformPos own
+        match c.RefAnchor, refMesh with
+        | Some ra, Some rm ->
+            let refWorld = curWorld rm ra
+            let entries =
+                let movers =
+                    c.Anchors |> Map.toList
+                    |> List.filter (fun (m, _) -> m <> rm)
+                    |> List.map (fun (m, a) -> m, curWorld m a.Point, false)
+                (rm, refWorld, true) :: movers
+            let worlds = entries |> List.map (fun (_, w, _) -> w) |> Array.ofList
+            let centroid = (worlds |> Array.fold (+) V3d.Zero) / float (max 1 worlds.Length)
+            let az = DetailViewMath.sideAzimuth worlds
+            let north = V3d.OIO
+            let inv = System.Globalization.CultureInfo.InvariantCulture
+            let g (v : float) = if System.Double.IsNaN v || System.Double.IsInfinity v then "0" else v.ToString("0.######", inv)
+            let rel (v : V3d) = let r = v - centroid in sprintf "%s,%s,%s" (g r.X) (g r.Y) (g r.Z)
+            let dir (v : V3d) = sprintf "%s,%s,%s" (g v.X) (g v.Y) (g v.Z)
+            let sb = System.Text.StringBuilder()
+            sb.Append(sprintf "{\"status\":\"ready\",\"az\":%s,\"north\":[%s],\"markers\":[" (g az) (dir north)) |> ignore
+            entries |> List.iteri (fun i (mesh, world, isRef) ->
+                if i > 0 then sb.Append(',') |> ignore
+                let euclid, vert, horiz, azv = DetailViewMath.markerMetrics refWorld world (Some north)
+                let colorHex = match Map.tryFind mesh pin.DatasetColors with Some col -> c4bToHex col | None -> "#1a56db"
+                sb.Append(sprintf "{\"key\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"ref\":%b,\"world\":[%s],\"euclid\":%s,\"vert\":%s,\"horiz\":%s,\"az\":%s"
+                            mesh (numbered order mesh) colorHex isRef (rel world)
+                            (g euclid) (g vert) (g horiz)
+                            (if System.Double.IsNaN azv then "null" else g (azv * 180.0 / System.Math.PI))) |> ignore
+                match Map.tryFind mesh grids with
+                | Some (GridReady grid) ->
+                    let patch = DetailViewMath.symbolicPatch grid (effWorld mesh)
+                    sb.Append(sprintf ",\"dip\":%s,\"strike\":[%s],\"down\":[%s],\"zmin\":%s,\"zmax\":%s,\"contours\":["
+                                (g (patch.DipRad * 180.0 / System.Math.PI)) (dir patch.StrikeDir) (dir patch.DownSlope)
+                                (g (patch.ZMin - centroid.Z)) (g (patch.ZMax - centroid.Z))) |> ignore
+                    patch.Contours |> Array.iteri (fun j s ->
+                        if j > 0 then sb.Append(',') |> ignore
+                        sb.Append(sprintf "[%s,%s]" (rel s.A) (rel s.B)) |> ignore)
+                    let polys (ps : V3d[][]) =
+                        ps |> Array.iteri (fun j poly ->
+                            if j > 0 then sb.Append(',') |> ignore
+                            sb.Append('[') |> ignore
+                            poly |> Array.iteri (fun k p -> (if k > 0 then sb.Append(',') |> ignore); sb.Append(rel p) |> ignore)
+                            sb.Append(']') |> ignore)
+                    sb.Append("],\"ridges\":[") |> ignore
+                    polys patch.Ridges
+                    sb.Append("],\"valleys\":[") |> ignore
+                    polys patch.Valleys
+                    sb.Append("]") |> ignore
+                | _ -> ()
+                sb.Append("}") |> ignore)
+            sb.Append("]}") |> ignore
+            sb.ToString()
+        | _ -> "{\"status\":\"noref\"}"
+
+    // SVG renderer: builds toolbar + ortho viewport + values table inside the
+    // host; camera (view / azimuth / pan / zoom) is JS-local on el.__dv so
+    // pan/zoom never touch the reducer. Row/glyph hover posts to .pc-detail-bus.
+    let private detailJs = [
+        "  function ph(t){ var p=document.createElement('div'); p.className='pin-card-empty'; p.textContent=t; el.appendChild(p); }"
+        "  if(!d || d.status !== 'ready'){ ph(d && d.status==='noref' ? 'Designate a ★ reference mesh to measure against.' : 'No correspondence markers yet.'); return; }"
+        "  var markers = d.markers || [];"
+        "  if(markers.length === 0){ ph('No correspondence markers yet.'); return; }"
+        "  function send(s){ var r=el.closest('.pc-detail'); var b=r?r.querySelector('.pc-detail-bus'):null; if(b){ b.value=s; b.dispatchEvent(new Event('input',{bubbles:true})); } }"
+        "  function cross(a,b){ return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]]; }"
+        "  function dot(a,b){ return a[0]*b[0]+a[1]*b[1]+a[2]*b[2]; }"
+        "  function norm(a){ var l=Math.hypot(a[0],a[1],a[2])||1; return [a[0]/l,a[1]/l,a[2]/l]; }"
+        "  function niceStep(raw){ if(!(raw>0)) return 1; var p=Math.floor(Math.log10(raw)), b=Math.pow(10,p), c=[1,2,5,10]; for(var i=0;i<4;i++){ if(c[i]*b>=raw-1e-12) return c[i]*b; } return 10*b; }"
+        "  function hx(c){ return [parseInt(c.substr(1,2),16),parseInt(c.substr(3,2),16),parseInt(c.substr(5,2),16)]; }"
+        "  function shadeCol(rgb,z,zmin,zmax,wt){ var t=(zmax>zmin)?(z-zmin)/(zmax-zmin):0.5; t=Math.max(0,Math.min(1,t)); var s=(0.55+0.7*t)*(wt||1); function cl(v){return Math.max(0,Math.min(255,Math.round(v*s)));} return 'rgb('+cl(rgb[0])+','+cl(rgb[1])+','+cl(rgb[2])+')'; }"
+        // camera state persists across re-renders; markers-changed clears userAdjusted
+        "  var sig = markers.map(function(m){ return m.key+':'+m.world.map(function(v){return v.toFixed(2);}).join(','); }).join('|');"
+        "  var st = el.__dv = el.__dv || {view:'side', az:d.az, el:0.0, panX:0, panY:0, zoom:2.0, userAdjusted:false, hover:null, sig:''};"
+        "  if(st.sig !== sig){ st.sig = sig; st.userAdjusted = false; st.az = d.az; }"
+        // DOM scaffold
+        "  var tb=document.createElement('div'); tb.className='pc-detail-tb';"
+        "  function refreshTB(){ var bs=tb.querySelectorAll('.pc-detail-vbtn'); ['side','top','free'].forEach(function(v,i){ if(bs[i]) bs[i].className='pc-detail-vbtn'+(st.view===v?' btn-active':''); }); }"
+        "  ['side','top','free'].forEach(function(v){ var bb=document.createElement('button'); bb.className='pc-detail-vbtn'+(st.view===v?' btn-active':''); bb.textContent=v.charAt(0).toUpperCase()+v.slice(1); bb.onclick=function(){ st.view=v; if(!st.userAdjusted) autofit(); refreshTB(); draw(); }; tb.appendChild(bb); });"
+        "  var rb=document.createElement('button'); rb.className='pc-detail-vbtn pc-detail-reset'; rb.textContent='Reset'; rb.onclick=function(){ st.userAdjusted=false; st.az=d.az; st.el=0; autofit(); refreshTB(); draw(); }; tb.appendChild(rb);"
+        "  el.appendChild(tb);"
+        "  var box=document.createElement('div'); box.className='pc-detail-box'; el.appendChild(box);"
+        "  var svg=document.createElementNS(ns,'svg'); svg.setAttribute('class','pc-detail-svg'); box.appendChild(svg);"
+        "  var tbl=document.createElement('div'); tbl.className='pc-detail-table'; el.appendChild(tbl);"
+        // camera math
+        "  var Wd=300, Hd=220, b=null, ppm=1;"
+        "  function basis(){ var up=[0,0,1];"
+        "    if(st.view==='top'){ var vd=[0,0,-1]; var r=norm(cross(vd,[0,1,0])); return {r:r,u:norm(cross(r,vd))}; }"
+        "    if(st.view==='free'){ var ce=Math.cos(st.el),se=Math.sin(st.el); var vd=[ce*Math.cos(st.az),ce*Math.sin(st.az),se]; var r=norm(cross(vd,up)); return {r:r,u:norm(cross(r,vd))}; }"
+        "    var vd=[Math.cos(st.az),Math.sin(st.az),0]; var r=norm(cross(vd,up)); return {r:r,u:norm(cross(r,vd))}; }"
+        "  function setupGeom(){ b=basis(); Wd=svg.clientWidth||300; Hd=svg.clientHeight||220; ppm=(Hd*0.5)/st.zoom; }"
+        "  function proj(P){ var sx=dot(P,b.r), sy=dot(P,b.u); return [Wd*0.5+(sx-st.panX)*ppm, Hd*0.5-(sy-st.panY)*ppm]; }"
+        "  function projDir(V){ return [dot(V,b.r), -dot(V,b.u)]; }"
+        "  function autofit(){ b=basis(); var W2=svg.clientWidth||300, H2=svg.clientHeight||220; var mnx=1e9,mxx=-1e9,mny=1e9,mxy=-1e9;"
+        "    function acc(P){ var sx=dot(P,b.r), sy=dot(P,b.u); if(sx<mnx)mnx=sx; if(sx>mxx)mxx=sx; if(sy<mny)mny=sy; if(sy>mxy)mxy=sy; }"
+        "    markers.forEach(function(m){ acc(m.world); (m.contours||[]).forEach(function(s){ acc([s[0],s[1],s[2]]); acc([s[3],s[4],s[5]]); }); });"
+        "    if(mxx<mnx){ mnx=-2;mxx=2;mny=-2;mxy=2; }"
+        "    st.panX=(mnx+mxx)/2; st.panY=(mny+mxy)/2; var hw=(mxx-mnx)/2||1, hh=(mxy-mny)/2||1, asp=W2/H2;"
+        "    var z=Math.max(hh, hw/asp)/0.8; st.zoom=Math.max(0.25,Math.min(50, z>0?z:2)); }"
+        // svg primitives
+        "  function mk(tag,a){ var e=document.createElementNS(ns,tag); for(var k in a){ e.setAttribute(k,a[k]); } return e; }"
+        "  function ln(x1,y1,x2,y2,col,w,extra){ var a={x1:x1,y1:y1,x2:x2,y2:y2,stroke:col,'stroke-width':w,'stroke-linecap':'round'}; if(extra) for(var k in extra) a[k]=extra[k]; svg.appendChild(mk('line',a)); }"
+        "  function txt(x,y,s,col,size,anchor){ var t0=mk('text',{x:x,y:y,'font-size':size,'text-anchor':anchor||'middle',fill:'none',stroke:'#fff','stroke-width':3,'stroke-linejoin':'round'}); t0.textContent=s; svg.appendChild(t0); var t=mk('text',{x:x,y:y,'font-size':size,'text-anchor':anchor||'middle',fill:col}); t.textContent=s; svg.appendChild(t); }"
+        "  function drawPoly(flat,rgb,zmin,zmax,w,wt){ for(var i=0;i+5<flat.length;i+=3){ var a=proj([flat[i],flat[i+1],flat[i+2]]); var bb=proj([flat[i+3],flat[i+4],flat[i+5]]); var zc=(flat[i+2]+flat[i+5])/2; ln(a[0],a[1],bb[0],bb[1], shadeCol(rgb,zc,zmin,zmax,wt), w); } }"
+        "  function draw(){ setupGeom(); while(svg.firstChild) svg.removeChild(svg.firstChild);"
+        "    var ref=markers.filter(function(m){return m.ref;})[0]; var rp=ref?proj(ref.world):[Wd/2,Hd/2];"
+        // symbolic lines (under glyphs)
+        "    markers.forEach(function(m){ var rgb=hx(m.color), zmin=m.zmin, zmax=m.zmax;"
+        "      (m.contours||[]).forEach(function(s){ var a=proj([s[0],s[1],s[2]]), bb=proj([s[3],s[4],s[5]]); var zc=(s[2]+s[5])/2; ln(a[0],a[1],bb[0],bb[1], shadeCol(rgb,zc,zmin,zmax,1), 1.25); });"
+        "      (m.valleys||[]).forEach(function(p){ drawPoly(p,rgb,zmin,zmax,2.0,0.85); });"
+        "      (m.ridges||[]).forEach(function(p){ drawPoly(p,rgb,zmin,zmax,2.0,1.15); }); });"
+        // measurement lines + labels (not in Free)
+        "    if(st.view!=='free'){ markers.forEach(function(m){ if(m.ref) return; var p=proj(m.world); ln(rp[0],rp[1],p[0],p[1],'rgba(15,23,42,0.45)',1,{'stroke-dasharray':'3,3'}); txt((rp[0]+p[0])/2,(rp[1]+p[1])/2-2, m.euclid.toFixed(3)+' m','#0f172a',10); }); }"
+        // glyphs + strike/dip
+        "    markers.forEach(function(m){ var p=proj(m.world); var hovd=(st.hover===m.key); var col=m.color;"
+        "      if(m.ref){ svg.appendChild(mk('circle',{cx:p[0],cy:p[1],r:6,fill:'none',stroke:col,'stroke-width':hovd?2.6:1.8})); ln(p[0]-7,p[1],p[0]+7,p[1],col,hovd?2:1.4); ln(p[0],p[1]-7,p[0],p[1]+7,col,hovd?2:1.4); }"
+        "      else { svg.appendChild(mk('circle',{cx:p[0],cy:p[1],r:hovd?6:4.5,fill:col,stroke:'#fff','stroke-width':1.6})); }"
+        "      if(m.strike){ var sd=projDir(m.strike); var sl=Math.hypot(sd[0],sd[1])||1; var ux=sd[0]/sl, uy=sd[1]/sl; ln(p[0]-ux*10,p[1]-uy*10,p[0]+ux*10,p[1]+uy*10,col,2); if(m.down){ var dd=projDir(m.down); var dl=Math.hypot(dd[0],dd[1]); if(dl>1e-6){ ln(p[0],p[1],p[0]+dd[0]/dl*7,p[1]+dd[1]/dl*7,col,2); if(m.dip!=null) txt(p[0]+dd[0]/dl*16,p[1]+dd[1]/dl*16, m.dip.toFixed(0)+'°', col, 9); } } } });"
+        // callouts (right-edge vertical fan, leader lines)
+        "    var mv=markers.filter(function(m){return !m.ref;}); var bw=110, bh=Math.min(32,(Hd-10)/Math.max(1,mv.length)-2), bx=Wd-bw-3;"
+        "    mv.forEach(function(m,i){ var by=5+i*(bh+3); var p=proj(m.world); ln(p[0],p[1],bx,by+bh/2,'rgba(100,116,139,0.6)',1);"
+        "      svg.appendChild(mk('rect',{x:bx,y:by,width:bw,height:bh,rx:3,fill:'rgba(255,255,255,0.93)',stroke:m.color,'stroke-width':(st.hover===m.key)?2:1}));"
+        "      var nm=m.name.split('  ')[0]; txt(bx+5,by+13, nm+'  Δ'+m.euclid.toFixed(3)+'m','#0f172a',10,'start');"
+        "      var dipS=(m.dip!=null)?('dip '+m.dip.toFixed(1)+'°'):''; var ext=(st.hover===m.key)?('Z'+(m.vert>=0?'+':'')+m.vert.toFixed(3)+' H'+m.horiz.toFixed(3)+(dipS?'  '+dipS:'')):dipS; if(ext) txt(bx+5,by+bh-5, ext,'#475569',9,'start'); });"
+        // rulers + scale bar (not Free)
+        "    if(st.view!=='free'){ var stepM=niceStep(64/ppm); var bp=stepM*ppm, x0=10, y0=Hd-9; ln(x0,y0,x0+bp,y0,'#0f172a',2); ln(x0,y0-3,x0,y0+3,'#0f172a',1); ln(x0+bp,y0-3,x0+bp,y0+3,'#0f172a',1); txt(x0+bp/2,y0-5,(stepM<1?stepM.toFixed(2):stepM.toFixed(0))+' m','#0f172a',9);"
+        "      if(st.view==='side' && ref){ var rx=22, stepE=niceStep(48/ppm), refY=proj(ref.world)[1]; ln(rx,8,rx,Hd-18,'#94a3b8',1); for(var kk=-8;kk<=8;kk++){ var val=kk*stepE, yy=refY-val*ppm; if(yy<8||yy>Hd-18) continue; ln(rx-3,yy,rx+3,yy,'#94a3b8',1); txt(rx+16,yy+3,(val>0?'+':'')+(stepE<1?val.toFixed(2):val.toFixed(0)),'#64748b',8,'start'); } } }"
+        // compass (Top)
+        "    if(st.view==='top' && d.north){ var nd=projDir(d.north); var nl=Math.hypot(nd[0],nd[1])||1; var cx=Wd-22, cy=22; svg.appendChild(mk('circle',{cx:cx,cy:cy,r:13,fill:'rgba(255,255,255,0.85)',stroke:'#cbd5e1','stroke-width':1})); var nx=nd[0]/nl*11, ny=nd[1]/nl*11; ln(cx,cy,cx+nx,cy+ny,'#b45309',2); txt(cx+nx*1.5,cy+ny*1.5+3,'N','#b45309',9); }"
+        "  }"
+        // table
+        "  function cell(parent,t,cls){ var s=document.createElement('span'); if(cls) s.className=cls; s.textContent=t; parent.appendChild(s); return s; }"
+        "  function buildTable(){ tbl.innerHTML='';"
+        "    var head=document.createElement('div'); head.className='pc-detail-trow pc-detail-thead'; ['Mesh','Euclid','Z','Horiz','Az','Dip'].forEach(function(h){ cell(head,h); }); tbl.appendChild(head);"
+        "    markers.forEach(function(m){ var row=document.createElement('div'); row.className='pc-detail-trow'+(m.ref?' pc-detail-ref':'');"
+        "      var ms=document.createElement('span'); ms.className='pc-detail-mesh'; var sw=document.createElement('i'); sw.style.background=m.color; ms.appendChild(sw); ms.appendChild(document.createTextNode(m.name+(m.ref?' ★':''))); row.appendChild(ms);"
+        "      cell(row, m.ref?'0':m.euclid.toFixed(3)); cell(row, m.ref?'0':((m.vert>=0?'+':'')+m.vert.toFixed(3))); cell(row, m.ref?'0':m.horiz.toFixed(3)); cell(row, (m.ref||m.az==null)?'—':(m.az.toFixed(1)+'°')); cell(row, (m.dip==null)?'—':(m.dip.toFixed(1)+'°'));"
+        "      row.addEventListener('mouseenter',function(){ st.hover=m.key; send('hov|'+m.key); draw(); }); row.addEventListener('mouseleave',function(){ st.hover=null; send('out'); draw(); }); tbl.appendChild(row); }); }"
+        // pan / zoom / rotate
+        "  var pan=null;"
+        "  svg.addEventListener('pointerdown',function(e){ if(e.button!==0) return; pan={x:e.clientX,y:e.clientY}; svg.setPointerCapture(e.pointerId); svg.style.cursor='grabbing'; });"
+        "  svg.addEventListener('pointermove',function(e){ if(!pan) return; var dx=e.clientX-pan.x, dy=e.clientY-pan.y; pan.x=e.clientX; pan.y=e.clientY; if(st.view==='free'){ st.az-=dx*0.01; st.el=Math.max(-1.4,Math.min(1.4,st.el+dy*0.01)); } else { setupGeom(); st.panX-=dx/ppm; st.panY+=dy/ppm; } st.userAdjusted=true; draw(); });"
+        "  function endPan(e){ pan=null; svg.style.cursor=''; if(e&&e.pointerId!=null){ try{svg.releasePointerCapture(e.pointerId);}catch(err){} } }"
+        "  svg.addEventListener('pointerup',endPan); svg.addEventListener('pointerleave',function(){ if(pan) endPan(); });"
+        "  svg.addEventListener('wheel',function(e){ e.preventDefault(); setupGeom(); st.zoom=Math.max(0.25,Math.min(50, st.zoom*Math.exp(e.deltaY*0.001))); st.userAdjusted=true; draw(); }, {passive:false});"
+        "  buildTable();"
+        "  if(!st.userAdjusted) autofit();"
+        "  draw();"
+        // redraw once after layout settles (clientWidth is 0 before first layout)
+        "  requestAnimationFrame(function(){ if(svg.clientWidth>0){ if(!st.userAdjusted) autofit(); draw(); } });"
+    ]
+
+    let private detailSection (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) =
+        let corr = selectedPin |> AVal.map (Option.bind ScanPin.correspondence)
+        let detailVisible =
+            corr |> AVal.map (function
+                | Some c when c.Enabled && (not (Map.isEmpty c.Anchors) || c.RefAnchor.IsSome) -> true
+                | _ -> false)
+        let detailJson =
+            AVal.custom (fun t ->
+                match selectedPin.GetValue t with
+                | Some pin ->
+                    match pin.Correspondence with
+                    | Some c when c.Enabled && (not (Map.isEmpty c.Anchors) || c.RefAnchor.IsSome) ->
+                        buildDetailJson pin c
+                            (model.MeshOrder.Content.GetValue t)
+                            (model.DetailGrids.GetValue t)
+                            (model.MeshTransforms.GetValue t)
+                            (model.PendingReg.GetValue t)
+                            ((model.Registration.GetValue t).ReferenceMesh)
+                            (model.CommonCentroid.GetValue t)
+                            (model.DatasetScales.GetValue t)
+                    | _ -> "{\"status\":\"none\"}"
+                | None -> "{\"status\":\"none\"}")
+        let onDetailEvent (v : string) =
+            let parts = v.Split('|')
+            match parts.[0] with
+            | "hov" when parts.Length >= 2 ->
+                match AVal.force selectedPin with
+                | Some pin -> env.Emit [SetCorrMarkerHover (Some (pin.Id, parts.[1])); SetChartHoverMesh (Some parts.[1])]
+                | None -> ()
+            | "out" -> env.Emit [SetCorrMarkerHover None; SetChartHoverMesh None]
+            | _ -> ()
+        div {
+            Class "pc-detail"
+            Primitives.showWhen detailVisible
+            div {
+                Class "pc-probe-head"
+                span {
+                    Class "pc-section-title"
+                    Attribute("title", "To-scale orthographic view of this correspondence's markers, with a symbolic surface (contours + ridge/valley lines) per mesh and labelled offsets to the reference marker.")
+                    "Correspondence detail"
+                }
+            }
+            input {
+                Class "pc-detail-bus"
+                Attribute("type", "text")
+                Dom.OnInput(fun e -> onDetailEvent e.Value)
+            }
+            div {
+                Class "pc-detail-host"
+                detailJson |> AVal.map (fun j -> Some (Attribute("data-detail", j)))
+                Primitives.observedRender "data-detail" "{}" detailJs
+            }
+        }
+
     let pinCardBody (env : Env<Message>) (model : AdaptiveModel) (selectedPin : aval<ScanPin option>) (hoverWorld : aval<V3d option>) (patchHover : cval<PatchHover option>) =
         let isPoint = AVal.constant true
         let showOnly = Primitives.showWhen
@@ -864,6 +1090,7 @@ module CardsPin =
                         }
                     }
                 }
+                detailSection env model selectedPin
             }
 
         }

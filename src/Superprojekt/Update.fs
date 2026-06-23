@@ -994,6 +994,13 @@ module Update =
             if model.WorkflowPinHover = h then model else { model with WorkflowPinHover = h }
         | SetCorrMarkerHover h ->
             if model.CorrMarkerHover = h then model else { model with CorrMarkerHover = h }
+
+        // Stale guard: only land grids if they still belong to the open pin.
+        | DetailGridsComputed(pinId, grids) ->
+            if model.DetailGridPin <> Some pinId then model
+            else
+                let g = grids |> Array.fold (fun acc (mesh, grid) -> Map.add mesh (GridReady grid) acc) model.DetailGrids
+                { model with DetailGrids = g }
         | ChartColumnClick mesh ->
             let sticky = if model.ChartStickyMesh = Some mesh then None else Some mesh
             // soloed mesh changed → the surface map (keyed by it) is stale.
@@ -1109,6 +1116,7 @@ module Update =
             |> ScanPinUpdate.ensureProbe env
             |> ScanPinUpdate.ensureProbePreview env
             |> ScanPinUpdate.ensureRings env
+            |> ScanPinUpdate.ensureDetailGrids env
             |> ensureSurfaceDistance env
             |> clearSectioningOnPinChange model
         StudyUpdate.postlude env model updated msg

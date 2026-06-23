@@ -33,6 +33,11 @@ type LsqPairsRequest = { MovingName: string; Pairs: LsqPairDto[] }
 [<CLIMutable>]
 type ContactRingsRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
 
+// Ray-down elevation grid in the mesh's own (untransformed) world frame, for the
+// correspondence-detail symbolic surface (contours / ridge-valley / dip).
+[<CLIMutable>]
+type RegionGridRequest = { Name: string; CenterX: float; CenterY: float; Size: float; N: int; TopZ: float }
+
 [<CLIMutable>]
 type ProbeMeshDto = { Name: string; Transform: float[] }
 
@@ -187,6 +192,23 @@ let patchHandler : HttpHandler =
             return! json {| points = pts; triangles = result.Triangles; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx
         with ex ->
             log.LogError(ex, "patch failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+let regionGridHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<RegionGridRequest>()
+            let lm = loadMesh req.Name 0
+            let n = if req.N < 2 then 2 elif req.N > 256 then 256 else req.N
+            let size = if req.Size <= 0.0 then 1.0 else req.Size
+            let z, hit = MeshAnalysis.regionGrid lm req.CenterX req.CenterY size n req.TopZ
+            let hits = hit |> Array.sumBy (fun b -> if b then 1 else 0)
+            log.LogInformation("region-grid {Name} {N}^2 size={Size:F2}: {Hit}/{Total} hits", req.Name, n, size, hits, n * n)
+            return! json {| n = n; size = size; centerX = req.CenterX; centerY = req.CenterY; z = z; hit = hit |} next ctx
+        with ex ->
+            log.LogError(ex, "region-grid failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 

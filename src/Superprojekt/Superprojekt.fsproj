@@ -23,6 +23,7 @@
     <Compile Include="CameraModel.g.fs" />
     <Compile Include="OrbitController.fs" />
     <Compile Include="RegistrationModel.fs" />
+    <Compile Include="DetailViewMath.fs" />
     <Compile Include="StudyModel.fs" />
     <Compile Include="StudyApi.fs" />
     <Compile Include="StudyTelemetry.fs" />

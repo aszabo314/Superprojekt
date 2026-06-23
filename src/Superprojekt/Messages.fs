@@ -102,6 +102,8 @@ type Message =
     | SetChartHoverMesh of string option
     | SetWorkflowPinHover of ScanPinId option
     | SetCorrMarkerHover of (ScanPinId * string) option
+    // Correspondence-detail elevation grids (own-frame) for the effective pin.
+    | DetailGridsComputed of pinId:ScanPinId * grids:(string * ElevGrid)[]
     | ChartColumnClick of meshName:string
     | ClearChartSticky
     | TogglePanorama

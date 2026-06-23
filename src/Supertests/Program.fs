@@ -703,6 +703,90 @@ let lastSolveTests () =
     check "rollback of unrelated step is a no-op"
         (LastSolve.afterRollback { step with Outputs = Map.ofList [ "ds/C", out ] } m = m)
 
+// ───────────────────── DetailViewMath: symbolic patch ─────────────────────
+
+let detailViewTests () =
+    // synthetic own-frame grid centred at origin; f maps (x,y)→elevation.
+    let makeGrid n size (f : float -> float -> float) (holes : (int -> int -> bool)) =
+        let half = size * 0.5
+        let step = size / float (n - 1)
+        let z = Array.zeroCreate<float> (n * n)
+        let hit = Array.zeroCreate<bool> (n * n)
+        for k in 0 .. n * n - 1 do
+            let i = k % n
+            let j = k / n
+            let x = -half + step * float i
+            let y = -half + step * float j
+            z.[k] <- f x y
+            hit.[k] <- not (holes i j)
+        { N = n; Size = size; OwnCenterX = 0.0; OwnCenterY = 0.0; Z = z; Hit = hit }
+    let noHoles _ _ = false
+
+    check "niceStep 0.3 → 0.5" (DetailViewMath.niceStep 0.3 = 0.5)
+    check "niceStep 1.0 → 1.0" (DetailViewMath.niceStep 1.0 = 1.0)
+    check "niceStep 1.1 → 2.0" (DetailViewMath.niceStep 1.1 = 2.0)
+    check "niceStep 7 → 10"    (DetailViewMath.niceStep 7.0 = 10.0)
+    check "niceStep 0.04 → 0.05" (DetailViewMath.niceStep 0.04 = 0.05)
+
+    let e1, v1, h1, a1 = DetailViewMath.markerMetrics V3d.Zero (V3d(0.0, 0.0, 1.0)) (Some V3d.OIO)
+    checkLe "metrics vertical: euclid" (abs (e1 - 1.0)) 1e-9
+    checkLe "metrics vertical: vert"   (abs (v1 - 1.0)) 1e-9
+    checkLe "metrics vertical: horiz"  (abs h1) 1e-9
+    check   "metrics vertical: az NaN (no horizontal)" (Double.IsNaN a1)
+    let e2, v2, h2, a2 = DetailViewMath.markerMetrics V3d.Zero (V3d(1.0, 0.0, 0.0)) (Some V3d.OIO)
+    checkLe "metrics east: horiz" (abs (h2 - 1.0)) 1e-9
+    checkLe "metrics east: vert"  (abs v2) 1e-9
+    checkLe "metrics east: bearing 90°" (abs (a2 - Math.PI * 0.5)) 1e-6
+    let _, _, _, a3 = DetailViewMath.markerMetrics V3d.Zero (V3d(0.0, 1.0, 0.0)) (Some V3d.OIO)
+    checkLe "metrics north: bearing 0°" (abs a3) 1e-6
+    let _, _, _, a4 = DetailViewMath.markerMetrics V3d.Zero (V3d(1.0, 0.0, 0.0)) None
+    check "metrics: no North → az NaN" (Double.IsNaN a4)
+
+    let s = tan (30.0 * Math.PI / 180.0)
+    let tilted = makeGrid 48 4.0 (fun x _ -> s * x) noHoles
+    let pT = DetailViewMath.symbolicPatch tilted Trafo3d.Identity
+    checkLe "tilted plane: dip 30°" (abs (pT.DipRad - 30.0 * Math.PI / 180.0)) 1e-3
+    check "tilted plane: contours present" (pT.Contours.Length > 0)
+    check "tilted plane: no spurious ridge/valley" (pT.Ridges.Length = 0 && pT.Valleys.Length = 0)
+    let byLevel = pT.Contours |> Array.groupBy (fun c -> Math.Round(c.Level, 4))
+    let parallel =
+        byLevel |> Array.forall (fun (_, segs) ->
+            let xs = segs |> Array.collect (fun c -> [| c.A.X; c.B.X |])
+            Array.max xs - Array.min xs < 0.05)
+    check "tilted plane: contours parallel (constant X per level)" parallel
+
+    let flat = makeGrid 48 4.0 (fun _ _ -> 100.0) noHoles
+    let pF = DetailViewMath.symbolicPatch flat Trafo3d.Identity
+    checkLe "flat plane: dip 0" (abs pF.DipRad) 1e-6
+    check "flat plane: no ridge/valley" (pF.Ridges.Length = 0 && pF.Valleys.Length = 0)
+
+    let roof = makeGrid 48 4.0 (fun x _ -> - (abs x)) noHoles
+    let pR = DetailViewMath.symbolicPatch roof Trafo3d.Identity
+    check "roof: ridge detected" (pR.Ridges.Length > 0)
+    check "roof: no valley" (pR.Valleys.Length = 0)
+    let vch = makeGrid 48 4.0 (fun x _ -> abs x) noHoles
+    let pV = DetailViewMath.symbolicPatch vch Trafo3d.Identity
+    check "channel: valley detected" (pV.Valleys.Length > 0)
+    check "channel: no ridge" (pV.Ridges.Length = 0)
+
+    let step = 4.0 / 47.0
+    let midI = int (round (2.0 / step))
+    let holed = makeGrid 48 4.0 (fun x _ -> s * x) (fun i _ -> i = midI)
+    let pH = DetailViewMath.symbolicPatch holed Trafo3d.Identity
+    let noBridge =
+        pH.Contours |> Array.forall (fun c ->
+            (c.A.X <= step && c.B.X <= step) || (c.A.X >= -step && c.B.X >= -step))
+    check "holes: no contour bridges the gap" noBridge
+    let allHoles = makeGrid 8 4.0 (fun _ _ -> 0.0) (fun _ _ -> true)
+    let pNull = DetailViewMath.symbolicPatch allHoles Trafo3d.Identity
+    check "all-holes grid: no contours, no crash" (pNull.Contours.Length = 0)
+
+    let az = DetailViewMath.sideAzimuth [| V3d(-2.0,0.0,0.0); V3d(2.0,0.0,0.0); V3d(0.0,0.0,3.0) |]
+    checkLe "sideAzimuth: eye ⟂ spread axis" (abs (cos az)) 0.1
+
+    let pTt = DetailViewMath.symbolicPatch tilted (Trafo3d.Translation(V3d(0.0,0.0,10.0)))
+    checkLe "tilted plane under +Z translation: dip unchanged" (abs (pTt.DipRad - pT.DipRad)) 1e-6
+
 [<EntryPoint>]
 let main _ =
     umeyamaTests ()
@@ -716,6 +800,7 @@ let main _ =
     readinessTests ()
     flyToTests ()
     lastSolveTests ()
+    detailViewTests ()
     printfn ""
     printfn "%d/%d passed%s" (total - failures) total (if failures = 0 then "" else sprintf " — %d FAILED" failures)
     failures

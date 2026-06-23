@@ -1,5 +1,5 @@
-//9199b5fd-11b3-5226-45ee-26581034eb0e
-//5636045f-dc67-1811-8068-d2d27f701da9
+//e305172c-50fa-f966-4e95-ae474ff4f000
+//74f51206-c1d6-ab51-ad2a-b140ade27bab
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -74,6 +74,8 @@ type AdaptiveModel(value : Model) =
     let _ChartStickyMesh_ = FSharp.Data.Adaptive.cval(value.ChartStickyMesh)
     let _WorkflowPinHover_ = FSharp.Data.Adaptive.cval(value.WorkflowPinHover)
     let _CorrMarkerHover_ = FSharp.Data.Adaptive.cval(value.CorrMarkerHover)
+    let _DetailGrids_ = FSharp.Data.Adaptive.cval(value.DetailGrids)
+    let _DetailGridPin_ = FSharp.Data.Adaptive.cval(value.DetailGridPin)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _LassoCardPos_ = FSharp.Data.Adaptive.cval(value.LassoCardPos)
@@ -151,6 +153,8 @@ type AdaptiveModel(value : Model) =
             _ChartStickyMesh_.Value <- value.ChartStickyMesh
             _WorkflowPinHover_.Value <- value.WorkflowPinHover
             _CorrMarkerHover_.Value <- value.CorrMarkerHover
+            _DetailGrids_.Value <- value.DetailGrids
+            _DetailGridPin_.Value <- value.DetailGridPin
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
             _LassoCardPos_.Value <- value.LassoCardPos
@@ -221,6 +225,8 @@ type AdaptiveModel(value : Model) =
     member __.ChartStickyMesh = _ChartStickyMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.WorkflowPinHover = _WorkflowPinHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
     member __.CorrMarkerHover = _CorrMarkerHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
+    member __.DetailGrids = _DetailGrids_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, ElevGridState>>
+    member __.DetailGridPin = _DetailGridPin_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.LassoCardPos = _LassoCardPos_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V2d>>

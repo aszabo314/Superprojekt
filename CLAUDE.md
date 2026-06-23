@@ -132,6 +132,7 @@ Query.fs                        ← server query wrappers (Async), rayHitMany fa
 CameraModel.fs / .g.fs          ← OrbitState [<ModelType>]
 OrbitController.fs              ← OrbitMessage DU + orbit camera
 RegistrationModel.fs            ← ScanPinId, correspondence anchors, RegStep/RegLog, PendingRegistration, LastSolveEntry, readiness engine (Readiness.compute), FlyToMath, NavAction, HeatmapMode, RegJson (WASM-free, shared with Supertests)
+DetailViewMath.fs               ← correspondence-detail view: ElevGrid/SymbolicPatch types + pure math (marching-squares contours, ridge/valley, niceStep, dip/strike plane fit, PCA side-azimuth, marker metrics) (WASM-free, shared with Supertests)
 StudyModel.fs                   ← study-mode shared types: config DTOs + parser, predicate engine, StudyRuntime/StudySession/StudyShell (WASM-free, compiled into server + Supertests too)
 StudyApi.fs                     ← /api/study/* HTTP wrappers + StudyBoot.entryToken
 StudyTelemetry.fs               ← telemetry batcher (module-level queue, 5 s/50-event flush, backoff, throttling)
@@ -194,6 +195,7 @@ POST /api/query/icp                             → ICP transform + convergence 
 POST /api/query/lsq-pairs                       → weighted rigid landmark solve (delta onto reference + per-pair residuals + conditioning; 400 on <3 pairs)
 POST /api/query/probe                           → N-mesh M3C2 probe (per-mesh distributions + KDE + three sources)
 POST /api/query/region-distance                 → per-vertex signed M3C2 distance of a target mesh to the reference (cloud-to-mesh closest point, signed by ref normal), in the target's served vertex order; 1e30 sentinel where no closest point. A2 surface map.
+POST /api/query/region-grid                      → n×n vertical ray-down elevation grid (z + hit flags) in the mesh's own (untransformed) world frame around a world-XY centre. Transform-independent, so the client maps it to the current pose. Correspondence-detail symbolic surface (contours / ridge-valley / dip).
 POST /api/study/session                         → { token } or { demo, studyId, condition } → session + configPublic (verbatim config.json)
 GET  /api/study/list                            → valid study ids (gear-popover demo picker)
 POST /api/study/{sid}/events|answers|transforms|workspace|advance, GET /api/study/{sid}/complete
@@ -219,6 +221,7 @@ Top-level `Model` fields (see `Model.fs`):
 - `PendingReg` (uncommitted solve preview — deltas + rms/convergence/collinearity; “preview active” ⇔ results non-empty), `RegistrationLog` (committed `RegStep` history, newest first), `AnchorPick` (one-shot 3D correspondence-marker pick), `PatchPicker` (small-multiples picker state), `Toast`
 - `MeshSensorTypes`, `MeshDatasetErrors`, `MeshAlgorithmResidual`, `HeatmapMode` (`HeatOff | HeatProvenance | HeatDiff`) + `HeatmapPrev` (Diff auto-revert), `ProvenanceThreshold`
 - `SurfaceDistOn`, `SurfaceDistance` (`Map<mesh, float32[]>` per-vertex signed distance for the soloed mesh), `SurfaceDistBrush` (`(float*float) option` — A2/A3 surface map + range brush)
+- `DetailGrids` (`Map<mesh, ElevGridState>` own-frame ray-down grids for the effective registration pin's marker meshes) + `DetailGridPin` (which pin they belong to) — correspondence detail view, session-only
 - `FusionMode`
 - `PanoramaOpen`, `Panoramas` (`Panorama list` = `{ Name; EyeWorld; Yaw }`, synthetic, regenerated on dataset load), `SelectedPanorama`, `PanoramaMode` (`PanoPhoto | PanoRender | PanoBlend`), `PanoramaBlend`
 - `ScanPins`, `CardSystem`, `HoverProbe` (transient Ctrl-click probe, one global slot — carries `Radius` so the transient 3D body can be drawn)
@@ -270,6 +273,14 @@ Two **stages**, both landing in `PendingReg` (an uncommitted preview), with an e
 
 The lasso never affects registration — it is purely visual. Workspace JSON v2 persists `corr` per pin + `regLog` (the `"acc"` field is dropped on write / ignored on read); `PendingReg` is never persisted; v1 workspaces load with empty defaults.
 
+### Correspondence detail view
+
+A pin-card section (`CardsPin.detailSection`) showing one registration pin's correspondence markers in a to-scale **orthographic SVG** viewport — symbolic surface (height-shaded contours + ridge/valley lines) per mesh, ring+cross reference glyph + disc moving glyphs, strike/dip, measurement lines, callouts, rulers/scale bar, Top-view +Y=North compass, and a values table (Euclid/Z/Horiz/Az/Dip). Visible iff the effective pin is a registration pin with ≥1 marker.
+
+- **SVG, not a second RenderControl** — same reason as the patch picker ([[patch-picker-html-canvas]]): a second live WebGL control is a perf ceiling here, and the content is fully 2D-projectable. Heavy math (marching-squares / dip / PCA / niceStep) is in the WASM-free, unit-tested `DetailViewMath`; the `observedRender` JS only projects + pans/zooms + builds SVG. Camera (Side/Top/Free view, azimuth, pan, zoom) is **JS-local** on `el.__dv` (like the patch picker's `el.__ppv`) so it never churns the reducer.
+- **Elevation grids** come from `POST /api/query/region-grid`, sampled in each marker mesh's **own frame** (transform-independent → survive previews/commits), cached in `Model.DetailGrids` by `ScanPinUpdate.ensureDetailGrids` (debounced postlude like `ensureRings`; auto-invalidates on own-frame centre move / pin change). The JS maps grid + markers to the current pose via the committed ∘ pending world transform, so the view follows a solve preview.
+- **Linking**: table-row / glyph hover → `.pc-detail-bus` → `SetCorrMarkerHover` (main-view marker brighten) + `SetChartHoverMesh` (violin column).
+
 ## User study mode
 
 `/s/{token}` (server falls back to index.html; `<base href="/">` keeps assets at root) enters **study mode**: chrome replaced by a study bar (progress dots, goal line, gated tool strip, Next gated on step completion), instruction overlays / anchored guided tooltips, and a right-docked task pane with the question widgets. `Model.Study : StudyShell option` — `None` = Full app, everything else is study pages or the running session. Demo preview from the gear popover (condition picker FULL/NUM + study picker); only demo sessions can exit.
@@ -282,7 +293,7 @@ The lasso never affects registration — it is purely visual. Workspace JSON v2 
 
 ## Tests
 
-`src/Supertests` (console runner, paket-managed, no extra packages) compiles `RegistrationModel.fs` + `StudyModel.fs` + `RegMath.fs` + `StudyConfig.fs` + `StudyStore.fs` directly and covers the Umeyama solver (recovery, reflections, weights, collinearity), the RegLog commit/rollback machine, the RegJson round-trips, the predicate engine, study reducer gating, config validation, balanced assignment / HMAC codes / TRE scoring / gold screening / advance ordering — `dotnet run --project src/Supertests`. Against a running server (`ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver`): `node tools/integration.mjs` (registration HTTP flow) and `node tools/study-integration.mjs` (full study walk: balance, route security, gold echo + screen-out, resume, completion codes).
+`src/Supertests` (console runner, paket-managed, no extra packages) compiles `RegistrationModel.fs` + `DetailViewMath.fs` + `StudyModel.fs` + `RegMath.fs` + `StudyConfig.fs` + `StudyStore.fs` directly and covers the Umeyama solver (recovery, reflections, weights, collinearity), the RegLog commit/rollback machine, the RegJson round-trips, the detail-view math (niceStep, marker metrics + North bearing, marching-squares contours / dip / ridge-valley on synthetic patches), the predicate engine, study reducer gating, config validation, balanced assignment / HMAC codes / TRE scoring / gold screening / advance ordering — `dotnet run --project src/Supertests`. Against a running server (`ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver`): `node tools/integration.mjs` (registration HTTP flow) and `node tools/study-integration.mjs` (full study walk: balance, route security, gold echo + screen-out, resume, completion codes).
 
 ## Notes
 

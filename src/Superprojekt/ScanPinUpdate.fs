@@ -319,6 +319,95 @@ module ScanPinUpdate =
                     { model with ScanPins = { sp with Pins = HashMap.add id { pin with ProbePreview = ProbeRunning } sp.Pins } }
             | _ -> model
 
+    // Correspondence-detail elevation grids. Postlude (like ensureRings) that
+    // keeps own-frame ray-down grids cached for the effective registration pin's
+    // markers (moving meshes + reference). Own-frame ⇒ transform-independent, so
+    // they survive previews/commits; a grid is re-fetched only when its marker's
+    // own-frame centre moves (centre mismatch) or the pin changes. One debounce.
+    let mutable private detailGridCts : System.Threading.CancellationTokenSource =
+        new System.Threading.CancellationTokenSource()
+
+    let ensureDetailGrids (env : Env<Message>) (model : Model) : Model =
+        let sp = model.ScanPins
+        // (mesh, ownCentre) the effective registration pin needs a grid for.
+        let needed =
+            match ScanPinModel.effectivePinId sp |> Option.bind (fun id -> HashMap.tryFind id sp.Pins) with
+            | Some pin ->
+                match pin.Correspondence with
+                | Some c when c.Enabled ->
+                    let ownOf mesh (worldPt : V3d) =
+                        (ModelTransforms.committedWorld model mesh).Backward.TransformPos worldPt
+                    let existing = model.MeshNames |> IndexList.toList |> Set.ofList
+                    let movers =
+                        c.Anchors |> Map.toList
+                        |> List.filter (fun (m, _) -> Set.contains m existing)
+                        |> List.map (fun (m, a) -> m, ownOf m a.Point)
+                    let refEntry =
+                        match c.RefAnchor, model.Registration.ReferenceMesh with
+                        | Some ra, Some refMesh -> [ refMesh, ownOf refMesh ra ]
+                        | _ -> []
+                    // ref mesh may coincide with a mover key — last wins (same centre).
+                    (movers @ refEntry) |> Map.ofList |> Map.toList
+                | _ -> []
+            | None -> []
+        let pinId = ScanPinModel.effectivePinId sp
+        let eps = 1e-6
+        let upToDate mesh (cx, cy) =
+            match Map.tryFind mesh model.DetailGrids with
+            | Some (GridReady g) -> abs (g.OwnCenterX - cx) < eps && abs (g.OwnCenterY - cy) < eps
+            | Some GridRunning -> true   // in flight; self-corrects if its centre is stale
+            | _ -> false
+        let neededMap = needed |> List.map (fun (m, oc) -> m, (oc.X, oc.Y)) |> Map.ofList
+        if List.isEmpty needed then
+            if Map.isEmpty model.DetailGrids && model.DetailGridPin.IsNone then model
+            else { model with DetailGrids = Map.empty; DetailGridPin = None }
+        else
+            // pin change → drop everything for the old pin
+            let baseGrids =
+                if model.DetailGridPin = pinId then model.DetailGrids
+                else Map.empty
+            // drop meshes no longer needed
+            let baseGrids = baseGrids |> Map.filter (fun m _ -> Map.containsKey m neededMap)
+            let toFetch =
+                needed |> List.filter (fun (m, oc) ->
+                    match Map.tryFind m baseGrids with
+                    | Some (GridReady g) -> not (abs (g.OwnCenterX - oc.X) < eps && abs (g.OwnCenterY - oc.Y) < eps)
+                    | Some GridRunning -> false
+                    | _ -> true)
+            if List.isEmpty toFetch && baseGrids = model.DetailGrids && model.DetailGridPin = pinId then model
+            else
+                let running = toFetch |> List.fold (fun acc (m, _) -> Map.add m GridRunning acc) baseGrids
+                match pinId with
+                | Some pid when not (List.isEmpty toFetch) ->
+                    detailGridCts.Cancel()
+                    detailGridCts <- new System.Threading.CancellationTokenSource()
+                    let token = detailGridCts.Token
+                    let size = DetailConsts.patchSize
+                    let n = DetailConsts.patchGridN
+                    let jobs = toFetch
+                    task {
+                        try
+                            do! System.Threading.Tasks.Task.Delay(250, token)
+                            let! results =
+                                jobs
+                                |> List.map (fun (mesh, oc) -> async {
+                                    try
+                                        let! z, hit =
+                                            Query.regionGrid ApiConfig.apiBase.Value mesh oc.X oc.Y size n (oc.Z + DetailConsts.topMargin)
+                                        return Some (mesh, { N = n; Size = size; OwnCenterX = oc.X; OwnCenterY = oc.Y; Z = z; Hit = hit })
+                                    with _ -> return None })
+                                |> Async.Parallel
+                                |> Async.StartAsTask
+                            if not token.IsCancellationRequested then
+                                let ready = results |> Array.choose (fun x -> x)
+                                if ready.Length > 0 then env.Emit [DetailGridsComputed(pid, ready)]
+                        with
+                        | :? System.OperationCanceledException -> ()
+                        | _ -> ()
+                    } |> ignore
+                | _ -> ()
+                { model with DetailGrids = running; DetailGridPin = pinId }
+
     // Lazy contact-ring trigger, postlude after every reducer step: every RingsNone pin gets
     // one debounced fan-out over ALL meshes (visibility only gates rendering, so toggling never
     // recomputes). Transforms are rigid: sphere intersected in each mesh's own frame

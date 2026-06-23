@@ -336,6 +336,38 @@ body.loaded { background: #f4f6f8; }
 .pc-patch-box { position: relative; }
 .pc-patch-canvas { position: absolute; left: 0; top: 0; touch-action: none; }
 
+/* ── Correspondence detail view (orthographic SVG) ─────────────────── */
+
+.pc-detail { margin-top: 6px; border-top: 1px solid #e2e8f0; padding-top: 4px; }
+.pc-detail-bus { display: none !important; }
+.pc-detail-tb { display: flex; gap: 3px; margin: 3px 0; }
+.pc-detail-vbtn {
+    font-size: 10px; padding: 2px 7px; border: 1px solid #cbd5e1;
+    background: #ffffff; color: #334155; border-radius: 3px; cursor: pointer;
+}
+.pc-detail-vbtn.btn-active { background: #1a56db; color: #ffffff; border-color: #1a56db; }
+.pc-detail-reset { margin-left: auto; }
+.pc-detail-box {
+    position: relative; width: 100%; height: 220px;
+    border: 1px solid #e2e8f0; border-radius: 4px; background: #f8fafc; overflow: hidden;
+}
+.pc-detail-svg { position: absolute; left: 0; top: 0; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.pc-detail-svg text { font-family: 'SF Mono', 'Monaco', monospace; pointer-events: none; }
+.pc-detail-table {
+    margin-top: 4px; font-size: 10px;
+    font-family: 'SF Mono', 'Monaco', monospace; font-variant-numeric: tabular-nums;
+}
+.pc-detail-trow { display: flex; align-items: center; gap: 4px; padding: 1px 3px; }
+.pc-detail-trow > span { flex: 1; text-align: right; }
+.pc-detail-trow > span.pc-detail-mesh {
+    flex: 2.2; text-align: left; display: flex; align-items: center; gap: 4px;
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.pc-detail-mesh i { width: 8px; height: 8px; flex-shrink: 0; display: inline-block; border-radius: 1px; }
+.pc-detail-thead { color: #64748b; border-bottom: 1px solid #e2e8f0; }
+.pc-detail-trow:not(.pc-detail-thead):hover { background: #eff6ff; cursor: default; }
+.pc-detail-ref { color: #b45309; }
+
 /* ── Registration panel: history + convergence sparkline (folded in from
    the old card; the rest of the panel uses the wfp-* styles below) ──── */
 

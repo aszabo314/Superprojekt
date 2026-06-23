@@ -291,6 +291,13 @@ type Model =
         WorkflowPinHover      : ScanPinId option
         CorrMarkerHover       : (ScanPinId * string) option
 
+        // Correspondence-detail view: per-marker-mesh ray-down elevation grids
+        // (own-frame, transform-independent) for the effective pin's symbolic
+        // surface. Scoped to DetailGridPin; cleared on pin change, re-fetched
+        // when a marker's own-frame centre moves. Session-only (not persisted).
+        DetailGrids           : Map<string, ElevGridState>
+        DetailGridPin         : ScanPinId option
+
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
         LassoCardPos        : V2d option
@@ -400,6 +407,8 @@ module Model =
             ChartStickyMesh       = None
             WorkflowPinHover      = None
             CorrMarkerHover       = None
+            DetailGrids           = Map.empty
+            DetailGridPin         = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             LassoCardPos        = None

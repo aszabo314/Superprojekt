@@ -14,9 +14,6 @@ module RenderPass =
 module MeshShader =
 
     [<Literal>]
-    let MaxLassoPlanes = 32
-
-    [<Literal>]
     let MaxBlobs = 32
 
     [<Literal>]
@@ -31,29 +28,11 @@ module MeshShader =
         member x.ShadingStrength : float32 = x?ShadingStrength
         // sin(threshold angle) for SlopeColor.
         member x.SlopeThreshold  : float32 = x?SlopeThreshold
-        // Outward half-space planes V4f(nx,ny,nz,d); inside iff dot(xyz,p)+w<=0
-        // for all. count = 0 → no restriction.
-        member x.LassoPlaneCount : int     = x?LassoPlaneCount
-        member x.LassoPlanes     : Arr<N<32>, V4f> = x?LassoPlanes
         // Pin blobs in render space: Blobs = (cx,cy,cz,innerR). AnchorGhost = 0
-        // disables the blob alpha filter but the array stays uploaded — the
-        // provenance conditioning (Gaussian σ = innerR) still loops over it.
+        // disables the blob alpha filter but the array stays uploaded.
         member x.BlobCount       : int     = x?BlobCount
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
         member x.AnchorGhost     : int     = x?AnchorGhost
-        // 0 = off, 1 = provenance sources, 2 = registration diff.
-        member x.HeatmapMode       : int     = x?HeatmapMode
-        member x.ProvThreshold     : float32 = x?ProvThreshold
-        member x.MeshDatasetError  : float32 = x?MeshDatasetError
-        member x.MeshAlgoResidual  : float32 = x?MeshAlgoResidual
-        // Registration diff (HeatmapMode = 2): signed combined-error change
-        // committed→preview. DiffInvDelta maps a preview-pose render position
-        // back to its committed-pose position; algo residuals come per mesh
-        // from the pending solve; DiffSigmaRef is the reference's dataset error.
-        member x.DiffAlgoBefore    : float32 = x?DiffAlgoBefore
-        member x.DiffAlgoAfter     : float32 = x?DiffAlgoAfter
-        member x.DiffInvDelta      : M44f    = x?DiffInvDelta
-        member x.DiffSigmaRef      : float32 = x?DiffSigmaRef
         // Contact-line highlight at the elevation-cursor plane (render space).
         // CursorActive is per-mesh (bbox-vs-plane gate); CursorClip restricts
         // the band to the probe cylinder (off when Alt-extended scene-wide).
@@ -83,12 +62,17 @@ module MeshShader =
         member x.DistBrushOn      : int     = x?DistBrushOn
         member x.DistBrushLo      : float32 = x?DistBrushLo
         member x.DistBrushHi      : float32 = x?DistBrushHi
+        // §6 intrinsic heatmap channel: 0 = off, 1 = incidence, 2 = range.
+        member x.HeatmapMode      : int     = x?HeatmapMode
+        member x.SensorOrigin     : V3f     = x?SensorOrigin
+        member x.RangeMax         : float32 = x?RangeMax
 
     type FragIn = {
         [<Color>]                              c  : V4f
         [<Semantic("Normals")>]                n  : V3f
         [<Semantic("WorldPosition")>]          wp : V4f
         [<Semantic("SurfaceDist")>]            sd : float32
+        [<Semantic("ShapeQ")>]                 shq : float32
         [<FragCoord>]                          fc : V4f
     }
 
@@ -111,16 +95,6 @@ module MeshShader =
                 let p = uniform.ClipPlane1
                 let sd = p.X * wp.X + p.Y * wp.Y + p.Z * wp.Z + p.W
                 if sd > 0.0f then discard()
-            let mutable lassoMask = 1.0f
-            let lc = uniform.LassoPlaneCount
-            if lc > 0 then
-                let mutable inside = true
-                for i in 0 .. MaxLassoPlanes - 1 do
-                    if i < lc then
-                        let pl = uniform.LassoPlanes.[i]
-                        let d = pl.X * wp.X + pl.Y * wp.Y + pl.Z * wp.Z + pl.W
-                        if d > 0.0f then inside <- false
-                lassoMask <- if inside then 1.0f else 0.0f
             let mutable inAnyBlob = false
             let bc = uniform.BlobCount
             if bc > 0 then
@@ -133,15 +107,12 @@ module MeshShader =
                         let dz = wp.Z - b.Z
                         let d  = sqrt (dx*dx + dy*dy + dz*dz)
                         if d <= inner then inAnyBlob <- true
-            let lassoActive  = lc > 0
             let blobsActive  = bc > 0 && uniform.AnchorGhost <> 0
-            let lassoComponent =
-                if lassoActive then lassoMask else 1.0f
             let blobComponent =
                 if blobsActive then
                     if inAnyBlob then 1.0f else 0.0f
                 else 1.0f
-            let maskFactor = lassoComponent * blobComponent
+            let maskFactor = blobComponent
             let ghost = uniform.GhostOpacity
             let mutable alpha = 0.0f
             if uniform.MeshActive then
@@ -151,9 +122,8 @@ module MeshShader =
             if alpha < 1e-4f then discard()
             // α-gated depth: clamp ghost/outside fragments below opaqueThreshold
             // so only fully-solid surface writes natural depth (below).
-            let lassoFull = (lc = 0) || lassoMask >= 1.0f
             let blobFull  = (not blobsActive) || inAnyBlob
-            let fullySolid = lassoFull && blobFull
+            let fullySolid = blobFull
             if uniform.MeshActive && not fullySolid then
                 alpha <- min alpha (opaqueThreshold - 0.01f)
             let n = v.n |> Vec.normalize
@@ -184,177 +154,6 @@ module MeshShader =
                 elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
-            if uniform.HeatmapMode = 1 && aboveGhost then
-                let mutable wSum = 0.0f
-                let mutable validCount = 0
-                for i in 0 .. MaxBlobs - 1 do
-                    if i < bc then
-                        let bi = uniform.Blobs.[i]
-                        let sigma = bi.W
-                        if sigma > 1e-6f then
-                            let dx = wp.X - bi.X
-                            let dy = wp.Y - bi.Y
-                            let dz = wp.Z - bi.Z
-                            let d2 = dx*dx + dy*dy + dz*dz
-                            let w = exp (-d2 / (2.0f * sigma * sigma))
-                            if w > 0.05f then
-                                wSum <- wSum + w
-                                validCount <- validCount + 1
-                let mutable maxCos = 0.0f
-                if validCount >= 2 then
-                    for i in 0 .. MaxBlobs - 1 do
-                        if i < bc then
-                            let bi = uniform.Blobs.[i]
-                            let sigmaI = bi.W
-                            if sigmaI > 1e-6f then
-                                let dxI = wp.X - bi.X
-                                let dyI = wp.Y - bi.Y
-                                let dzI = wp.Z - bi.Z
-                                let dI2 = dxI*dxI + dyI*dyI + dzI*dzI
-                                let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
-                                if wI > 0.05f then
-                                    let lenI = sqrt dI2
-                                    if lenI > 1e-9f then
-                                        let nix = (bi.X - wp.X) / lenI
-                                        let niy = (bi.Y - wp.Y) / lenI
-                                        let niz = (bi.Z - wp.Z) / lenI
-                                        for j in 0 .. MaxBlobs - 1 do
-                                            if j > i && j < bc then
-                                                let bj = uniform.Blobs.[j]
-                                                let sigmaJ = bj.W
-                                                if sigmaJ > 1e-6f then
-                                                    let dxJ = wp.X - bj.X
-                                                    let dyJ = wp.Y - bj.Y
-                                                    let dzJ = wp.Z - bj.Z
-                                                    let dJ2 = dxJ*dxJ + dyJ*dyJ + dzJ*dzJ
-                                                    let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
-                                                    if wJ > 0.05f then
-                                                        let lenJ = sqrt dJ2
-                                                        if lenJ > 1e-9f then
-                                                            let njx = (bj.X - wp.X) / lenJ
-                                                            let njy = (bj.Y - wp.Y) / lenJ
-                                                            let njz = (bj.Z - wp.Z) / lenJ
-                                                            let dotV = nix*njx + niy*njy + niz*njz
-                                                            let cAbs = abs dotV
-                                                            if cAbs > maxCos then maxCos <- cAbs
-                let mutable cond = 1e6f
-                if validCount >= 2 then
-                    let angDiv = 1.0f - maxCos
-                    let raw = 1.0f / (wSum * angDiv + 1e-3f)
-                    cond <- if raw > 1e6f then 1e6f else raw
-                let d = uniform.MeshDatasetError
-                let a = uniform.MeshAlgoResidual
-                let cScaled = cond * 0.01f
-                let total = max d (max a cScaled)
-                if total >= uniform.ProvThreshold then
-                    let datasetCol = V3f(0.376f, 0.647f, 0.980f) // #60a5fa
-                    let algoCol    = V3f(0.961f, 0.620f, 0.044f) // #f59e0b
-                    let condCol    = V3f(0.655f, 0.545f, 0.913f) // #a78bfa
-                    let domCol =
-                        if d >= a && d >= cScaled then datasetCol
-                        elif a >= cScaled then algoCol
-                        else condCol
-                    baseRgb <- domCol
-            // Registration diff (HeatmapMode = 2, only meaningful during a
-            // solve preview): signed combined-error change (preview − committed)
-            // per fragment. Dataset error cancels; algo residual + conditioning
-            // vary. Below the detection limit 1.96·√(σ_ref² + σ_M²) → context
-            // /ghost; the rest get a diverging blue (improved) / red (degraded).
-            if uniform.HeatmapMode = 2 && aboveGhost then
-                let wpc4 = uniform.DiffInvDelta * V4f(wp.X, wp.Y, wp.Z, 1.0f)
-                let wpcx = wpc4.X
-                let wpcy = wpc4.Y
-                let wpcz = wpc4.Z
-                // conditioning at the preview-pose position
-                let mutable wSumP = 0.0f
-                let mutable validP = 0
-                let mutable maxCosP = 0.0f
-                let mutable wSumC = 0.0f
-                let mutable validC = 0
-                let mutable maxCosC = 0.0f
-                for i in 0 .. MaxBlobs - 1 do
-                    if i < bc then
-                        let bi = uniform.Blobs.[i]
-                        let sigma = bi.W
-                        if sigma > 1e-6f then
-                            let dxP = wp.X - bi.X
-                            let dyP = wp.Y - bi.Y
-                            let dzP = wp.Z - bi.Z
-                            let d2P = dxP*dxP + dyP*dyP + dzP*dzP
-                            let wP = exp (-d2P / (2.0f * sigma * sigma))
-                            if wP > 0.05f then
-                                wSumP <- wSumP + wP
-                                validP <- validP + 1
-                            let dxC = wpcx - bi.X
-                            let dyC = wpcy - bi.Y
-                            let dzC = wpcz - bi.Z
-                            let d2C = dxC*dxC + dyC*dyC + dzC*dzC
-                            let wC = exp (-d2C / (2.0f * sigma * sigma))
-                            if wC > 0.05f then
-                                wSumC <- wSumC + wC
-                                validC <- validC + 1
-                for i in 0 .. MaxBlobs - 1 do
-                    if i < bc then
-                        let bi = uniform.Blobs.[i]
-                        let sigmaI = bi.W
-                        if sigmaI > 1e-6f then
-                            for j in 0 .. MaxBlobs - 1 do
-                                if j > i && j < bc then
-                                    let bj = uniform.Blobs.[j]
-                                    let sigmaJ = bj.W
-                                    if sigmaJ > 1e-6f then
-                                        if validP >= 2 then
-                                            let dI2 = (wp.X-bi.X)*(wp.X-bi.X) + (wp.Y-bi.Y)*(wp.Y-bi.Y) + (wp.Z-bi.Z)*(wp.Z-bi.Z)
-                                            let dJ2 = (wp.X-bj.X)*(wp.X-bj.X) + (wp.Y-bj.Y)*(wp.Y-bj.Y) + (wp.Z-bj.Z)*(wp.Z-bj.Z)
-                                            let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
-                                            let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
-                                            if wI > 0.05f && wJ > 0.05f then
-                                                let lI = sqrt dI2
-                                                let lJ = sqrt dJ2
-                                                if lI > 1e-9f && lJ > 1e-9f then
-                                                    let dotV =
-                                                        ((bi.X-wp.X)*(bj.X-wp.X) + (bi.Y-wp.Y)*(bj.Y-wp.Y) + (bi.Z-wp.Z)*(bj.Z-wp.Z)) / (lI * lJ)
-                                                    let cAbs = abs dotV
-                                                    if cAbs > maxCosP then maxCosP <- cAbs
-                                        if validC >= 2 then
-                                            let dI2 = (wpcx-bi.X)*(wpcx-bi.X) + (wpcy-bi.Y)*(wpcy-bi.Y) + (wpcz-bi.Z)*(wpcz-bi.Z)
-                                            let dJ2 = (wpcx-bj.X)*(wpcx-bj.X) + (wpcy-bj.Y)*(wpcy-bj.Y) + (wpcz-bj.Z)*(wpcz-bj.Z)
-                                            let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
-                                            let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
-                                            if wI > 0.05f && wJ > 0.05f then
-                                                let lI = sqrt dI2
-                                                let lJ = sqrt dJ2
-                                                if lI > 1e-9f && lJ > 1e-9f then
-                                                    let dotV =
-                                                        ((bi.X-wpcx)*(bj.X-wpcx) + (bi.Y-wpcy)*(bj.Y-wpcy) + (bi.Z-wpcz)*(bj.Z-wpcz)) / (lI * lJ)
-                                                    let cAbs = abs dotV
-                                                    if cAbs > maxCosC then maxCosC <- cAbs
-                let mutable condP = 1e6f
-                if validP >= 2 then
-                    let raw = 1.0f / (wSumP * (1.0f - maxCosP) + 1e-3f)
-                    condP <- if raw > 1e6f then 1e6f else raw
-                let mutable condC = 1e6f
-                if validC >= 2 then
-                    let raw = 1.0f / (wSumC * (1.0f - maxCosC) + 1e-3f)
-                    condC <- if raw > 1e6f then 1e6f else raw
-                let combinedP = uniform.DiffAlgoAfter  + 0.01f * (min (condP * 0.01f) 50.0f)
-                let combinedC = uniform.DiffAlgoBefore + 0.01f * (min (condC * 0.01f) 50.0f)
-                let dd = combinedP - combinedC
-                let lod =
-                    max 1e-6f
-                        (1.96f * sqrt (uniform.DiffSigmaRef * uniform.DiffSigmaRef
-                                       + uniform.MeshDatasetError * uniform.MeshDatasetError))
-                if abs dd < lod then
-                    baseRgb <- uniform.MeshColor.XYZ
-                    alpha <- min (max ghost 0.12f) 0.5f
-                else
-                    let tt = clamp -1.0f 1.0f (dd / (3.0f * lod))
-                    let blueCol2 = V3f(0.149f, 0.388f, 0.922f) // #2563eb improved
-                    let redCol2  = V3f(0.863f, 0.149f, 0.149f) // #dc2626 degraded
-                    let midCol2  = V3f(0.945f, 0.961f, 0.976f) // #f1f5f9 neutral
-                    baseRgb <-
-                        if tt >= 0.0f then midCol2 * (1.0f - tt) + redCol2 * tt
-                        else midCol2 * (1.0f + tt) + blueCol2 * (-tt)
             // A2: per-mesh signed-distance map (canonical M3C2). Diverging blue
             // (below ref) ↔ red (above ref) centred at 0; within ±DistLoD reads
             // neutral so "not significant" looks near-neutral in 3D too.
@@ -377,6 +176,41 @@ module MeshShader =
                         baseRgb <- V3f(0.82f, 0.85f, 0.88f)
                     else
                         baseRgb <- col
+            // §6 variance map (sequential): per-reference-vertex disagreement std
+            // (≥0) from light grey to strong red, normalised by DistScale.
+            if uniform.DistanceEncoding = 2 && aboveGhost then
+                let d = v.sd
+                if abs d < 1e20f then
+                    let scale = max 1e-6f uniform.DistScale
+                    let tt = clamp 0.0f 1.0f (d / scale)
+                    let loC = V3f(0.945f, 0.961f, 0.976f)
+                    let hiC = V3f(0.725f, 0.110f, 0.110f)
+                    baseRgb <- loC * (1.0f - tt) + hiC * tt
+            // §6 intrinsic incidence heatmap: false-colour the camera-incidence
+            // angle on above-ghost fragments (grazing = red, head-on = green).
+            if uniform.HeatmapMode = 1 && aboveGhost then
+                let incid = abs (Vec.dot n toCam)
+                let lo  = V3f(0.84f, 0.19f, 0.15f)
+                let mid = V3f(0.99f, 0.85f, 0.30f)
+                let hi  = V3f(0.18f, 0.55f, 0.34f)
+                baseRgb <-
+                    if incid < 0.5f then lo + (mid - lo) * (incid * 2.0f)
+                    else mid + (hi - mid) * ((incid - 0.5f) * 2.0f)
+            // §6 intrinsic range heatmap: distance from the mesh's own origin
+            // (= sensor) over its max range, near = blue → far = red.
+            if uniform.HeatmapMode = 2 && aboveGhost then
+                let rng = (wp - uniform.SensorOrigin).Length
+                let tr  = clamp 0.0f 1.0f (rng / max 1e-6f uniform.RangeMax)
+                let nearC = V3f(0.13f, 0.40f, 0.85f)
+                let farC  = V3f(0.86f, 0.20f, 0.15f)
+                baseRgb <- nearC * (1.0f - tr) + farC * tr
+            // §6 intrinsic shape heatmap: per-vertex triangle quality (4√3·A/Σl²,
+            // 1 = equilateral, →0 = thin/degenerate). Red = poor, green = good.
+            if uniform.HeatmapMode = 3 && aboveGhost then
+                let ts = clamp 0.0f 1.0f v.shq
+                let loC = V3f(0.86f, 0.20f, 0.15f)
+                let hiC = V3f(0.18f, 0.55f, 0.34f)
+                baseRgb <- loC * (1.0f - ts) + hiC * ts
             // Contact-line highlight at the slicing plane: darken the mesh,
             // brighten a smoothstep band within CursorHighlightWidth of the
             // plane (accent #0891b2), optionally clipped to the probe cylinder.
@@ -412,113 +246,93 @@ module MeshShader =
             }
         }
 
-// Writes combined provenance error as depth so the lowest-error mesh wins the
-// offscreen LessOrEqual test. Conditioning = same density × angular-diversity
-// heuristic as the heatmap.
+// §10 image-space outlines. G-buffer pass: write world normal + window depth to
+// target0 and the per-mesh palette colour + coverage mask to target1 (MRT).
 [<ReflectedDefinition>]
-module FusionShader =
+module OutlineGBuffer =
     open MeshShader
 
     type FragIn = {
-        [<Color>]                              c  : V4f
-        [<Semantic("Normals")>]                n  : V3f
-        [<Semantic("WorldPosition")>]          wp : V4f
-        [<FragCoord>]                          fc : V4f
-    }
-
-    type FragOut = {
-        [<Color>] color : V4f
-        [<Depth>] depth : float32
-    }
-
-    let shade (v : FragIn) =
-        fragment {
-            let wp = v.wp.XYZ
-            let bc = uniform.BlobCount
-            let mutable wSum = 0.0f
-            let mutable validCount = 0
-            for i in 0 .. MeshShader.MaxBlobs - 1 do
-                if i < bc then
-                    let bi = uniform.Blobs.[i]
-                    let sigma = bi.W
-                    if sigma > 1e-6f then
-                        let dx = wp.X - bi.X
-                        let dy = wp.Y - bi.Y
-                        let dz = wp.Z - bi.Z
-                        let d2 = dx*dx + dy*dy + dz*dz
-                        let w = exp (-d2 / (2.0f * sigma * sigma))
-                        if w > 0.05f then
-                            wSum <- wSum + w
-                            validCount <- validCount + 1
-            let mutable maxCos = 0.0f
-            if validCount >= 2 then
-                for i in 0 .. MeshShader.MaxBlobs - 1 do
-                    if i < bc then
-                        let bi = uniform.Blobs.[i]
-                        let sigmaI = bi.W
-                        if sigmaI > 1e-6f then
-                            let dxI = wp.X - bi.X
-                            let dyI = wp.Y - bi.Y
-                            let dzI = wp.Z - bi.Z
-                            let dI2 = dxI*dxI + dyI*dyI + dzI*dzI
-                            let wI = exp (-dI2 / (2.0f * sigmaI * sigmaI))
-                            if wI > 0.05f then
-                                let lenI = sqrt dI2
-                                if lenI > 1e-9f then
-                                    let nix = (bi.X - wp.X) / lenI
-                                    let niy = (bi.Y - wp.Y) / lenI
-                                    let niz = (bi.Z - wp.Z) / lenI
-                                    for j in 0 .. MeshShader.MaxBlobs - 1 do
-                                        if j > i && j < bc then
-                                            let bj = uniform.Blobs.[j]
-                                            let sigmaJ = bj.W
-                                            if sigmaJ > 1e-6f then
-                                                let dxJ = wp.X - bj.X
-                                                let dyJ = wp.Y - bj.Y
-                                                let dzJ = wp.Z - bj.Z
-                                                let dJ2 = dxJ*dxJ + dyJ*dyJ + dzJ*dzJ
-                                                let wJ = exp (-dJ2 / (2.0f * sigmaJ * sigmaJ))
-                                                if wJ > 0.05f then
-                                                    let lenJ = sqrt dJ2
-                                                    if lenJ > 1e-9f then
-                                                        let njx = (bj.X - wp.X) / lenJ
-                                                        let njy = (bj.Y - wp.Y) / lenJ
-                                                        let njz = (bj.Z - wp.Z) / lenJ
-                                                        let dotV = nix*njx + niy*njy + niz*njz
-                                                        let cAbs = abs dotV
-                                                        if cAbs > maxCos then maxCos <- cAbs
-            let mutable cond = 1e6f
-            if validCount >= 2 then
-                let angDiv = 1.0f - maxCos
-                let raw = 1.0f / (wSum * angDiv + 1e-3f)
-                cond <- if raw > 1e6f then 1e6f else raw
-            let d = uniform.MeshDatasetError
-            let a = uniform.MeshAlgoResidual
-            let cScaled = cond * 0.01f
-            let combined = d + a + 0.01f * (min cScaled 50.0f)
-            let depth = clamp 0.0001f 0.9999f (combined * 0.3f)
-            let nn = v.n |> Vec.normalize
-            let toCam = (uniform.CameraLocation - wp) |> Vec.normalize
-            let ndl = max 0.2f (abs (Vec.dot nn toCam))
-            let rgb = v.c.XYZ * ndl
-            return { color = V4f(rgb, 1.0f); depth = depth }
-        }
-
-// Plain textured surface + headlight, natural depth — panorama captures want
-// the meshes as-is (no lasso/blob/ghost filters).
-[<ReflectedDefinition>]
-module PanoramaShader =
-
-    type FragIn = {
-        [<Color>]                     c  : V4f
         [<Semantic("Normals")>]       n  : V3f
         [<Semantic("WorldPosition")>] wp : V4f
+        [<FragCoord>]                 fc : V4f
     }
-
+    type FragOut = {
+        [<Color>]                 g0 : V4f
+        [<Semantic("Outline1")>]  g1 : V4f
+    }
     let shade (v : FragIn) =
         fragment {
-            let nn = v.n |> Vec.normalize
-            let toCam = (uniform.CameraLocation - v.wp.XYZ) |> Vec.normalize
-            let ndl = max 0.25f (abs (Vec.dot nn toCam))
-            return V4f(v.c.XYZ * ndl, 1.0f)
+            let n = v.n |> Vec.normalize
+            let col = uniform.MeshColor
+            return {
+                g0 = V4f(n.X * 0.5f + 0.5f, n.Y * 0.5f + 0.5f, n.Z * 0.5f + 0.5f, v.fc.Z)
+                g1 = V4f(col.X, col.Y, col.Z, 1.0f)
+            }
+        }
+
+// Edge-detect fullscreen pass: sample the g-buffer at centre ±1 texel; an edge =
+// depth jump OR normal-angle jump OR coverage-mask boundary (the mask boundary
+// catches the silhouette AND the near-plane cut → no inverted hull). Output the
+// per-pixel palette colour where an edge is found, transparent elsewhere.
+[<ReflectedDefinition>]
+module OutlineEdge =
+
+    type UniformScope with
+        member x.OutlineTexel : V2f = x?OutlineTexel
+
+    let private gNormal =
+        sampler2d {
+            texture uniform?GNormal
+            filter Filter.MinMagPoint
+            addressU WrapMode.Clamp
+            addressV WrapMode.Clamp
+        }
+    let private gColor =
+        sampler2d {
+            texture uniform?GColor
+            filter Filter.MinMagPoint
+            addressU WrapMode.Clamp
+            addressV WrapMode.Clamp
+        }
+
+    type Vtx = {
+        [<Position>]            pos : V4f
+        [<Semantic("OTc")>]     tc  : V2f
+    }
+
+    let vertex (v : Vtx) =
+        vertex {
+            return { v with tc = V2f(v.pos.X * 0.5f + 0.5f, v.pos.Y * 0.5f + 0.5f) }
+        }
+
+    let fragment (v : Vtx) =
+        fragment {
+            let ts = uniform.OutlineTexel
+            let c  = gNormal.Sample(v.tc)
+            let l  = gNormal.Sample(v.tc + V2f(-ts.X, 0.0f))
+            let r  = gNormal.Sample(v.tc + V2f( ts.X, 0.0f))
+            let u  = gNormal.Sample(v.tc + V2f(0.0f,  ts.Y))
+            let d  = gNormal.Sample(v.tc + V2f(0.0f, -ts.Y))
+            let m0 = gColor.Sample(v.tc).W
+            let ml = gColor.Sample(v.tc + V2f(-ts.X, 0.0f)).W
+            let mr = gColor.Sample(v.tc + V2f( ts.X, 0.0f)).W
+            let mu = gColor.Sample(v.tc + V2f(0.0f,  ts.Y)).W
+            let md = gColor.Sample(v.tc + V2f(0.0f, -ts.Y)).W
+            // depth edge (window depth in .W)
+            let dEdge =
+                max (max (abs (c.W - l.W)) (abs (c.W - r.W)))
+                    (max (abs (c.W - u.W)) (abs (c.W - d.W)))
+            // normal edge (decode *2-1)
+            let nC = V3f(c.X, c.Y, c.Z) * 2.0f - V3f.III
+            let nDiff (s : V4f) = 1.0f - Vec.dot nC (V3f(s.X, s.Y, s.Z) * 2.0f - V3f.III)
+            let nEdge = max (max (nDiff l) (nDiff r)) (max (nDiff u) (nDiff d))
+            // coverage-mask boundary (object silhouette + near-plane cut)
+            let mEdge = if m0 > 0.5f then 1.0f - min (min ml mr) (min mu md) else 0.0f
+            let isEdge = dEdge > 0.0015f || nEdge > 0.30f || mEdge > 0.5f
+            if isEdge && (m0 > 0.5f || mEdge > 0.5f) then
+                let col = gColor.Sample(v.tc)
+                return V4f(col.X, col.Y, col.Z, 1.0f)
+            else
+                return V4f(0.0f, 0.0f, 0.0f, 0.0f)
         }

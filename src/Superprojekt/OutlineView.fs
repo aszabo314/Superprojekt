@@ -7,47 +7,23 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open FShade
 
-// Fullscreen-quad composite: samples the offscreen fusion colour texture into
-// the main framebuffer. Quad is in NDC, so the vertex stage is pass-through.
-[<ReflectedDefinition>]
-module FusionComposite =
-    open FShade
+// §10 per-mesh image-space outlines. Offscreen G-buffer pass (world normal +
+// depth → target0, palette colour + mask → target1) then a fullscreen
+// edge-detect composite that paints each mesh's outline in its palette colour,
+// including the near-plane cut (mask boundary). Gated on OutlineMode — when off
+// the composite is inactive and the offscreen task never runs (lazy), so it can
+// never regress the main forward pass. Replaces the opacity-ghost as the body
+// identity cue when enabled. The at-most-two-WebGL-controls rule is unaffected:
+// this is an extra offscreen render target on the main control, not a 3rd one.
+module OutlineView =
 
-    let private fusionColor =
-        sampler2d {
-            texture uniform?FusionColor
-            filter Filter.MinMagLinear
-            addressU WrapMode.Clamp
-            addressV WrapMode.Clamp
-        }
-
-    type Vtx = {
-        [<Position>]               pos : V4f
-        [<Semantic("FusionTc")>]   tc  : V2f
-    }
-
-    let vertex (v : Vtx) =
-        vertex {
-            // pos is already clip-space NDC; derive [0,1] tex coords from it.
-            return { v with tc = V2f(v.pos.X * 0.5f + 0.5f, v.pos.Y * 0.5f + 0.5f) }
-        }
-
-    let fragment (v : Vtx) =
-        fragment {
-            return fusionColor.Sample(v.tc)
-        }
-
-module FusionView =
-
-    // Fullscreen quad in NDC (z = 0). Composite uses DepthTest.None so z is moot.
     let private quadPos =
         [| V3f(-1.0f, -1.0f, 0.0f); V3f(1.0f, -1.0f, 0.0f)
            V3f( 1.0f,  1.0f, 0.0f); V3f(-1.0f, 1.0f, 0.0f) |]
     let private quadIdx = [| 0; 1; 2; 0; 2; 3 |]
 
-    // Offscreen fusion pass + the composite node that draws its colour output
-    // into the main framebuffer. Lazy: the offscreen task only runs when the
-    // composite is Active (FusionMode on) and its colour uniform is pulled.
+    let private outline1 = Sym.ofString "Outline1"
+
     let build
         (info : Aardvark.Dom.RenderControlInfo)
         (model : AdaptiveModel)
@@ -60,9 +36,12 @@ module FusionView =
         let signature =
             runtime.CreateFramebufferSignature([
                 DefaultSemantic.Colors,       TextureFormat.Rgba8
+                outline1,                     TextureFormat.Rgba8
                 DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
             ])
 
+        let normalAtt =
+            runtime.CreateTextureAttachment(runtime.CreateTexture2D(size, TextureFormat.Rgba8))
         let colorAtt =
             runtime.CreateTextureAttachment(runtime.CreateTexture2D(size, TextureFormat.Rgba8))
         let depthAtt =
@@ -70,27 +49,36 @@ module FusionView =
 
         let fbo =
             runtime.CreateFramebuffer(signature, Map.ofList [
-                DefaultSemantic.Colors,       colorAtt
+                DefaultSemantic.Colors,       normalAtt
+                outline1,                     colorAtt
                 DefaultSemantic.DepthStencil, depthAtt
             ])
 
-        let fusionNode = MeshView.buildFusionNode model view proj
-        let renderObjects, _ = fusionNode.GetObjects(TraversalState.empty runtime)
+        let node = MeshView.buildOutlineNode model view proj
+        let renderObjects, _ = node.GetObjects(TraversalState.empty runtime)
 
         let task = runtime.CompileRender(signature, renderObjects)
         let clr = clear { color C4f.Black; depth 1.0 }
         let output = task |> RenderTask.renderToWithClear fbo clr
-        let colorOut = output.GetOutputTexture DefaultSemantic.Colors
+        let gNormal = output.GetOutputTexture DefaultSemantic.Colors
+        let gColor  = output.GetOutputTexture outline1
+
+        let texel =
+            size |> AVal.map (fun (s : V2i) ->
+                V2f(1.0f / float32 (max 1 s.X), 1.0f / float32 (max 1 s.Y)))
 
         let composite =
             sg {
-                Sg.Active model.FusionMode
+                Sg.Active model.OutlineMode
                 Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Shader {
-                    FusionComposite.vertex
-                    FusionComposite.fragment
+                    OutlineEdge.vertex
+                    OutlineEdge.fragment
                 }
-                Sg.Uniform("FusionColor", colorOut)
+                Sg.Uniform("GNormal", gNormal)
+                Sg.Uniform("GColor", gColor)
+                Sg.Uniform("OutlineTexel", texel)
                 Sg.VertexAttributes(
                     HashMap.ofList [
                         string DefaultSemantic.Positions,

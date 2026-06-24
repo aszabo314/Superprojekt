@@ -166,27 +166,6 @@ module Primitives =
               sprintf "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['%s']});" attr
               "})();" ])
 
-    let provBarJs = [
-        "if(!d || d.length < 3) return;"
-        "var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
-        "d.forEach(function(p, i){"
-        "  var s = document.createElement('div');"
-        "  s.style.width = p + '%';"
-        "  s.style.background = colours[i];"
-        "  s.style.height = '100%';"
-        "  el.appendChild(s);"
-        "});" ]
-
-// View-side feature gating (§5): Full mode = all visible; study session =
-// phase.allowedFeatures minus the condition's disabledFeatures.
-module StudyGate =
-
-    let studyActive (model : AdaptiveModel) : aval<bool> =
-        model.Study |> AVal.map Study.isActive
-
-    let featureOn (model : AdaptiveModel) (featureId : string) : aval<bool> =
-        model.Study |> AVal.map (fun s -> Study.featureVisible s featureId)
-
 // Readiness-engine adapter: builds the engine input from individual model
 // leaves (adaptive-performance rule — never the whole record), shared by the
 // registration card and the workflow panel.
@@ -203,7 +182,11 @@ module ReadinessView =
             let names = meshNamesVal.GetValue t |> IndexList.toList
             let visible = model.MeshVisible.GetValue t
             let pending = PendingRegistration.isPreview (model.PendingReg.GetValue t)
-            let log = model.RegistrationLog.GetValue t
+            // No history any more: "committed step" = a mesh already carries a
+            // (non-identity) committed transform from the single coarse commit.
+            let hasCommitted =
+                model.MeshTransforms.GetValue t
+                |> Map.exists (fun _ tr -> not (tr.Forward.Equals M44d.Identity))
             let movingVisible =
                 match reg.ReferenceMesh with
                 | Some r ->
@@ -232,7 +215,7 @@ module ReadinessView =
                 VisibleMovingMeshes = movingVisible
                 EnabledPins         = enabledPins
                 HasPending          = pending
-                HasCommittedStep    = not (List.isEmpty log)
+                HasCommittedStep    = hasCommitted
                 FineModeLabel       =
                     match reg.Mode with
                     | TraditionalIcp -> "Traditional ICP"

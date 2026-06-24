@@ -7,6 +7,34 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Superprojekt
 
+// Dataset bootstrap (was in the removed StudyUpdate.fs). Loads the dataset
+// list + default dataset on startup; loadDataset fans out centroids + bboxes.
+module ServerActions =
+
+    let loadDataset (env : Env<Message>) (dataset : string) =
+        task {
+            try
+                let! cs = MeshData.fetchCentroids ApiConfig.apiBase.Value dataset
+                env.Emit [CentroidsLoaded cs]
+            with _ -> ()
+            try
+                let! bboxes = MeshData.fetchBboxes ApiConfig.apiBase.Value dataset
+                env.Emit [SceneBoundsLoaded bboxes]
+            with _ -> ()
+        } |> ignore
+
+    let init (env : Env<Message>) =
+        task {
+            try
+                let! datasets = MeshData.fetchDatasets ApiConfig.apiBase.Value
+                env.Emit [DatasetsLoaded datasets]
+                let! autoLoad = MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
+                if not (System.String.IsNullOrEmpty autoLoad) && datasets |> Array.contains autoLoad then
+                    env.Emit [SetActiveDataset autoLoad]
+                    loadDataset env autoLoad
+            with _ -> ()
+        } |> ignore
+
 // Reducer helpers + module-level debounce/generation state, split out of
 // Update.fs (opened there unqualified). The giant updateCore match stays put.
 module UpdateHelpers =
@@ -43,11 +71,10 @@ module UpdateHelpers =
     let clearPreviewProbes (model : Model) =
         { model with ScanPins = ScanPinModel.invalidatePreviewProbes model.ScanPins }
 
-    // Leaving the pending preview (commit/discard/rollback/reference change): drop
-    // preview probes, recompute rings at the now-current pose, restore the heatmap mode Diff replaced.
+    // Leaving the pending preview (commit/discard/reference change): drop
+    // preview probes, recompute rings at the now-current pose.
     let exitPreview (model : Model) =
-        let heatmap = match model.HeatmapMode with HeatDiff -> model.HeatmapPrev | m -> m
-        clearPreviewProbes (invalidateRings { model with PendingReg = None; HeatmapMode = heatmap })
+        clearPreviewProbes (invalidateRings { model with PendingReg = None })
 
     let showToast (env : Env<Message>) (text : string) (model : Model) =
         toastCts.Cancel()
@@ -110,27 +137,6 @@ module UpdateHelpers =
                     | Some p -> { card with Anchor = AnchorToWorldPoint (ScanPin.renderCentre cc scale p.Centre) }
                     | None -> card)
         { model with CardSystem = { model.CardSystem with Cards = cards } }
-
-    // World-space anchor deltas for one step: forward = commit (before→after), else rollback inverse.
-    let stepDeltas (forward : bool) (model : Model) (step : RegStep) =
-        step.Outputs |> Map.map (fun mesh o ->
-            let a, b = if forward then o.TransformBefore, o.TransformAfter
-                       else o.TransformAfter, o.TransformBefore
-            ModelTransforms.worldDelta model mesh a b)
-
-    let applyRegState (st : RegTransformState) (deltas : Map<string, Trafo3d>) (model : Model) =
-        { model with
-            MeshTransforms = st.Transforms
-            MeshAlgorithmResidual = st.AlgoResiduals
-            RegistrationLog = st.Log
-            ScanPins = bakeAnchors deltas model.ScanPins }
-
-    let regState (model : Model) : RegTransformState =
-        {
-            Transforms    = model.MeshTransforms
-            AlgoResiduals = model.MeshAlgorithmResidual
-            Log           = model.RegistrationLog
-        }
 
     let correspondenceEnabledIds (model : Model) =
         model.ScanPins.Pins |> HashMap.toList

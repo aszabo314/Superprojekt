@@ -345,12 +345,9 @@ module CardsPin =
                         | Some (ProbeReady r) -> Some r
                         | _ -> None)
                 let previewActive = model.PendingReg |> AVal.map PendingRegistration.isPreview
-                // §5 NUM: violin chart → RMS table; split-violin preview + three-source bar hidden.
-                let violinOn = StudyGate.featureOn model "violinChart"
-                let barOn = StudyGate.featureOn model "threeSourceBar"
+                let violinOn = AVal.constant true
                 let meshOrderMap = model.MeshOrder.Content
-                let previewSplit =
-                    (previewActive, StudyGate.featureOn model "splitViolinPreview") ||> AVal.map2 (&&)
+                let previewSplit = previewActive
                 let probeJson =
                     let selOrder =
                         (selectedPin, meshOrderMap, model.SurfaceDistOn) |||> AVal.map3 (fun po ord sd -> po, ord, sd)
@@ -424,14 +421,7 @@ module CardsPin =
                         | _ -> ()
                     | "brushclear" ->
                         env.Emit [SetSurfaceDistBrush None]
-                    // Alt-click the plot → lock the iso-plane into ClipPlanes so it survives orbiting.
-                    | "lock" when parts.Length >= 2 ->
-                        match parseInvariant parts.[1] with
-                        | Some dv -> env.Emit [LockIsoPlane dv]
-                        | None -> ()
                     | _ -> ()
-                let sources =
-                    probeResult |> AVal.map (Option.map (fun r -> r.Sources))
                 // B1: plain-language significance verdict per moving mesh, read against the detection limit.
                 let lodVerdict =
                     (probeResult, meshOrderMap) ||> AVal.map2 (fun rr order ->
@@ -456,15 +446,6 @@ module CardsPin =
                     div {
                         Class "pc-probe-head"
                         span { Class "pc-section-title"; "Distance probe" }
-                        // Iso-plane sectioning: clip above the hovered plane; Alt-click the chart locks it.
-                        button {
-                            Class "tb-gear-btn"
-                            showOnly violinOn
-                            model.ClipAboveIso |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
-                            Attribute("title", "Slice: while hovering the chart, clip the meshes above the iso-plane. Alt-click the chart to lock it.")
-                            Dom.OnClick(fun _ -> env.Emit [ToggleClipAboveIso])
-                            "⊟ slice"
-                        }
                         // A2: paint the soloed mesh's signed distance in 3D.
                         button {
                             Class "tb-gear-btn"
@@ -538,18 +519,15 @@ module CardsPin =
                             })
                         div {
                             Class "pc-rms-reg"
-                            (model.PendingReg, model.RegistrationLog, meshOrderMap) |||> AVal.map3 (fun pending log order ->
+                            (model.PendingReg, model.LastSolve, meshOrderMap) |||> AVal.map3 (fun pending lastSolve order ->
                                 let rows =
                                     match pending with
                                     | Some pr when not (Map.isEmpty pr.Results) ->
                                         pr.Results |> Map.toList
                                         |> List.map (fun (m, r) -> m, r.RmsBefore, r.RmsAfter, "pending")
                                     | _ ->
-                                        match log with
-                                        | step :: _ ->
-                                            step.Outputs |> Map.toList
-                                            |> List.map (fun (m, o) -> m, o.RmsBefore, o.RmsAfter, "committed")
-                                        | [] -> []
+                                        lastSolve |> Map.toList
+                                        |> List.map (fun (m, e) -> m, e.RmsBefore, e.RmsAfter, "committed")
                                 match rows with
                                 | [] -> "no registration solve yet"
                                 | rows ->
@@ -565,21 +543,6 @@ module CardsPin =
                             match rr with
                             | Some r -> sprintf "ref %s" (numbered order r.ReferenceMesh)
                             | None -> "")
-                    }
-                    div {
-                        Class "pc-bar"
-                        showOnly barOn
-                        sources |> AVal.map (function
-                            | Some s -> Some (Attribute("data-srcs", sprintf "[%.6g,%.6g,%.6g]" s.DatasetError s.AlgorithmResid s.LocalConditioning))
-                            | None -> Some (Attribute("data-srcs", "[]")))
-                        Primitives.observedRender "data-srcs" "[]" CardCharts.probeBarJs
-                    }
-                    div {
-                        Class "pc-bar-legend"
-                        showOnly barOn
-                        span { Class "pc-legend-item pc-bar-dataset"; "Dataset" }
-                        span { Class "pc-legend-item pc-bar-algorithm"; "Algorithm" }
-                        span { Class "pc-legend-item pc-bar-conditioning"; "Conditioning" }
                     }
                 }
                 // Ensemble-registration correspondence: per-mesh anchor status, last coarse-solve residuals, fallback picks.
@@ -716,14 +679,6 @@ module CardsPin =
                                 Attribute("title", "Pick correspondence markers in co-oriented surface patches")
                                 Dom.OnClick(fun _ -> emitForPinTop OpenPatchPicker)
                                 "▦ Pick in patches"
-                            }
-                            // Marker↔reference rulers (distance / residual labels).
-                            button {
-                                Class "tb-gear-btn"
-                                model.RulerActive |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
-                                Attribute("title", "Rulers: label each correspondence marker↔reference distance (the pair gap; shrinks to the residual after a solve)")
-                                Dom.OnClick(fun _ -> env.Emit [ToggleRuler])
-                                "📏 Rulers"
                             }
                         }
                         // Patch small-multiples picker: one orthographic footprint per visible mesh in the shared reference frame; click sets that mesh's anchor.

@@ -165,6 +165,126 @@ body.loaded { background: #f4f6f8; }
 }
 .left-panel.open { transform: translateX(0); }
 
+/* ── Workflow rail (spec §2) ───────────────────────────────────────────── */
+.workflow-rail {
+    position: fixed;
+    top: 32px; left: 0;
+    width: 256px;
+    max-height: calc(100vh - 40px);
+    display: flex; flex-direction: column;
+    background: #ffffff;
+    border-right: 1px solid #d7dce4;
+    border-bottom: 1px solid #d7dce4;
+    box-shadow: 2px 2px 8px rgba(0,0,0,0.06);
+    overflow-y: auto;
+    font-size: 12px;
+    z-index: 998;
+}
+.rail-steps { display: flex; flex-direction: column; }
+.rail-step {
+    display: flex; align-items: center; gap: 6px;
+    width: 100%; text-align: left;
+    padding: 7px 10px;
+    background: #f8fafc;
+    border: none; border-bottom: 1px solid #e6eaf0;
+    cursor: pointer; font-size: 12px; color: #0f172a;
+}
+.rail-step:hover { background: #eef2f8; }
+.rail-step-active { background: #ffffff; box-shadow: inset 3px 0 0 #1a56db; font-weight: 600; }
+.rail-step-no {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 18px; height: 18px; border-radius: 50%;
+    background: #e2e8f0; color: #334155; font-size: 11px; font-weight: 600;
+}
+.rail-step-active .rail-step-no { background: #1a56db; color: #fff; }
+.rail-step-title { flex: 1; }
+.rail-pill {
+    display: inline-flex; align-items: center; justify-content: center;
+    min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
+    font-size: 10px; font-weight: 700;
+}
+.rail-pill-ready { background: #dcfce7; color: #16a34a; }
+.rail-pill-warn  { background: #fef3c7; color: #b45309; }
+.rail-pill-block { background: #fee2e2; color: #dc2626; }
+.rail-pill-info  { background: #e2e8f0; color: #475569; }
+.rail-body { padding: 8px 10px; border-bottom: 1px solid #e6eaf0; background: #fff; }
+.rail-hint { font-size: 11px; color: #64748b; margin-bottom: 6px; }
+.rail-note { font-size: 11px; color: #475569; margin-bottom: 6px; line-height: 1.35; }
+.rail-mesh-list { display: flex; flex-direction: column; gap: 2px; }
+.rail-mesh-row, .rail-pin-row {
+    display: flex; align-items: center; gap: 4px; padding: 2px 0;
+}
+.rail-row-dim { opacity: 0.5; }
+.rail-mesh-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-sensor { min-width: 38px; font-size: 10px; }
+.rail-step-controls { display: flex; flex-direction: column; gap: 8px; }
+.rail-toggle-row, .rail-commit-row { display: flex; gap: 6px; align-items: center; }
+.rail-btn {
+    padding: 5px 10px; border: 1px solid #cbd5e1; border-radius: 4px;
+    background: #f1f5f9; color: #0f172a; cursor: pointer; font-size: 12px;
+}
+.rail-btn:hover { background: #e2e8f0; }
+.rail-btn:disabled { opacity: 0.5; cursor: default; }
+.rail-btn-primary { background: #1a56db; border-color: #1a56db; color: #fff; }
+.rail-btn-primary:hover { background: #1648b8; }
+.rail-btn-active { background: #1a56db; border-color: #1a56db; color: #fff; }
+.rail-pins { padding: 8px 10px; }
+.rail-pins-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
+.rail-section-title { font-weight: 600; color: #334155; }
+.rail-pin-list { display: flex; flex-direction: column; gap: 1px; }
+.rail-pin-row { padding: 2px 4px; border-radius: 3px; }
+.rail-pin-sel { background: #eaf1ff; box-shadow: inset 2px 0 0 #1a56db; }
+.rail-pin-name { flex: 1; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rail-pin-del { color: #dc2626; }
+
+/* ── Focus panel: secondary ortho control (spec §1/§5) ─────────────────── */
+.focus-panel {
+    position: fixed;
+    top: 32px; right: 0;
+    width: 320px;
+    max-height: calc(100vh - 40px);
+    display: flex; flex-direction: column;
+    background: #ffffff;
+    border-left: 1px solid #d7dce4;
+    border-bottom: 1px solid #d7dce4;
+    box-shadow: -2px 2px 8px rgba(0,0,0,0.06);
+    font-size: 12px;
+    z-index: 998;
+}
+.focus-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 5px 8px; border-bottom: 1px solid #e6eaf0; background: #f8fafc;
+}
+.focus-title { font-weight: 600; color: #334155; }
+.focus-close {
+    border: none; background: none; cursor: pointer; font-size: 14px; color: #64748b;
+}
+.focus-toolbar { padding: 6px 8px; display: flex; gap: 8px; align-items: center; }
+.focus-axes { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; }
+.focus-axis-btn {
+    padding: 3px 10px; border: none; border-right: 1px solid #cbd5e1;
+    background: #f1f5f9; color: #0f172a; cursor: pointer; font-size: 11px;
+}
+.focus-axis-btn:last-child { border-right: none; }
+.focus-axis-btn.btn-active { background: #1a56db; color: #fff; }
+.focus-moving { padding: 0 8px 6px; display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
+.focus-sublabel { color: #64748b; }
+.focus-moving-btn {
+    width: 22px; height: 20px; border: 1px solid #cbd5e1; border-radius: 4px;
+    background: #f1f5f9; color: #0f172a; cursor: pointer; font-size: 11px;
+}
+.focus-moving-btn.btn-active { background: #1a56db; border-color: #1a56db; color: #fff; }
+.focus-view { width: 100%; height: 300px; background: #eef2f6; position: relative; }
+.focus-rc { width: 100%; height: 100%; display: block; touch-action: none; cursor: move; }
+.focus-hint { padding: 6px 8px; font-size: 11px; color: #64748b; line-height: 1.35; }
+.focus-reopen {
+    position: fixed; top: 40px; right: 0;
+    padding: 5px 8px; border: 1px solid #d7dce4; border-right: none;
+    border-radius: 4px 0 0 4px; background: #ffffff; color: #0f172a;
+    cursor: pointer; font-size: 12px; box-shadow: -1px 1px 4px rgba(0,0,0,0.08);
+    z-index: 997;
+}
+
 .lp-normal { display: flex; flex-direction: column; gap: 8px; }
 
 .lp-section { display: flex; flex-direction: column; gap: 3px; }

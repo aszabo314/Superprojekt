@@ -61,11 +61,22 @@ module View =
         // selection outlives the key — it keeps steering picks. Suspended while
         // the chart cursor is live (Alt there extends the slicing plane
         // scene-wide, needing every mesh visible).
+        // Alt-held layer isolation, OR §9 align-auto (step 2: the manually-moved
+        // mesh solid, rest ghosted), OR §9 movement-auto (movement layer on: the
+        // moved mesh solid + glyphs, rest ghosted).
         let wheelIsolation =
-            (altHeld :> aval<_>, model.ActivePickingLayer, model.ChartCursor) |||> AVal.map3 (fun held layer chart ->
-                if held && chart.IsNone then layer else None)
-
-        let lassoActive = model.LassoDrawing |> AVal.map Option.isSome
+            AVal.custom (fun t ->
+                let held = altHeld.GetValue t
+                let chart = model.ChartCursor.GetValue t
+                if held && chart.IsNone then model.ActivePickingLayer.GetValue t
+                else
+                    match model.MovementLayer.GetValue t, model.PendingReg.GetValue t with
+                    | (MovementGlyphs | MovementGrid), Some pr when not (Map.isEmpty pr.Results) ->
+                        pr.Results |> Map.toSeq |> Seq.tryHead |> Option.map fst
+                    | _ ->
+                        match model.WorkflowStep.GetValue t, model.AlignMesh.GetValue t with
+                        | StepCoarse, Some m -> Some m
+                        | _ -> None)
 
         // Slicing-plane highlight for the mesh shader. Chart-hover cursor wins
         // (Alt-extended → unclipped, scene-wide); else the 3D hover point drives
@@ -111,132 +122,15 @@ module View =
                             else None)
                     | _ -> None)
 
-        // Cutaway: the selected pin's correspondence markers define a z-aligned
-        // box; the cut plane is whichever of its four upright faces the camera
-        // looks at most head-on, removing everything camera-ward of it to reveal
-        // the marker cross-section (the cut side switches past the 45° diagonal).
-        // Global toggle (gear popover, default on); re-derives live with camera.
-        let cutawayPlane =
-            let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-            let effectiveId =
-                ScanPinModel.effectivePinIdA model.ScanPins.Placement model.ScanPins.SelectedPin
-            AVal.custom (fun t ->
-                if not (model.CutawayActive.GetValue t) then None
-                else
-                    match effectiveId.GetValue t with
-                    | None -> None
-                    | Some pid ->
-                        match HashMap.tryFind pid (pinsVal.GetValue t) with
-                        | Some pin ->
-                            match ScanPin.correspondence pin with
-                            | Some corr when corr.Enabled ->
-                                let pending = model.PendingReg.GetValue t
-                                let transforms = model.MeshTransforms.GetValue t
-                                let scales = model.DatasetScales.GetValue t
-                                let cc = model.CommonCentroid.GetValue t
-                                let pts =
-                                    corr.Anchors |> Map.toSeq
-                                    |> Seq.map (fun (mesh, a) ->
-                                            match PendingRegistration.delta mesh pending with
-                                            | Some d ->
-                                                let scale = DatasetScale.forMesh scales mesh
-                                                let c = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
-                                                (RigidTransform.worldDeltaOf scale cc c d).Forward.TransformPos a.Point
-                                            | None -> a.Point)
-                                    |> Array.ofSeq
-                                let pts = if Array.isEmpty pts then [| pin.Centre |] else pts
-                                let tol = 0.5
-                                let xmin = (pts |> Array.map (fun p -> p.X) |> Array.min) - tol
-                                let xmax = (pts |> Array.map (fun p -> p.X) |> Array.max) + tol
-                                let ymin = (pts |> Array.map (fun p -> p.Y) |> Array.min) - tol
-                                let ymax = (pts |> Array.map (fun p -> p.Y) |> Array.max) + tol
-                                let cx = (xmin + xmax) * 0.5
-                                let cy = (ymin + ymax) * 0.5
-                                let s = DatasetScale.active (model.ActiveDataset.GetValue t) scales
-                                let camWorld =
-                                    ScanPin.worldCentre cc s (model.Camera.view.GetValue t).Location
-                                let toCam = V3d(camWorld.X - cx, camWorld.Y - cy, 0.0)
-                                // Four upright faces (outward normal, point on
-                                // face). Removing dot(p − origin, normal) > 0
-                                // discards the camera-side terrain in front.
-                                let faces =
-                                    [ V3d( 1.0, 0.0, 0.0), V3d(xmax, cy, 0.0)
-                                      V3d(-1.0, 0.0, 0.0), V3d(xmin, cy, 0.0)
-                                      V3d( 0.0, 1.0, 0.0), V3d(cx, ymax, 0.0)
-                                      V3d( 0.0,-1.0, 0.0), V3d(cx, ymin, 0.0) ]
-                                let normal, origin = faces |> List.maxBy (fun (n, _) -> Vec.dot n toCam)
-                                Some { Origin = origin; Normal = normal }
-                            | _ -> None
-                        | None -> None)
-
-        // Live "clip above" the chart-driven iso-plane (follows the hover), only
-        // when ClipAboveIso is on and no lock present. Normal = +probe axis
-        // removes the half above the plane.
-        let liveIsoPlane =
-            let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-            let effectiveId =
-                ScanPinModel.effectivePinIdA model.ScanPins.Placement model.ScanPins.SelectedPin
-            AVal.custom (fun t ->
-                if not (model.ClipAboveIso.GetValue t) then None
-                else
-                    match model.ChartCursor.GetValue t with
-                    | Some cur when effectiveId.GetValue t = Some cur.PinId ->
-                        match HashMap.tryFind cur.PinId (pinsVal.GetValue t) with
-                        | Some pin ->
-                            let pv = PendingRegistration.isPreview (model.PendingReg.GetValue t)
-                            match ScanPin.effectiveProbe pv pin with
-                            | ProbeReady r ->
-                                Some { Origin = pin.Centre + r.Normal * (cur.Distance + r.RefOffset)
-                                       Normal = r.Normal }
-                            | _ -> None
-                        | None -> None
-                    | _ -> None)
-
-        // Resolved render-space clip-plane equations for the mesh shader.
-        // Effective set = live cutaway (front) then any locked plane or the live
-        // iso-plane, capped at 2. Stored metric normal is used directly (world
-        // axis dirs = render axis dirs under the uniform scale); Origin metric→render.
-        let clipUniforms =
-            let datasetScaleA =
-                (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-            AVal.custom (fun t ->
-                let cut = cutawayPlane.GetValue t |> Option.toList
-                let locked = model.ClipPlanes.GetValue t
-                let iso = if List.isEmpty locked then liveIsoPlane.GetValue t |> Option.toList else []
-                let planes = cut @ locked @ iso
-                let cc = model.CommonCentroid.GetValue t
-                let s = datasetScaleA.GetValue t
-                let resolve (cp : ClipPlane) =
-                    let n = if cp.Normal.Length > 1e-9 then cp.Normal.Normalized else V3d.OOI
-                    let ro = ScanPin.renderCentre cc s cp.Origin
-                    V4f(float32 n.X, float32 n.Y, float32 n.Z, float32 (-(Vec.dot n ro)))
-                match planes |> List.truncate 2 |> List.map resolve with
-                | [] -> 0, V4f.Zero, V4f.Zero
-                | [ p0 ] -> 1, p0, V4f.Zero
-                | p0 :: p1 :: _ -> 2, p0, p1)
+        // Section/cutaway clipping was removed; the mesh shader keeps generic
+        // clip-plane support but is fed a constant no-clip.
+        let clipUniforms : aval<int * V4f * V4f> = AVal.constant (0, V4f.Zero, V4f.Zero)
 
         body {
             OnBoot [
                 "const l = document.getElementById('loader');"
                 "if(l) l.remove();"
                 "document.body.classList.add('loaded');"
-                "window.SuperWorkspaceSave = function(filename, json){"
-                "  var blob = new Blob([json], {type:'application/json'});"
-                "  var url = URL.createObjectURL(blob);"
-                "  var a = document.createElement('a');"
-                "  a.href = url; a.download = filename;"
-                "  document.body.appendChild(a); a.click(); document.body.removeChild(a);"
-                "  URL.revokeObjectURL(url);"
-                "};"
-                // page hide → telemetry flush (best effort, §8)
-                "var studyFlush = function(){"
-                "  var b = document.querySelector('.study-flush-bus');"
-                "  if(b){ b.value = 'x'; b.dispatchEvent(new Event('input', {bubbles:true})); }"
-                "};"
-                "document.addEventListener('visibilitychange', function(){"
-                "  if(document.visibilityState === 'hidden') studyFlush();"
-                "});"
-                "window.addEventListener('pagehide', studyFlush);"
                 // Pulse outline for nav actions (§5); delayed so just-opened
                 // targets are visible first.
                 "window.SuperPulse = function(selector){"
@@ -249,38 +143,19 @@ module View =
                 "    setTimeout(function(){ el.classList.remove('pulse-outline'); }, 1600);"
                 "  }, 150);"
                 "};"
-                "window.SuperWorkspaceLoad = function(){"
-                "  return new Promise(function(resolve){"
-                "    var input = document.createElement('input');"
-                "    input.type = 'file'; input.accept = '.json,application/json';"
-                "    input.onchange = function(){"
-                "      if(input.files && input.files.length > 0){"
-                "        var reader = new FileReader();"
-                "        reader.onload = function(){ resolve(reader.result || ''); };"
-                "        reader.onerror = function(){ resolve(''); };"
-                "        reader.readAsText(input.files[0]);"
-                "      } else { resolve(''); }"
-                "    };"
-                "    input.click();"
-                "  });"
-                "};"
             ]
 
             renderControl {
                 RenderControl.Samples 1
                 Class "render-control"
 
-                let sceneClickArmed =
-                    model.Study |> AVal.map (function
-                        | Some (StudyActive s) -> s.Runtime.SceneClickArm.IsSome
-                        | _ -> false)
                 let pickModeOn =
-                    (model.ScanPins.Placement, lassoActive, model.AnchorPick) |||> AVal.map3 (fun p lasso ap ->
-                        match p, lasso, ap with
-                        | PlacementIdle, false, None -> false
+                    (model.ScanPins.Placement, model.AnchorPick) ||> AVal.map2 (fun p ap ->
+                        match p, ap with
+                        | PlacementIdle, None -> false
                         | _ -> true)
-                (pickModeOn, sceneClickArmed) ||> AVal.map2 (fun pick armed ->
-                    if pick || armed then Some (Dom.Style [Css.Cursor "crosshair"]) else None)
+                pickModeOn |> AVal.map (fun pick ->
+                    if pick then Some (Dom.Style [Css.Cursor "crosshair"]) else None)
 
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
@@ -305,7 +180,6 @@ module View =
                 OrbitController.getAttributes (Env.map CameraMessage env)
 
                 RenderControl.OnRendered(fun _ ->
-                    StudyTelemetry.frameTick ()
                     let s = AVal.force overlaySize
                     if viewportSize.Value <> s then
                         transact (fun () -> viewportSize.Value <- s)
@@ -348,46 +222,6 @@ module View =
                                     | Some h -> return Some (ScanPin.renderCentre cc scale h.point)
                                     | None -> return frontmost
                                 }
-
-                // Fusion picking: the composite is a flat quad so the GPU pick
-                // can't see meshes. Raycast every visible mesh server-side, keep
-                // the lowest combined-error hit (= offscreen depth-test winner).
-                let resolveFusionPick () : Async<(V3d * string) option> =
-                    match cursorScreen.Value with
-                    | None -> async.Return None
-                    | Some cursorPx ->
-                        let names = MeshView.visibleMeshNames model
-                        if List.isEmpty names then async.Return None
-                        else
-                            let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
-                            let cc = AVal.force model.CommonCentroid
-                            let scales = AVal.force model.DatasetScales
-                            let sensors = AVal.force model.MeshSensorTypes
-                            let overrides = AVal.force model.MeshDatasetErrors
-                            let algo = AVal.force model.MeshAlgorithmResidual
-                            let anchors =
-                                AVal.force (model.ScanPins.Pins |> AMap.toAVal) |> HashMap.toSeq
-                                |> Seq.choose (fun (_, pn) ->
-                                    if pn.Phase = PinPhase.Committed then Some (pn.Centre, pn.InnerRadius) else None)
-                                |> Array.ofSeq
-                            async {
-                                let! hits =
-                                    Query.rayHitMany ApiConfig.apiBase.Value names (fun name ->
-                                        let scale = DatasetScale.forMesh scales name
-                                        ScanPin.worldCentre cc scale ray.Origin, ray.Direction)
-                                let best =
-                                    hits |> Array.choose id
-                                    |> Array.map (fun (name, h) ->
-                                        let d, a, c = Provenance.sourcesAt name overrides sensors algo h.point anchors
-                                        name, h.point, d + a + c * 0.01)
-                                    |> Array.sortBy (fun (_, _, e) -> e)
-                                    |> Array.tryHead
-                                match best with
-                                | Some (name, worldPt, _) ->
-                                    let scale = DatasetScale.forMesh scales name
-                                    return Some (ScanPin.renderCentre cc scale worldPt, name)
-                                | None -> return None
-                            }
 
                 Sg.View view
                 Sg.Proj proj
@@ -476,43 +310,19 @@ module View =
                 )
 
                 Sg.OnDoubleTap(fun e ->
-                    match AVal.force model.LassoDrawing with
-                    | Some _ ->
-                        env.Emit [LassoCommit(AVal.force view, AVal.force proj, AVal.force overlaySize)]
-                        false
-                    | None ->
-                        if AVal.force model.FusionMode then
-                            async {
-                                let! resolved = resolveFusionPick ()
-                                match resolved with
-                                | Some (renderPos, _) ->
-                                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
-                                | None -> ()
-                            } |> Async.Start
-                        else
-                            let frontmost =
-                                if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                            async {
-                                let! resolved = resolveLayerPick frontmost
-                                match resolved with
-                                | Some renderPos ->
-                                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
-                                | None -> ()
-                            } |> Async.Start
-                        false
+                    let frontmost =
+                        if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                    async {
+                        let! resolved = resolveLayerPick frontmost
+                        match resolved with
+                        | Some renderPos ->
+                            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
+                        | None -> ()
+                    } |> Async.Start
+                    false
                 )
 
                 Sg.OnTap(fun e ->
-                    let studyArmed =
-                        match AVal.force model.Study with
-                        | Some (StudyActive s) -> s.Runtime.SceneClickArm.IsSome
-                        | _ -> false
-                    if studyArmed then
-                        // §7 sceneClick: one-shot depth-gated pick, no pin.
-                        if e.Location.Depth < 0.9999 then
-                            env.Emit [StudyMsg (StudySceneClickHit (worldFromRender model e.WorldPosition))]
-                        true
-                    else
                     match AVal.force model.AnchorPick with
                     | Some _ ->
                         // One-shot anchor pick: only the target mesh writes depth
@@ -521,71 +331,37 @@ module View =
                         if e.Location.Depth < 0.9999 then
                             env.Emit [AnchorPickHit (worldFromRender model e.WorldPosition)]
                         true
-                    | None ->
-                    match AVal.force model.LassoDrawing with
-                    | Some _ ->
-                        match cursorScreen.Value with
-                        | Some px -> env.Emit [LassoAddVertex px]
-                        | None -> ()
-                        false
                     | None when e.Ctrl ->
                         // Ctrl-click = transient hover probe.
                         let screenPx = cursorScreen.Value |> Option.defaultValue V2d.Zero
-                        if AVal.force model.FusionMode then
-                            async {
-                                let! resolved = resolveFusionPick ()
-                                match resolved with
-                                | Some (renderPos, _) ->
-                                    env.Emit [HoverProbeAt(screenPx, worldFromRender model renderPos)]
-                                | None -> ()
-                            } |> Async.Start
-                        else
-                            let frontmost =
-                                if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                            async {
-                                let! resolved = resolveLayerPick frontmost
-                                match resolved with
-                                | Some renderPos ->
-                                    env.Emit [HoverProbeAt(screenPx, worldFromRender model renderPos)]
-                                | None -> ()
-                            } |> Async.Start
+                        let frontmost =
+                            if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                        async {
+                            let! resolved = resolveLayerPick frontmost
+                            match resolved with
+                            | Some renderPos ->
+                                env.Emit [HoverProbeAt(screenPx, worldFromRender model renderPos)]
+                            | None -> ()
+                        } |> Async.Start
                         true
                     | None ->
                         if Option.isSome (AVal.force model.HoverProbe) then
                             env.Emit [ClearHoverProbe]
                         let placement = AVal.force model.ScanPins.Placement
-                        if AVal.force model.FusionMode then
-                            // Fusion: CPU-resolve the winner mesh + point, set it
-                            // as the active layer so a placed pin inherits it as
-                            // host, then place / focus.
-                            async {
-                                let! resolved = resolveFusionPick ()
-                                match placement, resolved with
-                                | AnchorPlacement, Some (renderPos, mesh) ->
-                                    let worldPos = worldFromRender model renderPos
-                                    env.Emit [SetActivePickingLayer (Some mesh); ScanPinMsg (PlaceAnchor worldPos)]
-                                | AnchorPlacement, None -> ()
-                                | _, Some (renderPos, mesh) ->
-                                    let worldPos = worldFromRender model renderPos
-                                    env.Emit [SetActivePickingLayer (Some mesh)]
-                                    transact (fun () -> hoverCoord.Value <- Some worldPos)
-                                | _, None -> ()
-                            } |> Async.Start
-                        else
-                            let frontmost =
-                                if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                            async {
-                                let! resolved = resolveLayerPick frontmost
-                                match placement, resolved with
-                                | AnchorPlacement, Some renderPos ->
-                                    let worldPos = worldFromRender model renderPos
-                                    env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
-                                | AnchorPlacement, None -> ()
-                                | _, Some renderPos ->
-                                    let worldPos = worldFromRender model renderPos
-                                    transact (fun () -> hoverCoord.Value <- Some worldPos)
-                                | _, None -> ()
-                            } |> Async.Start
+                        let frontmost =
+                            if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                        async {
+                            let! resolved = resolveLayerPick frontmost
+                            match placement, resolved with
+                            | AnchorPlacement, Some renderPos ->
+                                let worldPos = worldFromRender model renderPos
+                                env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
+                            | AnchorPlacement, None -> ()
+                            | _, Some renderPos ->
+                                let worldPos = worldFromRender model renderPos
+                                transact (fun () -> hoverCoord.Value <- Some worldPos)
+                            | _, None -> ()
+                        } |> Async.Start
                         true
                 )
 
@@ -618,31 +394,17 @@ module View =
                 | "Alt" ->
                     if not altHeld.Value then transact (fun () -> altHeld.Value <- true)
                 | " " ->
-                    // Hold-space fullscreen is Full-mode only (would blank
-                    // pins/cards mid-task in a study).
-                    if not (Study.isActive (AVal.force model.Study)) then
-                        transact (fun () -> spaceHeld.Value <- true)
+                    transact (fun () -> spaceHeld.Value <- true)
                 | "r" | "R" ->
-                    // Hold-R reference peek (Full-mode review tool).
-                    if not (Study.isActive (AVal.force model.Study)) then
-                        env.Emit [SetReferencePeek true]
+                    // Hold-R reference peek.
+                    env.Emit [SetReferencePeek true]
                 | "Escape" ->
-                    let studyArmed =
-                        match AVal.force model.Study with
-                        | Some (StudyActive s) -> s.Runtime.SceneClickArm.IsSome
-                        | _ -> false
-                    if studyArmed then
-                        env.Emit [StudyMsg StudyCancelSceneClick]
-                    elif Option.isSome (AVal.force model.AnchorPick) then
+                    if Option.isSome (AVal.force model.AnchorPick) then
                         env.Emit [CancelAnchorPick]
                     elif Option.isSome (AVal.force model.HoverProbe) then
                         env.Emit [ClearHoverProbe]
-                    elif not (List.isEmpty (AVal.force model.ClipPlanes)) then
-                        env.Emit [SetClipPlanes []]
                     else
-                        match AVal.force model.LassoDrawing with
-                        | Some _ -> env.Emit [LassoCancel]
-                        | None -> env.Emit [ScanPinMsg CancelPlacement]
+                        env.Emit [ScanPinMsg CancelPlacement]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
@@ -653,49 +415,25 @@ module View =
                 | _ -> ()
             )
 
-            // Study mode replaces the normal top bar with the study bar.
+            GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
             div {
-                Primitives.showWhenNot (model.Study |> AVal.map Study.isActive)
-                GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
+                Primitives.showWhen model.MenuOpen
+                GuiRail.rail env model (viewportSize :> aval<V2i>)
             }
-            GuiStudy.studyBar env model
-            GuiStudy.studyPages model
-            GuiStudy.instructionOverlay env model
-            GuiStudy.taskPane env model
-            input {
-                Class "study-flush-bus hidden"
-                Attribute("type", "text")
-                Dom.OnInput(fun _ -> StudyTelemetry.flushNow ())
-            }
-            div {
-                Primitives.showWhen (StudyGate.featureOn model "meshPanel")
-                GuiPanels.leftPanel env model
+            GuiFocus.panel env model
+            button {
+                Class "focus-reopen"
+                Primitives.showWhenNot model.FocusOpen
+                Attribute("title", "Show focus panel")
+                Dom.OnClick(fun _ -> env.Emit [ToggleFocusPanel])
+                "◧ Focus"
             }
             GuiPanels.placementFlyout env model
-            GuiCards.lassoCard env model
-            div {
-                Primitives.showWhen (StudyGate.featureOn model "registrationCard")
-                GuiWorkflow.workflowPanel env model (viewportSize :> aval<V2i>)
-                // study mode has no top bar — floating opener for the panel
-                div {
-                    Primitives.showWhen (StudyGate.studyActive model)
-                    GuiCards.registrationToggleButton env model
-                }
-            }
-            GuiCards.retargetCard env model
-            GuiCards.panoramaCard env model
             GuiOverlays.previewBanner model (fun b -> transact (fun () -> previewSwap.Value <- b))
             GuiOverlays.toast model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.hoverProbeTooltip model (viewportSize :> aval<V2i>)
-            GuiOverlays.fusionNotice model
-            GuiOverlays.provenanceHoverOverlay model (hoverCoord :> aval<_>) (cursorScreen :> aval<_>)
-            GuiOverlays.lassoOverlay env model (cursorScreen :> aval<_>)
-            div {
-                Primitives.showWhen (StudyGate.featureOn model "pinCard")
-                Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>) patchHover
-            }
-            GuiOverlays.rulerOverlay model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>)
+            Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>) patchHover
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.orientationIndicator model
         }

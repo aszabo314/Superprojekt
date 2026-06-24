@@ -15,17 +15,12 @@ module Update =
         // §6: while a solve preview is pending, block actions that change what it is relative to.
         let previewBlocked =
             match msg with
-            | SetActiveDataset _ | ToggleFusionMode | StartRetarget _
+            | SetActiveDataset _
             | ScanPinMsg EnterAnchorPlacement ->
                 PendingRegistration.isPreview model.PendingReg
             | _ -> false
         if previewBlocked then
             showToast env "Blocked while previewing a registration result — commit or discard it first" model
-        // §5 study-mode guard: gated messages no-op with a toast (silently for pointer/hover).
-        elif StudyUpdate.blocked model msg then
-            match msg with
-            | CameraMessage _ | SetChartCursor _ | SetChartHoverMesh _ -> model
-            | _ -> showToast env "Not available in this step" model
         else
         match msg with
         | CameraMessage msg ->
@@ -96,34 +91,6 @@ module Update =
         | SetReferencePeek held ->
             if model.ReferencePeekHeld = held then model
             else { model with ReferencePeekHeld = held }
-        | SetClipPlanes planes ->
-            { model with ClipPlanes = planes }
-        | ToggleCutaway ->
-            { model with CutawayActive = not model.CutawayActive }
-        | ToggleClipAboveIso ->
-            { model with ClipAboveIso = not model.ClipAboveIso }
-        | LockIsoPlane d ->
-            let pid = ScanPinModel.effectivePinId model.ScanPins
-            match pid |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
-            | Some pin ->
-                let pv = PendingRegistration.isPreview model.PendingReg
-                // chart value d → 3D needs the reference-median offset (chart y=0 = pin.Centre + axis·RefOffset).
-                let axis, refOffset =
-                    match ScanPin.effectiveProbe pv pin with
-                    | ProbeReady r -> r.Normal, r.RefOffset
-                    | _ -> ScanPin.axis pin, 0.0
-                let origin = pin.Centre + axis * (d + refOffset)
-                let plane = { Origin = origin; Normal = axis }
-                // Alt-click the same spot releases; a new spot relocks.
-                let same =
-                    match List.tryHead model.ClipPlanes with
-                    | Some e -> (e.Origin - origin).Length < max 1e-3 (pin.InnerRadius * 0.1)
-                    | None -> false
-                if same then { model with ClipPlanes = [] }
-                else { model with ClipPlanes = [plane] }
-            | None -> model
-        | ToggleRuler ->
-            { model with RulerActive = not model.RulerActive }
 
         | SetRegistrationMode m ->
             { model with Registration = { model.Registration with Mode = m } }
@@ -346,44 +313,29 @@ module Update =
         | CommitRegistration ->
             match model.PendingReg with
             | Some pr when not (Map.isEmpty pr.Results) ->
-                let refMesh = model.Registration.ReferenceMesh |> Option.defaultValue ""
-                let step = RegLog.buildStep System.DateTime.UtcNow refMesh pr (regState model)
-                let st' = RegLog.commit step (regState model)
+                // Single commit (no history): apply each pending delta into the
+                // committed render transforms, re-base correspondence anchors by
+                // the applied world delta so they stay on the surface.
+                let committed mesh = ModelTransforms.committedRender model mesh
+                let after =
+                    pr.Results |> Map.fold (fun m mesh r ->
+                        Map.add mesh (RegLog.effective (committed mesh) r.Delta) m) model.MeshTransforms
+                let worldDeltas =
+                    pr.Results |> Map.map (fun mesh r ->
+                        ModelTransforms.worldDelta model mesh (committed mesh)
+                            (RegLog.effective (committed mesh) r.Delta))
                 let model =
                     reanchorCards
-                        { applyRegState st' (stepDeltas true model step) model with
+                        { model with
+                            MeshTransforms = after
+                            ScanPins = bakeAnchors worldDeltas model.ScanPins
                             Registration = { model.Registration with Running = false } }
-                // Registration-complete cascade: all probes + contact rings (algo RMS already swapped above).
+                // Registration-complete cascade: all probes + contact rings.
                 invalidateProbes (exitPreview model)
             | _ -> model
         | DiscardRegistration ->
             // §1: clears the pending delta only — committed probes stay valid; rings recompute at committed pose.
             { exitPreview model with Registration = { model.Registration with Running = false } }
-        | RollbackRegStep ->
-            match RegLog.rollback (regState model) with
-            | Some (st', step) ->
-                let model =
-                    reanchorCards
-                        { applyRegState st' (stepDeltas false model step) model with
-                            // diagnostics of the rolled-back step are stale
-                            LastSolve = LastSolve.afterRollback step model.LastSolve }
-                invalidateProbes (exitPreview model)
-            | None -> model
-        | ResetRegistration ->
-            // §8.4: roll back every logged step (un-baking anchors), then drop unlogged
-            // leftovers (legacy workspaces) → identity transforms + empty log.
-            let rec rollAll (model : Model) =
-                match RegLog.rollback (regState model) with
-                | Some (st', step) ->
-                    rollAll (applyRegState st' (stepDeltas false model step) model)
-                | None -> model
-            let model = reanchorCards (rollAll model)
-            invalidateProbes (exitPreview
-                { model with
-                    MeshTransforms = Map.empty
-                    MeshAlgorithmResidual = Map.empty
-                    LastSolve = Map.empty
-                    Registration = { model.Registration with Running = false } })
 
         // Correspondence anchors (spec §4) + fallback picks (§8.1/§8.2).
         | ToggleCorrespondence pinId ->
@@ -621,21 +573,8 @@ module Update =
 
         | SetMeshSensorType(name, sensor) ->
             { model with MeshSensorTypes = Map.add name sensor model.MeshSensorTypes }
-        | SetMeshDatasetError(name, valueOpt) ->
-            match valueOpt with
-            | Some v -> { model with MeshDatasetErrors = Map.add name v model.MeshDatasetErrors }
-            | None -> { model with MeshDatasetErrors = Map.remove name model.MeshDatasetErrors }
         | SetHeatmapMode m ->
-            match m with
-            | HeatDiff when not (PendingRegistration.isPreview model.PendingReg) ->
-                model
-            | HeatDiff ->
-                let prev = match model.HeatmapMode with HeatDiff -> model.HeatmapPrev | cur -> cur
-                { model with HeatmapMode = HeatDiff; HeatmapPrev = prev }
-            | m ->
-                { model with HeatmapMode = m; HeatmapPrev = m }
-        | SetProvenanceThreshold v ->
-            { model with ProvenanceThreshold = v }
+            { model with HeatmapMode = m }
         | ToggleSurfaceDistance ->
             bumpSurfaceDist ()
             if model.SurfaceDistOn then
@@ -665,9 +604,25 @@ module Update =
                     match chosen with
                     | None ->
                         showToast env "No visible moving mesh to map"
-                            { model with SurfaceDistOn = true; SurfaceDistance = Map.empty }
+                            { model with SurfaceDistOn = true; VarianceOn = false; SurfaceDistance = Map.empty }
                     | Some m ->
-                        { model with SurfaceDistOn = true; ChartStickyMesh = Some m; SurfaceDistance = Map.empty }
+                        { model with SurfaceDistOn = true; VarianceOn = false; ChartStickyMesh = Some m; SurfaceDistance = Map.empty }
+        | ToggleVariance ->
+            bumpSurfaceDist ()
+            // Mutually exclusive with the single-mesh extrinsic map.
+            { model with
+                VarianceOn = not model.VarianceOn
+                SurfaceDistOn = false
+                SurfaceDistance = Map.empty }
+        | VarianceComputed(mesh, arr) ->
+            // Keep only if still in variance mode and this is the reference mesh.
+            if model.VarianceOn && model.Registration.ReferenceMesh = Some mesh then
+                { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
+            else model
+        | ToggleExtrinsicZDiff ->
+            // Switch extrinsic measure (M3C2 ↔ Δz); drop the cache so it refetches.
+            bumpSurfaceDist ()
+            { model with ExtrinsicZDiff = not model.ExtrinsicZDiff; SurfaceDistance = Map.empty }
         | SurfaceDistanceComputed(mesh, dist) ->
             // drop if the soloed mesh changed since the fetch was issued.
             if model.SurfaceDistOn && model.ChartStickyMesh = Some mesh then
@@ -678,8 +633,6 @@ module Update =
                 { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "region-distance failed: %s" reason) }
         | SetSurfaceDistBrush b ->
             if model.SurfaceDistBrush = b then model else { model with SurfaceDistBrush = b }
-        | ToggleFusionMode ->
-            { model with FusionMode = not model.FusionMode }
 
         | SceneBoundsLoaded bboxes ->
             if bboxes.Length = 0 then model
@@ -692,17 +645,9 @@ module Update =
                         )) Box3d.Invalid
                 let padded = Box3d(union.Min - V3d.III, union.Max + V3d.III)
                 let perMesh = bboxes |> Array.fold (fun m (n, b) -> Map.add n b m) Map.empty
-                // Synthetic pose: no dataset ships real imagery.
-                let panos =
-                    if union.IsValid then
-                        let name = model.ActiveDataset |> Option.defaultValue "scene"
-                        [ { Name = name; EyeWorld = union.Center + V3d(0.0, 0.0, 2.0); Yaw = 0.0 } ]
-                    else []
                 { model with
                     SceneBounds = padded
-                    MeshBounds = perMesh
-                    Panoramas = panos
-                    SelectedPanorama = 0 }
+                    MeshBounds = perMesh }
         | DatasetsLoaded datasets ->
             { model with Datasets = datasets |> Array.toList }
         | SetActiveDataset dataset ->
@@ -716,17 +661,11 @@ module Update =
                     ChartStickyMesh = None
                     MeshSolo = NoSolo
                     MeshBounds = Map.empty
-                    Panoramas = []
-                    SelectedPanorama = 0
                     ActivePickingLayer = None
-                    LassoDrawing = None
-                    LassoVolume = None
-                    LassoEnabled = true
                     PendingReg = None
                     AnchorPick = None
                     PatchPicker = None
                     Toast = None
-                    HeatmapMode = (match model.HeatmapMode with HeatDiff -> model.HeatmapPrev | m -> m)
                     CardSystem = { model.CardSystem with Cards = model.CardSystem.Cards |> HashMap.map (fun _ c -> { c with Visible = false }) } }
         | JumpToMesh meshName ->
             match Map.tryFind meshName model.DatasetCentroids with
@@ -768,8 +707,6 @@ module Update =
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, center))]
             env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
             model
-        | SetLassoCardPos pos ->
-            { model with LassoCardPos = Some pos }
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
         | EditPin id ->
@@ -782,162 +719,10 @@ module Update =
             | None -> model
         | SetActivePickingLayer name ->
             { model with ActivePickingLayer = name }
-        | LassoBegin ->
-            let scanPins =
-                match model.ScanPins.Placement with
-                | AnchorPlacement -> { model.ScanPins with Placement = PlacementIdle }
-                | _ -> model.ScanPins
-            { model with ScanPins = scanPins; LassoDrawing = Some { Vertices = [||] }; LassoEnabled = true }
-        | ToggleLassoEnabled ->
-            { model with LassoEnabled = not model.LassoEnabled }
-        | LassoAddVertex p ->
-            match model.LassoDrawing with
-            | Some d -> { model with LassoDrawing = Some { Vertices = Array.append d.Vertices [| p |] } }
-            | None -> model
-        | LassoCommit(viewTrafo, projTrafo, vpSize) ->
-            match model.LassoDrawing with
-            | Some d when d.Vertices.Length >= 3 ->
-                let poly = d.Vertices
-                let n = poly.Length
-                let toNdc (px : V2d) =
-                    V2d(2.0 * px.X / float vpSize.X - 1.0,
-                        1.0 - 2.0 * px.Y / float vpSize.Y)
-                let vp = viewTrafo * projTrafo
-                let camPos = viewTrafo.Backward.TransformPos V3d.Zero
-                let dirs =
-                    poly |> Array.map (fun px ->
-                        let ndc = toNdc px
-                        let pNear = vp.Backward.TransformPosProj(V3d(ndc, -1.0))
-                        (pNear - camPos) |> Vec.normalize)
-                let planes =
-                    Array.init n (fun i ->
-                        let d0 = dirs.[i]
-                        let d1 = dirs.[(i + 1) % n]
-                        let normal = Vec.cross d0 d1 |> Vec.normalize
-                        let offset = -(Vec.dot normal camPos)
-                        V4d(normal.X, normal.Y, normal.Z, offset))
-                let centroidNdc =
-                    let mutable s = V2d.Zero
-                    for px in poly do
-                        s <- s + toNdc px
-                    s / float n
-                let centroidWorld =
-                    vp.Backward.TransformPosProj(V3d(centroidNdc, 0.0))
-                let outside =
-                    planes |> Array.sumBy (fun p ->
-                        let d = p.X * centroidWorld.X + p.Y * centroidWorld.Y + p.Z * centroidWorld.Z + p.W
-                        if d > 0.0 then 1 else 0)
-                let planes =
-                    if outside > n / 2 then planes |> Array.map (fun p -> -p)
-                    else planes
-                let volume = { Planes = planes; ScreenPolygon = poly; CommitVpSize = vpSize }
-                { model with LassoDrawing = None; LassoVolume = Some volume; LassoEnabled = true }
-            | _ ->
-                { model with LassoDrawing = None }
-        | LassoCancel ->
-            { model with LassoDrawing = None }
-        | LassoClear ->
-            { model with LassoDrawing = None; LassoVolume = None; LassoEnabled = true }
         | CardMsg msg ->
             { model with CardSystem = CardUpdate.update msg model.CardSystem }
         | ScanPinMsg msg ->
             ScanPinUpdate.handleMsg env model msg
-        | SaveWorkspace ->
-            let json = Persistence.serialize model
-            try
-                JSRuntime.Instance.InvokeVoid("SuperWorkspaceSave", "workspace.json", json)
-            with _ -> ()
-            model
-        | LoadWorkspaceJson json ->
-            match Persistence.apply json model with
-            | Result.Ok m -> m
-            | Result.Error err ->
-                { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "workspace load failed: %s" err) }
-        | StartRetarget target ->
-            let pins =
-                model.ScanPins.Pins
-                |> HashMap.toSeq
-                |> Seq.choose (fun (_, p) ->
-                    if p.Phase = PinPhase.Committed then Some p else None)
-                |> Array.ofSeq
-            if pins.Length = 0 then
-                { model with DebugLog = model.DebugLog.InsertAt(0, "retarget: no committed pins") }
-            else
-                task {
-                    try
-                        let! candidates =
-                            pins
-                            |> Array.map (fun p ->
-                                async {
-                                    let! res = Query.closestPoint ApiConfig.apiBase.Value target 0 p.Centre
-                                    return
-                                        match res with
-                                        | Some r ->
-                                            let dist = sqrt (float r.distanceSquared)
-                                            {
-                                                PinId = p.Id
-                                                OriginalHostMesh = p.HostMeshName
-                                                InnerRadius = p.InnerRadius
-                                                ProjectedCentre = r.point
-                                                ProjectionDistance = dist
-                                                TargetMesh = target
-                                                Decision = RetargetUndecided
-                                            }
-                                        | None ->
-                                            // No projection — flag with a sentinel large distance
-                                            {
-                                                PinId = p.Id
-                                                OriginalHostMesh = p.HostMeshName
-                                                InnerRadius = p.InnerRadius
-                                                ProjectedCentre = p.Centre
-                                                ProjectionDistance = System.Double.PositiveInfinity
-                                                TargetMesh = target
-                                                Decision = RetargetReject
-                                            }
-                                })
-                            |> Async.Parallel
-                        env.Emit [RetargetCandidatesReady candidates]
-                    with ex ->
-                        env.Emit [LogDebug (sprintf "retarget projection failed: %s" ex.Message)]
-                } |> ignore
-                { model with Retarget = RetargetProjecting target }
-        | RetargetCandidatesReady candidates ->
-            { model with Retarget = RetargetReviewing candidates }
-        | SetRetargetDecision(pinId, decision) ->
-            match model.Retarget with
-            | RetargetReviewing cs ->
-                let updated =
-                    cs |> Array.map (fun c ->
-                        if c.PinId = pinId then { c with Decision = decision } else c)
-                { model with Retarget = RetargetReviewing updated }
-            | _ -> model
-        | CommitRetarget ->
-            match model.Retarget with
-            | RetargetReviewing cs ->
-                let mutable pins = model.ScanPins.Pins
-                let mutable moved = []
-                for c in cs do
-                    if c.Decision = RetargetAccept then
-                        match HashMap.tryFind c.PinId pins with
-                        | Some p ->
-                            let p' =
-                                { p with
-                                    Centre = c.ProjectedCentre
-                                    HostMeshName = Some c.TargetMesh
-                                    Probe = ProbeNone
-                                    ContactRings = RingsNone }
-                            pins <- HashMap.add c.PinId p' pins
-                            moved <- c.PinId :: moved
-                        | None -> ()
-                let model =
-                    { model with
-                        ScanPins = { model.ScanPins with Pins = pins }
-                        Retarget = RetargetIdle }
-                // §4: a moved pin re-seeds its refAnchor + Auto anchors (manual picks survive).
-                seedAnchors env model moved
-            | _ -> model
-        | CancelRetarget ->
-            { model with Retarget = RetargetIdle }
         // Transient hover probe: QuickPinRadius, auto length, declared reference mesh (or
         // active picking layer / first visible). Not cached; next Ctrl-click cancels via the CTS.
         | HoverProbeAt(screenPx, world) ->
@@ -1009,16 +794,33 @@ module Update =
         | ClearChartSticky ->
             if model.ChartStickyMesh.IsNone && model.SurfaceDistBrush.IsNone then model
             else (bumpSurfaceDist (); { model with ChartStickyMesh = None; SurfaceDistance = Map.empty; SurfaceDistBrush = None })
-        | TogglePanorama ->
-            { model with PanoramaOpen = not model.PanoramaOpen }
-        | SetPanoramaMode m ->
-            { model with PanoramaMode = m }
-        | SetPanoramaBlend b ->
-            { model with PanoramaBlend = clamp 0.0 1.0 b }
-        | StudiesLoaded studies ->
-            { model with StudiesAvailable = studies |> Array.toList }
         | ToggleWorkflowPanel ->
             { model with WorkflowPanelOpen = not model.WorkflowPanelOpen; WorkflowPinHover = None }
+        | SetWorkflowStep step ->
+            if model.WorkflowStep = step then model else { model with WorkflowStep = step }
+        | SetFocusAxis a ->
+            if model.FocusAxis = a then model else { model with FocusAxis = a }
+        | ToggleFocusPanel ->
+            { model with FocusOpen = not model.FocusOpen }
+        | SetAlignMesh m ->
+            if model.AlignMesh = m then model else { model with AlignMesh = m }
+        | TogglePinFocus ->
+            { model with PinFocusMode = not model.PinFocusMode }
+        | SetMovementLayer m ->
+            if model.MovementLayer = m then model else { model with MovementLayer = m }
+        | ToggleOutlines ->
+            { model with OutlineMode = not model.OutlineMode }
+        // §5 translate-only coarse align: shift the moving mesh's committed
+        // render-space transform by an in-plane delta. Blocked under a preview.
+        | TranslateAlignMesh d ->
+            if PendingRegistration.isPreview model.PendingReg then model
+            else
+                match model.AlignMesh with
+                | Some mesh when Map.tryFind mesh model.MeshVisible |> Option.defaultValue true ->
+                    let cur = Map.tryFind mesh model.MeshTransforms |> Option.defaultValue Trafo3d.Identity
+                    invalidateRings
+                        (invalidateProbes { model with MeshTransforms = Map.add mesh (cur * Trafo3d.Translation d) model.MeshTransforms })
+                | _ -> model
         // Workflow §4: keep orientation, animate centre + radius so the target subtends
         // ~25% of viewport height. User nav input overrides via the orbit machinery.
         | FlyTo(target, aspect) ->
@@ -1047,34 +849,15 @@ module Update =
             | RunFine -> env.Emit [RunRegistration]; model
             | CommitPending -> env.Emit [CommitRegistration]; model
             | DiscardPending -> env.Emit [DiscardRegistration]; model
-        | StudyMsg smsg ->
-            StudyUpdate.handleMsg env model smsg
-        | FlyToPanorama i ->
-            match List.tryItem i model.Panoramas with
-            | Some p ->
-                let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
-                let eyeR = (p.EyeWorld - model.CommonCentroid) * scale
-                let r =
-                    if model.SceneBounds.IsInvalid then 5.0
-                    else max 1.0 (model.SceneBounds.Size.Length * scale * 0.12)
-                let fwd = V3d(cos p.Yaw, sin p.Yaw, 0.0)
-                let center = eyeR + fwd * r
-                env.Emit [CameraMessage (OrbitMessage.SetTarget(true, center, r, p.Yaw + Constant.Pi, 0.05))]
-                model
-            | None -> model
 
-    // Rulers / locked iso-plane are scoped to the effective (selected/adjusting) pin:
-    // they reset when it changes (incl. deselect). Cutaway is global, deliberately not reset.
+    // The correspondence-marker hover highlight is scoped to the effective
+    // (selected/adjusting) pin: it resets when the pin changes (incl. deselect).
     let private effectivePinId (m : Model) = ScanPinModel.effectivePinId m.ScanPins
 
     let private clearSectioningOnPinChange (before : Model) (after : Model) =
         if effectivePinId before = effectivePinId after then after
-        else
-            let after =
-                if after.RulerActive then { after with RulerActive = false } else after
-            let after =
-                if after.CorrMarkerHover.IsSome then { after with CorrMarkerHover = None } else after
-            if List.isEmpty after.ClipPlanes then after else { after with ClipPlanes = [] }
+        elif after.CorrMarkerHover.IsSome then { after with CorrMarkerHover = None }
+        else after
 
     // A2 postlude: surface-map on + a soloed column → lazily fetch that mesh's per-vertex
     // signed distance (committed pose), debounced, at most once per invalidation generation.
@@ -1097,7 +880,7 @@ module Update =
                     try
                         do! System.Threading.Tasks.Task.Delay(120, token)
                         let! dist =
-                            Query.regionDistance ApiConfig.apiBase.Value mesh 0 refMesh 0 targetT refT
+                            Query.regionDistance ApiConfig.apiBase.Value mesh 0 refMesh 0 targetT refT (if model.ExtrinsicZDiff then 1 else 0)
                             |> Async.StartAsTask
                         if not token.IsCancellationRequested then
                             env.Emit [SurfaceDistanceComputed(mesh, dist)]
@@ -1110,6 +893,62 @@ module Update =
                 model
             | _ -> model
 
+    // §6 all-meshes variance: per reference vertex, the std of each visible
+    // moving mesh's signed distance (target = reference, ref = moving). Shares
+    // the surface-distance generation/CTS (mutually exclusive with the map).
+    let private ensureVariance (env : Env<Message>) (model : Model) : Model =
+        if not model.VarianceOn then model
+        else
+            match model.Registration.ReferenceMesh with
+            | Some refMesh
+                  when not (Map.containsKey refMesh model.SurfaceDistance)
+                       && surfaceDistReqGen <> surfaceDistGen ->
+                let moving =
+                    model.MeshNames |> IndexList.toList
+                    |> List.filter (fun n -> n <> refMesh && (Map.tryFind n model.MeshVisible |> Option.defaultValue true))
+                if List.length moving < 2 then model
+                else
+                    surfaceDistReqGen <- surfaceDistGen
+                    let refT = (ModelTransforms.committedWorld model refMesh).Forward
+                    let jobs =
+                        moving |> List.map (fun m ->
+                            let mT = (ModelTransforms.committedWorld model m).Forward
+                            Query.regionDistance ApiConfig.apiBase.Value refMesh 0 m 0 refT mT 0)
+                    surfaceDistCts.Cancel()
+                    surfaceDistCts <- new System.Threading.CancellationTokenSource()
+                    let token = surfaceDistCts.Token
+                    task {
+                        try
+                            do! System.Threading.Tasks.Task.Delay(150, token)
+                            let! results = jobs |> Async.Parallel |> Async.StartAsTask
+                            if not token.IsCancellationRequested && results.Length >= 2 then
+                                let n = results.[0].Length
+                                let outv = Array.zeroCreate<float32> n
+                                for i in 0 .. n - 1 do
+                                    let mutable sum = 0.0
+                                    let mutable sum2 = 0.0
+                                    let mutable cnt = 0
+                                    for r in results do
+                                        if i < r.Length then
+                                            let v = float r.[i]
+                                            if abs v < 1e20 then
+                                                sum  <- sum + v
+                                                sum2 <- sum2 + v * v
+                                                cnt  <- cnt + 1
+                                    if cnt >= 2 then
+                                        let mean = sum / float cnt
+                                        outv.[i] <- float32 (sqrt (max 0.0 (sum2 / float cnt - mean * mean)))
+                                    else outv.[i] <- 1e30f
+                                env.Emit [VarianceComputed(refMesh, outv)]
+                        with
+                        | :? System.OperationCanceledException -> ()
+                        | ex ->
+                            if not token.IsCancellationRequested then
+                                env.Emit [SurfaceDistanceFailed(refMesh, ex.Message)]
+                    } |> ignore
+                    model
+            | _ -> model
+
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         let updated =
             updateCore env model msg
@@ -1118,6 +957,7 @@ module Update =
             |> ScanPinUpdate.ensureRings env
             |> ScanPinUpdate.ensureDetailGrids env
             |> ensureSurfaceDistance env
+            |> ensureVariance env
             |> clearSectioningOnPinChange model
-        StudyUpdate.postlude env model updated msg
+        updated
 

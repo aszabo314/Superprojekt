@@ -11,6 +11,43 @@ type RenderingMode =
     | Shaded
     | SlopeColor
 
+// Left-rail workflow spine (spec §2). One step is expanded at a time; each
+// gates the next via the readiness engine.
+type WorkflowStep =
+    | StepReference
+    | StepCoarse
+    | StepFine
+    | StepInspect
+    | StepCommit
+
+module WorkflowStep =
+    let all = [ StepReference; StepCoarse; StepFine; StepInspect; StepCommit ]
+    let index = function
+        | StepReference -> 0 | StepCoarse -> 1 | StepFine -> 2
+        | StepInspect -> 3 | StepCommit -> 4
+    let title = function
+        | StepReference -> "Reference"
+        | StepCoarse -> "Coarse align"
+        | StepFine -> "Fine ICP"
+        | StepInspect -> "Inspect"
+        | StepCommit -> "Commit"
+
+// Focus panel ortho view axis (spec §5): one at a time, never simultaneously.
+type FocusAxis =
+    | AxisTop
+    | AxisFront
+    | AxisSide
+
+module FocusAxis =
+    let label = function AxisTop -> "Top" | AxisFront -> "Front" | AxisSide -> "Side"
+
+// Movement layer (spec §7, preview only): visualises the applied rigid motion
+// over each pin ROI. Off / before→after displacement arrows / warped lattice.
+type MovementMode =
+    | MovementOff
+    | MovementGlyphs
+    | MovementGrid
+
 module DatasetScale =
     let forMesh (scales : Map<string, float>) (meshName : string) =
         let i = meshName.IndexOf '/'
@@ -72,122 +109,6 @@ module RegistrationState =
         Running        = false
     }
 
-type RetargetDecision =
-    | RetargetUndecided
-    | RetargetAccept
-    | RetargetReject
-
-type RetargetCandidate = {
-    PinId              : ScanPinId
-    OriginalHostMesh   : string option
-    InnerRadius        : float
-    ProjectedCentre    : V3d
-    ProjectionDistance : float
-    TargetMesh         : string
-    Decision           : RetargetDecision
-}
-
-type RetargetState =
-    | RetargetIdle
-    | RetargetProjecting of targetMesh:string
-    | RetargetReviewing  of candidates:RetargetCandidate[]
-
-module RetargetState =
-    let initial = RetargetIdle
-
-// Synthetic panorama: a metric world-space camera pose rendered to a cubemap
-// and reprojected cylindrically. No real imagery exists — one is generated per
-// dataset on load at the scene bbox centre plus a couple of metres up.
-type Panorama = {
-    Name     : string
-    EyeWorld : V3d     // metric world-space eye position
-    Yaw      : float   // horizontal look offset (radians); 0 looks along +X
-}
-
-// Panorama panel display mode.
-//   PanoPhoto  — the captured synthetic image (meshes in reference state)
-//   PanoRender — live render of the current meshes from the pose
-//   PanoBlend  — slider mix of the two (photo-vs-mesh disagreement detector)
-type PanoramaMode =
-    | PanoPhoto
-    | PanoRender
-    | PanoBlend
-
-type LassoDraft =
-    { Vertices : V2d[] }
-
-type LassoVolume =
-    {
-        Planes        : V4d[]
-        ScreenPolygon : V2d[]
-        CommitVpSize  : V2i
-    }
-
-// 3D sectioning / cutaway: one clip-plane subsystem (cutaway + live/locked
-// iso-plane are parameterizations). Origin/Normal metric world-space, converted
-// at the pipeline boundary. Half-space rule: discard where
-// dot(p − origin, normal) > 0 — Normal points at the half to remove.
-type ClipPlane = {
-    Origin : V3d
-    Normal : V3d
-}
-
-module Provenance =
-    let defaultDatasetError (sensor : SensorType) =
-        match sensor with
-        | RoverStereo     -> 0.5
-        | Satellite       -> 0.25
-        | Photogrammetry  -> 0.008
-        | LiDAR           -> 0.0005
-        | UnknownSensor   -> 0.01
-
-    let datasetError (overrides : Map<string, float>) (sensors : Map<string, SensorType>) (mesh : string) =
-        match Map.tryFind mesh overrides with
-        | Some v -> v
-        | None ->
-            Map.tryFind mesh sensors
-            |> Option.defaultValue UnknownSensor
-            |> defaultDatasetError
-
-    let localConditioning (p : V3d) (anchors : (V3d * float)[]) =
-        if anchors.Length < 2 then 1e6
-        else
-            let weighted =
-                anchors
-                |> Array.choose (fun (c, sigma) ->
-                    if sigma < 1e-6 then None
-                    else
-                        let d2 = (p - c).LengthSquared
-                        let w = exp (-d2 / (2.0 * sigma * sigma))
-                        if w > 0.05 then Some (c, w) else None)
-            if weighted.Length < 2 then 1e6
-            else
-                let density = weighted |> Array.sumBy snd
-                let dirs =
-                    weighted |> Array.map (fun (c, _) ->
-                        let v = c - p
-                        if v.Length > 1e-9 then v / v.Length else V3d.OOI)
-                let mutable maxCos = 0.0
-                for i in 0 .. dirs.Length - 1 do
-                    for j in i + 1 .. dirs.Length - 1 do
-                        let c = abs (Vec.dot dirs.[i] dirs.[j])
-                        if c > maxCos then maxCos <- c
-                let angDiv = 1.0 - maxCos
-                let cond = 1.0 / (density * angDiv + 1e-3)
-                min cond 1e6
-
-    let sourcesAt
-            (mesh : string)
-            (datasetOverrides : Map<string, float>)
-            (sensors : Map<string, SensorType>)
-            (algoResiduals : Map<string, float>)
-            (worldPoint : V3d)
-            (anchors : (V3d * float)[]) =
-        let dErr = datasetError datasetOverrides sensors mesh
-        let aErr = Map.tryFind mesh algoResiduals |> Option.defaultValue 0.0
-        let cErr = localConditioning worldPoint anchors
-        dErr, aErr, cErr
-
 [<ModelType>]
 type Model =
     {
@@ -219,30 +140,15 @@ type Model =
 
         ActivePickingLayer : string option
 
-        LassoDrawing : LassoDraft option
-        LassoVolume  : LassoVolume option
-        LassoEnabled : bool
-
-        // 3D sectioning (0..2 active planes) + spring-loaded reference peek.
-        // ClipPlanes = manually-locked planes (iso-plane lock); cutaway is
-        // derived live from the selected pin's correspondence box.
-        ClipPlanes        : ClipPlane list
+        // Spring-loaded reference peek (hold to show only the reference mesh).
         ReferencePeekHeld : bool
-        CutawayActive     : bool
-        // Clip meshes above the live iso-plane while hovering the violin (see
-        // into the section). Alt-click locks it.
-        ClipAboveIso      : bool
-        // Labelled anchor↔reference rulers for the selected pin (HTML overlay).
-        RulerActive       : bool
 
         MeshTransforms        : Map<string, Trafo3d>
         Registration          : RegistrationState
-        Retarget              : RetargetState
 
-        // Ensemble registration: uncommitted solve preview, committed history,
-        // correspondence-anchor flows.
+        // Ensemble registration: uncommitted solve preview + correspondence-
+        // anchor flows. A single commit applies into MeshTransforms; no history.
         PendingReg            : PendingRegistration option
-        RegistrationLog       : RegStep list
         // Last solve diagnostics per mesh (workflow panel) — persisted.
         LastSolve             : Map<string, LastSolveEntry>
         AnchorPick            : AnchorPickState option
@@ -250,30 +156,23 @@ type Model =
         Toast                 : string option
 
         MeshSensorTypes       : Map<string, SensorType>
-        MeshDatasetErrors     : Map<string, float>
-        MeshAlgorithmResidual : Map<string, float>
         HeatmapMode           : HeatmapMode
-        // Mode to restore when HeatDiff auto-reverts on commit/discard.
-        HeatmapPrev           : HeatmapMode
-        ProvenanceThreshold   : float
 
         // A2: per-mesh signed-distance surface colour map — the soloed mesh is
         // painted with its per-vertex signed M3C2 distance to the reference.
         // SurfaceDistance holds the fetched per-vertex arrays (aligned with the
         // served geometry), keyed by mesh.
         SurfaceDistOn         : bool
+        // §6 extrinsic mode: false = signed M3C2, true = vertical Δz.
+        ExtrinsicZDiff        : bool
+        // §6 all-meshes variance map: per-reference-vertex disagreement (std of
+        // each visible moving mesh's distance), painted on the reference.
+        // Mutually exclusive with the single-mesh extrinsic map above.
+        VarianceOn            : bool
         SurfaceDistance       : Map<string, float32[]>
         // A3 range brush: a signed-distance interval brushed on the violin;
         // fragments inside it stay vivid, the rest wash out (focus+context).
         SurfaceDistBrush      : (float * float) option
-
-        FusionMode            : bool
-
-        PanoramaOpen          : bool
-        Panoramas             : Panorama list
-        SelectedPanorama      : int
-        PanoramaMode          : PanoramaMode
-        PanoramaBlend         : float
 
         ScanPins              : ScanPinModel
         CardSystem            : CardSystemModel
@@ -300,17 +199,29 @@ type Model =
 
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
-        LassoCardPos        : V2d option
         GearPopoverOpen     : bool
-
-        // User-study mode: None = Full app; Some shell = study pages / running
-        // session (chrome replaced, features gated).
-        Study               : StudyShell option
-        StudiesAvailable    : string list
 
         // Registration panel open state (model-side so nav actions can open it;
         // session-only).
         WorkflowPanelOpen   : bool
+
+        // Left workflow rail: which step is expanded (spec §2).
+        WorkflowStep        : WorkflowStep
+
+        // Right focus panel (spec §1/§5): secondary ortho WebGL control.
+        // AlignMesh = the moving mesh manually translated in the ortho view.
+        FocusOpen           : bool
+        FocusAxis           : FocusAxis
+        AlignMesh           : string option
+
+        // §9 pin-focus modifier: ghost everything outside the focused pin's ROI.
+        PinFocusMode        : bool
+
+        // §7 movement layer (preview only).
+        MovementLayer       : MovementMode
+
+        // §10 per-mesh image-space outlines (default off — gated overlay).
+        OutlineMode         : bool
     }
 
 // Committed vs effective (committed ∘ pending-delta) transforms, render and
@@ -351,7 +262,7 @@ module Model =
             MeshesLoaded   = HashSet.empty
             MeshVisible    = Map.empty
             CommonCentroid = V3d.Zero
-            MenuOpen       = false
+            MenuOpen       = true
             SavedMenuOpen  = None
             DebugLog       = IndexList.empty
             Datasets         = []
@@ -367,38 +278,21 @@ module Model =
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             ActivePickingLayer = None
-            LassoDrawing = None
-            LassoVolume  = None
-            LassoEnabled = true
-            ClipPlanes        = []
             ReferencePeekHeld = false
-            CutawayActive     = true
-            ClipAboveIso      = false
-            RulerActive       = false
             MeshTransforms        = Map.empty
             Registration          = RegistrationState.initial
-            Retarget              = RetargetState.initial
             PendingReg            = None
-            RegistrationLog       = []
             LastSolve             = Map.empty
             AnchorPick            = None
             PatchPicker           = None
             Toast                 = None
             MeshSensorTypes       = Map.empty
-            MeshDatasetErrors     = Map.empty
-            MeshAlgorithmResidual = Map.empty
             SurfaceDistOn         = false
+            ExtrinsicZDiff        = false
+            VarianceOn            = false
             SurfaceDistance       = Map.empty
             SurfaceDistBrush      = None
             HeatmapMode           = HeatOff
-            HeatmapPrev           = HeatOff
-            ProvenanceThreshold   = 0.01
-            FusionMode            = false
-            PanoramaOpen          = false
-            Panoramas             = []
-            SelectedPanorama      = 0
-            PanoramaMode          = PanoRender
-            PanoramaBlend         = 0.5
             ScanPins              = ScanPinModel.initial
             CardSystem            = CardSystemModel.initial
             HoverProbe            = None
@@ -411,9 +305,13 @@ module Model =
             DetailGridPin         = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
-            LassoCardPos        = None
             GearPopoverOpen     = false
-            Study               = None
-            StudiesAvailable    = []
             WorkflowPanelOpen   = false
+            WorkflowStep        = StepReference
+            FocusOpen           = true
+            FocusAxis           = AxisTop
+            AlignMesh           = None
+            PinFocusMode        = false
+            MovementLayer       = MovementOff
+            OutlineMode         = false
         }

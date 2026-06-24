@@ -199,7 +199,7 @@ module SceneGraph =
         // shouldn't write depth" rule but is the only combination that works.
 
         let meshScene  = MeshView.buildScene loadFinished cursorHighlight clipUniforms previewSwap wheelIsolation model
-        let fusionScene = FusionView.build info model view proj
+        let outlineScene = OutlineView.build info model view proj
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover patchHover model
 
         let notFullscreen = AVal.map not fullscreenActive
@@ -215,7 +215,7 @@ module SceneGraph =
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Uniform("ViewportSize", info.ViewportSize)
                 meshScene
-                fusionScene
+                outlineScene
                 cross
                 pinScene
                 refOutline

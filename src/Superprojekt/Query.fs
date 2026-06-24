@@ -270,7 +270,7 @@ module Query =
             (serverUrl : string)
             (targetName : string) (targetIndex : int)
             (refName : string) (refIndex : int)
-            (targetTransform : M44d) (refTransform : M44d)
+            (targetTransform : M44d) (refTransform : M44d) (mode : int)
             : Async<float32[]> =
         async {
             let m44 (m : M44d) =
@@ -281,8 +281,8 @@ module Query =
                        m.M30; m.M31; m.M32; m.M33 |]
                     |> Array.map (sprintf "%.17g"))
             let json =
-                sprintf """{"targetName":"%s","targetIndex":%d,"refName":"%s","refIndex":%d,"targetTransform":[%s],"refTransform":[%s]}"""
-                    targetName targetIndex refName refIndex (m44 targetTransform) (m44 refTransform)
+                sprintf """{"targetName":"%s","targetIndex":%d,"refName":"%s","refIndex":%d,"targetTransform":[%s],"refTransform":[%s],"mode":%d}"""
+                    targetName targetIndex refName refIndex (m44 targetTransform) (m44 refTransform) mode
             let! r = post serverUrl "/query/region-distance" json
             return
                 r.GetProperty("dist").EnumerateArray()

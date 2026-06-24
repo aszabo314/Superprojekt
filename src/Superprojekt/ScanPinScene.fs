@@ -177,9 +177,8 @@ module ScanPinScene =
         // InnerRadius) + sphere–surface contact rings per visible mesh, in the
         // pin's categorical colour. Unselected α 0.6 / 1.5 px, selected α 1.0 /
         // 2.5 px. Normal depth testing on purpose — occlusion is the spatial
-        // cue. Study gating: contact rings are their own feature; the equator
-        // ring stays (the footprint cue + inner-radius slider feedback).
-        let contactRingsOn = model.Study |> AVal.map (fun s -> Study.featureVisible s "contactRings")
+        // cue.
+        let contactRingsOn = AVal.constant true
         let pinRings =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
@@ -449,29 +448,6 @@ module ScanPinScene =
                 linesNode active rimSegs
             ]
 
-        // Locked iso-plane gizmo: a slate ring + short normal stub per committed
-        // ClipPlane so the section plane stays legible while orbiting.
-        let clipGizmos =
-            let col = V4d(0.27, 0.31, 0.39, 0.85)
-            let segs =
-                AVal.custom (fun t ->
-                    let planes = model.ClipPlanes.GetValue t
-                    if List.isEmpty planes then [||]
-                    else
-                        let cc = model.CommonCentroid.GetValue t
-                        let scale = datasetScale.GetValue t
-                        let sb = model.SceneBounds.GetValue t
-                        let rWorld = if sb.IsInvalid then 5.0 else sb.Size.Length * 0.3
-                        let out = ResizeArray<V3d * V3d * V4d * float>()
-                        for p in planes do
-                            let c = ScanPin.renderCentre cc scale p.Origin
-                            let r = ScanPin.renderLength scale rWorld
-                            let nN, u, v = basisFromNormal p.Normal
-                            addRing out c u v r col 1.5 72
-                            out.Add(c, c + nN * (r * 0.12), col, 1.5)
-                        out.ToArray())
-            ASet.ofList [ linesNode notFullscreen segs ]
-
         // Patch-picker 2D→3D linking (patchHover is a view-local cval set by the
         // cell JS — pointer moves never touch the reducer): while a cell is
         // hovered, sampled vertices inside its pan/zoom viewport get a tick
@@ -546,52 +522,112 @@ module ScanPinScene =
                     | None -> Array.empty)
             ASet.ofList [ linesNode notFullscreen tickSegs; linesNode notFullscreen markerSegs ]
 
-        // Study flag markers (§7 sceneClick / §9 P5): config-planted flags of
-        // the current phase in amber, the participant's marks in the accent.
-        // One Lines node, pole + diamond sized in world metres. model.Study
-        // changes on every reducer step, so the result is memoized on the actual
-        // inputs (equality cut keeps the line buffer untouched while unchanged).
-        let studyFlags =
-            let flagCache : ((string * int * Map<string, V3d> * V3d * float * Box3d) option * (V3d * V3d * V4d * float)[]) ref =
-                ref (None, Array.empty)
+        // §8 pin glyph (far/preattentive view): a pole + head per committed pin.
+        // Head colour = verdict (green if every moving mesh's |median| ≤ LoD₉₅,
+        // red if any is significant; grey when no probe yet). Pole height grows
+        // with magnitude (max |median offset| across moving meshes). The near
+        // (attentive) split-violin lives in the pin card / flyout.
+        let pinGlyphs =
+            let green = V4d(0.086, 0.639, 0.290, 1.0)   // #16a34a
+            let red   = V4d(0.863, 0.149, 0.149, 1.0)   // #dc2626
+            let grey  = V4d(0.60, 0.62, 0.66, 0.9)
             let segs =
                 AVal.custom (fun t ->
-                    match model.Study.GetValue t with
-                    | Some (StudyActive s) ->
-                        let cc = model.CommonCentroid.GetValue t
-                        let scale = datasetScale.GetValue t
-                        let sb = model.SceneBounds.GetValue t
-                        let key = Some (s.SessionId, s.Runtime.PhaseIx, s.Runtime.Flags, cc, scale, sb)
-                        match flagCache.Value with
-                        | lastKey, cached when lastKey = key -> cached
-                        | _ ->
-                            let hWorld = if sb.IsInvalid then 1.0 else sb.Size.Length * 0.02
-                            let h = ScanPin.renderLength scale hWorld
-                            let questions =
-                                match Study.currentPhase s with
-                                | Some ph -> ph.Steps |> List.choose (fun st -> Study.effectiveQuestion s.Config st)
-                                | None -> []
-                            let out = ResizeArray<V3d * V3d * V4d * float>()
-                            let flag (world : V3d) (colour : V4d) =
-                                let p = ScanPin.renderCentre cc scale world
-                                let top = p + V3d.OOI * h
-                                let r = h * 0.18
-                                out.Add(p, top, colour, 2.0)
-                                for (a, b) in [ V3d.IOO, V3d.OIO; V3d.OIO, -V3d.IOO; -V3d.IOO, -V3d.OIO; -V3d.OIO, V3d.IOO ] do
-                                    out.Add(top + a * r, top + b * r, colour, 2.0)
-                            for q in questions do
-                                match q.FlagPoint with
-                                | Some fp -> flag fp (V4d(0.85, 0.47, 0.02, 0.95))
-                                | None -> ()
-                                match Map.tryFind q.Id s.Runtime.Flags with
-                                | Some mark -> flag mark (V4d(0.03, 0.57, 0.7, 0.95))
-                                | None -> ()
-                            let result = out.ToArray()
-                            flagCache.Value <- key, result
-                            result
-                    | _ ->
-                        flagCache.Value <- None, Array.empty
-                        Array.empty)
+                    let pins  = pinsVal.GetValue t
+                    let cc    = model.CommonCentroid.GetValue t
+                    let scale = datasetScale.GetValue t
+                    let out   = ResizeArray<V3d * V3d * V4d * float>()
+                    for (_, p) in HashMap.toSeq pins do
+                        if p.Phase = PinPhase.Committed then
+                            let verdict, magnitude =
+                                match p.Probe with
+                                | ProbeReady r ->
+                                    let moving =
+                                        r.Distributions
+                                        |> Array.filter (fun d -> d.MeshName <> r.ReferenceMesh && d.Count > 0)
+                                    if moving.Length = 0 then grey, 0.0
+                                    else
+                                        let refD = r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
+                                        let refStd = refD |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
+                                        let refN = refD |> Option.map (fun d -> float (max 1 d.Count)) |> Option.defaultValue 1.0
+                                        let anySig =
+                                            moving |> Array.exists (fun d ->
+                                                let lod = 1.96 * sqrt (refStd*refStd/refN + d.Std*d.Std/float (max 1 d.Count))
+                                                abs d.Median > lod)
+                                        let mag = moving |> Array.map (fun d -> abs d.Median) |> Array.max
+                                        (if anySig then red else green), mag
+                                | _ -> grey, 0.0
+                            let axisN, u, v = basisFromNormal (ScanPin.axis p)
+                            let c   = ScanPin.renderCentre cc scale p.Centre
+                            let h   = ScanPin.renderLength scale (p.InnerRadius * 1.5 + magnitude * 3.0)
+                            let top = c + axisN * h
+                            let hr  = ScanPin.renderLength scale (p.InnerRadius * 0.5)
+                            out.Add(c, top, verdict, 2.5)
+                            addRing out top u v hr verdict 2.5 24
+                    out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; hoverProbeBody; pickGuide; ghostPreview; cursorPlane; clipGizmos; anchorGlyphs; patchLink; studyFlags])
+        // §7 movement layer (preview only): per committed pin ROI, show the
+        // applied rigid motion of each moving mesh as before→after displacement
+        // arrows (MovementGlyphs) or an original-faint / warped-accent lattice
+        // (MovementGrid). World delta = the preview pose relative to committed.
+        let movementLayer =
+            let accent = V4d(0.031, 0.569, 0.698, 0.95)
+            let faint  = V4d(0.45, 0.50, 0.55, 0.40)
+            let segs =
+                AVal.custom (fun t ->
+                    let mode = model.MovementLayer.GetValue t
+                    match model.PendingReg.GetValue t with
+                    | Some pr when mode <> MovementOff && not (Map.isEmpty pr.Results) ->
+                        let pins  = pinsVal.GetValue t
+                        let cc    = model.CommonCentroid.GetValue t
+                        let scale = datasetScale.GetValue t
+                        let transforms = model.MeshTransforms.GetValue t
+                        let scales = model.DatasetScales.GetValue t
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        let K = 2
+                        let arrow (bR : V3d) (aR : V3d) =
+                            out.Add(bR, aR, accent, 1.5)
+                            let d = aR - bR
+                            if d.Length > 1e-6 then
+                                let dn = d.Normalized
+                                let perp = (if abs dn.Z < 0.9 then Vec.cross dn V3d.OOI else Vec.cross dn V3d.IOO).Normalized
+                                let hl = d.Length * 0.28
+                                let hw = hl * 0.5
+                                out.Add(aR, aR - dn * hl + perp * hw, accent, 1.5)
+                                out.Add(aR, aR - dn * hl - perp * hw, accent, 1.5)
+                        for (_, p) in HashMap.toSeq pins do
+                            if p.Phase = PinPhase.Committed then
+                                let axisN, u, v = basisFromNormal (ScanPin.axis p)
+                                ignore axisN
+                                let r = p.InnerRadius
+                                for KeyValue(mesh, res) in pr.Results do
+                                    let committed = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
+                                    let sM = DatasetScale.forMesh scales mesh
+                                    let wd = RigidTransform.worldDeltaOf sM cc committed res.Delta
+                                    let pts =
+                                        Array2D.init (2*K+1) (2*K+1) (fun i j ->
+                                            let off = u * (float (i-K) / float K * r) + v * (float (j-K) / float K * r)
+                                            let before = p.Centre + off
+                                            let after  = wd.Forward.TransformPos before
+                                            ScanPin.renderCentre cc scale before, ScanPin.renderCentre cc scale after)
+                                    match mode with
+                                    | MovementGlyphs ->
+                                        for i in 0 .. 2*K do
+                                            for j in 0 .. 2*K do
+                                                let bR, aR = pts.[i, j]
+                                                arrow bR aR
+                                    | MovementGrid ->
+                                        let lattice (sel : (V3d * V3d) -> V3d) col =
+                                            for i in 0 .. 2*K do
+                                                for j in 0 .. 2*K do
+                                                    if i < 2*K then out.Add(sel pts.[i, j], sel pts.[i+1, j], col, 1.0)
+                                                    if j < 2*K then out.Add(sel pts.[i, j], sel pts.[i, j+1], col, 1.0)
+                                        lattice fst faint
+                                        lattice snd accent
+                                    | MovementOff -> ()
+                        out.ToArray()
+                    | _ -> [||])
+            ASet.ofList [ linesNode notFullscreen segs ]
+
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; movementLayer; hoverProbeBody; pickGuide; ghostPreview; cursorPlane; anchorGlyphs; patchLink])

@@ -15,6 +15,9 @@ type LoadedMesh =
         idx  : aval<IBuffer>
         tex  : aval<ITexture>
         fvc  : aval<int>
+        // §6 range heatmap: max |local vertex| (metric) = farthest point from the
+        // mesh's own origin (= sensor). Normalises the range false-colour.
+        localMaxR : aval<float>
         mesh : MeshData option ref
     }
 
@@ -51,6 +54,7 @@ module MeshView =
                     idx  = cval (ArrayBuffer [| 0; 1; 2 |] :> IBuffer)
                     tex  = cval<ITexture> (AVal.force DefaultTextures.checkerboard)
                     fvc  = cval 3
+                    localMaxR = cval 1.0
                     mesh = ref None
                 }
             meshes.[name] <- m
@@ -65,6 +69,8 @@ module MeshView =
                         (m.nrm :?> cval<IBuffer>).Value <- ArrayBuffer mesh.normals
                         (m.idx :?> cval<IBuffer>).Value <- ArrayBuffer mesh.indices
                         (m.fvc :?> cval<int>).Value     <- mesh.indices.Length
+                        let maxR = mesh.positions |> Array.fold (fun mx (p : V3f) -> max mx (float p.Length)) 0.0
+                        (m.localMaxR :?> cval<float>).Value <- max 1e-6 maxR
                     )
                     let! img = JSImage.load mesh.atlasUrl
                     transact (fun () -> (m.tex :?> cval<ITexture>).Value <- JSTexture(img, true))
@@ -110,15 +116,23 @@ module MeshView =
         |> List.filter (fun n -> Map.tryFind n visible |> Option.defaultValue true)
 
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
-    // inner radius w). Shared by the mesh shader (isolation + provenance) and
-    // the fusion shader (conditioning).
+    // inner radius w). Used by the mesh shader's pin-isolation filter.
     let private pinBlobUniforms (model : AdaptiveModel) =
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
+        // §9 pin-focus: when on, only the focused pin's ROI carves the visible region.
+        let focusVal =
+            (model.PinFocusMode, ScanPinModel.effectivePinIdA model.ScanPins.Placement model.ScanPins.SelectedPin)
+            ||> AVal.map2 (fun on fid -> if on then fid else None)
+        let pinsF =
+            (model.ScanPins.Pins |> AMap.toAVal, focusVal) ||> AVal.map2 (fun pinsMap focus ->
+                let arr = HashMap.toArray pinsMap |> Array.map snd
+                match focus with
+                | Some fid -> arr |> Array.filter (fun p -> p.Id = fid)
+                | None -> arr)
         let blobsArr =
-            (model.ScanPins.Pins |> AMap.toAVal, model.CommonCentroid, datasetScale)
-            |||> AVal.map3 (fun pinsMap cc scale ->
-                let pins  = HashMap.toArray pinsMap |> Array.map snd
+            (pinsF, model.CommonCentroid, datasetScale)
+            |||> AVal.map3 (fun pins cc scale ->
                 let n     = min pins.Length MeshShader.MaxBlobs
                 let centres  = Array.zeroCreate<V4f> MeshShader.MaxBlobs
                 for i in 0 .. n - 1 do
@@ -147,25 +161,6 @@ module MeshView =
             model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
                 names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
         let palette = Primitives.meshPaletteV4d
-
-        // LassoEnabled gates count to 0 (disabled = no effect) while the volume
-        // is kept for re-enabling.
-        let lassoPlaneCount =
-            (model.LassoVolume, model.LassoEnabled) ||> AVal.map2 (fun lv on ->
-                match lv with
-                | Some v when on -> min v.Planes.Length MeshShader.MaxLassoPlanes
-                | _              -> 0)
-        let lassoPlanes =
-            model.LassoVolume |> AVal.map (fun lv ->
-                let arr = Array.zeroCreate<V4f> MeshShader.MaxLassoPlanes
-                match lv with
-                | Some v ->
-                    let n = min v.Planes.Length MeshShader.MaxLassoPlanes
-                    for i in 0 .. n - 1 do
-                        let p = v.Planes.[i]
-                        arr.[i] <- V4f(float32 p.X, float32 p.Y, float32 p.Z, float32 p.W)
-                | None -> ()
-                arr)
 
         let blobCount, blobs = pinBlobUniforms model
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
@@ -213,23 +208,11 @@ module MeshView =
         // Auto-suspend pin isolation while placing an anchor so the terrain
         // stays visible for aiming (auto-restored, no model mutation).
         let anchorGhost =
-            (model.AnchorGhostMode, model.ScanPins.Placement) ||> AVal.map2 (fun on pl ->
+            let isoOn = (model.AnchorGhostMode, model.PinFocusMode) ||> AVal.map2 (||)
+            (isoOn, model.ScanPins.Placement) ||> AVal.map2 (fun on pl ->
                 match pl with
                 | AnchorPlacement -> 0
                 | _ -> if on then 1 else 0)
-        let heatmapModeInt =
-            model.HeatmapMode |> AVal.map (function
-                | HeatOff -> 0
-                | HeatProvenance -> 1
-                | HeatDiff -> 2)
-        let diffSigmaRef =
-            (model.Registration, model.MeshSensorTypes, model.MeshDatasetErrors)
-            |||> AVal.map3 (fun reg sensors overrides ->
-                match reg.ReferenceMesh with
-                | Some r -> Provenance.datasetError overrides sensors r |> float32
-                | None -> 0.0f)
-        let provThreshold =
-            model.ProvenanceThreshold |> AVal.map float32
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             // One-shot 3D anchor pick: target mesh solid (forced visible),
@@ -259,10 +242,14 @@ module MeshView =
             let meshT =
                 (effectiveMeshT model name, committedMeshT model name, previewSwap)
                 |||> AVal.map3 (fun eff comm swap -> if swap then comm else eff)
-            // Inactive meshes still render (as ghost); gate only on load state
-            // and fusion mode (the composite replaces the normal pass).
+            // §6 range heatmap: sensor origin (mesh-local 0,0,0) in render space,
+            // and the normalising max range (metric maxR × dataset scale).
+            let fullTrafo = meshTrafo model.CommonCentroid loaded scale meshT
+            let sensorOrigin = fullTrafo |> AVal.map (fun t -> V3f (t.Forward.TransformPos V3d.Zero))
+            let rangeMax = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> float32 (max 1e-6 (r * s)))
+            // Inactive meshes still render (as ghost); gate only on load state.
             let renderEnabled =
-                (loaded.fvc, model.FusionMode) ||> AVal.map2 (fun c f -> c > 3 && not f)
+                loaded.fvc |> AVal.map (fun c -> c > 3)
             let meshColor =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
@@ -278,9 +265,40 @@ module MeshView =
                         match loaded.mesh.Value with
                         | Some md -> ArrayBuffer (Array.zeroCreate<float32> md.positions.Length) :> IBuffer
                         | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
+            // §6 shape heatmap: per-vertex triangle quality (incident-face mean
+            // of 4√3·A/Σl², clamped 0..1). Recomputed once when geometry loads.
+            let shapeBuf =
+                loaded.pos |> AVal.map (fun _ ->
+                    match loaded.mesh.Value with
+                    | Some md ->
+                        let pos = md.positions
+                        let idx = md.indices
+                        let q   = Array.zeroCreate<float32> pos.Length
+                        let cnt = Array.zeroCreate<int> pos.Length
+                        let mutable f = 0
+                        while f + 2 < idx.Length do
+                            let a, b, c = idx.[f], idx.[f+1], idx.[f+2]
+                            let pa, pb, pc = pos.[a], pos.[b], pos.[c]
+                            let denom = (pb - pa).LengthSquared + (pc - pb).LengthSquared + (pa - pc).LengthSquared
+                            let area  = 0.5f * (Vec.cross (pb - pa) (pc - pa)).Length
+                            let ql    = if denom > 1e-12f then clamp 0.0f 1.0f (4.0f * 1.7320508f * area / denom) else 0.0f
+                            q.[a] <- q.[a] + ql; cnt.[a] <- cnt.[a] + 1
+                            q.[b] <- q.[b] + ql; cnt.[b] <- cnt.[b] + 1
+                            q.[c] <- q.[c] + ql; cnt.[c] <- cnt.[c] + 1
+                            f <- f + 3
+                        for i in 0 .. pos.Length - 1 do
+                            if cnt.[i] > 0 then q.[i] <- q.[i] / float32 cnt.[i]
+                        ArrayBuffer q :> IBuffer
+                    | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
+            // 1 = single-mesh extrinsic (diverging) on the soloed moving mesh;
+            // 2 = §6 variance (sequential) on the reference mesh.
             let distEncoding =
-                (model.SurfaceDistOn, model.ChartStickyMesh, myDist) |||> AVal.map3 (fun on sticky d ->
-                    if on && sticky = Some name && Option.isSome d then 1 else 0)
+                AVal.custom (fun t ->
+                    if (myDist.GetValue t).IsNone then 0
+                    elif model.SurfaceDistOn.GetValue t && model.ChartStickyMesh.GetValue t = Some name then 1
+                    elif model.VarianceOn.GetValue t
+                         && (model.Registration.GetValue t).ReferenceMesh = Some name then 2
+                    else 0)
             // Saturated end of the diverging map: robust (95th pct |d|).
             let distScale =
                 myDist |> AVal.map (function
@@ -315,23 +333,6 @@ module MeshView =
                     match b with
                     | Some (lo, hi) when on && sticky = Some name -> 1, float32 lo, float32 hi
                     | _ -> 0, 0.0f, 0.0f)
-            let meshDatasetErr =
-                (model.MeshSensorTypes, model.MeshDatasetErrors)
-                ||> AVal.map2 (fun sensors overrides ->
-                    Provenance.datasetError overrides sensors name |> float32)
-            let meshAlgoRes =
-                model.MeshAlgorithmResidual
-                |> AVal.map (fun m ->
-                    Map.tryFind name m |> Option.defaultValue 0.0 |> float32)
-            // Diff-mode inputs: per-mesh algo residual before/after the pending
-            // solve + the inverse preview delta (preview-pose fragment →
-            // committed-pose). No pending delta → diffs to zero (masked).
-            let diffData =
-                (model.PendingReg, model.MeshAlgorithmResidual) ||> AVal.map2 (fun pending algo ->
-                    let before = Map.tryFind name algo |> Option.defaultValue 0.0 |> float32
-                    match pending |> Option.bind (fun pr -> Map.tryFind name pr.Results) with
-                    | Some r -> float32 r.RmsAfter, before, M44f r.Delta.Backward
-                    | None -> before, before, M44f.Identity)
             // "All meshes the plane intersects": the cursor effect activates
             // only on meshes whose registered-world bbox touches the highlight
             // slab — and, when clipped, the cylinder's bounding sphere.
@@ -387,7 +388,7 @@ module MeshView =
             let surface =
                 sg {
                     Sg.Active renderEnabled
-                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                    Sg.Trafo fullTrafo
                     Sg.Shader {
                         DefaultSurfaces.trafo
                         DefaultSurfaces.diffuseTexture
@@ -423,19 +424,9 @@ module MeshView =
                     Sg.Uniform("SlopeThreshold",
                         model.SlopeThresholdDeg |> AVal.map (fun d ->
                             sin (d * System.Math.PI / 180.0) |> float32))
-                    Sg.Uniform("LassoPlaneCount", lassoPlaneCount)
-                    Sg.Uniform("LassoPlanes",     lassoPlanes)
                     Sg.Uniform("BlobCount",       blobCount)
                     Sg.Uniform("Blobs",           blobs)
                     Sg.Uniform("AnchorGhost",     anchorGhost)
-                    Sg.Uniform("HeatmapMode",       heatmapModeInt)
-                    Sg.Uniform("ProvThreshold",     provThreshold)
-                    Sg.Uniform("MeshDatasetError",  meshDatasetErr)
-                    Sg.Uniform("MeshAlgoResidual",  meshAlgoRes)
-                    Sg.Uniform("DiffAlgoAfter",     diffData |> AVal.map (fun (a, _, _) -> a))
-                    Sg.Uniform("DiffAlgoBefore",    diffData |> AVal.map (fun (_, b, _) -> b))
-                    Sg.Uniform("DiffInvDelta",      diffData |> AVal.map (fun (_, _, m) -> m))
-                    Sg.Uniform("DiffSigmaRef",      diffSigmaRef)
                     Sg.Uniform("CursorActive",         cursorActive)
                     Sg.Uniform("CursorPlaneOrigin",    cursorOrigin)
                     Sg.Uniform("CursorPlaneNormal",    cursorNormal)
@@ -454,12 +445,16 @@ module MeshView =
                     Sg.Uniform("DistBrushOn",          distBrush |> AVal.map (fun (o, _, _) -> o))
                     Sg.Uniform("DistBrushLo",          distBrush |> AVal.map (fun (_, l, _) -> l))
                     Sg.Uniform("DistBrushHi",          distBrush |> AVal.map (fun (_, _, h) -> h))
+                    Sg.Uniform("HeatmapMode",          model.HeatmapMode |> AVal.map (function HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
+                    Sg.Uniform("SensorOrigin",         sensorOrigin)
+                    Sg.Uniform("RangeMax",             rangeMax)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
                             string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
                             string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
                             "SurfaceDist",                                  BufferView(distBuf, typeof<float32>)
+                            "ShapeQ",                                       BufferView(shapeBuf, typeof<float32>)
                         ]
                     )
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
@@ -490,19 +485,9 @@ module MeshView =
                     Sg.Uniform("MeshColor",       AVal.constant (V4f(0.45f, 0.49f, 0.55f, 1.0f)))
                     Sg.Uniform("ShadingStrength", AVal.constant 0.0f)
                     Sg.Uniform("SlopeThreshold",  AVal.constant 0.5f)
-                    Sg.Uniform("LassoPlaneCount", AVal.constant 0)
-                    Sg.Uniform("LassoPlanes",     lassoPlanes)
                     Sg.Uniform("BlobCount",       AVal.constant 0)
                     Sg.Uniform("Blobs",           blobs)
                     Sg.Uniform("AnchorGhost",     AVal.constant 0)
-                    Sg.Uniform("HeatmapMode",       AVal.constant 0)
-                    Sg.Uniform("ProvThreshold",     AVal.constant 1.0f)
-                    Sg.Uniform("MeshDatasetError",  AVal.constant 0.0f)
-                    Sg.Uniform("MeshAlgoResidual",  AVal.constant 0.0f)
-                    Sg.Uniform("DiffAlgoAfter",     AVal.constant 0.0f)
-                    Sg.Uniform("DiffAlgoBefore",    AVal.constant 0.0f)
-                    Sg.Uniform("DiffInvDelta",      AVal.constant M44f.Identity)
-                    Sg.Uniform("DiffSigmaRef",      AVal.constant 0.0f)
                     Sg.Uniform("CursorActive",         AVal.constant 0)
                     Sg.Uniform("CursorPlaneOrigin",    cursorOrigin)
                     Sg.Uniform("CursorPlaneNormal",    cursorNormal)
@@ -521,12 +506,16 @@ module MeshView =
                     Sg.Uniform("DistBrushOn",          AVal.constant 0)
                     Sg.Uniform("DistBrushLo",          AVal.constant 0.0f)
                     Sg.Uniform("DistBrushHi",          AVal.constant 0.0f)
+                    Sg.Uniform("HeatmapMode",          AVal.constant 0)
+                    Sg.Uniform("SensorOrigin",         AVal.constant V3f.Zero)
+                    Sg.Uniform("RangeMax",             AVal.constant 1.0f)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
                             string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
                             string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
                             "SurfaceDist",                                  BufferView(distBuf, typeof<float32>)
+                            "ShapeQ",                                       BufferView(shapeBuf, typeof<float32>)
                         ]
                     )
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
@@ -535,14 +524,14 @@ module MeshView =
             sg { surface; committedGhost }
         ) |> AList.toASet
 
-    let buildFusionNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
-        let blobCount, blobs = pinBlobUniforms model
-        // Before registration the meshes aren't aligned, so fusing is
-        // meaningless: show only the reference mesh.
-        let hasRegistered =
-            model.MeshTransforms |> AVal.map (fun m -> not (Map.isEmpty m))
-        let refMesh =
-            model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
+    // §10 outline G-buffer: every visible mesh rendered solid with the
+    // OutlineGBuffer shader (world normal + depth → target0, palette colour +
+    // mask → target1). Consumed by OutlineView's offscreen pass.
+    let buildOutlineNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+        let meshIndices =
+            model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
+                names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
+        let palette = Primitives.meshPaletteV4d
         let nodes =
             model.MeshNames |> AList.map (fun name ->
                 let loaded = loadMeshAsync (fun () -> ()) name
@@ -550,82 +539,25 @@ module MeshView =
                     model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
                 let scale = scaleFor model name
                 let meshT = effectiveMeshT model name
-                let regGate =
-                    (hasRegistered, refMesh) ||> AVal.map2 (fun reg rm ->
-                        match rm with
-                        | Some r -> reg || r = name
-                        | None   -> true)
-                let renderEnabled =
-                    (loaded.fvc, isActive, regGate) |||> AVal.map3 (fun c a g -> c > 3 && a && g)
-                let meshDatasetErr =
-                    (model.MeshSensorTypes, model.MeshDatasetErrors)
-                    ||> AVal.map2 (fun sensors overrides ->
-                        Provenance.datasetError overrides sensors name |> float32)
-                let meshAlgoRes =
-                    model.MeshAlgorithmResidual
-                    |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0.0 |> float32)
-                sg {
-                    Sg.Active renderEnabled
-                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
-                    Sg.Shader {
-                        DefaultSurfaces.trafo
-                        DefaultSurfaces.diffuseTexture
-                        FusionShader.shade
-                    }
-                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
-                    Sg.Uniform("MeshDatasetError", meshDatasetErr)
-                    Sg.Uniform("MeshAlgoResidual", meshAlgoRes)
-                    Sg.VertexAttributes(
-                        HashMap.ofList [
-                            string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
-                            string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
-                            string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
-                        ]
-                    )
-                    Sg.Index(BufferView(loaded.idx, typeof<int>))
-                    Sg.Render loaded.fvc
-                }
-            ) |> AList.toASet
-        sg {
-            Sg.View view
-            Sg.Proj proj
-            Sg.Uniform("BlobCount",    blobCount)
-            Sg.Uniform("Blobs",        blobs)
-            nodes
-        }
-
-    // useTransforms = false renders the reference state (identity transforms,
-    // all visible) for Photo mode; true renders the live state for Render mode.
-    let buildPanoramaNode (model : AdaptiveModel) (useTransforms : bool) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
-        let nodes =
-            model.MeshNames |> AList.map (fun name ->
-                let loaded = loadMeshAsync (fun () -> ()) name
-                let isActive =
-                    if useTransforms then
-                        model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-                    else AVal.constant true
-                let scale = scaleFor model name
-                let meshT =
-                    if useTransforms then effectiveMeshT model name
-                    else AVal.constant Trafo3d.Identity
                 let renderEnabled =
                     (loaded.fvc, isActive) ||> AVal.map2 (fun c a -> c > 3 && a)
+                let meshColor =
+                    meshIndices |> AVal.map (fun m ->
+                        let i = Map.tryFind name m |> Option.defaultValue 0
+                        V4f palette.[i % palette.Length])
                 sg {
                     Sg.Active renderEnabled
                     Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
                     Sg.Shader {
                         DefaultSurfaces.trafo
-                        DefaultSurfaces.diffuseTexture
-                        PanoramaShader.shade
+                        OutlineGBuffer.shade
                     }
-                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                    Sg.Uniform("MeshColor", meshColor)
                     Sg.VertexAttributes(
                         HashMap.ofList [
-                            string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
-                            string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
-                            string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
-                        ]
-                    )
+                            string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
+                            string DefaultSemantic.Normals,   BufferView(loaded.nrm, typeof<V3f>)
+                        ])
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
                     Sg.Render loaded.fvc
                 }
@@ -633,5 +565,6 @@ module MeshView =
         sg {
             Sg.View view
             Sg.Proj proj
+            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
             nodes
         }

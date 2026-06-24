@@ -27,98 +27,6 @@ module GuiTopBar =
                 div { Class "burger-line" }
             }
 
-            let datasetOpen = cval false
-            div {
-                Class "tb-dataset"
-                button {
-                    Class "tb-dataset-btn"
-                    Dom.OnClick(fun _ -> transact (fun () -> datasetOpen.Value <- not datasetOpen.Value))
-                    model.ActiveDataset |> AVal.map (fun a ->
-                        let name = a |> Option.defaultValue "Dataset"
-                        sprintf "%s ▾" name)
-                }
-                div {
-                    Class "tb-dataset-menu"
-                    showWhen (datasetOpen :> aval<_>)
-                    model.Datasets |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun dataset ->
-                        let isActive = model.ActiveDataset |> AVal.map (fun a -> a = Some dataset)
-                        button {
-                            Class "tb-dataset-item"
-                            isActive |> AVal.map (fun on -> if on then Some (Class "active") else None)
-                            previewDisabled
-                            previewOn |> AVal.map (fun p ->
-                                if p then Some (Attribute("title", "Dataset switch is blocked while previewing a registration result"))
-                                else None)
-                            Dom.OnClick(fun _ ->
-                                if not (AVal.force previewOn) then
-                                    transact (fun () -> datasetOpen.Value <- false)
-                                    env.Emit [SetActiveDataset dataset]
-                                    ServerActions.loadDataset env dataset)
-                            dataset
-                        })
-                }
-            }
-
-            let lassoActive =
-                (model.LassoDrawing, model.LassoVolume)
-                ||> AVal.map2 (fun d v -> d.IsSome || v.IsSome)
-            button {
-                Class "tb-btn"
-                lassoActive |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Lasso: start drawing a clip polygon on the viewport")
-                Dom.OnClick(fun _ ->
-                    if AVal.force lassoActive then env.Emit [LassoClear]
-                    else env.Emit [LassoBegin])
-                "◌ Lasso"
-            }
-
-            let placementActive =
-                model.ScanPins.Placement |> AVal.map (function
-                    | AnchorPlacement -> true
-                    | _ -> false)
-            button {
-                Class "tb-btn"
-                placementActive |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                previewDisabled
-                previewOn |> AVal.map (fun p ->
-                    Some (Attribute("title",
-                        if p then "Pin placement is blocked while previewing a registration result"
-                        else "Place anchor — click on a surface (Esc cancels)")))
-                Dom.OnClick(fun _ ->
-                    let active = AVal.force placementActive
-                    if active then env.Emit [ScanPinMsg CancelPlacement]
-                    else env.Emit [LassoCancel; ScanPinMsg EnterAnchorPlacement])
-                "○ Pin"
-            }
-
-            button {
-                Class "tb-btn"
-                model.FusionMode |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                previewDisabled
-                previewOn |> AVal.map (fun p ->
-                    Some (Attribute("title",
-                        if p then "Fusion is blocked while previewing a registration result"
-                        else "Fusion mesh: per-pixel best mesh from the registered ensemble")))
-                Dom.OnClick(fun _ -> env.Emit [ToggleFusionMode])
-                "◈ Fusion"
-            }
-
-            button {
-                Class "tb-btn"
-                model.PanoramaOpen |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Panorama: cylindrical view from a synthetic viewpoint in the scene")
-                Dom.OnClick(fun _ -> env.Emit [TogglePanorama])
-                "▦ Pano"
-            }
-
-            button {
-                Class "tb-btn"
-                model.WorkflowPanelOpen |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
-                Attribute("title", "Registration: readiness, correspondence markers, status and error stats in one panel")
-                Dom.OnClick(fun _ -> env.Emit [ToggleWorkflowPanel])
-                "⚲ Registration"
-            }
-
             button {
                 Class "tb-btn tb-btn-icon"
                 Attribute("title", "Reset camera")
@@ -141,13 +49,6 @@ module GuiTopBar =
 
             div {
                 Class "tb-right"
-                span {
-                    Class "tb-coord"
-                    hoverCoord |> AVal.map (fun c ->
-                        match c with
-                        | Some p -> sprintf "⌖ %.1f, %.1f, %.1f" p.X p.Y p.Z
-                        | None   -> "⌖ —")
-                }
                 div {
                     Class "tb-gear-wrap"
                     button {
@@ -162,74 +63,36 @@ module GuiTopBar =
                         showWhen model.GearPopoverOpen
                         div {
                             Class "tb-gear-row"
-                            span { Class "lp-sublabel"; "Retarget" }
+                            span { Class "lp-sublabel"; "Dataset" }
                             div {
                                 Class "tb-gear-btn-row"
-                                button {
-                                    Class "tb-gear-btn"
-                                    previewOn |> AVal.map (fun p ->
-                                        Some (Attribute("title",
-                                            if p then "Retarget is blocked while previewing a registration result"
-                                            else "Project all pins onto the active picking layer (hold Option/Alt and scroll to pick the target mesh first)")))
-                                    (model.ActivePickingLayer, previewOn) ||> AVal.map2 (fun l p ->
-                                        if l.IsNone || p then Some (Attribute("disabled", "disabled")) else None)
-                                    Dom.OnClick(fun _ ->
-                                        match AVal.force model.ActivePickingLayer with
-                                        | Some target -> env.Emit [StartRetarget target]
-                                        | None -> ())
-                                    "→ Project pins to active layer"
-                                }
-                            }
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            span { Class "lp-sublabel"; "Workspace" }
-                            div {
-                                Class "tb-gear-btn-row"
-                                button {
-                                    Class "tb-gear-btn"
-                                    Attribute("title", "Save workspace as JSON")
-                                    Dom.OnClick(fun _ -> env.Emit [SaveWorkspace])
-                                    "💾 Save"
-                                }
-                                button {
-                                    Class "tb-gear-btn"
-                                    Attribute("title", "Load workspace from JSON file")
-                                    Dom.OnClick(fun _ ->
-                                        task {
-                                            try
-                                                let rt = Aardworx.WebAssembly.JSRuntime.Instance :> Microsoft.JSInterop.IJSRuntime
-                                                let! json = rt.InvokeAsync<string>("SuperWorkspaceLoad", [||]).AsTask()
-                                                if not (isNull json) && json.Length > 0 then
-                                                    env.Emit [LoadWorkspaceJson json]
-                                            with _ -> ()
-                                        } |> ignore)
-                                    "📂 Load"
-                                }
-                            }
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            showWhen (model.StudiesAvailable |> AVal.map (List.isEmpty >> not))
-                            span { Class "lp-sublabel"; "Preview study mode" }
-                            let demoCond = cval CondFull
-                            div {
-                                Class "tb-gear-btn-row"
-                                button {
-                                    Class "tb-gear-btn"
-                                    Attribute("title", "Condition for the preview session (FULL = all charts, NUM = numbers only)")
-                                    Dom.OnClick(fun _ -> transact (fun () ->
-                                        demoCond.Value <- (match demoCond.Value with CondFull -> CondNum | CondNum -> CondFull)))
-                                    (demoCond :> aval<_>) |> AVal.map (fun c -> sprintf "Condition: %s ⇄" (StudyCondition.tag c))
-                                }
-                                model.StudiesAvailable |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun studyId ->
+                                model.Datasets |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun dataset ->
+                                    let isActive = model.ActiveDataset |> AVal.map (fun a -> a = Some dataset)
                                     button {
                                         Class "tb-gear-btn"
-                                        Attribute("title", "Enter this study as a demo session (telemetry flagged demo, exit any time)")
-                                        Dom.OnClick(fun _ -> env.Emit [StudyMsg (StudyStartDemo(studyId, demoCond.Value))])
-                                        sprintf "▶ %s" studyId
+                                        isActive |> AVal.map (fun on -> if on then Some (Class "active") else None)
+                                        previewDisabled
+                                        Dom.OnClick(fun _ ->
+                                            if not (AVal.force previewOn) then
+                                                env.Emit [SetActiveDataset dataset]
+                                                ServerActions.loadDataset env dataset)
+                                        dataset
                                     })
                             }
+                        }
+                        div {
+                            Class "tb-gear-row"
+                            span { Class "lp-sublabel"; "Rendering" }
+                            compactButtonBar [
+                                "Textured", (model.RenderingMode |> AVal.map (fun m -> m = Textured)), (fun () -> env.Emit [SetRenderingMode Textured])
+                                "Shaded",   (model.RenderingMode |> AVal.map (fun m -> m = Shaded)),    (fun () -> env.Emit [SetRenderingMode Shaded])
+                                "Slope",    (model.RenderingMode |> AVal.map (fun m -> m = SlopeColor)),(fun () -> env.Emit [SetRenderingMode SlopeColor])
+                            ]
+                        }
+                        div {
+                            Class "tb-gear-row"
+                            compactToggle "Per-mesh outlines (image-space)" model.OutlineMode (fun () ->
+                                env.Emit [ToggleOutlines])
                         }
                         div {
                             Class "tb-gear-row"
@@ -254,14 +117,6 @@ module GuiTopBar =
                                 (model.AnchorGhostMode, placing) ||> AVal.map2 (fun on p -> on && not p)
                             compactToggle "Isolate pins" isoEffective (fun () ->
                                 if not (AVal.force placing) then env.Emit [ToggleAnchorGhostMode])
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            // Cutaway: clip terrain in front of the selected pin's
-                            // correspondence box (nearest upright face) to reveal
-                            // the marker cross-section.
-                            compactToggle "Cutaway" model.CutawayActive (fun () ->
-                                env.Emit [ToggleCutaway])
                         }
                         div {
                             Class "tb-gear-row"

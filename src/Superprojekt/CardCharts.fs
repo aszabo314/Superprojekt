@@ -306,19 +306,3 @@ module CardCharts =
         "  el.appendChild(svg);"
     ]
 
-    // Three-source stacked bar for a data-srcs = [d,a,c] attribute.
-    let probeBarJs = [
-        "  if(!d || d.length < 3) return;"
-        "  var labels = ['Dataset error (sensor / reconstruction)','Algorithm residual (registration, correlated across the mesh)','Local conditioning (geometric observability of the marker)'];"
-        "  var colours = ['#60a5fa','#f59e0b','#a78bfa'];"
-        "  var total = d[0] + d[1] + d[2];"
-        "  if(total <= 0) return;"
-        "  d.forEach(function(v, i){"
-        "    var s = document.createElement('div');"
-        "    s.style.width = (v / total * 100) + '%';"
-        "    s.style.background = colours[i];"
-        "    s.style.height = '100%';"
-        "    s.title = labels[i] + ': ' + v.toFixed(4) + ' m';"
-        "    el.appendChild(s);"
-        "  });"
-    ]

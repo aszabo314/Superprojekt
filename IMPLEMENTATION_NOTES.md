@@ -1,77 +1,87 @@
-# Correspondence-Detail View — Implementation Notes
+# ScanPin v7 overhaul — implementation log
 
-Built per `ScanPin_detail_view_agent_spec.md` with the review adjustments (A1: SVG-only,
-no second RenderControl; build-new for the absent "reusable" pieces). Status: feature
-complete; verified by unit tests + JS DOM-stub smoke test + live server endpoint. The
-pixel-level WP10 visual pass needs a human in the browser (see "Verification" below).
+Continuous log for the `ScanPin_v7_coding_spec.md` rewrite. Newest entries at the bottom of each phase. Build/verify commands and conventions live at the end.
 
-## WP0 — discovered handles (real)
+---
 
-| ID | Resolution |
-|----|------------|
-| R1 | **Built new (SVG-local).** No reusable per-instance ortho 3D camera controller exists — `OrbitController`/`OrbitState` is bound to the single global `Model.Camera`. Pan/zoom/rotate is implemented JS-local on `el.__dv` (mirrors the patch picker's `el.__ppv`), so it never touches the reducer. |
-| R2 | **N/A (dropped).** No second RenderControl — see A1. The viewport is an `<svg>` built by `Primitives.observedRender` JS, exactly like the patch picker's canvas. |
-| R6 | Reused colour source `ScanPin.DatasetColors : Map<string,C4b>` (+ `c4bToHex`). Glyphs are SVG: moving = filled disc, reference = ring+cross (new, per spec 4.3). |
-| R7 | Reused `Model.MeshTransforms` + `ModelTransforms`/`RegLog.effective` + `RigidTransform.renderToWorld`. Marker preview math goes own-frame → current pose: `own = committedWorld.Backward(storedPoint)`, `world = effWorld.Forward(own)` (committed ∘ pending), so it follows the registration preview without double-transforming. Grids are sampled in **own frame** ⇒ transform-independent ⇒ survive previews/commits. |
-| R8/R14 | **Built new.** Server endpoint `POST /api/query/region-grid` (`MeshAnalysis.regionGrid`): n×n vertical ray-down (Embree) in the mesh's own world frame → `z[]` + `hit[]`. `Query.regionGrid` wrapper. Heavy compute server-side per the architecture rule (the spec's "client raycast" fallback was rejected — the client has no triangle store). |
-| R9 | Reused `SetCorrMarkerHover` (main-view marker brighten, already wired in `ScanPinScene`) **and** `SetChartHoverMesh` (violin column). Table-row / glyph hover posts `hov|<meshKey>` to `.pc-detail-bus` → both messages. |
-| R10 | **Absent → assumed +Y = North** (UTM datasets). Compass shown in Top view; `azimuth` bearings in the table use it. If a real bearing arrives, change `north` in `buildDetailJson`. |
-| R11 | **N/A.** World→screen is our own ortho projection in JS (`proj`), derived from the camera params we control; no RenderControl matrix needed. |
-| R12 | Section added to `CardsPin.pinCardBody` after the `pc-corr` div (`detailSection`). Collapse uses the existing card chrome; the section is gated by `showWhen detailVisible`. |
-| R13 | `Correspondence { Enabled; RefAnchor; Anchors : Map<string,MeshAnchor>; … }`; `MeshAnchor.Point`. Effective pin = `ScanPinModel.effectivePinId`. |
-| R15 | Camera transition is a snap + auto-fit (no eased tween). Acceptable; left as a follow-up (see deviations). |
+## Phase 1 — Aggressive removal ✅ COMPLETE & verified green (2026-06-24)
 
-## Data model added
+All three projects build clean; `dotnet run --project src/Supertests` → **86/86 passed**. Independently verified (not just trusting subagent reports).
 
-- `Model.DetailGrids : Map<string, ElevGridState>` + `Model.DetailGridPin : ScanPinId option`
-  (session-only). Own-frame grids for the effective pin's marker meshes + reference.
-- `DetailViewMath.fs` (WASM-free, compiled into Supertests): `ElevGrid`/`ElevGridState`,
-  `DetailViewMode`, `SymbolicPatch`, marching-squares contours, ridge/valley curvature,
-  `niceStep`, dip/strike plane fit, PCA `sideAzimuth`, `markerMetrics`.
-- `ScanPinUpdate.ensureDetailGrids` — debounced (250 ms) postlude (mirrors `ensureRings`):
-  fetches missing/stale grids in parallel; **auto-invalidates** when a marker's own-frame
-  centre moves (centre-mismatch check) or the pin changes; per-mesh self-correcting.
-- `Message.DetailGridsComputed`; handled in `Update.updateCore` with a pin-id stale guard.
+Removed everything not in the spec, in dependency order, building between steps:
 
-## Deviations from the spec (recorded)
+| Feature | Notes |
+|---|---|
+| **Study mode** | client StudyModel/StudyApi/StudyTelemetry/StudyUpdate/GuiStudy; server StudyConfig/StudyStore/StudyHandlers; `/api/study/*`; `studies/` dir; study tests. *(user-confirmed; not in spec)* |
+| **Panorama** | PanoramaView.fs, Pano shader, `▦ Pano`, model state, card. *(user-confirmed)* |
+| **Fusion** | FusionView.fs, FusionShader, `◈` toggle, CPU-raycast pick |
+| **Save/Load** | Persistence.fs, gear Save/Load, workspace JS |
+| **Retarget** | types, card, messages, reducer |
+| **Lasso** | card, draw layer, `◌`, shader `LassoPlanes` |
+| **Registration history** | RegStep/RegLog history, rollback `↩`, reset `↺`, `★ Set as final`, median-offset strip → **single commit** |
+| **Iso-plane/cutaway/ruler** | `⊟ slice`, `lock\|d`, cutaway, locked-plane gizmo. **Kept reference-peek.** |
+| **Old D/A/C error model** | Provenance module, three-source bar, provenance+diff heatmaps (`HeatmapMode`→`HeatOff`), prov tooltip, dataset-error UI. **Kept SensorType/MeshSensorTypes.** |
 
-1. **A1 — SVG-only, no second RenderControl.** The spec's WP2/WP3 3D control was dropped;
-   the symbolic surface, glyphs, strike/dip and the WP8 overlay all render as one SVG. The
-   content is fully 2D-projectable and a second live WebGL control is a known perf ceiling
-   on this backend (see memory `patch-picker-html-canvas`). The WP4 *geometry math* is
-   unchanged — only the draw target moved from Sg → SVG. The camera math of WP2/WP5 is
-   kept (it drives `proj`).
-2. **Ridge/valley test (WP4.2).** Spec said "both-axis curvature < −rvThresh", which only
-   fires on domes; a *linear* roof ridge has ~0 curvature along its length. Changed to
-   "strongly convex in ≥1 axis, concave in neither" (excludes saddles) so the spec's own
-   "roof → one crest polyline" example works. Unit-tested (roof/channel/plane/saddle).
-3. **R10 North** assumed +Y (UTM) rather than omitted, so the Top-view compass + azimuth
-   column are populated. Cheap to revert.
-4. **View-switch animation (R15/WP5.3)** is a snap + auto-fit, not a 0.4 s eased tween.
-5. **Heavy math in F#, projection in JS.** Per review C4, marching-squares / dip / PCA /
-   niceStep live in the WASM-free `DetailViewMath` (unit-tested); the JS only projects,
-   pans/zooms, and builds SVG. `niceStep` exists twice (F# for contour intervals; a 3-line
-   JS copy for runtime rulers, which depend on live `pxPerMetre`).
-6. **detailJson recompute surface.** `detailJson` depends on the whole selected `ScanPin`
-   (via `selectedPin`), so probe/ring results dirty it and re-run marching-squares. This is
-   bounded (a handful of recomputes per pin selection, not per-frame) and the
-   `observedRender` `raw===last` guard skips the DOM rebuild when the JSON is unchanged.
-   Possible follow-up: memoise `symbolicPatch` by `(mesh, grid identity, transform)`.
+### Decisions / assumptions
+- Study + Panorama removed per explicit user confirmation (neither in spec nor §12 list).
+- `ServerActions` (dataset bootstrap) relocated from deleted StudyUpdate.fs → `UpdateHelpers.fs`.
+- `StudyGate` kept as a 2-line always-on shim so existing `showWhen` feature-gates compile (full app = all visible); prune in Phase 2/3.
+- Single-commit registration: `CommitRegistration` applies pending delta to `MeshTransforms` + re-bases anchors, no log. Preview (`PendingReg`) intact.
+- `RegTransformState` deleted (trivial after removals); `LastSolve` kept (independent diagnostics).
 
-## Verification done
+### Dead-but-harmless leftovers (Phase-3 prune targets)
+- `StudyGate` shim (Primitives.fs)
+- `GuiCards.registrationToggleButton`
+- generic clip-plane shader plumbing (fed constant no-clip in View/MeshView/MeshShaders)
+- `ProbeResult.Sources` + `CardCharts.probeBarJs` (dead three-source data; server MeshProbe untouched)
 
-- `dotnet run --project src/Supertests` → **171/171** (incl. new `detailViewTests`:
-  niceStep, marker metrics + North bearing, tilted-plane dip 30° / parallel contours,
-  flat → no ridge/valley, roof→ridge, channel→valley, holes-not-bridged, all-holes,
-  sideAzimuth ⟂ spread, transform-invariant dip).
-- `POST /api/query/region-grid` live on a running server: 48×48, ~1 m relief over a 4 m
-  patch, holes where the tile doesn't cover the column.
-- `node --check` of the extracted renderer JS, plus a DOM-stub smoke test: builds toolbar
-  (4 btns) + 41 SVG nodes + table (2 markers), row-hover posts `hov|<key>` to the bus,
-  wheel-zoom + Side/Top/Free/Reset redraw without exceptions.
+---
 
-## Verification — in-browser (WP10)
+## Phase 2 — Implement the spec ⏳ IN PROGRESS
 
-Confirmed working in the browser (looks/works correctly): the orthographic viewport,
-symbolic surface, glyphs, measurement overlay, rulers, table, view switches, pan/zoom,
-and the hover linking to the main 3D view + violin.
+Target (spec §1–§11): slim top bar + dark debug menu; left workflow rail (stepper 1 Reference · 2 Coarse align · 3 Fine ICP · 4 Inspect · 5 Commit) + PINS list; right focus panel (2nd WebGL control + small-multiples); §3 data model (Mesh/Pin{roiRadius,isCorrespondence}/Solve/Preview); §5 translate-only ortho coarse align; §6 heatmaps (intrinsic incidence/shape/range + extrinsic z-diff/m3c2 + variance); §7 movement layer (glyph field + warped grid); §8 pin glyph semantic zoom + violin flyout; §9 ghost isolation modes; §10 image-space edge-detection outlines. Constraint: ≤2 live WebGL controls. LoD₉₅ = `1.96·(√(σ_ref²/n_ref+σ_M²/n_M)+reg)`.
+
+Caveat: FShade shaders only validate in-browser, so the shader-heavy items (§6 heatmaps, §7 movement, §8 glyphs, §10 outlines) are build-checked here but need a browser pass.
+
+### Progress
+- **§2 Left workflow rail** ✅ (build-verified) — new `GuiRail.fs` (`GuiRail.rail`): vertical stepper (1 Reference · 2 Coarse · 3 Fine · 4 Inspect · 5 Commit), one step expanded at a time, per-step readiness pill (ready/warn/block/info), + a PINS list (place / select / ⚲ promote-to-correspondence / ✎ edit / ✕ delete). Reuses existing messages (SetReferenceMesh, SetVisible, SetMeshSensorType, SolveCoarse, RunRegistration, SetRegistrationMode, Commit/Discard, ScanPinMsg…). New model state: `WorkflowStep` enum + `Model.WorkflowStep` + `SetWorkflowStep` msg. Wired into `View.fs` replacing `GuiPanels.leftPanel` + `GuiWorkflow.workflowPanel` (both now dead → Phase-3 prune). Hamburger now toggles the rail (`MenuOpen` default→true, rail gated on it). CSS added to `style.css` (`.workflow-rail`/`.rail-*`).
+- **§1/§11 Slim top bar + dark debug menu** ✅ (build-verified) — top bar reduced to hamburger · ⟲ reset · 👁 Peek (hold) · ⚙ debug. Removed from bar: dataset selector, ○ Pin (→ rail), ⚲ Registration (→ rail IS the registration surface), coord readout. Dataset switch + rendering-mode (Textured/Shaded/Slope) moved into the ⚙ gear popover (debug menu) alongside camera speed / ghost / shading / slope / centroids / log.
+- **§3 data model** — NOT renamed. The existing model already realizes §3's shape under different names (Mesh = MeshNames/MeshVisible/MeshOrder/MeshSensorTypes/MeshTransforms/Registration.ReferenceMesh; Pin = `ScanPin` with `Correspondence`/isCorrespondence=`Correspondence.Enabled`/`InnerRadius`=roiRadius; Solve = `LastSolve`; Preview = `PendingReg`). A cosmetic record rename was deferred to avoid high-churn rework — revisit only if a strict §3 shape is required.
+- **§1/§5 Focus panel = secondary ortho WebGL control** ✅ (build-verified; needs browser check) — new `GuiFocus.fs` (`GuiFocus.panel`): right-docked panel with the **second** (and only second) live WebGL control, rendering the scene orthographically in render-space (Top/Front/Side button group, one at a time). Mounted only while open (`FocusOpen`), so ≤2 controls holds. **Pointer drag translates** the selected moving mesh in the two in-plane axes (`TranslateAlignMesh`, render-space, translate-only) → updates that mesh's committed `MeshTransforms`. Moving-mesh selector = visible non-reference meshes. Reopen tab when closed. New model state: `FocusOpen`/`FocusAxis`/`AlignMesh` + messages. CSS `.focus-*`.
+- **§9 Ghost isolation modes** ✅ (build-verified; needs browser check) — *Align-auto*: in step 2 (StepCoarse) the moving mesh renders solid, all others ghosted, in BOTH the main viewport (via `wheelIsolation`) and the focus control. *Pin-focus*: `PinFocusMode` (rail toggle in Inspect) restricts the mesh-shader blob uniforms to the focused pin's ROI and forces isolation on → ghost everything outside that one pin. *Movement-auto*: deferred (needs §7 movement layer).
+- **§4 Pins / ROI** ✅ already spec-compliant — `ScanPin` is the single primitive; `InnerRadius` = roiRadius with an **inline log-slider** in the placement flyout; `Correspondence.Enabled` = isCorrespondence (⚲ in the rail); auto-seed = closest-point; probe evaluates inside the ROI cylinder. No change needed beyond the rail's promote toggle.
+- **§8 Pin glyph — far/preattentive view** ✅ (build-verified; needs browser check) — `ScanPinScene.pinGlyphs`: per committed pin a pole + head-ring (`Lines`), head colour = verdict (green `#16a34a` if every moving mesh's |median| ≤ LoD₉₅, red `#dc2626` if any significant, grey when no probe yet), pole height grows with magnitude (max |median offset| across moving meshes). LoD uses the spec form `1.96·√(σ_ref²/n_ref + σ_M²/n_M)` (reg term ≈ 0 for now). The **near/attentive split-violin = the existing pin card / flyout** (opens on select) — not re-rendered as a 3D billboard. Coexists with the clickable `pinDots`.
+- **§7 Movement layer** ✅ (build-verified; needs browser check) — `ScanPinScene.movementLayer`, preview-only. `MovementMode` (Off / Arrows / Grid), rail-Inspect button group. *Arrows*: 5×5 grid over each committed pin's ROI plane, before→after displacement arrow (with chevron head) where after = world preview-delta · before. *Grid*: original faint lattice + warped accent lattice. World delta via `RigidTransform.worldDeltaOf`. **Movement-auto ghost** (§9): when the layer is on under a preview, `wheelIsolation` isolates the first pending-delta mesh (moved mesh solid + glyphs, rest ghosted).
+- **§6 Heatmaps — intrinsic triad + extrinsic M3C2** ✅ (build-verified; needs browser check). `HeatmapMode = HeatOff | HeatIncidence | HeatRange | HeatShape`, rail-Inspect Off/Incidence/Range/Shape group + an Extrinsic-M3C2 toggle.
+  - **Intrinsic incidence** — mesh-shader block: |n·toCam| → red (grazing) → green (head-on).
+  - **Intrinsic range** (user spec: sensor = each mesh's own origin, no coefficient) — `SensorOrigin` per-mesh uniform = full mesh trafo · (0,0,0); `RangeMax` = scale × max|local vertex| (computed at load, `LoadedMesh.localMaxR`); shader paints `|wp−SensorOrigin|/RangeMax`, blue (near) → red (far). Rigid-invariant.
+  - **Intrinsic shape** (user spec: any reasonable default with signal on thin/degenerate tris) — per-vertex triangle quality `4√3·A/Σl²` (1 = equilateral, →0 = sliver), incident-face mean, computed at load into a `ShapeQ` per-vertex attribute (mirrors `SurfaceDist`); shader red (poor) → green (good).
+  - **Extrinsic M3C2 / z-diff** — the kept `DistanceEncoding` surface map, surfaced as a rail toggle (`SurfaceDistOn`; paints the soloed moving mesh) with an **M3C2 ↔ Δz** mode switch (`ExtrinsicZDiff`). Server `region-distance` gained `Mode` (0 = signed closest-point M3C2, 1 = vertical Δz via Embree raycast onto the reference, signed: moving-above-reference → positive). Both render through the same diverging map.
+  - **Variance / disagreement (all-meshes)** ✅ — `VarianceOn` (rail toggle). Default selection = **all visible moving meshes (≥2)** (no multi-select UI for now). `Update.ensureVariance` postlude fetches per-reference-vertex distance to each moving mesh (region-distance target=reference, N parallel fetches), computes per-vertex **std** (ignoring sentinels), emits `VarianceComputed(refMesh, std[])` → stored in `SurfaceDistance[refMesh]`. Painted on the **reference** mesh via a new `DistanceEncoding = 2` **sequential** ramp (light grey → red, normalised by DistScale). Mutually exclusive with the single-mesh extrinsic map. **§6 heatmaps are now complete** (intrinsic incidence/range/shape + extrinsic M3C2/Δz + variance).
+- **Still TODO**: §1 focus small-multiples (per-mesh extrinsic miniatures — canvas + a multi-mesh distance fetch; redundant with the now-complete spatial heatmaps), glyph **near-in-3D** semantic zoom (currently the flyout), §3 optional record rename, **Phase 3 final prune** (clean build = §13 acceptance). Everything else in the spec is implemented + green. (dead: `GuiWorkflow.workflowPanel`, `GuiPanels.leftPanel`, `StudyGate` shim, `GuiCards.registrationToggleButton`, clip-plane shader plumbing, `ProbeResult.Sources`/`CardCharts.probeBarJs`). All three projects build green; 86/86 tests pass. **Needs browser verification:** all GPU pieces, especially §10 outlines (new pipeline) + §6 shader ramps.
+
+### §10 image-space outlines — IMPLEMENTED (first cut; build-verified; **needs browser verification + threshold tuning**)
+`OutlineView.fs` (new) + `OutlineGBuffer`/`OutlineEdge` shaders (MeshShaders.fs) + `MeshView.buildOutlineNode` + SceneGraph wiring + `OutlineMode` toggle (debug menu, **default off**). Offscreen MRT pass: target0 = world-normal(rgb)+window-depth(a), target1 = palette-colour(rgb)+mask(a); custom attachment `Sym.ofString "Outline1"`. Edge-detect fullscreen composite: edge = depth jump (>0.0015) OR normal-angle jump (>0.30) OR mask boundary; paints per-pixel palette colour, alpha-blended overlay (DepthTest.None). Mask boundary covers silhouette + near-plane cut (no inverted hull, per spec). Lazy: offscreen task only runs when `OutlineMode` on, so default-off cannot regress the forward pass. **Thresholds (0.0015 / 0.30) and the world-normal encoding are guesses — tune in-browser.** Risk: MRT signature + custom-attachment + FShade MRT output compiled, but the GLSL/render is unverified here.
+
+### §10 image-space outlines — original plan (kept for reference)
+Offscreen-pass API recovered from `git show HEAD:src/Superprojekt/FusionView.fs` (signature/texture/attachment/framebuffer + `runtime.CompileRender` + `RenderTask.renderToWithClear` + `GetOutputTexture` + a fullscreen-quad composite reading the texture). Plan:
+1. **G-buffer offscreen pass** (`MeshView.buildOutlineNode`, mirrors the removed `buildFusionNode`): render all meshes to an **MRT** — target0 Rgba8 = `world-normal*0.5+0.5` (rgb) + window depth `fc.Z` (a); target1 Rgba8 = per-mesh **palette colour** (rgb) + coverage mask (a=1). New float32-only gbuffer shader.
+2. **Edge-detect fullscreen pass**: sample target0/target1 at centre ±1 texel (texel = 1/viewport); edge = depth jump **OR** normal-angle jump **OR** mask boundary (the mask boundary is the near-plane cut + silhouette → satisfies the "incl. near-plane clip, not inverted-hull" requirement). Output target1.rgb where edge, else transparent.
+3. **Composite** over the main framebuffer (alpha-blended overlay), gated behind a new `OutlineMode` toggle (**default off** so it can never regress the working viewport).
+Risks: FShade MRT output-record attributes; edge thresholds + normal encoding need in-browser tuning; keep float32-only.
+
+### Session checkpoint (2026-06-24)
+Landed this session on top of Phase 1: §2 rail, §1/§11 top bar + debug menu, §1/§5 focus panel (2nd ortho control + translate-drag), §9 ghost isolation (align-auto + pin-focus + movement-auto), §4 ROI (already compliant), §8 pin-glyph far view, §7 movement layer, §6 FULL (intrinsic incidence/range/shape + extrinsic M3C2/Δz + variance), §10 outlines (gated). New files: `GuiRail.fs`, `GuiFocus.fs`. New model state: `WorkflowStep`, `FocusOpen`/`FocusAxis`/`AlignMesh`, `PinFocusMode`, `MovementMode`/`MovementLayer`, `HeatmapMode` (+Incidence/Range/Shape), `MenuOpen` default→true. New mesh-shader uniforms: `HeatmapMode`/`SensorOrigin`/`RangeMax` + `ShapeQ` per-vertex attribute (+ `LoadedMesh.localMaxR`). All build-verified green; GPU/scene pieces need a browser smoke-test. Remaining: §6 z-diff/variance, §10 outlines (plan above), §1 small-multiples, §3 optional rename, Phase-3 prune.
+
+---
+
+## Phase 3 — Final prune ✅ (2026-06-25)
+Deleted now-dead code (all-green after): `GuiWorkflow.fs` (workflowPanel → replaced by the rail) and `GuiCards.fs` (lasso/retarget/panorama cards + spark + registrationToggleButton, all unreferenced) removed from disk + fsproj. `GuiPanels.fs` reduced to just `placementFlyout` (mesh/pin/registration sections → the rail). `StudyGate` shim removed from `Primitives.fs` (its last users — leftPanel + CardsPin gates — neutralised to always-on). `CardCharts.probeBarJs` (dead three-source bar JS) removed. **Left intentionally** (low value / shader risk): the generic clip-plane shader plumbing (fed constant no-clip), `ProbeResult.Sources` (server-computed, client-unused), and the vestigial `WorkflowPanelOpen`/`ToggleWorkflowPanel` model state (harmless; `WorkflowPinHover` is still used by the pin hover highlight). See `HANDOFF.md` for the full record.
+
+## Build / verify / conventions
+- Client (fast, native off): `dotnet build src/Superprojekt/Superprojekt.fsproj -p:WasmBuildNative=false -clp:ErrorsOnly`  (~37s)
+- Server: `dotnet build src/Superserver/Superserver.fsproj`
+- Tests: `dotnet build src/Supertests/Supertests.fsproj` then `dotnet run --project src/Supertests`
+- After any `[<ModelType>]` edit (Model.fs, ScanPinModel.fs, RegistrationModel.fs, CameraModel.fs): `bash adaptify.sh`. **Never hand-edit `.g.fs`.**
+- FShade shaders are **float32-only** (V3f/V2f/float32/`0.0f`); only verify in-browser.
+- Light theme, accent `#1a56db`; data accent `#0891b2`; reference amber `#b45309`; significance `#16a34a`/`#dc2626`. Mesh palette = 9 categorical colours.

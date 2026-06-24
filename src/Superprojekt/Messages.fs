@@ -16,14 +16,8 @@ type Message =
     | SetSlopeThresholdDeg of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
-    // 3D sectioning / cutaway.
+    // Spring-loaded reference peek (hold).
     | SetReferencePeek of bool
-    | SetClipPlanes of ClipPlane list
-    | ToggleCutaway
-    | ToggleClipAboveIso
-    // Lock the chart-driven iso-plane at a signed distance into ClipPlanes.
-    | LockIsoPlane of float
-    | ToggleRuler
     | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
     // Stage 2 · Fine (ICP). Solves land in PendingReg, not MeshTransforms.
@@ -34,11 +28,9 @@ type Message =
     | SolveCoarse
     | CoarseSolved of mesh:string * worldDelta:M44d * pairResiduals:(ScanPinId * float)[] * rmsBefore:float * eigenvalues:float[] * collinear:bool
     | CoarseFailed of mesh:string * reason:string
-    // Pending-preview lifecycle + history.
+    // Pending-preview lifecycle (single commit, no history).
     | CommitRegistration
     | DiscardRegistration
-    | RollbackRegStep
-    | ResetRegistration
     // Correspondence anchors.
     | ToggleCorrespondence of ScanPinId
     // Seeded markers apply immediately (no review modal).
@@ -58,15 +50,15 @@ type Message =
     | ShowToast of string
     | ClearToast
     | SetMeshSensorType of string * SensorType
-    | SetMeshDatasetError of string * float option
     | SetHeatmapMode of HeatmapMode
-    | SetProvenanceThreshold of float
     // A2: per-mesh signed-distance surface colour map.
     | ToggleSurfaceDistance
+    | ToggleExtrinsicZDiff
+    | ToggleVariance
+    | VarianceComputed of mesh:string * float32[]
     | SurfaceDistanceComputed of mesh:string * float32[]
     | SurfaceDistanceFailed of mesh:string * reason:string
     | SetSurfaceDistBrush of (float * float) option
-    | ToggleFusionMode
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
@@ -78,23 +70,9 @@ type Message =
     | ShowAllMeshes
     | HideAllMeshes
     | ResetCamera
-    | SetLassoCardPos of V2d
     | ToggleGearPopover
     | EditPin of ScanPinId
     | SetActivePickingLayer of string option
-    | LassoBegin
-    | ToggleLassoEnabled
-    | LassoAddVertex of V2d
-    | LassoCommit    of viewTrafo:Trafo3d * projTrafo:Trafo3d * vpSize:V2i
-    | LassoCancel
-    | LassoClear
-    | SaveWorkspace
-    | LoadWorkspaceJson of string
-    | StartRetarget of targetMesh:string
-    | RetargetCandidatesReady of RetargetCandidate[]
-    | SetRetargetDecision of ScanPinId * RetargetDecision
-    | CommitRetarget
-    | CancelRetarget
     | HoverProbeAt of screenPx:V2d * world:V3d
     | HoverProbeResult of ProbeState
     | ClearHoverProbe
@@ -106,43 +84,21 @@ type Message =
     | DetailGridsComputed of pinId:ScanPinId * grids:(string * ElevGrid)[]
     | ChartColumnClick of meshName:string
     | ClearChartSticky
-    | TogglePanorama
-    | SetPanoramaMode of PanoramaMode
-    | SetPanoramaBlend of float
-    | FlyToPanorama of int
-    | StudiesLoaded of string[]
     | ToggleWorkflowPanel
+    | SetWorkflowStep of WorkflowStep
+    // Right focus panel (spec §5): ortho view axis, panel toggle, the moving
+    // mesh under manual coarse alignment, and a render-space drag translation.
+    | SetFocusAxis of FocusAxis
+    | ToggleFocusPanel
+    | SetAlignMesh of string option
+    | TranslateAlignMesh of V3d
+    | TogglePinFocus
+    | SetMovementLayer of MovementMode
+    | ToggleOutlines
     // Workflow panel: camera fly-to (aspect from the view; fovY from the fixed
     // 90° horizontal fov) + navigation actions.
     | FlyTo of FlyToTarget * aspect:float
     | NavTo of NavAction
-    | StudyMsg of StudyMessage
-
-and StudyMessage =
-    // Session lifecycle: real entry via /s/{token}, demo entry from the gear
-    // popover, exit only for demo sessions.
-    | StudyJoin of token:string
-    | StudyStartDemo of studyId:string * StudyCondition
-    | StudySessionStarted of StudySessionInit
-    | StudySessionFailed of message:string
-    | StudyExitDemo
-    // Runtime: Next gating, instruction overlay, tutorial gold flow.
-    | StudyNext
-    | StudyReopenOverlay
-    | StudyCloseOverlay
-    | StudyGoldResult of questionId:string * correct:bool * screened:bool
-    | StudyCompletionCode of string
-    | StudyCompletionFailed of string
-    | StudySetAsFinal
-    // Answer drafts: post immediately on change, again on Next.
-    | StudySetChoice of questionId:string * option_:int
-    | StudySetNumber of questionId:string * value:float
-    | StudySetText of questionId:string * text:string
-    | StudySetGridItem of questionId:string * item:int * value:float
-    | StudySetConfidence of questionId:string * confidence:int
-    | StudyArmSceneClick of questionId:string
-    | StudyCancelSceneClick
-    | StudySceneClickHit of world:V3d
 
 and CardMessage =
     | BringToFront of CardId

@@ -117,13 +117,4 @@ let webApp : HttpHandler =
         route  "/api/query/probe"                               >=> probeHandler
         route  "/api/query/region-distance"                     >=> regionDistanceHandler
         route  "/api/query/region-grid"                         >=> regionGridHandler
-        route  "/api/study/session"                             >=> POST >=> StudyHandlers.sessionHandler
-        route  "/api/study/list"                                >=> GET  >=> StudyHandlers.listHandler
-        routef "/api/study/%s/events"                           (fun sid -> POST >=> StudyHandlers.eventsHandler sid)
-        routef "/api/study/%s/answers"                          (fun sid -> POST >=> StudyHandlers.answersHandler sid)
-        routef "/api/study/%s/transforms"                       (fun sid -> POST >=> StudyHandlers.transformsHandler sid)
-        routef "/api/study/%s/workspace"                        (fun sid -> POST >=> StudyHandlers.workspaceHandler sid)
-        routef "/api/study/%s/advance"                          (fun sid -> POST >=> StudyHandlers.advanceHandler sid)
-        routef "/api/study/%s/complete"                         (fun sid -> GET  >=> StudyHandlers.completeHandler sid)
-        routef "/api/study/%s/tokens"                           (fun studyId -> POST >=> StudyHandlers.tokensHandler studyId)
     ]

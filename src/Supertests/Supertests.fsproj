@@ -10,10 +10,7 @@
     <!-- Pure modules under test, compiled directly (no WASM / web hosts). -->
     <Compile Include="..\Superprojekt\RegistrationModel.fs" Link="RegistrationModel.fs" />
     <Compile Include="..\Superprojekt\DetailViewMath.fs" Link="DetailViewMath.fs" />
-    <Compile Include="..\Superprojekt\StudyModel.fs" Link="StudyModel.fs" />
     <Compile Include="..\Superserver\RegMath.fs" Link="RegMath.fs" />
-    <Compile Include="..\Superserver\StudyConfig.fs" Link="StudyConfig.fs" />
-    <Compile Include="..\Superserver\StudyStore.fs" Link="StudyStore.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <Import Project="..\..\.paket\Paket.Restore.targets" />

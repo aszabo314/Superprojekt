@@ -62,6 +62,8 @@ type RegionDistanceRequest = {
     RefIndex         : int
     TargetTransform  : float[]
     RefTransform     : float[]
+    // 0 = signed M3C2 closest-point (default), 1 = vertical Z difference (§6 z-diff).
+    Mode             : int
 }
 
 [<CLIMutable>]
@@ -148,23 +150,40 @@ let regionDistanceHandler : HttpHandler =
             let refPos = lmR.parsed.positions
             let refIdx = lmR.parsed.indices
             let dist = Array.zeroCreate<float32> pos.Length
-            System.Threading.Tasks.Parallel.For(0, pos.Length, fun i ->
-                let vWorld = tT.TransformPos (V3d pos.[i] + cT)
-                let vRefLocal = rInv.TransformPos vWorld - cR
-                let res = lmR.scene.GetClosestPoint(V3f vRefLocal)
-                if res.IsValid then
-                    let cp = V3d res.Point
-                    let pid = int res.PrimID
-                    if pid * 3 + 2 < refIdx.Length then
-                        let p0 = V3d refPos.[refIdx.[pid*3]]
-                        let p1 = V3d refPos.[refIdx.[pid*3+1]]
-                        let p2 = V3d refPos.[refIdx.[pid*3+2]]
-                        let nrm = Vec.cross (p1 - p0) (p2 - p0)
-                        let nl  = nrm.Length
-                        let s   = if nl > 1e-12 && Vec.dot (vRefLocal - cp) (nrm / nl) < 0.0 then -1.0 else 1.0
-                        dist.[i] <- float32 (s * sqrt (float res.DistanceSquared))
-                    else dist.[i] <- float32 (sqrt (float res.DistanceSquared))
-                else dist.[i] <- 1e30f) |> ignore
+            if req.Mode = 1 then
+                // §6 z-diff: vertical world ray onto the reference; signed Δz
+                // (moving above reference → positive). Down then up.
+                let dnLocal = (rInv.TransformDir (V3d(0.0, 0.0, -1.0))).Normalized
+                let upLocal = (rInv.TransformDir (V3d(0.0, 0.0,  1.0))).Normalized
+                System.Threading.Tasks.Parallel.For(0, pos.Length, fun i ->
+                    let vWorld = tT.TransformPos (V3d pos.[i] + cT)
+                    let vRefLocal = rInv.TransformPos vWorld - cR
+                    let mutable hd = RayHit()
+                    if lmR.scene.Intersect(V3f vRefLocal, V3f dnLocal, &hd) then
+                        dist.[i] <- float32 hd.T
+                    else
+                        let mutable hu = RayHit()
+                        if lmR.scene.Intersect(V3f vRefLocal, V3f upLocal, &hu) then
+                            dist.[i] <- float32 (- hu.T)
+                        else dist.[i] <- 1e30f) |> ignore
+            else
+                System.Threading.Tasks.Parallel.For(0, pos.Length, fun i ->
+                    let vWorld = tT.TransformPos (V3d pos.[i] + cT)
+                    let vRefLocal = rInv.TransformPos vWorld - cR
+                    let res = lmR.scene.GetClosestPoint(V3f vRefLocal)
+                    if res.IsValid then
+                        let cp = V3d res.Point
+                        let pid = int res.PrimID
+                        if pid * 3 + 2 < refIdx.Length then
+                            let p0 = V3d refPos.[refIdx.[pid*3]]
+                            let p1 = V3d refPos.[refIdx.[pid*3+1]]
+                            let p2 = V3d refPos.[refIdx.[pid*3+2]]
+                            let nrm = Vec.cross (p1 - p0) (p2 - p0)
+                            let nl  = nrm.Length
+                            let s   = if nl > 1e-12 && Vec.dot (vRefLocal - cp) (nrm / nl) < 0.0 then -1.0 else 1.0
+                            dist.[i] <- float32 (s * sqrt (float res.DistanceSquared))
+                        else dist.[i] <- float32 (sqrt (float res.DistanceSquared))
+                    else dist.[i] <- 1e30f) |> ignore
             log.LogInformation("region-distance {Target} vs {Ref}: {Verts} verts", req.TargetName, req.RefName, pos.Length)
             return! json {| dist = dist |} next ctx
         with ex ->

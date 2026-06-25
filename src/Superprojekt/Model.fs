@@ -11,35 +11,61 @@ type RenderingMode =
     | Shaded
     | SlopeColor
 
-// Left-rail workflow spine (spec §2). One step is expanded at a time; each
-// gates the next via the readiness engine.
+// Left-rail workflow spine (spec §2 / v3 §B). Six steps: the old coarse step is
+// split into Manual move (translate-drag) then Correspondences (the manager +
+// constellation + 2D handles). One step is expanded at a time.
 type WorkflowStep =
     | StepReference
-    | StepCoarse
+    | StepManualMove
+    | StepCorrespondences
     | StepFine
     | StepInspect
     | StepCommit
 
 module WorkflowStep =
-    let all = [ StepReference; StepCoarse; StepFine; StepInspect; StepCommit ]
+    let all = [ StepReference; StepManualMove; StepCorrespondences; StepFine; StepInspect; StepCommit ]
     let index = function
-        | StepReference -> 0 | StepCoarse -> 1 | StepFine -> 2
-        | StepInspect -> 3 | StepCommit -> 4
+        | StepReference -> 0 | StepManualMove -> 1 | StepCorrespondences -> 2
+        | StepFine -> 3 | StepInspect -> 4 | StepCommit -> 5
     let title = function
         | StepReference -> "Reference"
-        | StepCoarse -> "Coarse align"
+        | StepManualMove -> "Manual move"
+        | StepCorrespondences -> "Correspondences"
+        | StepFine -> "Fine ICP"
+        | StepInspect -> "Inspect"
+        | StepCommit -> "Commit"
+    // One-word dock-header mode label (v3 §A mode indication).
+    let mode = function
+        | StepReference -> "Reference"
+        | StepManualMove -> "Manual move"
+        | StepCorrespondences -> "Correspondences"
         | StepFine -> "Fine ICP"
         | StepInspect -> "Inspect"
         | StepCommit -> "Commit"
 
-// Focus panel ortho view axis (spec §5): one at a time, never simultaneously.
-type FocusAxis =
-    | AxisTop
-    | AxisFront
-    | AxisSide
+// Focus-panel projection (spec v3 §A/§B): drives the large single (GPU) and the
+// canvas small multiples together. Pano = cylindrical from a mesh origin; the
+// three orthos are world-axis drops.
+type FocusProjection =
+    | ProjPano
+    | ProjTop
+    | ProjFront
+    | ProjSide
 
-module FocusAxis =
-    let label = function AxisTop -> "Top" | AxisFront -> "Front" | AxisSide -> "Side"
+module FocusProjection =
+    let label = function ProjPano -> "Pano" | ProjTop -> "Top" | ProjFront -> "Front" | ProjSide -> "Side"
+    let toInt = function ProjPano -> 0 | ProjTop -> 1 | ProjFront -> 2 | ProjSide -> 3
+
+// One mesh's co-oriented preview for the canvas small multiples (server-computed,
+// spec v3 §F). Verts2d is flattened [u0;v0;u1;v1;…] per emitted vertex; Tris index
+// into it; Scalar is the per-vertex display value; Lo/Hi the robust scalar domain.
+type FocusPreview = {
+    Verts2d : float[]
+    Tris    : int[]
+    Scalar  : float[]
+    Lo      : float
+    Hi      : float
+}
 
 // Movement layer (spec §7, preview only): visualises the applied rigid motion
 // over each pin ROI. Off / before→after displacement arrows / warped lattice.
@@ -177,23 +203,27 @@ type Model =
 
         // UI→3D hover highlight (None = nothing hovered): a pin row → its glyph.
         WorkflowPinHover      : ScanPinId option
+        // Correspondence-manager row hover (v3 §G brushing): (pinId-as-string, mesh)
+        // → ghost-isolate that mesh in 3D + brighten its glyph + pulse its 2D handle.
+        CorrRowHover          : (string * string) option
 
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
         GearPopoverOpen     : bool
 
-        // Registration panel open state (model-side so nav actions can open it;
-        // session-only).
-        WorkflowPanelOpen   : bool
-
         // Left workflow rail: which step is expanded (spec §2).
         WorkflowStep        : WorkflowStep
 
-        // Right focus panel (spec §1/§5): secondary ortho WebGL control.
-        // AlignMesh = the moving mesh manually translated in the ortho view.
-        FocusOpen           : bool
-        FocusAxis           : FocusAxis
-        AlignMesh           : string option
+        // Right focus panel (spec v3): persistent GPU large single + canvas small
+        // multiples — always present (no open/close). FocusMesh is the mesh shown
+        // large + dragged in Manual move + edited in Correspondences. FocusMaps
+        // caches one server preview per visible mesh for the multiples.
+        FocusProjection     : FocusProjection
+        FocusMesh           : string option
+        FocusMaps           : Map<string, FocusPreview>
+        // Peek-reference modifier (v3 §E): hold → large single re-renders as the
+        // reference mesh textured, in the current panel's own frame; juxtaposition.
+        FocusPeekReference  : bool
 
         // §9 pin-focus modifier: ghost everything outside the focused pin's ROI.
         PinFocusMode        : bool
@@ -274,14 +304,15 @@ module Model =
             ScanPins              = ScanPinModel.initial
             InspectorMesh         = None
             WorkflowPinHover      = None
+            CorrRowHover          = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             GearPopoverOpen     = false
-            WorkflowPanelOpen   = false
             WorkflowStep        = StepReference
-            FocusOpen           = true
-            FocusAxis           = AxisTop
-            AlignMesh           = None
+            FocusProjection     = ProjPano
+            FocusMesh           = None
+            FocusMaps           = Map.empty
+            FocusPeekReference  = false
             PinFocusMode        = false
             MovementLayer       = MovementOff
             OutlineMode         = false

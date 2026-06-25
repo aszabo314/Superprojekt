@@ -294,6 +294,36 @@ module Query =
                 |> Seq.toArray
         }
 
+    // Focus-panel co-oriented preview (spec v3 §F). Returns the flattened 2D
+    // vertices [u0;v0;…], triangle indices, per-vertex scalar, and robust domain.
+    // FocusPreview itself lives in Model.fs (compiled later); the caller wraps.
+    let meshPreview
+            (serverUrl : string)
+            (name : string) (refName : string)
+            (transform : M44d) (refTransform : M44d)
+            (projection : int) (originMode : int) (channel : int) (maxTris : int)
+            : Async<float[] * int[] * float[] * float * float> =
+        async {
+            let m44 (m : M44d) =
+                System.String.Join(",",
+                    [| m.M00; m.M01; m.M02; m.M03
+                       m.M10; m.M11; m.M12; m.M13
+                       m.M20; m.M21; m.M22; m.M23
+                       m.M30; m.M31; m.M32; m.M33 |]
+                    |> Array.map (sprintf "%.17g"))
+            let json =
+                sprintf """{"name":"%s","refName":"%s","transform":[%s],"refTransform":[%s],"projection":%d,"originMode":%d,"channel":%d,"maxTris":%d}"""
+                    name refName (m44 transform) (m44 refTransform) projection originMode channel maxTris
+            let! r = post serverUrl "/query/mesh-preview" json
+            let verts2d =
+                r.GetProperty("verts2d").EnumerateArray()
+                |> Seq.collect (fun e -> e.EnumerateArray() |> Seq.map (fun v -> v.GetDouble()))
+                |> Seq.toArray
+            let tris = r.GetProperty("tris").EnumerateArray() |> Seq.map (fun e -> e.GetInt32()) |> Seq.toArray
+            let scalar = r.GetProperty("scalar").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+            return verts2d, tris, scalar, r.GetProperty("lo").GetDouble(), r.GetProperty("hi").GetDouble()
+        }
+
     let rayHitMany (serverUrl : string) (names : string list) (rayFor : string -> V3d * V3d) =
         names
         |> List.map (fun name ->

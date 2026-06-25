@@ -156,10 +156,11 @@ let regJsonTests () =
         RefDistance = 0.125
         Anchors     =
             Map.ofList [
-                "ds/B", { Point = V3d(10.0, 20.0, 30.0); Source = AnchorPatch2D }
+                "ds/B", { Point = V3d(10.0, 20.0, 30.0); Source = AnchorPick3D }
                 "ds/C", { Point = V3d(-1.0, 2.5, 3.75); Source = AnchorAuto }
             ]
         Residuals   = Map.ofList [ "ds/B", 0.042 ]
+        InRoi       = Map.ofList [ "ds/B", true; "ds/C", false ]
     }
     let corr' = RegJson.readCorrespondence (parseRoot (RegJson.correspondenceJ corr))
     check "correspondence round-trip" (corr' = corr)

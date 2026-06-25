@@ -349,21 +349,28 @@ module Update =
                         Pins = HashMap.add pinId { pin with Correspondence = Some next } model.ScanPins.Pins }
                 let model = { model with ScanPins = sp }
                 if next.Enabled then
-                    // C3: first registration pin of the session opens the readiness panel once.
-                    let model =
-                        if not requirementsSurfaced then
-                            requirementsSurfaced <- true
-                            { model with WorkflowPanelOpen = true }
-                        else model
                     if model.Registration.ReferenceMesh.IsSome then seedAnchors env model [pinId]
                     else showToast env "Designate a reference mesh (★) to seed correspondence markers" model
                 else model
             | None -> model
-        | AnchorsSeeded(refUpdates, seeded) ->
+        | AnchorsSeeded(refUpdates, seeded, inRoi) ->
             let sp =
                 refUpdates |> Array.fold (fun sp (pinId, ra, dist) ->
                     updateCorr pinId (fun c -> { c with RefAnchor = Some ra; RefDistance = dist }) sp)
                     model.ScanPins
+            // §C: record ROI membership; drop a stale auto marker for any mesh
+            // that resolved out-of-ROI (a manual pick is kept).
+            let sp =
+                inRoi |> Array.fold (fun sp (pinId, mesh, inside) ->
+                    updateCorr pinId (fun c ->
+                        let anchors =
+                            if inside then c.Anchors
+                            else
+                                match Map.tryFind mesh c.Anchors with
+                                | Some a when a.Source = AnchorAuto -> Map.remove mesh c.Anchors
+                                | _ -> c.Anchors
+                        { c with InRoi = Map.add mesh inside c.InRoi; Anchors = anchors }) sp)
+                    sp
             // Seeded correspondence markers apply immediately (Auto source).
             let sp =
                 seeded |> Array.fold (fun sp (pinId, mesh, point) ->
@@ -371,6 +378,12 @@ module Update =
                         { corr with Anchors = Map.add mesh { Point = point; Source = AnchorAuto } corr.Anchors }) sp)
                     sp
             { model with ScanPins = sp }
+        | ReseedMesh(pinId, mesh) ->
+            match HashMap.tryFind pinId model.ScanPins.Pins with
+            | Some pin when (ScanPin.correspondence pin |> Option.map (fun c -> c.Enabled) |> Option.defaultValue false) ->
+                if model.Registration.ReferenceMesh.IsSome then reseedOneMesh env model pinId mesh
+                else showToast env "Set a ★ reference mesh first to re-seed" model
+            | _ -> model
         | AnchorSeedFailed reason ->
             showToast env "Correspondence seeding failed — see debug log"
                 { model with
@@ -383,9 +396,11 @@ module Update =
         | SetMeshSensorType(name, sensor) ->
             { model with MeshSensorTypes = Map.add name sensor model.MeshSensorTypes }
         | SetHeatmapMode m ->
-            { model with HeatmapMode = m }
+            invalidateFocusMaps { model with HeatmapMode = m }
         | ToggleSurfaceDistance ->
             bumpSurfaceDist ()
+            bumpFocusMaps ()
+            let model = { model with FocusMaps = Map.empty }
             if model.SurfaceDistOn then
                 { model with SurfaceDistOn = false; SurfaceDistance = Map.empty }
             else
@@ -411,20 +426,23 @@ module Update =
                         { model with SurfaceDistOn = true; VarianceOn = false; InspectorMesh = Some m; SurfaceDistance = Map.empty }
         | ToggleVariance ->
             bumpSurfaceDist ()
+            bumpFocusMaps ()
             // Mutually exclusive with the single-mesh extrinsic map.
             { model with
                 VarianceOn = not model.VarianceOn
                 SurfaceDistOn = false
-                SurfaceDistance = Map.empty }
+                SurfaceDistance = Map.empty
+                FocusMaps = Map.empty }
         | VarianceComputed(mesh, arr) ->
             // Keep only if still in variance mode and this is the reference mesh.
             if model.VarianceOn && model.Registration.ReferenceMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
             else model
         | ToggleExtrinsicZDiff ->
-            // Switch extrinsic measure (M3C2 ↔ Δz); drop the cache so it refetches.
+            // Switch extrinsic measure (M3C2 ↔ Δz); drop the caches so they refetch.
             bumpSurfaceDist ()
-            { model with ExtrinsicZDiff = not model.ExtrinsicZDiff; SurfaceDistance = Map.empty }
+            bumpFocusMaps ()
+            { model with ExtrinsicZDiff = not model.ExtrinsicZDiff; SurfaceDistance = Map.empty; FocusMaps = Map.empty }
         | SurfaceDistanceComputed(mesh, dist) ->
             // drop if the active inspector mesh changed since the fetch was issued.
             if model.SurfaceDistOn && model.InspectorMesh = Some mesh then
@@ -457,6 +475,8 @@ module Update =
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
                     InspectorMesh = None
+                    FocusMesh = None
+                    FocusMaps = Map.empty
                     MeshSolo = NoSolo
                     MeshBounds = Map.empty
                     ActivePickingLayer = None
@@ -533,16 +553,55 @@ module Update =
                 // active row drives the extrinsic surface map; drop its cache to refetch.
                 if model.SurfaceDistOn then bumpSurfaceDist ()
                 { model with InspectorMesh = m; SurfaceDistance = (if model.SurfaceDistOn then Map.empty else model.SurfaceDistance) }
-        | ToggleWorkflowPanel ->
-            { model with WorkflowPanelOpen = not model.WorkflowPanelOpen; WorkflowPinHover = None }
         | SetWorkflowStep step ->
-            if model.WorkflowStep = step then model else { model with WorkflowStep = step }
-        | SetFocusAxis a ->
-            if model.FocusAxis = a then model else { model with FocusAxis = a }
-        | ToggleFocusPanel ->
-            { model with FocusOpen = not model.FocusOpen }
-        | SetAlignMesh m ->
-            if model.AlignMesh = m then model else { model with AlignMesh = m }
+            // Context (pick ↔ compare) follows the step → refetch focus previews.
+            if model.WorkflowStep = step then model
+            else invalidateFocusMaps { model with WorkflowStep = step }
+        | SetFocusProjection p ->
+            if model.FocusProjection = p then model
+            else invalidateFocusMaps { model with FocusProjection = p }
+        | SetFocusPeekReference held ->
+            if model.FocusPeekReference = held then model else { model with FocusPeekReference = held }
+        | SetCorrRowHover h ->
+            if model.CorrRowHover = h then model else { model with CorrRowHover = h }
+        | SetFocusMesh None ->
+            { model with FocusMesh = None }
+        | SetFocusMesh (Some m) ->
+            // spec §E: promote to the large single + set the inspector's active
+            // mesh (link panel + dock). The main view follows softly via the
+            // step-2 focus isolation (wheelIsolation) — a hard solo would hide the
+            // reference and break the reference-relative channels.
+            if model.FocusMesh = Some m && model.InspectorMesh = Some m then model
+            else
+                if model.SurfaceDistOn && model.InspectorMesh <> Some m then bumpSurfaceDist ()
+                { model with
+                    FocusMesh = Some m
+                    InspectorMesh = Some m
+                    SurfaceDistance =
+                        if model.SurfaceDistOn && model.InspectorMesh <> Some m then Map.empty
+                        else model.SurfaceDistance }
+        | FocusMapsComputed(mesh, preview) ->
+            { model with FocusMaps = Map.add mesh preview model.FocusMaps }
+        | PickCorrespondenceAt(pinId, mesh, world) ->
+            // spec §D step 2: set/update the focused mesh's correspondence marker
+            // for the selected pin, constrained to the pin's probe-cylinder ROI.
+            match HashMap.tryFind pinId model.ScanPins.Pins with
+            | Some pin ->
+                match ScanPin.correspondence pin with
+                | Some c when c.Enabled ->
+                    let axis = ScanPin.axis pin
+                    let v = world - pin.Centre
+                    let axial = Vec.dot v axis
+                    let radial = (v - axis * axial).Length
+                    if radial <= pin.InnerRadius && abs axial <= ScanPin.fixedProbeLength * 0.5 then
+                        let sp = updateCorr pinId (fun corr ->
+                                    { corr with
+                                        Anchors = Map.add mesh { Point = world; Source = AnchorPick3D } corr.Anchors
+                                        InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
+                        showToast env "Correspondence placed" { model with ScanPins = sp }
+                    else showToast env "Pick is outside the pin ROI" model
+                | _ -> showToast env "Promote this pin to a registration pin (⚲) before picking markers" model
+            | None -> model
         | TogglePinFocus ->
             { model with PinFocusMode = not model.PinFocusMode }
         | SetMovementLayer m ->
@@ -554,8 +613,9 @@ module Update =
         | TranslateAlignMesh d ->
             if PendingRegistration.isPreview model.PendingReg then model
             else
-                match model.AlignMesh with
-                | Some mesh when Map.tryFind mesh model.MeshVisible |> Option.defaultValue true ->
+                match model.FocusMesh with
+                | Some mesh when Some mesh <> model.Registration.ReferenceMesh
+                                 && (Map.tryFind mesh model.MeshVisible |> Option.defaultValue true) ->
                     let cur = Map.tryFind mesh model.MeshTransforms |> Option.defaultValue Trafo3d.Identity
                     invalidateRings
                         (invalidateProbes { model with MeshTransforms = Map.add mesh (cur * Trafo3d.Translation d) model.MeshTransforms })
@@ -579,10 +639,10 @@ module Update =
                 seedAnchors env model (correspondenceEnabledIds model)
             | SelectPinOpenCard pinId ->
                 env.Emit [ScanPinMsg (SelectPin (Some pinId))]
-                pulse ".pc-corr"
-                model
+                pulse ".pin-inspector"
+                { model with WorkflowStep = StepCorrespondences }
             | HighlightReferenceColumn ->
-                pulse ".left-panel .mesh-list"
+                pulse ".rail-mesh-list"
                 { model with MenuOpen = true }
             | RunCoarse -> env.Emit [SolveCoarse]; model
             | RunFine -> env.Emit [RunRegistration]; model
@@ -679,6 +739,61 @@ module Update =
                     model
             | _ -> model
 
+    // Compare-context server channel (spec §F int) for a moving cell; mirrors
+    // GuiFocus.compareChannel. The reference cell + pick context use Shade (0).
+    let private compareChannelInt (model : Model) =
+        if model.SurfaceDistOn then (if model.ExtrinsicZDiff then 2 else 1)
+        elif model.VarianceOn then 1
+        else match model.HeatmapMode with HeatIncidence -> 3 | HeatRange -> 4 | HeatShape -> 5 | HeatOff -> 1
+
+    // Focus-panel postlude (spec §F): one debounced fan-out per generation that
+    // fetches the co-oriented preview of every effective-visible mesh missing
+    // from FocusMaps. Pick → Shade from own origin; compare → active channel from
+    // the reference origin (reference cell stays Shade). Effective world poses so
+    // the multiples follow a solve preview.
+    let private ensureFocusMaps (env : Env<Message>) (model : Model) : Model =
+            match model.Registration.ReferenceMesh with
+            | None -> model
+            | Some refMesh ->
+                let visible = effectiveVisibleMeshes model
+                let missing = visible |> List.filter (fun m -> not (Map.containsKey m model.FocusMaps))
+                if List.isEmpty missing || focusMapsReqGen = focusMapsGen then model
+                else
+                    focusMapsReqGen <- focusMapsGen
+                    let pick = model.WorkflowStep <> StepInspect
+                    let proj = FocusProjection.toInt model.FocusProjection
+                    let chCompare = compareChannelInt model
+                    let refT = (ModelTransforms.effectiveWorld model refMesh).Forward
+                    focusMapsCts.Cancel()
+                    focusMapsCts <- new System.Threading.CancellationTokenSource()
+                    let token = focusMapsCts.Token
+                    let jobs =
+                        missing |> List.map (fun m ->
+                            let mT = (ModelTransforms.effectiveWorld model m).Forward
+                            let channel = if pick || m = refMesh then 0 else chCompare
+                            let origin = if pick then 0 else 1
+                            async {
+                                try
+                                    let! (v2, tris, scalar, lo, hi) =
+                                        Query.meshPreview ApiConfig.apiBase.Value m refMesh mT refT proj origin channel 6000
+                                    return Some (m, { Verts2d = v2; Tris = tris; Scalar = scalar; Lo = lo; Hi = hi })
+                                with _ -> return None
+                            })
+                    task {
+                        try
+                            do! System.Threading.Tasks.Task.Delay(150, token)
+                            let! results = jobs |> Async.Parallel |> Async.StartAsTask
+                            if not token.IsCancellationRequested then
+                                for r in results do
+                                    match r with
+                                    | Some (m, p) -> env.Emit [FocusMapsComputed(m, p)]
+                                    | None -> ()
+                        with
+                        | :? System.OperationCanceledException -> ()
+                        | _ -> ()
+                    } |> ignore
+                    model
+
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         let updated =
             updateCore env model msg
@@ -687,5 +802,6 @@ module Update =
             |> ScanPinUpdate.ensureRings env
             |> ensureSurfaceDistance env
             |> ensureVariance env
+            |> ensureFocusMaps env
         updated
 

@@ -61,6 +61,23 @@ type RegionDistanceRequest = {
     Mode             : int
 }
 
+// Focus-panel co-oriented preview (spec v3 §F): one downsampled mesh projected
+// into a shared 2D frame, per-vertex display scalar for the chosen channel.
+[<CLIMutable>]
+type MeshPreviewRequest = {
+    Name            : string
+    RefName         : string
+    Transform       : float[]
+    RefTransform    : float[]
+    // 0 = Pano, 1 = Top, 2 = Front, 3 = Side.
+    Projection      : int
+    // 0 = own origin, 1 = reference origin (pano eye).
+    OriginMode      : int
+    // 0 = Shade, 1 = M3C2, 2 = Zdiff, 3 = Incidence, 4 = Range, 5 = Shape.
+    Channel         : int
+    MaxTris         : int
+}
+
 [<CLIMutable>]
 type IcpRequest = {
     ReferenceName    : string
@@ -183,6 +200,27 @@ let regionDistanceHandler : HttpHandler =
             return! json {| dist = dist |} next ctx
         with ex ->
             log.LogError(ex, "region-distance failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+let meshPreviewHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<MeshPreviewRequest>()
+            let lm  = loadMesh req.Name 0
+            let lmR = loadMesh req.RefName 0
+            let r =
+                MeshPreview.preview lm lmR (mat16 req.Transform) (mat16 req.RefTransform)
+                    (MeshPreview.projectionOfInt req.Projection)
+                    (MeshPreview.originOfInt req.OriginMode)
+                    (MeshPreview.channelOfInt req.Channel)
+                    (if req.MaxTris <= 0 then 6000 else req.MaxTris)
+            log.LogInformation("mesh-preview {Name} proj={Proj} ch={Ch}: {Verts} verts, {Tris} tris",
+                req.Name, req.Projection, req.Channel, r.Verts2d.Length, r.Tris.Length / 3)
+            return! json {| verts2d = r.Verts2d; tris = r.Tris; scalar = r.Scalar; lo = r.Lo; hi = r.Hi |} next ctx
+        with ex ->
+            log.LogError(ex, "mesh-preview failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 

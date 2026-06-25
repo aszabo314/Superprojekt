@@ -1,5 +1,5 @@
-//ada21ca4-0d03-781b-8468-d370387c0dbe
-//ac59a9d8-ada9-e6f0-6baa-a5ecd22d9cea
+//caded9ab-5c4d-9d2d-d364-5c1cc5208d9a
+//0c327d25-2013-4c60-fba9-c5847c18a58c
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -49,14 +49,15 @@ type AdaptiveModel(value : Model) =
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _InspectorMesh_ = FSharp.Data.Adaptive.cval(value.InspectorMesh)
     let _WorkflowPinHover_ = FSharp.Data.Adaptive.cval(value.WorkflowPinHover)
+    let _CorrRowHover_ = FSharp.Data.Adaptive.cval(value.CorrRowHover)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
-    let _WorkflowPanelOpen_ = FSharp.Data.Adaptive.cval(value.WorkflowPanelOpen)
     let _WorkflowStep_ = FSharp.Data.Adaptive.cval(value.WorkflowStep)
-    let _FocusOpen_ = FSharp.Data.Adaptive.cval(value.FocusOpen)
-    let _FocusAxis_ = FSharp.Data.Adaptive.cval(value.FocusAxis)
-    let _AlignMesh_ = FSharp.Data.Adaptive.cval(value.AlignMesh)
+    let _FocusProjection_ = FSharp.Data.Adaptive.cval(value.FocusProjection)
+    let _FocusMesh_ = FSharp.Data.Adaptive.cval(value.FocusMesh)
+    let _FocusMaps_ = FSharp.Data.Adaptive.cval(value.FocusMaps)
+    let _FocusPeekReference_ = FSharp.Data.Adaptive.cval(value.FocusPeekReference)
     let _PinFocusMode_ = FSharp.Data.Adaptive.cval(value.PinFocusMode)
     let _MovementLayer_ = FSharp.Data.Adaptive.cval(value.MovementLayer)
     let _OutlineMode_ = FSharp.Data.Adaptive.cval(value.OutlineMode)
@@ -105,14 +106,15 @@ type AdaptiveModel(value : Model) =
             _ScanPins_.Update(value.ScanPins)
             _InspectorMesh_.Value <- value.InspectorMesh
             _WorkflowPinHover_.Value <- value.WorkflowPinHover
+            _CorrRowHover_.Value <- value.CorrRowHover
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
-            _WorkflowPanelOpen_.Value <- value.WorkflowPanelOpen
             _WorkflowStep_.Value <- value.WorkflowStep
-            _FocusOpen_.Value <- value.FocusOpen
-            _FocusAxis_.Value <- value.FocusAxis
-            _AlignMesh_.Value <- value.AlignMesh
+            _FocusProjection_.Value <- value.FocusProjection
+            _FocusMesh_.Value <- value.FocusMesh
+            _FocusMaps_.Value <- value.FocusMaps
+            _FocusPeekReference_.Value <- value.FocusPeekReference
             _PinFocusMode_.Value <- value.PinFocusMode
             _MovementLayer_.Value <- value.MovementLayer
             _OutlineMode_.Value <- value.OutlineMode
@@ -154,14 +156,15 @@ type AdaptiveModel(value : Model) =
     member __.ScanPins = _ScanPins_
     member __.InspectorMesh = _InspectorMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.WorkflowPinHover = _WorkflowPinHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
+    member __.CorrRowHover = _CorrRowHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.string * Microsoft.FSharp.Core.string)>>
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.WorkflowPanelOpen = _WorkflowPanelOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.WorkflowStep = _WorkflowStep_ :> FSharp.Data.Adaptive.aval<WorkflowStep>
-    member __.FocusOpen = _FocusOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.FocusAxis = _FocusAxis_ :> FSharp.Data.Adaptive.aval<FocusAxis>
-    member __.AlignMesh = _AlignMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.FocusProjection = _FocusProjection_ :> FSharp.Data.Adaptive.aval<FocusProjection>
+    member __.FocusMesh = _FocusMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.FocusMaps = _FocusMaps_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, FocusPreview>>
+    member __.FocusPeekReference = _FocusPeekReference_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PinFocusMode = _PinFocusMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MovementLayer = _MovementLayer_ :> FSharp.Data.Adaptive.aval<MovementMode>
     member __.OutlineMode = _OutlineMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>

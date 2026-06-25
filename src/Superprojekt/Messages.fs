@@ -33,8 +33,10 @@ type Message =
     | DiscardRegistration
     // Correspondence anchors.
     | ToggleCorrespondence of ScanPinId
-    // Seeded markers apply immediately (no review modal).
-    | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[]
+    // Seeded markers apply immediately (no review modal). inRoi carries the
+    // per-(pin,mesh) ROI membership (v3 §C); out-of-ROI meshes are not seeded and
+    // their stale auto markers are dropped.
+    | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]
     | AnchorSeedFailed of string
     | ShowToast of string
     | ClearToast
@@ -62,16 +64,24 @@ type Message =
     | RenamePin of ScanPinId * string
     | SetActivePickingLayer of string option
     | SetWorkflowPinHover of ScanPinId option
+    // Correspondence-manager row hover (v3 §G): ghost-isolate that mesh in 3D.
+    | SetCorrRowHover of (string * string) option
+    // Re-seed one mesh's correspondence for one pin (v3 §F ⟳).
+    | ReseedMesh of ScanPinId * string
     // Bottom-dock inspector: active moving-mesh row.
     | SetInspectorMesh of string option
-    | ToggleWorkflowPanel
     | SetWorkflowStep of WorkflowStep
-    // Right focus panel (spec §5): ortho view axis, panel toggle, the moving
-    // mesh under manual coarse alignment, and a render-space drag translation.
-    | SetFocusAxis of FocusAxis
-    | ToggleFocusPanel
-    | SetAlignMesh of string option
+    // Right focus panel (spec v3): projection selector (drives single + multiples),
+    // the focused mesh (large single + Manual-move drag target / Correspondences
+    // edit target), a render-space drag translation, server-preview results, a
+    // surface-click/handle-drag that sets the focused mesh's correspondence, and
+    // the peek-reference modifier.
+    | SetFocusProjection of FocusProjection
+    | SetFocusMesh of string option
     | TranslateAlignMesh of V3d
+    | FocusMapsComputed of mesh:string * FocusPreview
+    | PickCorrespondenceAt of ScanPinId * mesh:string * world:V3d
+    | SetFocusPeekReference of bool
     | TogglePinFocus
     | SetMovementLayer of MovementMode
     | ToggleOutlines

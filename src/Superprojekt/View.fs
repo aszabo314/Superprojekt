@@ -72,8 +72,13 @@ module View =
                     | (MovementGlyphs | MovementGrid), Some pr when not (Map.isEmpty pr.Results) ->
                         pr.Results |> Map.toSeq |> Seq.tryHead |> Option.map fst
                     | _ ->
-                        match model.WorkflowStep.GetValue t, model.AlignMesh.GetValue t with
-                        | StepCoarse, Some m -> Some m
+                        // Manual move → align-auto isolates the focused mesh.
+                        // Correspondences → isolate only the hovered manager row
+                        // (§G brushing); base state keeps every mesh for the
+                        // constellation. Other steps: no isolation.
+                        match model.WorkflowStep.GetValue t with
+                        | StepManualMove -> model.FocusMesh.GetValue t
+                        | StepCorrespondences -> model.CorrRowHover.GetValue t |> Option.map snd
                         | _ -> None)
 
         // Contact-line highlight for the mesh shader: the 3D hover point drives a
@@ -331,6 +336,11 @@ module View =
                         transact (fun () ->
                             if needHover     then hoverCoord.Value     <- nextHover
                             if needPlacement then placementHover.Value <- nextPlacement)
+                    // Moving over terrain (off a constellation glyph) ends the
+                    // §G glyph-hover brush — the glyph re-sets it while hovered.
+                    if AVal.force model.WorkflowStep = StepCorrespondences
+                       && (AVal.force model.CorrRowHover).IsSome then
+                        env.Emit [SetCorrRowHover None]
                     true
                 )
 
@@ -364,13 +374,6 @@ module View =
                 GuiRail.rail env model (viewportSize :> aval<V2i>)
             }
             GuiFocus.panel env model
-            button {
-                Class "focus-reopen"
-                Primitives.showWhenNot model.FocusOpen
-                Attribute("title", "Show focus panel")
-                Dom.OnClick(fun _ -> env.Emit [ToggleFocusPanel])
-                "◧ Focus"
-            }
             GuiPanels.placementFlyout env model
             GuiOverlays.previewBanner model (fun b -> transact (fun () -> previewSwap.Value <- b))
             GuiOverlays.toast model

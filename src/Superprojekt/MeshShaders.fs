@@ -237,6 +237,49 @@ module MeshShader =
             }
         }
 
+// Focus-panel large-single projection (spec v3 §D). Replaces DefaultSurfaces.trafo
+// in the focus scene so the same mesh can be drawn either orthographically
+// (FocusPano = 0 → the usual MVP) or as a cylindrical panorama from a world eye
+// (FocusPano = 1 → azimuth→x, elevation→y, radial→depth). Outputs the world
+// position + world normal MeshShader.shade expects, so the full channel stack
+// (textured / extrinsic / intrinsic heatmaps) is reused unchanged downstream.
+[<ReflectedDefinition>]
+module FocusProject =
+    open FShade
+
+    [<Literal>]
+    let piF = 3.1415927f
+
+    type UniformScope with
+        member x.FocusPano  : int     = x?FocusPano
+        member x.FocusEye   : V3f     = x?FocusEye
+        member x.FocusRange : float32 = x?FocusRange
+
+    type Vertex = {
+        [<Position>]                  pos : V4f
+        [<Semantic("WorldPosition")>] wp  : V4f
+        [<Semantic("Normals")>]       n   : V3f
+    }
+
+    let vertex (v : Vertex) =
+        vertex {
+            let world = uniform.ModelTrafo * v.pos
+            let nrm = uniform.NormalMatrix * v.n
+            let clip =
+                if uniform.FocusPano = 1 then
+                    let d = world.XYZ - uniform.FocusEye
+                    let hyp = sqrt (d.X * d.X + d.Y * d.Y)
+                    let phi = if hyp < 1e-9f && abs d.Z < 1e-9f then 0.0f else atan2 d.Y d.X
+                    let theta = atan2 d.Z (max 1e-9f hyp)
+                    let u = phi / piF
+                    let vv = theta / (piF * 0.5f)
+                    let dd = clamp 0.0f 1.0f (d.Length / max 1e-6f uniform.FocusRange)
+                    V4f(u, vv, dd * 2.0f - 1.0f, 1.0f)
+                else
+                    uniform.ModelViewProjTrafo * v.pos
+            return { v with pos = clip; wp = world; n = nrm }
+        }
+
 // §10 image-space outlines. G-buffer pass: write world normal + window depth to
 // target0 and the per-mesh palette colour + coverage mask to target1 (MRT).
 [<ReflectedDefinition>]

@@ -116,4 +116,5 @@ let webApp : HttpHandler =
         route  "/api/query/lsq-pairs"                           >=> lsqPairsHandler
         route  "/api/query/probe"                               >=> probeHandler
         route  "/api/query/region-distance"                     >=> regionDistanceHandler
+        route  "/api/query/mesh-preview"                        >=> meshPreviewHandler
     ]

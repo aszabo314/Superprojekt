@@ -95,6 +95,18 @@ module ScanPinScene =
                 Sg.NoEvents
                 Lines.render segs
             }
+        // Same, but depth-test off → renders on top of surfaces (constellation
+        // §D depth bias; ghost-isolation clears occluders when reading it).
+        let linesNodeTop (active : aval<bool>) segs =
+            sg {
+                Sg.Active active
+                Sg.View view
+                Sg.Proj proj
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                Lines.render segs
+            }
         let selectedId = model.ScanPins.SelectedPin
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
@@ -208,67 +220,176 @@ module ScanPinScene =
                             out.ToArray())
                 ASet.ofList [ linesNode notFullscreen segs ])
 
-        // Correspondence visuals (always, not only during preview): markers as
-        // small wireframe tetrahedra in the mesh palette colour + a thin line
-        // to the reference anchor. Both follow the effective preview transforms.
-        let anchorGlyphs =
-            let tetra =
-                let s = 1.0 / sqrt 3.0
-                [| V3d(s, s, s); V3d(s, -s, -s); V3d(-s, s, -s); V3d(-s, -s, s) |]
-            let tetraEdges = [| 0, 1; 0, 2; 0, 3; 1, 2; 1, 3; 2, 3 |]
+        // ── §D correspondence constellation (selected pin emphasized) ────────
+        // Per moving mesh: a small filled sphere glyph at its correspondence
+        // point (palette colour); the reference point a larger haloed glyph;
+        // thin lines from each moving glyph to the reference glyph. Out-of-ROI
+        // meshes are omitted. Glyphs render on top (depth bias) and are pickable
+        // for §G brushing. Marker positions follow the effective preview pose.
+        let pinKey (ScanPinId.ScanPinId g : ScanPinId) = g.ToString()
+        let refGlyphCol = V4d(0.706, 0.325, 0.035, 1.0)   // amber #b45309
+
+        // World marker for a (pin, mesh), following the preview delta; None when
+        // out-of-ROI / no marker. Reused by glyph trafo + the connecting lines.
+        let markerWorldOf (pinVal : aval<ScanPin option>) (mesh : string) =
+            AVal.custom (fun t ->
+                match pinVal.GetValue t |> Option.bind ScanPin.correspondence with
+                | Some c when c.Enabled ->
+                    let inRoi = Map.tryFind mesh c.InRoi |> Option.defaultValue true
+                    match Map.tryFind mesh c.Anchors with
+                    | Some a when inRoi ->
+                        match PendingRegistration.delta mesh (model.PendingReg.GetValue t) with
+                        | Some d ->
+                            let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
+                            let cc = model.CommonCentroid.GetValue t
+                            let committed = Map.tryFind mesh (model.MeshTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+                            Some ((RigidTransform.worldDeltaOf scale cc committed d).Forward.TransformPos a.Point)
+                        | None -> Some a.Point
+                    | _ -> None
+                | _ -> None)
+
+        // Stable (pin × moving-mesh) key set — changes only on enabled-pins /
+        // mesh-list / reference / visibility, never on hover or preview.
+        let corrPairs =
+            AVal.custom (fun t ->
+                let names = model.MeshNames.Content.GetValue t |> IndexList.toList
+                let vis = model.MeshVisible.GetValue t
+                let rf = (model.Registration.GetValue t).ReferenceMesh
+                let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
+                let enabled =
+                    pinsVal.GetValue t |> HashMap.toSeq
+                    |> Seq.choose (fun (id, p) -> match ScanPin.correspondence p with Some c when c.Enabled -> Some id | _ -> None)
+                    |> List.ofSeq
+                seq { for id in enabled do for m in moving -> (id, m) } |> HashSet.ofSeq)
+
+        let glyphColour (pinVal : aval<ScanPin option>) (pinId : ScanPinId) (mesh : string) =
+            AVal.custom (fun t ->
+                let baseCol =
+                    match pinVal.GetValue t |> Option.bind (fun p -> Map.tryFind mesh p.DatasetColors) with
+                    | Some c -> Primitives.c4bToV3d c
+                    | None -> V3d(0.102, 0.337, 0.859)
+                let sel = selectedId.GetValue t = Some pinId
+                let rowHover = model.CorrRowHover.GetValue t = Some (pinKey pinId, mesh)
+                let pinHover = model.WorkflowPinHover.GetValue t = Some pinId
+                if rowHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
+                elif sel || pinHover then V4d(baseCol, 1.0)
+                else V4d(baseCol, 0.4))
+
+        let glyphSphere (pinId : ScanPinId) (mesh : string) =
+            let pinVal = pinsVal |> AVal.map (HashMap.tryFind pinId)
+            let world = markerWorldOf pinVal mesh
+            let active = world |> AVal.map Option.isSome
+            let trafo =
+                (world, model.CommonCentroid, datasetScale, pinVal)
+                |> fun (a, b, c, d) -> AVal.custom (fun t ->
+                    match a.GetValue t with
+                    | Some w ->
+                        let cc = b.GetValue t
+                        let s = c.GetValue t
+                        let ir = d.GetValue t |> Option.map (fun p -> p.InnerRadius) |> Option.defaultValue 1.0
+                        let r = max 0.08 (ScanPin.renderLength s (ir * 0.3))
+                        let sel = selectedId.GetValue t = Some pinId
+                        Trafo3d.Scale (if sel then r else r * 0.75) * Trafo3d.Translation (ScanPin.renderCentre cc s w)
+                    | None -> Trafo3d.Scale 0.0)
+            sg {
+                Sg.Active (AVal.map2 (&&) notFullscreen active)
+                Sg.View view
+                Sg.Proj proj
+                Sg.Trafo trafo
+                Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                Sg.Uniform("FlatColor", glyphColour pinVal pinId mesh |> AVal.map V4f)
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.OnPointerMove(fun _ -> env.Emit [SetCorrRowHover (Some (pinKey pinId, mesh))]; true)
+                Sg.OnTap(fun _ -> env.Emit [SetFocusMesh (Some mesh)]; false)
+                Sg.VertexAttributes(
+                    HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
+                Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
+                Sg.Render sphereIdxCnt
+            }
+        let movingGlyphs = corrPairs |> ASet.ofAVal |> ASet.map (fun (id, m) -> glyphSphere id m)
+
+        // Reference glyph per enabled pin: a larger amber sphere at the reference
+        // point (haloed by the ring in the lines below).
+        let refGlyph (pinId : ScanPinId) =
+            let pinVal = pinsVal |> AVal.map (HashMap.tryFind pinId)
+            let raVal = pinVal |> AVal.map (Option.bind ScanPin.correspondence >> Option.bind (fun c -> if c.Enabled then c.RefAnchor else None))
+            let active = raVal |> AVal.map Option.isSome
+            let trafo =
+                AVal.custom (fun t ->
+                    match raVal.GetValue t with
+                    | Some ra ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let s = datasetScale.GetValue t
+                        let ir = pinVal.GetValue t |> Option.map (fun p -> p.InnerRadius) |> Option.defaultValue 1.0
+                        let r = max 0.12 (ScanPin.renderLength s (ir * 0.45))
+                        Trafo3d.Scale r * Trafo3d.Translation (ScanPin.renderCentre cc s ra)
+                    | None -> Trafo3d.Scale 0.0)
+            let col =
+                selectedId |> AVal.map (fun sel -> if sel = Some pinId then refGlyphCol else V4d(refGlyphCol.XYZ, 0.4))
+            sg {
+                Sg.Active (AVal.map2 (&&) notFullscreen active)
+                Sg.View view
+                Sg.Proj proj
+                Sg.Trafo trafo
+                Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                Sg.Uniform("FlatColor", col |> AVal.map V4f)
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                Sg.VertexAttributes(
+                    HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
+                Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
+                Sg.Render sphereIdxCnt
+            }
+        let enabledPinIds =
+            pinsVal |> AVal.map (fun pins ->
+                pins |> HashMap.toSeq
+                |> Seq.choose (fun (id, p) -> match ScanPin.correspondence p with Some c when c.Enabled -> Some id | _ -> None)
+                |> HashSet.ofSeq)
+        let refGlyphs = enabledPinIds |> ASet.ofAVal |> ASet.map refGlyph
+
+        // Connecting lines (moving glyph → reference glyph) + reference halo ring.
+        let constLines =
             let segs =
                 AVal.custom (fun t ->
                     let pins = pinsVal.GetValue t
-                    let pending = model.PendingReg.GetValue t
-                    let transforms = model.MeshTransforms.GetValue t
-                    let scales = model.DatasetScales.GetValue t
                     let cc = model.CommonCentroid.GetValue t
+                    let scale = datasetScale.GetValue t
                     let sel = selectedId.GetValue t
-                    let scaleActive = datasetScale.GetValue t
-                    let deltaCache = System.Collections.Generic.Dictionary<string, Trafo3d option>()
-                    let worldDeltaOf (mesh : string) =
-                        match deltaCache.TryGetValue mesh with
-                        | true, v -> v
-                        | _ ->
-                            let v =
-                                match PendingRegistration.delta mesh pending with
-                                | Some d ->
-                                    let scale = DatasetScale.forMesh scales mesh
-                                    let c = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
-                                    Some (RigidTransform.worldDeltaOf scale cc c d)
-                                | None -> None
-                            deltaCache.[mesh] <- v
-                            v
+                    let names = model.MeshNames.Content.GetValue t |> IndexList.toList
+                    let vis = model.MeshVisible.GetValue t
+                    let rf = (model.Registration.GetValue t).ReferenceMesh
+                    let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
                     let out = ResizeArray<V3d * V3d * V4d * float>()
-                    for (_, pin) in HashMap.toSeq pins do
-                        match ScanPin.correspondence pin with
-                        | Some corr when corr.Enabled ->
-                            let isSel = sel = Some pin.Id
-                            let alpha = if isSel then 1.0 else 0.6
-                            let width = if isSel then 1.5 else 1.0
-                            let refR =
-                                corr.RefAnchor |> Option.map (ScanPin.renderCentre cc scaleActive)
-                            let glyphR =
-                                ScanPin.renderLength scaleActive (max 0.05 (pin.InnerRadius * 0.12))
-                            for KeyValue(mesh, a) in corr.Anchors do
-                                    let pWorld =
-                                        match worldDeltaOf mesh with
-                                        | Some d -> d.Forward.TransformPos a.Point
-                                        | None -> a.Point
-                                    let p = ScanPin.renderCentre cc scaleActive pWorld
-                                    let baseCol =
-                                        match Map.tryFind mesh pin.DatasetColors with
-                                        | Some c -> Primitives.c4bToV3d c
-                                        | None -> V3d(0.102, 0.337, 0.859)
-                                    let colour = V4d(baseCol, alpha)
-                                    for (i, j) in tetraEdges do
-                                        out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, colour, width)
-                                    match refR with
-                                    | Some r -> out.Add(p, r, colour, width)
+                    for (id, p) in HashMap.toSeq pins do
+                        match ScanPin.correspondence p with
+                        | Some c when c.Enabled ->
+                            match c.RefAnchor with
+                            | Some ra ->
+                                let isSel = sel = Some id
+                                let raR = ScanPin.renderCentre cc scale ra
+                                let baseAlpha = if isSel then 0.9 else 0.3
+                                let width = if isSel then 1.5 else 1.0
+                                let _, u, v = basisFromNormal (ScanPin.axis p)
+                                let hr = max 0.08 (ScanPin.renderLength scale (p.InnerRadius * 0.5))
+                                addRing out raR u v hr (V4d(refGlyphCol.XYZ, baseAlpha)) width 24
+                                let pinVal = pins |> HashMap.tryFind id |> AVal.constant
+                                for mesh in moving do
+                                    match (markerWorldOf pinVal mesh).GetValue t with
+                                    | Some w ->
+                                        let baseCol =
+                                            match Map.tryFind mesh p.DatasetColors with
+                                            | Some cc4 -> Primitives.c4bToV3d cc4
+                                            | None -> V3d(0.102, 0.337, 0.859)
+                                        out.Add(ScanPin.renderCentre cc scale w, raR, V4d(baseCol, baseAlpha), width)
                                     | None -> ()
+                            | None -> ()
                         | _ -> ()
                     out.ToArray())
-            ASet.ofList [ linesNode notFullscreen segs ]
+            ASet.ofList [ linesNodeTop notFullscreen segs ]
+
+        let constellation = ASet.unionMany (ASet.ofList [ constLines; movingGlyphs; refGlyphs ])
 
         let ghostPreview =
             let defaultR =
@@ -401,4 +522,4 @@ module ScanPinScene =
                     | _ -> [||])
             ASet.ofList [ linesNode notFullscreen segs ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; movementLayer; ghostPreview; anchorGlyphs])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; movementLayer; ghostPreview; constellation])

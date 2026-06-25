@@ -14,20 +14,11 @@ type ScanPinId = ScanPinId of Guid with
 // delta so they stay on the surface.
 type AnchorSource =
     | AnchorAuto
-    | AnchorPatch2D
     | AnchorPick3D
-    | AnchorViolinAxial
 
 module AnchorSource =
-    let label = function
-        | AnchorAuto -> "auto" | AnchorPatch2D -> "patch"
-        | AnchorPick3D -> "3D" | AnchorViolinAxial -> "violin"
-    let tag = function
-        | AnchorAuto -> "auto" | AnchorPatch2D -> "patch2d"
-        | AnchorPick3D -> "pick3d" | AnchorViolinAxial -> "violin"
-    let ofTag = function
-        | "patch2d" -> AnchorPatch2D | "pick3d" -> AnchorPick3D
-        | "violin" -> AnchorViolinAxial | _ -> AnchorAuto
+    let tag = function AnchorAuto -> "auto" | AnchorPick3D -> "pick3d"
+    let ofTag = function "pick3d" -> AnchorPick3D | _ -> AnchorAuto
 
 // One correspondence marker per (pin × moving mesh); a stored marker is
 // applied (no separate accept/reject state).
@@ -45,6 +36,10 @@ type Correspondence = {
     Anchors     : Map<string, MeshAnchor>
     // Per-mesh pair residual of the last coarse solve this pin took part in.
     Residuals   : Map<string, float>
+    // v3 §C ROI membership, computed server-side during seed: true = the mesh
+    // has surface inside the pin ROI (closest point ≤ roiRadius). Absent ⇒ not
+    // yet evaluated. Drives placed / placeable / out-of-ROI + the k/n count.
+    InRoi       : Map<string, bool>
 }
 
 module Correspondence =
@@ -54,6 +49,7 @@ module Correspondence =
         RefDistance = 0.0
         Anchors     = Map.empty
         Residuals   = Map.empty
+        InRoi       = Map.empty
     }
 
 // Registration stages (still used by PendingRegistration.Stage).
@@ -390,10 +386,14 @@ module RegJson =
             c.Residuals |> Map.toSeq
             |> Seq.map (fun (m, r) -> sprintf "%s:%s" (q m) (f r))
             |> String.concat ","
-        sprintf "{\"enabled\":%b,\"refAnchor\":%s,\"refDist\":%s,\"anchors\":{%s},\"residuals\":{%s}}"
+        let inRoi =
+            c.InRoi |> Map.toSeq
+            |> Seq.map (fun (m, b) -> sprintf "%s:%b" (q m) b)
+            |> String.concat ","
+        sprintf "{\"enabled\":%b,\"refAnchor\":%s,\"refDist\":%s,\"anchors\":{%s},\"residuals\":{%s},\"inRoi\":{%s}}"
             c.Enabled
             (match c.RefAnchor with Some a -> v3 a | None -> "null")
-            (f c.RefDistance) anchors residuals
+            (f c.RefDistance) anchors residuals inRoi
 
     let readCorrespondence (e : JsonElement) : Correspondence =
         let anchors =
@@ -412,6 +412,11 @@ module RegJson =
             | Some re ->
                 re.EnumerateObject() |> Seq.map (fun p -> p.Name, p.Value.GetDouble()) |> Map.ofSeq
             | None -> Map.empty
+        let inRoi =
+            match tryProp "inRoi" e with
+            | Some re ->
+                re.EnumerateObject() |> Seq.map (fun p -> p.Name, p.Value.GetBoolean()) |> Map.ofSeq
+            | None -> Map.empty
         {
             Enabled     = (match tryProp "enabled" e with Some v -> v.GetBoolean() | None -> true)
             RefAnchor   =
@@ -421,6 +426,7 @@ module RegJson =
             RefDistance = (match tryProp "refDist" e with Some v -> v.GetDouble() | None -> 0.0)
             Anchors     = anchors
             Residuals   = residuals
+            InRoi       = inRoi
         }
 
     let private stageTag = function StageCoarse -> "coarse" | StageFine -> "fine"

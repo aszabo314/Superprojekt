@@ -50,11 +50,14 @@ module GuiRail =
                 | StepReference ->
                     if hasRef then PillReady, "reference set"
                     else PillBlock, "pick a reference ★"
-                | StepCoarse ->
+                | StepManualMove ->
+                    if not hasRef then PillBlock, "needs a reference"
+                    else PillInfo, "drag in the focus panel to translate"
+                | StepCorrespondences ->
                     if not hasRef then PillBlock, "needs a reference"
                     elif preview then PillReady, "preview ready"
                     elif solved then PillReady, "aligned"
-                    else PillInfo, "add ≥3 correspondences, then solve"
+                    else PillInfo, "place ≥3 correspondences, then solve"
                 | StepFine ->
                     if not solved && not preview then PillInfo, "optional · coarse first"
                     else PillInfo, "optional"
@@ -153,6 +156,9 @@ module GuiRail =
             div {
                 Class "rail-pin-row"
                 selected |> AVal.map (fun s -> if s then Some (Class "rail-pin-sel") else None)
+                // §G brushing: pin-row hover brightens this pin's 3D constellation.
+                Dom.OnPointerMove(fun _ -> env.Emit [SetWorkflowPinHover (Some pin.Id)])
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetWorkflowPinHover None])
                 span {
                     Class "rail-pin-name"
                     Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPin (Some pin.Id))])
@@ -184,16 +190,32 @@ module GuiRail =
         let referenceBody =
             div { Class "rail-mesh-list"; meshList }
 
-        let coarseBody =
+        let manualMoveBody =
             div {
                 Class "rail-step-controls"
-                div { Class "rail-note"; "Drag in the focus panel (orthographic) to translate the selected moving mesh. Place correspondence pins on the reference, then solve." }
-                button {
-                    Class "rail-btn rail-btn-primary"
-                    previewOn |> AVal.map (fun p -> if p then Some (Attribute("disabled", "disabled")) else None)
-                    Dom.OnClick(fun _ -> env.Emit [SolveCoarse])
-                    "Solve coarse alignment"
+                div { Class "rail-note"; "Drag in the focus panel (Top/Front/Side) to translate the selected moving mesh in the view plane. Others ghost out automatically." }
+            }
+
+        let correspondencesBody =
+            // Readiness diagnostics (revived engine) — blocker/warning/ready with
+            // one-click nav actions (NavTo). The dock manager hosts the rows + solve.
+            let diags = ReadinessView.input model |> AVal.map (fun inp -> (Readiness.compute inp).Coarse)
+            let sevClass = function Blocker -> "block" | Warning -> "warn" | Ready -> "ready" | Info -> "info"
+            let sevIcon  = function Blocker -> "✖" | Warning -> "⚠" | Ready -> "✔" | Info -> "•"
+            let diagRow (d : Diagnostic) =
+                div {
+                    Class (sprintf "rail-diag rail-diag-%s" (sevClass d.Severity))
+                    span { Class "rail-diag-ic"; sevIcon d.Severity }
+                    span { Class "rail-diag-tx"; d.Text }
+                    match d.Action with
+                    | Some a ->
+                        button { Class "rail-diag-go"; Attribute("title", "go"); Dom.OnClick(fun _ -> env.Emit [NavTo a]); "→" }
+                    | None -> span { Class "hidden" }
                 }
+            div {
+                Class "rail-step-controls"
+                div { Class "rail-note"; "Place pins on the reference; auto-seeded markers project onto each mesh. Edit handles in the focus panel; manage + solve in the dock below." }
+                div { Class "rail-diags"; diags |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map diagRow }
             }
 
         let fineBody =
@@ -297,8 +319,10 @@ module GuiRail =
                 Class "rail-steps"
                 stepHeader StepReference
                 stepBody StepReference referenceBody
-                stepHeader StepCoarse
-                stepBody StepCoarse coarseBody
+                stepHeader StepManualMove
+                stepBody StepManualMove manualMoveBody
+                stepHeader StepCorrespondences
+                stepBody StepCorrespondences correspondencesBody
                 stepHeader StepFine
                 stepBody StepFine fineBody
                 stepHeader StepInspect

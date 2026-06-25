@@ -117,6 +117,8 @@ module GuiInspector =
         "  el.appendChild(svg);"
     ]
 
+    let private pinKey (ScanPinId.ScanPinId g : ScanPinId) = g.ToString()
+
     let dock (env : Env<Message>) (model : AdaptiveModel) =
         let placement = model.ScanPins.Placement
         let selected  = model.ScanPins.SelectedPin
@@ -145,14 +147,20 @@ module GuiInspector =
         let nameVal   = effPin |> AVal.map (Option.map (fun p -> p.Name) >> Option.defaultValue "")
         let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 5.0)
         let corrEnabled = corrA |> AVal.map (function Some c -> c.Enabled | None -> false)
+        // k/n counts in-ROI meshes only (§C): n = in-ROI moving meshes, k = those
+        // with a placed marker; out-of-ROI meshes are excluded entirely.
+        let inRoiOf (c : Correspondence option) (m : string) =
+            match c with Some cc -> Map.tryFind m cc.InRoi |> Option.defaultValue true | None -> true
         let kn =
             AVal.custom (fun t ->
                 let moving = visibleMovingA.GetValue t
+                let c = corrA.GetValue t
+                let inRoiMoving = moving |> List.filter (inRoiOf c)
                 let k =
-                    match corrA.GetValue t with
-                    | Some c -> moving |> List.filter (fun m -> Map.containsKey m c.Anchors) |> List.length
+                    match c with
+                    | Some cc -> inRoiMoving |> List.filter (fun m -> Map.containsKey m cc.Anchors) |> List.length
                     | None -> 0
-                k, List.length moving)
+                k, List.length inRoiMoving)
         let emitPin (mk : ScanPinId -> Message) = match AVal.force effId with Some id -> env.Emit [mk id] | None -> ()
 
         let identity =
@@ -281,19 +289,179 @@ module GuiInspector =
                 bar "S" 2
             }
 
+        // ── §F correspondence manager (Correspondences step) ──────────────
+        let emit (m : Message) = env.Emit [m]
+        let hoverEmit (m : string option) =
+            match AVal.force effId with
+            | Some id -> emit (SetCorrRowHover (m |> Option.map (fun mesh -> pinKey id, mesh)))
+            | None -> emit (SetCorrRowHover None)
+        let managerRow (mesh : string) =
+            let isMoving = refMeshA |> AVal.map (fun r -> r <> Some mesh)
+            let isVis = model.MeshVisible |> AVal.map (fun mp -> Map.tryFind mesh mp |> Option.defaultValue true)
+            let show = (isMoving, isVis) ||> AVal.map2 (&&)
+            let inRoi = corrA |> AVal.map (fun c -> inRoiOf c mesh)
+            let placed = corrA |> AVal.map (Option.bind (fun c -> Map.tryFind mesh c.Anchors) >> Option.isSome)
+            let stateGlyph = (inRoi, placed) ||> AVal.map2 (fun roi p -> if not roi then "⊘" elif p then "✓" else "○")
+            let stateCls   = (inRoi, placed) ||> AVal.map2 (fun roi p -> Class (if not roi then "ins-st-out" elif p then "ins-st-ok" else "ins-st-mid"))
+            let resOrSpread =
+                corrA |> AVal.map (function
+                    | Some cc ->
+                        match Map.tryFind mesh cc.Residuals with
+                        | Some r -> sprintf "%.0f mm" (r * 1000.0)
+                        | None ->
+                            match Map.tryFind mesh cc.Anchors, cc.RefAnchor with
+                            | Some a, Some ra -> sprintf "%.0f mm" ((a.Point - ra).Length * 1000.0)
+                            | _ -> "—"
+                    | None -> "—")
+            let active =
+                AVal.custom (fun t ->
+                    (match effId.GetValue t with Some id -> model.CorrRowHover.GetValue t = Some (pinKey id, mesh) | None -> false)
+                    || model.InspectorMesh.GetValue t = Some mesh)
+            let colorVal = model.MeshOrder |> AMap.tryFind mesh |> AVal.map (Option.defaultValue 0 >> meshColor)
+            div {
+                Class "ins-mgr-row"
+                showWhen show
+                inRoi |> AVal.map (fun roi -> if roi then None else Some (Class "ins-mgr-out"))
+                active |> AVal.map (fun a -> if a then Some (Class "ins-mgr-active") else None)
+                Dom.OnPointerMove(fun _ -> hoverEmit (Some mesh))
+                Dom.OnMouseLeave(fun _ -> hoverEmit None)
+                span { Class "ins-sw"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (c4bToRgbCss c)])) }
+                span { Class "ins-mgr-name"; orderVal |> AVal.map (fun o -> numbered o mesh) }
+                span { stateCls |> AVal.map Some; Class "ins-mgr-state"; stateGlyph }
+                span { Class "ins-mgr-res"; resOrSpread }
+                button {
+                    Class "mb ins-mgr-act"
+                    inRoi |> AVal.map (fun roi -> if roi then None else Some (Class "hidden"))
+                    Attribute("title", "Re-seed this mesh")
+                    Dom.OnClick(fun _ -> match AVal.force effId with Some id -> emit (ReseedMesh(id, mesh)) | None -> ())
+                    "⟳"
+                }
+                button {
+                    Class "mb ins-mgr-act"
+                    inRoi |> AVal.map (fun roi -> if roi then None else Some (Class "hidden"))
+                    Attribute("title", "Edit in the focus panel")
+                    Dom.OnClick(fun _ -> emit (SetFocusMesh (Some mesh)))
+                    "✎"
+                }
+            }
+        let refColorA =
+            AVal.custom (fun t ->
+                match refMeshA.GetValue t with
+                | Some r -> (match HashMap.tryFind r (orderVal.GetValue t) with Some i -> meshColor i | None -> meshColor 0)
+                | None -> meshColor 0)
+        let refRow =
+            div {
+                Class "ins-mgr-row ins-mgr-refrow"
+                span { Class "ins-sw"; refColorA |> AVal.map (fun c -> Some (Style [Css.Background (c4bToRgbCss c)])) }
+                span { Class "ins-mgr-name"
+                       (refMeshA, orderVal) ||> AVal.map2 (fun r o -> match r with Some m -> numbered o m | None -> "— no reference") }
+                span { Class "ins-mgr-state ins-st-ref"; "★" }
+                span { Class "ins-mgr-res"; corrA |> AVal.map (function Some c when c.RefAnchor.IsSome -> "ref" | _ -> "…") }
+            }
+        let manager =
+            div {
+                Class "ins-mgr"
+                refRow
+                div { Class "ins-mgr-rows"; model.MeshNames |> AList.map managerRow }
+                div {
+                    Class "ins-mgr-foot"
+                    span { Class "ins-kn"; kn |> AVal.map (fun (k, n) -> sprintf "k/n %d/%d" k n) }
+                    button {
+                        Class "rail-btn rail-btn-primary ins-solve"
+                        previewOn |> AVal.map (fun p -> if p then Some (Attribute("disabled", "disabled")) else None)
+                        Dom.OnClick(fun _ -> emit SolveCoarse)
+                        "Solve coarse"
+                    }
+                }
+            }
+
+        // ── light step modes ──────────────────────────────────────────────
+        let referenceMode =
+            div {
+                Class "ins-light"
+                div {
+                    Class "ins-light-row"
+                    span { Class "ins-light-k"; "Reference" }
+                    span { (refMeshA, orderVal) ||> AVal.map2 (fun r o -> match r with Some m -> numbered o m | None -> "— pick a ★ in the rail") }
+                }
+                div {
+                    Class "ins-light-row"
+                    span { Class "ins-light-k"; "Meshes" }
+                    span { model.MeshNames.Content |> AVal.map (fun ns -> sprintf "%d loaded" (IndexList.count ns)) }
+                }
+            }
+        let fineMode =
+            div {
+                Class "ins-light"
+                div {
+                    Class "ins-light-row"
+                    span { Class "ins-light-k"; "RMS" }
+                    span {
+                        model.LastSolve |> AVal.map (fun ls ->
+                            if Map.isEmpty ls then "no solve yet"
+                            else
+                                let bs = ls |> Map.toSeq |> Seq.map (fun (_, e) -> e.RmsBefore) |> Seq.toArray
+                                let aft = ls |> Map.toSeq |> Seq.map (fun (_, e) -> e.RmsAfter) |> Seq.toArray
+                                sprintf "%.0f → %.0f mm" (Array.average bs * 1000.0) (Array.average aft * 1000.0))
+                    }
+                }
+                button {
+                    Class "rail-btn ins-solve"
+                    previewOn |> AVal.map (fun p -> if p then Some (Attribute("disabled", "disabled")) else None)
+                    Dom.OnClick(fun _ -> emit RunRegistration)
+                    "Run / re-run ICP"
+                }
+            }
+        let commitMode =
+            let pend = model.PendingReg |> AVal.map (function Some pr -> Map.count pr.Results | None -> 0)
+            div {
+                Class "ins-light"
+                div {
+                    Class "ins-light-row"
+                    pend |> AVal.map (fun n -> if n > 0 then sprintf "Previewing %d mesh(es) — committed vs new pose" n else "Nothing pending — run a solve first")
+                }
+                div {
+                    Class "ins-commit-row"
+                    showWhen previewOn
+                    button {
+                        Class "rail-btn rail-btn-primary"
+                        Dom.OnClick(fun _ -> emit CommitRegistration)
+                        "Commit"
+                    }
+                    button {
+                        Class "rail-btn"
+                        Dom.OnClick(fun _ -> emit DiscardRegistration)
+                        "Discard"
+                    }
+                }
+            }
+
+        // ── step-contextual assembly (cross-faded; v3 §A) ─────────────────
+        let stepA = model.WorkflowStep
+        let modeOn (pred : WorkflowStep -> bool) =
+            stepA |> AVal.map (fun s -> if pred s then Some (Class "ins-mode-on") else None)
+        let errorInspector =
+            div {
+                div { Class "ins-empty"; showWhenNot hasPin; span { "◌" } }
+                div { Class "ins-body"; showWhen hasPin; identity; raincloud; b3; b4 }
+            }
         div {
             Class "pin-inspector"
             div {
-                Class "ins-empty"
-                showWhenNot hasPin
-                span { "◌" }
+                Class "ins-header"
+                span { Class "ins-mode-label"; stepA |> AVal.map WorkflowStep.mode }
             }
             div {
-                Class "ins-body"
-                showWhen hasPin
-                identity
-                raincloud
-                b3
-                b4
+                Class "ins-modes"
+                div { Class "ins-mode"; modeOn ((=) StepReference); referenceMode }
+                div { Class "ins-mode"; modeOn (fun s -> s = StepManualMove || s = StepInspect); errorInspector }
+                div {
+                    Class "ins-mode"
+                    modeOn ((=) StepCorrespondences)
+                    div { Class "ins-empty"; showWhenNot hasPin; span { "◌ select a pin" } }
+                    div { Class "ins-mgr-wrap"; showWhen hasPin; manager }
+                }
+                div { Class "ins-mode"; modeOn ((=) StepFine); fineMode }
+                div { Class "ins-mode"; modeOn ((=) StepCommit); commitMode }
             }
         }

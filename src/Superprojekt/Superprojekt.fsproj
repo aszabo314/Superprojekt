@@ -36,6 +36,7 @@
     <Compile Include="Update.fs" />
     <Compile Include="MeshShaders.fs" />
     <Compile Include="MeshView.fs" />
+    <Compile Include="FocusView.fs" />
     <Compile Include="OutlineView.fs" />
     <Compile Include="ScanPinScene.fs" />
     <Compile Include="SceneGraph.fs" />

@@ -122,3 +122,73 @@ Replaced the per-pin detail surface. All three projects green; client (native of
 
 ### Needs browser verification
 Dock raincloud SVG sizing/interaction, B4 bars, the `DistBrush`-removed mesh shader, and that the dock never visually collides with rail/focus/overlays on hi-dpi.
+
+---
+
+## Focus panel v3 — large single + co-oriented small multiples (`ScanPin_v3_focus_panel_spec.md`)
+
+Built the deferred §1/§6 small-multiples item, unified with the large single into one persistent right-docked panel (`GuiFocus.fs`). Context follows the workflow step — **pick** (step 2) vs **compare** (step 4) — layout is invariant.
+
+### Server
+- New `MeshPreview.fs` + `POST /api/query/mesh-preview` (`meshPreviewHandler`). Projects a downsampled mesh (≤`maxTris`, default 6k, uniform stride, re-indexed like the patch sampler) into a shared 2D frame and tags every vertex with a per-channel display scalar. Projections `Pano|Top|Front|Side`; channels `Shade|M3C2|Zdiff|Incidence|Range|Shape`; origin Own/Reference. Pano drops ±π seam-crossing triangles. Returns `{ verts2d, tris, scalar, lo, hi }`. Verified end-to-end on Hessigheim across every channel/projection.
+- **Sensor/eye = `transform·centroid`, not `transform·0`.** Positions are stored relative to the centroid, so the mesh's local origin maps to `transform·centroid`; using `0` put the sensor at the far UTM origin and collapsed Range/Incidence to a constant. This now matches the GPU single's render-space sensor (`fullTrafo·0`).
+- Picking reuses the existing Embree `/api/query/ray` (no new endpoint).
+
+### Client
+- **Large single = the one secondary WebGL control** (`FocusView.fs`). Renders ONLY the focused mesh, reusing `MeshShader.shade` (so every channel — textured / extrinsic diverging / intrinsic incidence·range·shape / shaded — comes for free) with a new **`FocusProject.vertex`** shader that branches `FocusPano`: pano = cylindrical (azimuth→x, elevation→y, radial→depth) from a world eye; ortho = standard MVP. `FocusView.cam` is shared with `GuiFocus` so the surface-pick inverts the same projection.
+- **Small multiples = pure 2D canvas** (`observedRender` island + `multiplesJs`), one cell per visible mesh, triangle-filled and coloured by the per-vertex server scalar (shaded-relief in pick, scalar ramp in compare with a **shared colour scale** + LoD-neutral band for extrinsic). Click a cell → `SetFocusMesh` → promotes to the single + sets the inspector mesh.
+- `Model`: `FocusAxis`→**`FocusProjection`** (+`ProjPano`, default), **`FocusMesh`**, **`FocusMaps : Map<mesh, FocusPreview>`**. Removed `AlignMesh` (folded into `FocusMesh`). Messages: `SetFocusProjection`, `SetFocusMesh`, `FocusMapsComputed`, `PickCorrespondenceAt`; removed `SetFocusAxis`/`SetAlignMesh`.
+- `ensureFocusMaps` postlude — one debounced per-generation fan-out (mirrors `ensureVariance`); invalidates on projection / channel / context / reference / transform / visibility. `Query.meshPreview` wrapper.
+- **Step-2 surface pick** (`pickAt` → `PickCorrespondenceAt`): inverts the focus projection to a render ray → mesh-own frame → `/query/ray` → maps the hit back through `effectiveWorld`; the handler ROI-constrains it to the pin's probe cylinder and writes an `AnchorPick3D` marker. Translate-align drag kept (ortho only).
+
+### Decisions / deviations (flagged)
+- **GPU panorama is a cylindrical vertex projection, not the revived cubemap `PanoramaShader`.** Lighter (no FBO/readback — satisfies "no GPU readback in the default path"), and identical to the server's per-vertex projection so the single and its multiple cell agree. The spec's "reuse the removed shader" was guidance toward a GPU panorama; this meets the mandate more consistently.
+- **"Solo in the main viewport" softened to the existing step-2 isolation.** A hard `MeshSolo` would hide the reference and break every reference-relative channel (probe / extrinsic map / variance). `SetFocusMesh` sets `FocusMesh`+`InspectorMesh`; the main view follows softly via the StepCoarse `wheelIsolation`. The multiples use a restore-aware visible set so a manual solo still shows every cell.
+- **Incidence on the single diverges from the multiples in compare.** The single reuses `MeshShader` incidence (camera = pano eye = reference origin in compare), the multiples use sensor incidence. Range/Shape/Shade/extrinsic are consistent. Niche channel in a niche context.
+- GPU pano has the classic ±π seam smear on the single (the canvas multiples drop seam triangles server-side).
+
+### Needs browser verification
+`FocusProject.vertex` (FShade compiles only in-browser — pano `atan2`, attribute pass-through into `MeshShader.shade`), the canvas multiples grid (layout/fit/colour/click-to-promote), the surface-pick ray math, and that the taller focus panel doesn't collide with the inspector dock / rail on hi-dpi.
+
+---
+
+## Per-step GUI + correspondence workflow (`ScanPin_v3_correspondence_workflow_spec.md`)
+
+Implemented all sections A–I; client + server + 58/58 tests green; server data paths (closest-point, mesh-preview) smoke-tested.
+
+### Model / messages (§B,§H)
+- `WorkflowStep`: split `StepCoarse` → **`StepManualMove` + `StepCorrespondences`** (six steps). `AlignMesh` was already folded into `FocusMesh`.
+- `Correspondence.InRoi : Map<string,bool>` (round-tripped in `RegJson` + test).
+- New: `SetCorrRowHover`, `ReseedMesh`, `SetFocusPeekReference`; fields `CorrRowHover`, `FocusPeekReference`. Removed `FocusOpen`/`ToggleFocusPanel` (panel is always present — no open/close) and the focus-reopen button.
+- Pruned vestigial dead code: `WorkflowPanelOpen`, `ToggleWorkflowPanel`, `requirementsSurfaced` (set-but-never-read), the dead `.workflow-panel`/`.wfp-*` CSS (removed GuiWorkflow), and the `AnchorSource` variants `AnchorPatch2D`/`AnchorViolinAxial` (+ `label`/`tag`/`ofTag`/RegJson/test usage).
+
+### ROI membership (§C)
+`seedAnchors` is now **ROI-clamped**: a mesh is in-ROI iff its closest point is within the probe cylinder's reach (`roiReach = √(InnerRadius² + (fixedProbeLength/2)²)`); out-of-ROI meshes aren't seeded and stale auto markers are dropped. `Correspondence.InRoi` records membership; `k/n` counts in-ROI meshes only. Added `reseedOneMesh` (forces re-seed of one mesh, the ⟳).
+
+### 3D constellation (§D — `ScanPinScene.fs`)
+Replaced the non-pickable line-tetra `anchorGlyphs` with a constellation: per in-ROI moving mesh a small filled **sphere glyph** (palette colour) at the marker, a larger **amber haloed** reference glyph, and thin lines to the reference. Selected pin bright / others dim; depth-test off (renders on top). Glyphs are a stable (pin×mesh) ASet with adaptive trafo/colour (no churn on hover/preview) and are pickable: hover → `SetCorrRowHover`, tap → `SetFocusMesh`.
+
+### Focus 2D editor (§E — `GuiFocus.fs` / `FocusView.fs`)
+- **Handles + reference crosshair** drawn in the large single (HTML overlay, projected via `projectToFocus` = the same pano/ortho as `FocusProject.vertex`) **and** in every canvas cell (projected in the cell's own server frame). Crosshair opaque; handle in mesh colour; the manager-hovered mesh's handle pulses (accent).
+- **Editing** is press/click-drag-release on the large-single surface → server raycast → `PickCorrespondenceAt` (ROI-constrained) → marker + a "Correspondence placed" toast. Click a cell → promote to the large single.
+- **Peek-reference**: hold the `⇄ ref` button → `FocusView.buildSingle` renders the **reference geometry through the focused mesh's own camera** (new `camMeshA` decoupling geom from cam) — juxtaposition, no transparency.
+
+### Correspondence manager + per-step dock (§A,§F)
+- `GuiInspector.dock` is now **step-contextual**: a mode header (`WorkflowStep.mode`) + six cross-faded modes (CSS opacity, absolutely-positioned — containers never move). Manual move / Inspect = the raincloud error inspector (B1–B4); Correspondences = the **manager**; Reference / Fine ICP / Commit = light readouts.
+- **Manager**: reference row + per-moving-mesh rows (swatch · state `✓`/`○`/`⊘` · residual-or-pre-solve-spread mm · `⟳` re-seed · `✎` edit), out-of-ROI greyed, `k/n` + **Solve coarse** (moved off the rail). No source column.
+
+### Linked highlighting (§G)
+- Pin-row hover (rail) → `SetWorkflowPinHover` → brightens the pin's constellation (the previously-dead reader now has an emitter).
+- Manager-row hover → `SetCorrRowHover` → ghost-isolates that mesh in 3D (`View.wheelIsolation`, StepCorrespondences) + brightens its 3D glyph + pulses its 2D handle; cleared on row-leave and on terrain pointer-move.
+- Bidirectional: tapping a 3D glyph / clicking a 2D cell → `SetFocusMesh`/`SetInspectorMesh` (manager row goes active).
+
+### Readiness engine revived (§H,§I)
+Rather than delete the test-covered `Readiness.compute`/`NavAction`/`NavTo`, **revived** them: the Correspondences rail step renders the coarse diagnostics (blocker/warning/ready) with one-click `NavTo` actions; stale `NavTo` pulse selectors (`.pc-corr`, `.left-panel`) repointed to `.pin-inspector`/`.rail-mesh-list`.
+
+### Decisions / deviations (flagged)
+- **Constellation glyphs are small spheres, not literal billboards** — view-independent and pickable without per-frame billboard math; reads as point glyphs from any angle. Sizes (`InnerRadius·0.3`, floor 0.08 render) need a browser pass.
+- **"Draggable handle" = press-drag-release placement** (marker jumps to the release point) + a live display handle, not a live-follow HTML drag — the overlay can't get rc-relative coords mid-drag cleanly. Functionally equivalent (click/drag to re-place); the existing surface click-pick does the raycast.
+- **Cell handles are display-only**; editing happens on the large single (click a cell → promote, then place). Matches "click a multiple cell → promote for editing".
+
+### Needs browser verification
+The dock cross-fade + 6 modes, the manager interactions, the constellation sphere sizes/picking, the focus-overlay handle/crosshair projection accuracy (pano + ortho), peek-reference, and all the brushing links — all GPU/DOM, verifiable only in-browser.

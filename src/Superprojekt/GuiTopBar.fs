@@ -154,7 +154,7 @@ module GuiTopBar =
                                 let centroid = model.DatasetCentroids |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue V3d.Zero)
                                 let numName =
                                     model.MeshOrder |> AMap.tryFind name |> AVal.map (fun o ->
-                                        sprintf "%d  %s" ((Option.defaultValue 0 o) + 1) (Cards.shortName name))
+                                        sprintf "%d  %s" ((Option.defaultValue 0 o) + 1) (Primitives.shortName name))
                                 div {
                                     Class "tb-gear-mesh-row"
                                     span { Class "tb-gear-mesh-name"; numName }

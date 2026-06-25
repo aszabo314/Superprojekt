@@ -39,11 +39,7 @@ module ServerActions =
 // Update.fs (opened there unqualified). The giant updateCore match stays put.
 module UpdateHelpers =
 
-    let mutable hoverProbeCts : System.Threading.CancellationTokenSource =
-        new System.Threading.CancellationTokenSource()
     let mutable toastCts : System.Threading.CancellationTokenSource =
-        new System.Threading.CancellationTokenSource()
-    let mutable patchPickerCts : System.Threading.CancellationTokenSource =
         new System.Threading.CancellationTokenSource()
     // C3: auto-open the panel the first time a registration pin is made this session.
     let mutable requirementsSurfaced = false
@@ -60,7 +56,6 @@ module UpdateHelpers =
         if not (Map.isEmpty model.SurfaceDistance) then bumpSurfaceDist ()
         { model with
             ScanPins = ScanPinModel.invalidateProbes model.ScanPins
-            HoverProbe = None
             SurfaceDistance = Map.empty }
 
     // Rings depend on pin geometry + transforms, NOT visibility (which gates
@@ -95,10 +90,6 @@ module UpdateHelpers =
             { sp with Pins = HashMap.add id (ScanPin.withCorrespondence (Some (f cur)) pin) sp.Pins }
         | None -> sp
 
-    let setAnchor (id : ScanPinId) (mesh : string) (point : V3d) (source : AnchorSource) (sp : ScanPinModel) =
-        sp |> updateCorr id (fun c ->
-            { c with Anchors = Map.add mesh { Point = point; Source = source } c.Anchors })
-
     // Anchors are world-space at committed poses; commit/rollback re-bases every
     // anchor on a moved mesh by the applied world delta so it stays on the surface.
     // Host-aware (WP14): a plain pin's centre follows its host mesh's delta; a
@@ -123,20 +114,6 @@ module UpdateHelpers =
                         | Some d -> { p with Centre = d.Forward.TransformPos p.Centre }
                         | None -> p)
             { sp with Pins = pins }
-
-    // Re-derive each pin card's render-space anchor from its pin's current centre,
-    // so attached cards follow host-tracked pins after a commit/rollback.
-    let reanchorCards (model : Model) =
-        let cc = model.CommonCentroid
-        let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
-        let cards =
-            model.CardSystem.Cards |> HashMap.map (fun _ card ->
-                match card.Content with
-                | PinCard pid ->
-                    match HashMap.tryFind pid model.ScanPins.Pins with
-                    | Some p -> { card with Anchor = AnchorToWorldPoint (ScanPin.renderCentre cc scale p.Centre) }
-                    | None -> card)
-        { model with CardSystem = { model.CardSystem with Cards = cards } }
 
     let correspondenceEnabledIds (model : Model) =
         model.ScanPins.Pins |> HashMap.toList

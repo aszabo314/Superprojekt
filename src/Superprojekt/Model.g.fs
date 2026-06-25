@@ -1,5 +1,5 @@
-//a3d10765-4402-9a99-8f41-78e39ee495a8
-//ee8ed84d-e2e9-8c47-ab7b-5544d96bb151
+//ada21ca4-0d03-781b-8468-d370387c0dbe
+//ac59a9d8-ada9-e6f0-6baa-a5ecd22d9cea
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -39,8 +39,6 @@ type AdaptiveModel(value : Model) =
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _PendingReg_ = FSharp.Data.Adaptive.cval(value.PendingReg)
     let _LastSolve_ = FSharp.Data.Adaptive.cval(value.LastSolve)
-    let _AnchorPick_ = FSharp.Data.Adaptive.cval(value.AnchorPick)
-    let _PatchPicker_ = FSharp.Data.Adaptive.cval(value.PatchPicker)
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
     let _MeshSensorTypes_ = FSharp.Data.Adaptive.cval(value.MeshSensorTypes)
     let _HeatmapMode_ = FSharp.Data.Adaptive.cval(value.HeatmapMode)
@@ -48,17 +46,9 @@ type AdaptiveModel(value : Model) =
     let _ExtrinsicZDiff_ = FSharp.Data.Adaptive.cval(value.ExtrinsicZDiff)
     let _VarianceOn_ = FSharp.Data.Adaptive.cval(value.VarianceOn)
     let _SurfaceDistance_ = FSharp.Data.Adaptive.cval(value.SurfaceDistance)
-    let _SurfaceDistBrush_ = FSharp.Data.Adaptive.cval(value.SurfaceDistBrush)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
-    let _CardSystem_ = AdaptiveCardSystemModel(value.CardSystem)
-    let _HoverProbe_ = FSharp.Data.Adaptive.cval(value.HoverProbe)
-    let _ChartCursor_ = FSharp.Data.Adaptive.cval(value.ChartCursor)
-    let _ChartHoverMesh_ = FSharp.Data.Adaptive.cval(value.ChartHoverMesh)
-    let _ChartStickyMesh_ = FSharp.Data.Adaptive.cval(value.ChartStickyMesh)
+    let _InspectorMesh_ = FSharp.Data.Adaptive.cval(value.InspectorMesh)
     let _WorkflowPinHover_ = FSharp.Data.Adaptive.cval(value.WorkflowPinHover)
-    let _CorrMarkerHover_ = FSharp.Data.Adaptive.cval(value.CorrMarkerHover)
-    let _DetailGrids_ = FSharp.Data.Adaptive.cval(value.DetailGrids)
-    let _DetailGridPin_ = FSharp.Data.Adaptive.cval(value.DetailGridPin)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
@@ -105,8 +95,6 @@ type AdaptiveModel(value : Model) =
             _Registration_.Value <- value.Registration
             _PendingReg_.Value <- value.PendingReg
             _LastSolve_.Value <- value.LastSolve
-            _AnchorPick_.Value <- value.AnchorPick
-            _PatchPicker_.Value <- value.PatchPicker
             _Toast_.Value <- value.Toast
             _MeshSensorTypes_.Value <- value.MeshSensorTypes
             _HeatmapMode_.Value <- value.HeatmapMode
@@ -114,17 +102,9 @@ type AdaptiveModel(value : Model) =
             _ExtrinsicZDiff_.Value <- value.ExtrinsicZDiff
             _VarianceOn_.Value <- value.VarianceOn
             _SurfaceDistance_.Value <- value.SurfaceDistance
-            _SurfaceDistBrush_.Value <- value.SurfaceDistBrush
             _ScanPins_.Update(value.ScanPins)
-            _CardSystem_.Update(value.CardSystem)
-            _HoverProbe_.Value <- value.HoverProbe
-            _ChartCursor_.Value <- value.ChartCursor
-            _ChartHoverMesh_.Value <- value.ChartHoverMesh
-            _ChartStickyMesh_.Value <- value.ChartStickyMesh
+            _InspectorMesh_.Value <- value.InspectorMesh
             _WorkflowPinHover_.Value <- value.WorkflowPinHover
-            _CorrMarkerHover_.Value <- value.CorrMarkerHover
-            _DetailGrids_.Value <- value.DetailGrids
-            _DetailGridPin_.Value <- value.DetailGridPin
             _RenderingMode_.Value <- value.RenderingMode
             _MeshSolo_.Value <- value.MeshSolo
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
@@ -164,8 +144,6 @@ type AdaptiveModel(value : Model) =
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.PendingReg = _PendingReg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PendingRegistration>>
     member __.LastSolve = _LastSolve_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, LastSolveEntry>>
-    member __.AnchorPick = _AnchorPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<AnchorPickState>>
-    member __.PatchPicker = _PatchPicker_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PatchPickerState>>
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MeshSensorTypes = _MeshSensorTypes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, SensorType>>
     member __.HeatmapMode = _HeatmapMode_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
@@ -173,17 +151,9 @@ type AdaptiveModel(value : Model) =
     member __.ExtrinsicZDiff = _ExtrinsicZDiff_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.VarianceOn = _VarianceOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SurfaceDistance = _SurfaceDistance_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
-    member __.SurfaceDistBrush = _SurfaceDistBrush_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.float * Microsoft.FSharp.Core.float)>>
     member __.ScanPins = _ScanPins_
-    member __.CardSystem = _CardSystem_
-    member __.HoverProbe = _HoverProbe_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<HoverProbeState>>
-    member __.ChartCursor = _ChartCursor_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ChartCursor>>
-    member __.ChartHoverMesh = _ChartHoverMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
-    member __.ChartStickyMesh = _ChartStickyMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.InspectorMesh = _InspectorMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.WorkflowPinHover = _WorkflowPinHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
-    member __.CorrMarkerHover = _CorrMarkerHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
-    member __.DetailGrids = _DetailGrids_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, ElevGridState>>
-    member __.DetailGridPin = _DetailGridPin_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>

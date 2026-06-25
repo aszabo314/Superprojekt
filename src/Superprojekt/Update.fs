@@ -325,11 +325,10 @@ module Update =
                         ModelTransforms.worldDelta model mesh (committed mesh)
                             (RegLog.effective (committed mesh) r.Delta))
                 let model =
-                    reanchorCards
-                        { model with
-                            MeshTransforms = after
-                            ScanPins = bakeAnchors worldDeltas model.ScanPins
-                            Registration = { model.Registration with Running = false } }
+                    { model with
+                        MeshTransforms = after
+                        ScanPins = bakeAnchors worldDeltas model.ScanPins
+                        Registration = { model.Registration with Running = false } }
                 // Registration-complete cascade: all probes + contact rings.
                 invalidateProbes (exitPreview model)
             | _ -> model
@@ -376,196 +375,6 @@ module Update =
             showToast env "Correspondence seeding failed — see debug log"
                 { model with
                     DebugLog = model.DebugLog.InsertAt(0, sprintf "correspondence seeding failed: %s" reason) }
-        | SetAnchor(pinId, mesh, point, source) ->
-            { model with ScanPins = setAnchor pinId mesh point source model.ScanPins }
-        | StartAnchorPick(pinId, mesh) ->
-            if PendingRegistration.isPreview model.PendingReg then
-                showToast env "Correspondence-marker picking is disabled while a solve preview is pending" model
-            else
-                { model with AnchorPick = Some { PinId = pinId; Mesh = mesh } }
-        | CancelAnchorPick ->
-            { model with AnchorPick = None }
-        | AnchorPickHit world ->
-            match model.AnchorPick with
-            | Some ap when model.Registration.ReferenceMesh = Some ap.Mesh ->
-                // F10: a 3D pick on the reference mesh moves RefAnchor (the marker every pair is measured from).
-                let dist =
-                    match HashMap.tryFind ap.PinId model.ScanPins.Pins with
-                    | Some pin -> (world - pin.Centre).Length
-                    | None -> 0.0
-                let sp =
-                    updateCorr ap.PinId (fun c -> { c with RefAnchor = Some world; RefDistance = dist }) model.ScanPins
-                { model with ScanPins = sp; AnchorPick = None }
-            | Some ap ->
-                let sp = setAnchor ap.PinId ap.Mesh world AnchorPick3D model.ScanPins
-                // Auto-advance to the next moving mesh (panel order after current) lacking a marker for this pin.
-                let next =
-                    match HashMap.tryFind ap.PinId sp.Pins |> Option.bind ScanPin.correspondence with
-                    | Some corr ->
-                        let refMesh = model.Registration.ReferenceMesh
-                        let meshes = model.MeshNames |> IndexList.toList
-                        let candidates =
-                            match List.tryFindIndex ((=) ap.Mesh) meshes with
-                            | Some i -> List.skip (i + 1) meshes @ List.truncate i meshes
-                            | None -> meshes
-                        candidates
-                        |> List.tryFind (fun m ->
-                            Some m <> refMesh && m <> ap.Mesh
-                            && not (Map.containsKey m corr.Anchors))
-                    | None -> None
-                { model with
-                    ScanPins = sp
-                    AnchorPick = next |> Option.map (fun m -> { ap with Mesh = m }) }
-            | None -> model
-
-        // Patch small-multiples picker (spec §7.2).
-        | OpenPatchPicker pinId ->
-            if PendingRegistration.isPreview model.PendingReg then
-                showToast env "Patch picking is disabled while a solve preview is pending" model
-            else
-                let pinOpt = HashMap.tryFind pinId model.ScanPins.Pins
-                let refMeshOpt = model.Registration.ReferenceMesh
-                match pinOpt, refMeshOpt with
-                | Some pin, Some refMesh ->
-                    let refAnchor =
-                        ScanPin.correspondence pin
-                        |> Option.bind (fun c -> c.RefAnchor)
-                        |> Option.defaultValue pin.Centre
-                    let radius = pin.InnerRadius
-                    let visible =
-                        model.MeshNames |> IndexList.toList
-                        |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
-                    let trafos =
-                        (model.MeshNames |> IndexList.toList)
-                        |> List.map (fun m -> m, ModelTransforms.committedWorld model m)
-                        |> Map.ofList
-                    let anchorOf mesh =
-                        ScanPin.correspondence pin
-                        |> Option.bind (fun c -> Map.tryFind mesh c.Anchors)
-                        |> Option.map (fun a -> a.Point)
-                    let atlasUrl (mesh : string) =
-                        let i = mesh.IndexOf '/'
-                        if i < 0 then ""
-                        else
-                            sprintf "%s/datasets/%s/mesh/%s/0/atlas"
-                                (ApiConfig.apiBase.Value.TrimEnd('/')) (mesh.[.. i - 1]) (mesh.[i + 1 ..])
-                    patchPickerCts.Cancel()
-                    patchPickerCts <- new System.Threading.CancellationTokenSource()
-                    let token = patchPickerCts.Token
-                    task {
-                        try
-                            do! System.Threading.Tasks.Task.Delay(250, token)
-                            // Reference patch first — its fitted frame is the shared frame for every other mesh.
-                            let refT = Map.tryFind refMesh trafos |> Option.defaultValue Trafo3d.Identity
-                            let cRef = refT.Backward.TransformPos refAnchor
-                            let! refPts, refTris, refDirM, normalM =
-                                Query.patchInFrame ApiConfig.apiBase.Value refMesh cRef radius 200000 None
-                                |> Async.StartAsTask
-                            let normalW = (refT.Forward.TransformDir normalM).Normalized
-                            let refDirW =
-                                let r = refT.Forward.TransformDir refDirM
-                                let proj = r - normalW * Vec.dot r normalW
-                                if proj.Length > 1e-9 then proj.Normalized else V3d.OIO
-                            let leftW = Vec.cross normalW refDirW
-                            let refEntry = {
-                                Mesh      = refMesh
-                                Centre    = refAnchor
-                                Points    =
-                                    refPts |> Array.map (fun (uv2, wp, atlasUv) ->
-                                        let world = refT.Forward.TransformPos wp
-                                        uv2, Vec.dot (world - refAnchor) normalW, atlasUv)
-                                Triangles = refTris
-                                Crosshair = V2d.Zero
-                                AtlasUrl  = atlasUrl refMesh
-                            }
-                            let! moving =
-                                visible
-                                |> List.filter ((<>) refMesh)
-                                |> List.map (fun mesh -> async {
-                                    try
-                                        let t = Map.tryFind mesh trafos |> Option.defaultValue Trafo3d.Identity
-                                        let! centreW =
-                                            match anchorOf mesh with
-                                            | Some p -> async.Return (Some p)
-                                            | None -> async {
-                                                // Auto seed if no anchor yet.
-                                                let! res =
-                                                    Query.closestPoint ApiConfig.apiBase.Value mesh 0
-                                                        (t.Backward.TransformPos refAnchor)
-                                                return res |> Option.map (fun r -> t.Forward.TransformPos r.point)
-                                              }
-                                        match centreW with
-                                        | None -> return None
-                                        | Some cw ->
-                                            let frame =
-                                                (t.Backward.TransformDir normalW),
-                                                (t.Backward.TransformDir refDirW)
-                                            let! pts, tris, _, _ =
-                                                Query.patchInFrame ApiConfig.apiBase.Value mesh
-                                                    (t.Backward.TransformPos cw) radius 200000 (Some frame)
-                                            let points =
-                                                pts |> Array.map (fun (uv2, wp, atlasUv) ->
-                                                    let world = t.Forward.TransformPos wp
-                                                    uv2, Vec.dot (world - cw) normalW, atlasUv)
-                                            let cross =
-                                                V2d(Vec.dot (refAnchor - cw) refDirW,
-                                                    Vec.dot (refAnchor - cw) leftW)
-                                            return Some {
-                                                Mesh = mesh; Centre = cw; Points = points
-                                                Triangles = tris
-                                                Crosshair = cross; AtlasUrl = atlasUrl mesh
-                                            }
-                                    with _ -> return None
-                                })
-                                |> Async.Parallel
-                                |> Async.StartAsTask
-                            if not token.IsCancellationRequested then
-                                let entries = refEntry :: (moving |> Array.choose id |> List.ofArray)
-                                env.Emit [PatchPickerReady(pinId, normalW, refDirW, radius, entries)]
-                        with
-                        | :? System.OperationCanceledException -> ()
-                        | ex ->
-                            if not token.IsCancellationRequested then
-                                env.Emit [PatchPickerFailed ex.Message]
-                    } |> ignore
-                    { model with
-                        PatchPicker = Some {
-                            PinId = pinId; Normal = V3d.OOI; RefDir = V3d.OIO
-                            Radius = radius; Entries = []; Running = true
-                            Shaded = (model.PatchPicker |> Option.map (fun p -> p.Shaded) |> Option.defaultValue false) } }
-                | _ -> showToast env "Patch picking needs a reference mesh (★)" model
-        | ClosePatchPicker ->
-            patchPickerCts.Cancel()
-            { model with PatchPicker = None }
-        | TogglePatchShaded ->
-            match model.PatchPicker with
-            | Some pp -> { model with PatchPicker = Some { pp with Shaded = not pp.Shaded } }
-            | None -> model
-        | PatchPickerReady(pinId, normal, refDir, radius, entries) ->
-            match model.PatchPicker with
-            | Some pp when pp.PinId = pinId ->
-                { model with
-                    PatchPicker = Some { pp with Normal = normal; RefDir = refDir; Radius = radius; Entries = entries; Running = false } }
-            | _ -> model
-        | PatchPickerFailed reason ->
-            match model.PatchPicker with
-            | Some pp ->
-                showToast env (sprintf "Patch sampling failed: %s" reason)
-                    { model with PatchPicker = Some { pp with Running = false } }
-            | None -> model
-        | PatchPickerClick(mesh, u, v, h) ->
-            match model.PatchPicker with
-            | Some pp ->
-                match pp.Entries |> List.tryFind (fun e -> e.Mesh = mesh) with
-                | Some entry when Some mesh <> model.Registration.ReferenceMesh ->
-                    // (u,v,h) from the cell's triangle hit-test; the frame is orthonormal,
-                    // so this is the exact surface point at committed poses — no server ray needed.
-                    let left = Vec.cross pp.Normal pp.RefDir
-                    let point = entry.Centre + pp.RefDir * u + left * v + pp.Normal * h
-                    env.Emit [SetAnchor(pp.PinId, mesh, point, AnchorPatch2D)]
-                    model
-                | _ -> model
-            | None -> model
         | ShowToast text ->
             showToast env text model
         | ClearToast ->
@@ -578,10 +387,10 @@ module Update =
         | ToggleSurfaceDistance ->
             bumpSurfaceDist ()
             if model.SurfaceDistOn then
-                { model with SurfaceDistOn = false; SurfaceDistance = Map.empty; SurfaceDistBrush = None }
+                { model with SurfaceDistOn = false; SurfaceDistance = Map.empty }
             else
-                // Turning on: encoding paints the soloed (chart-sticky) mesh. Auto-pick one
-                // (current solo if a valid moving mesh, else selected pin's host, else first visible moving).
+                // Turning on: encoding paints the inspector's active moving-mesh row.
+                // Auto-pick one (current InspectorMesh if valid, else first visible moving).
                 match model.Registration.ReferenceMesh with
                 | None ->
                     showToast env "Set a ★ reference mesh first to map signed distance" model
@@ -591,22 +400,15 @@ module Update =
                         |> List.filter (fun n ->
                             n <> refMesh && (Map.tryFind n model.MeshVisible |> Option.defaultValue true))
                     let chosen =
-                        match model.ChartStickyMesh with
+                        match model.InspectorMesh with
                         | Some m when List.contains m visibleMoving -> Some m
-                        | _ ->
-                            let host =
-                                model.ScanPins.SelectedPin
-                                |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins)
-                                |> Option.bind (fun p -> p.HostMeshName)
-                            match host with
-                            | Some h when List.contains h visibleMoving -> Some h
-                            | _ -> List.tryHead visibleMoving
+                        | _ -> List.tryHead visibleMoving
                     match chosen with
                     | None ->
                         showToast env "No visible moving mesh to map"
                             { model with SurfaceDistOn = true; VarianceOn = false; SurfaceDistance = Map.empty }
                     | Some m ->
-                        { model with SurfaceDistOn = true; VarianceOn = false; ChartStickyMesh = Some m; SurfaceDistance = Map.empty }
+                        { model with SurfaceDistOn = true; VarianceOn = false; InspectorMesh = Some m; SurfaceDistance = Map.empty }
         | ToggleVariance ->
             bumpSurfaceDist ()
             // Mutually exclusive with the single-mesh extrinsic map.
@@ -624,15 +426,13 @@ module Update =
             bumpSurfaceDist ()
             { model with ExtrinsicZDiff = not model.ExtrinsicZDiff; SurfaceDistance = Map.empty }
         | SurfaceDistanceComputed(mesh, dist) ->
-            // drop if the soloed mesh changed since the fetch was issued.
-            if model.SurfaceDistOn && model.ChartStickyMesh = Some mesh then
+            // drop if the active inspector mesh changed since the fetch was issued.
+            if model.SurfaceDistOn && model.InspectorMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh dist model.SurfaceDistance }
             else model
         | SurfaceDistanceFailed(_, reason) ->
             showToast env "Surface-distance query failed — is the server up to date? (restart it)"
                 { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "region-distance failed: %s" reason) }
-        | SetSurfaceDistBrush b ->
-            if model.SurfaceDistBrush = b then model else { model with SurfaceDistBrush = b }
 
         | SceneBoundsLoaded bboxes ->
             if bboxes.Length = 0 then model
@@ -656,17 +456,12 @@ module Update =
                 { model with
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
-                    ChartCursor = None
-                    ChartHoverMesh = None
-                    ChartStickyMesh = None
+                    InspectorMesh = None
                     MeshSolo = NoSolo
                     MeshBounds = Map.empty
                     ActivePickingLayer = None
                     PendingReg = None
-                    AnchorPick = None
-                    PatchPicker = None
-                    Toast = None
-                    CardSystem = { model.CardSystem with Cards = model.CardSystem.Cards |> HashMap.map (fun _ c -> { c with Visible = false }) } }
+                    Toast = None }
         | JumpToMesh meshName ->
             match Map.tryFind meshName model.DatasetCentroids with
             | Some centroid ->
@@ -717,83 +512,27 @@ module Update =
                 let sp = { sp with Pins = HashMap.add id pin sp.Pins; Placement = AdjustingPin id; SelectedPin = Some id }
                 { model with ScanPins = sp }
             | None -> model
+        | RenamePin(id, name) ->
+            match HashMap.tryFind id model.ScanPins.Pins with
+            | Some pin ->
+                let nm = name.Trim()
+                let nm = if nm = "" then pin.Name else nm
+                let sp = { model.ScanPins with Pins = HashMap.add id { pin with Name = nm } model.ScanPins.Pins }
+                { model with ScanPins = sp }
+            | None -> model
         | SetActivePickingLayer name ->
             { model with ActivePickingLayer = name }
-        | CardMsg msg ->
-            { model with CardSystem = CardUpdate.update msg model.CardSystem }
         | ScanPinMsg msg ->
             ScanPinUpdate.handleMsg env model msg
-        // Transient hover probe: QuickPinRadius, auto length, declared reference mesh (or
-        // active picking layer / first visible). Not cached; next Ctrl-click cancels via the CTS.
-        | HoverProbeAt(screenPx, world) ->
-            let visible =
-                model.MeshNames |> IndexList.toList
-                |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
-            match visible with
-            | [] -> model
-            | _ ->
-                let refMesh =
-                    model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
-                    |> Option.orElse (model.ActivePickingLayer |> Option.filter (fun l -> List.contains l visible))
-                    |> Option.defaultValue (List.head visible)
-                let radius = max 0.01 model.QuickPinRadius
-                // Effective transforms: under a pending preview the hover probe reflects what is on screen.
-                let meshes =
-                    visible |> List.map (fun n -> n, (ModelTransforms.effectiveWorld model n).Forward)
-                hoverProbeCts.Cancel()
-                hoverProbeCts <- new System.Threading.CancellationTokenSource()
-                let token = hoverProbeCts.Token
-                task {
-                    try
-                        let! res =
-                            Query.probe ApiConfig.apiBase.Value meshes refMesh world radius 0.0 4096
-                            |> Async.StartAsTask
-                        if not token.IsCancellationRequested then
-                            match res with
-                            | Result.Ok r -> env.Emit [HoverProbeResult (ProbeReady r)]
-                            | Result.Error e -> env.Emit [HoverProbeResult (ProbeError e)]
-                        do! System.Threading.Tasks.Task.Delay(8000, token)
-                        if not token.IsCancellationRequested then
-                            env.Emit [ClearHoverProbe]
-                    with
-                    | :? System.OperationCanceledException -> ()
-                    | ex ->
-                        if not token.IsCancellationRequested then
-                            env.Emit [HoverProbeResult (ProbeError ex.Message)]
-                } |> ignore
-                { model with HoverProbe = Some { ScreenPos = screenPx; Anchor = world; Radius = radius; Probe = ProbeRunning } }
-        | HoverProbeResult st ->
-            match model.HoverProbe with
-            | Some h when h.Probe = ProbeRunning -> { model with HoverProbe = Some { h with Probe = st } }
-            | _ -> model
-        | ClearHoverProbe ->
-            hoverProbeCts.Cancel()
-            if model.HoverProbe.IsNone then model else { model with HoverProbe = None }
-        // Chart 2D-3D linking. Hover messages fire per pointer-move; the no-change
-        // guards keep that churn out of the adaptive graph (field-projection rule).
-        | SetChartCursor c ->
-            if model.ChartCursor = c then model else { model with ChartCursor = c }
-        | SetChartHoverMesh m ->
-            if model.ChartHoverMesh = m then model else { model with ChartHoverMesh = m }
         | SetWorkflowPinHover h ->
             if model.WorkflowPinHover = h then model else { model with WorkflowPinHover = h }
-        | SetCorrMarkerHover h ->
-            if model.CorrMarkerHover = h then model else { model with CorrMarkerHover = h }
-
-        // Stale guard: only land grids if they still belong to the open pin.
-        | DetailGridsComputed(pinId, grids) ->
-            if model.DetailGridPin <> Some pinId then model
+        // Bottom-dock inspector: active moving-mesh row (B4 + extrinsic-map target).
+        | SetInspectorMesh m ->
+            if model.InspectorMesh = m then model
             else
-                let g = grids |> Array.fold (fun acc (mesh, grid) -> Map.add mesh (GridReady grid) acc) model.DetailGrids
-                { model with DetailGrids = g }
-        | ChartColumnClick mesh ->
-            let sticky = if model.ChartStickyMesh = Some mesh then None else Some mesh
-            // soloed mesh changed → the surface map (keyed by it) is stale.
-            bumpSurfaceDist ()
-            { model with ChartStickyMesh = sticky; SurfaceDistance = Map.empty; SurfaceDistBrush = None }
-        | ClearChartSticky ->
-            if model.ChartStickyMesh.IsNone && model.SurfaceDistBrush.IsNone then model
-            else (bumpSurfaceDist (); { model with ChartStickyMesh = None; SurfaceDistance = Map.empty; SurfaceDistBrush = None })
+                // active row drives the extrinsic surface map; drop its cache to refetch.
+                if model.SurfaceDistOn then bumpSurfaceDist ()
+                { model with InspectorMesh = m; SurfaceDistance = (if model.SurfaceDistOn then Map.empty else model.SurfaceDistance) }
         | ToggleWorkflowPanel ->
             { model with WorkflowPanelOpen = not model.WorkflowPanelOpen; WorkflowPinHover = None }
         | SetWorkflowStep step ->
@@ -850,21 +589,12 @@ module Update =
             | CommitPending -> env.Emit [CommitRegistration]; model
             | DiscardPending -> env.Emit [DiscardRegistration]; model
 
-    // The correspondence-marker hover highlight is scoped to the effective
-    // (selected/adjusting) pin: it resets when the pin changes (incl. deselect).
-    let private effectivePinId (m : Model) = ScanPinModel.effectivePinId m.ScanPins
-
-    let private clearSectioningOnPinChange (before : Model) (after : Model) =
-        if effectivePinId before = effectivePinId after then after
-        elif after.CorrMarkerHover.IsSome then { after with CorrMarkerHover = None }
-        else after
-
-    // A2 postlude: surface-map on + a soloed column → lazily fetch that mesh's per-vertex
+    // A2 postlude: surface-map on + an active inspector mesh → lazily fetch that mesh's per-vertex
     // signed distance (committed pose), debounced, at most once per invalidation generation.
     let private ensureSurfaceDistance (env : Env<Message>) (model : Model) : Model =
         if not model.SurfaceDistOn then model
         else
-            match model.ChartStickyMesh, model.Registration.ReferenceMesh with
+            match model.InspectorMesh, model.Registration.ReferenceMesh with
             | Some mesh, Some refMesh
                   when mesh <> refMesh
                        && not (Map.containsKey mesh model.SurfaceDistance)
@@ -955,9 +685,7 @@ module Update =
             |> ScanPinUpdate.ensureProbe env
             |> ScanPinUpdate.ensureProbePreview env
             |> ScanPinUpdate.ensureRings env
-            |> ScanPinUpdate.ensureDetailGrids env
             |> ensureSurfaceDistance env
             |> ensureVariance env
-            |> clearSectioningOnPinChange model
         updated
 

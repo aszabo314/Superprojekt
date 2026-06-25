@@ -237,30 +237,3 @@ let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxTris : int) (fra
             tris.Add a; tris.Add b; tris.Add c
         ti <- ti + stride
     { Points = pts.ToArray(); Triangles = tris.ToArray(); RefDirWorld = refDir; NormalWorld = normal }
-
-// Ray-down elevation grid in the mesh's OWN (untransformed) world frame: n×n
-// vertical rays at world XY over a `size`×`size` square centred at
-// (centerX,centerY). Returns own-frame world Z per node (row-major j*n+i,
-// i along +X, j along +Y) + a hit flag (false = hole, no surface under that
-// column — never bridged downstream). The client rigidly transforms the grid to
-// the current pose, so the sampled height field is transform-independent and can
-// be cached across registration previews. topZ is an own-frame ray start above
-// the surface (caller passes marker-Z + margin; height fields, no overhangs).
-let regionGrid (lm : LoadedMesh) (centerX : float) (centerY : float) (size : float) (n : int) (topZ : float) : float32[] * bool[] =
-    let centroid = lm.parsed.centroid
-    let z = Array.zeroCreate<float32> (n * n)
-    let hit = Array.zeroCreate<bool> (n * n)
-    let half = size * 0.5
-    let step = if n > 1 then size / float (n - 1) else 0.0
-    let oz = float32 (topZ - centroid.Z)
-    System.Threading.Tasks.Parallel.For(0, n, fun j ->
-        let oy = float32 (centerY - half + step * float j - centroid.Y)
-        for i in 0 .. n - 1 do
-            let ox = float32 (centerX - half + step * float i - centroid.X)
-            let mutable h = RayHit()
-            if lm.scene.Intersect(V3f(ox, oy, oz), V3f(0.0f, 0.0f, -1.0f), &h) then
-                z.[j * n + i] <- float32 (topZ - float h.T)
-                hit.[j * n + i] <- true
-            else
-                hit.[j * n + i] <- false) |> ignore
-    z, hit

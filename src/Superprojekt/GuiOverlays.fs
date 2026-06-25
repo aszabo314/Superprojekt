@@ -21,62 +21,8 @@ module GuiOverlays =
                 | _ -> Some (Style [Display "none"]))
             (model.ActivePickingLayer, meshOrderMap) ||> AVal.map2 (fun layer order ->
                 match layer with
-                | Some name -> Cards.numbered order name
+                | Some name -> Primitives.numbered order name
                 | None -> "")
-        }
-
-
-    // Ctrl-click hover probe: compressed ridgeline at the cursor,
-    // kept inside the viewport; dismissed by Escape / click / timeout.
-    let hoverProbeTooltip (model : AdaptiveModel) (viewportSize : aval<V2i>) =
-        let posStyle =
-            (model.HoverProbe, viewportSize) ||> AVal.map2 (fun hp vp ->
-                match hp with
-                | Some h ->
-                    let x = max 0.0 (min (h.ScreenPos.X + 14.0) (float vp.X - 256.0))
-                    let y = max 0.0 (min (h.ScreenPos.Y + 14.0) (float vp.Y - 190.0))
-                    Some (Style [
-                        Left (sprintf "%.0fpx" x)
-                        Top  (sprintf "%.0fpx" y)
-                    ])
-                | None -> Some (Style [Display "none"]))
-        let colors =
-            model.MeshOrder |> AMap.toAVal |> AVal.map (fun order ->
-                order |> HashMap.toSeq
-                |> Seq.map (fun (n, i) -> n, Primitives.meshColor i)
-                |> Map.ofSeq)
-        let orderMap = model.MeshOrder |> AMap.toAVal
-        let json =
-            (model.HoverProbe, colors, orderMap) |||> AVal.map3 (fun hp cols order ->
-                match hp with
-                | Some h -> CardsPin.probeStateJson true false None cols order None h.Probe
-                | None -> "{\"status\":\"none\"}")
-        // F2: numeric median ± half-IQR per moving mesh under the mini chart.
-        let summary =
-            (model.HoverProbe, orderMap) ||> AVal.map2 (fun hp order ->
-                match hp with
-                | Some h ->
-                    match h.Probe with
-                    | ProbeReady r ->
-                        r.Distributions
-                        |> Array.filter (fun d -> d.Count > 0 && d.MeshName <> r.ReferenceMesh)
-                        |> Array.map (fun d ->
-                            sprintf "%s %+.2f±%.2f m" (Cards.numbered order d.MeshName) d.Median ((d.Q3 - d.Q1) * 0.5))
-                        |> IndexList.ofArray
-                    | _ -> IndexList.empty
-                | None -> IndexList.empty)
-        div {
-            Class "hover-probe-tip"
-            posStyle
-            div {
-                Class "hover-probe-ridge"
-                json |> AVal.map (fun j -> Some (Attribute("data-ridge", j)))
-                Primitives.observedRender "data-ridge" "{}" CardCharts.ridgelineJs
-            }
-            div {
-                Class "hover-probe-nums"
-                summary |> AList.ofAVal |> AList.map (fun line -> div { line })
-            }
         }
 
     // Thin banner while a registration solve preview is pending (spec §6).

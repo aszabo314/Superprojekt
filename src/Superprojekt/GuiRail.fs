@@ -103,7 +103,7 @@ module GuiRail =
                 isVis |> AVal.map (fun v -> if v then None else Some (Class "rail-row-dim"))
                 span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
                 span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                span { Class "rail-mesh-name"; Attribute("title", name); Cards.shortName name }
+                span { Class "rail-mesh-name"; Attribute("title", name); shortName name }
                 button {
                     Class "mb mb-ref"
                     isRef |> AVal.map (fun r -> if r then Some (Class "mb-on") else None)

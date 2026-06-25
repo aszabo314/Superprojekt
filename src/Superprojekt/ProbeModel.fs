@@ -14,8 +14,10 @@ type ProbeDistribution = {
     Q3        : float
     Std       : float
     Kde       : (float * float)[]
-    // Raw re-centred samples for the small-N strip (empty for large N).
+    // Raw re-centred samples for the raincloud "rain" (≤300, subsampled server-side).
     Samples   : float[]
+    // ROI-averaged intrinsic quality [incidence; range; shape] ∈ [0,1] (inspector B4).
+    Intrinsics : float[]
 }
 
 type ProbeSources = {
@@ -42,14 +44,4 @@ type ProbeState =
     | ProbeRunning
     | ProbeReady of ProbeResult
     | ProbeError of string
-
-// Transient Ctrl-click probe: one global slot, never cached, cleared on Escape
-// / click elsewhere / timeout.
-type HoverProbeState = {
-    ScreenPos : V2d
-    Anchor    : V3d
-    // Probe-cylinder radius (m) so the transient 3D body can be drawn.
-    Radius    : float
-    Probe     : ProbeState
-}
 

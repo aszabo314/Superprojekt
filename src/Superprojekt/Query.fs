@@ -241,6 +241,10 @@ module Query =
                                 match d.TryGetProperty "samples" with
                                 | true, se -> se.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                                 | _ -> [||]
+                            Intrinsics =
+                                match d.TryGetProperty "intr" with
+                                | true, ie -> ie.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                                | _ -> [||]
                         })
                     |> Seq.toArray
                 let s = r.GetProperty("sources")
@@ -288,21 +292,6 @@ module Query =
                 r.GetProperty("dist").EnumerateArray()
                 |> Seq.map (fun e -> float32 (e.GetDouble()))
                 |> Seq.toArray
-        }
-
-    // Ray-down elevation grid in the mesh's own (untransformed) world frame; the
-    // caller maps it to the current pose. cx/cy are own-frame world XY, topZ an
-    // own-frame ray start above the surface. Returns (z, hit) row-major n×n.
-    let regionGrid (serverUrl : string) (name : string) (cx : float) (cy : float) (size : float) (n : int) (topZ : float)
-            : Async<float[] * bool[]> =
-        async {
-            let json =
-                sprintf """{"name":"%s","centerX":%.17g,"centerY":%.17g,"size":%.17g,"n":%d,"topZ":%.17g}"""
-                    name cx cy size n topZ
-            let! r = post serverUrl "/query/region-grid" json
-            let z = r.GetProperty("z").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-            let hit = r.GetProperty("hit").EnumerateArray() |> Seq.map (fun e -> e.GetBoolean()) |> Seq.toArray
-            return z, hit
         }
 
     let rayHitMany (serverUrl : string) (names : string list) (rayFor : string -> V3d * V3d) =

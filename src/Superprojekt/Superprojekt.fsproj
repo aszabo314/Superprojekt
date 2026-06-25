@@ -23,7 +23,6 @@
     <Compile Include="CameraModel.g.fs" />
     <Compile Include="OrbitController.fs" />
     <Compile Include="RegistrationModel.fs" />
-    <Compile Include="DetailViewMath.fs" />
     <Compile Include="ScanPinModel.fs" />
     <Compile Include="ScanPinModel.g.fs" />
     <Compile Include="PinGeometry.fs" />
@@ -32,7 +31,6 @@
     <Compile Include="LineShader.fs" />
     <Compile Include="Primitives.fs" />
     <Compile Include="Messages.fs" />
-    <Compile Include="CardUpdate.fs" />
     <Compile Include="ScanPinUpdate.fs" />
     <Compile Include="UpdateHelpers.fs" />
     <Compile Include="Update.fs" />
@@ -41,14 +39,12 @@
     <Compile Include="OutlineView.fs" />
     <Compile Include="ScanPinScene.fs" />
     <Compile Include="SceneGraph.fs" />
-    <Compile Include="CardCharts.fs" />
-    <Compile Include="CardsPin.fs" />
-    <Compile Include="Cards.fs" />
     <Compile Include="GuiTopBar.fs" />
     <Compile Include="GuiPanels.fs" />
     <Compile Include="GuiOverlays.fs" />
     <Compile Include="GuiRail.fs" />
     <Compile Include="GuiFocus.fs" />
+    <Compile Include="GuiInspector.fs" />
     <Compile Include="View.fs" />
     <Compile Include="ShaderCache.fs" />
     <Compile Include="Program.fs" />

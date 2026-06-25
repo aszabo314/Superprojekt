@@ -35,26 +35,6 @@ module ScanPinScene =
     let private markerIdxCnt = AVal.constant pinMarkerIdx.Length
 
     // Unit disk in the XY plane for the elevation-cursor slicing plane.
-    let private diskPos, diskIdx =
-        let segs = 64
-        let pos = Array.init (segs + 1) (fun i ->
-            if i = 0 then V3f.Zero
-            else
-                let a = float (i - 1) / float segs * Constant.PiTimesTwo
-                V3f(float32 (cos a), float32 (sin a), 0.0f))
-        let idx = ResizeArray<int>(segs * 3)
-        for i in 1 .. segs do
-            idx.Add 0; idx.Add i; idx.Add (if i = segs then 1 else i + 1)
-        pos, idx.ToArray()
-
-    let private diskPosBuf = AVal.constant (ArrayBuffer diskPos :> IBuffer)
-    let private diskIdxBuf = AVal.constant (ArrayBuffer diskIdx :> IBuffer)
-    let private diskIdxCnt = AVal.constant diskIdx.Length
-
-    // 2D-3D elevation-cursor accent (#0891b2) — distinct from the mesh palette.
-    let private cursorPlaneFill = V4f(0.031f, 0.569f, 0.698f, 0.28f)
-    let private cursorPlaneRim  = V4d(0.031, 0.569, 0.698, 0.85)
-
     let private sphereShell
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (active : aval<bool>) (trafo : aval<Trafo3d>) (color : aval<V4d>) =
@@ -94,7 +74,6 @@ module ScanPinScene =
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (fullscreenActive : aval<bool>)
             (placementHover : aval<V3d option>)
-            (patchHover : aval<PatchHover option>)
             (model : AdaptiveModel) =
 
         let datasetScale =
@@ -229,59 +208,6 @@ module ScanPinScene =
                             out.ToArray())
                 ASet.ofList [ linesNode notFullscreen segs ])
 
-        // A4: during a 3D marker pick, draw the reference marker's normal as a
-        // guide — the predicted correspondence is where it meets the target.
-        let pickGuide =
-            let segs =
-                AVal.custom (fun t ->
-                    match model.AnchorPick.GetValue t with
-                    | Some ap ->
-                        let pins = pinsVal.GetValue t
-                        match HashMap.tryFind ap.PinId pins with
-                        | Some pin ->
-                            match ScanPin.correspondence pin |> Option.bind (fun c -> c.RefAnchor) with
-                            | Some ra ->
-                                let cc = model.CommonCentroid.GetValue t
-                                let scale = datasetScale.GetValue t
-                                let nN, u, v = basisFromNormal (ScanPin.axis pin)
-                                let raR = ScanPin.renderCentre cc scale ra
-                                let len = ScanPin.renderLength scale (max 0.5 (pin.InnerRadius * 4.0))
-                                let cross = ScanPin.renderLength scale (max 0.1 (pin.InnerRadius * 0.25))
-                                let col = V4d(0.031, 0.569, 0.698, 0.85)
-                                let out = ResizeArray<V3d * V3d * V4d * float>()
-                                out.Add(raR - nN * len, raR + nN * len, col, 1.5)
-                                out.Add(raR - u * cross, raR + u * cross, col, 1.5)
-                                out.Add(raR - v * cross, raR + v * cross, col, 1.5)
-                                out.ToArray()
-                            | None -> [||]
-                        | None -> [||]
-                    | None -> [||])
-            ASet.ofList [ linesNode notFullscreen segs ]
-
-        // A1: transient 3D body for the Ctrl+click hover probe — same vocabulary
-        // as a placed pin (equator ring + short axis line) so a spot-check reads
-        // as a region probe, not a tooltip. Cleared by the HoverProbe cascade.
-        let hoverProbeBody =
-            let segs =
-                AVal.custom (fun t ->
-                    match model.HoverProbe.GetValue t with
-                    | Some h ->
-                        match h.Probe with
-                        | ProbeReady r ->
-                            let cc = model.CommonCentroid.GetValue t
-                            let scale = datasetScale.GetValue t
-                            let cR = ScanPin.renderCentre cc scale h.Anchor
-                            let rR = ScanPin.renderLength scale h.Radius
-                            let nN, u, v = basisFromNormal r.Normal
-                            let col = V4d(0.031, 0.569, 0.698, 0.95)
-                            let out = ResizeArray<V3d * V3d * V4d * float>()
-                            addRing out cR u v rR col 2.0 48
-                            out.Add(cR - nN * rR, cR + nN * rR, V4d(0.031, 0.569, 0.698, 0.7), 1.5)
-                            out.ToArray()
-                        | _ -> [||]
-                    | None -> [||])
-            ASet.ofList [ linesNode notFullscreen segs ]
-
         // Correspondence visuals (always, not only during preview): markers as
         // small wireframe tetrahedra in the mesh palette colour + a thin line
         // to the reference anchor. Both follow the effective preview transforms.
@@ -313,7 +239,6 @@ module ScanPinScene =
                                 | None -> None
                             deltaCache.[mesh] <- v
                             v
-                    let hover = model.CorrMarkerHover.GetValue t
                     let out = ResizeArray<V3d * V3d * V4d * float>()
                     for (_, pin) in HashMap.toSeq pins do
                         match ScanPin.correspondence pin with
@@ -326,9 +251,6 @@ module ScanPinScene =
                             let glyphR =
                                 ScanPin.renderLength scaleActive (max 0.05 (pin.InnerRadius * 0.12))
                             for KeyValue(mesh, a) in corr.Anchors do
-                                    // Pin-card row hover lights this glyph + ref
-                                    // line up thick + bright.
-                                    let hovered = hover = Some (pin.Id, mesh)
                                     let pWorld =
                                         match worldDeltaOf mesh with
                                         | Some d -> d.Forward.TransformPos a.Point
@@ -338,14 +260,11 @@ module ScanPinScene =
                                         match Map.tryFind mesh pin.DatasetColors with
                                         | Some c -> Primitives.c4bToV3d c
                                         | None -> V3d(0.102, 0.337, 0.859)
-                                    let colour =
-                                        if hovered then V4d(baseCol * 0.45 + V3d.III * 0.55, 1.0)
-                                        else V4d(baseCol, alpha)
-                                    let w = if hovered then 4.0 else width
+                                    let colour = V4d(baseCol, alpha)
                                     for (i, j) in tetraEdges do
-                                        out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, colour, w)
+                                        out.Add(p + tetra.[i] * glyphR, p + tetra.[j] * glyphR, colour, width)
                                     match refR with
-                                    | Some r -> out.Add(p, r, colour, w)
+                                    | Some r -> out.Add(p, r, colour, width)
                                     | None -> ()
                         | _ -> ()
                     out.ToArray())
@@ -373,154 +292,6 @@ module ScanPinScene =
                 sphereShell view proj active trafo (AVal.constant (V4d(0.1, 0.34, 0.86, 0.18)))
                 linesNode active outlineSegs
             ]
-
-        // Chart-hover elevation cursor: a translucent disk ⊥ the pin's probe
-        // axis (NOT world-up — they coincide only for heightfields) at the
-        // hovered distance. Alt extends to scene bounds. Gated on card open.
-        let cursorPlane =
-            let effectiveId =
-                ScanPinModel.effectivePinIdA model.ScanPins.Placement selectedId
-            let planeParams =
-                AVal.custom (fun t ->
-                    match model.ChartCursor.GetValue t with
-                    | None -> None
-                    | Some cur ->
-                        if effectiveId.GetValue t <> Some cur.PinId then None
-                        else
-                            match HashMap.tryFind cur.PinId (pinsVal.GetValue t) with
-                            | Some pin ->
-                                let pv = PendingRegistration.isPreview (model.PendingReg.GetValue t)
-                                match ScanPin.effectiveProbe pv pin with
-                                | ProbeReady r ->
-                                    let cc = model.CommonCentroid.GetValue t
-                                    let scale = datasetScale.GetValue t
-                                    let centre = ScanPin.renderCentre cc scale (pin.Centre + r.Normal * (cur.Distance + r.RefOffset))
-                                    // F4: reference surface (chart d = 0) is at
-                                    // RefOffset along the axis — ruler runs from
-                                    // there to the picked distance.
-                                    let refCentre = ScanPin.renderCentre cc scale (pin.Centre + r.Normal * r.RefOffset)
-                                    let radiusWorld =
-                                        if cur.Extended then
-                                            let sb = model.SceneBounds.GetValue t
-                                            if sb.IsInvalid then pin.InnerRadius * 50.0
-                                            else sb.Size.Length * 0.75
-                                        else pin.InnerRadius
-                                    Some (centre, refCentre, r.Normal,
-                                          ScanPin.renderLength scale radiusWorld,
-                                          ScanPin.renderLength scale pin.InnerRadius)
-                                | _ -> None
-                            | None -> None)
-            let active =
-                (notFullscreen, planeParams) ||> AVal.map2 (fun nf p -> nf && Option.isSome p)
-            let trafo =
-                planeParams |> AVal.map (function
-                    | Some (c, _, n, r, _) -> Trafo3d.Scale r * Trafo3d.RotateInto(V3d.OOI, n) * Trafo3d.Translation c
-                    | None -> Trafo3d.Scale 0.0)
-            let rimSegs =
-                planeParams |> AVal.map (function
-                    | Some (c, refC, n, r, innerR) ->
-                        let _, u, v = basisFromNormal n
-                        let out = ResizeArray<V3d * V3d * V4d * float>()
-                        addRing out c u v r cursorPlaneRim 1.5 64
-                        // F4 ruler: reference → picked distance, with end ticks.
-                        let tk = innerR * 0.3
-                        out.Add(refC, c, cursorPlaneRim, 2.0)
-                        out.Add(refC - u * tk, refC + u * tk, cursorPlaneRim, 2.0)
-                        out.Add(refC - v * tk, refC + v * tk, cursorPlaneRim, 2.0)
-                        out.ToArray()
-                    | None -> [||])
-            ASet.ofList [
-                sg {
-                    Sg.Active active
-                    Sg.View view
-                    Sg.Proj proj
-                    Sg.Trafo trafo
-                    Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", AVal.constant cursorPlaneFill)
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-                    Sg.BlendMode (AVal.constant BlendMode.Blend)
-                    Sg.NoEvents
-                    Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(diskPosBuf, typeof<V3f>) ])
-                    Sg.Index(BufferView(diskIdxBuf, typeof<int>))
-                    Sg.Render diskIdxCnt
-                }
-                linesNode active rimSegs
-            ]
-
-        // Patch-picker 2D→3D linking (patchHover is a view-local cval set by the
-        // cell JS — pointer moves never touch the reducer): while a cell is
-        // hovered, sampled vertices inside its pan/zoom viewport get a tick
-        // along the frame normal and the cursor gets a jack glyph, both in the
-        // accent. Frame is orthonormal, so world = centre + u·refDir + v·left +
-        // h·normal is exact. Ticks memoized (entries compared by reference) so a
-        // plain pointer move only rebuilds the 3-segment marker.
-        let patchLink =
-            let accentTick = V4d(0.031, 0.569, 0.698, 0.45)
-            let accentMark = V4d(0.031, 0.569, 0.698, 0.95)
-            let tickCache :
-                (PatchPickerEntry list option * (string * V2d * float * V3d * float) * (V3d * V3d * V4d * float)[]) ref =
-                ref (None, ("", V2d.Zero, 0.0, V3d.Zero, 0.0), Array.empty)
-            let tickSegs =
-                AVal.custom (fun t ->
-                    let reset () =
-                        tickCache.Value <- None, ("", V2d.Zero, 0.0, V3d.Zero, 0.0), Array.empty
-                        Array.empty
-                    match patchHover.GetValue t with
-                    | None -> reset ()
-                    | Some hov ->
-                        match model.PatchPicker.GetValue t with
-                        | Some pp when not pp.Running ->
-                            match pp.Entries |> List.tryFind (fun e -> e.Mesh = hov.Mesh) with
-                            | Some entry ->
-                                let cc = model.CommonCentroid.GetValue t
-                                let scale = datasetScale.GetValue t
-                                let key = (hov.Mesh, hov.Centre, hov.Zoom, cc, scale)
-                                let lastEntries, lastKey, cached = tickCache.Value
-                                let entriesSame =
-                                    match lastEntries with
-                                    | Some le -> System.Object.ReferenceEquals(le, pp.Entries)
-                                    | None -> false
-                                if entriesSame && lastKey = key then cached
-                                else
-                                    let left = Vec.cross pp.Normal pp.RefDir
-                                    let s = pp.Radius / max 1.0 hov.Zoom
-                                    let tickLen = ScanPin.renderLength scale (pp.Radius * 0.05)
-                                    let out = ResizeArray<V3d * V3d * V4d * float>(entry.Points.Length)
-                                    for (uv, h, _) in entry.Points do
-                                        if abs (uv.X - hov.Centre.X) <= s && abs (uv.Y - hov.Centre.Y) <= s then
-                                            let wp = entry.Centre + pp.RefDir * uv.X + left * uv.Y + pp.Normal * h
-                                            let p = ScanPin.renderCentre cc scale wp
-                                            out.Add(p, p + pp.Normal * tickLen, accentTick, 1.0)
-                                    let arr = out.ToArray()
-                                    tickCache.Value <- Some pp.Entries, key, arr
-                                    arr
-                            | None -> reset ()
-                        | _ -> reset ())
-            let markerSegs =
-                AVal.custom (fun t ->
-                    match patchHover.GetValue t with
-                    | Some hov ->
-                        match hov.Point with
-                        | Some (uv, h) ->
-                            match model.PatchPicker.GetValue t with
-                            | Some pp when not pp.Running ->
-                                match pp.Entries |> List.tryFind (fun e -> e.Mesh = hov.Mesh) with
-                                | Some entry ->
-                                    let cc = model.CommonCentroid.GetValue t
-                                    let scale = datasetScale.GetValue t
-                                    let left = Vec.cross pp.Normal pp.RefDir
-                                    let wp = entry.Centre + pp.RefDir * uv.X + left * uv.Y + pp.Normal * h
-                                    let p = ScanPin.renderCentre cc scale wp
-                                    let l = ScanPin.renderLength scale (pp.Radius * 0.1)
-                                    [| p - pp.RefDir * l, p + pp.RefDir * l, accentMark, 1.8
-                                       p - left * l, p + left * l, accentMark, 1.8
-                                       p, p + pp.Normal * (l * 1.6), accentMark, 1.8 |]
-                                | None -> Array.empty
-                            | _ -> Array.empty
-                        | None -> Array.empty
-                    | None -> Array.empty)
-            ASet.ofList [ linesNode notFullscreen tickSegs; linesNode notFullscreen markerSegs ]
 
         // §8 pin glyph (far/preattentive view): a pole + head per committed pin.
         // Head colour = verdict (green if every moving mesh's |median| ≤ LoD₉₅,
@@ -630,4 +401,4 @@ module ScanPinScene =
                     | _ -> [||])
             ASet.ofList [ linesNode notFullscreen segs ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; movementLayer; hoverProbeBody; pickGuide; ghostPreview; cursorPlane; anchorGlyphs; patchLink])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; movementLayer; ghostPreview; anchorGlyphs])

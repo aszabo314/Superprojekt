@@ -151,8 +151,6 @@ type Model =
         PendingReg            : PendingRegistration option
         // Last solve diagnostics per mesh (workflow panel) — persisted.
         LastSolve             : Map<string, LastSolveEntry>
-        AnchorPick            : AnchorPickState option
-        PatchPicker           : PatchPickerState option
         Toast                 : string option
 
         MeshSensorTypes       : Map<string, SensorType>
@@ -170,32 +168,15 @@ type Model =
         // Mutually exclusive with the single-mesh extrinsic map above.
         VarianceOn            : bool
         SurfaceDistance       : Map<string, float32[]>
-        // A3 range brush: a signed-distance interval brushed on the violin;
-        // fragments inside it stay vivid, the rest wash out (focus+context).
-        SurfaceDistBrush      : (float * float) option
 
         ScanPins              : ScanPinModel
-        CardSystem            : CardSystemModel
-        HoverProbe            : HoverProbeState option
 
-        // Pin-card violin 2D-3D linking: chart-hover elevation cursor (drives
-        // the 3D slicing plane) + mesh-column highlight (hover transient,
-        // sticky until clicked elsewhere).
-        ChartCursor           : ChartCursor option
-        ChartHoverMesh        : string option
-        ChartStickyMesh       : string option
+        // Bottom-dock pin inspector: the active moving-mesh row (B4 intrinsic
+        // bars + the extrinsic surface-map target). None = topmost row.
+        InspectorMesh         : string option
 
-        // UI→3D hover highlights (None = nothing hovered): a pin row in the
-        // registration panel, and a correspondence-marker row (pin + mesh).
+        // UI→3D hover highlight (None = nothing hovered): a pin row → its glyph.
         WorkflowPinHover      : ScanPinId option
-        CorrMarkerHover       : (ScanPinId * string) option
-
-        // Correspondence-detail view: per-marker-mesh ray-down elevation grids
-        // (own-frame, transform-independent) for the effective pin's symbolic
-        // surface. Scoped to DetailGridPin; cleared on pin change, re-fetched
-        // when a marker's own-frame centre moves. Session-only (not persisted).
-        DetailGrids           : Map<string, ElevGridState>
-        DetailGridPin         : ScanPinId option
 
         RenderingMode       : RenderingMode
         MeshSolo            : MeshSoloState
@@ -283,26 +264,16 @@ module Model =
             Registration          = RegistrationState.initial
             PendingReg            = None
             LastSolve             = Map.empty
-            AnchorPick            = None
-            PatchPicker           = None
             Toast                 = None
             MeshSensorTypes       = Map.empty
             SurfaceDistOn         = false
             ExtrinsicZDiff        = false
             VarianceOn            = false
             SurfaceDistance       = Map.empty
-            SurfaceDistBrush      = None
             HeatmapMode           = HeatOff
             ScanPins              = ScanPinModel.initial
-            CardSystem            = CardSystemModel.initial
-            HoverProbe            = None
-            ChartCursor           = None
-            ChartHoverMesh        = None
-            ChartStickyMesh       = None
+            InspectorMesh         = None
             WorkflowPinHover      = None
-            CorrMarkerHover       = None
-            DetailGrids           = Map.empty
-            DetailGridPin         = None
             RenderingMode       = Textured
             MeshSolo            = NoSolo
             GearPopoverOpen     = false

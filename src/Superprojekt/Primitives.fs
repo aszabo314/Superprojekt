@@ -19,6 +19,26 @@ module Primitives =
 
     let meshColor (idx : int) = meshPalette.[((idx % meshPalette.Length) + meshPalette.Length) % meshPalette.Length]
 
+    let c4bToHex (c : C4b) = sprintf "#%02x%02x%02x" c.R c.G c.B
+
+    // Short, human-friendly mesh label (drops the dataset prefix, keeps a date +
+    // segment tag where present).
+    let shortName (name : string) =
+        let mesh =
+            let s = name.IndexOf('/')
+            if s >= 0 then name.[s + 1 ..] else name
+        if mesh.Length > 8 && mesh.[8] = '_' then
+            let date = mesh.[..7]
+            let si = mesh.LastIndexOf("_seg")
+            if si > 0 then date + "_" + mesh.[si + 1 ..] else date
+        else mesh
+
+    // Prefix the mesh's stable 1-based order number (matches the panel palette).
+    let numbered (order : HashMap<string, int>) (name : string) =
+        match HashMap.tryFind name order with
+        | Some i -> sprintf "%d  %s" (i + 1) (shortName name)
+        | None -> shortName name
+
     let private parseFloat (s : string) =
         match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
         | true, v -> Some v

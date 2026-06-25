@@ -51,7 +51,6 @@ module View =
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
         let cursorScreen    = cval<V2d option> None
-        let patchHover      = cval<PatchHover option> None
         let previewSwap     = cval false
 
         let fullscreenActive = spaceHeld :> aval<bool>
@@ -67,8 +66,7 @@ module View =
         let wheelIsolation =
             AVal.custom (fun t ->
                 let held = altHeld.GetValue t
-                let chart = model.ChartCursor.GetValue t
-                if held && chart.IsNone then model.ActivePickingLayer.GetValue t
+                if held then model.ActivePickingLayer.GetValue t
                 else
                     match model.MovementLayer.GetValue t, model.PendingReg.GetValue t with
                     | (MovementGlyphs | MovementGrid), Some pr when not (Map.isEmpty pr.Results) ->
@@ -78,10 +76,9 @@ module View =
                         | StepCoarse, Some m -> Some m
                         | _ -> None)
 
-        // Slicing-plane highlight for the mesh shader. Chart-hover cursor wins
-        // (Alt-extended → unclipped, scene-wide); else the 3D hover point drives
-        // it inside the effective pin's probe cylinder (always clipped). Only
-        // the effective (card-open) pin contributes — one plane at a time.
+        // Contact-line highlight for the mesh shader: the 3D hover point drives a
+        // band inside the effective (selected) pin's probe cylinder. Only the
+        // effective pin contributes — one plane at a time.
         let cursorHighlight =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
@@ -91,36 +88,24 @@ module View =
                 let probeOf pid =
                     HashMap.tryFind pid (pinsVal.GetValue t)
                     |> Option.bind (fun pin ->
-                        // Preview-pose probe while previewing, so the slicing
-                        // plane matches the rendered meshes.
                         match ScanPin.effectiveProbe pv pin with
                         | ProbeReady r -> Some (pin, r)
                         | _ -> None)
-                match model.ChartCursor.GetValue t with
-                | Some cur when effectiveId.GetValue t = Some cur.PinId ->
-                    probeOf cur.PinId |> Option.map (fun (pin, r) ->
-                        { Origin    = pin.Centre + r.Normal * (cur.Distance + r.RefOffset)
-                          Normal    = r.Normal
-                          Clip      = not cur.Extended
-                          PinCentre = pin.Centre
-                          PinRadius = pin.InnerRadius
-                          CylLength = r.Length })
-                | _ ->
-                    match hoverCoord.GetValue t, effectiveId.GetValue t with
-                    | Some q, Some pid ->
-                        probeOf pid |> Option.bind (fun (pin, r) ->
-                            let v = q - pin.Centre
-                            let dAx = Vec.dot v r.Normal
-                            let radial = (v - r.Normal * dAx).Length
-                            if radial <= pin.InnerRadius && abs dAx <= r.Length * 0.5 then
-                                Some { Origin    = pin.Centre + r.Normal * dAx
-                                       Normal    = r.Normal
-                                       Clip      = true
-                                       PinCentre = pin.Centre
-                                       PinRadius = pin.InnerRadius
-                                       CylLength = r.Length }
-                            else None)
-                    | _ -> None)
+                match hoverCoord.GetValue t, effectiveId.GetValue t with
+                | Some q, Some pid ->
+                    probeOf pid |> Option.bind (fun (pin, r) ->
+                        let v = q - pin.Centre
+                        let dAx = Vec.dot v r.Normal
+                        let radial = (v - r.Normal * dAx).Length
+                        if radial <= pin.InnerRadius && abs dAx <= r.Length * 0.5 then
+                            Some { Origin    = pin.Centre + r.Normal * dAx
+                                   Normal    = r.Normal
+                                   Clip      = true
+                                   PinCentre = pin.Centre
+                                   PinRadius = pin.InnerRadius
+                                   CylLength = r.Length }
+                        else None)
+                | _ -> None)
 
         // Section/cutaway clipping was removed; the mesh shader keeps generic
         // clip-plane support but is fed a constant no-clip.
@@ -150,9 +135,8 @@ module View =
                 Class "render-control"
 
                 let pickModeOn =
-                    (model.ScanPins.Placement, model.AnchorPick) ||> AVal.map2 (fun p ap ->
-                        match p, ap with
-                        | PlacementIdle, None -> false
+                    model.ScanPins.Placement |> AVal.map (function
+                        | PlacementIdle -> false
                         | _ -> true)
                 pickModeOn |> AVal.map (fun pick ->
                     if pick then Some (Dom.Style [Css.Cursor "crosshair"]) else None)
@@ -283,13 +267,6 @@ module View =
                         // While a one-shot anchor pick is live the cycle
                         // retargets it, skipping the reference (anchors never
                         // land on the reference).
-                        let anchorPick = AVal.force model.AnchorPick
-                        let candidates =
-                            match anchorPick with
-                            | Some _ ->
-                                let refMesh = (AVal.force model.Registration).ReferenceMesh
-                                candidates |> Array.filter (fun n -> Some n <> refMesh)
-                            | None -> candidates
                         if candidates.Length > 0 then
                             let cur = AVal.force model.ActivePickingLayer
                             let n = candidates.Length
@@ -302,11 +279,6 @@ module View =
                                     | Some i -> candidates.[((i + dir) % n + n) % n]
                                     | None -> candidates.[if dir > 0 then 0 else n - 1]
                             env.Emit [SetActivePickingLayer (Some next)]
-                            // live anchor pick follows the isolated layer
-                            match anchorPick with
-                            | Some ap when ap.Mesh <> next ->
-                                env.Emit [StartAnchorPick(ap.PinId, next)]
-                            | _ -> ()
                 )
 
                 Sg.OnDoubleTap(fun e ->
@@ -323,46 +295,22 @@ module View =
                 )
 
                 Sg.OnTap(fun e ->
-                    match AVal.force model.AnchorPick with
-                    | Some _ ->
-                        // One-shot anchor pick: only the target mesh writes depth
-                        // (rest ghosted), so a depth-gated hit IS the target
-                        // surface. Bypasses layer-resolve.
-                        if e.Location.Depth < 0.9999 then
-                            env.Emit [AnchorPickHit (worldFromRender model e.WorldPosition)]
-                        true
-                    | None when e.Ctrl ->
-                        // Ctrl-click = transient hover probe.
-                        let screenPx = cursorScreen.Value |> Option.defaultValue V2d.Zero
-                        let frontmost =
-                            if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                        async {
-                            let! resolved = resolveLayerPick frontmost
-                            match resolved with
-                            | Some renderPos ->
-                                env.Emit [HoverProbeAt(screenPx, worldFromRender model renderPos)]
-                            | None -> ()
-                        } |> Async.Start
-                        true
-                    | None ->
-                        if Option.isSome (AVal.force model.HoverProbe) then
-                            env.Emit [ClearHoverProbe]
-                        let placement = AVal.force model.ScanPins.Placement
-                        let frontmost =
-                            if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                        async {
-                            let! resolved = resolveLayerPick frontmost
-                            match placement, resolved with
-                            | AnchorPlacement, Some renderPos ->
-                                let worldPos = worldFromRender model renderPos
-                                env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
-                            | AnchorPlacement, None -> ()
-                            | _, Some renderPos ->
-                                let worldPos = worldFromRender model renderPos
-                                transact (fun () -> hoverCoord.Value <- Some worldPos)
-                            | _, None -> ()
-                        } |> Async.Start
-                        true
+                    let placement = AVal.force model.ScanPins.Placement
+                    let frontmost =
+                        if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                    async {
+                        let! resolved = resolveLayerPick frontmost
+                        match placement, resolved with
+                        | AnchorPlacement, Some renderPos ->
+                            let worldPos = worldFromRender model renderPos
+                            env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
+                        | AnchorPlacement, None -> ()
+                        | _, Some renderPos ->
+                            let worldPos = worldFromRender model renderPos
+                            transact (fun () -> hoverCoord.Value <- Some worldPos)
+                        | _, None -> ()
+                    } |> Async.Start
+                    true
                 )
 
                 Sg.OnPointerMove(fun e ->
@@ -386,7 +334,7 @@ module View =
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) (patchHover :> aval<_>) cursorHighlight clipUniforms (previewSwap :> aval<bool>) wheelIsolation model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) cursorHighlight clipUniforms (previewSwap :> aval<bool>) wheelIsolation model
             }
 
             Dom.OnKeyDown(fun e ->
@@ -399,12 +347,7 @@ module View =
                     // Hold-R reference peek.
                     env.Emit [SetReferencePeek true]
                 | "Escape" ->
-                    if Option.isSome (AVal.force model.AnchorPick) then
-                        env.Emit [CancelAnchorPick]
-                    elif Option.isSome (AVal.force model.HoverProbe) then
-                        env.Emit [ClearHoverProbe]
-                    else
-                        env.Emit [ScanPinMsg CancelPlacement]
+                    env.Emit [ScanPinMsg CancelPlacement]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
@@ -432,10 +375,9 @@ module View =
             GuiOverlays.previewBanner model (fun b -> transact (fun () -> previewSwap.Value <- b))
             GuiOverlays.toast model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
-            GuiOverlays.hoverProbeTooltip model (viewportSize :> aval<V2i>)
-            Cards.renderCards env model (model.Camera.view |> AVal.map CameraView.viewTrafo) (viewportSize :> aval<V2i>) (hoverCoord :> aval<V3d option>) patchHover
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.orientationIndicator model
+            GuiInspector.dock env model
         }
 
 module App =

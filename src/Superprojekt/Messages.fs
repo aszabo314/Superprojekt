@@ -36,35 +36,22 @@ type Message =
     // Seeded markers apply immediately (no review modal).
     | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[]
     | AnchorSeedFailed of string
-    | SetAnchor of ScanPinId * mesh:string * point:V3d * source:AnchorSource
-    | StartAnchorPick of ScanPinId * mesh:string
-    | CancelAnchorPick
-    | AnchorPickHit of world:V3d
-    // Patch small-multiples picker.
-    | OpenPatchPicker of ScanPinId
-    | ClosePatchPicker
-    | TogglePatchShaded
-    | PatchPickerReady of pinId:ScanPinId * normal:V3d * refDir:V3d * radius:float * entries:PatchPickerEntry list
-    | PatchPickerFailed of string
-    | PatchPickerClick of mesh:string * u:float * v:float * h:float
     | ShowToast of string
     | ClearToast
     | SetMeshSensorType of string * SensorType
     | SetHeatmapMode of HeatmapMode
-    // A2: per-mesh signed-distance surface colour map.
+    // A2: per-mesh signed-distance surface colour map (target = InspectorMesh).
     | ToggleSurfaceDistance
     | ToggleExtrinsicZDiff
     | ToggleVariance
     | VarianceComputed of mesh:string * float32[]
     | SurfaceDistanceComputed of mesh:string * float32[]
     | SurfaceDistanceFailed of mesh:string * reason:string
-    | SetSurfaceDistBrush of (float * float) option
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
     | ScanPinMsg              of ScanPinMessage
     | JumpToMesh of string
-    | CardMsg of CardMessage
     | SetRenderingMode of RenderingMode
     | ToggleMeshSolo of string
     | ShowAllMeshes
@@ -72,18 +59,11 @@ type Message =
     | ResetCamera
     | ToggleGearPopover
     | EditPin of ScanPinId
+    | RenamePin of ScanPinId * string
     | SetActivePickingLayer of string option
-    | HoverProbeAt of screenPx:V2d * world:V3d
-    | HoverProbeResult of ProbeState
-    | ClearHoverProbe
-    | SetChartCursor of ChartCursor option
-    | SetChartHoverMesh of string option
     | SetWorkflowPinHover of ScanPinId option
-    | SetCorrMarkerHover of (ScanPinId * string) option
-    // Correspondence-detail elevation grids (own-frame) for the effective pin.
-    | DetailGridsComputed of pinId:ScanPinId * grids:(string * ElevGrid)[]
-    | ChartColumnClick of meshName:string
-    | ClearChartSticky
+    // Bottom-dock inspector: active moving-mesh row.
+    | SetInspectorMesh of string option
     | ToggleWorkflowPanel
     | SetWorkflowStep of WorkflowStep
     // Right focus panel (spec §5): ortho view axis, panel toggle, the moving
@@ -99,13 +79,6 @@ type Message =
     // 90° horizontal fov) + navigation actions.
     | FlyTo of FlyToTarget * aspect:float
     | NavTo of NavAction
-
-and CardMessage =
-    | BringToFront of CardId
-    | FinishDrag of CardId * finalPos:V2d
-    | RedockCard of CardId
-    | CreateCardsForPin of ScanPinId * anchor:V3d
-    | RemoveCardsForPin of ScanPinId
 
 and ScanPinMessage =
     | EnterAnchorPlacement

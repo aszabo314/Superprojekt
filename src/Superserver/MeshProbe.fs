@@ -28,9 +28,11 @@ type ProbeDistribution = {
     Std       : float
     Bandwidth : float
     Kde       : float[][]
-    // Raw re-centred samples for the small-N strip (KDE fabricates shape below
-    // ~20 pts); only sent for small distributions to bound payload.
+    // Raw re-centred samples for the raincloud "rain" (bottom-dock inspector).
+    // Always sent, subsampled to ≤300 for payload; stats use the full set.
     Samples   : float[]
+    // ROI-averaged intrinsic quality [incidence; range; shape] ∈ [0,1] (B4).
+    Intrinsics : float[]
 }
 
 type PerMeshSource = { Name : string; Iqr : float; MedianOffset : float; Count : int }
@@ -207,6 +209,68 @@ let private sampleAlongAxis (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (r
             let stride = float arr.Length / float maxPoints
             Array.init maxPoints (fun i -> arr.[int (float i * stride)])
 
+// ROI-averaged intrinsic quality for the bottom-dock inspector (B4): incidence
+// = surface-vs-probe-axis alignment (view-independent, unlike the §6 camera
+// heatmap), range = proximity to the mesh-origin sensor, shape = triangle
+// regularity. All in [0,1], higher = better; averaged over the ROI cylinder.
+let private meshIntrinsics (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (radius : float) (halfLen : float) =
+    let pm = mi.Lm.parsed
+    let inv = mi.Transform.Inverse
+    let cL = inv.TransformPos centre - pm.centroid
+    let aL = (inv.TransformDir axis).Normalized
+    let ext =
+        V3d(halfLen * abs aL.X + radius * sqrt (max 0.0 (1.0 - aL.X * aL.X)),
+            halfLen * abs aL.Y + radius * sqrt (max 0.0 (1.0 - aL.Y * aL.Y)),
+            halfLen * abs aL.Z + radius * sqrt (max 0.0 (1.0 - aL.Z * aL.Z)))
+    let tris = trianglesInBox mi.Lm (V3f (cL - ext)) (V3f (cL + ext))
+    let triCount = tris.Length / 3
+    let positions = pm.positions
+    // Sensor = the mesh's own origin (calibration convention); world = trafo·0.
+    let sensor = mi.Transform.TransformPos V3d.Zero
+    let maxRange =
+        let b = pm.bbox
+        if b.IsInvalid then 1.0
+        else
+            let mutable mx = 1e-6
+            for ci in 0 .. 7 do
+                let corner =
+                    V3d((if ci &&& 1 = 0 then b.Min.X else b.Max.X),
+                        (if ci &&& 2 = 0 then b.Min.Y else b.Max.Y),
+                        (if ci &&& 4 = 0 then b.Min.Z else b.Max.Z))
+                let w = mi.Transform.TransformPos (corner + pm.centroid)
+                let r = (w - sensor).Length
+                if r > mx then mx <- r
+            mx
+    let r2 = radius * radius
+    let mutable nUsed = 0
+    let mutable incSum = 0.0
+    let mutable rngSum = 0.0
+    let mutable shpSum = 0.0
+    for ti in 0 .. triCount - 1 do
+        let p0 = V3d positions.[tris.[ti * 3]]
+        let p1 = V3d positions.[tris.[ti * 3 + 1]]
+        let p2 = V3d positions.[tris.[ti * 3 + 2]]
+        let g = (p0 + p1 + p2) / 3.0
+        let d = g - cL
+        let t = Vec.dot d aL
+        let radial = (d - t * aL).LengthSquared
+        if abs t <= halfLen && radial <= r2 then
+            let e0 = p1 - p0
+            let e1 = p2 - p0
+            let cr = Vec.cross e0 e1
+            let area = cr.Length * 0.5
+            if area > 1e-20 then
+                let nW = (mi.Transform.TransformDir cr.Normalized).Normalized
+                incSum <- incSum + abs (Vec.dot nW axis)
+                let gw = mi.Transform.TransformPos (g + pm.centroid)
+                rngSum <- rngSum + max 0.0 (1.0 - min 1.0 ((gw - sensor).Length / maxRange))
+                let l2 = e0.LengthSquared + e1.LengthSquared + (p2 - p1).LengthSquared
+                let q = if l2 > 1e-20 then 6.9282032302755088 * area / l2 else 0.0
+                shpSum <- shpSum + min 1.0 (max 0.0 q)
+                nUsed <- nUsed + 1
+    if nUsed = 0 then [| 0.0; 0.0; 0.0 |]
+    else [| incSum / float nUsed; rngSum / float nUsed; shpSum / float nUsed |]
+
 let private quantile (sorted : float[]) (p : float) =
     let n = sorted.Length
     if n = 0 then 0.0
@@ -230,6 +294,9 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
             let raw =
                 args.Meshes
                 |> Array.Parallel.map (fun mi -> sampleAlongAxis mi args.Centre normal args.Radius halfLen maxPts)
+            let intrinsics =
+                args.Meshes
+                |> Array.Parallel.map (fun mi -> meshIntrinsics mi args.Centre normal args.Radius halfLen)
             // Re-centre so 0 = the reference mesh's median.
             let refMedian =
                 let r = Array.sort raw.[refIdx]
@@ -300,10 +367,15 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
                                     let z = (x - t) / h
                                     if abs z < 6.0 then s <- s + exp (-0.5 * z * z)
                                 [| x; s * norm |])
+                    let samples =
+                        if a.Length <= 300 then a
+                        else
+                            let stride = float a.Length / 300.0
+                            Array.init 300 (fun k -> a.[min (a.Length - 1) (int (float k * stride))])
                     { Name = args.Meshes.[i].Name; Count = a.Length
                       Median = med; Q1 = q1; Q3 = q3; Std = std
                       Bandwidth = h; Kde = kde
-                      Samples = if a.Length < 40 then a else [||] })
+                      Samples = samples; Intrinsics = intrinsics.[i] })
             // Three-source decomposition: dataset = IQR of the union,
             // algorithm = RMS of non-reference median offsets, conditioning =
             // radius × observability deficiency (below).

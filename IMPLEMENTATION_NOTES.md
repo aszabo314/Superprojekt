@@ -85,3 +85,40 @@ Deleted now-dead code (all-green after): `GuiWorkflow.fs` (workflowPanel → rep
 - After any `[<ModelType>]` edit (Model.fs, ScanPinModel.fs, RegistrationModel.fs, CameraModel.fs): `bash adaptify.sh`. **Never hand-edit `.g.fs`.**
 - FShade shaders are **float32-only** (V3f/V2f/float32/`0.0f`); only verify in-browser.
 - Light theme, accent `#1a56db`; data accent `#0891b2`; reference amber `#b45309`; significance `#16a34a`/`#dc2626`. Mesh palette = 9 categorical colours.
+
+---
+
+## Addendum — Pin Inspector rebuild (`ScanPin_v7_pin_inspector_spec.md`) ✅ (2026-06-16)
+
+Replaced the per-pin detail surface. All three projects green; client (native off) + server + Supertests (58/58, was 86 — 28 DetailViewMath tests removed). GPU/JS pieces still need a browser pass.
+
+### A. Removed (entirely, with backing code)
+- **`CardsPin.fs`, `Cards.fs`, `CardUpdate.fs`, `CardCharts.fs`, `DetailViewMath.fs`** — deleted from disk + fsproj (+ Supertests fsproj).
+- **Card system**: `CardSystemModel`/`Card`/`CardId`/`CardContent`/`CardAnchor`/`CardAttachment` types, `CardMsg`/`CardMessage`, `model.CardSystem`, the select→`CreateCardsForPin` postlude, `reanchorCards`.
+- **Violin / split-violin** (`CardCharts.ridgelineJs`) + the **hover-probe tooltip** that rendered it (`GuiOverlays.hoverProbeTooltip`, `HoverProbe` state/messages/`HoverProbeState`, `hoverProbeBody`, Ctrl-click path).
+- **Object-centred detail view**: `buildDetailJson`/`detailJs`/`detailSection`, `DetailViewMath`, `Model.DetailGrids`/`DetailGridPin`, `DetailGridsComputed`, `ensureDetailGrids`, server `/api/query/region-grid` + `RegionGridRequest` + `MeshAnalysis.regionGrid` + `Query.regionGrid`, `ElevGrid*` types.
+- **Linked-view chart thread**: `ChartCursor`/`ChartHoverMesh`/`ChartStickyMesh`/`SurfaceDistBrush` model + `SetChartCursor`/`SetChartHoverMesh`/`ChartColumnClick`/`ClearChartSticky`/`SetSurfaceDistBrush`/`SetCorrMarkerHover`/`CorrMarkerHover`, `cursorPlane` scene node, the A3 range-brush shader path (`DistBrushOn/Lo/Hi`). Kept the pin-hover→glyph highlight (`WorkflowPinHover`).
+- **Manual correspondence pickers** (decision below): 3D anchor pick (`AnchorPick`/`StartAnchorPick`/`CancelAnchorPick`/`AnchorPickHit`/`SetAnchor`/`pickGuide`) and the **patch small-multiples picker** (`PatchPicker*`/`PatchHover`/`OpenPatchPicker`…/`patchLink`), since their only entry points lived in the deleted card and the new inspector has no picker. Auto-seed (closest-point) remains the marker source.
+
+### B. Built — `GuiInspector.fs` (always-mounted 2D bottom dock)
+- Full-width, fixed 220 px, docked below the viewport (`.render-control` height = `calc(100% - 220px)`, rail/focus/scale/orient nudged to clear it → never overlaps the 3D scene). Reads the effective selected pin; neutral `◌` placeholder when none. No prose — numbers/marks/glyphs only.
+- **B1 identity**: inline name (`RenamePin`), ROI radius log-slider (reuses `SetInnerRadius`, now generalised to the effective pin, not placement-only), `k/n`, `⚲` promote/demote, `✕` delete.
+- **B2 raincloud** (SVG via `observedRender`): one row per visible moving mesh on a shared zero-centred axis (robust 1–99 pct of pooled before+after). Per row: ±LoD band (`1.96·√(σ_ref²/n_ref+σ_M²/n_M)`), after = rain (always, ≤300 server-subsampled) + median/IQR box + half-violin only at N≥20, before = single committed-median tick; greyed when no samples. Row click → `SetInspectorMesh`.
+- **B3 readout**: per moving mesh — swatch · `✓/✗` placed · residual mm (`Correspondence.Residuals`). Click selects the active row.
+- **B4 intrinsic bars**: I/R/S for the active moving mesh from the new probe `Intrinsics`, red→green ramp.
+
+### C. Model/message
+- New: `Model.InspectorMesh : string option` (active row; also the extrinsic-map target — replaced `ChartStickyMesh`), `SetInspectorMesh`, `RenamePin`. `ToggleSurfaceDistance`/`SurfaceDistanceComputed`/`ensureSurfaceDistance`/`MeshView` rewired to `InspectorMesh`. `shortName`/`numbered`/`c4bToHex` moved to `Primitives` (their `Cards`/`CardsPin` home was deleted).
+
+### Server
+- `MeshProbe`: `ProbeDistribution.Samples` now always returned (≤300 subsampled — full set still drives stats); new `ProbeDistribution.Intrinsics = [incidence; range; shape]` computed over the ROI cylinder (`meshIntrinsics`). Surfaced as `intr` in the probe handler; parsed into `ProbeModel.ProbeDistribution.Intrinsics`.
+
+### Decisions / deviations
+- **Manual pickers removed, not re-homed.** The spec's new inspector defines no picker and mandates removing the card + "no unreferenced symbols left"; auto-seed covers marker placement. (Patch picker was a kept feature in the *first* v7 spec, but this addendum deleted its only host.)
+- **HoverProbe (Ctrl-click quick probe) removed** — its only renderer was the violin.
+- **B4 "incidence" is view-independent** (mean |surface-normal · probe-axis| over the ROI), unlike the §6 camera-incidence heatmap, because a dock bar can't depend on the live camera and the server has no camera. Range = proximity-to-mesh-origin sensor; shape = mean triangle quality. All in the same ROI the probe already samples (no new round-trip).
+- **`AnchorSource` DU kept intact** (only `AnchorAuto` now constructed in-app, but `label`/`tag`/`ofTag` + RegJson round-trip tests still reference all cases).
+- Contact-line highlight (`cursorHighlight`/`CursorHighlight`) kept on **3D hover only** (its chart-driven branch was removed) — not part of the violin/detail thread the spec targeted.
+
+### Needs browser verification
+Dock raincloud SVG sizing/interaction, B4 bars, the `DistBrush`-removed mesh shader, and that the dock never visually collides with rail/focus/overlays on hi-dpi.

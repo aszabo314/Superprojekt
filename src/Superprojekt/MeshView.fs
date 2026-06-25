@@ -189,17 +189,6 @@ module MeshView =
         let cursorPinR   = cursorRender |> AVal.map (fun (_, _, _, _, r, _, _) -> r)
         let cursorCylLen = cursorRender |> AVal.map (fun (_, _, _, _, _, l, _) -> l)
         let cursorWidth  = cursorRender |> AVal.map (fun (_, _, _, _, _, _, w) -> w)
-        // Chart column highlight (hover wins over sticky): highlighted mesh
-        // normal, others drop to the uniform-ghost path (MeshActive=false) at
-        // fixed 0.2 α — independent of GhostSilhouette (explicit gesture).
-        // Suspended during anchor placement so the column can't ghost (and
-        // un-pick) the terrain you're aiming at — same as the isolation suspend.
-        let chartHighlight =
-            (model.ChartHoverMesh, model.ChartStickyMesh, model.ScanPins.Placement)
-            |||> AVal.map3 (fun hov sticky pl ->
-                match pl with
-                | AnchorPlacement -> None
-                | _ -> hov |> Option.orElse sticky)
         // Reference peek (spring-loaded): while held with a reference set, the
         // reference is the only solid mesh — transient, no eye-state mutation.
         let peekTarget =
@@ -215,27 +204,18 @@ module MeshView =
                 | _ -> if on then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
-            // One-shot 3D anchor pick: target mesh solid (forced visible),
-            // reference at α 0.3, everything else ghosts — all shader-level.
-            // Option/Alt isolates the wheel-selected picking layer the same way
-            // (pick mode wins when both active).
+            // Isolation: reference peek wins, then Alt-wheel / §9 align-auto /
+            // movement-auto (wheelIsolation), else plain visibility.
             let isActive =
                 AVal.custom (fun t ->
-                    match model.AnchorPick.GetValue t with
-                    | Some pick -> pick.Mesh = name
-                    | None ->
                     match peekTarget.GetValue t with
                     | Some target -> target = name
                     | None ->
                         match wheelIsolation.GetValue t with
                         | Some iso -> iso = name
                         | None ->
-                            let vis =
-                                Map.tryFind name (model.MeshVisible.GetValue t)
-                                |> Option.defaultValue true
-                            match chartHighlight.GetValue t with
-                            | Some hm -> vis && hm = name
-                            | None -> vis)
+                            Map.tryFind name (model.MeshVisible.GetValue t)
+                            |> Option.defaultValue true)
             let scale = scaleFor model name
             // Effective pose = committed ∘ pending preview delta; while the
             // before/after swap is held, render the committed pose instead.
@@ -295,7 +275,7 @@ module MeshView =
             let distEncoding =
                 AVal.custom (fun t ->
                     if (myDist.GetValue t).IsNone then 0
-                    elif model.SurfaceDistOn.GetValue t && model.ChartStickyMesh.GetValue t = Some name then 1
+                    elif model.SurfaceDistOn.GetValue t && model.InspectorMesh.GetValue t = Some name then 1
                     elif model.VarianceOn.GetValue t
                          && (model.Registration.GetValue t).ReferenceMesh = Some name then 2
                     else 0)
@@ -326,13 +306,6 @@ module MeshView =
                             1.96 * sqrt (refStd*refStd + mStd*mStd) |> float32
                         | _ -> 0.0f
                     | None -> 0.0f)
-            // A3 range brush for the encoded mesh: (on, lo, hi).
-            let distBrush =
-                (model.SurfaceDistBrush, model.SurfaceDistOn, model.ChartStickyMesh)
-                |||> AVal.map3 (fun b on sticky ->
-                    match b with
-                    | Some (lo, hi) when on && sticky = Some name -> 1, float32 lo, float32 hi
-                    | _ -> 0, 0.0f, 0.0f)
             // "All meshes the plane intersects": the cursor effect activates
             // only on meshes whose registered-world bbox touches the highlight
             // slab — and, when clipped, the cylinder's bounding sphere.
@@ -396,28 +369,20 @@ module MeshView =
                     }
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
                     Sg.Uniform("MeshActive",      isActive)
-                    // GhostSilhouette off → 0 → ghost path discards. Anchor-pick
-                    // wins over chart-column highlight; both are explicit
-                    // gestures with fixed alphas, independent of the toggle.
+                    // GhostSilhouette off → 0 → ghost path discards. Reference
+                    // peek + wheel/align/movement isolation dim the others at
+                    // fixed alphas (explicit gestures, independent of the toggle).
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
-                            match model.AnchorPick.GetValue t with
-                            | Some pick when pick.Mesh <> name ->
-                                if (model.Registration.GetValue t).ReferenceMesh = Some name
-                                then 0.3f else 0.08f
+                            match peekTarget.GetValue t with
+                            | Some target when target <> name -> 0.12f
                             | _ ->
-                                match peekTarget.GetValue t with
-                                | Some target when target <> name -> 0.12f
-                                | _ ->
                                 match wheelIsolation.GetValue t with
                                 | Some iso when iso <> name -> 0.15f
                                 | _ ->
-                                    match chartHighlight.GetValue t with
-                                    | Some hm when hm <> name -> 0.2f
-                                    | _ ->
-                                        if model.GhostSilhouette.GetValue t
-                                        then float32 (model.GhostOpacity.GetValue t)
-                                        else 0.0f))
+                                    if model.GhostSilhouette.GetValue t
+                                    then float32 (model.GhostOpacity.GetValue t)
+                                    else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
                     Sg.Uniform("MeshColor",       meshColor)
                     Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)
@@ -442,9 +407,6 @@ module MeshView =
                     Sg.Uniform("DistanceEncoding",     distEncoding)
                     Sg.Uniform("DistLoD",              distLoD)
                     Sg.Uniform("DistScale",            distScale)
-                    Sg.Uniform("DistBrushOn",          distBrush |> AVal.map (fun (o, _, _) -> o))
-                    Sg.Uniform("DistBrushLo",          distBrush |> AVal.map (fun (_, l, _) -> l))
-                    Sg.Uniform("DistBrushHi",          distBrush |> AVal.map (fun (_, _, h) -> h))
                     Sg.Uniform("HeatmapMode",          model.HeatmapMode |> AVal.map (function HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
@@ -503,9 +465,6 @@ module MeshView =
                     Sg.Uniform("DistanceEncoding",     AVal.constant 0)
                     Sg.Uniform("DistLoD",              AVal.constant 0.0f)
                     Sg.Uniform("DistScale",            AVal.constant 1.0f)
-                    Sg.Uniform("DistBrushOn",          AVal.constant 0)
-                    Sg.Uniform("DistBrushLo",          AVal.constant 0.0f)
-                    Sg.Uniform("DistBrushHi",          AVal.constant 0.0f)
                     Sg.Uniform("HeatmapMode",          AVal.constant 0)
                     Sg.Uniform("SensorOrigin",         AVal.constant V3f.Zero)
                     Sg.Uniform("RangeMax",             AVal.constant 1.0f)

@@ -57,11 +57,6 @@ module MeshShader =
         member x.DistanceEncoding : int     = x?DistanceEncoding
         member x.DistLoD          : float32 = x?DistLoD
         member x.DistScale        : float32 = x?DistScale
-        // A3 range brush: when on, SurfaceDist outside [Lo,Hi] is washed to
-        // context (focus+context); inside keeps the diverging colour.
-        member x.DistBrushOn      : int     = x?DistBrushOn
-        member x.DistBrushLo      : float32 = x?DistBrushLo
-        member x.DistBrushHi      : float32 = x?DistBrushHi
         // §6 intrinsic heatmap channel: 0 = off, 1 = incidence, 2 = range.
         member x.HeatmapMode      : int     = x?HeatmapMode
         member x.SensorOrigin     : V3f     = x?SensorOrigin
@@ -171,11 +166,7 @@ module MeshShader =
                         col <-
                             if tt >= 0.0f then neutral * (1.0f - tt) + aboveCol * tt
                             else neutral * (1.0f + tt) + belowCol * (-tt)
-                    // A3 brush: out-of-band fragments wash to context grey.
-                    if uniform.DistBrushOn = 1 && (d < uniform.DistBrushLo || d > uniform.DistBrushHi) then
-                        baseRgb <- V3f(0.82f, 0.85f, 0.88f)
-                    else
-                        baseRgb <- col
+                    baseRgb <- col
             // §6 variance map (sequential): per-reference-vertex disagreement std
             // (≥0) from light grey to strong red, normalised by DistScale.
             if uniform.DistanceEncoding = 2 && aboveGhost then

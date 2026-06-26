@@ -96,21 +96,53 @@ let preview
     let centroid = pm.centroid
     let triCount = idx.Length / 3
 
-    // Downsample triangles by a uniform stride, emitting referenced vertices once.
-    let stride = if maxTris > 0 && triCount > maxTris then triCount / maxTris else 1
+    // Decimate by vertex clustering: snap each vertex to a grid cell and keep one
+    // representative original vertex per occupied cell, then rebuild triangles over
+    // the representatives (dropping triangles whose corners collapse into fewer
+    // than three cells, and de-duplicating). This keeps a coherent surface, unlike
+    // triangle striding (the old approach), which kept every Nth triangle and so
+    // left a sparse scatter of isolated triangles with holes everywhere.
+    let cellOf =
+        if maxTris <= 0 || triCount <= maxTris || pm.bbox.IsInvalid then
+            // No decimation needed: each vertex is its own cell.
+            fun (v : int) -> struct(v, 0, 0)
+        else
+            let e = pm.bbox.Size
+            let dims = [| e.X; e.Y; e.Z |] |> Array.sortDescending
+            // Surface ≈ 2D, so occupied cells ≈ (extent / cell)² over the two
+            // dominant axes; target ~maxTris/2 vertices ⇒ ~maxTris triangles.
+            let targetCells = float (max 16 (maxTris / 2))
+            let cell = max 1e-6 (sqrt (max 1e-12 (dims.[0] * dims.[1]) / targetCells))
+            let bmin = pm.bbox.Min
+            fun (v : int) ->
+                let p = pos.[v]
+                struct( int (floor ((float p.X - bmin.X) / cell)),
+                        int (floor ((float p.Y - bmin.Y) / cell)),
+                        int (floor ((float p.Z - bmin.Z) / cell)) )
+    let cellRep = Dictionary<struct(int * int * int), int>()
+    let repOf v =
+        let key = cellOf v
+        match cellRep.TryGetValue key with
+        | true, r -> r
+        | _ -> cellRep.[key] <- v; v
     let indexOf = Dictionary<int, int>()
     let order = ResizeArray<int>()
     let triList = ResizeArray<int>()
+    let seen = HashSet<struct(int * int * int)>()
     let emit v =
         match indexOf.TryGetValue v with
         | true, i -> i
         | _ -> let i = order.Count in indexOf.[v] <- i; order.Add v; i
-    let mutable ti = 0
-    while ti < triCount do
-        triList.Add(emit idx.[ti * 3])
-        triList.Add(emit idx.[ti * 3 + 1])
-        triList.Add(emit idx.[ti * 3 + 2])
-        ti <- ti + stride
+    for ti in 0 .. triCount - 1 do
+        let a = repOf idx.[ti * 3]
+        let b = repOf idx.[ti * 3 + 1]
+        let c = repOf idx.[ti * 3 + 2]
+        if a <> b && b <> c && a <> c then
+            let lo = min a (min b c)
+            let hi = max a (max b c)
+            let mid = a + b + c - lo - hi
+            if seen.Add(struct(lo, mid, hi)) then
+                triList.Add(emit a); triList.Add(emit b); triList.Add(emit c)
     let n = order.Count
 
     // World position of each emitted vertex (rigid pose); local→world adds the centroid.

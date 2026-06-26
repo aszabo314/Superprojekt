@@ -98,12 +98,13 @@ module UpdateHelpers =
             { sp with Pins = HashMap.add id (ScanPin.withCorrespondence (Some (f cur)) pin) sp.Pins }
         | None -> sp
 
+    // Every pin carries a correspondence, so this is effectively all pins.
     let correspondenceEnabledIds (model : Model) =
         model.ScanPins.Pins |> HashMap.toList
         |> List.choose (fun (id, p) ->
             match ScanPin.correspondence p with
-            | Some c when c.Enabled -> Some id
-            | _ -> None)
+            | Some _ -> Some id
+            | None -> None)
 
     // Pin ROI reach: the probe cylinder's bounding-sphere radius (radius
     // InnerRadius ⊥ axis, length fixedProbeLength along it). A mesh whose closest
@@ -125,8 +126,7 @@ module UpdateHelpers =
             let pins =
                 pinIds
                 |> List.choose (fun id -> HashMap.tryFind id model.ScanPins.Pins)
-                |> List.filter (fun p ->
-                    ScanPin.correspondence p |> Option.map (fun c -> c.Enabled) |> Option.defaultValue false)
+                |> List.filter (fun p -> ScanPin.correspondence p |> Option.isSome)
             if List.isEmpty pins then ()
             else
                 let meshes = model.MeshNames |> IndexList.toList

@@ -25,7 +25,6 @@ type Message =
     | SolveCoarse
     | CoarseSolved of mesh:string * world:M44d * pairResiduals:(ScanPinId * float)[] * rmsBefore:float * eigenvalues:float[] * collinear:bool
     | CoarseFailed of mesh:string * reason:string
-    | ToggleCorrespondence of ScanPinId
     // inRoi carries per-(pin,mesh) ROI membership; out-of-ROI meshes are not
     // seeded and their stale auto markers are dropped.
     | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]
@@ -61,6 +60,10 @@ type Message =
     | SetFocusProjection of FocusProjection
     | FocusMapsComputed of mesh:string * FocusPreview
     | PickCorrespondenceAt of ScanPinId * mesh:string * world:V3d
+    | ToggleCorrSetMode
+    // Transient hover preview of where a correspondence pick would land (metric
+    // world); drives the 3D ghost while CorrSetMode is on.
+    | CorrPreviewComputed of V3d option
     | SetFocusPeekReference of bool
     | ToggleOutlines
     // aspect from the view, fovY from the fixed 90° horizontal fov.

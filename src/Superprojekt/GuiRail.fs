@@ -142,8 +142,6 @@ module GuiRail =
             |> AList.ofAVal
         let pinRow (pin : ScanPin) =
             let selected = model.Selection.SelectedPin |> AVal.map ((=) (Some pin.Id))
-            let isCorr =
-                pin.Correspondence |> Option.map (fun c -> c.Enabled) |> Option.defaultValue false
             div {
                 Class "rail-pin-row"
                 selected |> AVal.map (fun s -> if s then Some (Class "rail-pin-sel") else None)
@@ -154,12 +152,6 @@ module GuiRail =
                     Class "rail-pin-name"
                     Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPin (Some pin.Id))])
                     pin.Name
-                }
-                button {
-                    Class (if isCorr then "mb mb-on" else "mb")
-                    Attribute("title", "Registration correspondence (promote / demote)")
-                    Dom.OnClick(fun _ -> env.Emit [ToggleCorrespondence pin.Id])
-                    "⚲"
                 }
                 button {
                     Class "mb rail-pin-del"

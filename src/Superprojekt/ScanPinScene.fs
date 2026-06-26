@@ -241,7 +241,7 @@ module ScanPinScene =
         let markerWorldOf (pinVal : aval<ScanPin option>) (mesh : string) =
             AVal.custom (fun t ->
                 match pinVal.GetValue t |> Option.bind ScanPin.correspondence with
-                | Some c when c.Enabled ->
+                | Some c ->
                     let inRoi = Map.tryFind mesh c.InRoi |> Option.defaultValue true
                     match Map.tryFind mesh c.Anchors with
                     | Some a when inRoi ->
@@ -259,7 +259,7 @@ module ScanPinScene =
                 let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
                 let enabled =
                     pinsVal.GetValue t |> HashMap.toSeq
-                    |> Seq.choose (fun (id, p) -> match ScanPin.correspondence p with Some c when c.Enabled -> Some id | _ -> None)
+                    |> Seq.choose (fun (id, p) -> match ScanPin.correspondence p with Some _ -> Some id | None -> None)
                     |> List.ofSeq
                 seq { for id in enabled do for m in moving -> (id, m) } |> HashSet.ofSeq)
 
@@ -315,7 +315,7 @@ module ScanPinScene =
         // point (haloed by the ring in the lines below).
         let refGlyph (pinId : ScanPinId) =
             let pinVal = pinsVal |> AVal.map (HashMap.tryFind pinId)
-            let raVal = pinVal |> AVal.map (Option.bind ScanPin.correspondence >> Option.bind (fun c -> if c.Enabled then c.RefAnchor else None))
+            let raVal = pinVal |> AVal.map (Option.bind ScanPin.correspondence >> Option.bind (fun c -> c.RefAnchor))
             let active = raVal |> AVal.map Option.isSome
             let trafo =
                 AVal.custom (fun t ->
@@ -347,7 +347,7 @@ module ScanPinScene =
         let enabledPinIds =
             pinsVal |> AVal.map (fun pins ->
                 pins |> HashMap.toSeq
-                |> Seq.choose (fun (id, p) -> match ScanPin.correspondence p with Some c when c.Enabled -> Some id | _ -> None)
+                |> Seq.choose (fun (id, p) -> match ScanPin.correspondence p with Some _ -> Some id | None -> None)
                 |> HashSet.ofSeq)
         let refGlyphs = enabledPinIds |> ASet.ofAVal |> ASet.map refGlyph
 
@@ -366,7 +366,7 @@ module ScanPinScene =
                     let out = ResizeArray<V3d * V3d * V4d * float>()
                     for (id, p) in HashMap.toSeq pins do
                         match ScanPin.correspondence p with
-                        | Some c when c.Enabled ->
+                        | Some c ->
                             match c.RefAnchor with
                             | Some ra ->
                                 let isSel = sel = Some id
@@ -460,4 +460,38 @@ module ScanPinScene =
                     out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; ghostPreview; constellation])
+        // Live correspondence-pick preview: a cyan ghost sphere at the hovered
+        // surface point while set-correspondence mode aims it (metric world →
+        // render). Renders on top so it reads against the surface.
+        let corrPreview =
+            let active = model.CorrPreview |> AVal.map Option.isSome
+            let trafo =
+                AVal.custom (fun t ->
+                    match model.CorrPreview.GetValue t with
+                    | Some w ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let s = datasetScale.GetValue t
+                        let ir =
+                            match selectedId.GetValue t |> Option.bind (fun id -> HashMap.tryFind id (pinsVal.GetValue t)) with
+                            | Some p -> p.InnerRadius
+                            | None -> 1.0
+                        let r = max 0.1 (ScanPin.renderLength s (ir * 0.35))
+                        Trafo3d.Scale r * Trafo3d.Translation (ScanPin.renderCentre cc s w)
+                    | None -> Trafo3d.Scale 0.0)
+            sg {
+                Sg.Active (AVal.map2 (&&) notFullscreen active)
+                Sg.View view
+                Sg.Proj proj
+                Sg.Trafo trafo
+                Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
+                Sg.Uniform("FlatColor", AVal.constant (V4f(0.0, 0.78, 0.84, 0.95)))
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                Sg.VertexAttributes(
+                    HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
+                Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
+                Sg.Render sphereIdxCnt
+            }
+
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; ghostPreview; constellation; ASet.ofList [corrPreview]])

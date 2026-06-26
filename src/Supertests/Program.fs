@@ -139,7 +139,6 @@ let parseRoot (json : string) =
 
 let regJsonTests () =
     let corr = {
-        Enabled     = true
         RefAnchor   = Some (V3d(1.25, -3.5, 0.001))
         RefDistance = 0.125
         Anchors     =
@@ -155,7 +154,7 @@ let regJsonTests () =
 
     let defaults = RegJson.readCorrespondence (parseRoot "{}")
     check "correspondence missing fields → defaults"
-        (defaults.Enabled && defaults.RefAnchor.IsNone && defaults.Anchors.IsEmpty && defaults.Residuals.IsEmpty)
+        (defaults.RefAnchor.IsNone && defaults.Anchors.IsEmpty && defaults.Residuals.IsEmpty)
 
 // ───────────────────────── RegConditioning sanity ─────────────────────────
 

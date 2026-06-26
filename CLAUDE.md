@@ -87,7 +87,7 @@ let pick = if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
 
 Background misses leave depth at the clear value (1.0); the gate is required. The α-gated depth write is what makes this work — ghost fragments leave depth at 1.0 so picks pass through them to the opaque surface behind. `Sg.OnTap`/`OnDoubleTap`/`OnLongPress` fire on background misses too — any handler that builds state from `e.WorldPosition` MUST gate on the depth check.
 
-The **focus-panel correspondence pick** is different (no GPU there): a 2D-frame click is inverted to a world ray (orthographic for Top, cylindrical for Pano), raycast server-side (`/query/ray`), and the hit is stored mesh-local.
+The **focus-panel correspondence pick** is different (no GPU there): a 2D-frame coord is inverted to a world ray (orthographic for Top, cylindrical for Pano), raycast server-side (`/query/ray`), and the hit mapped to metric world. It is gated behind a **set-correspondence toggle** (`Model.CorrSetMode`, the focus-head **⊕ set point** button): off ⇒ the focus single pans normally; on ⇒ the cursor aims the point (no pan), a throttled hover raycast feeds `Model.CorrPreview` (a live cyan 3D ghost in `ScanPinScene`), and a click commits (`PickCorrespondenceAt`, stored mesh-local) and exits the mode. Toggling off cancels without committing (the anchor was never touched, so the tile redraws the committed marker). `castWorld` in `GuiFocus` is the shared ray-cast for both the commit and the hover preview.
 
 ## Before/after registration model
 
@@ -100,7 +100,7 @@ There is **no preview / commit / undo history**. Per mesh:
 
 `SolveCoarse` → `POST /api/query/lsq-pairs` per visible moving mesh with ≥3 in-ROI correspondence pairs (parallel). Correspondence anchors are **mesh-local**, so the pairs are taken at the load pose (own-frame point); the server returns the **absolute** world transform mapping load → reference, which the reducer stores directly as `SolvedTransform` (`worldToRender`) and flips `RegView = RegAfter`. A re-solve replaces `SolvedTransform` only; `LoadTransform` is never overwritten. Server math: `RegMath.solveRigid`, weighted Umeyama/Arun with Jacobi SVD + det-flip so planar/collinear sets never reflect; response carries per-pair residuals + covariance eigenvalues + `collinearityWarning`. Changing the reference drops `SolvedTransforms` + snaps to `RegBefore` (a solve is relative to its reference).
 
-**Correspondences** (`ScanPin.Correspondence option`): `{ Enabled; RefAnchor (reference own-frame marker — the pin centre if the host is the reference, else its closest-point projection); RefDistance; Anchors : Map<mesh, {Point; Source}>; Residuals; InRoi }`. A pin is a **registration pin** iff its correspondence is enabled. `Anchors.Point` is mesh-local; display/solve derive world via the displayed transform, so the before/after toggle moves markers automatically (no `bakeAnchors`). Auto-seed (enable toggle / reference change / ⟳) projects via parallel `/query/closest`, ROI-clamped to `roiReach`; manual `AnchorPick3D` markers are never overwritten by auto-seed. `AnchorSource = AnchorAuto | AnchorPick3D`. The 3D **constellation** (`ScanPinScene`) draws a glyph per anchor + a haloed reference glyph + lines to the reference.
+**Correspondences** (`ScanPin.Correspondence option`): `{ RefAnchor (reference own-frame marker — the pin centre if the host is the reference, else its closest-point projection); RefDistance; Anchors : Map<mesh, {Point; Source}>; Residuals; InRoi }`. **Every pin is a registration pin** — there is no enable/disable distinction. `makeAnchor` gives each new pin `Some Correspondence.empty`, and placing a pin auto-seeds it against the reference (if one exists); a freshly placed pin is selected. `Anchors.Point` is mesh-local; display/solve derive world via the displayed transform, so the before/after toggle moves markers automatically (no `bakeAnchors`). Auto-seed (placement / reference change / ⟳) projects via parallel `/query/closest`, ROI-clamped to `roiReach`; manual `AnchorPick3D` markers are never overwritten by auto-seed. `AnchorSource = AnchorAuto | AnchorPick3D`. The 3D **constellation** (`ScanPinScene`) draws a glyph per anchor + a haloed reference glyph + lines to the reference.
 
 ## Three-mode GUI + shared selection
 
@@ -114,7 +114,7 @@ The left rail (`GuiRail`) has exactly three modes — **Overview · Corresponden
 
 **One shared selection record drives all linking** (`Model.Selection = { SelectedPin; FocusedMesh; SelectedPoint; Hovered }`). Linked highlighting is a *consequence* of every region binding to `Selection` — there are no panel-to-panel hover emitters. Grammar everywhere: **hover = peek** (writes `Selection.Hovered` via the single `SetHovered`), **click = select/promote**, **drag = edit**. Pin selection lives in `Selection.SelectedPin` (NOT `ScanPinModel`); `ScanPinUpdate.handleMsg` maintains it and drops a dangling selection when its pin is deleted.
 
-**Focus panel** (`GuiFocus`) is **canvas-only** — the main 3D viewport is the only WebGL control. A large single (focused mesh enlarged, pan + zoom, draggable correspondence handle, peek-reference) over a small-multiples strip, both from `Model.FocusMaps` (`POST /api/query/mesh-preview`), driven by the Pano/Top projection toggle. Pan/zoom state is JS-local on the element (never churns the reducer); the JS posts picks/clicks to a hidden `.fs-bus` / `.fm-bus` input via synthetic `input` events.
+**Focus panel** (`GuiFocus`) is **canvas-only** — the main 3D viewport is the only WebGL control. A large single (focused mesh enlarged, pan + zoom, draggable correspondence handle, peek-reference) over a small-multiples strip, both from `Model.FocusMaps` (`POST /api/query/mesh-preview`), driven by the Pano/Top projection toggle. Pan/zoom state is JS-local on the `.focus-single` element, **keyed per mesh** (`el.__fsv[mesh] = {z,tx,ty}`) so each tile restores its own view on switch; never churns the reducer. The wheel zooms about the cursor (scale `ox`/`oy` offsets about the pointer). The head **⟲ reset** button reaches into `el.__fsv[el.__cur]` and calls `el.__redraw` to reset the focused tile. Dragging pans by default; the **⊕ set point** toggle switches the single into set-correspondence mode (cursor aims, click commits — see the correspondence-pick paragraph). The JS posts picks/hovers/clicks to a hidden `.fs-bus` / `.fm-bus` input via synthetic `input` events (`pick|u|v`, `hover|u|v`, `hoveroff`, `cell|mesh`).
 
 ## ScanPin system
 
@@ -199,7 +199,7 @@ MeshLoader.fs     OBJ parse, centroid file, atlas paths
 MeshCache.fs      Embree scene + BbTree cache (lazy, permanent)
 MeshAnalysis.fs   sphere contact-ring tracing, patch sampling
 MeshProbe.fs      N-mesh M3C2 probe (normal PCA, cylinder sampling, KDE, three sources)
-MeshPreview.fs    co-oriented mesh preview for the focus panel (downsampled, per-vertex channel; Oblique projection + Displacement arrow field)
+MeshPreview.fs    co-oriented mesh preview for the focus panel (vertex-cluster decimated so the surface stays coherent, per-vertex channel; Oblique projection + Displacement arrow field)
 RegMath.fs        weighted Umeyama rigid landmark solve (Jacobi SVD, conditioning)
 QueryHandlers.fs  HTTP query handlers
 Handlers.fs       routing
@@ -240,7 +240,7 @@ Top-level `Model` fields (see `Model.fs`):
 - `MeshSensorTypes`, `HeatmapMode` (`HeatOff | HeatIncidence | HeatRange | HeatShape`), `ExtrinsicZDiff` (difference sub-mode M3C2 ↔ Δz), `SurfaceDistance` (`Map<mesh, float32[]>`, the reference variance array)
 - `ScanPins` (`ScanPinModel`), `Selection` (`{ SelectedPin; FocusedMesh; SelectedPoint; Hovered }`)
 - `RenderingMode`, `MeshSolo`, `GearPopoverOpen`
-- `WorkflowStep` (`Overview | Correspondence | Inspect`), `InspectChannel` (`ChDifference | ChDisplacement`), `FocusProjection` (`ProjPano | ProjTop | ProjOblique`), `FocusMaps` (`FocusPreview` carries `Disp*` arrows for displacement), `FocusPeekReference`, `Toast`
+- `WorkflowStep` (`Overview | Correspondence | Inspect`), `InspectChannel` (`ChDifference | ChDisplacement`), `FocusProjection` (`ProjPano | ProjTop | ProjOblique`), `FocusMaps` (`FocusPreview` carries `Disp*` arrows for displacement), `FocusPeekReference`, `CorrSetMode` (set-correspondence toggle) + `CorrPreview` (live 3D ghost point), `Toast`
 
 GUI placement:
 - Top bar (`GuiTopBar`): hamburger, camera reset, **👁 Peek** (hold), the global **Before/After** toggle, gear popover (dataset switch, rendering mode, outlines, camera speed, ghost silhouette + opacity, isolate-pins, shading strength, slope threshold, quick-pin radius, dataset info, mesh centroids, debug log).

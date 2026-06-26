@@ -25,8 +25,9 @@ type MeshAnchor = {
     Source   : AnchorSource
 }
 
+// Every pin is a registration correspondence (there is no enable/disable
+// distinction); a pin's correspondence is seeded as soon as a reference exists.
 type Correspondence = {
-    Enabled     : bool
     // Pin centre if the host is the reference mesh, else its closest-point
     // projection onto the reference. None until seeded.
     RefAnchor   : V3d option
@@ -40,7 +41,6 @@ type Correspondence = {
 
 module Correspondence =
     let empty = {
-        Enabled     = true
         RefAnchor   = None
         RefDistance = 0.0
         Anchors     = Map.empty
@@ -346,8 +346,7 @@ module RegJson =
             c.InRoi |> Map.toSeq
             |> Seq.map (fun (m, b) -> sprintf "%s:%b" (q m) b)
             |> String.concat ","
-        sprintf "{\"enabled\":%b,\"refAnchor\":%s,\"refDist\":%s,\"anchors\":{%s},\"residuals\":{%s},\"inRoi\":{%s}}"
-            c.Enabled
+        sprintf "{\"refAnchor\":%s,\"refDist\":%s,\"anchors\":{%s},\"residuals\":{%s},\"inRoi\":{%s}}"
             (match c.RefAnchor with Some a -> v3 a | None -> "null")
             (f c.RefDistance) anchors residuals inRoi
 
@@ -374,7 +373,6 @@ module RegJson =
                 re.EnumerateObject() |> Seq.map (fun p -> p.Name, p.Value.GetBoolean()) |> Map.ofSeq
             | None -> Map.empty
         {
-            Enabled     = (match tryProp "enabled" e with Some v -> v.GetBoolean() | None -> true)
             RefAnchor   =
                 (match tryProp "refAnchor" e with
                  | Some v when v.ValueKind <> JsonValueKind.Null -> Some (rV3 v)

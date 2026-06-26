@@ -209,7 +209,7 @@ module ReadinessView =
                 pins |> HashMap.toList
                 |> List.choose (fun (id, p) ->
                     match ScanPin.correspondence p with
-                    | Some c when c.Enabled ->
+                    | Some c ->
                         let marked =
                             movingVisible
                             |> List.filter (fun m -> Map.containsKey m c.Anchors)

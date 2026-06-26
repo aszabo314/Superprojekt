@@ -1,5 +1,5 @@
-//1ef5e47c-4bc7-0236-68a9-6374881a9e7c
-//09749ae2-9bd9-6c62-24e7-167d6d8d8b45
+//099ccb0d-19e9-0284-1ae2-6d0bc2a2f572
+//8fcc3515-63ed-dd82-5ce2-f855474e7167
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -78,6 +78,8 @@ type AdaptiveModel(value : Model) =
     let _FocusProjection_ = FSharp.Data.Adaptive.cval(value.FocusProjection)
     let _FocusMaps_ = FSharp.Data.Adaptive.cval(value.FocusMaps)
     let _FocusPeekReference_ = FSharp.Data.Adaptive.cval(value.FocusPeekReference)
+    let _CorrSetMode_ = FSharp.Data.Adaptive.cval(value.CorrSetMode)
+    let _CorrPreview_ = FSharp.Data.Adaptive.cval(value.CorrPreview)
     let _OutlineMode_ = FSharp.Data.Adaptive.cval(value.OutlineMode)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
@@ -130,6 +132,8 @@ type AdaptiveModel(value : Model) =
             _FocusProjection_.Value <- value.FocusProjection
             _FocusMaps_.Value <- value.FocusMaps
             _FocusPeekReference_.Value <- value.FocusPeekReference
+            _CorrSetMode_.Value <- value.CorrSetMode
+            _CorrPreview_.Value <- value.CorrPreview
             _OutlineMode_.Value <- value.OutlineMode
     member __.Current = __adaptive
     member __.Camera = _Camera_
@@ -175,5 +179,7 @@ type AdaptiveModel(value : Model) =
     member __.FocusProjection = _FocusProjection_ :> FSharp.Data.Adaptive.aval<FocusProjection>
     member __.FocusMaps = _FocusMaps_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, FocusPreview>>
     member __.FocusPeekReference = _FocusPeekReference_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.CorrSetMode = _CorrSetMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.CorrPreview = _CorrPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.OutlineMode = _OutlineMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

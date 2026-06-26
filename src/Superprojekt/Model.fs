@@ -208,6 +208,12 @@ type Model =
         // Hold → the focus re-renders the reference mesh in the same frame.
         FocusPeekReference  : bool
 
+        // Set-correspondence interaction (focus panel): off = pan; on = the cursor
+        // hovers the correspondence point (no pan), CorrPreview shows a live 3D
+        // ghost, and a click places it + exits. Toggling off cancels (no commit).
+        CorrSetMode         : bool
+        CorrPreview         : V3d option
+
         OutlineMode         : bool
     }
 
@@ -283,5 +289,7 @@ module Model =
             FocusProjection     = ProjPano
             FocusMaps           = Map.empty
             FocusPeekReference  = false
+            CorrSetMode         = false
+            CorrPreview         = None
             OutlineMode         = false
         }

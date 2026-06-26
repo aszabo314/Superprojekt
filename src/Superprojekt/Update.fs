@@ -100,7 +100,8 @@ module Update =
                     { model with
                         Registration = { model.Registration with ReferenceMesh = mesh }
                         SolvedTransforms = Map.empty
-                        RegView = RegBefore })
+                        RegView = RegBefore
+                        CorrSetMode = false; CorrPreview = None })
             match mesh with
             | Some _ -> seedAnchors env model (correspondenceEnabledIds model)
             | None -> model
@@ -123,7 +124,7 @@ module Update =
                     model.ScanPins.Pins |> HashMap.toList
                     |> List.choose (fun (_, p) ->
                         match ScanPin.correspondence p with
-                        | Some c when c.Enabled && c.RefAnchor.IsSome ->
+                        | Some c when c.RefAnchor.IsSome ->
                             Some (p.Id, c.RefAnchor.Value, c.Anchors)
                         | _ -> None)
                 let pairsFor mesh =
@@ -189,22 +190,6 @@ module Update =
                     DebugLog = model.DebugLog.InsertAt(0, sprintf "coarse solve failed (%s): %s" mesh reason)
                     Registration = { model.Registration with Running = false } }
 
-        | ToggleCorrespondence pinId ->
-            match HashMap.tryFind pinId model.ScanPins.Pins with
-            | Some pin ->
-                let next =
-                    match pin.Correspondence with
-                    | Some c -> { c with Enabled = not c.Enabled }
-                    | None -> Correspondence.empty
-                let sp =
-                    { model.ScanPins with
-                        Pins = HashMap.add pinId { pin with Correspondence = Some next } model.ScanPins.Pins }
-                let model = { model with ScanPins = sp }
-                if next.Enabled then
-                    if model.Registration.ReferenceMesh.IsSome then seedAnchors env model [pinId]
-                    else showToast env "Designate a reference mesh (★) to seed correspondence markers" model
-                else model
-            | None -> model
         | AnchorsSeeded(refUpdates, seeded, inRoi) ->
             let sp =
                 refUpdates |> Array.fold (fun sp (pinId, ra, dist) ->
@@ -232,7 +217,7 @@ module Update =
             { model with ScanPins = sp }
         | ReseedMesh(pinId, mesh) ->
             match HashMap.tryFind pinId model.ScanPins.Pins with
-            | Some pin when (ScanPin.correspondence pin |> Option.map (fun c -> c.Enabled) |> Option.defaultValue false) ->
+            | Some pin when (ScanPin.correspondence pin |> Option.isSome) ->
                 if model.Registration.ReferenceMesh.IsSome then reseedOneMesh env model pinId mesh
                 else showToast env "Set a ★ reference mesh first to re-seed" model
             | _ -> model
@@ -344,6 +329,13 @@ module Update =
             | None -> model
         | SetActivePickingLayer name ->
             { model with ActivePickingLayer = name }
+        | ScanPinMsg (PlaceAnchor _ as msg) ->
+            // A freshly placed pin is a registration pin immediately; seed it
+            // against the reference (if any) so its markers appear at once.
+            let model = ScanPinUpdate.handleMsg env model msg
+            match model.Registration.ReferenceMesh, model.Selection.SelectedPin with
+            | Some _, Some id -> seedAnchors env model [id]
+            | _ -> model
         | ScanPinMsg msg ->
             ScanPinUpdate.handleMsg env model msg
         | SetHovered h ->
@@ -359,7 +351,9 @@ module Update =
             if model.WorkflowStep = step then model
             else
                 bumpSurfaceDist ()
-                invalidateFocusMaps { model with WorkflowStep = step; SurfaceDistance = Map.empty }
+                invalidateFocusMaps
+                    { model with WorkflowStep = step; SurfaceDistance = Map.empty
+                                 CorrSetMode = false; CorrPreview = None }
         | SetInspectChannel ch ->
             // Difference vs displacement changes the focus-tile fetch (channel +
             // projection) → drop the cached previews so they refetch.
@@ -369,13 +363,18 @@ module Update =
             if model.FocusProjection = p then model
             else invalidateFocusMaps { model with FocusProjection = p }
         | SetFocusPeekReference held ->
-            if model.FocusPeekReference = held then model else { model with FocusPeekReference = held }
+            // Peeking the reference suspends set-correspondence; drop a stale ghost.
+            if model.FocusPeekReference = held then model
+            else { model with FocusPeekReference = held; CorrPreview = (if held then None else model.CorrPreview) }
         | SetFocusedMesh None ->
-            { model with Selection = { model.Selection with FocusedMesh = None } }
+            { model with Selection = { model.Selection with FocusedMesh = None }
+                         CorrSetMode = false; CorrPreview = None }
         | SetFocusedMesh (Some m) ->
             // Promote to the large single (links rail + dock + focus enlargement).
+            // Switching target cancels any in-progress set-correspondence.
             if model.Selection.FocusedMesh = Some m then model
-            else { model with Selection = { model.Selection with FocusedMesh = Some m } }
+            else { model with Selection = { model.Selection with FocusedMesh = Some m }
+                              CorrSetMode = false; CorrPreview = None }
         | FocusMapsComputed(mesh, preview) ->
             { model with FocusMaps = Map.add mesh preview model.FocusMaps }
         | PickCorrespondenceAt(pinId, mesh, world) ->
@@ -384,7 +383,7 @@ module Update =
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
                 match ScanPin.correspondence pin with
-                | Some c when c.Enabled ->
+                | Some c ->
                     let axis = ScanPin.axis pin
                     let v = world - pin.Centre
                     let axial = Vec.dot v axis
@@ -395,10 +394,19 @@ module Update =
                                     { corr with
                                         Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
                                         InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
-                        showToast env "Correspondence placed" { model with ScanPins = sp }
+                        // Placement ends set-correspondence mode and clears the ghost.
+                        showToast env "Correspondence placed"
+                            { model with ScanPins = sp; CorrSetMode = false; CorrPreview = None }
                     else showToast env "Pick is outside the pin ROI" model
-                | _ -> showToast env "Promote this pin to a registration pin (⚲) before picking markers" model
+                | None -> model
             | None -> model
+        | ToggleCorrSetMode ->
+            // Toggling off cancels (no commit) and drops the ghost; the focus tile
+            // redraws the committed marker since the anchor was never touched.
+            if model.CorrSetMode then { model with CorrSetMode = false; CorrPreview = None }
+            else { model with CorrSetMode = true; CorrPreview = None }
+        | CorrPreviewComputed p ->
+            if model.CorrSetMode then { model with CorrPreview = p } else model
         | ToggleOutlines ->
             { model with OutlineMode = not model.OutlineMode }
         // Keep orientation, animate centre + radius so the target subtends ~25% of

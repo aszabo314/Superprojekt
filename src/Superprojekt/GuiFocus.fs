@@ -86,13 +86,17 @@ module GuiFocus =
         cellDrawJs @ [
         "  function ph(t){ var p=document.createElement('div'); p.className='fm-ph fm-ph-big'; p.textContent=t; el.appendChild(p); }"
         "  if(!d || !d.cell){ ph('select a mesh'); return; }"
-        "  var cell=d.cell; var editing=!!d.editing;"
+        "  var cell=d.cell; var setmode=!!d.setmode;"
         "  var W=el.clientWidth||320, H=el.clientHeight||220; var dpr=window.devicePixelRatio||1;"
         "  var cv=document.createElement('canvas'); cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);"
         "  cv.style.width=W+'px'; cv.style.height=H+'px'; cv.className='fs-canvas-el';"
         "  var g=cv.getContext('2d');"
-        "  var st=el.__fsv||(el.__fsv={z:1,tx:0,ty:0,key:''});"
-        "  if(st.key!==cell.mesh){ st.z=1; st.tx=0; st.ty=0; st.key=cell.mesh; }"
+        // Per-mesh pan/zoom: each tile keeps its own view, so switching meshes
+        // restores the view it had. el.__cur/__redraw let the head reset button
+        // reach the current tile's state.
+        "  el.__fsv=el.__fsv||{};"
+        "  var st=el.__fsv[cell.mesh]||(el.__fsv[cell.mesh]={z:1,tx:0,ty:0});"
+        "  el.__cur=cell.mesh;"
         "  var bb=cell.box; var bw=Math.max(1e-6,bb[2]-bb[0]), bh=Math.max(1e-6,bb[3]-bb[1]);"
         "  var pad=12, k0=Math.min((W-2*pad)/bw,(H-2*pad)/bh);"
         "  function k(){ return k0*st.z; }"
@@ -101,14 +105,25 @@ module GuiFocus =
         "  function invX(px){ return bb[0]+(px-ox())/k(); } function invY(py){ return bb[1]+((H-py)-oy())/k(); }"
         "  function draw(){ g.setTransform(dpr,0,0,dpr,0,0); g.fillStyle='#f8fafc'; g.fillRect(0,0,W,H); drawCell(g,cell,X,Y);"
         "    if(cell.kind==='disp' && cell.magHi){ var rl=Math.min(k()*cell.magHi,W*0.4); if(rl<8)rl=8; var rx=12,ry=H-14; g.strokeStyle='#334155'; g.fillStyle='#334155'; g.lineWidth=1.5; g.beginPath(); g.moveTo(rx,ry); g.lineTo(rx+rl,ry); g.stroke(); g.beginPath(); g.moveTo(rx+rl,ry); g.lineTo(rx+rl-5,ry-3); g.lineTo(rx+rl-5,ry+3); g.closePath(); g.fill(); g.font='10px SF Mono,Monaco,monospace'; g.fillText('↔ '+(cell.magHi*1000).toFixed(0)+' mm',rx,ry-4); }"
-        "    g.fillStyle='#475569'; g.font='11px SF Mono,Monaco,monospace'; g.fillText(cell.name+(editing?'  ✎ click to place':'')+(d.zlabel||''),8,16); }"
+        "    g.fillStyle='#475569'; g.font='11px SF Mono,Monaco,monospace'; g.fillText(cell.name+(setmode?'  ⊕ click to place':'')+(d.zlabel||''),8,16); }"
+        "  el.__redraw=draw;"
         "  draw();"
-        "  function near(px,py){ if(!cell.handle) return false; var dx=px-X(cell.handle[0]),dy=py-Y(cell.handle[1]); return dx*dx+dy*dy<100; }"
-        "  var mode=null,sx=0,sy=0,otx=0,oty=0;"
-        "  cv.addEventListener('wheel',function(e){ e.preventDefault(); var r=cv.getBoundingClientRect(); var px=e.clientX-r.left,py=e.clientY-r.top; var u=invX(px),v=invY(py); var f=e.deltaY<0?1.15:1/1.15; st.z=Math.max(0.2,Math.min(40,st.z*f)); st.tx=px-(W/2)-(u-bb[0])*k()+bw*k()/2; st.ty=(H/2)-(H-py)-(v-bb[1])*k()+bh*k()/2; draw(); },{passive:false});"
-        "  cv.addEventListener('pointerdown',function(e){ var r=cv.getBoundingClientRect(); sx=e.clientX-r.left; sy=e.clientY-r.top; otx=st.tx; oty=st.ty; cv.setPointerCapture(e.pointerId); if(editing && e.button===0 && !e.shiftKey){ mode='pick'; } else { mode='pan'; } });"
-        "  cv.addEventListener('pointermove',function(e){ if(!mode)return; var r=cv.getBoundingClientRect(); var px=e.clientX-r.left,py=e.clientY-r.top; if(mode==='pan'){ st.tx=otx+(px-sx); st.ty=oty-(py-sy); draw(); } else if(mode==='pick'){ cell.handle=[invX(px),invY(py)]; cell.hover=true; draw(); } });"
-        "  cv.addEventListener('pointerup',function(e){ if(mode==='pick'){ var r=cv.getBoundingClientRect(); var px=e.clientX-r.left,py=e.clientY-r.top; var u=invX(px),v=invY(py); var bus=el.closest('.focus-panel'); bus=bus?bus.querySelector('.fs-bus'):null; if(bus){ bus.value='pick|'+u+'|'+v; bus.dispatchEvent(new Event('input',{bubbles:true})); } } mode=null; });"
+        "  var mode=null,sx=0,sy=0,otx=0,oty=0,lastHov=0;"
+        "  function busPost(v){ var b=el.closest('.focus-panel'); b=b?b.querySelector('.fs-bus'):null; if(b){ b.value=v; b.dispatchEvent(new Event('input',{bubbles:true})); } }"
+        // Zoom centred on the cursor: keep the world point under the pointer fixed
+        // by scaling the offsets ox/oy about the cursor (oy works in flipped Y).
+        "  cv.addEventListener('wheel',function(e){ e.preventDefault(); var r=cv.getBoundingClientRect(); var px=e.clientX-r.left,py=e.clientY-r.top; var f=e.deltaY<0?1.15:1/1.15; var nz=Math.max(0.2,Math.min(40,st.z*f)); var fe=nz/st.z; var oxo=ox(),oyo=oy(); st.z=nz; st.tx=(px-(px-oxo)*fe)-(W-bw*k())/2; st.ty=((H-py)-((H-py)-oyo)*fe)-(H-bh*k())/2; draw(); },{passive:false});"
+        // Set-correspondence: the cursor aims the point (handle follows locally +
+        // smooth, a throttled hover posts the live 3D preview), and a click commits.
+        // Otherwise the drag pans the view.
+        "  cv.addEventListener('pointermove',function(e){ var r=cv.getBoundingClientRect(); var px=e.clientX-r.left,py=e.clientY-r.top;"
+        "    if(setmode){ var u=invX(px),v=invY(py); cell.handle=[u,v]; cell.hover=true; draw(); var now=(window.performance&&performance.now)?performance.now():0; if(now-lastHov>70){ lastHov=now; busPost('hover|'+u+'|'+v); } return; }"
+        "    if(mode==='pan'){ st.tx=otx+(px-sx); st.ty=oty-(py-sy); draw(); } });"
+        "  cv.addEventListener('pointerdown',function(e){ var r=cv.getBoundingClientRect(); var px=e.clientX-r.left,py=e.clientY-r.top;"
+        "    if(setmode){ if(e.button===0){ busPost('pick|'+invX(px)+'|'+invY(py)); } return; }"
+        "    sx=px; sy=py; otx=st.tx; oty=st.ty; cv.setPointerCapture(e.pointerId); mode='pan'; });"
+        "  cv.addEventListener('pointerup',function(e){ mode=null; });"
+        "  cv.addEventListener('pointerleave',function(e){ if(setmode){ busPost('hoveroff'); } });"
         "  el.appendChild(cv);"
         ]
 
@@ -148,6 +163,19 @@ module GuiFocus =
              model.ScanPins.Pins |> AMap.toAVal)
             ||> AVal.map2 (fun id pins -> id |> Option.bind (fun i -> HashMap.tryFind i pins) |> Option.bind ScanPin.correspondence)
 
+        // Set-correspondence is offered only when a pin is selected and a non-reference
+        // mesh is focused (with a reference present), and the user is not peeking the
+        // reference. setActive = that, with the toggle actually engaged.
+        let setAvailable =
+            AVal.custom (fun t ->
+                corrStep.GetValue t
+                && not (model.FocusPeekReference.GetValue t)
+                && (model.Selection.SelectedPin.GetValue t).IsSome
+                && (match focusMesh.GetValue t, refMeshA.GetValue t with
+                    | Some m, Some rf -> m <> rf
+                    | _ -> false))
+        let setActive = (setAvailable, model.CorrSetMode) ||> AVal.map2 (&&)
+
         let dispRender (t : AdaptiveToken) (mesh : string) =
             match model.RegView.GetValue t, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
             | RegAfter, Some s -> s
@@ -170,7 +198,7 @@ module GuiFocus =
                 let proj = model.FocusProjection.GetValue t
                 let cc = model.CommonCentroid.GetValue t
                 let corr = effCorrA.GetValue t
-                let refW = corr |> Option.bind (fun c -> if c.Enabled then c.RefAnchor else None)
+                let refW = corr |> Option.bind (fun c -> c.RefAnchor)
                 let hoverMesh = model.Selection.Hovered.GetValue t |> function Some (HoverPoint (_, hm)) -> Some hm | _ -> None
                 let eyeOf mesh =
                     let s = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
@@ -188,7 +216,7 @@ module GuiFocus =
                         atan2 d.Z (max 1e-9 hyp) / halfPi
                 let markerOf mesh =
                     corr |> Option.bind (fun c ->
-                        if c.Enabled && (Map.tryFind mesh c.InRoi |> Option.defaultValue true)
+                        if (Map.tryFind mesh c.InRoi |> Option.defaultValue true)
                         then Map.tryFind mesh c.Anchors |> Option.map (fun a ->
                                 (RigidTransform.renderToWorld (DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh) cc (dispRender t mesh)).Forward.TransformPos a.Point)
                         else None)
@@ -311,45 +339,66 @@ module GuiFocus =
                     let sharedHi = if movingKind = "disp" then magHiOf t vis else sharedHiOf t vis rf
                     let lod = lodOf t
                     match cellJson t inv cmp editing sharedHi lod movingKind m with
-                    | Some c -> sprintf "{\"editing\":%b,\"proj\":%d,\"cell\":%s}" editing (FocusProjection.toInt (model.FocusProjection.GetValue t)) c
+                    | Some c -> sprintf "{\"editing\":%b,\"setmode\":%b,\"proj\":%d,\"cell\":%s}" editing (setActive.GetValue t) (FocusProjection.toInt (model.FocusProjection.GetValue t)) c
                     | None -> "{}")
 
         // Surface pick: invert the 2D frame coord to a world ray, then server
         // raycast. The ray is handed to the server in the mesh's own untransformed
-        // frame; the resulting anchor is stored mesh-local.
-        let pickAt (u : float) (v : float) =
+        // frame; the resulting hit is mapped back to metric world. Shared by the
+        // commit (click) and the live hover preview.
+        let castWorld (u : float) (v : float) : Async<(string * V3d) option> =
             match AVal.force focusMesh, AVal.force refMeshA with
             | Some mesh, Some refM when mesh <> refM && not (AVal.force model.FocusPeekReference) ->
-                match model.Selection.SelectedPin |> AVal.force with
-                | None -> ()
-                | Some pinId ->
-                    let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
-                    let cc = AVal.force model.CommonCentroid
-                    let disp =
-                        match AVal.force model.RegView, Map.tryFind mesh (AVal.force model.SolvedTransforms) with
-                        | RegAfter, Some s -> s
-                        | _ -> Map.tryFind mesh (AVal.force model.LoadTransforms) |> Option.defaultValue Trafo3d.Identity
-                    let dw = RigidTransform.renderToWorld scale cc disp
-                    let originW, dirW =
-                        match AVal.force model.FocusProjection with
-                        // Oblique never carries a correspondence pick (Inspect-only),
-                        // but the match must be total; treat like the Top drop.
-                        | ProjTop | ProjOblique -> V3d(u, v, 1.0e7), V3d(0.0, 0.0, -1.0)
-                        | ProjPano ->
-                            let centroid = Map.tryFind mesh (AVal.force model.DatasetCentroids) |> Option.defaultValue V3d.Zero
-                            let eye = dw.Forward.TransformPos centroid
-                            let phi = u * System.Math.PI
-                            let theta = v * System.Math.PI * 0.5
-                            eye, (V3d(cos theta * cos phi, cos theta * sin phi, sin theta)).Normalized
-                    let ownO = dw.Backward.TransformPos originW
-                    let ownD = (dw.Backward.TransformDir dirW).Normalized
-                    async {
-                        let! hit = Query.rayHit ApiConfig.apiBase.Value mesh 0 ownO ownD
-                        match hit with
-                        | Some h -> env.Emit [PickCorrespondenceAt(pinId, mesh, dw.Forward.TransformPos h.point)]
-                        | None -> ()
-                    } |> Async.Start
-            | _ -> ()
+                let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
+                let cc = AVal.force model.CommonCentroid
+                let disp =
+                    match AVal.force model.RegView, Map.tryFind mesh (AVal.force model.SolvedTransforms) with
+                    | RegAfter, Some s -> s
+                    | _ -> Map.tryFind mesh (AVal.force model.LoadTransforms) |> Option.defaultValue Trafo3d.Identity
+                let dw = RigidTransform.renderToWorld scale cc disp
+                let originW, dirW =
+                    match AVal.force model.FocusProjection with
+                    // Oblique never carries a correspondence pick (Inspect-only),
+                    // but the match must be total; treat like the Top drop.
+                    | ProjTop | ProjOblique -> V3d(u, v, 1.0e7), V3d(0.0, 0.0, -1.0)
+                    | ProjPano ->
+                        let centroid = Map.tryFind mesh (AVal.force model.DatasetCentroids) |> Option.defaultValue V3d.Zero
+                        let eye = dw.Forward.TransformPos centroid
+                        let phi = u * System.Math.PI
+                        let theta = v * System.Math.PI * 0.5
+                        eye, (V3d(cos theta * cos phi, cos theta * sin phi, sin theta)).Normalized
+                let ownO = dw.Backward.TransformPos originW
+                let ownD = (dw.Backward.TransformDir dirW).Normalized
+                async {
+                    let! hit = Query.rayHit ApiConfig.apiBase.Value mesh 0 ownO ownD
+                    return hit |> Option.map (fun h -> mesh, dw.Forward.TransformPos h.point)
+                }
+            | _ -> async.Return None
+
+        // Click places the correspondence; the reducer ROI-clamps it.
+        let pickAt (u : float) (v : float) =
+            match AVal.force model.Selection.SelectedPin with
+            | None -> ()
+            | Some pinId ->
+                async {
+                    match! castWorld u v with
+                    | Some (mesh, world) -> env.Emit [PickCorrespondenceAt(pinId, mesh, world)]
+                    | None -> ()
+                } |> Async.Start
+
+        // Throttled hover preview → transient 3D ghost. A generation guard drops
+        // out-of-order raycast results so the ghost tracks the latest cursor.
+        let mutable hoverGen = 0
+        let hoverAt (u : float) (v : float) =
+            hoverGen <- hoverGen + 1
+            let gen = hoverGen
+            async {
+                let! hit = castWorld u v
+                if gen = hoverGen then env.Emit [CorrPreviewComputed (hit |> Option.map snd)]
+            } |> Async.Start
+        let hoverOff () =
+            hoverGen <- hoverGen + 1
+            env.Emit [CorrPreviewComputed None]
 
         let projBtn (p : FocusProjection) =
             button {
@@ -357,6 +406,21 @@ module GuiFocus =
                 model.FocusProjection |> AVal.map (fun a -> if a = p then Some (Class "btn-active") else None)
                 Dom.OnClick(fun _ -> env.Emit [SetFocusProjection p])
                 FocusProjection.label p
+            }
+
+        // Resets the currently focused tile's JS-local pan/zoom (state lives on the
+        // .focus-single element, so the button reaches in directly and redraws).
+        let resetBtn =
+            button {
+                Class "focus-reset"
+                Attribute("title", "Reset pan / zoom of the focused tile")
+                OnBoot [
+                    "(function(){ var el=__THIS__; el.addEventListener('click',function(){"
+                    "  var panel=el.closest('.focus-panel'); var s=panel?panel.querySelector('.focus-single'):null;"
+                    "  if(s && s.__fsv && s.__cur && s.__fsv[s.__cur]){ var v=s.__fsv[s.__cur]; v.z=1; v.tx=0; v.ty=0; if(s.__redraw) s.__redraw(); }"
+                    "}); })();"
+                ]
+                "⟲ reset"
             }
 
         let peekBtn =
@@ -367,6 +431,19 @@ module GuiFocus =
                 Dom.OnPointerDown((fun _ -> env.Emit [SetFocusPeekReference true]), pointerCapture = true)
                 Dom.OnPointerUp((fun _ -> env.Emit [SetFocusPeekReference false]), pointerCapture = true)
                 "⇄ ref"
+            }
+
+        // Toggle set-correspondence: while on the cursor aims the point (no pan) and
+        // a click in the pane places it; toggling off cancels (no commit). Only
+        // offered when a pin + a non-reference focused mesh are in play.
+        let setBtn =
+            button {
+                Class "focus-set"
+                setAvailable |> AVal.map (fun a -> if a then None else Some (Class "hidden"))
+                model.CorrSetMode |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
+                Attribute("title", "Set correspondence: move to aim, click to place")
+                Dom.OnClick(fun _ -> env.Emit [ToggleCorrSetMode])
+                model.CorrSetMode |> AVal.map (fun on -> if on then "⊙ aiming…" else "⊕ set point")
             }
 
         div {
@@ -380,7 +457,12 @@ module GuiFocus =
                     projBtn ProjPano; projBtn ProjTop
                 }
                 span { Class "focus-proj-fixed"; showWhen displacementActive; "Oblique" }
-                peekBtn
+                div {
+                    Class "focus-head-right"
+                    setBtn
+                    resetBtn
+                    peekBtn
+                }
             }
             div {
                 Class "focus-single"
@@ -399,11 +481,12 @@ module GuiFocus =
                 Attribute("type", "text")
                 Dom.OnInput(fun e ->
                     let parts = e.Value.Split('|')
-                    if parts.Length = 3 && parts.[0] = "pick" then
-                        let pf (s : string) = match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with true, v -> Some v | _ -> None
-                        match pf parts.[1], pf parts.[2] with
-                        | Some u, Some v -> pickAt u v
-                        | _ -> ())
+                    let pf (s : string) = match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with true, v -> Some v | _ -> None
+                    match parts with
+                    | [| "pick"; a; b |] -> (match pf a, pf b with Some u, Some v -> pickAt u v | _ -> ())
+                    | [| "hover"; a; b |] -> (match pf a, pf b with Some u, Some v -> hoverAt u v | _ -> ())
+                    | [| "hoveroff" |] -> hoverOff ()
+                    | _ -> ())
             }
             div {
                 Class "focus-multiples"

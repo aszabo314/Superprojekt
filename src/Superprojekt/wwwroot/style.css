@@ -281,9 +281,25 @@ body.loaded { background: #f4f6f8; }
 .focus-proj-btn.btn-active { background: #1a56db; color: #fff; }
 /* fixed projection chip (displacement forces Oblique) */
 .focus-proj-fixed { padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px; background: #eef2f6; color: #475569; font-size: 11px; }
+/* right-aligned button group in the focus head */
+.focus-head-right { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
+/* set-correspondence toggle */
+.focus-set {
+    padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
+    background: #fff; color: #1a56db; cursor: pointer; font-size: 11px;
+}
+.focus-set:hover { background: #eef2f6; }
+.focus-set.btn-active { background: #1a56db; color: #fff; border-color: #1a56db; }
+/* reset pan/zoom of the focused tile */
+.focus-reset {
+    padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
+    background: #fff; color: #475569; cursor: pointer; font-size: 11px;
+}
+.focus-reset:hover { background: #eef2f6; }
+.focus-reset:active { background: #e2e8f0; }
 /* peek-reference modifier (hold) */
 .focus-peek {
-    margin-left: auto; padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
+    padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
     background: #fff; color: #b45309; cursor: pointer; font-size: 11px;
 }
 .focus-peek:active { background: #fef3c7; }

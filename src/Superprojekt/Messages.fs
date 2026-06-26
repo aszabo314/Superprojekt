@@ -58,7 +58,6 @@ type Message =
     | SetWorkflowStep of WorkflowStep
     | SetInspectChannel of InspectChannel
     | SetFocusProjection of FocusProjection
-    | FocusMapsComputed of mesh:string * FocusPreview
     | PickCorrespondenceAt of ScanPinId * mesh:string * world:V3d
     | ToggleCorrSetMode
     // Transient hover preview of where a correspondence pick would land (metric

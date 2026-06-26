@@ -2,7 +2,7 @@
 
 Research prototype for interactive 3D inspection and **registration** of geological mesh datasets (multi-epoch scans of the same terrain). Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH ray/closest-point, sphere contact rings, surface patches, per-vertex signed distance, co-oriented mesh previews, N-mesh M3C2 probes, weighted rigid landmark solve). Runs on `http://localhost:5000` and also hosts the WASM client.
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH ray/closest-point, sphere contact rings, surface patches, per-vertex signed distance, N-mesh M3C2 probes, weighted rigid landmark solve). Runs on `http://localhost:5000` and also hosts the WASM client.
 - **Superprojekt** — Blazor WASM client. Aardvark.Dom Elm-style architecture, WebGL2 rendering. Must work on desktop and mobile; the client stays thin and pushes heavy compute to the server.
 
 See `README.md` for what the app does and how to run it.
@@ -57,17 +57,17 @@ Uniforms per draw call: `MeshActive`, `GhostOpacity` (pre-gated by `GhostSilhoue
 
 The variance distances come from `POST /api/query/region-distance` (reference vs each moving mesh) reduced to a per-reference-vertex std by the generation-guarded debounced `Update.ensureVariance` postlude into `Model.SurfaceDistance` (keyed by the reference mesh); the `SurfaceDist` buffer aligns with `loaded.pos`, non-encoded meshes bind a zero buffer of the same length.
 
-### Inspect visualizations (the four-scope error ladder)
+### Inspect visualizations
 
-Inspect maps four error scopes to four regions (`Model.InspectChannel = ChDifference | ChDisplacement` toggles the focus-tile channel; the dock toggle drives it):
+> **NOTE (WebGL focus transition):** the two **focus-tile** Inspect channels — *difference* and
+> *displacement* — were **removed** when the focus panel moved to WebGL (they were the 2D-canvas
+> `mesh-preview`/`FocusMaps` path, now gone). `Model.InspectChannel` + the dock channel toggle
+> remain but are inert. Re-implement as WebGL (per-vertex coloured geometry) if wanted. What
+> survives: the **central-3D variance** map and the **dock distribution** + **shift readout**.
 
 - **pin** → dock **distribution**: per moving mesh, jittered raw probe samples + median/IQR box on a shared signed-distance axis with the ±LoD₉₅ band (`GuiInspector` `distData`/`distJs`, no KDE). The probe is the current `RegView` pose; the panel labels Before/After.
-- **2 meshes** → focus **difference**: signed-distance vs reference (`region-distance` channel via `mesh-preview`), diverging, zero-centred, ±LoD₉₅ neutral, shared scale across tiles.
-- **mesh** → focus **displacement**: load→solved arrow glyphs (white surface + sequential-blue arrows by `|d|`, forced **Oblique** projection, reference scale arrow); only for solved meshes. `mesh-preview` channel `6` returns sparse `dispBase/dispTip/dispMag`.
-- **all meshes** → central-3D **variance** (above).
+- **all meshes** → central-3D **variance**: per-reference-vertex disagreement std painted on the reference (`DistanceEncoding = 2`, above), `region-distance` + `ensureVariance`.
 - **shift readout** (dock, displacement only): the focused mesh's centroid displacement load→solved, split vertical(datum)/horizontal + rotation angle, derived client-side from its `SolvedTransform`.
-
-`RegView` drives the difference field, the variance map, and the distribution (all refetch via `invalidateProbes` on toggle); displacement is the load→solved transition, independent of `RegView`. Focus tiles are fetched per-channel by `Update.ensureFocusMaps`.
 
 ### `Sg.DepthMask` is forbidden
 
@@ -108,13 +108,13 @@ The left rail (`GuiRail`) has exactly three modes — **Overview · Corresponden
 
 | Mode | Rail | Focus (canvas) | Dock |
 |---|---|---|---|
-| Overview | mesh list (hover=peek-isolate, ★ reference) | shaded-relief tiles | mesh roster |
+| Overview | mesh list (hover=peek-isolate, ★ reference) | WebGL textured tiles | mesh roster |
 | Correspondence | pin list + readiness diagnostics | pick surface (Pano/Top) | correspondence manager + Solve |
 | Inspect | difference sub-mode + intrinsic channels | difference / displacement tiles (channel toggle) | channel toggle + pin distribution + shift readout |
 
 **One shared selection record drives all linking** (`Model.Selection = { SelectedPin; FocusedMesh; SelectedPoint; Hovered }`). Linked highlighting is a *consequence* of every region binding to `Selection` — there are no panel-to-panel hover emitters. Grammar everywhere: **hover = peek** (writes `Selection.Hovered` via the single `SetHovered`), **click = select/promote**, **drag = edit**. Pin selection lives in `Selection.SelectedPin` (NOT `ScanPinModel`); `ScanPinUpdate.handleMsg` maintains it and drops a dangling selection when its pin is deleted.
 
-**Focus panel** (`GuiFocus`) is **canvas-only** — the main 3D viewport is the only WebGL control. A large single (focused mesh enlarged, pan + zoom, draggable correspondence handle, peek-reference) over a small-multiples strip, both from `Model.FocusMaps` (`POST /api/query/mesh-preview`), driven by the Pano/Top projection toggle. Pan/zoom state is JS-local on the `.focus-single` element, **keyed per mesh** (`el.__fsv[mesh] = {z,tx,ty}`) so each tile restores its own view on switch; never churns the reducer. The wheel zooms about the cursor (scale `ox`/`oy` offsets about the pointer). The head **⟲ reset** button reaches into `el.__fsv[el.__cur]` and calls `el.__redraw` to reset the focused tile. Dragging pans by default; the **⊕ set point** toggle switches the single into set-correspondence mode (cursor aims, click commits — see the correspondence-pick paragraph). The JS posts picks/hovers/clicks to a hidden `.fs-bus` / `.fm-bus` input via synthetic `input` events (`pick|u|v`, `hover|u|v`, `hoveroff`, `cell|mesh`).
+**Focus panel** (`GuiFocus` + `FocusScene`) is **WebGL** — a large single (the focused mesh, rendered full-res + atlas-textured in render space at its displayed pose) over a strip of textured thumbnail tiles, one renderControl per visible mesh (`FocusScene.single`/`multiples`). The prior 2D-canvas/`mesh-preview`/`FocusMaps` path is gone. The earlier finding that a 2nd renderControl tanks the main view turned out wrong (measurement artefact) — many renderControls coexist fine here. **Top = strictly orthographic** (hand-built ortho matrix); **Pano = cylindrical unwrap in a vertex shader** (`FocusShaders.pano`, composed after `DefaultSurfaces.trafo` so the WorldPosition varying — and thus picking — survives; the camera is identity, the shader writes clip). A tiny pan+zoom controller (module-level `panNorm`/`zoom` cvals in `FocusScene`, no orbit) drives the single with mouse-anchored zoom; `⟲ reset` calls `FocusScene.resetCam`. **Picking is Dom-driven, not `Sg.OnTap`** (that did not fire reliably in the 2nd render control): `worldRayHit` inverts the cursor to a render-space ray (ortho drop / pano direction from the eye), maps it into the mesh's own frame, hits `/query/ray`, and maps the hit back to displayed world. In set-correspondence mode (⊕ set point) a **move** throttle-raycasts → `CorrPreviewComputed` (the live 3D ghost in the main viewport), and a **click** raycasts → `PickCorrespondenceAt` (places + exits the mode). Gated on a selected pin + a non-reference focused mesh.
 
 ## ScanPin system
 
@@ -150,7 +150,7 @@ For scene-graph nodes (`Sg.Text`, `sg { ... }`) this matters even more: rebuildi
 
 ## Server query performance
 
-Costly spatial queries (`probe`, `contact-rings`, `region-distance`, `mesh-preview`) scale with mesh count × sample density:
+Costly spatial queries (`probe`, `contact-rings`, `region-distance`) scale with mesh count × sample density:
 
 - **Never issue per-mesh requests sequentially.** Use `Query.rayHitMany` (parallel fan-out); if a multi-mesh operation becomes hot, add a batched server endpoint with `Parallel.For` instead.
 - **Parallelise the heavy inner loop server-side** when inputs are independent — Embree `Scene.Intersect` is thread-safe.
@@ -175,16 +175,18 @@ Primitives.fs          widgets, showWhen/showWhenNot, observedRender, ReadinessV
 Messages.fs            Message DU
 ScanPinUpdate.fs       pin sub-reducer + ensureProbe/ensureRings postludes
 UpdateHelpers.fs       reducer helpers + debounce/generation state, seedAnchorsCore
-Update.fs              main reducer + ensureSurfaceDistance/ensureVariance/ensureFocusMaps postludes
+Update.fs              main reducer + ensureVariance postlude
 MeshShaders.fs         RenderPass + MeshShader + OutlineGBuffer/OutlineEdge
 MeshView.fs            LoadedMesh, buildScene, load/displayed transforms, pin blobs
 OutlineView.fs         offscreen image-space outline pass
 ScanPinScene.fs        pin sg nodes + correspondence constellation
 SceneGraph.fs          composes meshScene + pinScene + cross + labels + reference outline
+FocusShaders.fs        FShade pano (cylindrical) vertex shader for the focus single
+FocusScene.fs          WebGL focus renderControls (single + per-mesh tiles, ortho/pano, pan/zoom, pick)
 GuiTopBar.fs           top bar (peek, before/after toggle, gear popover)
 GuiOverlays.fs         toast, scale bar, orientation indicator, wheel label
 GuiRail.fs             three-mode left rail
-GuiFocus.fs            canvas focus panel (large single + multiples)
+GuiFocus.fs            focus panel head + FocusScene mounts
 GuiInspector.fs        mode-contextual bottom dock
 View.fs                App module wires Boot.run
 ShaderCache.fs / Program.fs
@@ -199,7 +201,6 @@ MeshLoader.fs     OBJ parse, centroid file, atlas paths
 MeshCache.fs      Embree scene + BbTree cache (lazy, permanent)
 MeshAnalysis.fs   sphere contact-ring tracing, patch sampling
 MeshProbe.fs      N-mesh M3C2 probe (normal PCA, cylinder sampling, KDE, three sources)
-MeshPreview.fs    co-oriented mesh preview for the focus panel (vertex-cluster decimated so the surface stays coherent, per-vertex channel; Oblique projection + Displacement arrow field)
 RegMath.fs        weighted Umeyama rigid landmark solve (Jacobi SVD, conditioning)
 QueryHandlers.fs  HTTP query handlers
 Handlers.fs       routing
@@ -223,7 +224,6 @@ POST /api/query/contact-rings                   → sphere–surface intersectio
 POST /api/query/lsq-pairs                       → weighted rigid landmark solve (absolute world transform moving→reference + per-pair residuals + conditioning; 400 on <3 pairs)
 POST /api/query/probe                           → N-mesh M3C2 probe (per-mesh distributions + KDE + three sources)
 POST /api/query/region-distance                 → per-vertex signed M3C2 distance (mode 0) or vertical Δz (mode 1) of a target mesh to the reference, in the target's served vertex order; 1e30 sentinel where no closest point
-POST /api/query/mesh-preview                    → co-oriented 2D preview (flattened verts2d + tris + per-vertex scalar + robust domain) for the focus panel; projection 4 = Oblique, channel 6 = Displacement (returns sparse dispBase/dispTip/dispMag arrows, surface at Transform = solved/tip, base at Transform2 = load)
 ```
 
 All query coordinates are **absolute world space**; the server converts `localPos = worldPos − meshCentroid`. (Removed for lack of consumers — don't re-add without one: `/query/icp`, sphere/box/ray-batch, grid-eval, isoline, curvature-ridge, region-grid.)
@@ -240,12 +240,12 @@ Top-level `Model` fields (see `Model.fs`):
 - `MeshSensorTypes`, `HeatmapMode` (`HeatOff | HeatIncidence | HeatRange | HeatShape`), `ExtrinsicZDiff` (difference sub-mode M3C2 ↔ Δz), `SurfaceDistance` (`Map<mesh, float32[]>`, the reference variance array)
 - `ScanPins` (`ScanPinModel`), `Selection` (`{ SelectedPin; FocusedMesh; SelectedPoint; Hovered }`)
 - `RenderingMode`, `MeshSolo`, `GearPopoverOpen`
-- `WorkflowStep` (`Overview | Correspondence | Inspect`), `InspectChannel` (`ChDifference | ChDisplacement`), `FocusProjection` (`ProjPano | ProjTop | ProjOblique`), `FocusMaps` (`FocusPreview` carries `Disp*` arrows for displacement), `FocusPeekReference`, `CorrSetMode` (set-correspondence toggle) + `CorrPreview` (live 3D ghost point), `Toast`
+- `WorkflowStep` (`Overview | Correspondence | Inspect`), `InspectChannel` (`ChDifference | ChDisplacement`), `FocusProjection` (`ProjPano | ProjTop | ProjOblique`), `FocusPeekReference`, `CorrSetMode` (set-correspondence toggle) + `CorrPreview` (live 3D ghost point), `Toast`
 
 GUI placement:
 - Top bar (`GuiTopBar`): hamburger, camera reset, **👁 Peek** (hold), the global **Before/After** toggle, gear popover (dataset switch, rendering mode, outlines, camera speed, ghost silhouette + opacity, isolate-pins, shading strength, slope threshold, quick-pin radius, dataset info, mesh centroids, debug log).
 - Left rail (`GuiRail`): the three modes.
-- Right focus panel (`GuiFocus`): canvas large-single + multiples.
+- Right focus panel (`GuiFocus` + `FocusScene`): WebGL large-single + per-mesh tiles.
 - Bottom dock (`GuiInspector`): mode-contextual content.
 - Overlays (`GuiOverlays`).
 
@@ -260,7 +260,7 @@ GUI placement:
 - CSS `~` sibling combinator breaks (Aardvark inserts wrapper nodes) — use `:has()` on a known ancestor.
 - `RenderControlInfo` and `TraversalState` both have `.Runtime` — annotate `(info : Aardvark.Dom.RenderControlInfo)` when ambiguous.
 - `yield!` is not supported in Aardvark.Dom CE builders — use OnBoot JS with MutationObserver for dynamic SVG/canvas (the `observedRender` helper, the focus-panel canvas, the orientation indicator).
-- `renderControl { ... }` can be nested inside `div { ... }` — it creates a WebGL canvas child. There is exactly **one** in the app (the main viewport); the focus panel is plain canvas.
+- `renderControl { ... }` can be nested inside `div { ... }` — it creates a WebGL canvas child. The app has **several**: the main viewport plus the focus panel's single + one per visible mesh (`FocusScene`). Multiple controls coexist fine on this backend (an earlier "they tank the main view" finding was a measurement artefact). **`Sg.OnTap` (and the other Sg pointer events) did NOT fire reliably in the secondary focus controls** — the focus does its picking with Dom pointer handlers + a server `/query/ray` raycast instead (`FocusScene.worldRayHit`). Camera input there is also Dom-level (`Dom.OnPointerDown/Move/Up` without pointer capture — capture hijacked later clicks).
 - `AVal.map4` does not exist — combine with `AVal.map2`/`AVal.map3`.
 - `Dom.Style` for renderControl; `Style` for HTML elements. `Css.Custom` does not exist — use CSS classes in `style.css`.
 - **`RenderControl.ViewportSize` is framebuffer pixels** (CSS × devicePixelRatio); `RenderControl.ClientSize` is CSS pixels. Anything mixing with DOM coordinates — overlay placement (scale bar, tooltips), cursor → NDC math (pickRay, focus-panel pick) — must use ClientSize or it breaks on hi-dpi. ClientSize is `V2i.II` until the first DOM event; `View.fs` derives `overlaySize` with a ViewportSize fallback.

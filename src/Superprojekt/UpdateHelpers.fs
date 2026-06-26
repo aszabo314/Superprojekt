@@ -47,32 +47,12 @@ module UpdateHelpers =
     let mutable surfaceDistReqGen = -1
     let bumpSurfaceDist () = surfaceDistGen <- surfaceDistGen + 1
 
-    // Focus-panel small-multiples previews: one debounced fan-out per generation
-    // (projection / channel / context / reference / transform / visibility bump).
-    let mutable focusMapsCts = new System.Threading.CancellationTokenSource()
-    let mutable focusMapsGen = 0
-    let mutable focusMapsReqGen = -1
-    let bumpFocusMaps () = focusMapsGen <- focusMapsGen + 1
-    let invalidateFocusMaps (model : Model) =
-        if not (Map.isEmpty model.FocusMaps) then bumpFocusMaps ()
-        { model with FocusMaps = Map.empty }
-
-    // Effective visible meshes for the focus multiples: a hard solo (main view)
-    // hides others, but the multiples follow the pre-solo restore set so every
-    // panel cell stays present.
-    let effectiveVisibleMeshes (model : Model) =
-        let vis = match model.MeshSolo with Solo(_, restore) -> restore | NoSolo -> model.MeshVisible
-        model.MeshNames |> IndexList.toList
-        |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true)
-
     let invalidateProbes (model : Model) =
-        // Surface map + focus previews share the same triggers — drop to re-fetch lazily.
+        // The variance surface map shares the same triggers — drop to re-fetch lazily.
         if not (Map.isEmpty model.SurfaceDistance) then bumpSurfaceDist ()
-        if not (Map.isEmpty model.FocusMaps) then bumpFocusMaps ()
         { model with
             ScanPins = ScanPinModel.invalidateProbes model.ScanPins
-            SurfaceDistance = Map.empty
-            FocusMaps = Map.empty }
+            SurfaceDistance = Map.empty }
 
     // Rings depend on pin geometry + transforms, NOT visibility (which gates
     // rendering only) — so this is applied on transform changes alone, unlike invalidateProbes.

@@ -233,15 +233,14 @@ module Update =
         | SetMeshSensorType(name, sensor) ->
             { model with MeshSensorTypes = Map.add name sensor model.MeshSensorTypes }
         | SetHeatmapMode m ->
-            invalidateFocusMaps { model with HeatmapMode = m }
+            { model with HeatmapMode = m }
         | VarianceComputed(mesh, arr) ->
             // Keep only if still in Inspect and this is the reference mesh.
             if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
             else model
         | ToggleExtrinsicZDiff ->
-            // Switch the difference sub-mode (M3C2 ↔ Δz) of the focus tiles; refetch.
-            invalidateFocusMaps { model with ExtrinsicZDiff = not model.ExtrinsicZDiff }
+            { model with ExtrinsicZDiff = not model.ExtrinsicZDiff }
         | SurfaceDistanceFailed(_, reason) ->
             showToast env "Surface-distance query failed — is the server up to date? (restart it)"
                 { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "region-distance failed: %s" reason) }
@@ -269,7 +268,6 @@ module Update =
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
                     Selection = Selection.initial
-                    FocusMaps = Map.empty
                     MeshSolo = NoSolo
                     MeshBounds = Map.empty
                     ActivePickingLayer = None
@@ -345,23 +343,17 @@ module Update =
             if model.Selection.SelectedPoint = m then model
             else { model with Selection = { model.Selection with SelectedPoint = m } }
         | SetWorkflowStep step ->
-            // Context (pick ↔ compare) follows the mode → refetch focus previews.
-            // Entering/leaving Inspect also (re)drives the central-3D variance map,
-            // so drop its cache + bump the generation.
+            // Entering/leaving Inspect (re)drives the central-3D variance map, so drop
+            // its cache + bump the generation.
             if model.WorkflowStep = step then model
             else
                 bumpSurfaceDist ()
-                invalidateFocusMaps
-                    { model with WorkflowStep = step; SurfaceDistance = Map.empty
-                                 CorrSetMode = false; CorrPreview = None }
+                { model with WorkflowStep = step; SurfaceDistance = Map.empty
+                             CorrSetMode = false; CorrPreview = None }
         | SetInspectChannel ch ->
-            // Difference vs displacement changes the focus-tile fetch (channel +
-            // projection) → drop the cached previews so they refetch.
-            if model.InspectChannel = ch then model
-            else invalidateFocusMaps { model with InspectChannel = ch }
+            { model with InspectChannel = ch }
         | SetFocusProjection p ->
-            if model.FocusProjection = p then model
-            else invalidateFocusMaps { model with FocusProjection = p }
+            { model with FocusProjection = p }
         | SetFocusPeekReference held ->
             // Peeking the reference suspends set-correspondence; drop a stale ghost.
             if model.FocusPeekReference = held then model
@@ -375,8 +367,6 @@ module Update =
             if model.Selection.FocusedMesh = Some m then model
             else { model with Selection = { model.Selection with FocusedMesh = Some m }
                               CorrSetMode = false; CorrPreview = None }
-        | FocusMapsComputed(mesh, preview) ->
-            { model with FocusMaps = Map.add mesh preview model.FocusMaps }
         | PickCorrespondenceAt(pinId, mesh, world) ->
             // Set the mesh's correspondence marker for the pin, constrained to the
             // pin's probe-cylinder ROI. Stored mesh-local via the displayed transform.
@@ -494,89 +484,9 @@ module Update =
             | _ -> model
 
     // Inspect focus-tile server channel for a moving cell; mirrors
-    // GuiFocus.compareChannel. Difference = signed M3C2 (1) / vertical Δz (2);
-    // displacement is fetched separately (channel 6, Task 5). The reference cell +
-    // pick context use Shade (0).
-    let private compareChannelInt (model : Model) =
-        match model.InspectChannel with
-        | ChDifference   -> if model.ExtrinsicZDiff then 2 else 1
-        | ChDisplacement -> 6
-
-    // Focus-panel postlude: one debounced fan-out per generation that fetches the
-    // co-oriented preview of every effective-visible mesh missing from FocusMaps.
-    //  • non-Inspect (pick) → Shade from own origin, model projection.
-    //  • Inspect / Difference → signed-distance channel from the reference origin
-    //    (reference cell stays Shade), model projection.
-    //  • Inspect / Displacement → the displacement arrow field for each solved
-    //    moving mesh (surface at solved pose, base at load pose), forced Oblique;
-    //    reference + unsolved meshes fall back to a white Shade surface.
-    // Displayed world poses so the multiples follow a solve.
-    let private ensureFocusMaps (env : Env<Message>) (model : Model) : Model =
-            match model.Registration.ReferenceMesh with
-            | None -> model
-            | Some refMesh ->
-                let visible = effectiveVisibleMeshes model
-                let missing = visible |> List.filter (fun m -> not (Map.containsKey m model.FocusMaps))
-                if List.isEmpty missing || focusMapsReqGen = focusMapsGen then model
-                else
-                    focusMapsReqGen <- focusMapsGen
-                    let inspect = model.WorkflowStep = Inspect
-                    let displacement = inspect && model.InspectChannel = ChDisplacement
-                    let proj = if displacement then 4 else FocusProjection.toInt model.FocusProjection
-                    let chCompare = compareChannelInt model
-                    let refT = (ModelTransforms.displayedWorld model refMesh).Forward
-                    focusMapsCts.Cancel()
-                    focusMapsCts <- new System.Threading.CancellationTokenSource()
-                    let token = focusMapsCts.Token
-                    let jobs =
-                        missing |> List.map (fun m ->
-                            let isRef = m = refMesh
-                            // (channel, surface pose, displacement base pose, origin)
-                            let channel, surfaceT, baseT, origin =
-                                if not inspect then
-                                    0, (ModelTransforms.displayedWorld model m).Forward, M44d.Identity, 0
-                                elif displacement then
-                                    match (if isRef then None else Map.tryFind m model.SolvedTransforms) with
-                                    | Some sr ->
-                                        let scale = DatasetScale.forMesh model.DatasetScales m
-                                        let solvedW = (RigidTransform.renderToWorld scale model.CommonCentroid sr).Forward
-                                        let loadW = (ModelTransforms.loadWorld model m).Forward
-                                        6, solvedW, loadW, 1
-                                    | None ->
-                                        0, (ModelTransforms.displayedWorld model m).Forward, M44d.Identity, 0
-                                else
-                                    (if isRef then 0 else chCompare),
-                                    (ModelTransforms.displayedWorld model m).Forward, M44d.Identity,
-                                    (if isRef then 0 else 1)
-                            async {
-                                try
-                                    let! (v2, tris, scalar, lo, hi, db, dt, dm) =
-                                        Query.meshPreview ApiConfig.apiBase.Value m refMesh surfaceT baseT refT proj origin channel 6000
-                                    return Some (m, { Verts2d = v2; Tris = tris; Scalar = scalar; Lo = lo; Hi = hi
-                                                      DispBase = db; DispTip = dt; DispMag = dm })
-                                with _ -> return None
-                            })
-                    task {
-                        try
-                            do! System.Threading.Tasks.Task.Delay(150, token)
-                            let! results = jobs |> Async.Parallel |> Async.StartAsTask
-                            if not token.IsCancellationRequested then
-                                for r in results do
-                                    match r with
-                                    | Some (m, p) -> env.Emit [FocusMapsComputed(m, p)]
-                                    | None -> ()
-                        with
-                        | :? System.OperationCanceledException -> ()
-                        | _ -> ()
-                    } |> ignore
-                    model
-
     let update (env : Env<Message>) (model : Model) (msg : Message) =
-        let updated =
-            updateCore env model msg
-            |> ScanPinUpdate.ensureProbe env
-            |> ScanPinUpdate.ensureRings env
-            |> ensureVariance env
-            |> ensureFocusMaps env
-        updated
+        updateCore env model msg
+        |> ScanPinUpdate.ensureProbe env
+        |> ScanPinUpdate.ensureRings env
+        |> ensureVariance env
 

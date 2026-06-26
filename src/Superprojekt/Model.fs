@@ -46,20 +46,6 @@ type InspectChannel =
 module InspectChannel =
     let label = function ChDifference -> "Difference" | ChDisplacement -> "Displacement"
 
-// Verts2d is flattened [u0;v0;u1;v1;…] per emitted vertex; Tris index into it.
-// Disp* are populated only for the displacement channel: flattened base/tip 2D
-// arrow endpoints + per-sample 3D magnitude.
-type FocusPreview = {
-    Verts2d  : float[]
-    Tris     : int[]
-    Scalar   : float[]
-    Lo       : float
-    Hi       : float
-    DispBase : float[]
-    DispTip  : float[]
-    DispMag  : float[]
-}
-
 module DatasetScale =
     let forMesh (scales : Map<string, float>) (meshName : string) =
         let i = meshName.IndexOf '/'
@@ -201,10 +187,8 @@ type Model =
         // variance map is independent of it.
         InspectChannel      : InspectChannel
 
-        // FocusMaps caches one server preview per visible mesh; the focused mesh is
-        // Selection.FocusedMesh.
+        // Pano / Top projection of the WebGL focus single.
         FocusProjection     : FocusProjection
-        FocusMaps           : Map<string, FocusPreview>
         // Hold → the focus re-renders the reference mesh in the same frame.
         FocusPeekReference  : bool
 
@@ -287,7 +271,6 @@ module Model =
             WorkflowStep        = Overview
             InspectChannel      = ChDifference
             FocusProjection     = ProjPano
-            FocusMaps           = Map.empty
             FocusPeekReference  = false
             CorrSetMode         = false
             CorrPreview         = None

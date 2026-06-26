@@ -230,39 +230,6 @@ module Query =
                 |> Seq.toArray
         }
 
-    // Focus-panel co-oriented preview. Returns flattened 2D vertices [u0;v0;…],
-    // triangle indices, per-vertex scalar, robust domain, and (displacement only)
-    // flattened base/tip arrow endpoints + per-sample magnitude. transform2 is the
-    // displacement base (load) pose; ignored for every other channel.
-    let meshPreview
-            (serverUrl : string)
-            (name : string) (refName : string)
-            (transform : M44d) (transform2 : M44d) (refTransform : M44d)
-            (projection : int) (originMode : int) (channel : int) (maxTris : int)
-            : Async<float[] * int[] * float[] * float * float * float[] * float[] * float[]> =
-        async {
-            let m44 (m : M44d) =
-                System.String.Join(",",
-                    [| m.M00; m.M01; m.M02; m.M03
-                       m.M10; m.M11; m.M12; m.M13
-                       m.M20; m.M21; m.M22; m.M23
-                       m.M30; m.M31; m.M32; m.M33 |]
-                    |> Array.map (sprintf "%.17g"))
-            let json =
-                sprintf """{"name":"%s","refName":"%s","transform":[%s],"transform2":[%s],"refTransform":[%s],"projection":%d,"originMode":%d,"channel":%d,"maxTris":%d}"""
-                    name refName (m44 transform) (m44 transform2) (m44 refTransform) projection originMode channel maxTris
-            let! r = post serverUrl "/query/mesh-preview" json
-            let flat2 (prop : string) =
-                r.GetProperty(prop).EnumerateArray()
-                |> Seq.collect (fun e -> e.EnumerateArray() |> Seq.map (fun v -> v.GetDouble()))
-                |> Seq.toArray
-            let verts2d = flat2 "verts2d"
-            let tris = r.GetProperty("tris").EnumerateArray() |> Seq.map (fun e -> e.GetInt32()) |> Seq.toArray
-            let scalar = r.GetProperty("scalar").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-            let dispMag = r.GetProperty("dispMag").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-            return verts2d, tris, scalar, r.GetProperty("lo").GetDouble(), r.GetProperty("hi").GetDouble(),
-                   flat2 "dispBase", flat2 "dispTip", dispMag
-        }
 
     let rayHitMany (serverUrl : string) (names : string list) (rayFor : string -> V3d * V3d) =
         names

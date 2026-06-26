@@ -3,7 +3,7 @@ module RegMath
 open Aardvark.Base
 
 // Weighted rigid absolute orientation (Umeyama/Arun, no scale) for the
-// landmark (coarse) registration stage. Pure math — unit-tested standalone.
+// landmark registration solve. Pure math — unit-tested standalone.
 
 type LsqResult = {
     Transform           : M44d      // delta: maps current-world moving points onto the reference

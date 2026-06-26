@@ -28,10 +28,9 @@ type ProbeDistribution = {
     Std       : float
     Bandwidth : float
     Kde       : float[][]
-    // Raw re-centred samples for the raincloud "rain" (bottom-dock inspector).
-    // Always sent, subsampled to ≤300 for payload; stats use the full set.
+    // Raw re-centred samples, subsampled to ≤300 for payload; stats use the full set.
     Samples   : float[]
-    // ROI-averaged intrinsic quality [incidence; range; shape] ∈ [0,1] (B4).
+    // ROI-averaged intrinsic quality [incidence; range; shape] ∈ [0,1].
     Intrinsics : float[]
 }
 
@@ -42,9 +41,9 @@ type ProbeResult = {
     Planarity         : float
     Length            : float
     AutoLength        : float
-    // Axial offset (m along Normal from the pin centre) of chart y=0: distros
-    // are re-centred so 0 = ref median, sitting at centre + Normal·RefOffset in
-    // 3D — the chart↔3D linking must add it.
+    // Axial offset (m along Normal from the pin centre) of the re-centred zero:
+    // distributions are shifted so 0 = ref median, which sits at
+    // centre + Normal·RefOffset in 3D.
     RefOffset         : float
     XAuto             : float * float
     XFit              : float * float
@@ -136,7 +135,7 @@ let private estimateNormal (mi : ProbeMeshInput) (centre : V3d) (radius : float)
         // Geometric observability deficiency (1 − λmin/λmax of the
         // neighbourhood covariance): near-planar patch → ≈1 (weakly conditioned
         // for a 3D solve), isotropic → ≈0. Same formula as
-        // RegMath.observabilityDeficiency (unit-tested).
+        // RegMath.observabilityDeficiency.
         let condDeficiency = if l2 > 1e-30 then max 0.0 (min 1.0 (1.0 - l0 / l2)) else 1.0
         Some (nWorld, planarity, condDeficiency)
 
@@ -209,10 +208,10 @@ let private sampleAlongAxis (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (r
             let stride = float arr.Length / float maxPoints
             Array.init maxPoints (fun i -> arr.[int (float i * stride)])
 
-// ROI-averaged intrinsic quality for the bottom-dock inspector (B4): incidence
-// = surface-vs-probe-axis alignment (view-independent, unlike the §6 camera
-// heatmap), range = proximity to the mesh-origin sensor, shape = triangle
-// regularity. All in [0,1], higher = better; averaged over the ROI cylinder.
+// ROI-averaged intrinsic quality: incidence = surface-vs-probe-axis alignment
+// (view-independent), range = proximity to the mesh-origin sensor, shape =
+// triangle regularity. All in [0,1], higher = better; averaged over the ROI
+// cylinder.
 let private meshIntrinsics (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (radius : float) (halfLen : float) =
     let pm = mi.Lm.parsed
     let inv = mi.Transform.Inverse

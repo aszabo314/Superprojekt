@@ -7,8 +7,8 @@ open MeshCache
 
 // Sphere–surface contact rings: level set of |p − centre| − radius traced by
 // marching-squares edge keys + linking over BVH candidate triangles. Returns
-// every ring (a pin sphere can touch a surface in several places); closed rings
-// repeat their first point so rendering has no gap. Points are world-space.
+// every ring; closed rings repeat their first point so rendering has no gap.
+// Points are world-space.
 let contactRings (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) : V3d[][] =
     let positions = lm.parsed.positions
     let centroid = lm.parsed.centroid
@@ -155,17 +155,16 @@ type PatchPoint = { Px : float; Py : float; Wx : float; Wy : float; Wz : float; 
 type PatchResult = { Points : PatchPoint[]; Triangles : int[]; RefDirWorld : V3d; NormalWorld : V3d }
 
 // frame: optional (normal, refDir) override in the mesh's own frame — skips the
-// local plane fit and projects into the supplied frame (origin = centre) so the
-// patch small-multiples picker shares one co-oriented projection across meshes.
+// local plane fit and projects into the supplied frame (origin = centre) so
+// several meshes share one co-oriented projection.
 //
-// The data are height fields, so there is no overlap to disambiguate: the patch
-// is simply every triangle whose bbox overlaps the footprint sphere, projected
-// into the frame. (Px,Py) is the orthographic projection (origin = centre),
-// Triangles are index triples into Points. Mesh connectivity is irrelevant —
-// a fragmented multi-tile mesh fills the footprint exactly like a watertight
-// DEM. maxTris bounds the output via a uniform stride over the (spatially
-// grouped) BVH triangle order; under the cap a dense mesh thins evenly rather
-// than collapsing to a small core.
+// The data are height fields, so there is no overlap to disambiguate and mesh
+// connectivity is irrelevant: the patch is every triangle whose bbox overlaps
+// the footprint sphere, projected into the frame; a fragmented multi-tile mesh
+// fills the footprint like a watertight DEM. (Px,Py) is the orthographic
+// projection (origin = centre); Triangles index into Points. maxTris bounds the
+// output via a uniform stride over the (spatially grouped) BVH triangle order,
+// so a dense mesh thins evenly rather than collapsing to a core.
 let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxTris : int) (frame : (V3d * V3d) option) : PatchResult =
     let positions = lm.parsed.positions
     let uvs = lm.parsed.uvs
@@ -199,9 +198,9 @@ let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxTris : int) (fra
             normal, orthoRef normal V3d.OIO
     let leftDir = Vec.cross normal refDir
 
-    // Footprint clip: keep a triangle if any corner falls inside the radius disc
-    // (the gathered sphere is slightly larger so straddling rim triangles fill
-    // the edge); trims the wasted annulus the client circle-clips away anyway.
+    // Footprint clip: keep a triangle if any corner falls inside the radius disc.
+    // The gathered sphere is slightly larger so straddling rim triangles fill the
+    // edge; this trims the annulus the client circle-clips away anyway.
     let r2 = radius * radius
     let inline planarIn v =
         let dv = V3d positions.[v] - centreLocal

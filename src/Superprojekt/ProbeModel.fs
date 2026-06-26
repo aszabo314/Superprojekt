@@ -3,9 +3,8 @@ namespace Superprojekt
 open System
 open Aardvark.Base
 
-// N-mesh M3C2 probe results. Lengths in metric world-space metres; the
-// signed-distance axis is re-centred so 0 = the reference median. Raw samples
-// stay server-side — the client gets stats + the KDE curve.
+// Lengths in metric world-space metres; the signed-distance axis is re-centred
+// so 0 = the reference median.
 type ProbeDistribution = {
     MeshName  : string
     Count     : int
@@ -14,9 +13,8 @@ type ProbeDistribution = {
     Q3        : float
     Std       : float
     Kde       : (float * float)[]
-    // Raw re-centred samples for the raincloud "rain" (≤300, subsampled server-side).
     Samples   : float[]
-    // ROI-averaged intrinsic quality [incidence; range; shape] ∈ [0,1] (inspector B4).
+    // Intrinsic quality [incidence; range; shape] ∈ [0,1].
     Intrinsics : float[]
 }
 

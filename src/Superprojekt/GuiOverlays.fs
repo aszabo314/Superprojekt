@@ -25,22 +25,6 @@ module GuiOverlays =
                 | None -> "")
         }
 
-    // Thin banner while a registration solve preview is pending (spec §6).
-    let previewBanner (model : AdaptiveModel) (setSwap : bool -> unit) =
-        div {
-            Class "preview-banner"
-            Primitives.showWhen (model.PendingReg |> AVal.map PendingRegistration.isPreview)
-            span { Class "preview-banner-text"; "Previewing unregistered result — commit or discard" }
-            // Hold to compare: render-time swap to the committed (before) pose.
-            button {
-                Class "preview-banner-swap"
-                Attribute("title", "Hold to compare: shows the committed (before) pose while held")
-                Dom.OnPointerDown((fun _ -> setSwap true), pointerCapture = true)
-                Dom.OnPointerUp((fun _ -> setSwap false), pointerCapture = true)
-                "⇄ Hold: before"
-            }
-        }
-
     // Transient feedback for blocked/failed actions (auto-clears).
     let toast (model : AdaptiveModel) =
         div {

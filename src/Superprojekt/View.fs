@@ -51,35 +51,20 @@ module View =
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
         let cursorScreen    = cval<V2d option> None
-        let previewSwap     = cval false
 
         let fullscreenActive = spaceHeld :> aval<bool>
 
-        // Option/Alt = layer-isolation: wheel cycles the active picking layer,
-        // meshes render isolated (active solid, rest ghosted) while held. The
-        // selection outlives the key — it keeps steering picks. Suspended while
-        // the chart cursor is live (Alt there extends the slicing plane
-        // scene-wide, needing every mesh visible).
-        // Alt-held layer isolation, OR §9 align-auto (step 2: the manually-moved
-        // mesh solid, rest ghosted), OR §9 movement-auto (movement layer on: the
-        // moved mesh solid + glyphs, rest ghosted).
+        // Mesh isolation for the main view (hover = peek): Alt-held layer
+        // isolation (wheel-cycled), else the hovered mesh from the shared
+        // Selection. Ghosts the rest while held.
         let wheelIsolation =
             AVal.custom (fun t ->
-                let held = altHeld.GetValue t
-                if held then model.ActivePickingLayer.GetValue t
+                if altHeld.GetValue t then model.ActivePickingLayer.GetValue t
                 else
-                    match model.MovementLayer.GetValue t, model.PendingReg.GetValue t with
-                    | (MovementGlyphs | MovementGrid), Some pr when not (Map.isEmpty pr.Results) ->
-                        pr.Results |> Map.toSeq |> Seq.tryHead |> Option.map fst
-                    | _ ->
-                        // Manual move → align-auto isolates the focused mesh.
-                        // Correspondences → isolate only the hovered manager row
-                        // (§G brushing); base state keeps every mesh for the
-                        // constellation. Other steps: no isolation.
-                        match model.WorkflowStep.GetValue t with
-                        | StepManualMove -> model.FocusMesh.GetValue t
-                        | StepCorrespondences -> model.CorrRowHover.GetValue t |> Option.map snd
-                        | _ -> None)
+                    match model.Selection.Hovered.GetValue t with
+                    | Some (HoverMesh m) -> Some m
+                    | Some (HoverPoint (_, m)) -> Some m
+                    | _ -> None)
 
         // Contact-line highlight for the mesh shader: the 3D hover point drives a
         // band inside the effective (selected) pin's probe cylinder. Only the
@@ -87,13 +72,12 @@ module View =
         let cursorHighlight =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
             let effectiveId =
-                ScanPinModel.effectivePinIdA model.ScanPins.Placement model.ScanPins.SelectedPin
+                ScanPinModel.effectivePinIdA model.ScanPins.Placement model.Selection.SelectedPin
             AVal.custom (fun t ->
-                let pv = PendingRegistration.isPreview (model.PendingReg.GetValue t)
                 let probeOf pid =
                     HashMap.tryFind pid (pinsVal.GetValue t)
                     |> Option.bind (fun pin ->
-                        match ScanPin.effectiveProbe pv pin with
+                        match pin.Probe with
                         | ProbeReady r -> Some (pin, r)
                         | _ -> None)
                 match hoverCoord.GetValue t, effectiveId.GetValue t with
@@ -121,8 +105,8 @@ module View =
                 "const l = document.getElementById('loader');"
                 "if(l) l.remove();"
                 "document.body.classList.add('loaded');"
-                // Pulse outline for nav actions (§5); delayed so just-opened
-                // targets are visible first.
+                // Pulse outline for nav actions; delayed so just-opened targets
+                // are visible first.
                 "window.SuperPulse = function(selector){"
                 "  setTimeout(function(){"
                 "    var el = document.querySelector(selector);"
@@ -236,7 +220,6 @@ module View =
                 Dom.OnMouseWheel(fun e ->
                     let delta = V2d(e.DeltaX, e.DeltaY) / 120.0
                     if not e.Alt then
-                        // plain wheel = camera zoom, always
                         env.Emit [CameraMessage (OrbitMessage.Wheel(false, delta))]
                     else
                         // Option/Alt + wheel = cycle the isolated layer. Prefer
@@ -336,15 +319,15 @@ module View =
                         transact (fun () ->
                             if needHover     then hoverCoord.Value     <- nextHover
                             if needPlacement then placementHover.Value <- nextPlacement)
-                    // Moving over terrain (off a constellation glyph) ends the
-                    // §G glyph-hover brush — the glyph re-sets it while hovered.
-                    if AVal.force model.WorkflowStep = StepCorrespondences
-                       && (AVal.force model.CorrRowHover).IsSome then
-                        env.Emit [SetCorrRowHover None]
+                    // Moving over terrain (off a constellation glyph) ends a
+                    // point-hover brush — the glyph re-sets it while hovered.
+                    match AVal.force model.Selection.Hovered with
+                    | Some (HoverPoint _) -> env.Emit [SetHovered None]
+                    | _ -> ()
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) cursorHighlight clipUniforms (previewSwap :> aval<bool>) wheelIsolation model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) cursorHighlight clipUniforms wheelIsolation model
             }
 
             Dom.OnKeyDown(fun e ->
@@ -375,7 +358,6 @@ module View =
             }
             GuiFocus.panel env model
             GuiPanels.placementFlyout env model
-            GuiOverlays.previewBanner model (fun b -> transact (fun () -> previewSwap.Value <- b))
             GuiOverlays.toast model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)

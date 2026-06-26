@@ -279,32 +279,20 @@ body.loaded { background: #f4f6f8; }
 }
 .focus-proj-btn:last-child { border-right: none; }
 .focus-proj-btn.btn-active { background: #1a56db; color: #fff; }
+/* fixed projection chip (displacement forces Oblique) */
+.focus-proj-fixed { padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px; background: #eef2f6; color: #475569; font-size: 11px; }
 /* peek-reference modifier (hold) */
 .focus-peek {
     margin-left: auto; padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
     background: #fff; color: #b45309; cursor: pointer; font-size: 11px;
 }
 .focus-peek:active { background: #fef3c7; }
-/* large single (the one secondary WebGL control) */
-.focus-single { width: 100%; height: 280px; background: #eef2f6; position: relative; }
-.focus-rc { width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
-/* §E focus-2D handle + reference crosshair overlay (display only; click the
-   surface to place — pointer events pass through to the canvas) */
-.focus-handles { position: absolute; inset: 0; pointer-events: none; }
-.fh-handle {
-    position: absolute; width: 12px; height: 12px; margin: -6px 0 0 -6px;
-    border: 2px solid #fff; border-radius: 50%; box-shadow: 0 0 0 1px rgba(0,0,0,0.35);
-}
-.fh-handle.fh-hot { box-shadow: 0 0 0 3px rgba(8,145,178,0.6); animation: fhpulse 0.9s ease-in-out infinite; }
-@keyframes fhpulse { 0%,100% { box-shadow: 0 0 0 3px rgba(8,145,178,0.6); } 50% { box-shadow: 0 0 0 6px rgba(8,145,178,0.25); } }
-.fh-cross {
-    position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px;
-    background:
-        linear-gradient(#0f172a, #0f172a) center/2px 100% no-repeat,
-        linear-gradient(#0f172a, #0f172a) center/100% 2px no-repeat;
-}
+/* large single — canvas (pan/zoom/pick); no WebGL control here any more */
+.focus-single { width: 100%; height: 280px; background: #eef2f6; position: relative; touch-action: none; }
+.fs-canvas-el { display: block; touch-action: none; }
+.focus-single .fm-ph-big { color: #94a3b8; padding: 14px; }
 /* canvas small-multiples strip */
-.fm-bus { display: none !important; }
+.fm-bus, .fs-bus { display: none !important; }
 .focus-multiples {
     display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
     padding: 6px; overflow-y: auto; max-height: 40vh;
@@ -420,26 +408,16 @@ body.loaded { background: #f4f6f8; }
 .mb-on { color: #1a56db; }
 .mb-ref.mb-on { color: #b45309; }
 
-/* ── Registration preview banner ───────────────────────────────────── */
+/* ── Global before/after registration toggle (top bar) ─────────────── */
 
-.preview-banner {
-    position: fixed; top: 44px; left: 50%;
-    transform: translateX(-50%);
-    background: #f0f9ff; color: #0369a1;
-    border: 1px solid #bae6fd; border-top: none;
-    font-size: 12px; padding: 3px 14px;
-    border-radius: 0 0 6px 6px; z-index: 150;
-    pointer-events: none;
-    display: flex; align-items: center; gap: 10px;
+.tb-regview { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 5px; overflow: hidden; }
+.tb-regview-off { opacity: 0.45; pointer-events: none; }
+.tb-regview-btn {
+    border: none; background: #fff; color: #334155; cursor: pointer;
+    font-size: 12px; padding: 3px 10px;
 }
-.preview-banner-swap {
-    pointer-events: auto;
-    font-size: 11px; padding: 1px 8px;
-    border: 1px solid #0369a1; border-radius: 10px;
-    background: #ffffff; color: #0369a1; cursor: pointer;
-    user-select: none; touch-action: none;
-}
-.preview-banner-swap:active { background: #0369a1; color: #ffffff; }
+.tb-regview-btn + .tb-regview-btn { border-left: 1px solid #e2e8f0; }
+.tb-regview-btn.btn-active { background: #1a56db; color: #fff; }
 
 /* ── Toast ─────────────────────────────────────────────────────────── */
 
@@ -1173,13 +1151,7 @@ body.loaded { background: #f4f6f8; }
 .pin-inspector .ins-body { flex: 1; display: flex; min-width: 0; }
 .ins-mgr-wrap { flex: 1; display: flex; min-width: 0; }
 
-/* light dock modes (reference / fine / commit) */
-.ins-light { flex: 1; display: flex; flex-direction: column; gap: 6px; padding: 10px 14px; color: #334155; }
-.ins-light-row { display: flex; gap: 10px; align-items: baseline; }
-.ins-light-k { color: #64748b; min-width: 72px; }
-.ins-commit-row { display: flex; gap: 8px; margin-top: 4px; }
-
-/* §F correspondence manager */
+/* correspondence manager */
 .ins-mgr { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 6px 10px; }
 .ins-mgr-rows { flex: 1; overflow-y: auto; min-height: 0; }
 .ins-mgr-row {
@@ -1198,69 +1170,53 @@ body.loaded { background: #f4f6f8; }
 .ins-mgr-foot { display: flex; align-items: center; gap: 10px; padding-top: 4px; border-top: 1px solid #eef2f6; }
 .ins-solve { white-space: nowrap; }
 
-.ins-b1 {
-    flex: 0 0 180px; padding: 8px 10px;
-    display: flex; flex-direction: column; gap: 8px;
-    border-right: 1px solid #eef2f6;
-}
+/* pin name input (manager head) + k/n counter (manager foot) + colour swatch */
 .ins-name {
     width: 100%; height: 24px; padding: 0 6px;
     border: 1px solid #c5cdd8; border-radius: 3px;
     font-size: 12px; font-weight: 600; color: #0f172a;
 }
-.ins-b1-row { display: flex; align-items: center; gap: 6px; margin-top: auto; }
 .ins-kn {
     flex: 1; font-family: 'SF Mono', 'Monaco', monospace;
     font-size: 11px; color: #475569;
 }
-.ins-del { color: #dc2626; }
-
-.ins-b2 { flex: 1 1 auto; min-width: 0; position: relative; }
-.ins-rain-bus { display: none !important; }
-.ins-rain { width: 100%; height: 100%; }
-.ins-rain .ins-ph {
-    width: 100%; height: 100%; display: flex; align-items: center;
-    justify-content: center; color: #cbd5e1; font-size: 22px;
-}
-
-.ins-b3 {
-    flex: 0 0 200px; padding: 6px 8px; overflow-y: auto;
-    border-left: 1px solid #eef2f6;
-    display: flex; flex-direction: column; gap: 1px;
-}
-.ins-b3-row {
-    display: flex; align-items: center; gap: 5px;
-    padding: 2px 4px; border-radius: 2px; cursor: pointer;
-}
-.ins-b3-row:hover { background: #f1f5f9; }
-.ins-b3-active { background: #ecfeff; box-shadow: inset 2px 0 0 #0891b2; }
 .ins-sw { width: 8px; height: 8px; flex-shrink: 0; border-radius: 1px; display: inline-block; }
-.ins-b3-name {
-    flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font-size: 11px; color: #0f172a;
-}
-.ins-b3-ok { width: 12px; text-align: center; font-weight: 700; }
-.ins-ok { color: #16a34a; }
-.ins-no { color: #cbd5e1; }
-.ins-b3-res {
-    width: 52px; text-align: right; font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 11px; color: #475569; font-variant-numeric: tabular-nums;
-}
 
-.ins-b4 {
-    flex: 0 0 120px; padding: 10px; border-left: 1px solid #eef2f6;
-    display: flex; flex-direction: column; justify-content: center; gap: 8px;
-}
-.ins-bar-row { display: flex; align-items: center; gap: 5px; }
-.ins-bar-id {
-    width: 10px; font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 11px; color: #64748b; font-weight: 700;
-}
-.ins-bar-track {
-    flex: 1; height: 8px; background: #f1f5f9; border-radius: 4px; overflow: hidden;
-}
-.ins-bar-fill { height: 100%; border-radius: 4px; transition: width 0.15s ease; }
-.ins-bar-val {
-    width: 28px; text-align: right; font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 10px; color: #475569; font-variant-numeric: tabular-nums;
-}
+/* ── Phase-1 three-mode rail / dock additions ──────────────────────── */
+.rail-row-hover { background: #ecfeff; box-shadow: inset 2px 0 0 #0891b2; }
+.rail-sublabel { font-size: 11px; color: #64748b; min-width: 64px; }
+.rail-light-row { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
+.rail-light-v { color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Overview dock — mesh roster */
+.ins-roster { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 6px 10px; font-size: 12px; }
+.ros-head, .ros-row { display: flex; align-items: center; gap: 8px; padding: 2px 4px; }
+.ros-head { color: #64748b; font-size: 11px; border-bottom: 1px solid #e2e8f0; }
+.ros-rows { flex: 1; overflow-y: auto; min-height: 0; }
+.ros-row { border-radius: 3px; cursor: pointer; }
+.ros-row:hover { background: #f1f5f9; }
+.ros-row-active { background: #ecfeff; box-shadow: inset 2px 0 0 #0891b2; }
+.ros-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ros-cell { width: 92px; color: #475569; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Correspondence dock — manager head (name + radius) */
+.ins-mgr-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #eef2f6; margin-bottom: 4px; }
+.ins-mgr-head .ins-name { flex: 1; }
+
+/* Inspect dock — stub note */
+.ins-stub-note { font-size: 11px; color: #64748b; line-height: 1.4; margin-top: 4px; }
+
+/* Inspect dock — channel toggle + distribution + shift readout */
+.ins-inspect { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 6px 10px; }
+.ins-insp-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #eef2f6; margin-bottom: 4px; }
+.ins-insp-label { font-size: 11px; color: #64748b; font-weight: 600; }
+.ins-insp-body { flex: 1; display: flex; min-width: 0; min-height: 0; gap: 8px; }
+.ins-dist { flex: 1; min-width: 0; position: relative; }
+.ins-dist-cv { display: block; }
+.ins-dist .ins-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 14px; }
+.ins-shift { flex: 0 0 188px; border-left: 1px solid #eef2f6; padding-left: 10px; display: flex; flex-direction: column; gap: 6px; }
+.ins-shift-body { display: flex; flex-direction: column; gap: 4px; }
+.ins-shift-head { font-weight: 700; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ins-shift-row { display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
+.ins-shift-k { flex: 1; color: #64748b; font-size: 11px; }
+.ins-shift-v { font-family: 'SF Mono', 'Monaco', monospace; font-size: 12px; color: #0f172a; }

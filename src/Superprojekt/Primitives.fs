@@ -21,8 +21,6 @@ module Primitives =
 
     let c4bToHex (c : C4b) = sprintf "#%02x%02x%02x" c.R c.G c.B
 
-    // Short, human-friendly mesh label (drops the dataset prefix, keeps a date +
-    // segment tag where present).
     let shortName (name : string) =
         let mesh =
             let s = name.IndexOf('/')
@@ -33,7 +31,6 @@ module Primitives =
             if si > 0 then date + "_" + mesh.[si + 1 ..] else date
         else mesh
 
-    // Prefix the mesh's stable 1-based order number (matches the panel palette).
     let numbered (order : HashMap<string, int>) (name : string) =
         match HashMap.tryFind name order with
         | Some i -> sprintf "%d  %s" (i + 1) (shortName name)
@@ -166,9 +163,8 @@ module Primitives =
             }
         }
 
-    // OnBoot wrapper for attribute-driven SVG/DOM rendering: parses the JSON
-    // attribute into `d`, clears, runs `body`, re-renders on mutation. Dynamic
-    // markup goes through JS because the Aardvark.Dom CE has no yield!.
+    // Attribute-driven SVG/DOM rendering via OnBoot JS (the Aardvark.Dom CE has no
+    // yield!): parses the JSON attribute into `d`, runs `body`, re-renders on mutation.
     let observedRender (attr : string) (fallback : string) (body : string list) =
         OnBoot (
             [ "(function(){"
@@ -186,9 +182,8 @@ module Primitives =
               sprintf "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['%s']});" attr
               "})();" ])
 
-// Readiness-engine adapter: builds the engine input from individual model
-// leaves (adaptive-performance rule — never the whole record), shared by the
-// registration card and the workflow panel.
+// Readiness-engine adapter: builds the engine input from individual model leaves
+// (adaptive-performance rule — never depend on the whole record).
 module ReadinessView =
 
     open FSharp.Data.Adaptive
@@ -201,12 +196,9 @@ module ReadinessView =
             let reg = model.Registration.GetValue t
             let names = meshNamesVal.GetValue t |> IndexList.toList
             let visible = model.MeshVisible.GetValue t
-            let pending = PendingRegistration.isPreview (model.PendingReg.GetValue t)
-            // No history any more: "committed step" = a mesh already carries a
-            // (non-identity) committed transform from the single coarse commit.
-            let hasCommitted =
-                model.MeshTransforms.GetValue t
-                |> Map.exists (fun _ tr -> not (tr.Forward.Equals M44d.Identity))
+            let pending = false
+            // "Committed step" = at least one solved mesh.
+            let hasCommitted = not (Map.isEmpty (model.SolvedTransforms.GetValue t))
             let movingVisible =
                 match reg.ReferenceMesh with
                 | Some r ->
@@ -236,8 +228,5 @@ module ReadinessView =
                 EnabledPins         = enabledPins
                 HasPending          = pending
                 HasCommittedStep    = hasCommitted
-                FineModeLabel       =
-                    match reg.Mode with
-                    | TraditionalIcp -> "Traditional ICP"
-                    | RegionRestrictedIcp -> "Region-restricted"
+                FineModeLabel       = "Fine ICP"
             })

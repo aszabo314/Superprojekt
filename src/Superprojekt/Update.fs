@@ -12,16 +12,6 @@ module Update =
 
 
     let private updateCore (env : Env<Message>) (model : Model) (msg : Message) =
-        // §6: while a solve preview is pending, block actions that change what it is relative to.
-        let previewBlocked =
-            match msg with
-            | SetActiveDataset _
-            | ScanPinMsg EnterAnchorPlacement ->
-                PendingRegistration.isPreview model.PendingReg
-            | _ -> false
-        if previewBlocked then
-            showToast env "Blocked while previewing a registration result — commit or discard it first" model
-        else
         match msg with
         | CameraMessage msg ->
             { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
@@ -30,6 +20,8 @@ module Update =
             let names   = centroids |> Array.map fst |> IndexList.ofArray
             let visible = centroids |> Array.fold (fun m (n, _) -> Map.add n true m) Map.empty
             let indices = centroids |> Array.mapi (fun i (n,_) -> n,i) |> HashMap.ofArray
+            // LoadTransform = the immutable baseline captured at load (identity; meshes load unregistered).
+            let loadTransforms = centroids |> Array.fold (fun m (n, _) -> Map.add n Trafo3d.Identity m) Map.empty
             let dataset =
                 if centroids.Length > 0 then
                     let n = fst centroids.[0] in let s = n.IndexOf('/') in if s >= 0 then n.[..s-1] else ""
@@ -41,6 +33,9 @@ module Update =
                 MeshOrder        = indices
                 MeshesLoaded     = HashSet.empty
                 SceneBounds      = Box3d.Invalid
+                LoadTransforms   = loadTransforms
+                SolvedTransforms = Map.empty
+                RegView          = RegBefore
                 // Default reference = first mesh so reference-peek + registration UI work out of the box.
                 Registration     =
                     { model.Registration with
@@ -92,22 +87,32 @@ module Update =
             if model.ReferencePeekHeld = held then model
             else { model with ReferencePeekHeld = held }
 
-        | SetRegistrationMode m ->
-            { model with Registration = { model.Registration with Mode = m } }
+        | SetRegView v ->
+            // Only meaningful once a solve exists (the view disables it otherwise).
+            if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
+            else invalidateProbes (invalidateRings { model with RegView = v })
         | SetReferenceMesh mesh ->
-            // §3: probe invalidation + clear pending preview + re-seed all correspondence-enabled pins.
-            let model = exitPreview model
+            // Reference change invalidates any solve (it was relative to the old
+            // reference): drop SolvedTransforms, snap back to Before, invalidate
+            // probes/rings, then re-seed all correspondence-enabled pins.
             let model =
-                invalidateProbes { model with Registration = { model.Registration with ReferenceMesh = mesh } }
+                invalidateProbes (invalidateRings
+                    { model with
+                        Registration = { model.Registration with ReferenceMesh = mesh }
+                        SolvedTransforms = Map.empty
+                        RegView = RegBefore })
             match mesh with
             | Some _ -> seedAnchors env model (correspondenceEnabledIds model)
             | None -> model
 
-        // Stage 1: weighted rigid solve per visible moving mesh with ≥3 pairs, in parallel → PendingReg.
+        // Weighted rigid solve per visible moving mesh with ≥3 in-ROI pairs, in
+        // parallel. Writes SolvedTransform directly. Anchors are mesh-local, so the
+        // pairs are taken at the load pose, giving an absolute solved transform a
+        // re-solve replaces wholesale.
         | SolveCoarse ->
             let reg = model.Registration
             match reg.ReferenceMesh with
-            | None -> model
+            | None -> showToast env "Designate a reference mesh (★) first" model
             | Some refMesh ->
                 let visibleMoving =
                     model.MeshNames |> IndexList.toList
@@ -119,224 +124,71 @@ module Update =
                     |> List.choose (fun (_, p) ->
                         match ScanPin.correspondence p with
                         | Some c when c.Enabled && c.RefAnchor.IsSome && p.Phase = PinPhase.Committed ->
-                            Some (p.Id, c.RefAnchor.Value, 1.0, c.Anchors)
+                            Some (p.Id, c.RefAnchor.Value, c.Anchors)
                         | _ -> None)
                 let pairsFor mesh =
                     enabledPins
-                    |> List.choose (fun (pinId, ra, rel, anchors) ->
+                    |> List.choose (fun (pinId, ra, anchors) ->
                         match Map.tryFind mesh anchors with
-                        | Some a -> Some (pinId, ra, a.Point, rel)
+                        | Some a -> Some (pinId, ra, a.Point)
                         | None -> None)
                     |> Array.ofList
-                let solvable, unsolved =
-                    visibleMoving |> List.partition (fun m -> (pairsFor m).Length >= 3)
-                if List.isEmpty solvable then model
+                let solvable = visibleMoving |> List.filter (fun m -> (pairsFor m).Length >= 3)
+                if List.isEmpty solvable then
+                    showToast env "Need ≥3 correspondence markers on a visible moving mesh" model
                 else
-                    let inputs =
-                        CoarseInputs (
-                            enabledPins
-                            |> List.map (fun (pinId, _, rel, anchors) ->
-                                pinId, rel, anchors |> Map.map (fun _ a -> a.Source))
-                            |> Array.ofList)
                     for mesh in solvable do
                         let pairs = pairsFor mesh
-                        let pinIds = pairs |> Array.map (fun (pinId, _, _, _) -> pinId)
-                        let wSum = pairs |> Array.sumBy (fun (_, _, _, w) -> max 0.0 w)
+                        let pinIds = pairs |> Array.map (fun (pinId, _, _) -> pinId)
                         let rmsBefore =
-                            if wSum <= 1e-12 then
-                                sqrt ((pairs |> Array.sumBy (fun (_, ra, mp, _) -> (mp - ra).LengthSquared)) / float pairs.Length)
-                            else
-                                sqrt ((pairs |> Array.sumBy (fun (_, ra, mp, w) -> max 0.0 w * (mp - ra).LengthSquared)) / wSum)
-                        let queryPairs = pairs |> Array.map (fun (_, ra, mp, w) -> ra, mp, w)
+                            sqrt ((pairs |> Array.sumBy (fun (_, ra, mp) -> (mp - ra).LengthSquared)) / float pairs.Length)
+                        // (refAnchor world, moving anchor at load pose = own-frame point, weight 1).
+                        let queryPairs = pairs |> Array.map (fun (_, ra, mp) -> ra, mp, 1.0)
                         task {
                             try
-                                let! delta, residuals, eigen, collinear =
+                                let! world, residuals, eigen, collinear =
                                     Query.lsqPairs ApiConfig.apiBase.Value mesh queryPairs
                                     |> Async.StartAsTask
                                 let pairResiduals = Array.zip pinIds residuals
-                                env.Emit [CoarseSolved(mesh, delta, pairResiduals, rmsBefore, eigen, collinear)]
+                                env.Emit [CoarseSolved(mesh, world, pairResiduals, rmsBefore, eigen, collinear)]
                             with ex ->
                                 env.Emit [CoarseFailed(mesh, ex.Message)]
                         } |> ignore
-                    { model with
-                        PendingReg = Some {
-                            Stage    = StageCoarse
-                            Mode     = "correspondence"
-                            Inputs   = inputs
-                            Results  = Map.empty
-                            Unsolved = unsolved
-                            Expected = List.length solvable }
-                        Registration = { reg with Running = true } }
-        | CoarseSolved(mesh, worldDelta, pairResiduals, rmsBefore, eigenvalues, collinear) ->
-            match model.PendingReg with
-            | Some pr when pr.Stage = StageCoarse ->
-                let scale = DatasetScale.forMesh model.DatasetScales mesh
-                let deltaRender =
-                    RigidTransform.worldToRender scale model.CommonCentroid (Trafo3d(worldDelta, worldDelta.Inverse))
-                let rmsAfter =
-                    if pairResiduals.Length = 0 then 0.0
-                    else sqrt ((pairResiduals |> Array.sumBy (fun (_, r) -> r * r)) / float pairResiduals.Length)
-                let result = {
-                    Delta         = deltaRender
-                    RmsBefore     = rmsBefore
-                    RmsAfter      = rmsAfter
-                }
-                let pr' = { pr with Results = Map.add mesh result pr.Results; Expected = max 0 (pr.Expected - 1) }
-                let sp =
-                    pairResiduals |> Array.fold (fun sp (pinId, r) ->
-                        updateCorr pinId (fun c -> { c with Residuals = Map.add mesh r c.Residuals }) sp)
-                        model.ScanPins
-                let lastEntry = {
-                    Stage           = StageCoarse
-                    RmsBefore       = rmsBefore
-                    RmsAfter        = rmsAfter
-                    Conditioning    = Some { Eigenvalues = eigenvalues; CollinearityWarning = collinear }
-                    PerPinResiduals = Some (Map.ofArray pairResiduals)
-                    Timestamp       = System.DateTime.UtcNow
-                }
-                clearPreviewProbes (invalidateRings
-                    { model with
-                        PendingReg = Some pr'
-                        ScanPins = sp
-                        LastSolve = Map.add mesh lastEntry model.LastSolve
-                        Registration = { model.Registration with Running = pr'.Expected > 0 } })
-            | _ -> model
+                    { model with Registration = { reg with Running = true } }
+        | CoarseSolved(mesh, world, pairResiduals, rmsBefore, eigenvalues, collinear) ->
+            // lsqPairs returns the absolute world transform mapping the load-pose
+            // moving anchors onto the reference; store it as the SolvedTransform.
+            let scale = DatasetScale.forMesh model.DatasetScales mesh
+            let solvedRender =
+                RigidTransform.worldToRender scale model.CommonCentroid (Trafo3d(world, world.Inverse))
+            let rmsAfter =
+                if pairResiduals.Length = 0 then 0.0
+                else sqrt ((pairResiduals |> Array.sumBy (fun (_, r) -> r * r)) / float pairResiduals.Length)
+            let sp =
+                pairResiduals |> Array.fold (fun sp (pinId, r) ->
+                    updateCorr pinId (fun c -> { c with Residuals = Map.add mesh r c.Residuals }) sp)
+                    model.ScanPins
+            let lastEntry = {
+                Stage           = StageCoarse
+                RmsBefore       = rmsBefore
+                RmsAfter        = rmsAfter
+                Conditioning    = Some { Eigenvalues = eigenvalues; CollinearityWarning = collinear }
+                PerPinResiduals = Some (Map.ofArray pairResiduals)
+                Timestamp       = System.DateTime.UtcNow
+            }
+            invalidateRings (invalidateProbes
+                { model with
+                    SolvedTransforms = Map.add mesh solvedRender model.SolvedTransforms
+                    RegView = RegAfter
+                    ScanPins = sp
+                    LastSolve = Map.add mesh lastEntry model.LastSolve
+                    Registration = { model.Registration with Running = false } })
         | CoarseFailed(mesh, reason) ->
-            match model.PendingReg with
-            | Some pr when pr.Stage = StageCoarse ->
-                let pr' = { pr with Unsolved = mesh :: pr.Unsolved; Expected = max 0 (pr.Expected - 1) }
+            showToast env (sprintf "Solve failed (%s)" (Primitives.shortName mesh))
                 { model with
-                    PendingReg = Some pr'
                     DebugLog = model.DebugLog.InsertAt(0, sprintf "coarse solve failed (%s): %s" mesh reason)
-                    Registration = { model.Registration with Running = pr'.Expected > 0 } }
-            | _ -> model
+                    Registration = { model.Registration with Running = false } }
 
-        // Stage 2 · Fine: existing ICP, unchanged math; solves land in PendingReg as a delta vs committed.
-        | RunRegistration ->
-            let reg = model.Registration
-            match reg.ReferenceMesh with
-            | None -> model
-            | Some refMesh ->
-                let visibleMeshes =
-                    model.MeshNames |> IndexList.toSeq
-                    |> Seq.filter (fun n ->
-                        n <> refMesh
-                        && Map.tryFind n model.MeshVisible |> Option.defaultValue true)
-                    |> Array.ofSeq
-                if visibleMeshes.Length = 0 then model
-                else
-                    let anchorPins =
-                        model.ScanPins.Pins |> HashMap.toSeq
-                        |> Seq.choose (fun (_, pin) ->
-                            if pin.Phase = PinPhase.Committed then
-                                // pin.Centre and pin.InnerRadius are already world-space metres.
-                                Some (pin.Id, (pin.Centre, pin.InnerRadius, 1.0))
-                            else None)
-                        |> Array.ofSeq
-                    let anchors =
-                        match reg.Mode with
-                        | TraditionalIcp -> [||]
-                        | RegionRestrictedIcp -> anchorPins |> Array.map snd
-                    let eps =
-                        match reg.Mode with
-                        | TraditionalIcp -> 0.0
-                        | RegionRestrictedIcp -> 0.05
-                    let modeTag =
-                        match reg.Mode with
-                        | TraditionalIcp -> "traditional-icp"
-                        | RegionRestrictedIcp -> "region-icp"
-                    for mov in visibleMeshes do
-                        let initial = (ModelTransforms.committedWorld model mov).Forward
-                        let movName = mov
-                        task {
-                            try
-                                let! trafo, conv, resi =
-                                    Query.runIcp ApiConfig.apiBase.Value refMesh movName initial 50 30 anchors eps
-                                    |> Async.StartAsTask
-                                env.Emit [FineSolved(movName, trafo, conv, resi)]
-                            with ex ->
-                                env.Emit [FineFailed(movName, ex.Message)]
-                        } |> ignore
-                    { model with
-                        PendingReg = Some {
-                            Stage    = StageFine
-                            Mode     = modeTag
-                            Inputs   = FineInputs(modeTag, (match reg.Mode with
-                                                            | RegionRestrictedIcp -> anchorPins |> Array.map fst
-                                                            | TraditionalIcp -> [||]))
-                            Results  = Map.empty
-                            Unsolved = []
-                            Expected = visibleMeshes.Length }
-                        Registration = { reg with Running = true } }
-        | FineSolved(mesh, world, conv, resi) ->
-            match model.PendingReg with
-            | Some pr when pr.Stage = StageFine ->
-                // ICP returns the full world transform (iterates from committed initial); store the delta.
-                let committedW = ModelTransforms.committedWorld model mesh
-                let deltaW = committedW.Inverse * world
-                let scale = DatasetScale.forMesh model.DatasetScales mesh
-                let deltaRender = RigidTransform.worldToRender scale model.CommonCentroid deltaW
-                let rmsAfter =
-                    if resi.Length = 0 then 0.0
-                    else sqrt ((resi |> Array.sumBy (fun x -> x * x)) / float resi.Length)
-                let rmsBefore = if conv.Length > 0 then conv.[0] else rmsAfter
-                let result = {
-                    Delta         = deltaRender
-                    RmsBefore     = rmsBefore
-                    RmsAfter      = rmsAfter
-                }
-                let pr' = { pr with Results = Map.add mesh result pr.Results; Expected = max 0 (pr.Expected - 1) }
-                let lastEntry = {
-                    Stage           = StageFine
-                    RmsBefore       = rmsBefore
-                    RmsAfter        = rmsAfter
-                    Conditioning    = None
-                    PerPinResiduals = None
-                    Timestamp       = System.DateTime.UtcNow
-                }
-                clearPreviewProbes (invalidateRings
-                    { model with
-                        PendingReg = Some pr'
-                        LastSolve = Map.add mesh lastEntry model.LastSolve
-                        Registration = { model.Registration with Running = pr'.Expected > 0 } })
-            | _ -> model
-        | FineFailed(mesh, reason) ->
-            match model.PendingReg with
-            | Some pr when pr.Stage = StageFine ->
-                let pr' = { pr with Unsolved = mesh :: pr.Unsolved; Expected = max 0 (pr.Expected - 1) }
-                { model with
-                    PendingReg = Some pr'
-                    DebugLog = model.DebugLog.InsertAt(0, sprintf "fine solve failed (%s): %s" mesh reason)
-                    Registration = { model.Registration with Running = pr'.Expected > 0 } }
-            | _ -> model
-
-        | CommitRegistration ->
-            match model.PendingReg with
-            | Some pr when not (Map.isEmpty pr.Results) ->
-                // Single commit (no history): apply each pending delta into the
-                // committed render transforms, re-base correspondence anchors by
-                // the applied world delta so they stay on the surface.
-                let committed mesh = ModelTransforms.committedRender model mesh
-                let after =
-                    pr.Results |> Map.fold (fun m mesh r ->
-                        Map.add mesh (RegLog.effective (committed mesh) r.Delta) m) model.MeshTransforms
-                let worldDeltas =
-                    pr.Results |> Map.map (fun mesh r ->
-                        ModelTransforms.worldDelta model mesh (committed mesh)
-                            (RegLog.effective (committed mesh) r.Delta))
-                let model =
-                    { model with
-                        MeshTransforms = after
-                        ScanPins = bakeAnchors worldDeltas model.ScanPins
-                        Registration = { model.Registration with Running = false } }
-                // Registration-complete cascade: all probes + contact rings.
-                invalidateProbes (exitPreview model)
-            | _ -> model
-        | DiscardRegistration ->
-            // §1: clears the pending delta only — committed probes stay valid; rings recompute at committed pose.
-            { exitPreview model with Registration = { model.Registration with Running = false } }
-
-        // Correspondence anchors (spec §4) + fallback picks (§8.1/§8.2).
         | ToggleCorrespondence pinId ->
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
@@ -358,8 +210,8 @@ module Update =
                 refUpdates |> Array.fold (fun sp (pinId, ra, dist) ->
                     updateCorr pinId (fun c -> { c with RefAnchor = Some ra; RefDistance = dist }) sp)
                     model.ScanPins
-            // §C: record ROI membership; drop a stale auto marker for any mesh
-            // that resolved out-of-ROI (a manual pick is kept).
+            // Record ROI membership; drop a stale auto marker for any mesh that
+            // resolved out-of-ROI (a manual pick is kept).
             let sp =
                 inRoi |> Array.fold (fun sp (pinId, mesh, inside) ->
                     updateCorr pinId (fun c ->
@@ -397,57 +249,14 @@ module Update =
             { model with MeshSensorTypes = Map.add name sensor model.MeshSensorTypes }
         | SetHeatmapMode m ->
             invalidateFocusMaps { model with HeatmapMode = m }
-        | ToggleSurfaceDistance ->
-            bumpSurfaceDist ()
-            bumpFocusMaps ()
-            let model = { model with FocusMaps = Map.empty }
-            if model.SurfaceDistOn then
-                { model with SurfaceDistOn = false; SurfaceDistance = Map.empty }
-            else
-                // Turning on: encoding paints the inspector's active moving-mesh row.
-                // Auto-pick one (current InspectorMesh if valid, else first visible moving).
-                match model.Registration.ReferenceMesh with
-                | None ->
-                    showToast env "Set a ★ reference mesh first to map signed distance" model
-                | Some refMesh ->
-                    let visibleMoving =
-                        model.MeshNames |> IndexList.toList
-                        |> List.filter (fun n ->
-                            n <> refMesh && (Map.tryFind n model.MeshVisible |> Option.defaultValue true))
-                    let chosen =
-                        match model.InspectorMesh with
-                        | Some m when List.contains m visibleMoving -> Some m
-                        | _ -> List.tryHead visibleMoving
-                    match chosen with
-                    | None ->
-                        showToast env "No visible moving mesh to map"
-                            { model with SurfaceDistOn = true; VarianceOn = false; SurfaceDistance = Map.empty }
-                    | Some m ->
-                        { model with SurfaceDistOn = true; VarianceOn = false; InspectorMesh = Some m; SurfaceDistance = Map.empty }
-        | ToggleVariance ->
-            bumpSurfaceDist ()
-            bumpFocusMaps ()
-            // Mutually exclusive with the single-mesh extrinsic map.
-            { model with
-                VarianceOn = not model.VarianceOn
-                SurfaceDistOn = false
-                SurfaceDistance = Map.empty
-                FocusMaps = Map.empty }
         | VarianceComputed(mesh, arr) ->
-            // Keep only if still in variance mode and this is the reference mesh.
-            if model.VarianceOn && model.Registration.ReferenceMesh = Some mesh then
+            // Keep only if still in Inspect and this is the reference mesh.
+            if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
             else model
         | ToggleExtrinsicZDiff ->
-            // Switch extrinsic measure (M3C2 ↔ Δz); drop the caches so they refetch.
-            bumpSurfaceDist ()
-            bumpFocusMaps ()
-            { model with ExtrinsicZDiff = not model.ExtrinsicZDiff; SurfaceDistance = Map.empty; FocusMaps = Map.empty }
-        | SurfaceDistanceComputed(mesh, dist) ->
-            // drop if the active inspector mesh changed since the fetch was issued.
-            if model.SurfaceDistOn && model.InspectorMesh = Some mesh then
-                { model with SurfaceDistance = Map.add mesh dist model.SurfaceDistance }
-            else model
+            // Switch the difference sub-mode (M3C2 ↔ Δz) of the focus tiles; refetch.
+            invalidateFocusMaps { model with ExtrinsicZDiff = not model.ExtrinsicZDiff }
         | SurfaceDistanceFailed(_, reason) ->
             showToast env "Surface-distance query failed — is the server up to date? (restart it)"
                 { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "region-distance failed: %s" reason) }
@@ -474,13 +283,14 @@ module Update =
                 { model with
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
-                    InspectorMesh = None
-                    FocusMesh = None
+                    Selection = Selection.initial
                     FocusMaps = Map.empty
                     MeshSolo = NoSolo
                     MeshBounds = Map.empty
                     ActivePickingLayer = None
-                    PendingReg = None
+                    SolvedTransforms = Map.empty
+                    LoadTransforms = Map.empty
+                    RegView = RegBefore
                     Toast = None }
         | JumpToMesh meshName ->
             match Map.tryFind meshName model.DatasetCentroids with
@@ -529,8 +339,8 @@ module Update =
             match HashMap.tryFind id sp.Pins with
             | Some pin ->
                 let pin = { pin with Phase = PinPhase.Placement }
-                let sp = { sp with Pins = HashMap.add id pin sp.Pins; Placement = AdjustingPin id; SelectedPin = Some id }
-                { model with ScanPins = sp }
+                let sp = { sp with Pins = HashMap.add id pin sp.Pins; Placement = AdjustingPin id }
+                { model with ScanPins = sp; Selection = { model.Selection with SelectedPin = Some id } }
             | None -> model
         | RenamePin(id, name) ->
             match HashMap.tryFind id model.ScanPins.Pins with
@@ -544,47 +354,41 @@ module Update =
             { model with ActivePickingLayer = name }
         | ScanPinMsg msg ->
             ScanPinUpdate.handleMsg env model msg
-        | SetWorkflowPinHover h ->
-            if model.WorkflowPinHover = h then model else { model with WorkflowPinHover = h }
-        // Bottom-dock inspector: active moving-mesh row (B4 + extrinsic-map target).
-        | SetInspectorMesh m ->
-            if model.InspectorMesh = m then model
-            else
-                // active row drives the extrinsic surface map; drop its cache to refetch.
-                if model.SurfaceDistOn then bumpSurfaceDist ()
-                { model with InspectorMesh = m; SurfaceDistance = (if model.SurfaceDistOn then Map.empty else model.SurfaceDistance) }
+        | SetHovered h ->
+            if model.Selection.Hovered = h then model
+            else { model with Selection = { model.Selection with Hovered = h } }
+        | SetSelectedPoint m ->
+            if model.Selection.SelectedPoint = m then model
+            else { model with Selection = { model.Selection with SelectedPoint = m } }
         | SetWorkflowStep step ->
-            // Context (pick ↔ compare) follows the step → refetch focus previews.
+            // Context (pick ↔ compare) follows the mode → refetch focus previews.
+            // Entering/leaving Inspect also (re)drives the central-3D variance map,
+            // so drop its cache + bump the generation.
             if model.WorkflowStep = step then model
-            else invalidateFocusMaps { model with WorkflowStep = step }
+            else
+                bumpSurfaceDist ()
+                invalidateFocusMaps { model with WorkflowStep = step; SurfaceDistance = Map.empty }
+        | SetInspectChannel ch ->
+            // Difference vs displacement changes the focus-tile fetch (channel +
+            // projection) → drop the cached previews so they refetch.
+            if model.InspectChannel = ch then model
+            else invalidateFocusMaps { model with InspectChannel = ch }
         | SetFocusProjection p ->
             if model.FocusProjection = p then model
             else invalidateFocusMaps { model with FocusProjection = p }
         | SetFocusPeekReference held ->
             if model.FocusPeekReference = held then model else { model with FocusPeekReference = held }
-        | SetCorrRowHover h ->
-            if model.CorrRowHover = h then model else { model with CorrRowHover = h }
-        | SetFocusMesh None ->
-            { model with FocusMesh = None }
-        | SetFocusMesh (Some m) ->
-            // spec §E: promote to the large single + set the inspector's active
-            // mesh (link panel + dock). The main view follows softly via the
-            // step-2 focus isolation (wheelIsolation) — a hard solo would hide the
-            // reference and break the reference-relative channels.
-            if model.FocusMesh = Some m && model.InspectorMesh = Some m then model
-            else
-                if model.SurfaceDistOn && model.InspectorMesh <> Some m then bumpSurfaceDist ()
-                { model with
-                    FocusMesh = Some m
-                    InspectorMesh = Some m
-                    SurfaceDistance =
-                        if model.SurfaceDistOn && model.InspectorMesh <> Some m then Map.empty
-                        else model.SurfaceDistance }
+        | SetFocusedMesh None ->
+            { model with Selection = { model.Selection with FocusedMesh = None } }
+        | SetFocusedMesh (Some m) ->
+            // Promote to the large single (links rail + dock + focus enlargement).
+            if model.Selection.FocusedMesh = Some m then model
+            else { model with Selection = { model.Selection with FocusedMesh = Some m } }
         | FocusMapsComputed(mesh, preview) ->
             { model with FocusMaps = Map.add mesh preview model.FocusMaps }
         | PickCorrespondenceAt(pinId, mesh, world) ->
-            // spec §D step 2: set/update the focused mesh's correspondence marker
-            // for the selected pin, constrained to the pin's probe-cylinder ROI.
+            // Set the mesh's correspondence marker for the pin, constrained to the
+            // pin's probe-cylinder ROI. Stored mesh-local via the displayed transform.
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
                 match ScanPin.correspondence pin with
@@ -594,34 +398,19 @@ module Update =
                     let axial = Vec.dot v axis
                     let radial = (v - axis * axial).Length
                     if radial <= pin.InnerRadius && abs axial <= ScanPin.fixedProbeLength * 0.5 then
+                        let own = (ModelTransforms.displayedWorld model mesh).Backward.TransformPos world
                         let sp = updateCorr pinId (fun corr ->
                                     { corr with
-                                        Anchors = Map.add mesh { Point = world; Source = AnchorPick3D } corr.Anchors
+                                        Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
                                         InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
                         showToast env "Correspondence placed" { model with ScanPins = sp }
                     else showToast env "Pick is outside the pin ROI" model
                 | _ -> showToast env "Promote this pin to a registration pin (⚲) before picking markers" model
             | None -> model
-        | TogglePinFocus ->
-            { model with PinFocusMode = not model.PinFocusMode }
-        | SetMovementLayer m ->
-            if model.MovementLayer = m then model else { model with MovementLayer = m }
         | ToggleOutlines ->
             { model with OutlineMode = not model.OutlineMode }
-        // §5 translate-only coarse align: shift the moving mesh's committed
-        // render-space transform by an in-plane delta. Blocked under a preview.
-        | TranslateAlignMesh d ->
-            if PendingRegistration.isPreview model.PendingReg then model
-            else
-                match model.FocusMesh with
-                | Some mesh when Some mesh <> model.Registration.ReferenceMesh
-                                 && (Map.tryFind mesh model.MeshVisible |> Option.defaultValue true) ->
-                    let cur = Map.tryFind mesh model.MeshTransforms |> Option.defaultValue Trafo3d.Identity
-                    invalidateRings
-                        (invalidateProbes { model with MeshTransforms = Map.add mesh (cur * Trafo3d.Translation d) model.MeshTransforms })
-                | _ -> model
-        // Workflow §4: keep orientation, animate centre + radius so the target subtends
-        // ~25% of viewport height. User nav input overrides via the orbit machinery.
+        // Keep orientation, animate centre + radius so the target subtends ~25% of
+        // viewport height. User nav input overrides via the orbit machinery.
         | FlyTo(target, aspect) ->
             let cW, rW = FlyToMath.boundingSphere target
             let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
@@ -630,7 +419,7 @@ module Update =
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, centreR))
                       CameraMessage (OrbitMessage.SetTargetRadius(true, dist))]
             model
-        // Workflow §5: diagnostics route through existing handlers; focus/highlight = open target + 1.5s pulse.
+        // Diagnostics route through existing handlers; focus/highlight = open target + 1.5s pulse.
         | NavTo action ->
             let pulse (selector : string) =
                 try JSRuntime.Instance.InvokeVoid("SuperPulse", selector) with _ -> ()
@@ -638,56 +427,21 @@ module Update =
             | ReseedCorrespondence _ ->
                 seedAnchors env model (correspondenceEnabledIds model)
             | SelectPinOpenCard pinId ->
-                env.Emit [ScanPinMsg (SelectPin (Some pinId))]
                 pulse ".pin-inspector"
-                { model with WorkflowStep = StepCorrespondences }
+                { model with
+                    Selection = { model.Selection with SelectedPin = Some pinId }
+                    WorkflowStep = Correspondence }
             | HighlightReferenceColumn ->
                 pulse ".rail-mesh-list"
-                { model with MenuOpen = true }
+                { model with MenuOpen = true; WorkflowStep = Overview }
             | RunCoarse -> env.Emit [SolveCoarse]; model
-            | RunFine -> env.Emit [RunRegistration]; model
-            | CommitPending -> env.Emit [CommitRegistration]; model
-            | DiscardPending -> env.Emit [DiscardRegistration]; model
+            | RunFine | CommitPending | DiscardPending -> model
 
-    // A2 postlude: surface-map on + an active inspector mesh → lazily fetch that mesh's per-vertex
-    // signed distance (committed pose), debounced, at most once per invalidation generation.
-    let private ensureSurfaceDistance (env : Env<Message>) (model : Model) : Model =
-        if not model.SurfaceDistOn then model
-        else
-            match model.InspectorMesh, model.Registration.ReferenceMesh with
-            | Some mesh, Some refMesh
-                  when mesh <> refMesh
-                       && not (Map.containsKey mesh model.SurfaceDistance)
-                       && surfaceDistReqGen <> surfaceDistGen
-                       && (Map.tryFind mesh model.MeshVisible |> Option.defaultValue true) ->
-                surfaceDistReqGen <- surfaceDistGen
-                let targetT = (ModelTransforms.committedWorld model mesh).Forward
-                let refT = (ModelTransforms.committedWorld model refMesh).Forward
-                surfaceDistCts.Cancel()
-                surfaceDistCts <- new System.Threading.CancellationTokenSource()
-                let token = surfaceDistCts.Token
-                task {
-                    try
-                        do! System.Threading.Tasks.Task.Delay(120, token)
-                        let! dist =
-                            Query.regionDistance ApiConfig.apiBase.Value mesh 0 refMesh 0 targetT refT (if model.ExtrinsicZDiff then 1 else 0)
-                            |> Async.StartAsTask
-                        if not token.IsCancellationRequested then
-                            env.Emit [SurfaceDistanceComputed(mesh, dist)]
-                    with
-                    | :? System.OperationCanceledException -> ()
-                    | ex ->
-                        if not token.IsCancellationRequested then
-                            env.Emit [SurfaceDistanceFailed(mesh, ex.Message)]
-                } |> ignore
-                model
-            | _ -> model
-
-    // §6 all-meshes variance: per reference vertex, the std of each visible
-    // moving mesh's signed distance (target = reference, ref = moving). Shares
-    // the surface-distance generation/CTS (mutually exclusive with the map).
+    // All-meshes variance: per reference vertex, the std of each visible moving
+    // mesh's signed distance (target = reference, ref = moving). Debounced via the
+    // surface-distance generation/CTS.
     let private ensureVariance (env : Env<Message>) (model : Model) : Model =
-        if not model.VarianceOn then model
+        if model.WorkflowStep <> Inspect then model
         else
             match model.Registration.ReferenceMesh with
             | Some refMesh
@@ -699,10 +453,10 @@ module Update =
                 if List.length moving < 2 then model
                 else
                     surfaceDistReqGen <- surfaceDistGen
-                    let refT = (ModelTransforms.committedWorld model refMesh).Forward
+                    let refT = (ModelTransforms.displayedWorld model refMesh).Forward
                     let jobs =
                         moving |> List.map (fun m ->
-                            let mT = (ModelTransforms.committedWorld model m).Forward
+                            let mT = (ModelTransforms.displayedWorld model m).Forward
                             Query.regionDistance ApiConfig.apiBase.Value refMesh 0 m 0 refT mT 0)
                     surfaceDistCts.Cancel()
                     surfaceDistCts <- new System.Threading.CancellationTokenSource()
@@ -739,18 +493,24 @@ module Update =
                     model
             | _ -> model
 
-    // Compare-context server channel (spec §F int) for a moving cell; mirrors
-    // GuiFocus.compareChannel. The reference cell + pick context use Shade (0).
+    // Inspect focus-tile server channel for a moving cell; mirrors
+    // GuiFocus.compareChannel. Difference = signed M3C2 (1) / vertical Δz (2);
+    // displacement is fetched separately (channel 6, Task 5). The reference cell +
+    // pick context use Shade (0).
     let private compareChannelInt (model : Model) =
-        if model.SurfaceDistOn then (if model.ExtrinsicZDiff then 2 else 1)
-        elif model.VarianceOn then 1
-        else match model.HeatmapMode with HeatIncidence -> 3 | HeatRange -> 4 | HeatShape -> 5 | HeatOff -> 1
+        match model.InspectChannel with
+        | ChDifference   -> if model.ExtrinsicZDiff then 2 else 1
+        | ChDisplacement -> 6
 
-    // Focus-panel postlude (spec §F): one debounced fan-out per generation that
-    // fetches the co-oriented preview of every effective-visible mesh missing
-    // from FocusMaps. Pick → Shade from own origin; compare → active channel from
-    // the reference origin (reference cell stays Shade). Effective world poses so
-    // the multiples follow a solve preview.
+    // Focus-panel postlude: one debounced fan-out per generation that fetches the
+    // co-oriented preview of every effective-visible mesh missing from FocusMaps.
+    //  • non-Inspect (pick) → Shade from own origin, model projection.
+    //  • Inspect / Difference → signed-distance channel from the reference origin
+    //    (reference cell stays Shade), model projection.
+    //  • Inspect / Displacement → the displacement arrow field for each solved
+    //    moving mesh (surface at solved pose, base at load pose), forced Oblique;
+    //    reference + unsolved meshes fall back to a white Shade surface.
+    // Displayed world poses so the multiples follow a solve.
     let private ensureFocusMaps (env : Env<Message>) (model : Model) : Model =
             match model.Registration.ReferenceMesh with
             | None -> model
@@ -760,23 +520,40 @@ module Update =
                 if List.isEmpty missing || focusMapsReqGen = focusMapsGen then model
                 else
                     focusMapsReqGen <- focusMapsGen
-                    let pick = model.WorkflowStep <> StepInspect
-                    let proj = FocusProjection.toInt model.FocusProjection
+                    let inspect = model.WorkflowStep = Inspect
+                    let displacement = inspect && model.InspectChannel = ChDisplacement
+                    let proj = if displacement then 4 else FocusProjection.toInt model.FocusProjection
                     let chCompare = compareChannelInt model
-                    let refT = (ModelTransforms.effectiveWorld model refMesh).Forward
+                    let refT = (ModelTransforms.displayedWorld model refMesh).Forward
                     focusMapsCts.Cancel()
                     focusMapsCts <- new System.Threading.CancellationTokenSource()
                     let token = focusMapsCts.Token
                     let jobs =
                         missing |> List.map (fun m ->
-                            let mT = (ModelTransforms.effectiveWorld model m).Forward
-                            let channel = if pick || m = refMesh then 0 else chCompare
-                            let origin = if pick then 0 else 1
+                            let isRef = m = refMesh
+                            // (channel, surface pose, displacement base pose, origin)
+                            let channel, surfaceT, baseT, origin =
+                                if not inspect then
+                                    0, (ModelTransforms.displayedWorld model m).Forward, M44d.Identity, 0
+                                elif displacement then
+                                    match (if isRef then None else Map.tryFind m model.SolvedTransforms) with
+                                    | Some sr ->
+                                        let scale = DatasetScale.forMesh model.DatasetScales m
+                                        let solvedW = (RigidTransform.renderToWorld scale model.CommonCentroid sr).Forward
+                                        let loadW = (ModelTransforms.loadWorld model m).Forward
+                                        6, solvedW, loadW, 1
+                                    | None ->
+                                        0, (ModelTransforms.displayedWorld model m).Forward, M44d.Identity, 0
+                                else
+                                    (if isRef then 0 else chCompare),
+                                    (ModelTransforms.displayedWorld model m).Forward, M44d.Identity,
+                                    (if isRef then 0 else 1)
                             async {
                                 try
-                                    let! (v2, tris, scalar, lo, hi) =
-                                        Query.meshPreview ApiConfig.apiBase.Value m refMesh mT refT proj origin channel 6000
-                                    return Some (m, { Verts2d = v2; Tris = tris; Scalar = scalar; Lo = lo; Hi = hi })
+                                    let! (v2, tris, scalar, lo, hi, db, dt, dm) =
+                                        Query.meshPreview ApiConfig.apiBase.Value m refMesh surfaceT baseT refT proj origin channel 6000
+                                    return Some (m, { Verts2d = v2; Tris = tris; Scalar = scalar; Lo = lo; Hi = hi
+                                                      DispBase = db; DispTip = dt; DispMag = dm })
                                 with _ -> return None
                             })
                     task {
@@ -798,9 +575,7 @@ module Update =
         let updated =
             updateCore env model msg
             |> ScanPinUpdate.ensureProbe env
-            |> ScanPinUpdate.ensureProbePreview env
             |> ScanPinUpdate.ensureRings env
-            |> ensureSurfaceDistance env
             |> ensureVariance env
             |> ensureFocusMaps env
         updated

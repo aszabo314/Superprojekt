@@ -128,19 +128,7 @@ const run = async () => {
   const lin = await postJson("/query/lsq-pairs", { movingName: movMesh, pairs: linePairs });
   check("collinear pairs flag warning", lin.conditioning.collinearityWarning === true);
 
-  // 4 · ICP from the corrected transform (D·T ≈ I) must reduce the RMS
-  const corrected = mul(lsq.transform, T);
-  const icp = await postJson("/query/icp", {
-    referenceName: refMesh, movingName: movMesh,
-    initialTransform: corrected, sampleStride: 200, maxIterations: 12,
-    anchorCentres: [], anchorSigmas: [], anchorWeights: [], regionEps: 0,
-  });
-  const conv = icp.convergence;
-  check("icp ran", conv.length >= 2, `${conv.length} iterations`);
-  check("icp RMS decreases", conv[conv.length - 1] < conv[0],
-        `${conv[0].toFixed(4)} → ${conv[conv.length - 1].toFixed(4)}`);
-
-  // 5 · probe with pre- and post-correction transforms. Real inter-epoch
+  // 4 · probe with pre- and post-correction transforms. Real inter-epoch
   // change between the two meshes confounds an absolute-median comparison,
   // so assert relative to the unperturbed baseline: the perturbation must
   // move the moving mesh's median away from it, and the exact lsq correction

@@ -8,9 +8,6 @@ module GuiPanels =
 
     open Primitives
 
-    // Pin-adjust flyout: shown while a pin is being placed/adjusted (inner
-    // radius + numeric X/Y/Z + commit/discard). The mesh/pin/registration
-    // panels moved to the left workflow rail (GuiRail).
     let placementFlyout (env : Env<Message>) (model : AdaptiveModel) =
         let sp = model.ScanPins
         let activePlacementId =
@@ -38,7 +35,6 @@ module GuiPanels =
 
             let pinId = activePlacementId
 
-            // Numeric reposition: set the pin centre live while adjusting.
             let centre =
                 activePin |> AVal.map (Option.map (fun p -> p.Centre) >> Option.defaultValue V3d.Zero)
             let posInput (lbl : string) (get : V3d -> float) (upd : V3d -> float -> V3d) =

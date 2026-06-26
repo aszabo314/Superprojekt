@@ -7,14 +7,12 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open FShade
 
-// §10 per-mesh image-space outlines. Offscreen G-buffer pass (world normal +
-// depth → target0, palette colour + mask → target1) then a fullscreen
-// edge-detect composite that paints each mesh's outline in its palette colour,
-// including the near-plane cut (mask boundary). Gated on OutlineMode — when off
-// the composite is inactive and the offscreen task never runs (lazy), so it can
-// never regress the main forward pass. Replaces the opacity-ghost as the body
-// identity cue when enabled. The at-most-two-WebGL-controls rule is unaffected:
-// this is an extra offscreen render target on the main control, not a 3rd one.
+// Per-mesh image-space outlines. Offscreen G-buffer pass (world normal + depth →
+// target0, palette colour + mask → target1) then a fullscreen edge-detect
+// composite painting each mesh's outline in its palette colour, including the
+// near-plane cut (mask boundary). Gated on OutlineMode — when off the composite
+// is inactive and the offscreen task never runs (lazy), so it can never regress
+// the main forward pass.
 module OutlineView =
 
     let private quadPos =

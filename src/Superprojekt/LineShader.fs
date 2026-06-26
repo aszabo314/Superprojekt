@@ -170,10 +170,9 @@ module Lines =
         let count    = buffers |> AVal.map (fun (_,_,_,_,_,n) -> if n = 0 then 0 else 6 * n)
         p0Arr, p1Arr, colArr, widthArr, idxArr, count
 
-    // Forward-rendered alpha-blended lines (rgb, α) on the Color attachment;
-    // callers steer ordering via Sg.DepthTest/Sg.Pass (typically LessOrEqual so
-    // lines fade behind opaque meshes). Sg.DepthMask is never used (see
-    // SceneGraph.build), so line fragments also write depth — good enough here.
+    // Alpha-blended lines; callers steer ordering via Sg.DepthTest/Sg.Pass.
+    // Sg.DepthMask is never used (buggy here), so line fragments also write
+    // depth — see SceneGraph.build.
     let render (segments : aval<(V3d * V3d * V4d * float)[]>) =
         let p0Arr, p1Arr, colArr, widthArr, idxArr, count = buildBuffers segments
         sg {

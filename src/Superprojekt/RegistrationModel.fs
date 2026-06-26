@@ -9,9 +9,6 @@ open Aardvark.Base
 type ScanPinId = ScanPinId of Guid with
     static member create () = ScanPinId (Guid.NewGuid())
 
-// Correspondence anchors: one per (pin × moving mesh), world-space at the
-// mesh's *committed* pose. Commit/rollback re-base them by the applied world
-// delta so they stay on the surface.
 type AnchorSource =
     | AnchorAuto
     | AnchorPick3D
@@ -20,8 +17,9 @@ module AnchorSource =
     let tag = function AnchorAuto -> "auto" | AnchorPick3D -> "pick3d"
     let ofTag = function "pick3d" -> AnchorPick3D | _ -> AnchorAuto
 
-// One correspondence marker per (pin × moving mesh); a stored marker is
-// applied (no separate accept/reject state).
+// Point is mesh-local (the mesh's own untransformed frame); the world position is
+// derived via the mesh's displayed transform, so the before/after toggle moves
+// each anchor with its mesh automatically.
 type MeshAnchor = {
     Point    : V3d
     Source   : AnchorSource
@@ -34,11 +32,9 @@ type Correspondence = {
     RefAnchor   : V3d option
     RefDistance : float
     Anchors     : Map<string, MeshAnchor>
-    // Per-mesh pair residual of the last coarse solve this pin took part in.
     Residuals   : Map<string, float>
-    // v3 §C ROI membership, computed server-side during seed: true = the mesh
-    // has surface inside the pin ROI (closest point ≤ roiRadius). Absent ⇒ not
-    // yet evaluated. Drives placed / placeable / out-of-ROI + the k/n count.
+    // ROI membership computed server-side during seed: true = the mesh has surface
+    // inside the pin ROI (closest point ≤ roiRadius). Absent ⇒ not yet evaluated.
     InRoi       : Map<string, bool>
 }
 
@@ -52,46 +48,11 @@ module Correspondence =
         InRoi       = Map.empty
     }
 
-// Registration stages (still used by PendingRegistration.Stage).
+// StageFine is retained only for JSON round-trip; only StageCoarse is produced.
 type RegStage = StageCoarse | StageFine
 
-type RegInputs =
-    | CoarseInputs of (ScanPinId * float * Map<string, AnchorSource>)[]
-    | FineInputs   of mode : string * anchorPins : ScanPinId[]
-
-// Uncommitted solve result. Effective preview pose = committed * Delta
-// (Trafo3d composition is postfix: committed applies first).
-type PendingMeshResult = {
-    Delta         : Trafo3d
-    RmsBefore     : float
-    RmsAfter      : float
-}
-
-type PendingRegistration = {
-    Stage    : RegStage
-    Mode     : string
-    Inputs   : RegInputs
-    Results  : Map<string, PendingMeshResult>
-    Unsolved : string list
-    Expected : int
-}
-
-module PendingRegistration =
-    // Preview active ⇔ at least one solved mesh.
-    let isPreview (p : PendingRegistration option) =
-        match p with Some pr -> not (Map.isEmpty pr.Results) | None -> false
-
-    let delta (mesh : string) (p : PendingRegistration option) =
-        p |> Option.bind (fun pr -> Map.tryFind mesh pr.Results |> Option.map (fun r -> r.Delta))
-
-// Effective preview pose = committed first, then the delta (postfix Trafo3d
-// composition). The single registration commit applies the delta into
-// MeshTransforms; there is no committed history.
-module RegLog =
-    let effective (committed : Trafo3d) (delta : Trafo3d) = committed * delta
-
-// λ2/λ1 of a weighted 3D point spread (client-side conditioning pre-check for
-// the readiness line; the authoritative value comes from the server).
+// λ2/λ1 of a weighted 3D point spread (client-side conditioning pre-check for the
+// readiness line; the authoritative value comes from the server).
 module RegConditioning =
     let private jacobiEigenvalues (m : M33d) =
         let a = [|
@@ -190,10 +151,8 @@ module RegConditioning =
 
     let isCollinear (eigenvalues : float[]) = lambdaRatio eigenvalues < 1e-3
 
-// JSON (de)serialization of the new workspace pieces, kept here so the
-// round-trip is unit-testable outside the WASM project.
-// LastSolveEntry: per-mesh diagnostics set on every solve response, survives
-// commit.
+// JSON (de)serialization kept here so the round-trip is unit-testable outside the
+// WASM project.
 type SolveConditioning = {
     Eigenvalues         : float[]
     CollinearityWarning : bool
@@ -208,8 +167,7 @@ type LastSolveEntry = {
     Timestamp       : DateTime
 }
 
-// Camera fly-to (workflow panel §4): pure math, unit-tested. Targets are
-// world-space; reducer converts to render space at the boundary.
+// Targets are world-space; reducer converts to render space at the boundary.
 type FlyToTarget =
     | FlyToSphere of centre : V3d * radius : float
     | FlyToBounds of Box3d
@@ -228,9 +186,8 @@ module FlyToMath =
         | FlyToSphere (c, r) -> c, max 1e-3 r
         | FlyToBounds b -> b.Center, max 1e-3 (b.Size.Length * 0.5)
 
-// ───────────── readiness engine (workflow panel §2, shared) ─────────────
-// Pure over a dedicated input DTO so Supertests can table-drive it; the
-// adaptive adapter is in Primitives.ReadinessView.
+// Readiness engine: pure over a dedicated input DTO so Supertests can table-drive
+// it; the adaptive adapter is in Primitives.ReadinessView.
 
 type Severity =
     | Blocker
@@ -256,9 +213,9 @@ type Diagnostic = {
 type ReadinessPin = {
     Id            : ScanPinId
     Label         : string
-    // accepted reference anchor + reliability (collinearity input)
+    // reference anchor + reliability (the collinearity input)
     RefAnchor     : (V3d * float) option
-    // visible moving meshes with / without an accepted anchor for this pin
+    // visible moving meshes with an anchor for this pin; Unresolved = those without
     Accepted      : Set<string>
     Unresolved    : int
 }
@@ -299,7 +256,6 @@ module Readiness =
             l.Add { Severity = severity; Text = text; Action = action }
 
         if input.HasPending then
-            // blocks both stages, listed first; commit/discard is inline (no nav action).
             for l in [ coarse; fine ] do
                 add l Blocker "Commit or discard the pending result first" None
 
@@ -486,13 +442,13 @@ module RegJson =
             })
         |> Map.ofSeq
 
-// Heatmap modes (spec §6). Extrinsic m3c2 is the kept DistanceEncoding surface
-// map; this drives the intrinsic per-fragment channels in the mesh shader.
+// Drives the intrinsic per-fragment channels in the mesh shader (the extrinsic
+// m3c2 surface map is the separate DistanceEncoding path).
 type HeatmapMode =
     | HeatOff
-    // §6 intrinsic: camera-incidence (grazing-angle) false colour.
+    // camera-incidence (grazing-angle) false colour.
     | HeatIncidence
-    // §6 intrinsic: range from the mesh's own origin (= sensor).
+    // range from the mesh's own origin (= sensor).
     | HeatRange
-    // §6 intrinsic: triangle shape quality (thin/degenerate → low).
+    // triangle shape quality (thin/degenerate → low).
     | HeatShape

@@ -4,151 +4,73 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-// Bottom-dock pin inspector (Pin-Inspector spec §B). A full-width 2D dock
-// (SVG/HTML, NOT a WebGL control) docked below the 3D viewport, always mounted,
-// reading only the selected pin. Four panels left→right: B1 identity, B2
-// raincloud (per moving mesh on a shared signed-distance axis), B3
-// correspondence readout (numbers only), B4 three intrinsic-quality bars.
-// Hard rule: no prose — only numbers, units, marks, glyphs, terse identifiers.
+// Bottom dock: full-width 2D dock (SVG/HTML, not a WebGL control), always
+// mounted. Mode-contextual content (mesh roster / correspondence manager / pin
+// distribution), cross-faded; the container never moves.
 module GuiInspector =
 
     open Primitives
 
-    // Red→green quality ramp (matches the §6 heatmaps); v ∈ [0,1].
-    let private ramp (v : float) =
-        let v = max 0.0 (min 1.0 v)
-        let lerp (a : float) (b : float) = int (a + (b - a) * v)
-        sprintf "rgb(%d,%d,%d)" (lerp 220.0 22.0) (lerp 38.0 163.0) (lerp 38.0 74.0)
-
-    // Raincloud JSON: one row per visible moving mesh on a shared, zero-centred
-    // signed-distance axis. after = effective (preview-or-committed) probe;
-    // before = committed-probe median tick.
-    let private rainJson
-            (order : HashMap<string,int>) (moving : string list) (active : string option)
-            (before : ProbeResult option) (after : ProbeResult option) : string =
-        match after with
-        | None -> "{\"status\":\"running\"}"
-        | Some a ->
-            if List.isEmpty moving then "{\"status\":\"none\"}" else
-            let inv = System.Globalization.CultureInfo.InvariantCulture
-            let g (v : float) = if System.Double.IsNaN v || System.Double.IsInfinity v then "0" else v.ToString("0.#####", inv)
-            let refStd, refN =
-                a.Distributions |> Array.tryFind (fun d -> d.MeshName = a.ReferenceMesh)
-                |> Option.map (fun d -> d.Std, d.Count) |> Option.defaultValue (0.0, 0)
-            let afterOf m = a.Distributions |> Array.tryFind (fun d -> d.MeshName = m)
-            let beforeOf m = before |> Option.bind (fun b -> b.Distributions |> Array.tryFind (fun d -> d.MeshName = m))
-            // Robust symmetric domain from the pooled before+after samples.
-            let pool = ResizeArray<float>()
-            for m in moving do
-                match afterOf m with Some d -> pool.AddRange d.Samples | None -> ()
-                match beforeOf m with Some d when d.Count > 0 -> pool.Add d.Median | _ -> ()
-            let dom =
-                if pool.Count = 0 then 0.1
-                else
-                    let s = pool.ToArray() in System.Array.Sort s
-                    let q p = s.[max 0 (min (s.Length - 1) (int (p * float (s.Length - 1))))]
-                    max 0.05 (max (abs (q 0.01)) (abs (q 0.99)))
-            let activeMesh = active |> Option.filter (fun m -> List.contains m moving) |> Option.orElse (List.tryHead moving)
-            let topN = List.length moving
-            let sb = System.Text.StringBuilder()
-            sb.Append(sprintf "{\"status\":\"ready\",\"lo\":%s,\"hi\":%s,\"rows\":[" (g -dom) (g dom)) |> ignore
-            moving |> List.iteri (fun i m ->
-                if i > 0 then sb.Append ',' |> ignore
-                let col = match HashMap.tryFind m order with Some i -> c4bToHex (meshColor i) | None -> "#1a56db"
-                let af = afterOf m
-                let cnt = af |> Option.map (fun d -> d.Count) |> Option.defaultValue 0
-                let std = af |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
-                let lod = 1.96 * sqrt (refStd * refStd / float (max 1 refN) + std * std / float (max 1 cnt))
-                let med = af |> Option.map (fun d -> d.Median) |> Option.defaultValue 0.0
-                let q1  = af |> Option.map (fun d -> d.Q1) |> Option.defaultValue 0.0
-                let q3  = af |> Option.map (fun d -> d.Q3) |> Option.defaultValue 0.0
-                let bm  = beforeOf m
-                sb.Append(sprintf "{\"mesh\":\"%s\",\"name\":\"%s\",\"color\":\"%s\",\"active\":%b,\"count\":%d,\"median\":%s,\"q1\":%s,\"q3\":%s,\"lod\":%s,\"hasBefore\":%b,\"before\":%s,\"samples\":["
-                            m (numbered order m) col (activeMesh = Some m) cnt (g med) (g q1) (g q3) (g lod)
-                            (Option.isSome bm) (g (bm |> Option.map (fun d -> d.Median) |> Option.defaultValue 0.0))) |> ignore
-                match af with
-                | Some d -> d.Samples |> Array.iteri (fun j s -> (if j > 0 then sb.Append ',' |> ignore); sb.Append(g s) |> ignore)
-                | None -> ()
-                sb.Append "],\"kde\":[" |> ignore
-                match af with
-                | Some d when cnt >= 20 ->
-                    d.Kde |> Array.iteri (fun j (x, y) -> (if j > 0 then sb.Append ',' |> ignore); sb.Append(sprintf "[%s,%s]" (g x) (g y)) |> ignore)
-                | _ -> ()
-                sb.Append "]}" |> ignore)
-            ignore topN
-            sb.Append "]}" |> ignore
-            sb.ToString()
-
-    let private rainJs = [
+    // Pin distribution canvas (Task 4): per moving mesh, on a shared signed-distance
+    // axis, jittered raw probe samples (the "rain") + a median/IQR box, with the
+    // ±LoD₉₅ neutral band shaded. No KDE. Driven by the data-dist JSON attribute.
+    let private distJs = [
         "  function ph(t){ var p=document.createElement('div'); p.className='ins-ph'; p.textContent=t; el.appendChild(p); }"
-        "  if(!d||d.status==='none'){ ph('—'); return; }"
-        "  if(d.status==='running'){ ph('⋯'); return; }"
-        "  var rows=d.rows||[]; if(rows.length===0){ ph('—'); return; }"
-        "  var lo=d.lo,hi=d.hi; if(!(hi>lo)){ lo=-0.1; hi=0.1; }"
-        "  var W=el.clientWidth||320, H=el.clientHeight||170;"
-        "  var labelW=66,padR=10,axisH=14;"
-        "  var x0=labelW,x1=W-padR,pw=Math.max(10,x1-x0),n=rows.length,rh=(H-axisH)/n;"
-        "  function X(v){ return x0+(v-lo)/(hi-lo)*pw; }"
-        "  var svg=document.createElementNS(ns,'svg'); svg.setAttribute('width',W); svg.setAttribute('height',H); svg.setAttribute('viewBox','0 0 '+W+' '+H);"
-        "  function E(tag,a){ var e=document.createElementNS(ns,tag); for(var k in a) e.setAttribute(k,a[k]); return e; }"
-        "  function ln(xa,ya,xb,yb,c,w,op,dash){ var l=E('line',{x1:xa,y1:ya,x2:xb,y2:yb,stroke:c,'stroke-width':w}); if(op)l.setAttribute('stroke-opacity',op); if(dash)l.setAttribute('stroke-dasharray',dash); svg.appendChild(l); return l; }"
-        "  function tx(x,y,s,c,sz,an){ var t=E('text',{x:x,y:y,fill:c,'font-size':sz||9,'font-family':'SF Mono,Monaco,monospace','text-anchor':an||'start'}); t.textContent=s; svg.appendChild(t); return t; }"
-        "  var zx=X(0); ln(zx,0,zx,H-axisH,'#94a3b8',1,'0.8');"
-        "  var span=hi-lo,raw=span/4,p=Math.pow(10,Math.floor(Math.log(raw)/Math.LN10)),m=raw/p,step=(m>=5?5:m>=2?2:1)*p,dec=Math.max(0,-Math.floor(Math.log(step)/Math.LN10+1e-9));"
-        "  for(var tv=Math.ceil(lo/step)*step; tv<=hi+step*0.001; tv+=step){ var xx=X(tv); ln(xx,H-axisH,xx,H-axisH+3,'#94a3b8',1); tx(xx,H-3,tv.toFixed(dec),'#64748b',8,'middle'); }"
-        "  tx(x1,H-3,'m','#64748b',8,'end');"
-        "  rows.forEach(function(r,i){ var yTop=i*rh, yc=yTop+rh*0.62, grey=r.count===0;"
-        "    if(r.active) svg.appendChild(E('rect',{x:0,y:yTop,width:W,height:rh,fill:'#0891b2','fill-opacity':0.06}));"
-        "    tx(4,yc-1,r.name,grey?'#94a3b8':'#0f172a',9);"
-        "    var hit=E('rect',{x:0,y:yTop,width:W,height:rh,fill:'transparent'}); hit.style.cursor='pointer';"
-        "    hit.addEventListener('click',function(){ var b=el.closest('.pin-inspector'); b=b?b.querySelector('.ins-rain-bus'):null; if(b){ b.value='row|'+r.mesh; b.dispatchEvent(new Event('input',{bubbles:true})); } });"
-        "    svg.appendChild(hit);"
-        "    ln(x0,yc,x1,yc,grey?'#e2e8f0':'#cbd5e1',1);"
-        "    if(grey) return;"
-        "    if(r.lod>0){ var bl=X(Math.max(lo,-r.lod)),bh=X(Math.min(hi,r.lod)); svg.appendChild(E('rect',{x:bl,y:yTop+2,width:Math.max(0,bh-bl),height:rh-4,fill:'#94a3b8','fill-opacity':0.14})); }"
-        "    if(r.count>=20 && r.kde && r.kde.length>1){ var md=0; r.kde.forEach(function(q){ if(q[0]>=lo&&q[0]<=hi&&q[1]>md)md=q[1]; }); if(md>0){ var hg=rh*0.42,pa='',st=false; r.kde.forEach(function(q){ if(q[0]<lo||q[0]>hi)return; var xx=X(q[0]),yy=yc-q[1]/md*hg; pa+=(st?'L':'M')+xx.toFixed(1)+','+yy.toFixed(1); st=true; }); pa+='L'+X(Math.min(hi,r.kde[r.kde.length-1][0])).toFixed(1)+','+yc+'L'+X(Math.max(lo,r.kde[0][0])).toFixed(1)+','+yc+'Z'; svg.appendChild(E('path',{d:pa,fill:r.color,'fill-opacity':0.35,stroke:r.color,'stroke-width':1})); } }"
-        "    var jh=Math.max(3,rh*0.32);"
-        "    (r.samples||[]).forEach(function(sv,si){ if(sv<lo||sv>hi)return; var xx=X(sv), jy=yc-2-(((si*7)%Math.floor(jh))); svg.appendChild(E('circle',{cx:xx.toFixed(1),cy:jy.toFixed(1),r:1.1,fill:r.color,'fill-opacity':0.5})); });"
-        "    var qa=X(Math.max(lo,r.q1)),qb=X(Math.min(hi,r.q3)); if(qb>qa) svg.appendChild(E('rect',{x:qa,y:yc-3,width:qb-qa,height:6,fill:'none',stroke:r.color,'stroke-width':1.2}));"
-        "    var mx=X(Math.max(lo,Math.min(hi,r.median))); ln(mx,yc-5,mx,yc+5,r.color,2);"
-        "    if(r.hasBefore){ var bx=X(Math.max(lo,Math.min(hi,r.before))); ln(bx,yc+4,bx,yc+10,'#94a3b8',1.5); }"
-        "    tx(x1-1,yTop+rh*0.30,'n='+r.count,'#64748b',8,'end');"
-        "  });"
-        "  el.appendChild(svg);"
+        "  if(!d || !d.rows){ ph(d&&d.pending?d.pending:'select a pin'); return; }"
+        "  if(d.rows.length===0){ ph('no moving meshes probed'); return; }"
+        "  var W=el.clientWidth||320, H=el.clientHeight||150; var dpr=window.devicePixelRatio||1;"
+        "  var cv=document.createElement('canvas'); cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);"
+        "  cv.style.width=W+'px'; cv.style.height=H+'px'; cv.className='ins-dist-cv';"
+        "  var g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);"
+        "  g.fillStyle='#ffffff'; g.fillRect(0,0,W,H);"
+        "  var padL=10,padR=12,padT=24,padB=16; var lo=d.lo,hi=d.hi; var span=Math.max(1e-6,hi-lo);"
+        "  function X(v){ return padL+(v-lo)/span*(W-padL-padR); }"
+        "  g.fillStyle='#475569'; g.font='11px SF Mono,Monaco,monospace';"
+        "  g.fillText(d.state+'  ·  signed distance (mm)  ·  0 = reference median',8,14);"
+        "  var n=d.rows.length; var laneH=(H-padT-padB)/n;"
+        "  g.strokeStyle='#cbd5e1'; g.lineWidth=1; g.beginPath(); g.moveTo(X(0),padT-2); g.lineTo(X(0),H-padB+2); g.stroke();"
+        "  g.fillStyle='#94a3b8'; g.font='9px SF Mono,Monaco,monospace'; g.textAlign='center';"
+        "  [lo,(lo+hi)/2,hi].forEach(function(v){ g.fillText(v.toFixed(0),X(v),H-4); });"
+        "  g.textAlign='left';"
+        "  d.rows.forEach(function(r,i){ var y0=padT+i*laneH, yc=y0+laneH*0.55;"
+        "    if(r.lod>0){ g.fillStyle='rgba(148,163,184,0.16)'; g.fillRect(X(-r.lod),y0+2,Math.max(1,X(r.lod)-X(-r.lod)),laneH-4); }"
+        "    g.globalAlpha=0.30; g.fillStyle=r.color;"
+        "    for(var k=0;k<r.s.length;k++){ var x=X(r.s[k]); var yy=y0+laneH*0.32+Math.random()*(laneH*0.5); g.beginPath(); g.arc(x,yy,1.4,0,6.2832); g.fill(); }"
+        "    g.globalAlpha=1;"
+        "    var bx0=X(r.q1),bx1=X(r.q3); var bh=Math.min(13,laneH*0.42);"
+        "    g.strokeStyle=r.color; g.lineWidth=1.4; g.strokeRect(bx0,yc-bh/2,Math.max(1,bx1-bx0),bh);"
+        "    g.beginPath(); g.moveTo(X(r.median),yc-bh/2); g.lineTo(X(r.median),yc+bh/2); g.lineWidth=2.2; g.stroke();"
+        "    g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace';"
+        "    g.fillText(r.name+'   med '+r.median.toFixed(0)+'mm  IQR '+(r.q3-r.q1).toFixed(0)+'  n='+r.n, padL, y0+11); });"
+        "  el.appendChild(cv);"
     ]
 
-    let private pinKey (ScanPinId.ScanPinId g : ScanPinId) = g.ToString()
+    // 8-way unicode arrow for a heading in degrees (0 = +X/east, 90 = +Y/north).
+    let private dirArrow (deg : float) =
+        let d = ((deg % 360.0) + 360.0) % 360.0
+        [| "→"; "↗"; "↑"; "↖"; "←"; "↙"; "↓"; "↘" |].[int (System.Math.Round(d / 45.0)) % 8]
 
     let dock (env : Env<Message>) (model : AdaptiveModel) =
         let placement = model.ScanPins.Placement
-        let selected  = model.ScanPins.SelectedPin
+        let selected  = model.Selection.SelectedPin
         let pinsVal   = model.ScanPins.Pins |> AMap.toAVal
         let effId     = ScanPinModel.effectivePinIdA placement selected
         let effPin    = (effId, pinsVal) ||> AVal.map2 (fun id pins -> id |> Option.bind (fun i -> HashMap.tryFind i pins))
         let hasPin    = effPin |> AVal.map Option.isSome
         let orderVal  = model.MeshOrder.Content
         let refMeshA  = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
-        let meshNamesA = model.MeshNames |> AList.toAVal
-        let previewOn = model.PendingReg |> AVal.map PendingRegistration.isPreview
         let corrA     = effPin |> AVal.map (Option.bind ScanPin.correspondence)
+        let emit (m : Message) = env.Emit [m]
 
         let visibleMovingA =
             AVal.custom (fun t ->
-                let names = meshNamesA.GetValue t |> IndexList.toList
+                let names = model.MeshNames.Content.GetValue t |> IndexList.toList
                 let vis = model.MeshVisible.GetValue t
                 let rf = (model.Registration.GetValue t).ReferenceMesh
                 names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true)))
 
-        let beforeA = effPin |> AVal.map (Option.bind (fun p -> match p.Probe with ProbeReady r -> Some r | _ -> None))
-        let afterA  = (effPin, previewOn) ||> AVal.map2 (fun po pv ->
-                        po |> Option.bind (fun p -> match ScanPin.effectiveProbe pv p with ProbeReady r -> Some r | _ -> None))
-
-        // ── B1 · identity ──────────────────────────────────────────────────
-        let nameVal   = effPin |> AVal.map (Option.map (fun p -> p.Name) >> Option.defaultValue "")
-        let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 5.0)
-        let corrEnabled = corrA |> AVal.map (function Some c -> c.Enabled | None -> false)
-        // k/n counts in-ROI meshes only (§C): n = in-ROI moving meshes, k = those
-        // with a placed marker; out-of-ROI meshes are excluded entirely.
+        // k/n counts in-ROI meshes only: n = in-ROI moving meshes, k = those with
+        // a placed marker; out-of-ROI meshes are excluded entirely.
         let inRoiOf (c : Correspondence option) (m : string) =
             match c with Some cc -> Map.tryFind m cc.InRoi |> Option.defaultValue true | None -> true
         let kn =
@@ -161,140 +83,67 @@ module GuiInspector =
                     | Some cc -> inRoiMoving |> List.filter (fun m -> Map.containsKey m cc.Anchors) |> List.length
                     | None -> 0
                 k, List.length inRoiMoving)
-        let emitPin (mk : ScanPinId -> Message) = match AVal.force effId with Some id -> env.Emit [mk id] | None -> ()
 
-        let identity =
+        let rosterRow (name : string) =
+            let isVis   = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+            let isRef   = refMeshA |> AVal.map ((=) (Some name))
+            let colorVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0 >> meshColor)
+            let sensor  = model.MeshSensorTypes |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue UnknownSensor)
+            let loaded  = MeshView.loadMeshAsync (fun _ -> ()) name
+            let triCount = loaded.fvc |> AVal.map (fun c -> max 0 (c / 3))
+            let overlap =
+                AVal.custom (fun t ->
+                    match (model.Registration.GetValue t).ReferenceMesh with
+                    | Some rf when rf <> name ->
+                        let mb = model.MeshBounds.GetValue t
+                        match Map.tryFind name mb, Map.tryFind rf mb with
+                        | Some a, Some b -> a.Intersects b
+                        | _ -> false
+                    | _ -> true)
+            let sensorTxt = function
+                | RoverStereo -> "Rover" | Satellite -> "Sat" | Photogrammetry -> "Photo"
+                | LiDAR -> "LiDAR" | UnknownSensor -> "—"
+            let focused = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
             div {
-                Class "ins-b1"
-                input {
-                    Class "ins-name"
-                    Attribute("type", "text")
-                    Attribute("title", "name")
-                    nameVal |> AVal.map (fun n -> Some (Attribute("value", n)))
-                    Dom.OnChange(fun e ->
-                        match AVal.force effId with
-                        | Some id -> env.Emit [RenamePin(id, e.Value)]
-                        | None -> ())
-                }
-                inlineLogSlider "r" 0.01 10000.0 (sprintf "%.2f m") radiusVal (fun v ->
-                    env.Emit [ScanPinMsg (SetInnerRadius v)])
-                div {
-                    Class "ins-b1-row"
-                    span { Class "ins-kn"; kn |> AVal.map (fun (k, n) -> sprintf "k/n %d/%d" k n) }
-                    button {
-                        Class "mb"
-                        corrEnabled |> AVal.map (fun e -> if e then Some (Class "mb-on") else None)
-                        Attribute("title", "correspondence (promote / demote)")
-                        Dom.OnClick(fun _ -> emitPin ToggleCorrespondence)
-                        "⚲"
-                    }
-                    button {
-                        Class "mb ins-del"
-                        Attribute("title", "delete pin")
-                        Dom.OnClick(fun _ -> emitPin (fun id -> ScanPinMsg (DeletePin id)))
-                        "✕"
-                    }
-                }
-            }
-
-        // ── B2 · raincloud ─────────────────────────────────────────────────
-        let rainData =
-            AVal.custom (fun t ->
-                rainJson (orderVal.GetValue t) (visibleMovingA.GetValue t)
-                    (model.InspectorMesh.GetValue t) (beforeA.GetValue t) (afterA.GetValue t))
-        let raincloud =
-            div {
-                Class "ins-b2"
-                input {
-                    Class "ins-rain-bus"
-                    Attribute("type", "text")
-                    Dom.OnInput(fun e ->
-                        let parts = e.Value.Split('|')
-                        if parts.Length = 2 && parts.[0] = "row" then
-                            env.Emit [SetInspectorMesh (Some parts.[1])])
-                }
-                div {
-                    Class "ins-rain"
-                    rainData |> AVal.map (fun j -> Some (Attribute("data-rain", j)))
-                    observedRender "data-rain" "{}" rainJs
-                }
-            }
-
-        // ── B3 · correspondence readout (numbers only) ─────────────────────
-        let b3 =
-            div {
-                Class "ins-b3"
-                model.MeshNames |> AList.map (fun mesh ->
-                    let isMoving = refMeshA |> AVal.map (fun r -> r <> Some mesh)
-                    let isVis = model.MeshVisible |> AVal.map (fun m -> Map.tryFind mesh m |> Option.defaultValue true)
-                    let show = (isMoving, isVis) ||> AVal.map2 (&&)
-                    let placed = corrA |> AVal.map (Option.bind (fun c -> Map.tryFind mesh c.Anchors) >> Option.isSome)
-                    let residual = corrA |> AVal.map (Option.bind (fun c -> Map.tryFind mesh c.Residuals))
-                    let active = model.InspectorMesh |> AVal.map ((=) (Some mesh))
-                    let colorVal = model.MeshOrder |> AMap.tryFind mesh |> AVal.map (Option.defaultValue 0 >> meshColor)
-                    div {
-                        Class "ins-b3-row"
-                        showWhen show
-                        active |> AVal.map (fun a -> if a then Some (Class "ins-b3-active") else None)
-                        Dom.OnClick(fun _ -> env.Emit [SetInspectorMesh (Some mesh)])
-                        span { Class "ins-sw"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (c4bToRgbCss c)])) }
-                        span { Class "ins-b3-name"; orderVal |> AVal.map (fun o -> numbered o mesh) }
-                        span {
-                            Class "ins-b3-ok"
-                            placed |> AVal.map (fun p -> Some (Class (if p then "ins-ok" else "ins-no")))
-                            placed |> AVal.map (fun p -> if p then "✓" else "✗")
-                        }
-                        span {
-                            Class "ins-b3-res"
-                            residual |> AVal.map (function Some r -> sprintf "%.0f mm" (r * 1000.0) | None -> "—")
-                        }
-                    })
-            }
-
-        // ── B4 · intrinsic bars (active moving mesh) ───────────────────────
-        let activeIntrinsics =
-            AVal.custom (fun t ->
-                let moving = visibleMovingA.GetValue t
-                let act = model.InspectorMesh.GetValue t |> Option.filter (fun m -> List.contains m moving) |> Option.orElse (List.tryHead moving)
-                match act, afterA.GetValue t with
-                | Some m, Some r ->
-                    r.Distributions |> Array.tryFind (fun d -> d.MeshName = m)
-                    |> Option.map (fun d -> if d.Intrinsics.Length >= 3 then d.Intrinsics else [| 0.0; 0.0; 0.0 |])
-                | _ -> None)
-        let bar (letter : string) (idx : int) =
-            div {
-                Class "ins-bar-row"
-                span { Class "ins-bar-id"; letter }
-                div {
-                    Class "ins-bar-track"
-                    div {
-                        Class "ins-bar-fill"
-                        activeIntrinsics |> AVal.map (fun io ->
-                            let v = io |> Option.map (fun a -> a.[idx]) |> Option.defaultValue 0.0
-                            Some (Style [Width (sprintf "%.0f%%" (max 0.0 (min 1.0 v) * 100.0)); Css.Background (ramp v)]))
-                    }
-                }
+                Class "ros-row"
+                focused |> AVal.map (fun f -> if f then Some (Class "ros-row-active") else None)
+                Dom.OnClick(fun _ -> emit (SetFocusedMesh (Some name)))
+                Dom.OnPointerMove(fun _ -> emit (SetHovered (Some (HoverMesh name))))
+                Dom.OnMouseLeave(fun _ -> emit (SetHovered None))
+                span { Class "ins-sw"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (c4bToRgbCss c)])) }
+                span { Class "ros-name"; orderVal |> AVal.map (fun o -> numbered o name) }
+                span { Class "ros-cell"; isRef |> AVal.map (fun r -> if r then "★ ref" else "moving") }
+                span { Class "ros-cell"; sensor |> AVal.map sensorTxt }
+                span { Class "ros-cell"; triCount |> AVal.map (fun n -> sprintf "%d tris" n) }
                 span {
-                    Class "ins-bar-val"
-                    activeIntrinsics |> AVal.map (function
-                        | Some a -> sprintf "%.2f" a.[idx]
-                        | None -> "—")
+                    Class "ros-cell"
+                    isRef |> AVal.map (fun r -> if r then Some (Class "hidden") else None)
+                    overlap |> AVal.map (fun o -> if o then "overlaps ✓" else "no overlap")
+                }
+                button {
+                    Class "mb"
+                    isVis |> AVal.map (fun v -> if v then Some (Class "mb-on") else None)
+                    Attribute("title", "Visible")
+                    Dom.OnClick(fun _ -> emit (SetVisible(name, not (AVal.force isVis))))
+                    isVis |> AVal.map (fun v -> if v then "●" else "○")
                 }
             }
-        let b4 =
+        let roster =
             div {
-                Class "ins-b4"
-                bar "I" 0
-                bar "R" 1
-                bar "S" 2
+                Class "ins-roster"
+                div {
+                    Class "ros-head"
+                    span { Class "ins-sw" }
+                    span { Class "ros-name"; "mesh" }
+                    span { Class "ros-cell"; "role" }
+                    span { Class "ros-cell"; "sensor" }
+                    span { Class "ros-cell"; "size" }
+                    span { Class "ros-cell"; "vs ref" }
+                    span { Class "mb" }
+                }
+                div { Class "ros-rows"; model.MeshNames |> AList.map rosterRow }
             }
 
-        // ── §F correspondence manager (Correspondences step) ──────────────
-        let emit (m : Message) = env.Emit [m]
-        let hoverEmit (m : string option) =
-            match AVal.force effId with
-            | Some id -> emit (SetCorrRowHover (m |> Option.map (fun mesh -> pinKey id, mesh)))
-            | None -> emit (SetCorrRowHover None)
         let managerRow (mesh : string) =
             let isMoving = refMeshA |> AVal.map (fun r -> r <> Some mesh)
             let isVis = model.MeshVisible |> AVal.map (fun mp -> Map.tryFind mesh mp |> Option.defaultValue true)
@@ -315,16 +164,22 @@ module GuiInspector =
                     | None -> "—")
             let active =
                 AVal.custom (fun t ->
-                    (match effId.GetValue t with Some id -> model.CorrRowHover.GetValue t = Some (pinKey id, mesh) | None -> false)
-                    || model.InspectorMesh.GetValue t = Some mesh)
+                    (match effId.GetValue t with
+                     | Some id -> model.Selection.Hovered.GetValue t = Some (HoverPoint (id, mesh))
+                     | None -> false)
+                    || model.Selection.SelectedPoint.GetValue t = Some mesh)
             let colorVal = model.MeshOrder |> AMap.tryFind mesh |> AVal.map (Option.defaultValue 0 >> meshColor)
+            let hoverEmit (on : bool) =
+                match AVal.force effId with
+                | Some id -> emit (SetHovered (if on then Some (HoverPoint (id, mesh)) else None))
+                | None -> emit (SetHovered None)
             div {
                 Class "ins-mgr-row"
                 showWhen show
                 inRoi |> AVal.map (fun roi -> if roi then None else Some (Class "ins-mgr-out"))
                 active |> AVal.map (fun a -> if a then Some (Class "ins-mgr-active") else None)
-                Dom.OnPointerMove(fun _ -> hoverEmit (Some mesh))
-                Dom.OnMouseLeave(fun _ -> hoverEmit None)
+                Dom.OnPointerMove(fun _ -> hoverEmit true)
+                Dom.OnMouseLeave(fun _ -> hoverEmit false)
                 span { Class "ins-sw"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (c4bToRgbCss c)])) }
                 span { Class "ins-mgr-name"; orderVal |> AVal.map (fun o -> numbered o mesh) }
                 span { stateCls |> AVal.map Some; Class "ins-mgr-state"; stateGlyph }
@@ -339,9 +194,9 @@ module GuiInspector =
                 button {
                     Class "mb ins-mgr-act"
                     inRoi |> AVal.map (fun roi -> if roi then None else Some (Class "hidden"))
-                    Attribute("title", "Edit in the focus panel")
-                    Dom.OnClick(fun _ -> emit (SetFocusMesh (Some mesh)))
-                    "✎"
+                    Attribute("title", "Focus camera + edit in the focus panel")
+                    Dom.OnClick(fun _ -> emit (SetSelectedPoint (Some mesh)); emit (SetFocusedMesh (Some mesh)))
+                    "⌖"
                 }
             }
         let refColorA =
@@ -358,9 +213,23 @@ module GuiInspector =
                 span { Class "ins-mgr-state ins-st-ref"; "★" }
                 span { Class "ins-mgr-res"; corrA |> AVal.map (function Some c when c.RefAnchor.IsSome -> "ref" | _ -> "…") }
             }
+        let nameVal   = effPin |> AVal.map (Option.map (fun p -> p.Name) >> Option.defaultValue "")
+        let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 5.0)
         let manager =
             div {
                 Class "ins-mgr"
+                div {
+                    Class "ins-mgr-head"
+                    input {
+                        Class "ins-name"
+                        Attribute("type", "text"); Attribute("title", "pin name")
+                        nameVal |> AVal.map (fun n -> Some (Attribute("value", n)))
+                        Dom.OnChange(fun e ->
+                            match AVal.force effId with Some id -> emit (RenamePin(id, e.Value)) | None -> ())
+                    }
+                    inlineLogSlider "r" 0.01 10000.0 (sprintf "%.2f m") radiusVal (fun v ->
+                        emit (ScanPinMsg (SetInnerRadius v)))
+                }
                 refRow
                 div { Class "ins-mgr-rows"; model.MeshNames |> AList.map managerRow }
                 div {
@@ -368,83 +237,138 @@ module GuiInspector =
                     span { Class "ins-kn"; kn |> AVal.map (fun (k, n) -> sprintf "k/n %d/%d" k n) }
                     button {
                         Class "rail-btn rail-btn-primary ins-solve"
-                        previewOn |> AVal.map (fun p -> if p then Some (Attribute("disabled", "disabled")) else None)
                         Dom.OnClick(fun _ -> emit SolveCoarse)
-                        "Solve coarse"
+                        "Solve"
                     }
                 }
             }
 
-        // ── light step modes ──────────────────────────────────────────────
-        let referenceMode =
+        // Inspect dock: a Difference|Displacement channel toggle (drives the focus
+        // tiles), the pin distribution panel (Task 4), and the shift readout
+        // (Task 5, displacement only). Containers are fixed; only content swaps.
+        let channelA = model.InspectChannel
+        let isDisplacement = channelA |> AVal.map ((=) ChDisplacement)
+
+        // Shift readout (displacement): the focused mesh's centroid displacement
+        // load→solved, split vertical (datum) / horizontal (lateral) + rotation
+        // angle, derived client-side from its SolvedTransform.
+        let shiftData =
+            AVal.custom (fun t ->
+                match model.Selection.FocusedMesh.GetValue t with
+                | None -> None
+                | Some m ->
+                    match Map.tryFind m (model.SolvedTransforms.GetValue t) with
+                    | None -> None
+                    | Some sr ->
+                        let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) m
+                        let cc = model.CommonCentroid.GetValue t
+                        let centroidW = Map.tryFind m (model.DatasetCentroids.GetValue t) |> Option.defaultValue cc
+                        let sw = (RigidTransform.renderToWorld scale cc sr).Forward
+                        let shift = sw.TransformPos centroidW - centroidW
+                        let total = shift.Length
+                        let vertical = shift.Z
+                        let horizontal = sqrt (shift.X * shift.X + shift.Y * shift.Y)
+                        let heading = atan2 shift.Y shift.X * 180.0 / System.Math.PI
+                        let trace = sw.M00 + sw.M11 + sw.M22
+                        let ang = acos (max -1.0 (min 1.0 ((trace - 1.0) / 2.0))) * 180.0 / System.Math.PI
+                        Some (numbered (orderVal.GetValue t) m, total, vertical, horizontal, heading, ang))
+        let hasShift = shiftData |> AVal.map Option.isSome
+        let shiftBody = (isDisplacement, hasShift) ||> AVal.map2 (&&)
+        let shiftEmpty = (isDisplacement, hasShift) ||> AVal.map2 (fun d h -> d && not h)
+        let shiftFmt f = shiftData |> AVal.map (function Some x -> f x | None -> "—")
+        let shiftRow (k : string) (v : aval<string>) =
+            div { Class "ins-shift-row"; span { Class "ins-shift-k"; k }; span { Class "ins-shift-v"; v } }
+
+        // Per moving mesh: re-centred raw probe samples + median/IQR + ±LoD₉₅, on a
+        // shared mm axis. The probe reflects the current RegView pose (it refetches
+        // on toggle), so `state` labels which side is shown.
+        let distData =
+            AVal.custom (fun t ->
+                let inv = System.Globalization.CultureInfo.InvariantCulture
+                let g (v : float) =
+                    if System.Double.IsNaN v || System.Double.IsInfinity v then "0" else v.ToString("0.###", inv)
+                let order = orderVal.GetValue t
+                match effPin.GetValue t with
+                | None -> "{}"
+                | Some p ->
+                    match p.Probe with
+                    | ProbeRunning | ProbeNone -> "{\"pending\":\"probing…\"}"
+                    | ProbeError _ -> "{\"pending\":\"probe unavailable\"}"
+                    | ProbeReady r ->
+                        let stateLbl = match model.RegView.GetValue t with RegBefore -> "Before" | RegAfter -> "After"
+                        let stdOf m =
+                            r.Distributions |> Array.tryFind (fun d -> d.MeshName = m)
+                            |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
+                        let refStd = stdOf r.ReferenceMesh
+                        let moving = r.Distributions |> Array.filter (fun d -> d.MeshName <> r.ReferenceMesh)
+                        if moving.Length = 0 then "{\"rows\":[]}"
+                        else
+                            let pooled = moving |> Array.collect (fun d -> d.Samples) |> Array.map (fun x -> x * 1000.0)
+                            let lo, hi =
+                                if pooled.Length = 0 then -10.0, 10.0
+                                else
+                                    let s = Array.sort pooled
+                                    let q pp =
+                                        let h = pp * float (s.Length - 1)
+                                        let i = int h
+                                        if i >= s.Length - 1 then s.[s.Length - 1]
+                                        else s.[i] + (h - float i) * (s.[i + 1] - s.[i])
+                                    q 0.01, q 0.99
+                            let lo, hi = min lo 0.0, max hi 0.0
+                            let pad = max 1.0 (hi - lo) * 0.08
+                            let lo, hi = lo - pad, hi + pad
+                            let rowJson (d : ProbeDistribution) =
+                                let col = match HashMap.tryFind d.MeshName order with Some i -> c4bToHex (meshColor i) | None -> "#1a56db"
+                                let lod = 1.96 * sqrt (refStd * refStd + d.Std * d.Std) * 1000.0
+                                let stride = if d.Samples.Length > 300 then d.Samples.Length / 300 else 1
+                                let sj =
+                                    [ 0 .. stride .. d.Samples.Length - 1 ]
+                                    |> List.map (fun i -> g (d.Samples.[i] * 1000.0)) |> String.concat ","
+                                sprintf "{\"name\":\"%s\",\"color\":\"%s\",\"median\":%s,\"q1\":%s,\"q3\":%s,\"lod\":%s,\"n\":%d,\"s\":[%s]}"
+                                    (numbered order d.MeshName) col (g (d.Median * 1000.0)) (g (d.Q1 * 1000.0)) (g (d.Q3 * 1000.0)) (g lod) d.Count sj
+                            let rows = moving |> Array.map rowJson |> String.concat ","
+                            sprintf "{\"state\":\"%s\",\"lo\":%s,\"hi\":%s,\"rows\":[%s]}" stateLbl (g lo) (g hi) rows)
+
+        let inspectDock =
             div {
-                Class "ins-light"
+                Class "ins-inspect"
                 div {
-                    Class "ins-light-row"
-                    span { Class "ins-light-k"; "Reference" }
-                    span { (refMeshA, orderVal) ||> AVal.map2 (fun r o -> match r with Some m -> numbered o m | None -> "— pick a ★ in the rail") }
+                    Class "ins-insp-head"
+                    span { Class "ins-insp-label"; "Focus channel" }
+                    compactButtonBar [
+                        "Difference",   (channelA |> AVal.map ((=) ChDifference)),   (fun () -> emit (SetInspectChannel ChDifference))
+                        "Displacement", (channelA |> AVal.map ((=) ChDisplacement)), (fun () -> emit (SetInspectChannel ChDisplacement))
+                    ]
                 }
                 div {
-                    Class "ins-light-row"
-                    span { Class "ins-light-k"; "Meshes" }
-                    span { model.MeshNames.Content |> AVal.map (fun ns -> sprintf "%d loaded" (IndexList.count ns)) }
-                }
-            }
-        let fineMode =
-            div {
-                Class "ins-light"
-                div {
-                    Class "ins-light-row"
-                    span { Class "ins-light-k"; "RMS" }
-                    span {
-                        model.LastSolve |> AVal.map (fun ls ->
-                            if Map.isEmpty ls then "no solve yet"
-                            else
-                                let bs = ls |> Map.toSeq |> Seq.map (fun (_, e) -> e.RmsBefore) |> Seq.toArray
-                                let aft = ls |> Map.toSeq |> Seq.map (fun (_, e) -> e.RmsAfter) |> Seq.toArray
-                                sprintf "%.0f → %.0f mm" (Array.average bs * 1000.0) (Array.average aft * 1000.0))
+                    Class "ins-insp-body"
+                    div {
+                        Class "ins-dist"
+                        distData |> AVal.map (fun j -> Some (Attribute("data-dist", j)))
+                        observedRender "data-dist" "{}" distJs
                     }
-                }
-                button {
-                    Class "rail-btn ins-solve"
-                    previewOn |> AVal.map (fun p -> if p then Some (Attribute("disabled", "disabled")) else None)
-                    Dom.OnClick(fun _ -> emit RunRegistration)
-                    "Run / re-run ICP"
-                }
-            }
-        let commitMode =
-            let pend = model.PendingReg |> AVal.map (function Some pr -> Map.count pr.Results | None -> 0)
-            div {
-                Class "ins-light"
-                div {
-                    Class "ins-light-row"
-                    pend |> AVal.map (fun n -> if n > 0 then sprintf "Previewing %d mesh(es) — committed vs new pose" n else "Nothing pending — run a solve first")
-                }
-                div {
-                    Class "ins-commit-row"
-                    showWhen previewOn
-                    button {
-                        Class "rail-btn rail-btn-primary"
-                        Dom.OnClick(fun _ -> emit CommitRegistration)
-                        "Commit"
-                    }
-                    button {
-                        Class "rail-btn"
-                        Dom.OnClick(fun _ -> emit DiscardRegistration)
-                        "Discard"
+                    // Always mounted at a fixed width so the channel toggle never
+                    // reflows the distribution panel; only the inner content swaps.
+                    div {
+                        Class "ins-shift"
+                        div { Class "ins-stub-note"; showWhenNot isDisplacement; "Shift readout shows in the Displacement channel." }
+                        div { Class "ins-stub-note"; showWhen shiftEmpty; "Focus a solved mesh to read its shift." }
+                        div {
+                            Class "ins-shift-body"; showWhen shiftBody
+                            div { Class "ins-shift-head"; shiftFmt (fun (n, _, _, _, _, _) -> sprintf "Shift — %s" n) }
+                            shiftRow "total"          (shiftFmt (fun (_, tot, _, _, hd, _) -> sprintf "%.3f m  %s" tot (dirArrow hd)))
+                            shiftRow "vertical datum" (shiftFmt (fun (_, _, vr, _, _, _) -> sprintf "%+.3f m" vr))
+                            shiftRow "horizontal"     (shiftFmt (fun (_, _, _, hz, _, _) -> sprintf "%.3f m" hz))
+                            shiftRow "rotation"       (shiftFmt (fun (_, _, _, _, _, ang) -> sprintf "%.2f°" ang))
+                        }
                     }
                 }
             }
 
-        // ── step-contextual assembly (cross-faded; v3 §A) ─────────────────
+        // Container-invariant cross-fade between the three modes.
         let stepA = model.WorkflowStep
         let modeOn (pred : WorkflowStep -> bool) =
             stepA |> AVal.map (fun s -> if pred s then Some (Class "ins-mode-on") else None)
-        let errorInspector =
-            div {
-                div { Class "ins-empty"; showWhenNot hasPin; span { "◌" } }
-                div { Class "ins-body"; showWhen hasPin; identity; raincloud; b3; b4 }
-            }
         div {
             Class "pin-inspector"
             div {
@@ -453,15 +377,13 @@ module GuiInspector =
             }
             div {
                 Class "ins-modes"
-                div { Class "ins-mode"; modeOn ((=) StepReference); referenceMode }
-                div { Class "ins-mode"; modeOn (fun s -> s = StepManualMove || s = StepInspect); errorInspector }
+                div { Class "ins-mode"; modeOn ((=) Overview); roster }
                 div {
                     Class "ins-mode"
-                    modeOn ((=) StepCorrespondences)
+                    modeOn ((=) Correspondence)
                     div { Class "ins-empty"; showWhenNot hasPin; span { "◌ select a pin" } }
                     div { Class "ins-mgr-wrap"; showWhen hasPin; manager }
                 }
-                div { Class "ins-mode"; modeOn ((=) StepFine); fineMode }
-                div { Class "ins-mode"; modeOn ((=) StepCommit); commitMode }
+                div { Class "ins-mode"; modeOn ((=) Inspect); inspectDock }
             }
         }

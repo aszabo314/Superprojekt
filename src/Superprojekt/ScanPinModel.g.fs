@@ -1,5 +1,5 @@
-//011f3b3b-150c-2b17-737c-ad4494bce711
-//c10ebe6e-6f88-97a7-60f8-5f4c47805782
+//9250de6a-1f5b-8d94-386e-4312d77cd99d
+//1885c636-9154-85ee-3139-98bf9fe59dd8
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -13,7 +13,6 @@ open Superprojekt
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveScanPinModel(value : ScanPinModel) =
     let _Pins_ = FSharp.Data.Adaptive.cmap(value.Pins)
-    let _SelectedPin_ = FSharp.Data.Adaptive.cval(value.SelectedPin)
     let _Placement_ = FSharp.Data.Adaptive.cval(value.Placement)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
@@ -24,10 +23,8 @@ type AdaptiveScanPinModel(value : ScanPinModel) =
             __value <- value
             __adaptive.MarkOutdated()
             _Pins_.Value <- value.Pins
-            _SelectedPin_.Value <- value.SelectedPin
             _Placement_.Value <- value.Placement
     member __.Current = __adaptive
     member __.Pins = _Pins_ :> FSharp.Data.Adaptive.amap<ScanPinId, ScanPin>
-    member __.SelectedPin = _SelectedPin_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
     member __.Placement = _Placement_ :> FSharp.Data.Adaptive.aval<PlacementState>
 

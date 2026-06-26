@@ -18,7 +18,7 @@ let private cache = ConcurrentDictionary<struct(string * string * int), LoadedMe
 
 // BbTree build is recursive; non-uniform photogrammetry meshes can overflow a
 // thread-pool thread's 1 MB stack (uncatchable, kills the process). Build on a
-// dedicated large-stack thread so deep recursion is never fatal.
+// dedicated large-stack thread.
 let private buildBbTree (boxes : Box3d[]) : BbTree =
     let mutable tree = Unchecked.defaultof<BbTree>
     let mutable err : exn = null

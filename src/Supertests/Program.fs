@@ -132,18 +132,6 @@ let umeyamaTests () =
     // (e) fewer than 3 pairs is rejected (the HTTP handler maps this to 400).
     check "<3 pairs rejected" ((RegMath.solveRigid [| V3d.Zero, V3d.Zero, 1.0; V3d.IOO, V3d.IOO, 1.0 |]).IsNone)
 
-// ───────────────────────── RegLog: effective pose ─────────────────────────
-
-let regLogTests () =
-    // Effective composition is the load-bearing convention: committed first,
-    // then the delta (postfix Trafo3d composition).
-    let c = Trafo3d.Translation(V3d(1.0, 0.0, 0.0)) * Trafo3d.RotationZ 0.5
-    let d = Trafo3d.Translation(V3d(0.0, 2.0, 0.0))
-    let p = V3d(3.0, 4.0, 5.0)
-    let viaEffective = (RegLog.effective c d).Forward.TransformPos p
-    let viaSequence = d.Forward.TransformPos (c.Forward.TransformPos p)
-    checkLe "effective = delta ∘ committed" (viaEffective - viaSequence).Length 1e-12
-
 // ───────────────────────── RegJson: round-trips ───────────────────────────
 
 let parseRoot (json : string) =
@@ -315,7 +303,6 @@ let lastSolveTests () =
 [<EntryPoint>]
 let main _ =
     umeyamaTests ()
-    regLogTests ()
     regJsonTests ()
     conditioningTests ()
     readinessTests ()

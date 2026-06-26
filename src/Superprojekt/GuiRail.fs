@@ -4,11 +4,10 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-// Left workflow rail (spec §2): a vertical stepper — 1 Reference · 2 Coarse
-// align · 3 Fine ICP · 4 Inspect · 5 Commit — with one step expanded at a time
-// and a PINS list underneath. A near-pure view: every control dispatches an
-// existing message; it never issues server queries itself. Replaces the old
-// left mesh panel + floating registration panel.
+// Left rail: three modes (Overview · Correspondence · Inspect), one expanded at
+// a time; the container never moves, only the active mode's detail changes.
+// Pure view — every control dispatches an existing message and never issues
+// server queries itself.
 module GuiRail =
 
     open Primitives
@@ -34,42 +33,28 @@ module GuiRail =
     let rail (env : Env<Message>) (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let refMesh   = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let curStep   = model.WorkflowStep
-        let previewOn = model.PendingReg |> AVal.map PendingRegistration.isPreview
         let pinsVal   = model.ScanPins.Pins |> AMap.toAVal
         let flyTo (target : FlyToTarget) =
             let s = AVal.force viewportSize
             env.Emit [FlyTo(target, float s.X / float (max 1 s.Y))]
 
-        // ── per-step readiness pill ───────────────────────────────────────
         let stepStatus (step : WorkflowStep) : aval<Pill * string> =
             AVal.custom (fun t ->
                 let hasRef = (model.Registration.GetValue t).ReferenceMesh |> Option.isSome
-                let preview = PendingRegistration.isPreview (model.PendingReg.GetValue t)
-                let solved = not (Map.isEmpty (model.LastSolve.GetValue t))
+                let solved = not (Map.isEmpty (model.SolvedTransforms.GetValue t))
                 match step with
-                | StepReference ->
+                | Overview ->
                     if hasRef then PillReady, "reference set"
                     else PillBlock, "pick a reference ★"
-                | StepManualMove ->
+                | Correspondence ->
                     if not hasRef then PillBlock, "needs a reference"
-                    else PillInfo, "drag in the focus panel to translate"
-                | StepCorrespondences ->
-                    if not hasRef then PillBlock, "needs a reference"
-                    elif preview then PillReady, "preview ready"
                     elif solved then PillReady, "aligned"
                     else PillInfo, "place ≥3 correspondences, then solve"
-                | StepFine ->
-                    if not solved && not preview then PillInfo, "optional · coarse first"
-                    else PillInfo, "optional"
-                | StepInspect ->
+                | Inspect ->
                     if hasRef then PillInfo, "error layers"
-                    else PillBlock, "needs a reference"
-                | StepCommit ->
-                    if preview then PillReady, "ready to commit"
-                    else PillInfo, "nothing pending")
+                    else PillBlock, "needs a reference")
 
-        // ── stepper header ────────────────────────────────────────────────
-        let stepHeader (step : WorkflowStep) =
+        let modeHeader (step : WorkflowStep) =
             let active = curStep |> AVal.map ((=) step)
             let status = stepStatus step
             button {
@@ -80,13 +65,12 @@ module GuiRail =
                 span { Class "rail-step-title"; WorkflowStep.title step }
                 span {
                     status |> AVal.map (fun (p, _) -> Some (Class (pillClass p)))
-                    Attribute("title", "")
                     status |> AVal.map (fun (p, _) ->
                         match p with PillReady -> "✔" | PillWarn -> "⚠" | PillBlock -> "✖" | PillInfo -> "•")
                 }
             }
 
-        let stepBody (step : WorkflowStep) (body : DomNode) =
+        let modeBody (step : WorkflowStep) (body : DomNode) =
             div {
                 Class "rail-body"
                 showWhen (curStep |> AVal.map ((=) step))
@@ -94,19 +78,27 @@ module GuiRail =
                 body
             }
 
-        // ── 1 Reference: mesh list (ref / visibility / sensor / frame) ─────
         let meshRow (name : string) =
             let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
             let isRef  = refMesh |> AVal.map ((=) (Some name))
             let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
             let colorVal = idxVal |> AVal.map meshColor
             let sensor = model.MeshSensorTypes |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue UnknownSensor)
+            let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverMesh m) -> m = name | _ -> false)
             div {
                 Class "rail-mesh-row"
                 isVis |> AVal.map (fun v -> if v then None else Some (Class "rail-row-dim"))
+                hovered |> AVal.map (fun h -> if h then Some (Class "rail-row-hover") else None)
+                // hover = peek-isolate this mesh via the shared Selection.
+                Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                 span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
                 span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                span { Class "rail-mesh-name"; Attribute("title", name); shortName name }
+                span {
+                    Class "rail-mesh-name"; Attribute("title", name)
+                    Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
+                    shortName name
+                }
                 button {
                     Class "mb mb-ref"
                     isRef |> AVal.map (fun r -> if r then Some (Class "mb-on") else None)
@@ -139,10 +131,9 @@ module GuiRail =
                     "⌖"
                 }
             }
-        let meshList =
-            model.MeshNames |> AList.map meshRow
+        let overviewBody =
+            div { Class "rail-mesh-list"; model.MeshNames |> AList.map meshRow }
 
-        // ── PINS list (all steps) ─────────────────────────────────────────
         let pinList =
             pinsVal
             |> AVal.map (fun pins ->
@@ -150,15 +141,15 @@ module GuiRail =
                 |> List.map snd |> IndexList.ofList)
             |> AList.ofAVal
         let pinRow (pin : ScanPin) =
-            let selected = model.ScanPins.SelectedPin |> AVal.map ((=) (Some pin.Id))
+            let selected = model.Selection.SelectedPin |> AVal.map ((=) (Some pin.Id))
             let isCorr =
                 pin.Correspondence |> Option.map (fun c -> c.Enabled) |> Option.defaultValue false
             div {
                 Class "rail-pin-row"
                 selected |> AVal.map (fun s -> if s then Some (Class "rail-pin-sel") else None)
-                // §G brushing: pin-row hover brightens this pin's 3D constellation.
-                Dom.OnPointerMove(fun _ -> env.Emit [SetWorkflowPinHover (Some pin.Id)])
-                Dom.OnMouseLeave(fun _ -> env.Emit [SetWorkflowPinHover None])
+                // hover = peek the pin's constellation via the shared Selection.
+                Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPin pin.Id))])
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                 span {
                     Class "rail-pin-name"
                     Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPin (Some pin.Id))])
@@ -186,19 +177,7 @@ module GuiRail =
         let placing =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
-        // ── step bodies ───────────────────────────────────────────────────
-        let referenceBody =
-            div { Class "rail-mesh-list"; meshList }
-
-        let manualMoveBody =
-            div {
-                Class "rail-step-controls"
-                div { Class "rail-note"; "Drag in the focus panel (Top/Front/Side) to translate the selected moving mesh in the view plane. Others ghost out automatically." }
-            }
-
-        let correspondencesBody =
-            // Readiness diagnostics (revived engine) — blocker/warning/ready with
-            // one-click nav actions (NavTo). The dock manager hosts the rows + solve.
+        let corrBody =
             let diags = ReadinessView.input model |> AVal.map (fun inp -> (Readiness.compute inp).Coarse)
             let sevClass = function Blocker -> "block" | Warning -> "warn" | Ready -> "ready" | Info -> "info"
             let sevIcon  = function Blocker -> "✖" | Warning -> "⚠" | Ready -> "✔" | Info -> "•"
@@ -215,123 +194,6 @@ module GuiRail =
             div {
                 Class "rail-step-controls"
                 div { Class "rail-note"; "Place pins on the reference; auto-seeded markers project onto each mesh. Edit handles in the focus panel; manage + solve in the dock below." }
-                div { Class "rail-diags"; diags |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map diagRow }
-            }
-
-        let fineBody =
-            let mode = model.Registration |> AVal.map (fun r -> r.Mode)
-            div {
-                Class "rail-step-controls"
-                div { Class "rail-note"; "Optional. Refine with ICP after a coarse alignment." }
-                div {
-                    Class "rail-toggle-row"
-                    compactToggle "Region-restricted (weight toward pins)"
-                        (mode |> AVal.map (fun m -> m = RegionRestrictedIcp))
-                        (fun () ->
-                            let m = AVal.force mode
-                            env.Emit [SetRegistrationMode (if m = RegionRestrictedIcp then TraditionalIcp else RegionRestrictedIcp)])
-                }
-                button {
-                    Class "rail-btn"
-                    Dom.OnClick(fun _ -> env.Emit [RunRegistration])
-                    "Run / re-run ICP"
-                }
-            }
-
-        let inspectBody =
-            div {
-                Class "rail-step-controls"
-                div { Class "rail-note"; "Error layers and pin glyphs render in the viewport. (Heatmaps rebuild in a later step.)" }
-                div {
-                    Class "rail-toggle-row"
-                    compactToggle "Pin focus — ghost outside the focused pin's ROI"
-                        model.PinFocusMode (fun () -> env.Emit [TogglePinFocus])
-                }
-                div {
-                    Class "rail-toggle-row"
-                    span { Class "rail-sublabel"; "Intrinsic:" }
-                    compactButtonBar [
-                        "Off",       (model.HeatmapMode |> AVal.map (fun m -> m = HeatOff)),       (fun () -> env.Emit [SetHeatmapMode HeatOff])
-                        "Incidence", (model.HeatmapMode |> AVal.map (fun m -> m = HeatIncidence)),  (fun () -> env.Emit [SetHeatmapMode HeatIncidence])
-                        "Range",     (model.HeatmapMode |> AVal.map (fun m -> m = HeatRange)),      (fun () -> env.Emit [SetHeatmapMode HeatRange])
-                        "Shape",     (model.HeatmapMode |> AVal.map (fun m -> m = HeatShape)),      (fun () -> env.Emit [SetHeatmapMode HeatShape])
-                    ]
-                }
-                div {
-                    Class "rail-toggle-row"
-                    compactToggle "Extrinsic map (paints the soloed moving mesh — click a violin column)"
-                        model.SurfaceDistOn (fun () -> env.Emit [ToggleSurfaceDistance])
-                }
-                div {
-                    Class "rail-toggle-row"
-                    span { Class "rail-sublabel"; "Extrinsic:" }
-                    compactButtonBar [
-                        "M3C2", (model.ExtrinsicZDiff |> AVal.map not),  (fun () -> if AVal.force model.ExtrinsicZDiff then env.Emit [ToggleExtrinsicZDiff])
-                        "Δz",   (model.ExtrinsicZDiff :> aval<bool>),    (fun () -> if not (AVal.force model.ExtrinsicZDiff) then env.Emit [ToggleExtrinsicZDiff])
-                    ]
-                }
-                div {
-                    Class "rail-toggle-row"
-                    compactToggle "Variance map — disagreement of all visible moving meshes (≥2), painted on the reference"
-                        model.VarianceOn (fun () -> env.Emit [ToggleVariance])
-                }
-                div {
-                    Class "rail-toggle-row"
-                    span { Class "rail-sublabel"; "Movement (preview):" }
-                    compactButtonBar [
-                        "Off",    (model.MovementLayer |> AVal.map (fun m -> m = MovementOff)),    (fun () -> env.Emit [SetMovementLayer MovementOff])
-                        "Arrows", (model.MovementLayer |> AVal.map (fun m -> m = MovementGlyphs)), (fun () -> env.Emit [SetMovementLayer MovementGlyphs])
-                        "Grid",   (model.MovementLayer |> AVal.map (fun m -> m = MovementGrid)),   (fun () -> env.Emit [SetMovementLayer MovementGrid])
-                    ]
-                }
-            }
-
-        let commitBody =
-            div {
-                Class "rail-step-controls"
-                div {
-                    showWhen previewOn
-                    div { Class "rail-note"; "Previewing the new pose against the committed one." }
-                    div {
-                        Class "rail-commit-row"
-                        button {
-                            Class "rail-btn rail-btn-primary"
-                            Dom.OnClick(fun _ -> env.Emit [CommitRegistration])
-                            "Commit"
-                        }
-                        button {
-                            Class "rail-btn"
-                            Dom.OnClick(fun _ -> env.Emit [DiscardRegistration])
-                            "Discard"
-                        }
-                    }
-                }
-                div {
-                    showWhenNot previewOn
-                    div { Class "rail-note"; "Nothing to commit — run a solve first." }
-                }
-            }
-
-        // ── assembled rail ────────────────────────────────────────────────
-        div {
-            Class "workflow-rail"
-            div {
-                Class "rail-steps"
-                stepHeader StepReference
-                stepBody StepReference referenceBody
-                stepHeader StepManualMove
-                stepBody StepManualMove manualMoveBody
-                stepHeader StepCorrespondences
-                stepBody StepCorrespondences correspondencesBody
-                stepHeader StepFine
-                stepBody StepFine fineBody
-                stepHeader StepInspect
-                stepBody StepInspect inspectBody
-                stepHeader StepCommit
-                stepBody StepCommit commitBody
-            }
-            div {
-                Class "rail-pins"
                 div {
                     Class "rail-pins-head"
                     span { Class "rail-section-title"; "Pins" }
@@ -346,5 +208,54 @@ module GuiRail =
                     }
                 }
                 div { Class "rail-pin-list"; pinList |> AList.map pinRow }
+                div { Class "rail-diags"; diags |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map diagRow }
+            }
+
+        let inspectBody =
+            let focusName =
+                (model.Selection.FocusedMesh, model.MeshOrder.Content)
+                ||> AVal.map2 (fun fm o -> match fm with Some m -> numbered o m | None -> "— pick a mesh")
+            div {
+                Class "rail-step-controls"
+                div { Class "rail-note"; "Difference & displacement show per-mesh in the focus; variance shows on the reference in 3D. Before/after follows the global toggle." }
+                div {
+                    Class "rail-light-row"
+                    span { Class "rail-sublabel"; "Focused:" }
+                    span { Class "rail-light-v"; focusName }
+                }
+                div {
+                    Class "rail-toggle-row"
+                    span { Class "rail-sublabel"; "Difference:" }
+                    compactButtonBar [
+                        "M3C2", (model.ExtrinsicZDiff |> AVal.map not),  (fun () -> if AVal.force model.ExtrinsicZDiff then env.Emit [ToggleExtrinsicZDiff])
+                        "Δz",   (model.ExtrinsicZDiff :> aval<bool>),    (fun () -> if not (AVal.force model.ExtrinsicZDiff) then env.Emit [ToggleExtrinsicZDiff])
+                    ]
+                }
+                div {
+                    Class "rail-toggle-row"
+                    span { Class "rail-sublabel"; "Intrinsic:" }
+                    compactButtonBar [
+                        "Off",       (model.HeatmapMode |> AVal.map (fun m -> m = HeatOff)),       (fun () -> env.Emit [SetHeatmapMode HeatOff])
+                        "Incidence", (model.HeatmapMode |> AVal.map (fun m -> m = HeatIncidence)),  (fun () -> env.Emit [SetHeatmapMode HeatIncidence])
+                        "Range",     (model.HeatmapMode |> AVal.map (fun m -> m = HeatRange)),      (fun () -> env.Emit [SetHeatmapMode HeatRange])
+                        "Shape",     (model.HeatmapMode |> AVal.map (fun m -> m = HeatShape)),      (fun () -> env.Emit [SetHeatmapMode HeatShape])
+                    ]
+                }
+                div {
+                    Class "rail-note rail-note-sub"
+                    "Variance — disagreement of all visible moving meshes (≥2) — paints on the reference in 3D automatically while Inspect is active."
+                }
+            }
+
+        div {
+            Class "workflow-rail"
+            div {
+                Class "rail-steps"
+                modeHeader Overview
+                modeBody Overview overviewBody
+                modeHeader Correspondence
+                modeBody Correspondence corrBody
+                modeHeader Inspect
+                modeBody Inspect inspectBody
             }
         }

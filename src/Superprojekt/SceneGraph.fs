@@ -143,8 +143,9 @@ module SceneGraph =
                         let cc = model.CommonCentroid.GetValue t
                         let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
                         let tr =
-                            Map.tryFind name (model.MeshTransforms.GetValue t)
-                            |> Option.defaultValue Trafo3d.Identity
+                            match model.RegView.GetValue t, Map.tryFind name (model.SolvedTransforms.GetValue t) with
+                            | RegAfter, Some s -> s
+                            | _ -> Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
                         let corner (ix : int) (iy : int) (iz : int) =
                             let w =
                                 V3d((if ix = 0 then box.Min.X else box.Max.X),
@@ -178,26 +179,18 @@ module SceneGraph =
         (placementHover : aval<V3d option>)
         (cursorHighlight : aval<CursorHighlight option>)
         (clipUniforms : aval<int * V4f * V4f>)
-        (previewSwap : aval<bool>)
         (wheelIsolation : aval<string option>)
         (model : AdaptiveModel) =
 
         let loadFinished (name : string) =
             env.Emit [ LoadFinished name ]
 
-        // Single forward pass into the main framebuffer:
-        //   • Meshes: (rgb, α) + α-gated depth — opaque (α ≥ 0.99) write natural
-        //     depth, the rest write 1.0 (far). All passZero shares one buffer.
-        //   • Pin geometry: depth-tested against the mesh depth; alpha-blended.
-        //   • Cross + labels: passOne, DepthTest.None — always on top.
-        //
         // Sg.DepthMask is intentionally NEVER set: it is buggy in this
-        // Aardvark/WebGL build and silently breaks the depth pipeline. Every
-        // node writes depth from its shader; ordering is steered via
-        // Sg.DepthTest + Sg.Pass alone. Violates the textbook "translucent
-        // shouldn't write depth" rule but is the only combination that works.
+        // Aardvark/WebGL build and silently breaks the depth pipeline. Every node
+        // writes depth from its shader; ordering is steered via Sg.DepthTest +
+        // Sg.Pass alone. Cross + labels run in passOne (DepthTest.None) on top.
 
-        let meshScene  = MeshView.buildScene loadFinished cursorHighlight clipUniforms previewSwap wheelIsolation model
+        let meshScene  = MeshView.buildScene loadFinished cursorHighlight clipUniforms wheelIsolation model
         let outlineScene = OutlineView.build info model view proj
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
 

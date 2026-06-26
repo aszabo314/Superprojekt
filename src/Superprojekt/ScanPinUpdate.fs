@@ -23,10 +23,8 @@ module ScanPinUpdate =
     let activeScale (model : Model) =
         DatasetScale.active model.ActiveDataset model.DatasetScales
 
-    // Metric default hard-core radius.
     let defaultInnerRadius (_ : Model) = 5.0
 
-    // worldCentre is world-space metres.
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
         let inner   = defaultInnerRadius model
         {
@@ -40,7 +38,6 @@ module ScanPinUpdate =
             CreatedAt            = System.DateTime.UtcNow
             DatasetColors        = assignColors model.MeshNames
             Probe                = ProbeNone
-            ProbePreview         = ProbeNone
             ContactRings         = RingsNone
         }
 
@@ -51,9 +48,7 @@ module ScanPinUpdate =
 
     let private discardActivePin (sp : ScanPinModel) =
         match ScanPinModel.activePlacementId sp with
-        | Some id ->
-            let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
-            { sp with Pins = HashMap.remove id sp.Pins; SelectedPin = selected }
+        | Some id -> { sp with Pins = HashMap.remove id sp.Pins }
         | None -> sp
 
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
@@ -73,22 +68,18 @@ module ScanPinUpdate =
                 let pin = makeAnchor model id worldCentre
                 { sp with
                     Pins = HashMap.add id pin sp.Pins
-                    Placement = AdjustingPin id
-                    SelectedPin = Some id }
+                    Placement = AdjustingPin id }
             | _ -> sp
 
-        // InnerRadius = the "hard truth" (full opacity + probe weight inside).
-        // Applies to the effective pin (placement flyout OR the dock's selected
-        // pin), invalidating probe/preview/rings for lazy recompute.
+        // Applies to the effective pin (placement flyout OR the selected pin).
         | SetInnerRadius r ->
-            match ScanPinModel.effectivePinId sp with
+            match ScanPinModel.effectivePinId sp model.Selection.SelectedPin with
             | Some id -> sp |> updatePin id (fun pin ->
                 let r' = max 0.01 r
-                { pin with InnerRadius = r'; Probe = ProbeNone; ProbePreview = ProbeNone; ContactRings = RingsNone })
+                { pin with InnerRadius = r'; Probe = ProbeNone; ContactRings = RingsNone })
             | None -> sp
 
         | RepositionPin (id, centre) ->
-            // Move live during adjustment; probe + rings recompute.
             if ScanPinModel.activePlacementId sp = Some id then
                 sp |> updatePin id (fun pin ->
                     { pin with Centre = centre; Probe = ProbeNone; ContactRings = RingsNone })
@@ -102,13 +93,12 @@ module ScanPinUpdate =
             | None -> sp
 
         | DeletePin id ->
-            let selected = if sp.SelectedPin = Some id then None else sp.SelectedPin
             let wasActive = ScanPinModel.activePlacementId sp = Some id
             let placement = if wasActive then PlacementIdle else sp.Placement
-            { sp with Pins = HashMap.remove id sp.Pins; SelectedPin = selected; Placement = placement }
+            { sp with Pins = HashMap.remove id sp.Pins; Placement = placement }
 
-        | SelectPin id ->
-            { sp with SelectedPin = id }
+        // Pin selection lives in Model.Selection (handled in handleMsg).
+        | SelectPin _ -> sp
 
         // Stale guard: results only land while still ProbeRunning; any intervening invalidation wins.
         | ProbeComputed(id, result) ->
@@ -118,14 +108,6 @@ module ScanPinUpdate =
         | ProbeFailed(id, reason) ->
             sp |> updatePin id (fun pin ->
                 if pin.Probe = ProbeRunning then { pin with Probe = ProbeError reason } else pin)
-
-        | ProbePreviewComputed(id, result) ->
-            sp |> updatePin id (fun pin ->
-                if pin.ProbePreview = ProbeRunning then { pin with ProbePreview = ProbeReady result } else pin)
-
-        | ProbePreviewFailed(id, reason) ->
-            sp |> updatePin id (fun pin ->
-                if pin.ProbePreview = ProbeRunning then { pin with ProbePreview = ProbeError reason } else pin)
 
         | ContactRingsComputed(id, rings) ->
             sp |> updatePin id (fun pin ->
@@ -143,6 +125,20 @@ module ScanPinUpdate =
                 let restored = model.SavedMenuOpen |> Option.defaultValue model.MenuOpen
                 { model with MenuOpen = restored; SavedMenuOpen = None }
             else model
+        // SelectPin sets the shared selection, a freshly placed pin becomes
+        // selected, and a dangling selection (deleted pin) is dropped.
+        let selection =
+            let sel0 =
+                match msg with
+                | SelectPin id -> { model.Selection with SelectedPin = id }
+                | PlaceAnchor _ ->
+                    match ScanPinModel.activePlacementId sp' with
+                    | Some id -> { model.Selection with SelectedPin = Some id }
+                    | None -> model.Selection
+                | _ -> model.Selection
+            match sel0.SelectedPin with
+            | Some id when not (HashMap.containsKey id sp'.Pins) -> { sel0 with SelectedPin = None }
+            | _ -> sel0
         match msg with
         | PlaceAnchor _ ->
             match ScanPinModel.activePlacementId sp' with
@@ -155,9 +151,7 @@ module ScanPinUpdate =
                 | None -> ()
             | None -> ()
         | _ -> ()
-        // The bottom-dock inspector reads SelectedPin directly — no floating
-        // card to create/position here.
-        { model with ScanPins = sp' }
+        { model with ScanPins = sp'; Selection = selection }
 
     // Lazy probe trigger, postlude after every reducer step: the effective pin
     // (card open) with an invalidated probe gets one debounced server query.
@@ -165,7 +159,7 @@ module ScanPinUpdate =
     let ensureProbe (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
         let effective =
-            ScanPinModel.effectivePinId sp
+            ScanPinModel.effectivePinId sp model.Selection.SelectedPin
             |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
         match effective with
         | Some pin when (match pin.Probe with ProbeNone -> true | _ -> false) ->
@@ -181,9 +175,8 @@ module ScanPinUpdate =
                     model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
                     |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h visible))
                     |> Option.defaultValue (List.head visible)
-                // pin.Probe is always the committed-pose probe; the preview pose gets its own ProbePreview.
                 let meshes =
-                    visible |> List.map (fun n -> n, (ModelTransforms.committedWorld model n).Forward)
+                    visible |> List.map (fun n -> n, (ModelTransforms.displayedWorld model n).Forward)
                 let id = pin.Id
                 let centre = pin.Centre
                 let radius = pin.InnerRadius
@@ -221,73 +214,10 @@ module ScanPinUpdate =
                 { model with ScanPins = { sp with Pins = HashMap.add id { pin with Probe = ProbeRunning } sp.Pins } }
         | _ -> model
 
-    // Lazy preview-probe trigger (split violin): while a preview is pending, the effective pin
-    // also gets a probe under effective (committed ∘ pending-delta) transforms.
-    // Same debounce + stale-guard discipline as ensureProbe, separate token.
-    let mutable previewProbeCts : System.Threading.CancellationTokenSource =
-        new System.Threading.CancellationTokenSource()
-    let mutable private previewProbeOwner : ScanPinId option = None
-
-    let ensureProbePreview (env : Env<Message>) (model : Model) : Model =
-        if not (PendingRegistration.isPreview model.PendingReg) then model
-        else
-            let sp = model.ScanPins
-            let effective =
-                ScanPinModel.effectivePinId sp
-                |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
-            match effective with
-            | Some pin when (match pin.ProbePreview with ProbeNone -> true | _ -> false) ->
-                let visible =
-                    model.MeshNames |> IndexList.toList
-                    |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
-                match visible with
-                | [] -> model
-                | _ ->
-                    let refMesh =
-                        model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
-                        |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h visible))
-                        |> Option.defaultValue (List.head visible)
-                    let meshes =
-                        visible |> List.map (fun n -> n, (ModelTransforms.effectiveWorld model n).Forward)
-                    let id = pin.Id
-                    let centre = pin.Centre
-                    let radius = pin.InnerRadius
-                    let length = ScanPin.fixedProbeLength
-                    previewProbeCts.Cancel()
-                    previewProbeCts <- new System.Threading.CancellationTokenSource()
-                    let sp =
-                        match previewProbeOwner with
-                        | Some prev when prev <> id ->
-                            match HashMap.tryFind prev sp.Pins with
-                            | Some p when p.ProbePreview = ProbeRunning ->
-                                { sp with Pins = HashMap.add prev { p with ProbePreview = ProbeNone } sp.Pins }
-                            | _ -> sp
-                        | _ -> sp
-                    previewProbeOwner <- Some id
-                    let token = previewProbeCts.Token
-                    task {
-                        try
-                            do! System.Threading.Tasks.Task.Delay(250, token)
-                            let! res =
-                                Query.probe ApiConfig.apiBase.Value meshes refMesh centre radius length 8192
-                                |> Async.StartAsTask
-                            if not token.IsCancellationRequested then
-                                match res with
-                                | Result.Ok r -> env.Emit [ScanPinMsg (ProbePreviewComputed(id, r))]
-                                | Result.Error e -> env.Emit [ScanPinMsg (ProbePreviewFailed(id, e))]
-                        with
-                        | :? System.OperationCanceledException -> ()
-                        | ex ->
-                            if not token.IsCancellationRequested then
-                                env.Emit [ScanPinMsg (ProbePreviewFailed(id, ex.Message))]
-                    } |> ignore
-                    { model with ScanPins = { sp with Pins = HashMap.add id { pin with ProbePreview = ProbeRunning } sp.Pins } }
-            | _ -> model
-
     // Lazy contact-ring trigger, postlude after every reducer step: every RingsNone pin gets
     // one debounced fan-out over ALL meshes (visibility only gates rendering, so toggling never
     // recomputes). Transforms are rigid: sphere intersected in each mesh's own frame
-    // (inverse-transformed centre), rings mapped back. Effective transforms → rings follow a pending preview.
+    // (inverse-transformed centre), rings mapped back. Displayed transforms → rings follow the before/after toggle.
     let ensureRings (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
         let pending =
@@ -297,7 +227,7 @@ module ScanPinUpdate =
         else
             let meshes =
                 model.MeshNames |> IndexList.toList |> List.map (fun n ->
-                    n, ModelTransforms.effectiveWorld model n)
+                    n, ModelTransforms.displayedWorld model n)
             let mutable pins = sp.Pins
             for (pinId, pin) in pending do
                 match ringsCts.TryGetValue pinId with

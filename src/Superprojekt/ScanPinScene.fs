@@ -34,7 +34,7 @@ module ScanPinScene =
     let private markerIdxBuf = AVal.constant (ArrayBuffer pinMarkerIdx :> IBuffer)
     let private markerIdxCnt = AVal.constant pinMarkerIdx.Length
 
-    // Unit disk in the XY plane for the elevation-cursor slicing plane.
+    // Translucent icosphere shell (placement hover preview).
     let private sphereShell
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (active : aval<bool>) (trafo : aval<Trafo3d>) (color : aval<V4d>) =
@@ -96,7 +96,7 @@ module ScanPinScene =
                 Lines.render segs
             }
         // Same, but depth-test off → renders on top of surfaces (constellation
-        // §D depth bias; ghost-isolation clears occluders when reading it).
+        // depth bias; ghost-isolation clears occluders when reading it).
         let linesNodeTop (active : aval<bool>) segs =
             sg {
                 Sg.Active active
@@ -107,11 +107,22 @@ module ScanPinScene =
                 Sg.NoEvents
                 Lines.render segs
             }
-        let selectedId = model.ScanPins.SelectedPin
+        let selectedId = model.Selection.SelectedPin
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         let placementActive =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
+
+        // Displayed (before/after) world transform of a mesh at the given token —
+        // anchors are mesh-local, so their world follows this.
+        let dispWorldAt (t : AdaptiveToken) (mesh : string) =
+            let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
+            let cc = model.CommonCentroid.GetValue t
+            let disp =
+                match model.RegView.GetValue t, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
+                | RegAfter, Some s -> s
+                | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+            RigidTransform.renderToWorld scale cc disp
 
         // Pin centres/radii are metric world-space; the scene graph is render-
         // space (post centroid translate + dataset scale). Project before use.
@@ -189,9 +200,9 @@ module ScanPinScene =
                         | None -> [||]
                         | Some (centre, radius, axis, colour, rings) ->
                             let sel = isSelected.GetValue t
-                            // Workflow-card row hover lights the rings up thick
-                            // + bright (UI→3D linking).
-                            let hovered = model.WorkflowPinHover.GetValue t = Some id
+                            // Pin-row hover lights the rings up thick + bright
+                            // (UI→3D linking via the shared Selection record).
+                            let hovered = model.Selection.Hovered.GetValue t = Some (HoverPin id)
                             let cc = model.CommonCentroid.GetValue t
                             let scale = datasetScale.GetValue t
                             let vis = model.MeshVisible.GetValue t
@@ -220,17 +231,16 @@ module ScanPinScene =
                             out.ToArray())
                 ASet.ofList [ linesNode notFullscreen segs ])
 
-        // ── §D correspondence constellation (selected pin emphasized) ────────
-        // Per moving mesh: a small filled sphere glyph at its correspondence
-        // point (palette colour); the reference point a larger haloed glyph;
-        // thin lines from each moving glyph to the reference glyph. Out-of-ROI
-        // meshes are omitted. Glyphs render on top (depth bias) and are pickable
-        // for §G brushing. Marker positions follow the effective preview pose.
-        let pinKey (ScanPinId.ScanPinId g : ScanPinId) = g.ToString()
+        // Correspondence constellation (selected pin emphasized). Per moving
+        // mesh: a small sphere glyph at its correspondence point (palette
+        // colour); the reference point a larger haloed glyph; thin lines from
+        // each moving glyph to the reference glyph. Out-of-ROI meshes are
+        // omitted. Glyphs render on top (depth bias) and are pickable for
+        // brushing. Marker positions follow the displayed pose.
         let refGlyphCol = V4d(0.706, 0.325, 0.035, 1.0)   // amber #b45309
 
-        // World marker for a (pin, mesh), following the preview delta; None when
-        // out-of-ROI / no marker. Reused by glyph trafo + the connecting lines.
+        // World marker for a (pin, mesh): the mesh-local anchor mapped through the
+        // mesh's displayed transform. None when out-of-ROI / no marker.
         let markerWorldOf (pinVal : aval<ScanPin option>) (mesh : string) =
             AVal.custom (fun t ->
                 match pinVal.GetValue t |> Option.bind ScanPin.correspondence with
@@ -238,18 +248,12 @@ module ScanPinScene =
                     let inRoi = Map.tryFind mesh c.InRoi |> Option.defaultValue true
                     match Map.tryFind mesh c.Anchors with
                     | Some a when inRoi ->
-                        match PendingRegistration.delta mesh (model.PendingReg.GetValue t) with
-                        | Some d ->
-                            let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
-                            let cc = model.CommonCentroid.GetValue t
-                            let committed = Map.tryFind mesh (model.MeshTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
-                            Some ((RigidTransform.worldDeltaOf scale cc committed d).Forward.TransformPos a.Point)
-                        | None -> Some a.Point
+                        Some ((dispWorldAt t mesh).Forward.TransformPos a.Point)
                     | _ -> None
                 | _ -> None)
 
         // Stable (pin × moving-mesh) key set — changes only on enabled-pins /
-        // mesh-list / reference / visibility, never on hover or preview.
+        // mesh-list / reference / visibility, never on hover.
         let corrPairs =
             AVal.custom (fun t ->
                 let names = model.MeshNames.Content.GetValue t |> IndexList.toList
@@ -269,8 +273,9 @@ module ScanPinScene =
                     | Some c -> Primitives.c4bToV3d c
                     | None -> V3d(0.102, 0.337, 0.859)
                 let sel = selectedId.GetValue t = Some pinId
-                let rowHover = model.CorrRowHover.GetValue t = Some (pinKey pinId, mesh)
-                let pinHover = model.WorkflowPinHover.GetValue t = Some pinId
+                let hov = model.Selection.Hovered.GetValue t
+                let rowHover = (hov = Some (HoverPoint (pinId, mesh)))
+                let pinHover = (hov = Some (HoverPin pinId))
                 if rowHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
                 elif sel || pinHover then V4d(baseCol, 1.0)
                 else V4d(baseCol, 0.4))
@@ -300,8 +305,8 @@ module ScanPinScene =
                 Sg.Uniform("FlatColor", glyphColour pinVal pinId mesh |> AVal.map V4f)
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
-                Sg.OnPointerMove(fun _ -> env.Emit [SetCorrRowHover (Some (pinKey pinId, mesh))]; true)
-                Sg.OnTap(fun _ -> env.Emit [SetFocusMesh (Some mesh)]; false)
+                Sg.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPoint (pinId, mesh)))]; true)
+                Sg.OnTap(fun _ -> env.Emit [SetFocusedMesh (Some mesh)]; false)
                 Sg.VertexAttributes(
                     HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
                 Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
@@ -414,11 +419,10 @@ module ScanPinScene =
                 linesNode active outlineSegs
             ]
 
-        // §8 pin glyph (far/preattentive view): a pole + head per committed pin.
-        // Head colour = verdict (green if every moving mesh's |median| ≤ LoD₉₅,
-        // red if any is significant; grey when no probe yet). Pole height grows
-        // with magnitude (max |median offset| across moving meshes). The near
-        // (attentive) split-violin lives in the pin card / flyout.
+        // Pin glyph (far view): a pole + head per committed pin. Head colour =
+        // verdict (green if every moving mesh's |median| ≤ LoD₉₅, red if any is
+        // significant; grey when no probe yet). Pole height grows with magnitude
+        // (max |median offset| across moving meshes).
         let pinGlyphs =
             let green = V4d(0.086, 0.639, 0.290, 1.0)   // #16a34a
             let red   = V4d(0.863, 0.149, 0.149, 1.0)   // #dc2626
@@ -459,67 +463,4 @@ module ScanPinScene =
                     out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 
-        // §7 movement layer (preview only): per committed pin ROI, show the
-        // applied rigid motion of each moving mesh as before→after displacement
-        // arrows (MovementGlyphs) or an original-faint / warped-accent lattice
-        // (MovementGrid). World delta = the preview pose relative to committed.
-        let movementLayer =
-            let accent = V4d(0.031, 0.569, 0.698, 0.95)
-            let faint  = V4d(0.45, 0.50, 0.55, 0.40)
-            let segs =
-                AVal.custom (fun t ->
-                    let mode = model.MovementLayer.GetValue t
-                    match model.PendingReg.GetValue t with
-                    | Some pr when mode <> MovementOff && not (Map.isEmpty pr.Results) ->
-                        let pins  = pinsVal.GetValue t
-                        let cc    = model.CommonCentroid.GetValue t
-                        let scale = datasetScale.GetValue t
-                        let transforms = model.MeshTransforms.GetValue t
-                        let scales = model.DatasetScales.GetValue t
-                        let out = ResizeArray<V3d * V3d * V4d * float>()
-                        let K = 2
-                        let arrow (bR : V3d) (aR : V3d) =
-                            out.Add(bR, aR, accent, 1.5)
-                            let d = aR - bR
-                            if d.Length > 1e-6 then
-                                let dn = d.Normalized
-                                let perp = (if abs dn.Z < 0.9 then Vec.cross dn V3d.OOI else Vec.cross dn V3d.IOO).Normalized
-                                let hl = d.Length * 0.28
-                                let hw = hl * 0.5
-                                out.Add(aR, aR - dn * hl + perp * hw, accent, 1.5)
-                                out.Add(aR, aR - dn * hl - perp * hw, accent, 1.5)
-                        for (_, p) in HashMap.toSeq pins do
-                            if p.Phase = PinPhase.Committed then
-                                let axisN, u, v = basisFromNormal (ScanPin.axis p)
-                                ignore axisN
-                                let r = p.InnerRadius
-                                for KeyValue(mesh, res) in pr.Results do
-                                    let committed = Map.tryFind mesh transforms |> Option.defaultValue Trafo3d.Identity
-                                    let sM = DatasetScale.forMesh scales mesh
-                                    let wd = RigidTransform.worldDeltaOf sM cc committed res.Delta
-                                    let pts =
-                                        Array2D.init (2*K+1) (2*K+1) (fun i j ->
-                                            let off = u * (float (i-K) / float K * r) + v * (float (j-K) / float K * r)
-                                            let before = p.Centre + off
-                                            let after  = wd.Forward.TransformPos before
-                                            ScanPin.renderCentre cc scale before, ScanPin.renderCentre cc scale after)
-                                    match mode with
-                                    | MovementGlyphs ->
-                                        for i in 0 .. 2*K do
-                                            for j in 0 .. 2*K do
-                                                let bR, aR = pts.[i, j]
-                                                arrow bR aR
-                                    | MovementGrid ->
-                                        let lattice (sel : (V3d * V3d) -> V3d) col =
-                                            for i in 0 .. 2*K do
-                                                for j in 0 .. 2*K do
-                                                    if i < 2*K then out.Add(sel pts.[i, j], sel pts.[i+1, j], col, 1.0)
-                                                    if j < 2*K then out.Add(sel pts.[i, j], sel pts.[i, j+1], col, 1.0)
-                                        lattice fst faint
-                                        lattice snd accent
-                                    | MovementOff -> ()
-                        out.ToArray()
-                    | _ -> [||])
-            ASet.ofList [ linesNode notFullscreen segs ]
-
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; movementLayer; ghostPreview; constellation])
+        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; ghostPreview; constellation])

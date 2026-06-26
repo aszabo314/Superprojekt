@@ -57,38 +57,26 @@ type RegionDistanceRequest = {
     RefIndex         : int
     TargetTransform  : float[]
     RefTransform     : float[]
-    // 0 = signed M3C2 closest-point (default), 1 = vertical Z difference (§6 z-diff).
+    // 0 = signed M3C2 closest-point (default), 1 = vertical Z difference.
     Mode             : int
 }
 
-// Focus-panel co-oriented preview (spec v3 §F): one downsampled mesh projected
-// into a shared 2D frame, per-vertex display scalar for the chosen channel.
 [<CLIMutable>]
 type MeshPreviewRequest = {
     Name            : string
     RefName         : string
+    // Surface pose (= solved/tip pose for displacement).
     Transform       : float[]
+    // Displacement base (load) pose; ignored for every other channel.
+    Transform2      : float[]
     RefTransform    : float[]
-    // 0 = Pano, 1 = Top, 2 = Front, 3 = Side.
+    // 0 = Pano, 1 = Top, 2 = Front, 3 = Side, 4 = Oblique.
     Projection      : int
     // 0 = own origin, 1 = reference origin (pano eye).
     OriginMode      : int
-    // 0 = Shade, 1 = M3C2, 2 = Zdiff, 3 = Incidence, 4 = Range, 5 = Shape.
+    // 0 = Shade, 1 = M3C2, 2 = Zdiff, 3 = Incidence, 4 = Range, 5 = Shape, 6 = Displacement.
     Channel         : int
     MaxTris         : int
-}
-
-[<CLIMutable>]
-type IcpRequest = {
-    ReferenceName    : string
-    MovingName       : string
-    InitialTransform : float[]
-    SampleStride     : int
-    MaxIterations    : int
-    AnchorCentres    : float[]
-    AnchorSigmas     : float[]
-    AnchorWeights    : float[]
-    RegionEps        : float
 }
 
 let inline toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
@@ -163,7 +151,7 @@ let regionDistanceHandler : HttpHandler =
             let refIdx = lmR.parsed.indices
             let dist = Array.zeroCreate<float32> pos.Length
             if req.Mode = 1 then
-                // §6 z-diff: vertical world ray onto the reference; signed Δz
+                // z-diff: vertical world ray onto the reference; signed Δz
                 // (moving above reference → positive). Down then up.
                 let dnLocal = (rInv.TransformDir (V3d(0.0, 0.0, -1.0))).Normalized
                 let upLocal = (rInv.TransformDir (V3d(0.0, 0.0,  1.0))).Normalized
@@ -211,14 +199,15 @@ let meshPreviewHandler : HttpHandler =
             let lm  = loadMesh req.Name 0
             let lmR = loadMesh req.RefName 0
             let r =
-                MeshPreview.preview lm lmR (mat16 req.Transform) (mat16 req.RefTransform)
+                MeshPreview.preview lm lmR (mat16 req.Transform) (mat16 req.Transform2) (mat16 req.RefTransform)
                     (MeshPreview.projectionOfInt req.Projection)
                     (MeshPreview.originOfInt req.OriginMode)
                     (MeshPreview.channelOfInt req.Channel)
                     (if req.MaxTris <= 0 then 6000 else req.MaxTris)
-            log.LogInformation("mesh-preview {Name} proj={Proj} ch={Ch}: {Verts} verts, {Tris} tris",
-                req.Name, req.Projection, req.Channel, r.Verts2d.Length, r.Tris.Length / 3)
-            return! json {| verts2d = r.Verts2d; tris = r.Tris; scalar = r.Scalar; lo = r.Lo; hi = r.Hi |} next ctx
+            log.LogInformation("mesh-preview {Name} proj={Proj} ch={Ch}: {Verts} verts, {Tris} tris, {Arrows} arrows",
+                req.Name, req.Projection, req.Channel, r.Verts2d.Length, r.Tris.Length / 3, r.DispMag.Length)
+            return! json {| verts2d = r.Verts2d; tris = r.Tris; scalar = r.Scalar; lo = r.Lo; hi = r.Hi
+                            dispBase = r.DispBase; dispTip = r.DispTip; dispMag = r.DispMag |} next ctx
         with ex ->
             log.LogError(ex, "mesh-preview failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
@@ -326,8 +315,8 @@ let probeHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
-// Weighted rigid landmark solve (coarse stage). Points arrive in world space at
-// current poses; the returned transform is a delta mapping them onto the ref.
+// Weighted rigid landmark solve. Points arrive in world space at current poses;
+// the returned transform is a delta mapping them onto the reference.
 let lsqPairsHandler : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"
@@ -365,67 +354,5 @@ let lsqPairsHandler : HttpHandler =
         with ex ->
             log.LogError(ex, "lsq-pairs failed")
             return! RequestErrors.badRequest (text ex.Message) next ctx
-    }
-
-let icpHandler : HttpHandler =
-    fun next ctx -> task {
-        let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<IcpRequest>()
-            let lmRef = loadMesh req.ReferenceName 0
-            let lmMov = loadMesh req.MovingName 0
-
-            let initial =
-                if req.InitialTransform <> null && req.InitialTransform.Length = 16 then
-                    let m = req.InitialTransform
-                    M44d(m.[0], m.[1], m.[2], m.[3],
-                         m.[4], m.[5], m.[6], m.[7],
-                         m.[8], m.[9], m.[10], m.[11],
-                         m.[12], m.[13], m.[14], m.[15])
-                else M44d.Identity
-
-            let weights =
-                let aC = if isNull req.AnchorCentres then [||] else req.AnchorCentres
-                let aS = if isNull req.AnchorSigmas  then [||] else req.AnchorSigmas
-                let aW = if isNull req.AnchorWeights then [||] else req.AnchorWeights
-                let n = aS.Length
-                if n = 0 || aC.Length < n * 3 then None
-                else
-                    let centres = Array.init n (fun i -> V3d(aC.[i * 3], aC.[i * 3 + 1], aC.[i * 3 + 2]))
-                    let f (p : V3d) =
-                        let mutable s = 0.0
-                        for i in 0 .. n - 1 do
-                            let sigma = aS.[i]
-                            if sigma > 1e-6 then
-                                let d2 = (p - centres.[i]).LengthSquared
-                                let w = exp (-d2 / (2.0 * sigma * sigma))
-                                let mult = if i < aW.Length then aW.[i] else 1.0
-                                s <- s + mult * w
-                        min 1.0 s
-                    Some f
-
-            let stride = if req.SampleStride <= 0 then 50 else req.SampleStride
-            let maxIter = if req.MaxIterations <= 0 then 30 else req.MaxIterations
-            let eps = if req.RegionEps <= 0.0 then 0.0 else req.RegionEps
-            match MeshIcp.runIcp lmRef lmMov initial stride maxIter weights eps with
-            | Result.Error reason ->
-                log.LogWarning("icp ref={Ref} mov={Mov}: aborted ({Reason})",
-                    req.ReferenceName, req.MovingName, reason)
-                return! json {| ok = false; reason = reason |} next ctx
-            | Result.Ok result ->
-                let m = result.Transform
-                let flat = [|
-                    m.M00; m.M01; m.M02; m.M03
-                    m.M10; m.M11; m.M12; m.M13
-                    m.M20; m.M21; m.M22; m.M23
-                    m.M30; m.M31; m.M32; m.M33
-                |]
-                log.LogInformation("icp ref={Ref} mov={Mov}: {Iters} iters, final RMS={Rms:F4}",
-                    req.ReferenceName, req.MovingName, result.Convergence.Length,
-                    (if result.Convergence.Length > 0 then result.Convergence.[result.Convergence.Length - 1] else 0.0))
-                return! json {| ok = true; transform = flat; convergence = result.Convergence; residuals = result.Residuals |} next ctx
-        with ex ->
-            log.LogError(ex, "icp failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
     }
 

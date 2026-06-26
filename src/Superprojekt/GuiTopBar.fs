@@ -10,12 +10,8 @@ module GuiTopBar =
     open Primitives
 
     let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) =
-        // §6 guards: these actions are blocked while a preview is pending (the
-        // reducer also rejects them; this is just the affordance).
-        let previewOn = model.PendingReg |> AVal.map PendingRegistration.isPreview
-        let previewDisabled =
-            previewOn |> AVal.map (fun p ->
-                if p then Some (Attribute("disabled", "disabled")) else None)
+        // Global before/after toggle: disabled until any SolvedTransform exists.
+        let solved = model.SolvedTransforms |> AVal.map (Map.isEmpty >> not)
         div {
             Class "top-bar"
             button {
@@ -35,8 +31,8 @@ module GuiTopBar =
             }
 
             // Spring-loaded reference peek: while held, ghost every mesh except
-            // the reference (★). Transient — never mutates the eye toggles.
-            // Pointer-leave/up both release so it can't stick.
+            // the reference. Transient — never mutates the eye toggles; leave/up
+            // both release so it can't stick.
             button {
                 Class "tb-btn"
                 model.ReferencePeekHeld |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
@@ -45,6 +41,22 @@ module GuiTopBar =
                 Dom.OnPointerUp((fun _ -> env.Emit [SetReferencePeek false]), pointerCapture = true)
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetReferencePeek false])
                 "👁 Peek"
+            }
+
+            div {
+                Class "tb-regview"
+                solved |> AVal.map (fun s -> if s then None else Some (Class "tb-regview-off"))
+                Attribute("title", "Show meshes before or after registration")
+                let btn (label : string) (v : RegView) =
+                    button {
+                        Class "tb-regview-btn"
+                        (model.RegView, solved) ||> AVal.map2 (fun cur s ->
+                            if s && cur = v then Some (Class "btn-active") else None)
+                        Dom.OnClick(fun _ -> if AVal.force solved then env.Emit [SetRegView v])
+                        label
+                    }
+                btn "Before" RegBefore
+                btn "After" RegAfter
             }
 
             div {
@@ -71,11 +83,9 @@ module GuiTopBar =
                                     button {
                                         Class "tb-gear-btn"
                                         isActive |> AVal.map (fun on -> if on then Some (Class "active") else None)
-                                        previewDisabled
                                         Dom.OnClick(fun _ ->
-                                            if not (AVal.force previewOn) then
-                                                env.Emit [SetActiveDataset dataset]
-                                                ServerActions.loadDataset env dataset)
+                                            env.Emit [SetActiveDataset dataset]
+                                            ServerActions.loadDataset env dataset)
                                         dataset
                                     })
                             }
@@ -108,9 +118,8 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
-                            // Isolate pins: ghost everything outside the pins'
-                            // radius regions. Auto-suspended (and inert) while
-                            // placing an anchor, so the terrain stays visible.
+                            // Auto-suspended (and inert) while placing a pin, so
+                            // the terrain stays visible.
                             let placing =
                                 model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
                             let isoEffective =

@@ -28,12 +28,11 @@ module MeshShader =
         member x.ShadingStrength : float32 = x?ShadingStrength
         // sin(threshold angle) for SlopeColor.
         member x.SlopeThreshold  : float32 = x?SlopeThreshold
-        // Pin blobs in render space: Blobs = (cx,cy,cz,innerR). AnchorGhost = 0
-        // disables the blob alpha filter but the array stays uploaded.
+        // Blobs = (cx,cy,cz,innerR) in render space. AnchorGhost = 0 disables the
+        // blob alpha filter but the array stays uploaded.
         member x.BlobCount       : int     = x?BlobCount
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
         member x.AnchorGhost     : int     = x?AnchorGhost
-        // Contact-line highlight at the elevation-cursor plane (render space).
         // CursorActive is per-mesh (bbox-vs-plane gate); CursorClip restricts
         // the band to the probe cylinder (off when Alt-extended scene-wide).
         member x.CursorActive         : int     = x?CursorActive
@@ -45,19 +44,17 @@ module MeshShader =
         member x.CursorPinCentre      : V3f     = x?CursorPinCentre
         member x.CursorPinRadius      : float32 = x?CursorPinRadius
         member x.CursorCylLength      : float32 = x?CursorCylLength
-        // 3D sectioning: up to two render-space plane equations
-        // V4f(nx,ny,nz,-dot(n,renderOrigin)); dot(n,wp)+w > 0 is the removed
-        // (camera-side) half.
+        // Render-space plane equations V4f(nx,ny,nz,-dot(n,renderOrigin));
+        // dot(n,wp)+w > 0 is the removed (camera-side) half.
         member x.ClipPlaneCount : int = x?ClipPlaneCount
         member x.ClipPlane0     : V4f = x?ClipPlane0
         member x.ClipPlane1     : V4f = x?ClipPlane1
-        // A2 per-mesh signed-distance map. 1 = paint SurfaceDist with a
-        // diverging map (0 = reference); |d| < DistLoD → neutral mid; DistScale
-        // normalizes the saturated ends; SurfaceDist = 1e30 → keep base colour.
+        // All-meshes variance map. DistanceEncoding = 2 paints SurfaceDist (the
+        // per-reference-vertex disagreement std ≥ 0) sequential; DistScale
+        // normalizes the high end; SurfaceDist = 1e30 → keep base colour.
         member x.DistanceEncoding : int     = x?DistanceEncoding
-        member x.DistLoD          : float32 = x?DistLoD
         member x.DistScale        : float32 = x?DistScale
-        // §6 intrinsic heatmap channel: 0 = off, 1 = incidence, 2 = range.
+        // 0 = off, 1 = incidence, 2 = range.
         member x.HeatmapMode      : int     = x?HeatmapMode
         member x.SensorOrigin     : V3f     = x?SensorOrigin
         member x.RangeMax         : float32 = x?RangeMax
@@ -79,8 +76,8 @@ module MeshShader =
     let shade (v : FragIn) =
         fragment {
             let wp = v.wp.XYZ
-            // 3D sectioning (mesh only; overlays never clipped): the
-            // camera-side half (dot(n,wp)+w > 0) is discarded.
+            // Sectioning (mesh only; overlays never clipped): the camera-side
+            // half (dot(n,wp)+w > 0) is discarded.
             let cpc = uniform.ClipPlaneCount
             if cpc >= 1 then
                 let p = uniform.ClipPlane0
@@ -149,26 +146,8 @@ module MeshShader =
                 elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
-            // A2: per-mesh signed-distance map (canonical M3C2). Diverging blue
-            // (below ref) ↔ red (above ref) centred at 0; within ±DistLoD reads
-            // neutral so "not significant" looks near-neutral in 3D too.
-            if uniform.DistanceEncoding = 1 && aboveGhost then
-                let d = v.sd
-                if abs d < 1e20f then
-                    let lod = max 1e-6f uniform.DistLoD
-                    let neutral = V3f(0.945f, 0.961f, 0.976f) // #f1f5f9
-                    let mutable col = neutral
-                    if abs d >= lod then
-                        let scale = max 1e-6f uniform.DistScale
-                        let tt = clamp -1.0f 1.0f (d / scale)
-                        let belowCol = V3f(0.149f, 0.388f, 0.922f) // #2563eb (negative)
-                        let aboveCol = V3f(0.863f, 0.149f, 0.149f) // #dc2626 (positive)
-                        col <-
-                            if tt >= 0.0f then neutral * (1.0f - tt) + aboveCol * tt
-                            else neutral * (1.0f + tt) + belowCol * (-tt)
-                    baseRgb <- col
-            // §6 variance map (sequential): per-reference-vertex disagreement std
-            // (≥0) from light grey to strong red, normalised by DistScale.
+            // Variance map: per-reference-vertex disagreement std (≥0) from light
+            // grey to strong red, normalised by DistScale.
             if uniform.DistanceEncoding = 2 && aboveGhost then
                 let d = v.sd
                 if abs d < 1e20f then
@@ -177,8 +156,8 @@ module MeshShader =
                     let loC = V3f(0.945f, 0.961f, 0.976f)
                     let hiC = V3f(0.725f, 0.110f, 0.110f)
                     baseRgb <- loC * (1.0f - tt) + hiC * tt
-            // §6 intrinsic incidence heatmap: false-colour the camera-incidence
-            // angle on above-ghost fragments (grazing = red, head-on = green).
+            // Incidence heatmap: camera-incidence angle (grazing = red, head-on
+            // = green).
             if uniform.HeatmapMode = 1 && aboveGhost then
                 let incid = abs (Vec.dot n toCam)
                 let lo  = V3f(0.84f, 0.19f, 0.15f)
@@ -187,25 +166,24 @@ module MeshShader =
                 baseRgb <-
                     if incid < 0.5f then lo + (mid - lo) * (incid * 2.0f)
                     else mid + (hi - mid) * ((incid - 0.5f) * 2.0f)
-            // §6 intrinsic range heatmap: distance from the mesh's own origin
-            // (= sensor) over its max range, near = blue → far = red.
+            // Range heatmap: distance from the mesh's own origin (= sensor) over
+            // its max range, near = blue → far = red.
             if uniform.HeatmapMode = 2 && aboveGhost then
                 let rng = (wp - uniform.SensorOrigin).Length
                 let tr  = clamp 0.0f 1.0f (rng / max 1e-6f uniform.RangeMax)
                 let nearC = V3f(0.13f, 0.40f, 0.85f)
                 let farC  = V3f(0.86f, 0.20f, 0.15f)
                 baseRgb <- nearC * (1.0f - tr) + farC * tr
-            // §6 intrinsic shape heatmap: per-vertex triangle quality (4√3·A/Σl²,
-            // 1 = equilateral, →0 = thin/degenerate). Red = poor, green = good.
+            // Shape heatmap: per-vertex triangle quality (4√3·A/Σl², 1 =
+            // equilateral, →0 = thin/degenerate). Red = poor, green = good.
             if uniform.HeatmapMode = 3 && aboveGhost then
                 let ts = clamp 0.0f 1.0f v.shq
                 let loC = V3f(0.86f, 0.20f, 0.15f)
                 let hiC = V3f(0.18f, 0.55f, 0.34f)
                 baseRgb <- loC * (1.0f - ts) + hiC * ts
-            // Contact-line highlight at the slicing plane: darken the mesh,
-            // brighten a smoothstep band within CursorHighlightWidth of the
-            // plane (accent #0891b2), optionally clipped to the probe cylinder.
-            // Ghost fragments skipped so the silhouette colour stays uniform.
+            // Contact-line highlight: darken the mesh, brighten a smoothstep band
+            // within CursorHighlightWidth of the plane, optionally clipped to the
+            // probe cylinder. Ghost fragments skipped so the silhouette stays uniform.
             if uniform.CursorActive <> 0 && aboveGhost then
                 let co = uniform.CursorPlaneOrigin
                 let cn = uniform.CursorPlaneNormal
@@ -237,51 +215,8 @@ module MeshShader =
             }
         }
 
-// Focus-panel large-single projection (spec v3 §D). Replaces DefaultSurfaces.trafo
-// in the focus scene so the same mesh can be drawn either orthographically
-// (FocusPano = 0 → the usual MVP) or as a cylindrical panorama from a world eye
-// (FocusPano = 1 → azimuth→x, elevation→y, radial→depth). Outputs the world
-// position + world normal MeshShader.shade expects, so the full channel stack
-// (textured / extrinsic / intrinsic heatmaps) is reused unchanged downstream.
-[<ReflectedDefinition>]
-module FocusProject =
-    open FShade
-
-    [<Literal>]
-    let piF = 3.1415927f
-
-    type UniformScope with
-        member x.FocusPano  : int     = x?FocusPano
-        member x.FocusEye   : V3f     = x?FocusEye
-        member x.FocusRange : float32 = x?FocusRange
-
-    type Vertex = {
-        [<Position>]                  pos : V4f
-        [<Semantic("WorldPosition")>] wp  : V4f
-        [<Semantic("Normals")>]       n   : V3f
-    }
-
-    let vertex (v : Vertex) =
-        vertex {
-            let world = uniform.ModelTrafo * v.pos
-            let nrm = uniform.NormalMatrix * v.n
-            let clip =
-                if uniform.FocusPano = 1 then
-                    let d = world.XYZ - uniform.FocusEye
-                    let hyp = sqrt (d.X * d.X + d.Y * d.Y)
-                    let phi = if hyp < 1e-9f && abs d.Z < 1e-9f then 0.0f else atan2 d.Y d.X
-                    let theta = atan2 d.Z (max 1e-9f hyp)
-                    let u = phi / piF
-                    let vv = theta / (piF * 0.5f)
-                    let dd = clamp 0.0f 1.0f (d.Length / max 1e-6f uniform.FocusRange)
-                    V4f(u, vv, dd * 2.0f - 1.0f, 1.0f)
-                else
-                    uniform.ModelViewProjTrafo * v.pos
-            return { v with pos = clip; wp = world; n = nrm }
-        }
-
-// §10 image-space outlines. G-buffer pass: write world normal + window depth to
-// target0 and the per-mesh palette colour + coverage mask to target1 (MRT).
+// Outline G-buffer pass: world normal + window depth → target0, per-mesh palette
+// colour + coverage mask → target1 (MRT).
 [<ReflectedDefinition>]
 module OutlineGBuffer =
     open MeshShader
@@ -353,11 +288,11 @@ module OutlineEdge =
             let mr = gColor.Sample(v.tc + V2f( ts.X, 0.0f)).W
             let mu = gColor.Sample(v.tc + V2f(0.0f,  ts.Y)).W
             let md = gColor.Sample(v.tc + V2f(0.0f, -ts.Y)).W
-            // depth edge (window depth in .W)
+            // window depth in .W
             let dEdge =
                 max (max (abs (c.W - l.W)) (abs (c.W - r.W)))
                     (max (abs (c.W - u.W)) (abs (c.W - d.W)))
-            // normal edge (decode *2-1). Inlined per-tap — a local `let nDiff …`
+            // Decode normals *2-1. Inlined per-tap — a local `let nDiff …`
             // function reads as a lambda FShade can't compile.
             let nC = V3f(c.X, c.Y, c.Z) * 2.0f - V3f.III
             let nl = 1.0f - Vec.dot nC (V3f(l.X, l.Y, l.Z) * 2.0f - V3f.III)
@@ -365,7 +300,6 @@ module OutlineEdge =
             let nu = 1.0f - Vec.dot nC (V3f(u.X, u.Y, u.Z) * 2.0f - V3f.III)
             let nd = 1.0f - Vec.dot nC (V3f(d.X, d.Y, d.Z) * 2.0f - V3f.III)
             let nEdge = max (max nl nr) (max nu nd)
-            // coverage-mask boundary (object silhouette + near-plane cut)
             let mEdge = if m0 > 0.5f then 1.0f - min (min ml mr) (min mu md) else 0.0f
             let isEdge = dEdge > 0.0015f || nEdge > 0.30f || mEdge > 0.5f
             if isEdge && (m0 > 0.5f || mEdge > 0.5f) then

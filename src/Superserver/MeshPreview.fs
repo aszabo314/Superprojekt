@@ -6,30 +6,31 @@ open Aardvark.Base
 open Aardvark.Embree
 open MeshCache
 
-// Co-oriented mesh preview for the focus-panel small multiples (spec v3 §F):
-// project a downsampled copy of one mesh into a shared 2D frame and tag every
-// vertex with a per-channel display scalar. Pure CPU — the client fills the
-// triangles into a 2D canvas (no extra WebGL control).
+// Co-oriented mesh preview: project a downsampled copy of one mesh into a shared
+// 2D frame and tag every vertex with a per-channel display scalar. Pure CPU —
+// the client fills the triangles into a 2D canvas (no extra WebGL control).
 
-// Projection of the 2D frame. Pano = cylindrical from an eye origin; the three
-// orthos are world-axis drops (inherently shared frames).
-type Projection = ProjPano | ProjTop | ProjFront | ProjSide
+// Projection of the 2D frame. Pano = cylindrical from an eye origin; the orthos
+// are world-axis drops; Oblique = isometric axonometric (keeps the vertical/datum
+// axis visible — used for the displacement glyph field).
+type Projection = ProjPano | ProjTop | ProjFront | ProjSide | ProjOblique
 
 // Pano eye: the focused mesh's own origin (pick) or the reference origin (compare).
 type OriginMode = OriginOwn | OriginReference
 
 // Display scalar per vertex.
-//  Shade     = Lambert relief (n·light), 0..1, channel-free (pick context).
-//  M3C2/Zdiff= signed extrinsic distance to the reference (modes 0/1).
-//  Incidence = |n · dir-to-own-sensor| (acquisition incidence, view-independent).
-//  Range     = distance from the own sensor / max range, 0..1.
-//  Shape     = per-vertex triangle quality 4√3·A/Σl², 0..1.
-type Channel = ChShade | ChM3C2 | ChZdiff | ChIncidence | ChRange | ChShape
+//  Shade        = Lambert relief (n·light), 0..1, channel-free (pick context).
+//  M3C2/Zdiff   = signed extrinsic distance to the reference (modes 0/1).
+//  Incidence    = |n · dir-to-own-sensor| (acquisition incidence, view-independent).
+//  Range        = distance from the own sensor / max range, 0..1.
+//  Shape        = per-vertex triangle quality 4√3·A/Σl², 0..1.
+//  Displacement = white surface; the payload is the sparse base→tip arrow field.
+type Channel = ChShade | ChM3C2 | ChZdiff | ChIncidence | ChRange | ChShape | ChDisplacement
 
-let projectionOfInt = function 1 -> ProjTop | 2 -> ProjFront | 3 -> ProjSide | _ -> ProjPano
+let projectionOfInt = function 1 -> ProjTop | 2 -> ProjFront | 3 -> ProjSide | 4 -> ProjOblique | _ -> ProjPano
 let originOfInt     = function 1 -> OriginReference | _ -> OriginOwn
 let channelOfInt    = function
-    | 1 -> ChM3C2 | 2 -> ChZdiff | 3 -> ChIncidence | 4 -> ChRange | 5 -> ChShape | _ -> ChShade
+    | 1 -> ChM3C2 | 2 -> ChZdiff | 3 -> ChIncidence | 4 -> ChRange | 5 -> ChShape | 6 -> ChDisplacement | _ -> ChShade
 
 type PreviewResult = {
     // Per emitted (downsampled) vertex: 2D frame coord + display scalar.
@@ -39,9 +40,15 @@ type PreviewResult = {
     // triangles dropped).
     Tris    : int[]
     // Robust scalar domain (1st/99th pct over finite values); the client unions
-    // these across panels for the shared colour scale.
+    // these across panels for the shared colour scale. For Displacement, [0, max
+    // |displacement|] so the client gets a shared magnitude scale.
     Lo      : float
     Hi      : float
+    // Displacement channel only: sparse arrows — projected base (load pose) + tip
+    // (solved pose) 2D positions, and the 3D displacement magnitude per sample.
+    DispBase : float[][]
+    DispTip  : float[][]
+    DispMag  : float[]
 }
 
 let private lightDir = (V3d(0.35, 0.25, 0.90)).Normalized
@@ -75,9 +82,11 @@ let private shapeQuality (pos : V3f[]) (idx : int[]) =
         if cnt.[i] > 0 then q.[i] <- q.[i] / float cnt.[i]
     q
 
+// transform = the surface pose (= the solved/tip pose for displacement); transform2
+// is the displacement base (load) pose, ignored for every other channel.
 let preview
         (lm : LoadedMesh) (refLm : LoadedMesh)
-        (transform : M44d) (refTransform : M44d)
+        (transform : M44d) (transform2 : M44d) (refTransform : M44d)
         (projection : Projection) (originMode : OriginMode)
         (channel : Channel) (maxTris : int) : PreviewResult =
     let pm = lm.parsed
@@ -109,8 +118,7 @@ let preview
 
     // Pano eye + sensor (the mesh's local origin) in world space. Positions are
     // stored relative to the centroid, so the local origin maps to
-    // transform·centroid — matching the GPU single's render-space sensor
-    // (fullTrafo·0). Using transform·0 would sit at the far UTM origin.
+    // transform·centroid. Using transform·0 would sit at the far UTM origin.
     let ownSensor = transform.TransformPos centroid
     let eye =
         match originMode with
@@ -118,19 +126,22 @@ let preview
         | OriginOwn -> ownSensor
 
     let halfPi = Math.PI * 0.5
+    // Isometric oblique (30°): keeps Z visible so a vertical/datum shift shows.
+    let obliqueC = 0.86602540378
+    let obliqueS = 0.5
     let project (w : V3d) =
         match projection with
-        | ProjTop   -> w.X, w.Y
-        | ProjFront -> w.X, w.Z
-        | ProjSide  -> w.Y, w.Z
-        | ProjPano  ->
+        | ProjTop     -> w.X, w.Y
+        | ProjFront   -> w.X, w.Z
+        | ProjSide    -> w.Y, w.Z
+        | ProjOblique -> (w.X - w.Y) * obliqueC, w.Z + (w.X + w.Y) * obliqueS
+        | ProjPano    ->
             let d = w - eye
             let hyp = sqrt (d.X * d.X + d.Y * d.Y)
             (if hyp < 1e-9 && abs d.Z < 1e-9 then 0.0 else atan2 d.Y d.X) / Math.PI,
             (atan2 d.Z (max 1e-9 hyp)) / halfPi
     let verts2d = Array.init n (fun k -> let u, v = project world.[k] in [| u; v |])
 
-    // Per-vertex display scalar.
     let maxRange =
         let mutable mx = 1e-6
         for k in 0 .. n - 1 do
@@ -139,6 +150,7 @@ let preview
         mx
     let scalar = Array.zeroCreate<float> n
     match channel with
+    | ChDisplacement -> ()   // surface rendered white; payload is the arrow field
     | ChShade ->
         for k in 0 .. n - 1 do
             let nw = (transform.TransformDir (V3d nrm.[order.[k]])).Normalized
@@ -203,10 +215,35 @@ let preview
                 j <- j + 3
             keep.ToArray()
 
+    // Displacement field: a sparse grid of emitted vertices, each as a projected
+    // base (load pose, transform2) → tip (solved pose, the surface) arrow + the 3D
+    // magnitude. Capped by a uniform stride.
+    let dispBase, dispTip, dispMag =
+        if channel = ChDisplacement then
+            let target = 220
+            let st = if n > target then n / target else 1
+            let bs = ResizeArray<float[]>()
+            let ts = ResizeArray<float[]>()
+            let ms = ResizeArray<float>()
+            let mutable k = 0
+            while k < n do
+                let baseW = transform2.TransformPos (V3d pos.[order.[k]] + centroid)
+                let bu, bv = project baseW
+                bs.Add [| bu; bv |]
+                ts.Add verts2d.[k]
+                ms.Add ((world.[k] - baseW).Length)
+                k <- k + st
+            bs.ToArray(), ts.ToArray(), ms.ToArray()
+        else [||], [||], [||]
+
     let lo, hi =
-        let finite = scalar |> Array.filter (fun s -> abs s < 1e20)
-        if finite.Length = 0 then 0.0, 1.0
+        if channel = ChDisplacement then
+            0.0, (if dispMag.Length = 0 then 1.0 else max 1e-3 (Array.max dispMag))
         else
-            Array.sortInPlace finite
-            quantile finite 0.01, quantile finite 0.99
-    { Verts2d = verts2d; Scalar = scalar; Tris = outTris; Lo = lo; Hi = hi }
+            let finite = scalar |> Array.filter (fun s -> abs s < 1e20)
+            if finite.Length = 0 then 0.0, 1.0
+            else
+                Array.sortInPlace finite
+                quantile finite 0.01, quantile finite 0.99
+    { Verts2d = verts2d; Scalar = scalar; Tris = outTris; Lo = lo; Hi = hi
+      DispBase = dispBase; DispTip = dispTip; DispMag = dispMag }

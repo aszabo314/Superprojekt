@@ -16,38 +16,27 @@ type Message =
     | SetSlopeThresholdDeg of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
-    // Spring-loaded reference peek (hold).
     | SetReferencePeek of bool
-    | SetRegistrationMode of RegistrationMode
     | SetReferenceMesh of string option
-    // Stage 2 · Fine (ICP). Solves land in PendingReg, not MeshTransforms.
-    | RunRegistration
-    | FineSolved of mesh:string * world:Trafo3d * convergence:float[] * residuals:float[]
-    | FineFailed of mesh:string * reason:string
-    // Stage 1 · Coarse (landmarks via /query/lsq-pairs).
+    // Disabled until a solve exists.
+    | SetRegView of RegView
+    // Writes SolvedTransform directly, per visible moving mesh with ≥3 in-ROI
+    // pairs, in parallel.
     | SolveCoarse
-    | CoarseSolved of mesh:string * worldDelta:M44d * pairResiduals:(ScanPinId * float)[] * rmsBefore:float * eigenvalues:float[] * collinear:bool
+    | CoarseSolved of mesh:string * world:M44d * pairResiduals:(ScanPinId * float)[] * rmsBefore:float * eigenvalues:float[] * collinear:bool
     | CoarseFailed of mesh:string * reason:string
-    // Pending-preview lifecycle (single commit, no history).
-    | CommitRegistration
-    | DiscardRegistration
-    // Correspondence anchors.
     | ToggleCorrespondence of ScanPinId
-    // Seeded markers apply immediately (no review modal). inRoi carries the
-    // per-(pin,mesh) ROI membership (v3 §C); out-of-ROI meshes are not seeded and
-    // their stale auto markers are dropped.
+    // inRoi carries per-(pin,mesh) ROI membership; out-of-ROI meshes are not
+    // seeded and their stale auto markers are dropped.
     | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]
     | AnchorSeedFailed of string
     | ShowToast of string
     | ClearToast
     | SetMeshSensorType of string * SensorType
     | SetHeatmapMode of HeatmapMode
-    // A2: per-mesh signed-distance surface colour map (target = InspectorMesh).
-    | ToggleSurfaceDistance
+    // Difference sub-mode (M3C2 ↔ Δz) for the Inspect focus tiles.
     | ToggleExtrinsicZDiff
-    | ToggleVariance
     | VarianceComputed of mesh:string * float32[]
-    | SurfaceDistanceComputed of mesh:string * float32[]
     | SurfaceDistanceFailed of mesh:string * reason:string
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]
@@ -63,30 +52,19 @@ type Message =
     | EditPin of ScanPinId
     | RenamePin of ScanPinId * string
     | SetActivePickingLayer of string option
-    | SetWorkflowPinHover of ScanPinId option
-    // Correspondence-manager row hover (v3 §G): ghost-isolate that mesh in 3D.
-    | SetCorrRowHover of (string * string) option
-    // Re-seed one mesh's correspondence for one pin (v3 §F ⟳).
+    // hover = peek, click = select/promote.
+    | SetHovered of HoverTarget option
+    | SetFocusedMesh of string option
+    | SetSelectedPoint of string option
     | ReseedMesh of ScanPinId * string
-    // Bottom-dock inspector: active moving-mesh row.
-    | SetInspectorMesh of string option
     | SetWorkflowStep of WorkflowStep
-    // Right focus panel (spec v3): projection selector (drives single + multiples),
-    // the focused mesh (large single + Manual-move drag target / Correspondences
-    // edit target), a render-space drag translation, server-preview results, a
-    // surface-click/handle-drag that sets the focused mesh's correspondence, and
-    // the peek-reference modifier.
+    | SetInspectChannel of InspectChannel
     | SetFocusProjection of FocusProjection
-    | SetFocusMesh of string option
-    | TranslateAlignMesh of V3d
     | FocusMapsComputed of mesh:string * FocusPreview
     | PickCorrespondenceAt of ScanPinId * mesh:string * world:V3d
     | SetFocusPeekReference of bool
-    | TogglePinFocus
-    | SetMovementLayer of MovementMode
     | ToggleOutlines
-    // Workflow panel: camera fly-to (aspect from the view; fovY from the fixed
-    // 90° horizontal fov) + navigation actions.
+    // aspect from the view, fovY from the fixed 90° horizontal fov.
     | FlyTo of FlyToTarget * aspect:float
     | NavTo of NavAction
 
@@ -95,13 +73,10 @@ and ScanPinMessage =
     | CancelPlacement
     | PlaceAnchor of worldCentre:V3d
     | SetInnerRadius of float
-    // Move the pin being adjusted (numeric position fields in the flyout).
     | RepositionPin of ScanPinId * V3d
     | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
     | ProbeComputed of ScanPinId * ProbeResult
     | ProbeFailed of ScanPinId * string
-    | ProbePreviewComputed of ScanPinId * ProbeResult
-    | ProbePreviewFailed of ScanPinId * string
     | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>

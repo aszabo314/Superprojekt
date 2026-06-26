@@ -15,15 +15,15 @@ type LoadedMesh =
         idx  : aval<IBuffer>
         tex  : aval<ITexture>
         fvc  : aval<int>
-        // §6 range heatmap: max |local vertex| (metric) = farthest point from the
-        // mesh's own origin (= sensor). Normalises the range false-colour.
+        // Max |local vertex| (metric) = farthest point from the mesh origin
+        // (= sensor); normalises the range heatmap false-colour.
         localMaxR : aval<float>
         mesh : MeshData option ref
     }
 
 // Elevation-cursor slicing-plane highlight (world-space metres). Built in
-// View.fs from the chart cursor (priority) or the 3D hover point inside the
-// effective pin's probe cylinder; None = off.
+// View.fs from the 3D hover point inside the effective pin's probe cylinder;
+// None = off.
 type CursorHighlight =
     {
         Origin    : V3d
@@ -97,18 +97,16 @@ module MeshView =
     let private scaleFor (model : AdaptiveModel) (name : string) =
         model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
 
-    // Committed render trafo, and the effective one (committed ∘ pending
-    // preview delta) every mesh renders with while a solve preview is open.
-    let committedMeshT (model : AdaptiveModel) (name : string) =
-        model.MeshTransforms |> AVal.map (fun m ->
+    let loadMeshT (model : AdaptiveModel) (name : string) =
+        model.LoadTransforms |> AVal.map (fun m ->
             Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
 
-    let effectiveMeshT (model : AdaptiveModel) (name : string) =
-        (model.MeshTransforms, model.PendingReg) ||> AVal.map2 (fun m pending ->
-            let c = Map.tryFind name m |> Option.defaultValue Trafo3d.Identity
-            match PendingRegistration.delta name pending with
-            | Some d -> RegLog.effective c d
-            | None -> c)
+    let displayedMeshT (model : AdaptiveModel) (name : string) =
+        (model.RegView, model.SolvedTransforms, model.LoadTransforms)
+        |||> AVal.map3 (fun view solved load ->
+            match view, Map.tryFind name solved with
+            | RegAfter, Some t -> t
+            | _ -> Map.tryFind name load |> Option.defaultValue Trafo3d.Identity)
 
     let visibleMeshNames (model : AdaptiveModel) =
         let visible = AVal.force model.MeshVisible
@@ -116,20 +114,13 @@ module MeshView =
         |> List.filter (fun n -> Map.tryFind n visible |> Option.defaultValue true)
 
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
-    // inner radius w). Used by the mesh shader's pin-isolation filter.
+    // inner radius w), for the mesh shader's pin-isolation filter.
     let private pinBlobUniforms (model : AdaptiveModel) =
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-        // §9 pin-focus: when on, only the focused pin's ROI carves the visible region.
-        let focusVal =
-            (model.PinFocusMode, ScanPinModel.effectivePinIdA model.ScanPins.Placement model.ScanPins.SelectedPin)
-            ||> AVal.map2 (fun on fid -> if on then fid else None)
         let pinsF =
-            (model.ScanPins.Pins |> AMap.toAVal, focusVal) ||> AVal.map2 (fun pinsMap focus ->
-                let arr = HashMap.toArray pinsMap |> Array.map snd
-                match focus with
-                | Some fid -> arr |> Array.filter (fun p -> p.Id = fid)
-                | None -> arr)
+            model.ScanPins.Pins |> AMap.toAVal |> AVal.map (fun pinsMap ->
+                HashMap.toArray pinsMap |> Array.map snd)
         let blobsArr =
             (pinsF, model.CommonCentroid, datasetScale)
             |||> AVal.map3 (fun pins cc scale ->
@@ -151,7 +142,7 @@ module MeshView =
     [<Literal>]
     let private cursorDarken = 0.85f
 
-    let buildScene (loadFinished : string -> unit) (cursor : aval<CursorHighlight option>) (clip : aval<int * V4f * V4f>) (previewSwap : aval<bool>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
+    let buildScene (loadFinished : string -> unit) (cursor : aval<CursorHighlight option>) (clip : aval<int * V4f * V4f>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
         let renderingModeInt =
             model.RenderingMode |> AVal.map (function
                 | Textured     -> 0
@@ -166,7 +157,7 @@ module MeshView =
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
-        // Cursor-plane uniforms shared by every mesh (metric → render once).
+        // Cursor-plane uniforms shared by every mesh (metric → render once);
         // CursorActive is the only per-mesh one (below).
         let cursorRender =
             let datasetScaleA =
@@ -189,23 +180,22 @@ module MeshView =
         let cursorPinR   = cursorRender |> AVal.map (fun (_, _, _, _, r, _, _) -> r)
         let cursorCylLen = cursorRender |> AVal.map (fun (_, _, _, _, _, l, _) -> l)
         let cursorWidth  = cursorRender |> AVal.map (fun (_, _, _, _, _, _, w) -> w)
-        // Reference peek (spring-loaded): while held with a reference set, the
-        // reference is the only solid mesh — transient, no eye-state mutation.
+        // Reference peek: while held with a reference set, the reference is the
+        // only solid mesh — transient, no model mutation.
         let peekTarget =
             (model.ReferencePeekHeld, model.Registration) ||> AVal.map2 (fun held reg ->
                 if held then reg.ReferenceMesh else None)
         // Auto-suspend pin isolation while placing an anchor so the terrain
         // stays visible for aiming (auto-restored, no model mutation).
         let anchorGhost =
-            let isoOn = (model.AnchorGhostMode, model.PinFocusMode) ||> AVal.map2 (||)
-            (isoOn, model.ScanPins.Placement) ||> AVal.map2 (fun on pl ->
+            (model.AnchorGhostMode, model.ScanPins.Placement) ||> AVal.map2 (fun on pl ->
                 match pl with
                 | AnchorPlacement -> 0
                 | _ -> if on then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
-            // Isolation: reference peek wins, then Alt-wheel / §9 align-auto /
-            // movement-auto (wheelIsolation), else plain visibility.
+            // Isolation: reference peek wins, then wheelIsolation (Alt-wheel /
+            // hover peek), else plain visibility.
             let isActive =
                 AVal.custom (fun t ->
                     match peekTarget.GetValue t with
@@ -214,16 +204,21 @@ module MeshView =
                         match wheelIsolation.GetValue t with
                         | Some iso -> iso = name
                         | None ->
-                            Map.tryFind name (model.MeshVisible.GetValue t)
-                            |> Option.defaultValue true)
+                            let vis = Map.tryFind name (model.MeshVisible.GetValue t) |> Option.defaultValue true
+                            // Inspect central 3D: the reference carries the variance
+                            // aggregate solid; moving meshes drop to faint ghost
+                            // context — unless an intrinsic channel wants them solid.
+                            let inspectGhost =
+                                model.WorkflowStep.GetValue t = Inspect
+                                && model.HeatmapMode.GetValue t = HeatOff
+                                && (match (model.Registration.GetValue t).ReferenceMesh with
+                                    | Some rf -> rf <> name
+                                    | None -> false)
+                            vis && not inspectGhost)
             let scale = scaleFor model name
-            // Effective pose = committed ∘ pending preview delta; while the
-            // before/after swap is held, render the committed pose instead.
-            let meshT =
-                (effectiveMeshT model name, committedMeshT model name, previewSwap)
-                |||> AVal.map3 (fun eff comm swap -> if swap then comm else eff)
-            // §6 range heatmap: sensor origin (mesh-local 0,0,0) in render space,
-            // and the normalising max range (metric maxR × dataset scale).
+            let meshT = displayedMeshT model name
+            // Range-heatmap inputs: sensor origin (mesh-local 0,0,0) in render
+            // space, and the normalising max range (metric maxR × dataset scale).
             let fullTrafo = meshTrafo model.CommonCentroid loaded scale meshT
             let sensorOrigin = fullTrafo |> AVal.map (fun t -> V3f (t.Forward.TransformPos V3d.Zero))
             let rangeMax = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> float32 (max 1e-6 (r * s)))
@@ -234,7 +229,7 @@ module MeshView =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
-            // A2: per-vertex signed distance for this mesh (None unless soloed/
+            // Per-vertex signed distance for this mesh (None unless soloed/
             // encoded). Projected early so a refetch doesn't churn other meshes.
             let myDist = model.SurfaceDistance |> AVal.map (Map.tryFind name)
             let distBuf =
@@ -245,8 +240,8 @@ module MeshView =
                         match loaded.mesh.Value with
                         | Some md -> ArrayBuffer (Array.zeroCreate<float32> md.positions.Length) :> IBuffer
                         | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
-            // §6 shape heatmap: per-vertex triangle quality (incident-face mean
-            // of 4√3·A/Σl², clamped 0..1). Recomputed once when geometry loads.
+            // Shape heatmap: per-vertex triangle quality (incident-face mean of
+            // 4√3·A/Σl², clamped 0..1). Recomputed once when geometry loads.
             let shapeBuf =
                 loaded.pos |> AVal.map (fun _ ->
                     match loaded.mesh.Value with
@@ -270,13 +265,13 @@ module MeshView =
                             if cnt.[i] > 0 then q.[i] <- q.[i] / float32 cnt.[i]
                         ArrayBuffer q :> IBuffer
                     | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
-            // 1 = single-mesh extrinsic (diverging) on the soloed moving mesh;
-            // 2 = §6 variance (sequential) on the reference mesh.
+            // 2 = variance (sequential) on the reference mesh — the Inspect central
+            // 3D aggregate. The single-mesh signed-distance difference moved to the
+            // focus tiles, so this is the only per-vertex main-view map now.
             let distEncoding =
                 AVal.custom (fun t ->
                     if (myDist.GetValue t).IsNone then 0
-                    elif model.SurfaceDistOn.GetValue t && model.InspectorMesh.GetValue t = Some name then 1
-                    elif model.VarianceOn.GetValue t
+                    elif model.WorkflowStep.GetValue t = Inspect
                          && (model.Registration.GetValue t).ReferenceMesh = Some name then 2
                     else 0)
             // Saturated end of the diverging map: robust (95th pct |d|).
@@ -289,23 +284,6 @@ module MeshView =
                             Array.sortInPlace valid
                             max 1e-3f valid.[int (0.95 * float (valid.Length - 1))]
                     | None -> 1.0f)
-            // Detection limit (neutral mid) from the selected pin's probe:
-            // 1.96·√(σ_ref² + σ_mesh²); 0 → no neutral band.
-            let distLoD =
-                (model.ScanPins.SelectedPin, model.ScanPins.Pins |> AMap.toAVal)
-                ||> AVal.map2 (fun sel pins ->
-                    match sel |> Option.bind (fun id -> HashMap.tryFind id pins) with
-                    | Some p ->
-                        match p.Probe with
-                        | ProbeReady r ->
-                            let stdOf m =
-                                r.Distributions |> Array.tryFind (fun d -> d.MeshName = m)
-                                |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
-                            let refStd = stdOf r.ReferenceMesh
-                            let mStd = stdOf name
-                            1.96 * sqrt (refStd*refStd + mStd*mStd) |> float32
-                        | _ -> 0.0f
-                    | None -> 0.0f)
             // "All meshes the plane intersects": the cursor effect activates
             // only on meshes whose registered-world bbox touches the highlight
             // slab — and, when clipped, the cylinder's bounding sphere.
@@ -319,16 +297,13 @@ module MeshView =
                         | None -> 1
                         | Some box ->
                             let tw =
-                                let committed =
-                                    Map.tryFind name (model.MeshTransforms.GetValue t)
-                                    |> Option.defaultValue Trafo3d.Identity
-                                let eff =
-                                    match PendingRegistration.delta name (model.PendingReg.GetValue t) with
-                                    | Some d -> RegLog.effective committed d
-                                    | None -> committed
+                                let disp =
+                                    match model.RegView.GetValue t, Map.tryFind name (model.SolvedTransforms.GetValue t) with
+                                    | RegAfter, Some s -> s
+                                    | _ -> Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
                                 RigidTransform.renderToWorld
                                     (DatasetScale.forMesh (model.DatasetScales.GetValue t) name)
-                                    (model.CommonCentroid.GetValue t) eff
+                                    (model.CommonCentroid.GetValue t) disp
                             let mutable dMin = infinity
                             let mutable dMax = -infinity
                             let mutable bMin = V3d(infinity, infinity, infinity)
@@ -370,8 +345,8 @@ module MeshView =
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
                     Sg.Uniform("MeshActive",      isActive)
                     // GhostSilhouette off → 0 → ghost path discards. Reference
-                    // peek + wheel/align/movement isolation dim the others at
-                    // fixed alphas (explicit gestures, independent of the toggle).
+                    // peek + wheel isolation dim the others at fixed alphas
+                    // (explicit gestures, independent of the toggle).
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
                             match peekTarget.GetValue t with
@@ -405,7 +380,6 @@ module MeshView =
                     Sg.Uniform("ClipPlane0",           clipPlane0)
                     Sg.Uniform("ClipPlane1",           clipPlane1)
                     Sg.Uniform("DistanceEncoding",     distEncoding)
-                    Sg.Uniform("DistLoD",              distLoD)
                     Sg.Uniform("DistScale",            distScale)
                     Sg.Uniform("HeatmapMode",          model.HeatmapMode |> AVal.map (function HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
@@ -422,68 +396,10 @@ module MeshView =
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
                     Sg.Render loaded.fvc
                 }
-            // While this mesh has a pending preview delta, also show its
-            // committed pose via the uniform-ghost path in a slate tint. Ghost
-            // fragments write far depth so picks pass through to the preview.
-            let ghostActive =
-                (renderEnabled, model.PendingReg, previewSwap) |||> AVal.map3 (fun r pending swap ->
-                    r && (not swap) && (PendingRegistration.delta name pending |> Option.isSome))
-            let committedGhost =
-                sg {
-                    Sg.Active ghostActive
-                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale (committedMeshT model name))
-                    Sg.Shader {
-                        DefaultSurfaces.trafo
-                        DefaultSurfaces.diffuseTexture
-                        MeshShader.shade
-                    }
-                    Sg.NoEvents
-                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
-                    Sg.Uniform("MeshActive",      AVal.constant false)
-                    // Slate committed-pose ghost obeys the opacity slider too
-                    // (its slate MeshColor distinguishes it, not a fixed alpha).
-                    Sg.Uniform("GhostOpacity",    model.GhostOpacity |> AVal.map float32)
-                    Sg.Uniform("RenderingMode",   AVal.constant 1)
-                    Sg.Uniform("MeshColor",       AVal.constant (V4f(0.45f, 0.49f, 0.55f, 1.0f)))
-                    Sg.Uniform("ShadingStrength", AVal.constant 0.0f)
-                    Sg.Uniform("SlopeThreshold",  AVal.constant 0.5f)
-                    Sg.Uniform("BlobCount",       AVal.constant 0)
-                    Sg.Uniform("Blobs",           blobs)
-                    Sg.Uniform("AnchorGhost",     AVal.constant 0)
-                    Sg.Uniform("CursorActive",         AVal.constant 0)
-                    Sg.Uniform("CursorPlaneOrigin",    cursorOrigin)
-                    Sg.Uniform("CursorPlaneNormal",    cursorNormal)
-                    Sg.Uniform("CursorHighlightWidth", cursorWidth)
-                    Sg.Uniform("CursorDarken",         AVal.constant cursorDarken)
-                    Sg.Uniform("CursorClip",           cursorClip)
-                    Sg.Uniform("CursorPinCentre",      cursorPinC)
-                    Sg.Uniform("CursorPinRadius",      cursorPinR)
-                    Sg.Uniform("CursorCylLength",      cursorCylLen)
-                    Sg.Uniform("ClipPlaneCount",       clipCount)
-                    Sg.Uniform("ClipPlane0",           clipPlane0)
-                    Sg.Uniform("ClipPlane1",           clipPlane1)
-                    Sg.Uniform("DistanceEncoding",     AVal.constant 0)
-                    Sg.Uniform("DistLoD",              AVal.constant 0.0f)
-                    Sg.Uniform("DistScale",            AVal.constant 1.0f)
-                    Sg.Uniform("HeatmapMode",          AVal.constant 0)
-                    Sg.Uniform("SensorOrigin",         AVal.constant V3f.Zero)
-                    Sg.Uniform("RangeMax",             AVal.constant 1.0f)
-                    Sg.VertexAttributes(
-                        HashMap.ofList [
-                            string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
-                            string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
-                            string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
-                            "SurfaceDist",                                  BufferView(distBuf, typeof<float32>)
-                            "ShapeQ",                                       BufferView(shapeBuf, typeof<float32>)
-                        ]
-                    )
-                    Sg.Index(BufferView(loaded.idx, typeof<int>))
-                    Sg.Render loaded.fvc
-                }
-            sg { surface; committedGhost }
+            surface
         ) |> AList.toASet
 
-    // §10 outline G-buffer: every visible mesh rendered solid with the
+    // Outline G-buffer: every visible mesh rendered solid with the
     // OutlineGBuffer shader (world normal + depth → target0, palette colour +
     // mask → target1). Consumed by OutlineView's offscreen pass.
     let buildOutlineNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
@@ -497,7 +413,7 @@ module MeshView =
                 let isActive =
                     model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
                 let scale = scaleFor model name
-                let meshT = effectiveMeshT model name
+                let meshT = displayedMeshT model name
                 let renderEnabled =
                     (loaded.fvc, isActive) ||> AVal.map2 (fun c a -> c > 3 && a)
                 let meshColor =

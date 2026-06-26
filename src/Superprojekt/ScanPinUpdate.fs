@@ -23,16 +23,12 @@ module ScanPinUpdate =
     let activeScale (model : Model) =
         DatasetScale.active model.ActiveDataset model.DatasetScales
 
-    let defaultInnerRadius (_ : Model) = 5.0
-
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
-        let inner   = defaultInnerRadius model
         {
             Id                   = id
             Name                 = PinNames.generate id
-            Phase                = PinPhase.Placement
             Centre               = worldCentre
-            InnerRadius          = inner
+            InnerRadius          = max 0.01 model.QuickPinRadius
             Correspondence       = None
             HostMeshName         = model.ActivePickingLayer
             CreatedAt            = System.DateTime.UtcNow
@@ -46,21 +42,16 @@ module ScanPinUpdate =
         | Some pin -> { sp with Pins = HashMap.add id (f pin) sp.Pins }
         | None -> sp
 
-    let private discardActivePin (sp : ScanPinModel) =
-        match ScanPinModel.activePlacementId sp with
-        | Some id -> { sp with Pins = HashMap.remove id sp.Pins }
-        | None -> sp
-
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
         | EnterAnchorPlacement ->
-            let sp = discardActivePin sp
             { sp with Placement = AnchorPlacement }
 
         | CancelPlacement ->
-            let sp = discardActivePin sp
             { sp with Placement = PlacementIdle }
 
+        // Click-and-drop: the pin is created committed and placement ends. Radius
+        // is edited afterwards from the pin's detail panel (dock).
         | PlaceAnchor worldCentre ->
             match sp.Placement with
             | AnchorPlacement ->
@@ -68,34 +59,19 @@ module ScanPinUpdate =
                 let pin = makeAnchor model id worldCentre
                 { sp with
                     Pins = HashMap.add id pin sp.Pins
-                    Placement = AdjustingPin id }
+                    Placement = PlacementIdle }
             | _ -> sp
 
-        // Applies to the effective pin (placement flyout OR the selected pin).
+        // Applies to the selected pin (its detail panel).
         | SetInnerRadius r ->
-            match ScanPinModel.effectivePinId sp model.Selection.SelectedPin with
+            match model.Selection.SelectedPin with
             | Some id -> sp |> updatePin id (fun pin ->
                 let r' = max 0.01 r
                 { pin with InnerRadius = r'; Probe = ProbeNone; ContactRings = RingsNone })
             | None -> sp
 
-        | RepositionPin (id, centre) ->
-            if ScanPinModel.activePlacementId sp = Some id then
-                sp |> updatePin id (fun pin ->
-                    { pin with Centre = centre; Probe = ProbeNone; ContactRings = RingsNone })
-            else sp
-
-        | CommitPin ->
-            match ScanPinModel.activePlacementId sp with
-            | Some id ->
-                let sp = sp |> updatePin id (fun pin -> { pin with Phase = PinPhase.Committed })
-                { sp with Placement = PlacementIdle }
-            | None -> sp
-
         | DeletePin id ->
-            let wasActive = ScanPinModel.activePlacementId sp = Some id
-            let placement = if wasActive then PlacementIdle else sp.Placement
-            { sp with Pins = HashMap.remove id sp.Pins; Placement = placement }
+            { sp with Pins = HashMap.remove id sp.Pins }
 
         // Pin selection lives in Model.Selection (handled in handleMsg).
         | SelectPin _ -> sp
@@ -125,6 +101,13 @@ module ScanPinUpdate =
                 let restored = model.SavedMenuOpen |> Option.defaultValue model.MenuOpen
                 { model with MenuOpen = restored; SavedMenuOpen = None }
             else model
+        // The pin just added by PlaceAnchor (exactly one new key), if any.
+        let placedId =
+            match msg with
+            | PlaceAnchor _ ->
+                sp'.Pins |> HashMap.toSeq |> Seq.map fst
+                |> Seq.tryFind (fun id -> not (HashMap.containsKey id sp.Pins))
+            | _ -> None
         // SelectPin sets the shared selection, a freshly placed pin becomes
         // selected, and a dangling selection (deleted pin) is dropped.
         let selection =
@@ -132,25 +115,19 @@ module ScanPinUpdate =
                 match msg with
                 | SelectPin id -> { model.Selection with SelectedPin = id }
                 | PlaceAnchor _ ->
-                    match ScanPinModel.activePlacementId sp' with
+                    match placedId with
                     | Some id -> { model.Selection with SelectedPin = Some id }
                     | None -> model.Selection
                 | _ -> model.Selection
             match sel0.SelectedPin with
             | Some id when not (HashMap.containsKey id sp'.Pins) -> { sel0 with SelectedPin = None }
             | _ -> sel0
-        match msg with
-        | PlaceAnchor _ ->
-            match ScanPinModel.activePlacementId sp' with
-            | Some id ->
-                match HashMap.tryFind id sp'.Pins with
-                | Some pin ->
-                    let scale = activeScale model
-                    let renderCentre = ScanPin.renderCentre model.CommonCentroid scale pin.Centre
-                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderCentre))]
-                | None -> ()
-            | None -> ()
-        | _ -> ()
+        match placedId |> Option.bind (fun id -> HashMap.tryFind id sp'.Pins) with
+        | Some pin ->
+            let scale = activeScale model
+            let renderCentre = ScanPin.renderCentre model.CommonCentroid scale pin.Centre
+            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderCentre))]
+        | None -> ()
         { model with ScanPins = sp'; Selection = selection }
 
     // Lazy probe trigger, postlude after every reducer step: the effective pin
@@ -159,7 +136,7 @@ module ScanPinUpdate =
     let ensureProbe (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
         let effective =
-            ScanPinModel.effectivePinId sp model.Selection.SelectedPin
+            model.Selection.SelectedPin
             |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
         match effective with
         | Some pin when (match pin.Probe with ProbeNone -> true | _ -> false) ->

@@ -51,10 +51,9 @@ module GuiInspector =
         [| "→"; "↗"; "↑"; "↖"; "←"; "↙"; "↓"; "↘" |].[int (System.Math.Round(d / 45.0)) % 8]
 
     let dock (env : Env<Message>) (model : AdaptiveModel) =
-        let placement = model.ScanPins.Placement
         let selected  = model.Selection.SelectedPin
         let pinsVal   = model.ScanPins.Pins |> AMap.toAVal
-        let effId     = ScanPinModel.effectivePinIdA placement selected
+        let effId     = selected
         let effPin    = (effId, pinsVal) ||> AVal.map2 (fun id pins -> id |> Option.bind (fun i -> HashMap.tryFind i pins))
         let hasPin    = effPin |> AVal.map Option.isSome
         let orderVal  = model.MeshOrder.Content
@@ -214,7 +213,7 @@ module GuiInspector =
                 span { Class "ins-mgr-res"; corrA |> AVal.map (function Some c when c.RefAnchor.IsSome -> "ref" | _ -> "…") }
             }
         let nameVal   = effPin |> AVal.map (Option.map (fun p -> p.Name) >> Option.defaultValue "")
-        let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 5.0)
+        let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 0.5)
         let manager =
             div {
                 Class "ins-mgr"

@@ -120,7 +120,7 @@ The left rail (`GuiRail`) has exactly three modes — **Overview · Corresponden
 
 A ScanPin is a 3D annotation in **metric world-space**: `Centre : V3d`, `InnerRadius : float` (a hard sphere — α = 1 and full probe weight inside). Pins drive the per-pixel blob in the mesh shader (`Blobs` uniform). Render-space conversions happen at boundaries (`ScanPin.renderCentre`/`renderLength`).
 
-**Placement:** Correspondence mode → **○ Place pin** → tap the reference surface → `AdjustingPin` flyout (X/Y/Z + inner radius) → Commit / Discard / Escape. `Placement : PlacementState = PlacementIdle | AnchorPlacement | AdjustingPin of ScanPinId`.
+**Placement:** Correspondence mode → **○ Place pin** → tap the reference surface. Click-and-drop: the pin is created immediately (no commit step), becomes selected, and placement ends. Radius is edited afterwards from the pin's detail panel (the Correspondence dock manager, `SetInnerRadius` on the selected pin). New pins take `Model.QuickPinRadius` (default 0.5 m) as their inner radius. `Placement : PlacementState = PlacementIdle | AnchorPlacement`.
 
 **M3C2 probe:** every pin owns `Probe : ProbeState`. It samples all visible meshes inside a cylinder (radius = `InnerRadius`, length = 20 m fixed `ScanPin.fixedProbeLength`, axis = PCA normal of the reference inside the pin sphere) via `POST /api/query/probe` and returns per-mesh signed-distance distributions (re-centred so 0 = reference median) + the dataset/algorithm/conditioning decomposition. Lazy + debounced (`ScanPinUpdate.ensureProbe`, generation-guarded CTS); invalidation just resets to `ProbeNone`. The probe drives the Inspect dock's **pin distribution** panel (strip + box) and the difference field's ±LoD₉₅ detection-limit band.
 
@@ -182,7 +182,6 @@ OutlineView.fs         offscreen image-space outline pass
 ScanPinScene.fs        pin sg nodes + correspondence constellation
 SceneGraph.fs          composes meshScene + pinScene + cross + labels + reference outline
 GuiTopBar.fs           top bar (peek, before/after toggle, gear popover)
-GuiPanels.fs           pin placement flyout
 GuiOverlays.fs         toast, scale bar, orientation indicator, wheel label
 GuiRail.fs             three-mode left rail
 GuiFocus.fs            canvas focus panel (large single + multiples)
@@ -248,7 +247,7 @@ GUI placement:
 - Left rail (`GuiRail`): the three modes.
 - Right focus panel (`GuiFocus`): canvas large-single + multiples.
 - Bottom dock (`GuiInspector`): mode-contextual content.
-- Pin placement flyout (`GuiPanels`); overlays (`GuiOverlays`).
+- Overlays (`GuiOverlays`).
 
 ## Tests
 

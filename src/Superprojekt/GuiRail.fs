@@ -162,12 +162,6 @@ module GuiRail =
                     "⚲"
                 }
                 button {
-                    Class "mb"
-                    Attribute("title", "Edit position / radius")
-                    Dom.OnClick(fun _ -> env.Emit [EditPin pin.Id])
-                    "✎"
-                }
-                button {
                     Class "mb rail-pin-del"
                     Attribute("title", "Delete pin")
                     Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (DeletePin pin.Id)])

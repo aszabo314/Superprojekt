@@ -144,7 +144,7 @@ module GuiFocus =
             |||> AVal.map3 (fun fm pk rf -> if pk then rf else fm)
 
         let effCorrA =
-            (ScanPinModel.effectivePinIdA model.ScanPins.Placement model.Selection.SelectedPin,
+            (model.Selection.SelectedPin,
              model.ScanPins.Pins |> AMap.toAVal)
             ||> AVal.map2 (fun id pins -> id |> Option.bind (fun i -> HashMap.tryFind i pins) |> Option.bind ScanPin.correspondence)
 
@@ -320,7 +320,7 @@ module GuiFocus =
         let pickAt (u : float) (v : float) =
             match AVal.force focusMesh, AVal.force refMeshA with
             | Some mesh, Some refM when mesh <> refM && not (AVal.force model.FocusPeekReference) ->
-                match ScanPinModel.effectivePinIdA model.ScanPins.Placement model.Selection.SelectedPin |> AVal.force with
+                match model.Selection.SelectedPin |> AVal.force with
                 | None -> ()
                 | Some pinId ->
                     let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh

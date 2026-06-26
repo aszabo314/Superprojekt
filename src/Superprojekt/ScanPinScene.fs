@@ -135,18 +135,15 @@ module ScanPinScene =
         let pinDots =
             pinIdSet |> ASet.map (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
-                let phaseVal = pinVal |> AVal.map (Option.map (fun p -> p.Phase))
+                let presentVal = pinVal |> AVal.map Option.isSome
                 let centreVal =
                     (pinVal, renderCentreOpt) ||> AVal.map2 (fun po f ->
                         po |> Option.map (fun p -> f p.Centre))
                 let color =
-                    (selectedId, phaseVal) ||> AVal.map2 (fun sel phaseOpt ->
-                        match phaseOpt with
-                        | Some phase ->
-                            if sel = Some id then V4d(1.0, 0.9, 0.0, 1.0)
-                            elif phase = PinPhase.Placement then V4d(0.2, 1.0, 0.3, 1.0)
-                            else V4d(1.0, 0.3, 0.3, 1.0)
-                        | None -> V4d(0.0, 0.0, 0.0, 0.0))
+                    (selectedId, presentVal) ||> AVal.map2 (fun sel present ->
+                        if not present then V4d(0.0, 0.0, 0.0, 0.0)
+                        elif sel = Some id then V4d(1.0, 0.9, 0.0, 1.0)
+                        else V4d(1.0, 0.3, 0.3, 1.0))
                 let trafo =
                     centreVal |> AVal.map (function
                         | Some c -> Trafo3d.Translation c
@@ -397,20 +394,21 @@ module ScanPinScene =
         let constellation = ASet.unionMany (ASet.ofList [ constLines; movingGlyphs; refGlyphs ])
 
         let ghostPreview =
-            let defaultR =
-                model.SceneBounds |> AVal.map (fun b ->
-                    if b.IsInvalid then 1.0
-                    else max 0.1 (b.Size.Length * 0.05))
+            // Preview radius = the radius a click would place (QuickPinRadius,
+            // metric) in render space, so the hover sphere matches the real pin.
+            let previewR =
+                (model.QuickPinRadius, datasetScale) ||> AVal.map2 (fun r s ->
+                    max 1e-4 (ScanPin.renderLength s r))
             let active =
                 (notFullscreen, placementActive, placementHover) |||> AVal.map3 (fun nf pa hOpt ->
                     nf && pa && hOpt.IsSome)
             let trafo =
-                (placementHover, defaultR) ||> AVal.map2 (fun hOpt r ->
+                (placementHover, previewR) ||> AVal.map2 (fun hOpt r ->
                     match hOpt with
                     | Some c -> Trafo3d.Scale r * Trafo3d.Translation c
                     | None -> Trafo3d.Scale 0.0)
             let outlineSegs =
-                (placementHover, defaultR) ||> AVal.map2 (fun hOpt r ->
+                (placementHover, previewR) ||> AVal.map2 (fun hOpt r ->
                     match hOpt with
                     | Some c -> PinGeometry.buildSphereOutline c r (V4d(0.1, 0.34, 0.86, 0.85)) 1.5
                     | None -> [||])
@@ -434,32 +432,31 @@ module ScanPinScene =
                     let scale = datasetScale.GetValue t
                     let out   = ResizeArray<V3d * V3d * V4d * float>()
                     for (_, p) in HashMap.toSeq pins do
-                        if p.Phase = PinPhase.Committed then
-                            let verdict, magnitude =
-                                match p.Probe with
-                                | ProbeReady r ->
-                                    let moving =
-                                        r.Distributions
-                                        |> Array.filter (fun d -> d.MeshName <> r.ReferenceMesh && d.Count > 0)
-                                    if moving.Length = 0 then grey, 0.0
-                                    else
-                                        let refD = r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
-                                        let refStd = refD |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
-                                        let refN = refD |> Option.map (fun d -> float (max 1 d.Count)) |> Option.defaultValue 1.0
-                                        let anySig =
-                                            moving |> Array.exists (fun d ->
-                                                let lod = 1.96 * sqrt (refStd*refStd/refN + d.Std*d.Std/float (max 1 d.Count))
-                                                abs d.Median > lod)
-                                        let mag = moving |> Array.map (fun d -> abs d.Median) |> Array.max
-                                        (if anySig then red else green), mag
-                                | _ -> grey, 0.0
-                            let axisN, u, v = basisFromNormal (ScanPin.axis p)
-                            let c   = ScanPin.renderCentre cc scale p.Centre
-                            let h   = ScanPin.renderLength scale (p.InnerRadius * 1.5 + magnitude * 3.0)
-                            let top = c + axisN * h
-                            let hr  = ScanPin.renderLength scale (p.InnerRadius * 0.5)
-                            out.Add(c, top, verdict, 2.5)
-                            addRing out top u v hr verdict 2.5 24
+                        let verdict, magnitude =
+                            match p.Probe with
+                            | ProbeReady r ->
+                                let moving =
+                                    r.Distributions
+                                    |> Array.filter (fun d -> d.MeshName <> r.ReferenceMesh && d.Count > 0)
+                                if moving.Length = 0 then grey, 0.0
+                                else
+                                    let refD = r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
+                                    let refStd = refD |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
+                                    let refN = refD |> Option.map (fun d -> float (max 1 d.Count)) |> Option.defaultValue 1.0
+                                    let anySig =
+                                        moving |> Array.exists (fun d ->
+                                            let lod = 1.96 * sqrt (refStd*refStd/refN + d.Std*d.Std/float (max 1 d.Count))
+                                            abs d.Median > lod)
+                                    let mag = moving |> Array.map (fun d -> abs d.Median) |> Array.max
+                                    (if anySig then red else green), mag
+                            | _ -> grey, 0.0
+                        let axisN, u, v = basisFromNormal (ScanPin.axis p)
+                        let c   = ScanPin.renderCentre cc scale p.Centre
+                        let h   = ScanPin.renderLength scale (p.InnerRadius * 1.5 + magnitude * 3.0)
+                        let top = c + axisN * h
+                        let hr  = ScanPin.renderLength scale (p.InnerRadius * 0.5)
+                        out.Add(c, top, verdict, 2.5)
+                        addRing out top u v hr verdict 2.5 24
                     out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 

@@ -83,7 +83,6 @@ OutlineView.fs         offscreen image-space outline pass
 ScanPinScene.fs        pin sg nodes + correspondence constellation
 SceneGraph.fs          scene composition + coordinate cross
 GuiTopBar.fs           top bar + before/after toggle + gear popover
-GuiPanels.fs           pin placement flyout
 GuiOverlays.fs         toast, scale bar, orientation indicator, wheel label
 GuiRail.fs             three-mode left rail
 GuiFocus.fs            canvas focus panel (large single + multiples)

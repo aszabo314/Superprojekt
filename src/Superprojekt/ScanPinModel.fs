@@ -8,11 +8,6 @@ open Adaptify
 // ScanPinId is in RegistrationModel.fs (shared so the registration state
 // machine stays WASM-free for tests).
 
-[<RequireQualifiedAccess>]
-type PinPhase =
-    | Placement
-    | Committed
-
 // Per mesh, registered world-space metres. Invalidated (→ RingsNone, lazy
 // recompute) by radius / centre / transform changes; mesh visibility only gates
 // rendering, never the cache.
@@ -41,7 +36,6 @@ module PinNames =
 type ScanPin = {
     Id                   : ScanPinId
     Name                 : string
-    Phase                : PinPhase
     Centre               : V3d
     InnerRadius          : float
     Correspondence       : Correspondence option
@@ -55,7 +49,6 @@ type ScanPin = {
 type PlacementState =
     | PlacementIdle
     | AnchorPlacement
-    | AdjustingPin of ScanPinId
 
 // Pin selection lives in Model.Selection, not here — the placement state machine
 // is the only pin-local UI state.
@@ -70,21 +63,6 @@ module ScanPinModel =
         Pins        = HashMap.empty
         Placement   = PlacementIdle
     }
-
-    let activePlacementId (sp : ScanPinModel) =
-        match sp.Placement with
-        | AdjustingPin id -> Some id
-        | _ -> None
-
-    // The pin under inspection: the one being adjusted, else the selected one.
-    let effectivePinId (sp : ScanPinModel) (selected : ScanPinId option) =
-        activePlacementId sp |> Option.orElse selected
-
-    // Built from already-projected leaves (field-projection rule), so it only fires
-    // when placement or selection actually change.
-    let effectivePinIdA (placement : aval<PlacementState>) (selected : aval<ScanPinId option>) =
-        (placement, selected) ||> AVal.map2 (fun pl sel ->
-            match pl with AdjustingPin id -> Some id | _ -> sel)
 
     let isPlacing (sp : ScanPinModel) =
         match sp.Placement with

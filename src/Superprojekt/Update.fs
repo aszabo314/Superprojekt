@@ -123,7 +123,7 @@ module Update =
                     model.ScanPins.Pins |> HashMap.toList
                     |> List.choose (fun (_, p) ->
                         match ScanPin.correspondence p with
-                        | Some c when c.Enabled && c.RefAnchor.IsSome && p.Phase = PinPhase.Committed ->
+                        | Some c when c.Enabled && c.RefAnchor.IsSome ->
                             Some (p.Id, c.RefAnchor.Value, c.Anchors)
                         | _ -> None)
                 let pairsFor mesh =
@@ -334,14 +334,6 @@ module Update =
             model
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
-        | EditPin id ->
-            let sp = model.ScanPins
-            match HashMap.tryFind id sp.Pins with
-            | Some pin ->
-                let pin = { pin with Phase = PinPhase.Placement }
-                let sp = { sp with Pins = HashMap.add id pin sp.Pins; Placement = AdjustingPin id }
-                { model with ScanPins = sp; Selection = { model.Selection with SelectedPin = Some id } }
-            | None -> model
         | RenamePin(id, name) ->
             match HashMap.tryFind id model.ScanPins.Pins with
             | Some pin ->

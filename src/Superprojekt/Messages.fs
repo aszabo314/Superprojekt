@@ -49,7 +49,6 @@ type Message =
     | HideAllMeshes
     | ResetCamera
     | ToggleGearPopover
-    | EditPin of ScanPinId
     | RenamePin of ScanPinId * string
     | SetActivePickingLayer of string option
     // hover = peek, click = select/promote.
@@ -73,8 +72,6 @@ and ScanPinMessage =
     | CancelPlacement
     | PlaceAnchor of worldCentre:V3d
     | SetInnerRadius of float
-    | RepositionPin of ScanPinId * V3d
-    | CommitPin
     | DeletePin of ScanPinId
     | SelectPin of ScanPinId option
     | ProbeComputed of ScanPinId * ProbeResult

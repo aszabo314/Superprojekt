@@ -40,7 +40,6 @@
     <Compile Include="ScanPinScene.fs" />
     <Compile Include="SceneGraph.fs" />
     <Compile Include="GuiTopBar.fs" />
-    <Compile Include="GuiPanels.fs" />
     <Compile Include="GuiOverlays.fs" />
     <Compile Include="GuiRail.fs" />
     <Compile Include="GuiFocus.fs" />

@@ -71,8 +71,7 @@ module View =
         // effective pin contributes — one plane at a time.
         let cursorHighlight =
             let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-            let effectiveId =
-                ScanPinModel.effectivePinIdA model.ScanPins.Placement model.Selection.SelectedPin
+            let effectiveId = model.Selection.SelectedPin
             AVal.custom (fun t ->
                 let probeOf pid =
                     HashMap.tryFind pid (pinsVal.GetValue t)
@@ -357,7 +356,6 @@ module View =
                 GuiRail.rail env model (viewportSize :> aval<V2i>)
             }
             GuiFocus.panel env model
-            GuiPanels.placementFlyout env model
             GuiOverlays.toast model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)

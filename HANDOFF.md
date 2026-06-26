@@ -1,124 +1,111 @@
-# ScanPin v7 overhaul — handoff
+# Superprojekt — registration client handoff
 
-Implementation of `ScanPin_v7_coding_spec.md` ("registration workflow client" rewrite). Done in three phases: **(1) aggressive removal**, **(2) implement the spec**, **(3) final prune**. This document records exactly what was built, the per-spec implementation details, and the changes/decisions made. The running log is `IMPLEMENTATION_NOTES.md`; this is the consolidated reference.
+Consolidated current-state reference for the ScanPin registration workflow client
+(the "v7/v3" overhaul line). This is the single hand-off doc; detailed
+chronology lives in git history + commit messages. `CLAUDE.md` holds the
+durable architecture/style rules; `README.md` is the app overview.
 
-**Status:** Phase 1 complete · Phase 2 complete (one optional view deferred, see §"Not done") · Phase 3 complete. **Client (WASM), server, and Supertests all build green; 86/86 tests pass.** GPU/shader pieces were build-verified here and smoke-tested in-browser by the maintainer as they landed.
+**Status:** client (WASM), server, and Supertests all build green; **58/58 tests
+pass**. All GPU shaders and DOM/canvas islands are build-verified only — FShade
+compiles and the canvas/SVG islands run **only in-browser**, so anything touching
+them needs a load of `http://localhost:5000` to confirm.
 
----
+## Build / verify
 
-## 1. How to build / verify
-
-- **Client** (fast typecheck, native off): `dotnet build src/Superprojekt/Superprojekt.fsproj -p:WasmBuildNative=false` (~37 s)
+- **Client** (fast typecheck, native off): `dotnet build src/Superprojekt/Superprojekt.fsproj -p:WasmBuildNative=false` (~35 s)
 - **Server**: `dotnet build src/Superserver/Superserver.fsproj`
-- **Tests**: `dotnet run --project src/Supertests` → `86/86 passed`
-- **Adaptify** (after editing any `[<ModelType>]` file — Model.fs, ScanPinModel.fs, RegistrationModel.fs, CameraModel.fs): `bash adaptify.sh`. **Never hand-edit `*.g.fs`.**
-- FShade shaders are **float32-only** and only validate in-browser (run the server, load `http://localhost:5000`).
+- **Tests**: `dotnet run --project src/Supertests` → `58/58 passed`
+- **Adaptify** after editing any `[<ModelType>]` file (Model.fs, ScanPinModel.fs, RegistrationModel.fs, CameraModel.fs): `bash adaptify.sh`. **Never hand-edit `*.g.fs`.**
+- **FShade rule (bit us):** shaders are float32-only **and** must contain no
+  lambdas/local functions. A `let f x = …` *inside* a `fragment`/`vertex` body
+  compiles in F# but FShade rejects it as an unsupported lambda — inline it.
+  `OutlineView.build` is invoked unconditionally, so its shader compiles at
+  startup regardless of the outline toggle.
 
----
+## What the app is now
 
-## 2. Phase 1 — Removals (everything not in the spec)
+Single forward pass; **≤2 live WebGL controls** (main viewport + the focus
+panel's large single). Four invariant UI containers — they never move/resize/
+appear/disappear on step change; only their *content* and *emphasis* change.
 
-All removed with the build kept green between steps. Two big subsystems (Study, Panorama) were **confirmed for removal by the maintainer** since they're neither in the spec nor its §12 REMOVE list.
+- **Top bar** (`GuiTopBar.fs`): hamburger · reset · hold-Peek · ⚙ dark debug
+  popover (dataset, rendering mode, ghost/shading params, outline toggle,
+  centroids, debug log).
+- **Left rail** (`GuiRail.fs`): six-step vertical stepper —
+  **Reference · Manual move · Correspondences · Fine ICP · Inspect · Commit** —
+  one expanded at a time, per-step readiness pill, + a pins list (place / select /
+  ⚲ promote-to-correspondence / ✎ edit / ✕ delete). The Correspondences step also
+  renders the revived **readiness diagnostics** (blocker/warning/ready with
+  one-click `NavTo` actions).
+- **Focus panel** (`GuiFocus.fs` / `FocusView.fs`): always present. A GPU **large
+  single** (the second WebGL control) over a **2D-canvas small-multiples** strip,
+  driven by one projection selector **Panorama | Top | Front | Side** (default
+  Panorama). Context follows the step: *pick* (textured, own-origin) vs *compare*
+  (Inspect → active §6 channel, reference-origin, shared colour scale). Server
+  `POST /api/query/mesh-preview` (`MeshPreview.fs`) projects each mesh + a
+  per-vertex channel scalar; `ensureFocusMaps` is the debounced postlude.
+- **Bottom dock** (`GuiInspector.fs`): always present, **step-contextual**
+  (mode-name header + six cross-faded modes). Manual move / Inspect = the
+  raincloud error inspector; Correspondences = the **correspondence manager**;
+  Reference / Fine ICP / Commit = light readouts.
+- **3D scene** (`ScanPinScene.fs`): pin dots, pin influence rings + contact
+  rings, far-view pin glyphs (verdict colour + magnitude), movement layer
+  (arrows / warped grid, preview only), and the **correspondence constellation**
+  (per-mesh sphere glyph + haloed reference glyph + lines, pickable, selected pin
+  emphasized, out-of-ROI omitted).
 
-| Feature | What was removed |
-|---|---|
-| **Study mode** | client `StudyModel/StudyApi/StudyTelemetry/StudyUpdate/GuiStudy`; server `StudyConfig/StudyStore/StudyHandlers`; `/api/study/*` routes; `studies/` dir; study unit tests. |
-| **Panorama** | `PanoramaView.fs`, PanoramaShader, `▦ Pano` toggle, model state, card, synthetic-pose generation. |
-| **Fusion** | `FusionView.fs`, FusionShader, `◈` toggle, `FusionMode`, CPU-raycast fusion pick path, `buildFusionNode`. |
-| **Save/Load** | `Persistence.fs`, gear Save/Load, the workspace download/upload JS. |
-| **Retarget** | `RetargetState/Candidate/Decision`, retarget card, messages + reducer. |
-| **Lasso** | `LassoDraft/Volume`, model fields, messages, reducer, lasso card, SVG draw layer, `◌` toggle, shader `LassoPlanes` uniforms. |
-| **Registration history** | `RegStep`/`RegStepOutput`/`RegTransformState`, `RegistrationLog`, rollback `↩`, reset `↺`, `★ Set as final`, the cross-pin median-offset strip → **single commit**. |
-| **Iso-plane / cutaway / ruler** | `ClipPlane` type, `ClipPlanes`/`CutawayActive`/`ClipAboveIso`/`RulerActive`, `⊟ slice`, `lock\|d`, locked-plane gizmo, `rulerOverlay`. **Reference-peek kept.** |
-| **Old D/A/C error model** | `Provenance` module, three-source bar, provenance + diff heatmaps, prov tooltip, dataset-error UI, `MeshDatasetErrors`/`MeshAlgorithmResidual`/`ProvenanceThreshold`/`HeatmapPrev`. **`SensorType`/`MeshSensorTypes` kept** (feed the §6 range channel / step-1 sensor type). |
+## Registration / correspondence workflow
 
-### Decisions in Phase 1
-- **`ServerActions`** (dataset bootstrap `init`/`loadDataset`) was relocated out of the deleted `StudyUpdate.fs` into `UpdateHelpers.fs` (slimmed: no study-token branch).
-- Single-commit registration: `CommitRegistration` now applies each pending delta to `MeshTransforms` and re-bases correspondence anchors (`bakeAnchors`), with **no history**. The pending **preview** (`PendingReg`) is intact — that's the spec's `Preview`.
-- The coupled history + error-model removal (they share `AlgoResiduals`, the commit machinery, and the heatmap shader) was done as one pass.
+- **Pins**: one primitive (`ScanPin`); `InnerRadius` = ROI (log-slider); ⚲ promotes
+  to a registration pin (`Correspondence.Enabled`).
+- **Auto-seed** (`UpdateHelpers.seedAnchors`): ROI-clamped closest-point per moving
+  mesh (reach = probe-cylinder bounding sphere). `Correspondence.InRoi` records
+  membership → each moving mesh is **placed / placeable / out-of-ROI**; `k/n`
+  counts in-ROI meshes only. `⟳` re-seeds one mesh (`ReseedMesh`).
+- **Manual edit** (Correspondences step): click/press-drag-release the focus large
+  single → server raycast → `PickCorrespondenceAt` (ROI-constrained); the handle +
+  an opaque reference crosshair are drawn in the large single and every cell;
+  hold **⇄ ref** to peek the reference through the focused mesh's own camera.
+- **Brushing** (`SetWorkflowPinHover` / `SetCorrRowHover`): pin-row hover brightens
+  the constellation; manager-row hover ghost-isolates that mesh + brightens its
+  glyph + pulses its 2D handle; clicking a 3D glyph / 2D cell selects it.
+- **Solve**: `Solve coarse` (lives in the manager) → `/api/query/lsq-pairs`;
+  optional `Fine ICP` → `/api/query/icp`; everything lands in `PendingReg`
+  (preview), then **single commit** (no history) — `Commit`/`Discard`.
+- **Heatmaps** (§6, `MeshShaders.fs`): intrinsic incidence/range/shape; extrinsic
+  M3C2 ↔ Δz (`region-distance` Mode 0/1); all-meshes variance on the reference.
 
----
+## Decisions / deviations worth knowing
 
-## 3. Phase 2 — Implementation, per spec section
+- **§3 data model not renamed** — existing types map to the spec (Mesh = the
+  `Mesh*` maps + `Registration.ReferenceMesh`; Pin = `ScanPin`; Solve = `LastSolve`;
+  Preview = `PendingReg`). Cosmetic-only rename skipped.
+- **GPU panorama is a cylindrical vertex projection** (`FocusProject.vertex`), not
+  the old cubemap shader — lighter, no readback, and pixel-consistent with the
+  server's canvas projection.
+- **Constellation glyphs are small spheres**, not literal billboards (view-
+  independent + pickable without per-frame billboard math).
+- **Handle "drag" = press-drag-release placement** + a live display handle (the
+  HTML overlay can't get rc-relative coords mid-drag); functionally a re-place via
+  the surface raycast. Cell handles are display-only (click a cell → promote).
+- **Incidence on the focus single diverges from the multiples in compare only**
+  (single = camera/eye incidence via the reused mesh shader; multiples = own-sensor
+  incidence). Range/shape/shade/extrinsic are consistent.
+- **Readiness/NavTo revived** (not deleted) — they're test-covered and now feed the
+  Correspondences-step diagnostics.
 
-### §1 Layout / §11 Debug menu — `GuiTopBar.fs`
-- Top bar reduced to **hamburger · ⟲ reset · 👁 Peek (hold) · ⚙ debug**. The hamburger toggles the rail (`MenuOpen`, default **true**).
-- The **dark gear popover** is the debug menu: dataset switch + rendering mode (Textured/Shaded/Slope) **moved here from the bar/old panel**, alongside camera speed, ghost silhouette+opacity, isolate-pins, shading/slope params, **per-mesh outlines toggle** (§10), centroid/bounds info, debug log.
+## Needs an in-browser pass
 
-### §2 Workflow rail — `GuiRail.fs` (new)
-- Vertical stepper **1 Reference · 2 Coarse align · 3 Fine ICP · 4 Inspect · 5 Commit**; one step expanded at a time; per-step **readiness pill** (ready/warn/block/info) computed from model state; **PINS list** underneath (place / select / ⚲ promote-to-correspondence / ✎ edit / ✕ delete).
-- New model state: `WorkflowStep` (enum) + `Model.WorkflowStep` + `SetWorkflowStep`. A near-pure view: every control dispatches an existing message; it issues no server queries.
-- Replaces the old `GuiPanels.leftPanel` + the floating registration panel (`GuiWorkflow.workflowPanel`), both deleted in Phase 3.
+The dock cross-fade + six modes, the constellation (sphere sizes / picking), the
+focus-overlay handle+crosshair projection (pano + ortho), peek-reference, the
+canvas multiples, and the brushing links — all GPU/DOM, unverifiable headless.
+Server data paths (closest-point, mesh-preview, region-distance) are smoke-tested.
 
-### §1/§5 Focus panel = **secondary WebGL control** — `GuiFocus.fs` (new)
-- The **second (and only second) live WebGL control**, right-docked, rendering the scene **orthographically in render-space** (reuses `MeshView.buildScene`). **Top / Front / Side** button group, one view at a time.
-- Mounted only while open (`FocusOpen`) so the **≤2-WebGL-controls** rule always holds; a reopen tab shows when closed.
-- **§5 translate-only coarse align**: pointer drag → in-plane render-space delta → `TranslateAlignMesh` → the selected moving mesh's committed `MeshTransforms` (translate only, no rotation). Moving-mesh selector = visible non-reference meshes.
-- New model state: `FocusOpen` / `FocusAxis` (`AxisTop|AxisFront|AxisSide`) / `AlignMesh` + messages `SetFocusAxis`/`ToggleFocusPanel`/`SetAlignMesh`/`TranslateAlignMesh`.
+## Deferred / known gaps
 
-### §3 Data model — mapped, **not renamed** (decision)
-The existing model already realises the spec §3 shape under different names, so a record rename was **deliberately skipped** (high churn, no functional gain):
-- Mesh = `MeshNames`/`MeshVisible`/`MeshOrder`/`MeshSensorTypes`/`MeshTransforms` + `Registration.ReferenceMesh`
-- Pin = `ScanPin` (`Correspondence.Enabled` = isCorrespondence; `InnerRadius` = roiRadius)
-- Solve = `LastSolve` · Preview = `PendingReg`
-
-### §4 Pins / ROI — already spec-compliant
-`ScanPin` is the single primitive; `InnerRadius` is the ROI with an **inline log-slider** in the placement flyout; tap on the reference sets the centre; auto-seed is closest-point; the probe evaluates inside the ROI cylinder; ⚲ in the rail promotes/demotes the correspondence.
-
-### §6 Heatmaps — **complete** (`MeshShaders.fs`, `MeshView.fs`, `GuiRail.fs`, server)
-`HeatmapMode = HeatOff | HeatIncidence | HeatRange | HeatShape`; rail-Inspect group Off/Incidence/Range/Shape + an Extrinsic toggle with an **M3C2 ↔ Δz** switch + a **Variance** toggle.
-- **Intrinsic incidence** — shader: `|n·toCam|` → grazing red → head-on green.
-- **Intrinsic range** — per-mesh `SensorOrigin` uniform = full mesh trafo · (0,0,0); `RangeMax` = scale × max|local vertex| (`LoadedMesh.localMaxR`, computed at load); shader paints `|wp−SensorOrigin|/RangeMax`. **Sensor = each mesh's own origin** (maintainer calibration), no coefficient. Rigid-invariant.
-- **Intrinsic shape** — per-vertex triangle quality `4√3·A/Σl²` (1 equilateral → 0 sliver), incident-face mean, computed at load into a new `ShapeQ` per-vertex attribute (mirrors `SurfaceDist`); shader red (poor) → green (good).
-- **Extrinsic M3C2 / Δz** — the kept `DistanceEncoding` diverging map (`SurfaceDistOn`, paints the soloed moving mesh). Server `region-distance` gained a `Mode` field (0 = signed closest-point M3C2; **1 = vertical Δz** via Embree raycast onto the reference; signed: moving-above-reference → positive). Toggled by `ExtrinsicZDiff`.
-- **Variance / disagreement (all-meshes)** — `VarianceOn`. Default selection = **all visible moving meshes (≥2)** (no multi-select UI for now — maintainer-approved default). `Update.ensureVariance` postlude does N reference-centric `region-distance` fetches (target = reference, ref = each moving), computes per-reference-vertex **std**, stores under `SurfaceDistance[refMesh]`, painted on the **reference** via a new **sequential** `DistanceEncoding = 2` ramp. Mutually exclusive with the single-mesh extrinsic map.
-
-### §7 Movement layer — `ScanPinScene.fs`
-Preview-only. `MovementMode = MovementOff | MovementGlyphs | MovementGrid` (rail-Inspect button group). **Arrows**: 5×5 grid over each committed pin's ROI plane, before→after displacement arrow (chevron head) where after = world preview-delta · before (`RigidTransform.worldDeltaOf`). **Grid**: original faint lattice + warped accent lattice.
-
-### §8 Pin glyph (semantic zoom) — `ScanPinScene.fs`
-**Far/preattentive view** (`pinGlyphs`): per committed pin a pole + head-ring (`Lines`); head colour = **verdict** (green if every moving mesh's |median| ≤ LoD₉₅, red if any significant, grey if no probe); pole height ∝ magnitude (max |median offset|). **Near/attentive view = the existing pin card / violin flyout** (opens on select) — not re-rendered as a 3D billboard (decision; the flyout already serves the attentive content per spec).
-
-### §9 Ghost isolation — `View.fs`, `MeshView.fs`, `GuiRail.fs`
-Opacity-ghost base kept. **Align-auto**: in step 2 the moving mesh renders solid, all others ghosted (main viewport via `wheelIsolation` + the focus control). **Pin-focus** (`PinFocusMode`, rail toggle): mesh-shader blob uniforms restricted to the focused pin's ROI + isolation forced on → ghost everything outside that one pin. **Movement-auto**: with the movement layer on under a preview, isolate the moved mesh + glyphs.
-
-### §10 Per-mesh outlines (image-space) — `OutlineView.fs` (new), `MeshShaders.fs`, `MeshView.fs`, `SceneGraph.fs`
-- **Offscreen MRT G-buffer** (`MeshView.buildOutlineNode` + `OutlineGBuffer` shader): target0 = world normal + window depth, target1 = palette colour + coverage mask (custom attachment `Sym.ofString "Outline1"`). Offscreen-pass API recovered from the removed FusionView.
-- **Edge-detect composite** (`OutlineEdge` shader, fullscreen quad): edge = depth jump **OR** normal-angle jump **OR** coverage-mask boundary → paints the per-pixel palette colour, alpha-blended overlay. The **mask boundary** covers silhouette **and the near-plane cut** — satisfying the spec's "image-space, not inverted-hull" requirement.
-- **Gated** by `OutlineMode` (debug-menu toggle, **default off**); the offscreen task is lazy, so default-off cannot regress the main forward pass. Thresholds (`0.0015` depth / `0.30` normal) and the normal encoding are tunable in-shader.
-
-### §0 LoD₉₅
-The pin-glyph verdict uses the spec form `1.96·√(σ_ref²/n_ref + σ_M²/n_M)` (the `+ reg` term ≈ 0 — no registration-uncertainty input wired). The pin-card violin's existing LoD band was left as-is.
-
----
-
-## 4. Phase 3 — Final prune
-Deleted, build kept green: `GuiWorkflow.fs` and `GuiCards.fs` (entirely dead — no callers); `GuiPanels.fs` reduced to just `placementFlyout`; the `StudyGate` always-on shim removed from `Primitives.fs` (its last users neutralised to always-visible); `CardCharts.probeBarJs` removed.
-
-**Left intentionally:** the generic clip-plane shader plumbing (fed a constant no-clip — removing it means shader edits with in-browser-only verification); `ProbeResult.Sources` (computed server-side, now client-unused — harmless dead data); vestigial `WorkflowPanelOpen`/`ToggleWorkflowPanel` model state (harmless; `WorkflowPinHover` is still used by the pin hover highlight).
-
----
-
-## 5. New files & key model/message additions
-
-**New files:** `GuiRail.fs` (workflow rail), `GuiFocus.fs` (secondary ortho control), `OutlineView.fs` (outline offscreen pass).
-
-**New model state** (`Model.fs`): `WorkflowStep`, `FocusOpen`/`FocusAxis`/`AlignMesh`, `PinFocusMode`, `MovementLayer` (`MovementMode`), `OutlineMode`, `ExtrinsicZDiff`, `VarianceOn`; `HeatmapMode` extended with `HeatIncidence`/`HeatRange`/`HeatShape`; `MenuOpen` default → true. (`MeshView.LoadedMesh` gained `localMaxR`.)
-
-**New messages** (`Messages.fs`): `SetWorkflowStep`, `SetFocusAxis`/`ToggleFocusPanel`/`SetAlignMesh`/`TranslateAlignMesh`, `TogglePinFocus`, `SetMovementLayer`, `ToggleOutlines`, `ToggleExtrinsicZDiff`, `ToggleVariance`, `VarianceComputed`.
-
-**New shaders** (`MeshShaders.fs`): `OutlineGBuffer` + `OutlineEdge`; `MeshShader` gained `HeatmapMode`/`SensorOrigin`/`RangeMax` uniforms, a `ShapeQ` vertex attribute, and the incidence/range/shape/variance fragment branches.
-
-**Server** (`QueryHandlers.fs`): `RegionDistanceRequest.Mode` + the vertical-Δz raycast branch in `regionDistanceHandler`. Client wrapper `Query.regionDistance` gained a `mode` parameter.
-
----
-
-## 6. Not done / deferred (with reasons)
-- **§1 focus small-multiples** (per-mesh extrinsic miniatures) — the one unbuilt feature. Needs a new canvas renderer (no 3rd WebGL control allowed) + a multi-mesh distance fetch, and is **largely redundant** now that the spatial heatmaps (single-mesh map + variance) are complete. Deferred by agreement.
-- **Pin-glyph literal near-in-3D zoom** — served by the flyout instead.
-- **§3 record rename** — skipped (cosmetic; model already maps to §3).
-
-## 7. Caveats for the next person
-- All GPU pieces were build-verified here; **§10 outlines** is the newest pipeline — if outlines look wrong/absent when toggled on, it's threshold/normal-encoding tuning (in `OutlineEdge`), not structure.
-- §6 **range/variance** depend on the server (`region-distance` Mode + the variance fetch) — run the server to exercise them.
-- The **§3 "data model not renamed"** decision means spec names (Mesh/Pin/Solve/Preview) map to existing types — see §3 above for the mapping.
+- **Pin-glyph literal near-in-3D zoom** — the attentive view is the dock raincloud
+  instead.
+- **CLAUDE.md describes several removed subsystems** (Fusion / Panorama / Study /
+  Lasso / floating cards / old error model) — left per the standing
+  "don't churn CLAUDE.md per change" convention; treat the sections above as
+  authoritative for the current build.

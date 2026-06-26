@@ -357,10 +357,14 @@ module OutlineEdge =
             let dEdge =
                 max (max (abs (c.W - l.W)) (abs (c.W - r.W)))
                     (max (abs (c.W - u.W)) (abs (c.W - d.W)))
-            // normal edge (decode *2-1)
+            // normal edge (decode *2-1). Inlined per-tap — a local `let nDiff …`
+            // function reads as a lambda FShade can't compile.
             let nC = V3f(c.X, c.Y, c.Z) * 2.0f - V3f.III
-            let nDiff (s : V4f) = 1.0f - Vec.dot nC (V3f(s.X, s.Y, s.Z) * 2.0f - V3f.III)
-            let nEdge = max (max (nDiff l) (nDiff r)) (max (nDiff u) (nDiff d))
+            let nl = 1.0f - Vec.dot nC (V3f(l.X, l.Y, l.Z) * 2.0f - V3f.III)
+            let nr = 1.0f - Vec.dot nC (V3f(r.X, r.Y, r.Z) * 2.0f - V3f.III)
+            let nu = 1.0f - Vec.dot nC (V3f(u.X, u.Y, u.Z) * 2.0f - V3f.III)
+            let nd = 1.0f - Vec.dot nC (V3f(d.X, d.Y, d.Z) * 2.0f - V3f.III)
+            let nEdge = max (max nl nr) (max nu nd)
             // coverage-mask boundary (object silhouette + near-plane cut)
             let mEdge = if m0 > 0.5f then 1.0f - min (min ml mr) (min mu md) else 0.0f
             let isEdge = dEdge > 0.0015f || nEdge > 0.30f || mEdge > 0.5f

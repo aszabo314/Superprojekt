@@ -131,19 +131,6 @@ module FocusScene =
                 | _ -> zero ())
         modeA, (scalarData |> AVal.map fst), (scalarData |> AVal.map snd)
 
-    // Focused mesh (Selection.FocusedMesh, falling back to first visible); while
-    // peek-reference is held the single shows the reference instead.
-    let private focusMeshOf (model : AdaptiveModel) =
-        AVal.custom (fun t ->
-            if model.FocusPeekReference.GetValue t then (model.Registration.GetValue t).ReferenceMesh
-            else
-                let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                let vis = model.MeshVisible.GetValue t
-                let visible = names |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true)
-                match model.Selection.FocusedMesh.GetValue t with
-                | Some m when List.contains m visible -> Some m
-                | _ -> List.tryHead visible)
-
     // Large single: render-space, textured. Top = orthographic; Pano = cylindrical
     // unwrap (camera identity; the shader writes clip directly). Picking is Dom-driven
     // (the Sg pick didn't fire reliably in this 2nd control): the cursor is inverted to
@@ -404,16 +391,26 @@ module FocusScene =
     // through the pano unwrap), so Pano collapses to Top there.
     let single (env : Env<Message>) (model : AdaptiveModel) =
         AVal.custom (fun t ->
-            match (focusMeshOf model).GetValue t with
-            | None ->
-                System.Console.WriteLine "[focus.single] focusMeshOf=None → empty"
-                IndexList.empty
+            // Resolve the focused mesh INLINE — building a transient AVal.custom here
+            // (the old `focusMeshOf model`) and reading it dropped its dependency edge,
+            // so this aval evaluated once (empty at startup) and never re-fired when the
+            // meshes loaded → the single stayed blank.
+            let chosen =
+                if model.FocusPeekReference.GetValue t then (model.Registration.GetValue t).ReferenceMesh
+                else
+                    let names = model.MeshNames.Content.GetValue t |> IndexList.toList
+                    let vis = model.MeshVisible.GetValue t
+                    let visible = names |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true)
+                    match model.Selection.FocusedMesh.GetValue t with
+                    | Some m when List.contains m visible -> Some m
+                    | _ -> List.tryHead visible
+            System.Console.WriteLine(sprintf "[focus.single] chosen=%A" chosen)
+            match chosen with
+            | None -> IndexList.empty
             | Some n ->
                 let proj = model.FocusProjection.GetValue t
                 let disp = model.WorkflowStep.GetValue t = Inspect && model.InspectChannel.GetValue t = ChDisplacement
-                let eff = if disp && proj = ProjPano then ProjTop else proj
-                System.Console.WriteLine(sprintf "[focus.single] mesh=%s proj=%A" n eff)
-                IndexList.single (n, eff))
+                IndexList.single (n, (if disp && proj = ProjPano then ProjTop else proj)))
         |> AList.ofAVal
         |> AList.map (fun (n, proj) -> focusSingle env model n proj)
 

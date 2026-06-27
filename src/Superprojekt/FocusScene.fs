@@ -155,6 +155,7 @@ module FocusScene =
         let fitCenter = renderT |> AVal.map (fun t -> t.Forward.TransformPos V3d.Zero)
         let fitExtent = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> max 1e-4 (r * s * 1.15))
         let isPano = (proj = ProjPano)
+        System.Console.WriteLine(sprintf "[focusSingle] build mesh=%s pano=%b" name isPano)
         let modeA, scalarBuf, hiA = focusOverlay model name loaded scale
         // Displacement single: white surface (mode 2 → 3) so the arrow glyphs read.
         let surfaceMode = modeA |> AVal.map (fun m -> if m = 2 then 3 else m)
@@ -217,38 +218,34 @@ module FocusScene =
                 (size, dpr :> aval<_>) ||> AVal.map2 (fun v d ->
                     let k = max 1e-3 d
                     V2i(max 1 (int (round (float v.X / k))), max 1 (int (round (float v.Y / k)))))
-            let viewT, projT =
-                if isPano then AVal.constant Trafo3d.Identity, AVal.constant Trafo3d.Identity
-                else orthoCam size fitCenter fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
-            // Cursor (px,py, CSS) → world surface point via a server raycast. Top
-            // inverts the ACTUAL view·proj (the same trafos used to render), so the
-            // pick can't drift from what's on screen — no hand-rolled ortho inverse,
-            // no y-flip. Pano builds the eye direction from the cylindrical unwrap.
-            // The render-space ray is mapped into the mesh's own frame for the server,
-            // then the hit back to displayed world.
+            // Cursor (px,py, CSS px) → world surface point via a server raycast. Build
+            // the render-space ray (ortho drop / pano direction from the eye), map it
+            // into the mesh's own frame for the server, map the hit back to displayed
+            // world. overlaySize is CSS px (ViewportSize ÷ dpr), so the pick is
+            // dpr-correct on hi-dpi — that was the actual bug, not a y-flip.
             let worldRayHit (px : float) (py : float) : Async<V3d option> =
                 let s = AVal.force overlaySize
                 let w = float (max 1 s.X)
                 let h = float (max 1 s.Y)
+                let aspect = w / h
+                let clipX = 2.0 * px / w - 1.0
+                let clipY = 1.0 - 2.0 * py / h
+                let fc = AVal.force fitCenter
+                let ext = AVal.force fitExtent
+                let z = zoom.Value
+                let pan = panNorm.Value
                 let originR, dirR =
                     if isPano then
-                        let aspect = w / h
-                        let clipX = 2.0 * px / w - 1.0
-                        let clipY = 1.0 - 2.0 * py / h
-                        let fc = AVal.force fitCenter
-                        let z = zoom.Value
-                        let pan = panNorm.Value
                         let u = pan.X + clipX * aspect / z
                         let v = pan.Y + clipY / z
                         let az = u * System.Math.PI
                         let el = v * System.Math.PI * 0.5
                         fc, V3d(cos el * cos az, cos el * sin az, sin el)
                     else
-                        let ndc = V2d(2.0 * px / w - 1.0, 1.0 - 2.0 * py / h)
-                        let vp = (AVal.force viewT) * (AVal.force projT)
-                        let p0 = vp.Backward.TransformPosProj(V3d(ndc, -1.0))
-                        let p1 = vp.Backward.TransformPosProj(V3d(ndc,  1.0))
-                        p0, (p1 - p0).Normalized
+                        let halfE = ext / max 1e-3 z
+                        V3d(fc.X + pan.X * ext + clipX * halfE * aspect,
+                            fc.Y + pan.Y * ext + clipY * halfE,
+                            fc.Z + (ext + 1.0) * 5.0), V3d(0.0, 0.0, -1.0)
                 let rT = AVal.force renderT
                 let sc = AVal.force scale
                 let cc = AVal.force model.CommonCentroid
@@ -312,6 +309,9 @@ module FocusScene =
                 transact (fun () ->
                     zoom.Value <- z'
                     panNorm.Value <- panNorm.Value + V2d(clipX * aspect * (1.0/z - 1.0/z'), clipY * (1.0/z - 1.0/z'))))
+            let viewT, projT =
+                if isPano then AVal.constant Trafo3d.Identity, AVal.constant Trafo3d.Identity
+                else orthoCam size fitCenter fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
             let surface =
                 if isPano then
                     sg {
@@ -405,11 +405,15 @@ module FocusScene =
     let single (env : Env<Message>) (model : AdaptiveModel) =
         AVal.custom (fun t ->
             match (focusMeshOf model).GetValue t with
-            | None -> IndexList.empty
+            | None ->
+                System.Console.WriteLine "[focus.single] focusMeshOf=None → empty"
+                IndexList.empty
             | Some n ->
                 let proj = model.FocusProjection.GetValue t
                 let disp = model.WorkflowStep.GetValue t = Inspect && model.InspectChannel.GetValue t = ChDisplacement
-                IndexList.single (n, (if disp && proj = ProjPano then ProjTop else proj)))
+                let eff = if disp && proj = ProjPano then ProjTop else proj
+                System.Console.WriteLine(sprintf "[focus.single] mesh=%s proj=%A" n eff)
+                IndexList.single (n, eff))
         |> AList.ofAVal
         |> AList.map (fun (n, proj) -> focusSingle env model n proj)
 

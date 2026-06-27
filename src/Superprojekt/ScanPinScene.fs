@@ -357,9 +357,18 @@ module ScanPinScene =
                                 let refCol = if emph then refGlyphCol else V4d(refGlyphCol.XYZ, 0.4)
                                 addWireSphere out raR 0.07 refCol gw 20
                                 addCross out raR 0.09 refCol gw
-                                let pinVal = pins |> HashMap.tryFind id |> AVal.constant
                                 for mesh in moving do
-                                    match (markerWorldOf pinVal mesh).GetValue t with
+                                    // Inline marker resolution: read dispWorldAt with THIS
+                                    // aval's token so the displayed (before/after) transform
+                                    // stays a tracked dependency. Building a transient
+                                    // `markerWorldOf` aval here and forcing it dropped that
+                                    // edge (constellation could stop following the toggle).
+                                    let marker =
+                                        let inRoi = Map.tryFind mesh c.InRoi |> Option.defaultValue true
+                                        match Map.tryFind mesh c.Anchors with
+                                        | Some a when inRoi -> Some ((dispWorldAt t mesh).Forward.TransformPos a.Point)
+                                        | _ -> None
+                                    match marker with
                                     | Some w ->
                                         let baseCol =
                                             match Map.tryFind mesh p.DatasetColors with

@@ -108,11 +108,6 @@ module MeshView =
             | RegAfter, Some t -> t
             | _ -> Map.tryFind name load |> Option.defaultValue Trafo3d.Identity)
 
-    let visibleMeshNames (model : AdaptiveModel) =
-        let visible = AVal.force model.MeshVisible
-        model.MeshNames |> AList.toAVal |> AVal.force |> IndexList.toList
-        |> List.filter (fun n -> Map.tryFind n visible |> Option.defaultValue true)
-
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
     // inner radius w), for the mesh shader's pin-isolation filter.
     let private pinBlobUniforms (model : AdaptiveModel) =

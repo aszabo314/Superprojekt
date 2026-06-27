@@ -142,7 +142,6 @@ module FocusScene =
         let fitCenter = renderT |> AVal.map (fun t -> t.Forward.TransformPos V3d.Zero)
         let fitExtent = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> max 1e-4 (r * s * 1.15))
         let isPano = (proj = ProjPano)
-        System.Console.WriteLine(sprintf "[focusSingle] build mesh=%s pano=%b" name isPano)
         let modeA, scalarBuf, hiA = focusOverlay model name loaded scale
         // Displacement single: white surface (mode 2 → 3) so the arrow glyphs read.
         let surfaceMode = modeA |> AVal.map (fun m -> if m = 2 then 3 else m)
@@ -404,7 +403,6 @@ module FocusScene =
                     match model.Selection.FocusedMesh.GetValue t with
                     | Some m when List.contains m visible -> Some m
                     | _ -> List.tryHead visible
-            System.Console.WriteLine(sprintf "[focus.single] chosen=%A" chosen)
             match chosen with
             | None -> IndexList.empty
             | Some n ->

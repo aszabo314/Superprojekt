@@ -33,7 +33,6 @@ module GuiRail =
     let rail (env : Env<Message>) (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let refMesh   = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let curStep   = model.WorkflowStep
-        let pinsVal   = model.ScanPins.Pins |> AMap.toAVal
         let flyTo (target : FlyToTarget) =
             let s = AVal.force viewportSize
             env.Emit [FlyTo(target, float s.X / float (max 1 s.Y))]
@@ -134,32 +133,37 @@ module GuiRail =
         let overviewBody =
             div { Class "rail-mesh-list"; model.MeshNames |> AList.map meshRow }
 
-        let pinList =
-            pinsVal
-            |> AVal.map (fun pins ->
-                pins |> HashMap.toList |> List.sortBy (fun (_, p) -> p.CreatedAt)
-                |> List.map snd |> IndexList.ofList)
-            |> AList.ofAVal
-        let pinRow (pin : ScanPin) =
-            let selected = model.Selection.SelectedPin |> AVal.map ((=) (Some pin.Id))
+        let pinRow (id : ScanPinId) (name : string) =
+            let selected = model.Selection.SelectedPin |> AVal.map ((=) (Some id))
             div {
                 Class "rail-pin-row"
                 selected |> AVal.map (fun s -> if s then Some (Class "rail-pin-sel") else None)
                 // hover = peek the pin's constellation via the shared Selection.
-                Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPin pin.Id))])
+                Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPin id))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                 span {
                     Class "rail-pin-name"
-                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPin (Some pin.Id))])
-                    pin.Name
+                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPin (Some id))])
+                    name
                 }
                 button {
                     Class "mb rail-pin-del"
                     Attribute("title", "Delete pin")
-                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (DeletePin pin.Id)])
+                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (DeletePin id)])
                     "✕"
                 }
             }
+        // Stable-identity incremental list, sorted by (immutable) creation order.
+        // Project to ONLY the row's inputs (id, name) so a pin's probe/ring updates
+        // don't re-key its row. The old `AVal.map (… IndexList.ofList) |> AList.ofAVal`
+        // minted fresh indices on every pin change, churning the whole list and
+        // intermittently double-rendering a row.
+        let pinList =
+            model.ScanPins.Pins
+            |> AMap.map (fun _ p -> p.Name, p.CreatedAt)
+            |> AMap.toASet
+            |> ASet.sortBy (fun (ScanPinId.ScanPinId g, (_, created)) -> created, g)
+            |> AList.map (fun (id, (name, _)) -> pinRow id name)
         let placing =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
@@ -193,7 +197,7 @@ module GuiRail =
                         placing |> AVal.map (fun p -> if p then "○ placing… (Esc)" else "○ Place pin")
                     }
                 }
-                div { Class "rail-pin-list"; pinList |> AList.map pinRow }
+                div { Class "rail-pin-list"; pinList }
                 div { Class "rail-diags"; diags |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map diagRow }
             }
 

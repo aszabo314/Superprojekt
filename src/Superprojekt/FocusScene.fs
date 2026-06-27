@@ -204,32 +204,44 @@ module FocusScene =
             RenderControl.Samples 1
             Class "focus-rc"
             let! size = RenderControl.ViewportSize
-            // Cursor (px,py) → world surface point via a server raycast. Build the
-            // render-space ray (ortho drop / pano direction from the eye), map it into
-            // the mesh's own frame for the server, map the hit back to displayed world.
+            let! client = RenderControl.ClientSize
+            // Cursor coords are CSS px (DOM); ViewportSize is framebuffer px (CSS ×
+            // devicePixelRatio). Mixing them offsets the pick on hi-dpi — use
+            // ClientSize (falling back to framebuffer until the first DOM event).
+            let overlaySize =
+                (client, size) ||> AVal.map2 (fun c v -> if c.X > 1 && c.Y > 1 then c else v)
+            let viewT, projT =
+                if isPano then AVal.constant Trafo3d.Identity, AVal.constant Trafo3d.Identity
+                else orthoCam size fitCenter fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
+            // Cursor (px,py, CSS) → world surface point via a server raycast. Top
+            // inverts the ACTUAL view·proj (the same trafos used to render), so the
+            // pick can't drift from what's on screen — no hand-rolled ortho inverse,
+            // no y-flip. Pano builds the eye direction from the cylindrical unwrap.
+            // The render-space ray is mapped into the mesh's own frame for the server,
+            // then the hit back to displayed world.
             let worldRayHit (px : float) (py : float) : Async<V3d option> =
-                let s = AVal.force size
+                let s = AVal.force overlaySize
                 let w = float (max 1 s.X)
                 let h = float (max 1 s.Y)
-                let aspect = w / h
-                let clipX = 2.0 * px / w - 1.0
-                let clipY = 1.0 - 2.0 * py / h
-                let fc = AVal.force fitCenter
-                let ext = AVal.force fitExtent
-                let z = zoom.Value
-                let pan = panNorm.Value
                 let originR, dirR =
                     if isPano then
+                        let aspect = w / h
+                        let clipX = 2.0 * px / w - 1.0
+                        let clipY = 1.0 - 2.0 * py / h
+                        let fc = AVal.force fitCenter
+                        let z = zoom.Value
+                        let pan = panNorm.Value
                         let u = pan.X + clipX * aspect / z
                         let v = pan.Y + clipY / z
                         let az = u * System.Math.PI
                         let el = v * System.Math.PI * 0.5
                         fc, V3d(cos el * cos az, cos el * sin az, sin el)
                     else
-                        let halfE = ext / max 1e-3 z
-                        V3d(fc.X + pan.X * ext + clipX * halfE * aspect,
-                            fc.Y + pan.Y * ext + clipY * halfE,
-                            fc.Z + (ext + 1.0) * 5.0), V3d(0.0, 0.0, -1.0)
+                        let ndc = V2d(2.0 * px / w - 1.0, 1.0 - 2.0 * py / h)
+                        let vp = (AVal.force viewT) * (AVal.force projT)
+                        let p0 = vp.Backward.TransformPosProj(V3d(ndc, -1.0))
+                        let p1 = vp.Backward.TransformPosProj(V3d(ndc,  1.0))
+                        p0, (p1 - p0).Normalized
                 let rT = AVal.force renderT
                 let sc = AVal.force scale
                 let cc = AVal.force model.CommonCentroid
@@ -270,7 +282,7 @@ module FocusScene =
                             if gen = hoverGen then env.Emit [CorrPreviewComputed wld]
                         } |> Async.Start
                 elif dragging then
-                    let hh = float (max 1 (AVal.force size).Y)
+                    let hh = float (max 1 (AVal.force overlaySize).Y)
                     let d = p - lastPx
                     let k = 2.0 / (hh * max 1e-3 zoom.Value)
                     transact (fun () ->
@@ -282,7 +294,7 @@ module FocusScene =
                     env.Emit [CorrPreviewComputed None])
             // Mouse-anchored zoom: keep the plane point under the cursor fixed.
             Dom.OnMouseWheel(fun e ->
-                let s = AVal.force size
+                let s = AVal.force overlaySize
                 let w = float (max 1 s.X)
                 let h = float (max 1 s.Y)
                 let aspect = w / h
@@ -293,9 +305,6 @@ module FocusScene =
                 transact (fun () ->
                     zoom.Value <- z'
                     panNorm.Value <- panNorm.Value + V2d(clipX * aspect * (1.0/z - 1.0/z'), clipY * (1.0/z - 1.0/z'))))
-            let viewT, projT =
-                if isPano then AVal.constant Trafo3d.Identity, AVal.constant Trafo3d.Identity
-                else orthoCam size fitCenter fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
             let surface =
                 if isPano then
                     sg {

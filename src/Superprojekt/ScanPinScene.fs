@@ -10,29 +10,9 @@ module ScanPinScene =
 
     let private spherePos, sphereIdx = PinGeometry.buildIcosphere 2
 
-    let private pinMarkerPos, pinMarkerIdx =
-        let pos = System.Collections.Generic.List<V3f>()
-        let idx = System.Collections.Generic.List<int>()
-        let addBox (hx : float) (hy : float) (hz : float) =
-            let base0 = pos.Count
-            pos.Add (V3f(-hx, -hy, -hz)); pos.Add (V3f( hx, -hy, -hz))
-            pos.Add (V3f( hx,  hy, -hz)); pos.Add (V3f(-hx,  hy, -hz))
-            pos.Add (V3f(-hx, -hy,  hz)); pos.Add (V3f( hx, -hy,  hz))
-            pos.Add (V3f( hx,  hy,  hz)); pos.Add (V3f(-hx,  hy,  hz))
-            let offs = [| 0;1;2; 0;2;3;  5;4;7; 5;7;6;  4;0;3; 4;3;7
-                          1;5;6; 1;6;2;  0;4;5; 0;5;1;  3;2;6; 3;6;7 |]
-            for o in offs do idx.Add(base0 + o)
-        addBox 0.18 0.025 0.025
-        addBox 0.025 0.18 0.025
-        addBox 0.025 0.025 0.18
-        pos.ToArray(), idx.ToArray()
-
     let private spherePosBuf = AVal.constant (ArrayBuffer spherePos :> IBuffer)
     let private sphereIdxBuf = AVal.constant (ArrayBuffer sphereIdx :> IBuffer)
     let private sphereIdxCnt = AVal.constant sphereIdx.Length
-    let private markerPosBuf = AVal.constant (ArrayBuffer pinMarkerPos :> IBuffer)
-    let private markerIdxBuf = AVal.constant (ArrayBuffer pinMarkerIdx :> IBuffer)
-    let private markerIdxCnt = AVal.constant pinMarkerIdx.Length
 
     // Translucent icosphere shell (placement hover preview).
     let private sphereShell
@@ -68,6 +48,29 @@ module ScanPinScene =
             let a0 = float i / float segs * Constant.PiTimesTwo
             let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
             out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
+
+    // Wire sphere (three axis-aligned great circles) of radius r at c.
+    let private addWireSphere (out : ResizeArray<V3d * V3d * V4d * float>)
+                              (c : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
+        addRing out c V3d.IOO V3d.OIO r col width segs
+        addRing out c V3d.IOO V3d.OOI r col width segs
+        addRing out c V3d.OIO V3d.OOI r col width segs
+
+    // Small 3-axis cross (half-length r) marking an exact point at c.
+    let private addCross (out : ResizeArray<V3d * V3d * V4d * float>)
+                         (c : V3d) (r : float) (col : V4d) (width : float) =
+        out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, width)
+        out.Add(c - V3d.OIO * r, c + V3d.OIO * r, col, width)
+        out.Add(c - V3d.OOI * r, c + V3d.OOI * r, col, width)
+
+    // 12 edges of an axis-aligned box (half-extents hx,hy,hz) at c.
+    let private addBoxOutline (out : ResizeArray<V3d * V3d * V4d * float>)
+                              (c : V3d) (hx : float) (hy : float) (hz : float) (col : V4d) (width : float) =
+        let v = [|
+            V3d(-hx, -hy, -hz); V3d( hx, -hy, -hz); V3d( hx, hy, -hz); V3d(-hx, hy, -hz)
+            V3d(-hx, -hy,  hz); V3d( hx, -hy,  hz); V3d( hx, hy,  hz); V3d(-hx, hy,  hz) |]
+        let e = [| 0,1; 1,2; 2,3; 3,0; 4,5; 5,6; 6,7; 7,4; 0,4; 1,5; 2,6; 3,7 |]
+        for (a, b) in e do out.Add(c + v.[a], c + v.[b], col, width)
 
     let build
             (env : Env<Message>)
@@ -132,21 +135,18 @@ module ScanPinScene =
         let renderLength =
             datasetScale |> AVal.map (fun s -> ScanPin.renderLength s)
 
+        // Pin centre pick proxies: small invisible spheres carrying the select tap
+        // (the visible marker is the wire-box jack in pinMarkerLines). Alpha 0 →
+        // invisible in colour but still present in the depth/id pick pass.
         let pinDots =
             pinIdSet |> ASet.map (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
-                let presentVal = pinVal |> AVal.map Option.isSome
                 let centreVal =
                     (pinVal, renderCentreOpt) ||> AVal.map2 (fun po f ->
                         po |> Option.map (fun p -> f p.Centre))
-                let color =
-                    (selectedId, presentVal) ||> AVal.map2 (fun sel present ->
-                        if not present then V4d(0.0, 0.0, 0.0, 0.0)
-                        elif sel = Some id then V4d(1.0, 0.9, 0.0, 1.0)
-                        else V4d(1.0, 0.3, 0.3, 1.0))
                 let trafo =
                     centreVal |> AVal.map (function
-                        | Some c -> Trafo3d.Translation c
+                        | Some c -> Trafo3d.Scale 0.07 * Trafo3d.Translation c
                         | None -> Trafo3d.Scale 0.0)
                 sg {
                     Sg.Active notFullscreen
@@ -154,8 +154,10 @@ module ScanPinScene =
                     Sg.Proj proj
                     Sg.Trafo trafo
                     Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                    Sg.Uniform("FlatColor", color |> AVal.map V4f)
-                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.Uniform("FlatColor", AVal.constant (V4f(0.0, 0.0, 0.0, 0.0)))
+                    // On top (None): an invisible proxy still writes depth, so a
+                    // LessOrEqual marker would self-occlude behind it.
+                    Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Sg.OnTap(fun _ ->
                         match AVal.force placementActive with
@@ -166,11 +168,38 @@ module ScanPinScene =
                             else env.Emit [ScanPinMsg (SelectPin (Some id))]
                             false)
                     Sg.VertexAttributes(
-                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(markerPosBuf, typeof<V3f>) ])
-                    Sg.Index(BufferView(markerIdxBuf, typeof<int>))
-                    Sg.Render markerIdxCnt
+                        HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
+                    Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
+                    Sg.Render sphereIdxCnt
                 }
             )
+
+        // Visible pin-centre marker: a small wire-box jack on top (so the invisible
+        // pick proxy can't occlude it). Yellow when selected, brighter red on hover,
+        // else red. Fixed render size — independent of pin radius.
+        let pinMarkerLines =
+            let segs =
+                AVal.custom (fun t ->
+                    let pins = pinsVal.GetValue t
+                    let cc = model.CommonCentroid.GetValue t
+                    let scale = datasetScale.GetValue t
+                    let sel = selectedId.GetValue t
+                    let hov = model.Selection.Hovered.GetValue t
+                    let out = ResizeArray<V3d * V3d * V4d * float>()
+                    for (id, p) in HashMap.toSeq pins do
+                        let isSel = sel = Some id
+                        let hovered = hov = Some (HoverPin id)
+                        let col =
+                            if isSel then V4d(1.0, 0.85, 0.0, 1.0)
+                            elif hovered then V4d(1.0, 0.55, 0.45, 1.0)
+                            else V4d(0.95, 0.35, 0.35, 0.9)
+                        let w = if isSel || hovered then 2.0 else 1.2
+                        let cR = ScanPin.renderCentre cc scale p.Centre
+                        addBoxOutline out cR 0.07  0.014 0.014 col w
+                        addBoxOutline out cR 0.014 0.07  0.014 col w
+                        addBoxOutline out cR 0.014 0.014 0.07  col w
+                    out.ToArray())
+            linesNodeTop notFullscreen segs
 
         // Pin influence visuals: a thin equator ring (⊥ probe axis, radius =
         // InnerRadius) + sphere–surface contact rings per visible mesh, in the
@@ -263,35 +292,21 @@ module ScanPinScene =
                     |> List.ofSeq
                 seq { for id in enabled do for m in moving -> (id, m) } |> HashSet.ofSeq)
 
-        let glyphColour (pinVal : aval<ScanPin option>) (pinId : ScanPinId) (mesh : string) =
-            AVal.custom (fun t ->
-                let baseCol =
-                    match pinVal.GetValue t |> Option.bind (fun p -> Map.tryFind mesh p.DatasetColors) with
-                    | Some c -> Primitives.c4bToV3d c
-                    | None -> V3d(0.102, 0.337, 0.859)
-                let sel = selectedId.GetValue t = Some pinId
-                let hov = model.Selection.Hovered.GetValue t
-                let rowHover = (hov = Some (HoverPoint (pinId, mesh)))
-                let pinHover = (hov = Some (HoverPin pinId))
-                if rowHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
-                elif sel || pinHover then V4d(baseCol, 1.0)
-                else V4d(baseCol, 0.4))
-
-        let glyphSphere (pinId : ScanPinId) (mesh : string) =
+        // Moving-mesh correspondence pick proxies: small invisible spheres carrying
+        // the hover/focus brushing (the visible glyph — wire sphere + cross — is
+        // drawn in constLines). Alpha 0 → invisible but still pickable. Fixed render
+        // size, independent of pin radius.
+        let glyphProxy (pinId : ScanPinId) (mesh : string) =
             let pinVal = pinsVal |> AVal.map (HashMap.tryFind pinId)
             let world = markerWorldOf pinVal mesh
             let active = world |> AVal.map Option.isSome
             let trafo =
-                (world, model.CommonCentroid, datasetScale, pinVal)
-                |> fun (a, b, c, d) -> AVal.custom (fun t ->
-                    match a.GetValue t with
+                AVal.custom (fun t ->
+                    match world.GetValue t with
                     | Some w ->
-                        let cc = b.GetValue t
-                        let s = c.GetValue t
-                        let ir = d.GetValue t |> Option.map (fun p -> p.InnerRadius) |> Option.defaultValue 1.0
-                        let r = max 0.08 (ScanPin.renderLength s (ir * 0.3))
-                        let sel = selectedId.GetValue t = Some pinId
-                        Trafo3d.Scale (if sel then r else r * 0.75) * Trafo3d.Translation (ScanPin.renderCentre cc s w)
+                        let cc = model.CommonCentroid.GetValue t
+                        let s = datasetScale.GetValue t
+                        Trafo3d.Scale 0.06 * Trafo3d.Translation (ScanPin.renderCentre cc s w)
                     | None -> Trafo3d.Scale 0.0)
             sg {
                 Sg.Active (AVal.map2 (&&) notFullscreen active)
@@ -299,7 +314,7 @@ module ScanPinScene =
                 Sg.Proj proj
                 Sg.Trafo trafo
                 Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                Sg.Uniform("FlatColor", glyphColour pinVal pinId mesh |> AVal.map V4f)
+                Sg.Uniform("FlatColor", AVal.constant (V4f(0.0, 0.0, 0.0, 0.0)))
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPoint (pinId, mesh)))]; true)
@@ -309,49 +324,13 @@ module ScanPinScene =
                 Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
                 Sg.Render sphereIdxCnt
             }
-        let movingGlyphs = corrPairs |> ASet.ofAVal |> ASet.map (fun (id, m) -> glyphSphere id m)
+        let movingGlyphs = corrPairs |> ASet.ofAVal |> ASet.map (fun (id, m) -> glyphProxy id m)
 
-        // Reference glyph per enabled pin: a larger amber sphere at the reference
-        // point (haloed by the ring in the lines below).
-        let refGlyph (pinId : ScanPinId) =
-            let pinVal = pinsVal |> AVal.map (HashMap.tryFind pinId)
-            let raVal = pinVal |> AVal.map (Option.bind ScanPin.correspondence >> Option.bind (fun c -> c.RefAnchor))
-            let active = raVal |> AVal.map Option.isSome
-            let trafo =
-                AVal.custom (fun t ->
-                    match raVal.GetValue t with
-                    | Some ra ->
-                        let cc = model.CommonCentroid.GetValue t
-                        let s = datasetScale.GetValue t
-                        let ir = pinVal.GetValue t |> Option.map (fun p -> p.InnerRadius) |> Option.defaultValue 1.0
-                        let r = max 0.12 (ScanPin.renderLength s (ir * 0.45))
-                        Trafo3d.Scale r * Trafo3d.Translation (ScanPin.renderCentre cc s ra)
-                    | None -> Trafo3d.Scale 0.0)
-            let col =
-                selectedId |> AVal.map (fun sel -> if sel = Some pinId then refGlyphCol else V4d(refGlyphCol.XYZ, 0.4))
-            sg {
-                Sg.Active (AVal.map2 (&&) notFullscreen active)
-                Sg.View view
-                Sg.Proj proj
-                Sg.Trafo trafo
-                Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                Sg.Uniform("FlatColor", col |> AVal.map V4f)
-                Sg.DepthTest (AVal.constant DepthTest.None)
-                Sg.BlendMode (AVal.constant BlendMode.Blend)
-                Sg.NoEvents
-                Sg.VertexAttributes(
-                    HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
-                Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
-                Sg.Render sphereIdxCnt
-            }
-        let enabledPinIds =
-            pinsVal |> AVal.map (fun pins ->
-                pins |> HashMap.toSeq
-                |> Seq.choose (fun (id, p) -> match ScanPin.correspondence p with Some _ -> Some id | None -> None)
-                |> HashSet.ofSeq)
-        let refGlyphs = enabledPinIds |> ASet.ofAVal |> ASet.map refGlyph
-
-        // Connecting lines (moving glyph → reference glyph) + reference halo ring.
+        // Correspondence constellation lines: per pin, a small wire-sphere + cross
+        // glyph at each moving-mesh marker and a larger one at the reference point,
+        // plus a thin line from each moving glyph to the reference. Fixed render size
+        // (independent of pin radius). Selection / hover brighten; out-of-ROI meshes
+        // omitted. Rendered on top (depth bias) so the markers read against surfaces.
         let constLines =
             let segs =
                 AVal.custom (fun t ->
@@ -359,6 +338,7 @@ module ScanPinScene =
                     let cc = model.CommonCentroid.GetValue t
                     let scale = datasetScale.GetValue t
                     let sel = selectedId.GetValue t
+                    let hov = model.Selection.Hovered.GetValue t
                     let names = model.MeshNames.Content.GetValue t |> IndexList.toList
                     let vis = model.MeshVisible.GetValue t
                     let rf = (model.Registration.GetValue t).ReferenceMesh
@@ -370,12 +350,13 @@ module ScanPinScene =
                             match c.RefAnchor with
                             | Some ra ->
                                 let isSel = sel = Some id
+                                let pinHover = hov = Some (HoverPin id)
+                                let emph = isSel || pinHover
                                 let raR = ScanPin.renderCentre cc scale ra
-                                let baseAlpha = if isSel then 0.9 else 0.3
-                                let width = if isSel then 1.5 else 1.0
-                                let _, u, v = basisFromNormal (ScanPin.axis p)
-                                let hr = max 0.08 (ScanPin.renderLength scale (p.InnerRadius * 0.5))
-                                addRing out raR u v hr (V4d(refGlyphCol.XYZ, baseAlpha)) width 24
+                                let gw = if emph then 2.0 else 1.4
+                                let refCol = if emph then refGlyphCol else V4d(refGlyphCol.XYZ, 0.4)
+                                addWireSphere out raR 0.07 refCol gw 20
+                                addCross out raR 0.09 refCol gw
                                 let pinVal = pins |> HashMap.tryFind id |> AVal.constant
                                 for mesh in moving do
                                     match (markerWorldOf pinVal mesh).GetValue t with
@@ -384,14 +365,23 @@ module ScanPinScene =
                                             match Map.tryFind mesh p.DatasetColors with
                                             | Some cc4 -> Primitives.c4bToV3d cc4
                                             | None -> V3d(0.102, 0.337, 0.859)
-                                        out.Add(ScanPin.renderCentre cc scale w, raR, V4d(baseCol, baseAlpha), width)
+                                        let rowHover = hov = Some (HoverPoint (id, mesh))
+                                        let col =
+                                            if rowHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
+                                            elif emph then V4d(baseCol, 1.0)
+                                            else V4d(baseCol, 0.4)
+                                        let mw = if rowHover || isSel then 2.0 else 1.4
+                                        let wR = ScanPin.renderCentre cc scale w
+                                        addWireSphere out wR 0.055 col mw 16
+                                        addCross out wR 0.07 col mw
+                                        out.Add(wR, raR, V4d(col.XYZ, (if emph then 0.9 else 0.3)), (if isSel then 1.5 else 1.0))
                                     | None -> ()
                             | None -> ()
                         | _ -> ()
                     out.ToArray())
             ASet.ofList [ linesNodeTop notFullscreen segs ]
 
-        let constellation = ASet.unionMany (ASet.ofList [ constLines; movingGlyphs; refGlyphs ])
+        let constellation = ASet.unionMany (ASet.ofList [ constLines; movingGlyphs ])
 
         let ghostPreview =
             // Preview radius = the radius a click would place (QuickPinRadius,
@@ -460,38 +450,25 @@ module ScanPinScene =
                     out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 
-        // Live correspondence-pick preview: a cyan ghost sphere at the hovered
-        // surface point while set-correspondence mode aims it (metric world →
-        // render). Renders on top so it reads against the surface.
+        // Live correspondence-pick preview: a cyan wire sphere + cross at the hovered
+        // surface point while set-correspondence mode aims it (metric world → render).
+        // On top so it reads against the surface. Fixed render size.
         let corrPreview =
-            let active = model.CorrPreview |> AVal.map Option.isSome
-            let trafo =
+            let active =
+                (notFullscreen, model.CorrPreview) ||> AVal.map2 (fun nf c -> nf && Option.isSome c)
+            let segs =
                 AVal.custom (fun t ->
                     match model.CorrPreview.GetValue t with
                     | Some w ->
                         let cc = model.CommonCentroid.GetValue t
                         let s = datasetScale.GetValue t
-                        let ir =
-                            match selectedId.GetValue t |> Option.bind (fun id -> HashMap.tryFind id (pinsVal.GetValue t)) with
-                            | Some p -> p.InnerRadius
-                            | None -> 1.0
-                        let r = max 0.1 (ScanPin.renderLength s (ir * 0.35))
-                        Trafo3d.Scale r * Trafo3d.Translation (ScanPin.renderCentre cc s w)
-                    | None -> Trafo3d.Scale 0.0)
-            sg {
-                Sg.Active (AVal.map2 (&&) notFullscreen active)
-                Sg.View view
-                Sg.Proj proj
-                Sg.Trafo trafo
-                Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                Sg.Uniform("FlatColor", AVal.constant (V4f(0.0, 0.78, 0.84, 0.95)))
-                Sg.DepthTest (AVal.constant DepthTest.None)
-                Sg.BlendMode (AVal.constant BlendMode.Blend)
-                Sg.NoEvents
-                Sg.VertexAttributes(
-                    HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
-                Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
-                Sg.Render sphereIdxCnt
-            }
+                        let wR = ScanPin.renderCentre cc s w
+                        let col = V4d(0.0, 0.78, 0.84, 0.95)
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        addWireSphere out wR 0.06 col 1.8 20
+                        addCross out wR 0.075 col 1.8
+                        out.ToArray()
+                    | None -> [||])
+            linesNodeTop active segs
 
-        ASet.unionMany (ASet.ofList [pinDots; pinRings; pinGlyphs; ghostPreview; constellation; ASet.ofList [corrPreview]])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; ghostPreview; constellation; ASet.ofList [corrPreview]])

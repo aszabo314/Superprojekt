@@ -153,8 +153,14 @@ module View =
 
                 RenderControl.OnRendered(fun _ ->
                     let s = AVal.force overlaySize
-                    if viewportSize.Value <> s then
-                        transact (fun () -> viewportSize.Value <- s)
+                    let fb = AVal.force size
+                    // Share the device-pixel-ratio with the focus panel (its secondary
+                    // control can't bind ClientSize). overlaySize is CSS px, size is fb px.
+                    let d = if s.X > 0 then float fb.X / float s.X else 1.0
+                    if viewportSize.Value <> s || FocusScene.dpr.Value <> d then
+                        transact (fun () ->
+                            viewportSize.Value <- s
+                            FocusScene.dpr.Value <- d)
                     env.Emit [CameraMessage OrbitMessage.Rendered]
                 )
 

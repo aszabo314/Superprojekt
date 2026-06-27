@@ -20,6 +20,11 @@ module FocusScene =
     let private panNorm = cval V2d.Zero
     let private zoom = cval 1.0
     let resetCam () = transact (fun () -> panNorm.Value <- V2d.Zero; zoom.Value <- 1.0)
+    // Device-pixel-ratio (framebuffer ÷ CSS px). Set by the main view (where
+    // RenderControl.ClientSize works); used to turn the focus cursor (CSS px) into
+    // framebuffer-relative NDC. Binding ClientSize directly in this secondary
+    // control left the single blank, so the dpr is shared instead.
+    let dpr = cval 1.0
     let mutable private dragging = false
     let mutable private lastPx = V2i.Zero
     // Hover-preview throttle + generation guard (drops out-of-order raycast results).
@@ -204,12 +209,14 @@ module FocusScene =
             RenderControl.Samples 1
             Class "focus-rc"
             let! size = RenderControl.ViewportSize
-            let! client = RenderControl.ClientSize
             // Cursor coords are CSS px (DOM); ViewportSize is framebuffer px (CSS ×
-            // devicePixelRatio). Mixing them offsets the pick on hi-dpi — use
-            // ClientSize (falling back to framebuffer until the first DOM event).
+            // devicePixelRatio). Divide out the shared dpr to get CSS-px size for the
+            // cursor → NDC math (don't bind RenderControl.ClientSize here — it blanks
+            // this secondary control).
             let overlaySize =
-                (client, size) ||> AVal.map2 (fun c v -> if c.X > 1 && c.Y > 1 then c else v)
+                (size, dpr :> aval<_>) ||> AVal.map2 (fun v d ->
+                    let k = max 1e-3 d
+                    V2i(max 1 (int (round (float v.X / k))), max 1 (int (round (float v.Y / k)))))
             let viewT, projT =
                 if isPano then AVal.constant Trafo3d.Identity, AVal.constant Trafo3d.Identity
                 else orthoCam size fitCenter fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)

@@ -67,11 +67,64 @@ module FocusScene =
                 orthoProj (he * aspect) he 0.01 ((ext + 1.0) * 12.0))
         view, proj
 
-    let private vattrs (loaded : LoadedMesh) =
+    let private vattrs (loaded : LoadedMesh) (scalarBuf : aval<IBuffer>) =
         HashMap.ofList [
             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
             string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
+            "FocusScalar",                                  BufferView(scalarBuf, typeof<float32>)
         ]
+
+    // Robust colour-scale = 95th pct of |finite values|.
+    let private robustHi (arr : float32[]) =
+        let valid = arr |> Array.choose (fun x -> if abs x < 1e20f then Some (abs x) else None)
+        if valid.Length = 0 then 1.0f
+        else
+            Array.sortInPlace valid
+            max 1e-3f valid.[int (0.95 * float (valid.Length - 1))]
+
+    // Inspect colour overlay for a mesh: (FocusMode, per-vertex scalar buffer, hi).
+    // 0 = texture; 1 = difference (FocusDist, diverging); 2 = displacement (per-vertex
+    // |load→solved| computed here, sequential). Texture/no-data → a zero buffer of the
+    // right length (the shader ignores it).
+    let private focusOverlay (model : AdaptiveModel) (name : string) (loaded : LoadedMesh) (scale : aval<float>) =
+        let modeA =
+            AVal.custom (fun t ->
+                if model.WorkflowStep.GetValue t <> Inspect then 0
+                else
+                    let rf = (model.Registration.GetValue t).ReferenceMesh
+                    if Some name = rf then 0
+                    else
+                        match model.InspectChannel.GetValue t with
+                        | ChDifference -> if Map.containsKey name (model.FocusDist.GetValue t) then 1 else 0
+                        | ChDisplacement -> if Map.containsKey name (model.SolvedTransforms.GetValue t) then 2 else 0)
+        let scalarData =
+            AVal.custom (fun t ->
+                let zero () =
+                    loaded.pos.GetValue t |> ignore
+                    let n = match loaded.mesh.Value with Some md -> md.positions.Length | None -> 3
+                    (ArrayBuffer (Array.zeroCreate<float32> n) :> IBuffer, 1.0f)
+                match modeA.GetValue t with
+                | 1 ->
+                    match Map.tryFind name (model.FocusDist.GetValue t) with
+                    | Some arr -> (ArrayBuffer arr :> IBuffer, robustHi arr)
+                    | None -> zero ()
+                | 2 ->
+                    loaded.pos.GetValue t |> ignore
+                    match loaded.mesh.Value with
+                    | Some md ->
+                        let pos = md.positions
+                        let sc = scale.GetValue t
+                        let baseT =
+                            Trafo3d.Translation(loaded.centroid.GetValue t - model.CommonCentroid.GetValue t) * Trafo3d.Scale sc
+                        let loadF = (baseT * (Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity)).Forward
+                        let solvedF = (baseT * (Map.tryFind name (model.SolvedTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity)).Forward
+                        let mag = Array.init pos.Length (fun i ->
+                            let p = V3d pos.[i]
+                            float32 ((solvedF.TransformPos p - loadF.TransformPos p).Length / sc))
+                        (ArrayBuffer mag :> IBuffer, robustHi mag)
+                    | None -> zero ()
+                | _ -> zero ())
+        modeA, (scalarData |> AVal.map fst), (scalarData |> AVal.map snd)
 
     // Focused mesh (Selection.FocusedMesh, falling back to first visible); while
     // peek-reference is held the single shows the reference instead.
@@ -97,6 +150,56 @@ module FocusScene =
         let fitCenter = renderT |> AVal.map (fun t -> t.Forward.TransformPos V3d.Zero)
         let fitExtent = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> max 1e-4 (r * s * 1.15))
         let isPano = (proj = ProjPano)
+        let modeA, scalarBuf, hiA = focusOverlay model name loaded scale
+        // Displacement single: white surface (mode 2 → 3) so the arrow glyphs read.
+        let surfaceMode = modeA |> AVal.map (fun m -> if m = 2 then 3 else m)
+        // Load→solved arrow glyphs (render space, exaggerated for visibility; colour =
+        // true magnitude). Empty unless this solved mesh is in the displacement channel.
+        let arrowSegs =
+            AVal.custom (fun t ->
+                let disp = model.WorkflowStep.GetValue t = Inspect && model.InspectChannel.GetValue t = ChDisplacement
+                match loaded.mesh.Value with
+                | Some md when disp && Map.containsKey name (model.SolvedTransforms.GetValue t) ->
+                    let pos = md.positions
+                    let sc = scale.GetValue t
+                    let baseT = Trafo3d.Translation(loaded.centroid.GetValue t - model.CommonCentroid.GetValue t) * Trafo3d.Scale sc
+                    let loadF = (baseT * (Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity)).Forward
+                    let solvedF = (baseT * (Map.tryFind name (model.SolvedTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity)).Forward
+                    let n = pos.Length
+                    let stride = max 1 (n / 250)
+                    let mutable maxMag = 1e-9
+                    let mutable i = 0
+                    while i < n do
+                        let p = V3d pos.[i]
+                        let m = (solvedF.TransformPos p - loadF.TransformPos p).Length
+                        if m > maxMag then maxMag <- m
+                        i <- i + stride
+                    let exag = 0.18 * fitExtent.GetValue t / maxMag
+                    let hi = float (hiA.GetValue t)
+                    let out = ResizeArray<V3d * V3d * V4d * float>()
+                    i <- 0
+                    while i < n do
+                        let p = V3d pos.[i]
+                        let b = loadF.TransformPos p
+                        let s = solvedF.TransformPos p
+                        let d = (s - b) * exag
+                        let tip = b + d
+                        // colour by true magnitude (world metres): light → dark blue.
+                        let tc = min 1.0 ((s - b).Length / sc / max 1e-6 hi)
+                        let col = V4d(0.576 + (0.118 - 0.576) * tc, 0.773 + (0.227 - 0.773) * tc, 0.992 + (0.541 - 0.992) * tc, 0.95)
+                        out.Add(b, tip, col, 1.6)
+                        let dl = sqrt (d.X * d.X + d.Y * d.Y)
+                        if dl > 1e-9 then
+                            let nx = d.X / dl
+                            let ny = d.Y / dl
+                            let hl = dl * 0.28
+                            let ca = -0.866
+                            let sa = 0.5
+                            out.Add(tip, V3d(tip.X + hl * (nx * ca - ny * sa), tip.Y + hl * (nx * sa + ny * ca), tip.Z), col, 1.6)
+                            out.Add(tip, V3d(tip.X + hl * (nx * ca + ny * sa), tip.Y + hl * (-nx * sa + ny * ca), tip.Z), col, 1.6)
+                        i <- i + stride
+                    out.ToArray()
+                | _ -> [||])
         renderControl {
             RenderControl.Samples 1
             Class "focus-rc"
@@ -193,33 +296,47 @@ module FocusScene =
             let viewT, projT =
                 if isPano then AVal.constant Trafo3d.Identity, AVal.constant Trafo3d.Identity
                 else orthoCam size fitCenter fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
-            Sg.View viewT
-            Sg.Proj projT
-            if isPano then
-                sg {
-                    Sg.Trafo renderT
-                    Sg.Shader { DefaultSurfaces.trafo; FocusShaders.pano; DefaultSurfaces.diffuseTexture }
-                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
-                    Sg.Uniform("PanoEye",    fitCenter |> AVal.map (fun c -> V3f(float32 c.X, float32 c.Y, float32 c.Z)))
-                    Sg.Uniform("PanoCenter", (panNorm :> aval<_>) |> AVal.map (fun p -> V2f(float32 p.X, float32 p.Y)))
-                    Sg.Uniform("PanoZoom",   (zoom :> aval<_>) |> AVal.map float32)
-                    Sg.Uniform("PanoAspect", size |> AVal.map (fun s -> float32 (float s.X / float (max 1 s.Y))))
-                    Sg.Uniform("PanoRadFar", fitExtent |> AVal.map (fun e -> float32 (e * 2.0)))
-                    Sg.NoEvents
-                    Sg.VertexAttributes(vattrs loaded)
-                    Sg.Index(BufferView(loaded.idx, typeof<int>))
-                    Sg.Render loaded.fvc
-                }
-            else
-                sg {
-                    Sg.Trafo renderT
-                    Sg.Shader { DefaultSurfaces.trafo; DefaultSurfaces.diffuseTexture }
-                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
-                    Sg.NoEvents
-                    Sg.VertexAttributes(vattrs loaded)
-                    Sg.Index(BufferView(loaded.idx, typeof<int>))
-                    Sg.Render loaded.fvc
-                }
+            let surface =
+                if isPano then
+                    sg {
+                        Sg.Trafo renderT
+                        Sg.Shader { DefaultSurfaces.trafo; FocusShaders.pano; DefaultSurfaces.diffuseTexture; FocusShaders.focusColor }
+                        Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                        Sg.Uniform("PanoEye",    fitCenter |> AVal.map (fun c -> V3f(float32 c.X, float32 c.Y, float32 c.Z)))
+                        Sg.Uniform("PanoCenter", (panNorm :> aval<_>) |> AVal.map (fun p -> V2f(float32 p.X, float32 p.Y)))
+                        Sg.Uniform("PanoZoom",   (zoom :> aval<_>) |> AVal.map float32)
+                        Sg.Uniform("PanoAspect", size |> AVal.map (fun s -> float32 (float s.X / float (max 1 s.Y))))
+                        Sg.Uniform("PanoRadFar", fitExtent |> AVal.map (fun e -> float32 (e * 2.0)))
+                        Sg.Uniform("FocusMode", surfaceMode)
+                        Sg.Uniform("FocusHi",   hiA)
+                        Sg.Uniform("FocusLod",  AVal.constant 0.0f)
+                        Sg.NoEvents
+                        Sg.VertexAttributes(vattrs loaded scalarBuf)
+                        Sg.Index(BufferView(loaded.idx, typeof<int>))
+                        Sg.Render loaded.fvc
+                    }
+                else
+                    sg {
+                        Sg.Trafo renderT
+                        Sg.Shader { DefaultSurfaces.trafo; DefaultSurfaces.diffuseTexture; FocusShaders.focusColor }
+                        Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                        Sg.Uniform("FocusMode", surfaceMode)
+                        Sg.Uniform("FocusHi",   hiA)
+                        Sg.Uniform("FocusLod",  AVal.constant 0.0f)
+                        Sg.NoEvents
+                        Sg.VertexAttributes(vattrs loaded scalarBuf)
+                        Sg.Index(BufferView(loaded.idx, typeof<int>))
+                        Sg.Render loaded.fvc
+                    }
+            sg {
+                Sg.View viewT
+                Sg.Proj projT
+                Sg.Uniform("ViewportSize", size)
+                Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                surface
+                Lines.render arrowSegs
+            }
         }
 
     // One static thumbnail tile per mesh, clickable to focus (always ortho top-down).
@@ -228,6 +345,7 @@ module FocusScene =
         let renderT, scale = renderTrafoOf model name loaded
         let fitCenter = renderT |> AVal.map (fun t -> t.Forward.TransformPos V3d.Zero)
         let fitExtent = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> max 1e-4 (r * s * 1.15))
+        let modeA, scalarBuf, hiA = focusOverlay model name loaded scale
         let rc =
             renderControl {
                 RenderControl.Samples 1
@@ -238,10 +356,13 @@ module FocusScene =
                 Sg.Proj proj
                 sg {
                     Sg.Trafo renderT
-                    Sg.Shader { DefaultSurfaces.trafo; DefaultSurfaces.diffuseTexture }
+                    Sg.Shader { DefaultSurfaces.trafo; DefaultSurfaces.diffuseTexture; FocusShaders.focusColor }
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                    Sg.Uniform("FocusMode", modeA)
+                    Sg.Uniform("FocusHi",   hiA)
+                    Sg.Uniform("FocusLod",  AVal.constant 0.0f)
                     Sg.NoEvents
-                    Sg.VertexAttributes(vattrs loaded)
+                    Sg.VertexAttributes(vattrs loaded scalarBuf)
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
                     Sg.Render loaded.fvc
                 }
@@ -262,11 +383,17 @@ module FocusScene =
             }
         }
 
-    // The large single (keyed by (mesh, projection) so a projection toggle rebuilds).
+    // The large single, keyed by (mesh, effective projection) so a projection toggle
+    // rebuilds. The displacement channel forces ortho (its arrow line-glyphs can't go
+    // through the pano unwrap), so Pano collapses to Top there.
     let single (env : Env<Message>) (model : AdaptiveModel) =
-        (focusMeshOf model, model.FocusProjection)
-        ||> AVal.map2 (fun m proj ->
-            match m with Some n -> IndexList.single (n, proj) | None -> IndexList.empty)
+        AVal.custom (fun t ->
+            match (focusMeshOf model).GetValue t with
+            | None -> IndexList.empty
+            | Some n ->
+                let proj = model.FocusProjection.GetValue t
+                let disp = model.WorkflowStep.GetValue t = Inspect && model.InspectChannel.GetValue t = ChDisplacement
+                IndexList.single (n, (if disp && proj = ProjPano then ProjTop else proj)))
         |> AList.ofAVal
         |> AList.map (fun (n, proj) -> focusSingle env model n proj)
 

@@ -1,5 +1,5 @@
-//1a9472fe-5c0a-c216-6e4e-386899b64549
-//75d05dc8-4242-2149-4580-339d0e4e59b0
+//505cd1d7-bd57-9a19-1da7-59e2a4463d7f
+//626266d8-f54e-fe04-f26c-c8a624bd7f3a
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -68,6 +68,7 @@ type AdaptiveModel(value : Model) =
     let _HeatmapMode_ = FSharp.Data.Adaptive.cval(value.HeatmapMode)
     let _ExtrinsicZDiff_ = FSharp.Data.Adaptive.cval(value.ExtrinsicZDiff)
     let _SurfaceDistance_ = FSharp.Data.Adaptive.cval(value.SurfaceDistance)
+    let _FocusDist_ = FSharp.Data.Adaptive.cval(value.FocusDist)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _Selection_ = AdaptiveSelection(value.Selection)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
@@ -121,6 +122,7 @@ type AdaptiveModel(value : Model) =
             _HeatmapMode_.Value <- value.HeatmapMode
             _ExtrinsicZDiff_.Value <- value.ExtrinsicZDiff
             _SurfaceDistance_.Value <- value.SurfaceDistance
+            _FocusDist_.Value <- value.FocusDist
             _ScanPins_.Update(value.ScanPins)
             _Selection_.Update(value.Selection)
             _RenderingMode_.Value <- value.RenderingMode
@@ -167,6 +169,7 @@ type AdaptiveModel(value : Model) =
     member __.HeatmapMode = _HeatmapMode_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
     member __.ExtrinsicZDiff = _ExtrinsicZDiff_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SurfaceDistance = _SurfaceDistance_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
+    member __.FocusDist = _FocusDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.ScanPins = _ScanPins_
     member __.Selection = _Selection_
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>

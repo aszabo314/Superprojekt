@@ -175,6 +175,9 @@ type Model =
         // 3D aggregate). SurfaceDistance holds the fetched per-reference-vertex
         // array, keyed by the reference mesh.
         SurfaceDistance       : Map<string, float32[]>
+        // Inspect difference channel: per moving mesh, signed distance to the reference
+        // (the mesh's served vertex order), painted on the focus tile. Lazily fetched.
+        FocusDist             : Map<string, float32[]>
 
         ScanPins              : ScanPinModel
         Selection             : Selection
@@ -262,6 +265,7 @@ module Model =
             MeshSensorTypes       = Map.empty
             ExtrinsicZDiff        = false
             SurfaceDistance       = Map.empty
+            FocusDist             = Map.empty
             HeatmapMode           = HeatOff
             ScanPins              = ScanPinModel.initial
             Selection             = Selection.initial

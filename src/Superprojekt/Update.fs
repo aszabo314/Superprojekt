@@ -239,8 +239,13 @@ module Update =
             if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
             else model
+        | FocusDistComputed(mesh, arr) ->
+            if model.WorkflowStep = Inspect then
+                { model with FocusDist = Map.add mesh arr model.FocusDist }
+            else model
         | ToggleExtrinsicZDiff ->
-            { model with ExtrinsicZDiff = not model.ExtrinsicZDiff }
+            // The difference values change with the sub-mode (M3C2 ↔ Δz) → refetch.
+            invalidateFocusDist { model with ExtrinsicZDiff = not model.ExtrinsicZDiff }
         | SurfaceDistanceFailed(_, reason) ->
             showToast env "Surface-distance query failed — is the server up to date? (restart it)"
                 { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "region-distance failed: %s" reason) }
@@ -348,7 +353,8 @@ module Update =
             if model.WorkflowStep = step then model
             else
                 bumpSurfaceDist ()
-                { model with WorkflowStep = step; SurfaceDistance = Map.empty
+                bumpFocusDist ()
+                { model with WorkflowStep = step; SurfaceDistance = Map.empty; FocusDist = Map.empty
                              CorrSetMode = false; CorrPreview = None }
         | SetInspectChannel ch ->
             { model with InspectChannel = ch }
@@ -483,10 +489,53 @@ module Update =
                     model
             | _ -> model
 
-    // Inspect focus-tile server channel for a moving cell; mirrors
+    // Inspect Difference channel: per visible moving mesh, fetch its signed distance
+    // to the reference (the mesh's own served vertex order) for the focus heatmap.
+    // Same generation-guarded debounce as ensureVariance.
+    let private ensureFocusDist (env : Env<Message>) (model : Model) : Model =
+        if model.WorkflowStep <> Inspect || model.InspectChannel <> ChDifference then model
+        else
+            match model.Registration.ReferenceMesh with
+            | None -> model
+            | Some refMesh ->
+                let moving =
+                    model.MeshNames |> IndexList.toList
+                    |> List.filter (fun n -> n <> refMesh && (Map.tryFind n model.MeshVisible |> Option.defaultValue true))
+                let missing = moving |> List.filter (fun m -> not (Map.containsKey m model.FocusDist))
+                if List.isEmpty missing || focusDistReqGen = focusDistGen then model
+                else
+                    focusDistReqGen <- focusDistGen
+                    let mode = if model.ExtrinsicZDiff then 1 else 0
+                    let refT = (ModelTransforms.displayedWorld model refMesh).Forward
+                    let jobs =
+                        missing |> List.map (fun m ->
+                            let mT = (ModelTransforms.displayedWorld model m).Forward
+                            async {
+                                try
+                                    let! d = Query.regionDistance ApiConfig.apiBase.Value m 0 refMesh 0 mT refT mode
+                                    return Some (m, d)
+                                with _ -> return None
+                            })
+                    focusDistCts.Cancel()
+                    focusDistCts <- new System.Threading.CancellationTokenSource()
+                    let token = focusDistCts.Token
+                    task {
+                        try
+                            do! System.Threading.Tasks.Task.Delay(150, token)
+                            let! results = jobs |> Async.Parallel |> Async.StartAsTask
+                            if not token.IsCancellationRequested then
+                                for r in results do
+                                    match r with Some (m, d) -> env.Emit [FocusDistComputed(m, d)] | None -> ()
+                        with
+                        | :? System.OperationCanceledException -> ()
+                        | _ -> ()
+                    } |> ignore
+                    model
+
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
         |> ScanPinUpdate.ensureProbe env
         |> ScanPinUpdate.ensureRings env
         |> ensureVariance env
+        |> ensureFocusDist env
 

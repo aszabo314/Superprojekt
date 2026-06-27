@@ -47,12 +47,25 @@ module UpdateHelpers =
     let mutable surfaceDistReqGen = -1
     let bumpSurfaceDist () = surfaceDistGen <- surfaceDistGen + 1
 
+    // Focus difference channel fetch (region-distance per moving mesh) — same
+    // generation-guarded debounce as the variance map.
+    let mutable focusDistCts = new System.Threading.CancellationTokenSource()
+    let mutable focusDistGen = 0
+    let mutable focusDistReqGen = -1
+    let bumpFocusDist () = focusDistGen <- focusDistGen + 1
+    let invalidateFocusDist (model : Model) =
+        if not (Map.isEmpty model.FocusDist) then bumpFocusDist ()
+        { model with FocusDist = Map.empty }
+
     let invalidateProbes (model : Model) =
-        // The variance surface map shares the same triggers — drop to re-fetch lazily.
+        // The variance + focus-difference maps share the same triggers — drop to
+        // re-fetch lazily.
         if not (Map.isEmpty model.SurfaceDistance) then bumpSurfaceDist ()
+        if not (Map.isEmpty model.FocusDist) then bumpFocusDist ()
         { model with
             ScanPins = ScanPinModel.invalidateProbes model.ScanPins
-            SurfaceDistance = Map.empty }
+            SurfaceDistance = Map.empty
+            FocusDist = Map.empty }
 
     // Rings depend on pin geometry + transforms, NOT visibility (which gates
     // rendering only) — so this is applied on transform changes alone, unlike invalidateProbes.

@@ -59,15 +59,18 @@ The variance distances come from `POST /api/query/region-distance` (reference vs
 
 ### Inspect visualizations
 
-> **NOTE (WebGL focus transition):** the two **focus-tile** Inspect channels — *difference* and
-> *displacement* — were **removed** when the focus panel moved to WebGL (they were the 2D-canvas
-> `mesh-preview`/`FocusMaps` path, now gone). `Model.InspectChannel` + the dock channel toggle
-> remain but are inert. Re-implement as WebGL (per-vertex coloured geometry) if wanted. What
-> survives: the **central-3D variance** map and the **dock distribution** + **shift readout**.
+The focus-tile channels are now rendered **in WebGL** (per-vertex-coloured mesh, not the old
+2D-canvas/`mesh-preview` path) — a unified `FocusShaders.focusColor` fragment driven by a
+`FocusMode` uniform over a per-vertex `FocusScalar` buffer (`FocusScene.focusOverlay`), so the
+channel toggle is a uniform switch with no shader rebuild.
 
 - **pin** → dock **distribution**: per moving mesh, jittered raw probe samples + median/IQR box on a shared signed-distance axis with the ±LoD₉₅ band (`GuiInspector` `distData`/`distJs`, no KDE). The probe is the current `RegView` pose; the panel labels Before/After.
+- **2 meshes** → focus **difference** (`FocusMode = 1`): signed M3C2 / vertical Δz vs reference, diverging blue↔neutral↔red about 0 (robust per-tile scale). Data = `region-distance` (target = moving mesh) fetched by `Update.ensureFocusDist` into `Model.FocusDist` (the mesh's served vertex order, aligns with `loaded.pos`); same generation-guarded debounce as `ensureVariance`.
+- **mesh** → focus **displacement**: solved moving meshes only. The **large single** shows a white surface (`FocusMode = 3`) + **load→solved arrow line-glyphs** (`Lines.render`, exaggerated to ~18% of the fit extent for visibility, coloured light→dark blue by *true* magnitude, with XY-plane arrowheads) — forced to the ortho camera (lines can't go through the pano unwrap, so Pano collapses to Top here). The **tiles** show the sequential magnitude heatmap (`FocusMode = 2`, per-vertex `|load→solved|` computed in `focusOverlay`).
 - **all meshes** → central-3D **variance**: per-reference-vertex disagreement std painted on the reference (`DistanceEncoding = 2`, above), `region-distance` + `ensureVariance`.
 - **shift readout** (dock, displacement only): the focused mesh's centroid displacement load→solved, split vertical(datum)/horizontal + rotation angle, derived client-side from its `SolvedTransform`.
+
+The reference tile (and any mesh without data) stays atlas-textured (`FocusMode = 0`).
 
 ### `Sg.DepthMask` is forbidden
 
@@ -108,13 +111,13 @@ The left rail (`GuiRail`) has exactly three modes — **Overview · Corresponden
 
 | Mode | Rail | Focus (canvas) | Dock |
 |---|---|---|---|
-| Overview | mesh list (hover=peek-isolate, ★ reference) | WebGL textured tiles | mesh roster |
+| Overview | mesh list (hover=peek-isolate, ★ reference) | WebGL textured tiles (difference/displacement recolour in Inspect) | mesh roster |
 | Correspondence | pin list + readiness diagnostics | pick surface (Pano/Top) | correspondence manager + Solve |
 | Inspect | difference sub-mode + intrinsic channels | difference / displacement tiles (channel toggle) | channel toggle + pin distribution + shift readout |
 
 **One shared selection record drives all linking** (`Model.Selection = { SelectedPin; FocusedMesh; SelectedPoint; Hovered }`). Linked highlighting is a *consequence* of every region binding to `Selection` — there are no panel-to-panel hover emitters. Grammar everywhere: **hover = peek** (writes `Selection.Hovered` via the single `SetHovered`), **click = select/promote**, **drag = edit**. Pin selection lives in `Selection.SelectedPin` (NOT `ScanPinModel`); `ScanPinUpdate.handleMsg` maintains it and drops a dangling selection when its pin is deleted.
 
-**Focus panel** (`GuiFocus` + `FocusScene`) is **WebGL** — a large single (the focused mesh, rendered full-res + atlas-textured in render space at its displayed pose) over a strip of textured thumbnail tiles, one renderControl per visible mesh (`FocusScene.single`/`multiples`). The prior 2D-canvas/`mesh-preview`/`FocusMaps` path is gone. The earlier finding that a 2nd renderControl tanks the main view turned out wrong (measurement artefact) — many renderControls coexist fine here. **Top = strictly orthographic** (hand-built ortho matrix); **Pano = cylindrical unwrap in a vertex shader** (`FocusShaders.pano`, composed after `DefaultSurfaces.trafo` so the WorldPosition varying — and thus picking — survives; the camera is identity, the shader writes clip). A tiny pan+zoom controller (module-level `panNorm`/`zoom` cvals in `FocusScene`, no orbit) drives the single with mouse-anchored zoom; `⟲ reset` calls `FocusScene.resetCam`. **Picking is Dom-driven, not `Sg.OnTap`** (that did not fire reliably in the 2nd render control): `worldRayHit` inverts the cursor to a render-space ray (ortho drop / pano direction from the eye), maps it into the mesh's own frame, hits `/query/ray`, and maps the hit back to displayed world. In set-correspondence mode (⊕ set point) a **move** throttle-raycasts → `CorrPreviewComputed` (the live 3D ghost in the main viewport), and a **click** raycasts → `PickCorrespondenceAt` (places + exits the mode). Gated on a selected pin + a non-reference focused mesh.
+**Focus panel** (`GuiFocus` + `FocusScene`) is **WebGL** — a large single (the focused mesh, rendered full-res + atlas-textured in render space at its displayed pose) over a strip of textured thumbnail tiles, one renderControl per visible mesh (`FocusScene.single`/`multiples`). The prior 2D-canvas/`mesh-preview`/`FocusMaps` path is gone. The earlier finding that a 2nd renderControl tanks the main view turned out wrong (measurement artefact) — many renderControls coexist fine here. **Top = strictly orthographic** (hand-built ortho matrix); **Pano = cylindrical unwrap in a vertex shader** (`FocusShaders.pano`, composed after `DefaultSurfaces.trafo` so the WorldPosition varying — and thus picking — survives; the camera is identity, the shader writes clip). A tiny pan+zoom controller (module-level `panNorm`/`zoom` cvals in `FocusScene`, no orbit) drives the single with mouse-anchored zoom; `⟲ reset` calls `FocusScene.resetCam`. **Picking is Dom-driven, not `Sg.OnTap`** (that did not fire reliably in the 2nd render control): `worldRayHit` inverts the cursor to a render-space ray (ortho drop / pano direction from the eye), maps it into the mesh's own frame, hits `/query/ray`, and maps the hit back to displayed world. In set-correspondence mode (⊕ set point) a **move** throttle-raycasts → `CorrPreviewComputed` (the live 3D ghost in the main viewport), and a **click** raycasts → `PickCorrespondenceAt` (places + exits the mode). Gated on a selected pin + a non-reference focused mesh. In Inspect the tiles recolour per channel via `focusColor`/`FocusMode` (see Inspect visualizations).
 
 ## ScanPin system
 
@@ -237,7 +240,7 @@ Top-level `Model` fields (see `Model.fs`):
 - `GhostSilhouette` (default on), `GhostOpacity`, `ShadingStrength`, `SlopeThresholdDeg`, `AnchorGhostMode` ("Isolate pins", default on), `QuickPinRadius`, `OutlineMode`
 - `SceneBounds`, `MeshBounds`, `ActivePickingLayer`, `ReferencePeekHeld`
 - `LoadTransforms`, `SolvedTransforms`, `RegView` (`RegBefore`/`RegAfter`), `Registration` (`{ ReferenceMesh; Running }`), `LastSolve` (per-mesh solve diagnostics)
-- `MeshSensorTypes`, `HeatmapMode` (`HeatOff | HeatIncidence | HeatRange | HeatShape`), `ExtrinsicZDiff` (difference sub-mode M3C2 ↔ Δz), `SurfaceDistance` (`Map<mesh, float32[]>`, the reference variance array)
+- `MeshSensorTypes`, `HeatmapMode` (`HeatOff | HeatIncidence | HeatRange | HeatShape`), `ExtrinsicZDiff` (difference sub-mode M3C2 ↔ Δz), `SurfaceDistance` (`Map<mesh, float32[]>`, the reference variance array), `FocusDist` (`Map<mesh, float32[]>`, per moving mesh signed distance for the focus difference channel)
 - `ScanPins` (`ScanPinModel`), `Selection` (`{ SelectedPin; FocusedMesh; SelectedPoint; Hovered }`)
 - `RenderingMode`, `MeshSolo`, `GearPopoverOpen`
 - `WorkflowStep` (`Overview | Correspondence | Inspect`), `InspectChannel` (`ChDifference | ChDisplacement`), `FocusProjection` (`ProjPano | ProjTop | ProjOblique`), `FocusPeekReference`, `CorrSetMode` (set-correspondence toggle) + `CorrPreview` (live 3D ghost point), `Toast`

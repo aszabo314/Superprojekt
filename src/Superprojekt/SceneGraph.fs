@@ -177,7 +177,6 @@ module SceneGraph =
         (proj : aval<Trafo3d>)
         (fullscreenActive : aval<bool>)
         (placementHover : aval<V3d option>)
-        (cursorHighlight : aval<CursorHighlight option>)
         (clipUniforms : aval<int * V4f * V4f>)
         (wheelIsolation : aval<string option>)
         (model : AdaptiveModel) =
@@ -190,7 +189,7 @@ module SceneGraph =
         // writes depth from its shader; ordering is steered via Sg.DepthTest +
         // Sg.Pass alone. Cross + labels run in passOne (DepthTest.None) on top.
 
-        let meshScene  = MeshView.buildScene loadFinished cursorHighlight clipUniforms wheelIsolation model
+        let meshScene  = MeshView.buildScene loadFinished clipUniforms wheelIsolation model
         let outlineScene = OutlineView.build info model view proj
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
 

@@ -33,17 +33,6 @@ module MeshShader =
         member x.BlobCount       : int     = x?BlobCount
         member x.Blobs           : Arr<N<32>, V4f> = x?Blobs
         member x.AnchorGhost     : int     = x?AnchorGhost
-        // CursorActive is per-mesh (bbox-vs-plane gate); CursorClip restricts
-        // the band to the probe cylinder (off when Alt-extended scene-wide).
-        member x.CursorActive         : int     = x?CursorActive
-        member x.CursorPlaneOrigin    : V3f     = x?CursorPlaneOrigin
-        member x.CursorPlaneNormal    : V3f     = x?CursorPlaneNormal
-        member x.CursorHighlightWidth : float32 = x?CursorHighlightWidth
-        member x.CursorDarken         : float32 = x?CursorDarken
-        member x.CursorClip           : int     = x?CursorClip
-        member x.CursorPinCentre      : V3f     = x?CursorPinCentre
-        member x.CursorPinRadius      : float32 = x?CursorPinRadius
-        member x.CursorCylLength      : float32 = x?CursorCylLength
         // Render-space plane equations V4f(nx,ny,nz,-dot(n,renderOrigin));
         // dot(n,wp)+w > 0 is the removed (camera-side) half.
         member x.ClipPlaneCount : int = x?ClipPlaneCount
@@ -58,6 +47,11 @@ module MeshShader =
         member x.HeatmapMode      : int     = x?HeatmapMode
         member x.SensorOrigin     : V3f     = x?SensorOrigin
         member x.RangeMax         : float32 = x?RangeMax
+        // Render-space Z step between elevation isolines (global-Z locked). Read
+        // by the outline G-buffer pass, which writes a world-Z band parity that
+        // the edge-detect turns into crisp isolines; 0 disables. Not used by the
+        // forward mesh shader itself.
+        member x.ContourSpacing   : float32 = x?ContourSpacing
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -181,31 +175,9 @@ module MeshShader =
                 let loC = V3f(0.86f, 0.20f, 0.15f)
                 let hiC = V3f(0.18f, 0.55f, 0.34f)
                 baseRgb <- loC * (1.0f - ts) + hiC * ts
-            // Contact-line highlight: darken the mesh, brighten a smoothstep band
-            // within CursorHighlightWidth of the plane, optionally clipped to the
-            // probe cylinder. Ghost fragments skipped so the silhouette stays uniform.
-            if uniform.CursorActive <> 0 && aboveGhost then
-                let co = uniform.CursorPlaneOrigin
-                let cn = uniform.CursorPlaneNormal
-                let sd = (wp.X - co.X) * cn.X + (wp.Y - co.Y) * cn.Y + (wp.Z - co.Z) * cn.Z
-                let ad = abs sd
-                let hw = uniform.CursorHighlightWidth
-                let mutable amount = 0.0f
-                if hw > 1e-9f && ad < hw then
-                    let tt = clamp 0.0f 1.0f (ad / hw)
-                    amount <- 1.0f - tt * tt * (3.0f - 2.0f * tt)
-                if uniform.CursorClip <> 0 then
-                    let pc = uniform.CursorPinCentre
-                    let axial = (wp.X - pc.X) * cn.X + (wp.Y - pc.Y) * cn.Y + (wp.Z - pc.Z) * cn.Z
-                    let rx = wp.X - pc.X - axial * cn.X
-                    let ry = wp.Y - pc.Y - axial * cn.Y
-                    let rz = wp.Z - pc.Z - axial * cn.Z
-                    let radial = sqrt (rx*rx + ry*ry + rz*rz)
-                    if radial > uniform.CursorPinRadius || abs axial > uniform.CursorCylLength * 0.5f then
-                        amount <- 0.0f
-                let hiCol = V3f(0.031f, 0.569f, 0.698f)
-                let darkened = baseRgb * uniform.CursorDarken
-                baseRgb <- darkened * (1.0f - amount) + hiCol * amount
+            // (World-Z isolines are NOT drawn here — they are edge-detected from a
+            // band-parity field in the offscreen outline pass, so they get the same
+            // crisp 1px look as the silhouette outline. See OutlineGBuffer/OutlineEdge.)
             let depth =
                 if alpha >= opaqueThreshold then v.fc.Z
                 else 1.0f
@@ -215,8 +187,10 @@ module MeshShader =
             }
         }
 
-// Outline G-buffer pass: world normal + window depth → target0, per-mesh palette
-// colour + coverage mask → target1 (MRT).
+// Outline G-buffer pass: world-Z band parity + window depth → target0, per-mesh
+// palette colour + coverage mask → target1 (MRT). (target0.xyz used to hold the
+// world normal for the removed normal-angle edge term; .x now carries the isoline
+// band parity, .yz unused.)
 [<ReflectedDefinition>]
 module OutlineGBuffer =
     open MeshShader
@@ -232,18 +206,31 @@ module OutlineGBuffer =
     }
     let shade (v : FragIn) =
         fragment {
-            let n = v.n |> Vec.normalize
             let col = uniform.MeshColor
+            // target0.x = world-Z band parity (0/1) → the edge-detect turns every
+            // band boundary into a crisp 1px isoline, world-locked because the band
+            // index is a pure function of world Z. target0.w = window depth (the
+            // silhouette/depth edge). Normal channels (was target0.xyz) are free
+            // since the normal-angle edge term was removed.
+            let parity =
+                if uniform.ContourSpacing > 1e-12f then
+                    let band = floor (v.wp.Z / uniform.ContourSpacing)
+                    band - 2.0f * floor (band * 0.5f)
+                else 0.0f
             return {
-                g0 = V4f(n.X * 0.5f + 0.5f, n.Y * 0.5f + 0.5f, n.Z * 0.5f + 0.5f, v.fc.Z)
+                g0 = V4f(parity, 0.0f, 0.0f, v.fc.Z)
                 g1 = V4f(col.X, col.Y, col.Z, 1.0f)
             }
         }
 
 // Edge-detect fullscreen pass: sample the g-buffer at centre ±1 texel; an edge =
-// depth jump OR normal-angle jump OR coverage-mask boundary (the mask boundary
-// catches the silhouette AND the near-plane cut → no inverted hull). Output the
-// per-pixel palette colour where an edge is found, transparent elsewhere.
+// window-depth jump (silhouette + cliff/occlusion outlines, view-dependent) OR a
+// world-Z band-parity flip (elevation isolines, world-locked — the band index is a
+// pure function of world Z so the line stays welded to the surface as the camera
+// moves, while still rendering as a crisp 1px screen-space edge). Both gated to
+// covered pixels. The old normal-angle term is gone. The coverage-mask (mEdge)
+// term was dropped too — depth jumps already trace the silhouette in this data.
+// Output the per-pixel palette colour where an edge is found, transparent else.
 [<ReflectedDefinition>]
 module OutlineEdge =
 
@@ -284,25 +271,17 @@ module OutlineEdge =
             let u  = gNormal.Sample(v.tc + V2f(0.0f,  ts.Y))
             let d  = gNormal.Sample(v.tc + V2f(0.0f, -ts.Y))
             let m0 = gColor.Sample(v.tc).W
-            let ml = gColor.Sample(v.tc + V2f(-ts.X, 0.0f)).W
-            let mr = gColor.Sample(v.tc + V2f( ts.X, 0.0f)).W
-            let mu = gColor.Sample(v.tc + V2f(0.0f,  ts.Y)).W
-            let md = gColor.Sample(v.tc + V2f(0.0f, -ts.Y)).W
-            // window depth in .W
+            // target0: .w = window depth → silhouette/cliff outline; .x = world-Z
+            // band parity → world-locked isolines. Both are the same edge-detect: a
+            // jump between adjacent texels is a 1px line. Gated to covered pixels.
             let dEdge =
                 max (max (abs (c.W - l.W)) (abs (c.W - r.W)))
                     (max (abs (c.W - u.W)) (abs (c.W - d.W)))
-            // Decode normals *2-1. Inlined per-tap — a local `let nDiff …`
-            // function reads as a lambda FShade can't compile.
-            let nC = V3f(c.X, c.Y, c.Z) * 2.0f - V3f.III
-            let nl = 1.0f - Vec.dot nC (V3f(l.X, l.Y, l.Z) * 2.0f - V3f.III)
-            let nr = 1.0f - Vec.dot nC (V3f(r.X, r.Y, r.Z) * 2.0f - V3f.III)
-            let nu = 1.0f - Vec.dot nC (V3f(u.X, u.Y, u.Z) * 2.0f - V3f.III)
-            let nd = 1.0f - Vec.dot nC (V3f(d.X, d.Y, d.Z) * 2.0f - V3f.III)
-            let nEdge = max (max nl nr) (max nu nd)
-            let mEdge = if m0 > 0.5f then 1.0f - min (min ml mr) (min mu md) else 0.0f
-            let isEdge = dEdge > 0.0015f || nEdge > 0.30f || mEdge > 0.5f
-            if isEdge && (m0 > 0.5f || mEdge > 0.5f) then
+            let iEdge =
+                max (max (abs (c.X - l.X)) (abs (c.X - r.X)))
+                    (max (abs (c.X - u.X)) (abs (c.X - d.X)))
+            let isEdge = dEdge > 0.0015f || iEdge > 0.5f
+            if isEdge && m0 > 0.5f then
                 let col = gColor.Sample(v.tc)
                 return V4f(col.X, col.Y, col.Z, 1.0f)
             else

@@ -66,35 +66,6 @@ module View =
                     | Some (HoverPoint (_, m)) -> Some m
                     | _ -> None)
 
-        // Contact-line highlight for the mesh shader: the 3D hover point drives a
-        // band inside the effective (selected) pin's probe cylinder. Only the
-        // effective pin contributes — one plane at a time.
-        let cursorHighlight =
-            let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-            let effectiveId = model.Selection.SelectedPin
-            AVal.custom (fun t ->
-                let probeOf pid =
-                    HashMap.tryFind pid (pinsVal.GetValue t)
-                    |> Option.bind (fun pin ->
-                        match pin.Probe with
-                        | ProbeReady r -> Some (pin, r)
-                        | _ -> None)
-                match hoverCoord.GetValue t, effectiveId.GetValue t with
-                | Some q, Some pid ->
-                    probeOf pid |> Option.bind (fun (pin, r) ->
-                        let v = q - pin.Centre
-                        let dAx = Vec.dot v r.Normal
-                        let radial = (v - r.Normal * dAx).Length
-                        if radial <= pin.InnerRadius && abs dAx <= r.Length * 0.5 then
-                            Some { Origin    = pin.Centre + r.Normal * dAx
-                                   Normal    = r.Normal
-                                   Clip      = true
-                                   PinCentre = pin.Centre
-                                   PinRadius = pin.InnerRadius
-                                   CylLength = r.Length }
-                        else None)
-                | _ -> None)
-
         // Section/cutaway clipping was removed; the mesh shader keeps generic
         // clip-plane support but is fed a constant no-clip.
         let clipUniforms : aval<int * V4f * V4f> = AVal.constant (0, V4f.Zero, V4f.Zero)
@@ -339,7 +310,7 @@ module View =
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) cursorHighlight clipUniforms wheelIsolation model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) clipUniforms wheelIsolation model
             }
 
             Dom.OnKeyDown(fun e ->

@@ -79,6 +79,10 @@ module Update =
             { model with ShadingStrength = v }
         | SetSlopeThresholdDeg v ->
             { model with SlopeThresholdDeg = v }
+        | SetOutlineThreshold v ->
+            { model with OutlineThreshold = max 0.0 v }
+        | SetIsolineBands v ->
+            { model with IsolineBands = max 1.0 v }
         | ToggleAnchorGhostMode ->
             { model with AnchorGhostMode = not model.AnchorGhostMode }
         | SetQuickPinRadius v ->
@@ -398,8 +402,6 @@ module Update =
             else { model with CorrSetMode = true; CorrPreview = None }
         | CorrPreviewComputed p ->
             if model.CorrSetMode then { model with CorrPreview = p } else model
-        | ToggleOutlines ->
-            { model with OutlineMode = not model.OutlineMode }
         // Keep orientation, animate centre + radius so the target subtends ~25% of
         // viewport height. User nav input overrides via the orbit machinery.
         | FlyTo(target, aspect) ->

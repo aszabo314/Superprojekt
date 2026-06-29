@@ -101,8 +101,13 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
-                            compactToggle "Per-mesh outlines (image-space)" model.OutlineMode (fun () ->
-                                env.Emit [ToggleOutlines])
+                            inlineSlider "Outline edge threshold" 0.0001 0.01 0.0001 (sprintf "%.4f") model.OutlineThreshold (fun v ->
+                                env.Emit [SetOutlineThreshold v])
+                        }
+                        div {
+                            Class "tb-gear-row"
+                            inlineSlider "Isolines over Z range" 4.0 2000.0 1.0 (sprintf "%.0f") model.IsolineBands (fun v ->
+                                env.Emit [SetIsolineBands v])
                         }
                         div {
                             Class "tb-gear-row"

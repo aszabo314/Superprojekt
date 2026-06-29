@@ -44,7 +44,7 @@ The first request for a mesh parses the OBJ + builds an Embree scene + BbTree; t
 
 ## What you can do
 
-- **Load & explore.** Orbit camera (drag / right-drag / scroll, or touch); double-tap geometry to recenter; hold **Space** for distraction-free fullscreen; **Alt + scroll** cycles which mesh under the cursor is *isolated* (kept solid while the rest ghost). Per-mesh image-space outlines (silhouettes plus crisp global-Z elevation isolines, both edge-detected), rendering mode (Textured / Shaded / Slope-colour), ghost silhouette + opacity, shading strength, and slope threshold live in the **⚙ gear** popover.
+- **Load & explore.** Orbit camera (drag / right-drag / scroll, or touch); double-tap geometry to recenter; hold **Space** for distraction-free fullscreen; **Alt + scroll** cycles which mesh under the cursor is *isolated* (kept solid while the rest ghost). Per-mesh image-space outlines (silhouettes plus crisp global-Z elevation isolines, both edge-detected) are always on; their tuning (outline edge threshold, isoline count) alongside rendering mode (Textured / Shaded / Slope-colour), ghost silhouette + opacity, shading strength, and slope threshold live in the **⚙ gear** popover.
 - **Reference peek.** Hold the **👁 Peek** button (or **R**) to show only the reference mesh.
 - **Three-mode workflow.** The left rail has exactly three modes — **Overview · Correspondence · Inspect** — that share one selection state. The containers (rail, 3D viewport, focus panel, bottom dock) never move between modes; only their content changes. A single global **Before / After** toggle in the top bar (enabled once anything is solved) flips the whole app between each mesh's load pose and its solved pose.
 - **Overview.** The rail lists every mesh with a colour swatch, visibility toggle, sensor-type tag (cycles), the reference **★**, and a frame-camera button; hovering a row peek-isolates that mesh in 3D. The bottom dock is a roster (sensor · triangle count · overlaps-the-reference · visibility). The focus panel shows atlas-textured WebGL tiles of each mesh.
@@ -119,7 +119,7 @@ All query coordinates are **absolute world space**; the server converts to mesh-
 
 **`Sg.DepthMask` is never used.** It is buggy in this Aardvark / Aardworx WebGL build and silently breaks the depth pipeline. Ordering is steered with `Sg.DepthTest` + `Sg.Pass` alone. This violates the textbook "translucent should not write depth" rule, but it is the only configuration that renders correctly in this stack.
 
-**Image-space outlines** (`OutlineView.fs`, gated by the gear toggle) are the one offscreen pass: meshes render into an MRT G-buffer (world normal + depth, palette colour + coverage mask), and a fullscreen edge-detect pass paints per-mesh outlines. Ordinary FBOs are fine in this stack.
+**Image-space outlines** (`OutlineView.fs`, always on) are the one offscreen pass: meshes render into an MRT G-buffer (world-Z band parity + depth, palette colour + coverage mask), and a fullscreen edge-detect pass paints per-mesh silhouette outlines plus global-Z elevation isolines. Ordinary FBOs are fine in this stack.
 
 **Picking** uses Aardvark's pixel picker. `e.Location.Depth < 0.9999` gates valid hits (background misses leave depth at the clear value 1.0). The focus-panel correspondence pick is different: a 2D-frame click is inverted to a world ray (orthographic for Top, cylindrical for Pano) and raycast server-side. Note `Sg.OnTap` / `OnDoubleTap` fire on background misses too, so any handler that builds state from the hit must gate on the depth check.
 

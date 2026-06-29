@@ -201,7 +201,11 @@ type Model =
         CorrSetMode         : bool
         CorrPreview         : V3d option
 
-        OutlineMode         : bool
+        // Outline edge-detect threshold (depth Laplacian) + isoline band count over
+        // the scene Z range. Tunable from the gear menu; see OutlineEdge /
+        // buildOutlineNode. Image-space outlines + isolines are always on.
+        OutlineThreshold    : float
+        IsolineBands        : float
     }
 
 // Displayed = the pose a mesh currently shows: at RegAfter a solved mesh uses its
@@ -278,5 +282,6 @@ module Model =
             FocusPeekReference  = false
             CorrSetMode         = false
             CorrPreview         = None
-            OutlineMode         = false
+            OutlineThreshold    = 0.004
+            IsolineBands        = 700.0
         }

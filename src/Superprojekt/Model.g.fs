@@ -1,5 +1,5 @@
-//505cd1d7-bd57-9a19-1da7-59e2a4463d7f
-//626266d8-f54e-fe04-f26c-c8a624bd7f3a
+//da1f546d-f0c2-a514-9324-8660291a32b6
+//ff983583-c57f-f982-4f4e-0461b86809f6
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -80,7 +80,8 @@ type AdaptiveModel(value : Model) =
     let _FocusPeekReference_ = FSharp.Data.Adaptive.cval(value.FocusPeekReference)
     let _CorrSetMode_ = FSharp.Data.Adaptive.cval(value.CorrSetMode)
     let _CorrPreview_ = FSharp.Data.Adaptive.cval(value.CorrPreview)
-    let _OutlineMode_ = FSharp.Data.Adaptive.cval(value.OutlineMode)
+    let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
+    let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -134,7 +135,8 @@ type AdaptiveModel(value : Model) =
             _FocusPeekReference_.Value <- value.FocusPeekReference
             _CorrSetMode_.Value <- value.CorrSetMode
             _CorrPreview_.Value <- value.CorrPreview
-            _OutlineMode_.Value <- value.OutlineMode
+            _OutlineThreshold_.Value <- value.OutlineThreshold
+            _IsolineBands_.Value <- value.IsolineBands
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -181,5 +183,6 @@ type AdaptiveModel(value : Model) =
     member __.FocusPeekReference = _FocusPeekReference_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CorrSetMode = _CorrSetMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CorrPreview = _CorrPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
-    member __.OutlineMode = _OutlineMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
 

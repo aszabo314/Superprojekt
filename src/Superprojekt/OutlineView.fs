@@ -7,12 +7,10 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open FShade
 
-// Per-mesh image-space outlines. Offscreen G-buffer pass (world normal + depth →
-// target0, palette colour + mask → target1) then a fullscreen edge-detect
-// composite painting each mesh's outline in its palette colour, including the
-// near-plane cut (mask boundary). Gated on OutlineMode — when off the composite
-// is inactive and the offscreen task never runs (lazy), so it can never regress
-// the main forward pass.
+// Per-mesh image-space outlines. Offscreen G-buffer pass (world-Z band parity +
+// depth → target0, palette colour + coverage mask → target1) then a fullscreen
+// edge-detect composite painting each mesh's silhouette/cliff outline + world-Z
+// isolines in its palette colour. Always on — the offscreen task runs every frame.
 module OutlineView =
 
     let private quadPos =
@@ -67,7 +65,6 @@ module OutlineView =
 
         let composite =
             sg {
-                Sg.Active model.OutlineMode
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Shader {
@@ -77,6 +74,7 @@ module OutlineView =
                 Sg.Uniform("GNormal", gNormal)
                 Sg.Uniform("GColor", gColor)
                 Sg.Uniform("OutlineTexel", texel)
+                Sg.Uniform("OutlineThreshold", model.OutlineThreshold |> AVal.map float32)
                 Sg.VertexAttributes(
                     HashMap.ofList [
                         string DefaultSemantic.Positions,

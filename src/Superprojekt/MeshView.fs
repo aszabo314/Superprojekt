@@ -302,15 +302,16 @@ module MeshView =
                 names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
         let palette = Primitives.meshPaletteV4d
         // World-Z isoline spacing (render-space Z step), shared across meshes so
-        // the band parity lines up. Sized for ~25 bands over the scene elevation
-        // range (SceneBounds is world-metric, render = metric × datasetScale). The
-        // G-buffer encodes band parity from this; the edge pass draws the lines.
+        // the band parity lines up. Sized for IsolineBands bands over the scene
+        // elevation range (SceneBounds is world-metric, render = metric × datasetScale).
+        // The G-buffer encodes band parity from this; the edge pass draws the lines.
         let contourSpacing =
             let datasetScaleA =
                 (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-            (model.SceneBounds, datasetScaleA) ||> AVal.map2 (fun (b : Box3d) s ->
+            AVal.map3 (fun (b : Box3d) s bands ->
                 let zext = if b.IsInvalid then 0.0 else b.Size.Z
-                float32 (max 1e-6 (zext / 25.0) * s))
+                float32 (max 1e-6 (zext / max 1.0 bands) * s))
+                model.SceneBounds datasetScaleA model.IsolineBands
         let nodes =
             model.MeshNames |> AList.map (fun name ->
                 let loaded = loadMeshAsync (fun () -> ()) name

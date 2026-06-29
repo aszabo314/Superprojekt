@@ -224,18 +224,20 @@ module OutlineGBuffer =
         }
 
 // Edge-detect fullscreen pass: sample the g-buffer at centre ±1 texel; an edge =
-// window-depth jump (silhouette + cliff/occlusion outlines, view-dependent) OR a
-// world-Z band-parity flip (elevation isolines, world-locked — the band index is a
-// pure function of world Z so the line stays welded to the surface as the camera
-// moves, while still rendering as a crisp 1px screen-space edge). Both gated to
-// covered pixels. The old normal-angle term is gone. The coverage-mask (mEdge)
-// term was dropped too — depth jumps already trace the silhouette in this data.
+// window-depth BREAK (silhouette + cliff/occlusion outlines — a second difference of
+// depth, so smooth grazing slopes don't register) OR a world-Z band-parity flip
+// (elevation isolines, world-locked — the band index is a pure function of world Z so
+// the line stays welded to the surface as the camera moves, while still rendering as a
+// crisp 1px screen-space edge). Both gated to covered pixels. The old normal-angle term
+// is gone. The coverage-mask (mEdge) term was dropped too — the depth break already
+// traces the silhouette in this data.
 // Output the per-pixel palette colour where an edge is found, transparent else.
 [<ReflectedDefinition>]
 module OutlineEdge =
 
     type UniformScope with
         member x.OutlineTexel : V2f = x?OutlineTexel
+        member x.OutlineThreshold : float32 = x?OutlineThreshold
 
     let private gNormal =
         sampler2d {
@@ -272,15 +274,23 @@ module OutlineEdge =
             let d  = gNormal.Sample(v.tc + V2f(0.0f, -ts.Y))
             let m0 = gColor.Sample(v.tc).W
             // target0: .w = window depth → silhouette/cliff outline; .x = world-Z
-            // band parity → world-locked isolines. Both are the same edge-detect: a
-            // jump between adjacent texels is a 1px line. Gated to covered pixels.
+            // band parity → world-locked isolines.
+            //   dEdge is the SECOND difference (depth Laplacian) of window depth, not
+            //   the first difference: window-space gl_FragCoord.z is linear in screen
+            //   space across any planar primitive, so |l + r - 2c| is ~0 on a smooth
+            //   slope at any view angle/distance and spikes only at a genuine break
+            //   (silhouette/cliff/occlusion) — at a clean step it equals the full
+            //   jump. The old first difference only measured screen-space depth slope,
+            //   so it lit up every grazing/near surface as false banded lines.
+            //   iEdge stays a first difference — parity is a step function, so any
+            //   flip is already a real band boundary.
             let dEdge =
-                max (max (abs (c.W - l.W)) (abs (c.W - r.W)))
-                    (max (abs (c.W - u.W)) (abs (c.W - d.W)))
+                max (abs (l.W + r.W - 2.0f * c.W))
+                    (abs (u.W + d.W - 2.0f * c.W))
             let iEdge =
                 max (max (abs (c.X - l.X)) (abs (c.X - r.X)))
                     (max (abs (c.X - u.X)) (abs (c.X - d.X)))
-            let isEdge = dEdge > 0.0015f || iEdge > 0.5f
+            let isEdge = dEdge > uniform.OutlineThreshold || iEdge > 0.5f
             if isEdge && m0 > 0.5f then
                 let col = gColor.Sample(v.tc)
                 return V4f(col.X, col.Y, col.Z, 1.0f)

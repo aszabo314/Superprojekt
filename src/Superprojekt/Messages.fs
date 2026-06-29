@@ -14,6 +14,8 @@ type Message =
     | SetGhostOpacity of float
     | SetShadingStrength of float
     | SetSlopeThresholdDeg of float
+    | SetOutlineThreshold of float
+    | SetIsolineBands of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
     | SetReferencePeek of bool
@@ -65,7 +67,6 @@ type Message =
     // world); drives the 3D ghost while CorrSetMode is on.
     | CorrPreviewComputed of V3d option
     | SetFocusPeekReference of bool
-    | ToggleOutlines
     // aspect from the view, fovY from the fixed 90° horizontal fov.
     | FlyTo of FlyToTarget * aspect:float
     | NavTo of NavAction

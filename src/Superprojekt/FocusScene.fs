@@ -15,11 +15,23 @@ open Aardvark.Dom
 // on click); the `Sg.OnTap` GPU pick did not fire reliably in this 2nd render control.
 module FocusScene =
 
-    // Pan/zoom of the single, in fit-relative units (any focused mesh frames at
-    // zoom 1 / pan 0). Module-level: one single control, state survives rebuilds.
-    let private panNorm = cval V2d.Zero
-    let private zoom = cval 1.0
-    let resetCam () = transact (fun () -> panNorm.Value <- V2d.Zero; zoom.Value <- 1.0)
+    // Pan/zoom of the single, in fit-relative units (a mesh frames at zoom 1 / pan 0).
+    // Kept PER MESH so switching small-multiples restores each view's own state —
+    // module-level singletons made every mesh share one camera. Survives rebuilds.
+    let private camStates = System.Collections.Generic.Dictionary<string, cval<V2d> * cval<float>>()
+    let private camFor (name : string) =
+        match camStates.TryGetValue name with
+        | true, v -> v
+        | _ ->
+            let v = (cval V2d.Zero, cval 1.0)
+            camStates.[name] <- v
+            v
+    // ⟲ reset: clears the focused mesh's own camera (None = all, e.g. dataset switch).
+    let resetCam (name : string option) =
+        transact (fun () ->
+            match name with
+            | Some n -> let pan, z = camFor n in pan.Value <- V2d.Zero; z.Value <- 1.0
+            | None   -> for KeyValue(_, (pan, z)) in camStates do pan.Value <- V2d.Zero; z.Value <- 1.0)
     // Device-pixel-ratio (framebuffer ÷ CSS px). Set by the main view (where
     // RenderControl.ClientSize works); used to turn the focus cursor (CSS px) into
     // framebuffer-relative NDC. Binding ClientSize directly in this secondary
@@ -49,6 +61,37 @@ module FocusScene =
             (loaded.centroid, model.CommonCentroid, scale)
             |||> AVal.map3 (fun c common s -> Trafo3d.Translation(c - common) * Trafo3d.Scale s)
         (baseT, MeshView.displayedMeshT model name) ||> AVal.map2 (fun b t -> b * t), scale
+
+    // Framing for both the single and the tiles: the panorama centre and the
+    // half-extent that frames the mesh around it.
+    //  • centreWorld  = stored PanoCenters[mesh] (absolute world) else the centroid
+    //                   (= the mesh origin) — request: no entry ⇒ origin, as before.
+    //  • centreRender = that carried through renderT (− centroid → mesh frame → render):
+    //                   the pano cylinder eye AND the Top-view camera centre.
+    //  • extent       = farthest mesh-bbox corner from the centre (render units), so a
+    //                   centre off the geometry still frames it; ×0.98 zooms in a touch.
+    let private framing (model : AdaptiveModel) (name : string) (loaded : LoadedMesh)
+                        (renderT : aval<Trafo3d>) (scale : aval<float>) =
+        let centreWorld =
+            (model.PanoCenters, loaded.centroid) ||> AVal.map2 (fun centers c ->
+                match Map.tryFind name centers with Some w -> w | None -> c)
+        let centreRender =
+            (renderT, centreWorld, loaded.centroid) |||> AVal.map3 (fun rt w c ->
+                rt.Forward.TransformPos (w - c))
+        let extent =
+            AVal.custom (fun t ->
+                let s = scale.GetValue t
+                let w = centreWorld.GetValue t
+                let r =
+                    match Map.tryFind name (model.MeshBounds.GetValue t) with
+                    | Some (b : Box3d) when not b.IsInvalid ->
+                        let dx = max (abs (b.Min.X - w.X)) (abs (b.Max.X - w.X))
+                        let dy = max (abs (b.Min.Y - w.Y)) (abs (b.Max.Y - w.Y))
+                        let dz = max (abs (b.Min.Z - w.Z)) (abs (b.Max.Z - w.Z))
+                        sqrt (dx * dx + dy * dy + dz * dz)
+                    | _ -> loaded.localMaxR.GetValue t
+                max 1e-4 (r * s * 0.98))
+        centreWorld, centreRender, extent
 
     // Top-down ortho view + projection framing the displayed render centroid,
     // radius = localMaxR·scale, offset by (pan, zoom).
@@ -135,23 +178,15 @@ module FocusScene =
     // unwrap (camera identity; the shader writes clip directly). Picking is Dom-driven
     // (the Sg pick didn't fire reliably in this 2nd control): the cursor is inverted to
     // a render-space ray, raycast on the server, and the hit drives a live 3D preview
-    // ghost on move + the placement on click. Shared pan/zoom, mouse-anchored zoom.
+    // ghost on move + the placement on click. Per-mesh pan/zoom, mouse-anchored zoom.
     let private focusSingle (env : Env<Message>) (model : AdaptiveModel) (name : string) (proj : FocusProjection) : DomNode =
         let loaded = MeshView.loadMeshAsync (fun () -> ()) name
         let renderT, scale = renderTrafoOf model name loaded
-        let fitCenter = renderT |> AVal.map (fun t -> t.Forward.TransformPos V3d.Zero)
-        let fitExtent = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> max 1e-4 (r * s * 1.15))
-        // Pano cylinder eye = the measured calibrated-camera centre (PanoCenters, world
-        // coords) carried into the mesh's own frame (− centroid) then through renderT,
-        // so it scales + follows the before/after pose exactly like the geometry. No
-        // entry → the mesh origin (the prior behaviour).
-        let panoEye =
-            (renderT, model.PanoCenters, loaded.centroid) |||> AVal.map3 (fun rt centers c ->
-                let objCenter =
-                    match Map.tryFind name centers with
-                    | Some w -> w - c
-                    | None -> V3d.Zero
-                rt.Forward.TransformPos objCenter)
+        // Per-mesh pan/zoom so each small-multiple keeps its own camera on switch.
+        let panNorm, zoom = camFor name
+        // panoEye = the pano cylinder eye AND the Top-view camera centre (the mesh's
+        // panorama centre in render space); fitExtent frames the mesh around it.
+        let _, panoEye, fitExtent = framing model name loaded renderT scale
         let isPano = (proj = ProjPano)
         let modeA, scalarBuf, hiA = focusOverlay model name loaded scale
         // Displacement single: white surface (mode 2 → 3) so the arrow glyphs read.
@@ -230,7 +265,9 @@ module FocusScene =
                 let aspect = w / h
                 let clipX = 2.0 * px / w - 1.0
                 let clipY = 1.0 - 2.0 * py / h
-                let fc = AVal.force fitCenter
+                // fc = the pano centre (cylinder eye for Pano; ortho frame centre for
+                // Top) — matches the render uniform / Top camera.
+                let fc = AVal.force panoEye
                 let ext = AVal.force fitExtent
                 let z = zoom.Value
                 let pan = panNorm.Value
@@ -240,8 +277,7 @@ module FocusScene =
                         let v = pan.Y + clipY / z
                         let az = u * System.Math.PI
                         let el = v * System.Math.PI * 0.5
-                        // origin = the pano cylinder eye (matches the render uniform)
-                        AVal.force panoEye, V3d(cos el * cos az, cos el * sin az, sin el)
+                        fc, V3d(cos el * cos az, cos el * sin az, sin el)
                     else
                         let halfE = ext / max 1e-3 z
                         V3d(fc.X + pan.X * ext + clipX * halfE * aspect,
@@ -311,7 +347,7 @@ module FocusScene =
                     panNorm.Value <- panNorm.Value + V2d(clipX * aspect * (1.0/z - 1.0/z'), clipY * (1.0/z - 1.0/z'))))
             let viewT, projT =
                 if isPano then AVal.constant Trafo3d.Identity, AVal.constant Trafo3d.Identity
-                else orthoCam size fitCenter fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
+                else orthoCam size panoEye fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
             let surface =
                 if isPano then
                     sg {
@@ -359,8 +395,8 @@ module FocusScene =
     let private focusTile (env : Env<Message>) (model : AdaptiveModel) (name : string) : DomNode =
         let loaded = MeshView.loadMeshAsync (fun () -> ()) name
         let renderT, scale = renderTrafoOf model name loaded
-        let fitCenter = renderT |> AVal.map (fun t -> t.Forward.TransformPos V3d.Zero)
-        let fitExtent = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> max 1e-4 (r * s * 1.15))
+        // Centre the thumbnail on the same panorama centre as the single.
+        let _, fitCenter, fitExtent = framing model name loaded renderT scale
         let modeA, scalarBuf, hiA = focusOverlay model name loaded scale
         let rc =
             renderControl {

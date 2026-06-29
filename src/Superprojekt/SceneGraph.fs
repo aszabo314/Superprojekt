@@ -17,10 +17,10 @@ module SceneGraph =
 
     // Coordinate-cross centre block. Always-on-top: DepthTest.None, passOne
     // after the opaque mesh pass; alpha-blended.
-    let private axisBox (color : V4d) (trafo : Trafo3d) =
+    let private axisBox (color : V4d) (trafo : aval<Trafo3d>) =
         sg {
             Sg.Pass RenderPass.passOne
-            Sg.Trafo (AVal.constant trafo)
+            Sg.Trafo trafo
             Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
             Sg.Uniform("FlatColor", AVal.constant (V4f color))
             Sg.DepthTest (AVal.constant DepthTest.None)
@@ -33,8 +33,9 @@ module SceneGraph =
             Sg.Render (AVal.constant boxIdx.Length)
         }
 
-    // Origin cross + tick segments. Always-on-top: DepthTest.None, passOne.
-    let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
+    // Origin cross + tick segments, anchored at `center` (render space — the first
+    // mesh's panorama centre). Always-on-top: DepthTest.None, passOne.
+    let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (center : aval<V3d>) =
         let axisLength = 3.0
         let tickSpacing = 0.25
         let tickLen = 0.12
@@ -43,26 +44,27 @@ module SceneGraph =
         let yColor = V4d(0.10, 0.72, 0.10, 1.0)
         let zColor = V4d(0.15, 0.35, 0.90, 1.0)
 
-        let tickSegs (color : V4d) (dir : V3d) (perpA : V3d) =
+        let tickSegs (o : V3d) (color : V4d) (dir : V3d) (perpA : V3d) =
             let n = int (axisLength / tickSpacing)
             let half = perpA * (tickLen * 0.5)
             [| for i in 1 .. n do
-                let center = dir * (float i * tickSpacing)
-                yield center - half, center + half, color, 1.5 |]
+                let c = o + dir * (float i * tickSpacing)
+                yield c - half, c + half, color, 1.5 |]
 
         let allLineSegs =
-            AVal.constant (Array.concat [
-                [| V3d.Zero, V3d.IOO * axisLength, xColor, 2.0
-                   V3d.Zero, V3d.OIO * axisLength, yColor, 2.0
-                   V3d.Zero, V3d.OOI * axisLength, zColor, 2.0 |]
-                tickSegs xColor V3d.IOO V3d.OOI
-                tickSegs yColor V3d.OIO V3d.IOO
-                tickSegs zColor V3d.OOI V3d.IOO
-            ])
+            center |> AVal.map (fun o ->
+                Array.concat [
+                    [| o, o + V3d.IOO * axisLength, xColor, 2.0
+                       o, o + V3d.OIO * axisLength, yColor, 2.0
+                       o, o + V3d.OOI * axisLength, zColor, 2.0 |]
+                    tickSegs o xColor V3d.IOO V3d.OOI
+                    tickSegs o yColor V3d.OIO V3d.IOO
+                    tickSegs o zColor V3d.OOI V3d.IOO
+                ])
 
         ASet.ofList [
             sg { Sg.Active active; Sg.View view; Sg.Proj proj
-                 axisBox (V4d(0.88, 0.88, 0.88, 1.0)) (Trafo3d.Scale 0.08) }
+                 axisBox (V4d(0.88, 0.88, 0.88, 1.0)) (center |> AVal.map (fun o -> Trafo3d.Scale 0.08 * Trafo3d.Translation o)) }
             sg { Sg.Active active; Sg.View view; Sg.Proj proj
                  Sg.Pass RenderPass.passOne
                  Sg.DepthTest (AVal.constant DepthTest.None)
@@ -70,7 +72,7 @@ module SceneGraph =
                  Lines.render allLineSegs }
         ]
 
-    let private originLabels (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) =
+    let private originLabels (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (center : aval<V3d>) =
         let axisLength = 3.0
         let tickSpacing = 0.25
         let tickLen = 0.12
@@ -93,33 +95,33 @@ module SceneGraph =
             [ for i in 1 .. n do
                 if i % 4 = 0 then
                     let dist = float i * tickSpacing
-                    let center = dir * dist
-                    let labelPos = center + perpA * (tickLen * 0.5 + labelSize * 1.2)
+                    let labelPos = dir * dist + perpA * (tickLen * 0.5 + labelSize * 1.2)
                     let trafo = Trafo3d.Scale(labelSize) * textRot * Trafo3d.Translation(labelPos)
                     yield sg {
                         Sg.Active active; Sg.View view; Sg.Proj proj
                         Sg.Pass RenderPass.passOne
                         Sg.DepthTest (AVal.constant DepthTest.None)
-                        Sg.Trafo (AVal.constant trafo)
+                        Sg.Trafo (center |> AVal.map (fun o -> trafo * Trafo3d.Translation o))
                         Sg.Text(sprintf "%.0f" dist, color = AVal.constant textColor, align = TextAlignment.Center)
                     } ]
 
         let tipOffset = axisLength + labelSize * 1.5
+        let tipTrafo (baseT : Trafo3d) = center |> AVal.map (fun o -> baseT * Trafo3d.Translation o)
         let tipNodes =
             [ sg { Sg.Active active; Sg.View view; Sg.Proj proj
                    Sg.Pass RenderPass.passOne
                    Sg.DepthTest (AVal.constant DepthTest.None)
-                   Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoX * Trafo3d.Translation(V3d.IOO * tipOffset)))
+                   Sg.Trafo (tipTrafo (Trafo3d.Scale(labelSize * 1.5) * textTrafoX * Trafo3d.Translation(V3d.IOO * tipOffset)))
                    Sg.Text("X", color = AVal.constant (darken xColor), align = TextAlignment.Center) }
               sg { Sg.Active active; Sg.View view; Sg.Proj proj
                    Sg.Pass RenderPass.passOne
                    Sg.DepthTest (AVal.constant DepthTest.None)
-                   Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoY * Trafo3d.Translation(V3d.OIO * tipOffset)))
+                   Sg.Trafo (tipTrafo (Trafo3d.Scale(labelSize * 1.5) * textTrafoY * Trafo3d.Translation(V3d.OIO * tipOffset)))
                    Sg.Text("Y", color = AVal.constant (darken yColor), align = TextAlignment.Center) }
               sg { Sg.Active active; Sg.View view; Sg.Proj proj
                    Sg.Pass RenderPass.passOne
                    Sg.DepthTest (AVal.constant DepthTest.None)
-                   Sg.Trafo (AVal.constant (Trafo3d.Scale(labelSize * 1.5) * textTrafoZ * Trafo3d.Translation(V3d.OOI * tipOffset)))
+                   Sg.Trafo (tipTrafo (Trafo3d.Scale(labelSize * 1.5) * textTrafoZ * Trafo3d.Translation(V3d.OOI * tipOffset)))
                    Sg.Text("Z", color = AVal.constant (darken zColor), align = TextAlignment.Center) } ]
 
         ASet.ofList (
@@ -194,8 +196,21 @@ module SceneGraph =
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
 
         let notFullscreen = AVal.map not fullscreenActive
-        let cross         = originIndicator view proj notFullscreen
-        let labels        = originLabels    view proj notFullscreen
+        // The cross + axis labels sit at the first mesh's panorama centre (render
+        // space): stored PanoCenters[first] else its centroid (= origin); empty → origin.
+        let crossCenter =
+            AVal.custom (fun t ->
+                match model.MeshNames.Content.GetValue t |> IndexList.toList with
+                | first :: _ ->
+                    let cc = model.CommonCentroid.GetValue t
+                    let world =
+                        match Map.tryFind first (model.PanoCenters.GetValue t) with
+                        | Some w -> w
+                        | None -> Map.tryFind first (model.DatasetCentroids.GetValue t) |> Option.defaultValue cc
+                    (world - cc) * DatasetScale.forMesh (model.DatasetScales.GetValue t) first
+                | [] -> V3d.Zero)
+        let cross         = originIndicator view proj notFullscreen crossCenter
+        let labels        = originLabels    view proj notFullscreen crossCenter
         let refOutline    = referenceOutline view proj notFullscreen model
 
         let viewportUni =

@@ -53,7 +53,7 @@ module GuiFocus =
             button {
                 Class "focus-reset"
                 Attribute("title", "Reset pan / zoom")
-                Dom.OnClick(fun _ -> FocusScene.resetCam ())
+                Dom.OnClick(fun _ -> FocusScene.resetCam (AVal.force focusMesh))
                 "⟲ reset"
             }
 

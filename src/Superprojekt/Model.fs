@@ -238,6 +238,22 @@ module ModelTransforms =
     let displayedWorld (model : Model) (mesh : string) =
         toWorld model mesh (displayedRender model mesh)
 
+    // A mesh's panorama centre in render space (load pose): stored PanoCenters[mesh]
+    // (absolute world), else the centroid (= the mesh origin) — then (world − common)·scale.
+    let panoCenterRender (model : Model) (mesh : string) =
+        let world =
+            match Map.tryFind mesh model.PanoCenters with
+            | Some w -> w
+            | None -> Map.tryFind mesh model.DatasetCentroids |> Option.defaultValue model.CommonCentroid
+        (world - model.CommonCentroid) * DatasetScale.forMesh model.DatasetScales mesh
+
+    // The first mesh in the list's panorama centre (render space), the anchor for the
+    // coordinate cross + the camera's resting target. Empty list → render origin.
+    let firstPanoCenterRender (model : Model) =
+        match model.MeshNames |> IndexList.toList with
+        | first :: _ -> panoCenterRender model first
+        | [] -> V3d.Zero
+
 module Model =
     let initial =
         {

@@ -268,9 +268,15 @@ module Update =
                         )) Box3d.Invalid
                 let padded = Box3d(union.Min - V3d.III, union.Max + V3d.III)
                 let perMesh = bboxes |> Array.fold (fun m (n, b) -> Map.add n b m) Map.empty
-                { model with
-                    SceneBounds = padded
-                    MeshBounds = perMesh }
+                let m =
+                    { model with
+                        SceneBounds = padded
+                        MeshBounds = perMesh }
+                // Rest the camera on the first mesh's panorama centre (last load step,
+                // so PanoCenters/centroids are in). One-shot per dataset load.
+                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, ModelTransforms.firstPanoCenterRender m))
+                          CameraMessage (OrbitMessage.SetTargetRadius(true, max 1.0 (padded.Size.Length * 0.6)))]
+                m
         | DatasetsLoaded datasets ->
             { model with Datasets = datasets |> Array.toList }
         | SetActiveDataset dataset ->
@@ -321,9 +327,10 @@ module Update =
             let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, false) |> Map.ofSeq
             invalidateProbes { model with MeshVisible = vis; MeshSolo = NoSolo }
         | ResetCamera ->
-            let center, radius =
-                if model.SceneBounds.IsInvalid then V3d.Zero, 50.0
-                else V3d.Zero, max 1.0 (model.SceneBounds.Size.Length * 0.6)
+            let center = ModelTransforms.firstPanoCenterRender model
+            let radius =
+                if model.SceneBounds.IsInvalid then 50.0
+                else max 1.0 (model.SceneBounds.Size.Length * 0.6)
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, center))]
             env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
             model

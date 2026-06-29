@@ -141,6 +141,17 @@ module FocusScene =
         let renderT, scale = renderTrafoOf model name loaded
         let fitCenter = renderT |> AVal.map (fun t -> t.Forward.TransformPos V3d.Zero)
         let fitExtent = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> max 1e-4 (r * s * 1.15))
+        // Pano cylinder eye = the measured calibrated-camera centre (PanoCenters, world
+        // coords) carried into the mesh's own frame (− centroid) then through renderT,
+        // so it scales + follows the before/after pose exactly like the geometry. No
+        // entry → the mesh origin (the prior behaviour).
+        let panoEye =
+            (renderT, model.PanoCenters, loaded.centroid) |||> AVal.map3 (fun rt centers c ->
+                let objCenter =
+                    match Map.tryFind name centers with
+                    | Some w -> w - c
+                    | None -> V3d.Zero
+                rt.Forward.TransformPos objCenter)
         let isPano = (proj = ProjPano)
         let modeA, scalarBuf, hiA = focusOverlay model name loaded scale
         // Displacement single: white surface (mode 2 → 3) so the arrow glyphs read.
@@ -229,7 +240,8 @@ module FocusScene =
                         let v = pan.Y + clipY / z
                         let az = u * System.Math.PI
                         let el = v * System.Math.PI * 0.5
-                        fc, V3d(cos el * cos az, cos el * sin az, sin el)
+                        // origin = the pano cylinder eye (matches the render uniform)
+                        AVal.force panoEye, V3d(cos el * cos az, cos el * sin az, sin el)
                     else
                         let halfE = ext / max 1e-3 z
                         V3d(fc.X + pan.X * ext + clipX * halfE * aspect,
@@ -306,7 +318,7 @@ module FocusScene =
                         Sg.Trafo renderT
                         Sg.Shader { DefaultSurfaces.trafo; FocusShaders.pano; DefaultSurfaces.diffuseTexture; FocusShaders.focusColor }
                         Sg.Uniform("DiffuseColorTexture", loaded.tex)
-                        Sg.Uniform("PanoEye",    fitCenter |> AVal.map (fun c -> V3f(float32 c.X, float32 c.Y, float32 c.Z)))
+                        Sg.Uniform("PanoEye",    panoEye |> AVal.map (fun c -> V3f(float32 c.X, float32 c.Y, float32 c.Z)))
                         Sg.Uniform("PanoCenter", (panNorm :> aval<_>) |> AVal.map (fun p -> V2f(float32 p.X, float32 p.Y)))
                         Sg.Uniform("PanoZoom",   (zoom :> aval<_>) |> AVal.map float32)
                         Sg.Uniform("PanoAspect", size |> AVal.map (fun s -> float32 (float s.X / float (max 1 s.Y))))

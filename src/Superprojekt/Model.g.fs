@@ -1,5 +1,5 @@
-//da1f546d-f0c2-a514-9324-8660291a32b6
-//ff983583-c57f-f982-4f4e-0461b86809f6
+//4be2828c-62bd-945a-267c-c849a9adce27
+//f595e13a-c1d9-f8d9-a0fa-b7c8803e6e61
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -48,6 +48,7 @@ type AdaptiveModel(value : Model) =
     let _ActiveDataset_ = FSharp.Data.Adaptive.cval(value.ActiveDataset)
     let _DatasetScales_ = FSharp.Data.Adaptive.cval(value.DatasetScales)
     let _DatasetCentroids_ = FSharp.Data.Adaptive.cval(value.DatasetCentroids)
+    let _PanoCenters_ = FSharp.Data.Adaptive.cval(value.PanoCenters)
     let _GhostSilhouette_ = FSharp.Data.Adaptive.cval(value.GhostSilhouette)
     let _GhostOpacity_ = FSharp.Data.Adaptive.cval(value.GhostOpacity)
     let _ShadingStrength_ = FSharp.Data.Adaptive.cval(value.ShadingStrength)
@@ -103,6 +104,7 @@ type AdaptiveModel(value : Model) =
             _ActiveDataset_.Value <- value.ActiveDataset
             _DatasetScales_.Value <- value.DatasetScales
             _DatasetCentroids_.Value <- value.DatasetCentroids
+            _PanoCenters_.Value <- value.PanoCenters
             _GhostSilhouette_.Value <- value.GhostSilhouette
             _GhostOpacity_.Value <- value.GhostOpacity
             _ShadingStrength_.Value <- value.ShadingStrength
@@ -151,6 +153,7 @@ type AdaptiveModel(value : Model) =
     member __.ActiveDataset = _ActiveDataset_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.DatasetScales = _DatasetScales_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
     member __.DatasetCentroids = _DatasetCentroids_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.V3d>>
+    member __.PanoCenters = _PanoCenters_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.V3d>>
     member __.GhostSilhouette = _GhostSilhouette_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.GhostOpacity = _GhostOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ShadingStrength = _ShadingStrength_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>

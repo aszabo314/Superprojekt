@@ -137,6 +137,10 @@ type Model =
         ActiveDataset    : string option
         DatasetScales    : Map<string, float>
         DatasetCentroids : Map<string, V3d>
+        // Per-mesh panorama centre (the calibrated-camera origin), absolute world
+        // coords — same frame as the centroid. Read from <dataset>/pano-centers.txt
+        // on load; the focus pano subtracts the mesh centroid to place its eye.
+        PanoCenters      : Map<string, V3d>
 
         GhostSilhouette      : bool
         GhostOpacity         : float
@@ -250,6 +254,7 @@ module Model =
             ActiveDataset    = None
             DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
             DatasetCentroids = Map.empty
+            PanoCenters      = Map.empty
             GhostSilhouette     = true
             GhostOpacity        = 0.12
             ShadingStrength     = 0.15

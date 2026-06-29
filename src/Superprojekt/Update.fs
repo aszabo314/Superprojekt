@@ -33,6 +33,7 @@ module Update =
                 MeshOrder        = indices
                 MeshesLoaded     = HashSet.empty
                 SceneBounds      = Box3d.Invalid
+                PanoCenters      = Map.empty
                 LoadTransforms   = loadTransforms
                 SolvedTransforms = Map.empty
                 RegView          = RegBefore
@@ -43,6 +44,8 @@ module Update =
                 DatasetCentroids =
                     let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) model.DatasetCentroids
                     if dataset <> "" then Map.add dataset common perMesh else perMesh }
+        | PanoCentersLoaded pcs ->
+            { model with PanoCenters = Map.ofArray pcs }
         | SetVisible(name, v) ->
             let activePickingLayer =
                 if not v && model.ActivePickingLayer = Some name then None

@@ -31,6 +31,15 @@ module View =
         let p1 = vp.Backward.TransformPosProj(V3d(ndc, 1.0))
         Ray3d(p0, (p1 - p0) |> Vec.normalize)
 
+    // Cursor ray ∩ the render-space Z=0 plane. Render Z=0 ⟺ world Z = CommonCentroid.Z,
+    // so this is a horizontal plane at the dataset's mean elevation — the readout
+    // fallback when the ray misses every mesh.
+    let private rayPlaneZ0 (ray : Ray3d) : V3d option =
+        if abs ray.Direction.Z < 1e-6 then None
+        else
+            let t = -ray.Origin.Z / ray.Direction.Z
+            if t > 0.0 then Some (ray.Origin + t * ray.Direction) else None
+
     let private worldFromRender (model : AdaptiveModel) (renderPos : V3d) =
         let scale = DatasetScale.active (AVal.force model.ActiveDataset) (AVal.force model.DatasetScales)
         ScanPin.worldCentre (AVal.force model.CommonCentroid) scale renderPos
@@ -291,10 +300,19 @@ module View =
                         | _ -> false
                     let pick =
                         if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                    // Readout fallback: when the cursor ray misses every mesh, drop it
+                    // onto the render Z=0 plane (dataset mean elevation) so the top-bar
+                    // coordinate keeps reading over open ground / off-mesh.
                     let nextHover =
                         match pick with
                         | Some renderPos -> Some (worldFromRender model renderPos)
-                        | None -> None
+                        | None ->
+                            match cursorScreen.Value with
+                            | Some cursorPx ->
+                                pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
+                                |> rayPlaneZ0
+                                |> Option.map (worldFromRender model)
+                            | None -> None
                     let nextPlacement = if placementWanted then pick else None
                     let needHover     = hoverCoord.Value     <> nextHover
                     let needPlacement = placementHover.Value <> nextPlacement

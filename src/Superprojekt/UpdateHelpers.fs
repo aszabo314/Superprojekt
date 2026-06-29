@@ -18,6 +18,10 @@ module ServerActions =
                 env.Emit [CentroidsLoaded cs]
             with _ -> ()
             try
+                let! pcs = MeshData.fetchPanoCenters ApiConfig.apiBase.Value dataset
+                env.Emit [PanoCentersLoaded pcs]
+            with _ -> ()
+            try
                 let! bboxes = MeshData.fetchBboxes ApiConfig.apiBase.Value dataset
                 env.Emit [SceneBoundsLoaded bboxes]
             with _ -> ()

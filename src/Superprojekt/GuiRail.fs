@@ -79,6 +79,7 @@ module GuiRail =
 
         let meshRow (name : string) =
             let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+            let isSolo = model.MeshSolo |> AVal.map (function Solo(n, _) -> n = name | _ -> false)
             let isRef  = refMesh |> AVal.map ((=) (Some name))
             let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
             let colorVal = idxVal |> AVal.map meshColor
@@ -113,6 +114,13 @@ module GuiRail =
                     Attribute("title", "Visible")
                     Dom.OnClick(fun _ -> env.Emit [SetVisible(name, not (AVal.force isVis))])
                     isVis |> AVal.map (fun v -> if v then "●" else "○")
+                }
+                button {
+                    Class "mb"
+                    isSolo |> AVal.map (fun s -> if s then Some (Class "mb-on") else None)
+                    Attribute("title", "Isolate this mesh (hide the others); click again to restore")
+                    Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name])
+                    "◐"
                 }
                 button {
                     Class "mb rail-sensor"

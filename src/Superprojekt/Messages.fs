@@ -6,6 +6,7 @@ open Superprojekt
 type Message =
     | CameraMessage      of OrbitMessage
     | CentroidsLoaded    of (string * V3d)[]
+    | PanoCentersLoaded  of (string * V3d)[]
     | LoadFinished       of string
     | SetVisible         of string * bool
     | ToggleMenu

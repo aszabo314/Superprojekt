@@ -32,6 +32,16 @@ let centroidsHandler (dataset : string) : HttpHandler =
         return! json result next ctx
     }
 
+let panoCentersHandler (dataset : string) : HttpHandler =
+    fun next ctx -> task {
+        let log    = ctx.GetLogger "Superserver"
+        let result = Collections.Generic.Dictionary<string, float[]>()
+        for KeyValue(name, c) in MeshLoader.getPanoCenters dataset do
+            result.[name] <- [| c.X; c.Y; c.Z |]
+        log.LogInformation("pano-centers {Dataset}: {Count} meshes", dataset, result.Count)
+        return! json result next ctx
+    }
+
 let bboxesHandler (dataset : string) : HttpHandler =
     fun next ctx -> task {
         let log    = ctx.GetLogger "Superserver"
@@ -104,6 +114,7 @@ let webApp : HttpHandler =
         route  "/api/datasets"                                  >=> datasetsHandler
         route  "/api/datasets/default"                          >=> defaultDatasetHandler
         routef "/api/datasets/%s/centroids"                     centroidsHandler
+        routef "/api/datasets/%s/pano-centers"                  panoCentersHandler
         routef "/api/datasets/%s/bboxes"                        bboxesHandler
         routef "/api/datasets/%s/mesh/%s/%i/atlas"              (fun (d,n,i) -> atlasHandler(d,n,i))
         routef "/api/datasets/%s/mesh/%s/%i"                    (fun (d,n,i) -> meshHandler(d,n,i))

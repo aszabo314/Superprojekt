@@ -94,6 +94,20 @@ module MeshData =
                 |> Seq.toArray
         }
 
+    let fetchPanoCenters (serverUrl : string) (dataset : string) : Async<(string * V3d)[]> =
+        async {
+            let url = sprintf "%s/datasets/%s/pano-centers" (serverUrl.TrimEnd('/')) dataset
+            let! json = Http.client.GetStringAsync(url) |> Async.AwaitTask
+            let doc = System.Text.Json.JsonDocument.Parse(json)
+            return
+                doc.RootElement.EnumerateObject()
+                |> Seq.map (fun prop ->
+                    let a = prop.Value.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                    dataset + "/" + prop.Name, V3d(a.[0], a.[1], a.[2])
+                )
+                |> Seq.toArray
+        }
+
     let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d)[]> =
         async {
             let url = sprintf "%s/datasets/%s/bboxes" (serverUrl.TrimEnd('/')) dataset

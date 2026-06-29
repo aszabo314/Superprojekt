@@ -61,6 +61,30 @@ module GuiTopBar =
 
             div {
                 Class "tb-right"
+                // Live cursor coordinate. World = metric world under the cursor
+                // (XY-plane at mean elevation when off-mesh). When a mesh is focused,
+                // also its point in that mesh's own frame (origin = its camera) =
+                // world − centroid — exact at load pose, the relevant case here.
+                div {
+                    Class "tb-coord"
+                    Attribute("title", "Cursor world coordinate (drops to the mean-elevation XY plane when off-mesh). Focused mesh → offset from that mesh's origin.")
+                    let fmt (p : V3d) = sprintf "%.1f  %.1f  %.1f" p.X p.Y p.Z
+                    span {
+                        Class "tb-coord-w"
+                        hoverCoord |> AVal.map (function Some p -> "world " + fmt p | None -> "world  –")
+                    }
+                    span {
+                        Class "tb-coord-l"
+                        (hoverCoord, model.Selection.FocusedMesh, model.DatasetCentroids)
+                        |||> AVal.map3 (fun hc fm cents ->
+                            match hc, fm with
+                            | Some p, Some name ->
+                                match Map.tryFind name cents with
+                                | Some c -> sprintf "    %s  %s" (Primitives.shortName name) (fmt (p - c))
+                                | None -> ""
+                            | _ -> "")
+                    }
+                }
                 div {
                     Class "tb-gear-wrap"
                     button {

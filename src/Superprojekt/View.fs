@@ -194,10 +194,17 @@ module View =
                             | None -> async.Return frontmost
                             | Some _ ->
                                 async {
+                                    // Un-apply the layer's displayed (before/after) pose so the
+                                    // server raycast meets its load-pose geometry, then map the hit
+                                    // back through the same pose. Render → metric world → server
+                                    // frame, one step each (same convention as the focus pick).
+                                    let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model layer))
                                     let originW = ScanPin.worldCentre cc scale ray.Origin
-                                    let! hit = Query.rayHit ApiConfig.apiBase.Value layer 0 originW ray.Direction
+                                    let serverOrigin = dispWorld.Backward.TransformPos originW
+                                    let serverDir = (dispWorld.Backward.TransformDir ray.Direction).Normalized
+                                    let! hit = Query.rayHit ApiConfig.apiBase.Value layer 0 serverOrigin serverDir
                                     match hit with
-                                    | Some h -> return Some (ScanPin.renderCentre cc scale h.point)
+                                    | Some h -> return Some (ScanPin.renderCentre cc scale (dispWorld.Forward.TransformPos h.point))
                                     | None -> return frontmost
                                 }
 

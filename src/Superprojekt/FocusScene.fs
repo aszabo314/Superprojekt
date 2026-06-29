@@ -204,11 +204,14 @@ module FocusScene =
                 (size, dpr :> aval<_>) ||> AVal.map2 (fun v d ->
                     let k = max 1e-3 d
                     V2i(max 1 (int (round (float v.X / k))), max 1 (int (round (float v.Y / k)))))
-            // Cursor (px,py, CSS px) → world surface point via a server raycast. Build
-            // the render-space ray (ortho drop / pano direction from the eye), map it
-            // into the mesh's own frame for the server, map the hit back to displayed
-            // world. overlaySize is CSS px (ViewportSize ÷ dpr), so the pick is
-            // dpr-correct on hi-dpi — that was the actual bug, not a y-flip.
+            // Cursor (px,py, CSS px) → metric-world surface point via a server raycast.
+            // Two coordinate spaces only: render (where the cursor ray is built) and
+            // metric world (cc/scale, the app's single world convention). The mesh's
+            // displayed before/after pose lives in metric world as `dispWorld`
+            // (= ModelTransforms.displayedWorld), whose Backward is exactly the mesh's
+            // server frame — so render → metric world → server is one step each, the
+            // hit comes back through dispWorld.Forward, and per-mesh centroid never
+            // enters. overlaySize is CSS px (ViewportSize ÷ dpr) → dpr-correct picks.
             let worldRayHit (px : float) (py : float) : Async<V3d option> =
                 let s = AVal.force overlaySize
                 let w = float (max 1 s.X)
@@ -232,15 +235,14 @@ module FocusScene =
                         V3d(fc.X + pan.X * ext + clipX * halfE * aspect,
                             fc.Y + pan.Y * ext + clipY * halfE,
                             fc.Z + (ext + 1.0) * 5.0), V3d(0.0, 0.0, -1.0)
-                let rT = AVal.force renderT
                 let sc = AVal.force scale
                 let cc = AVal.force model.CommonCentroid
-                let mc = AVal.force loaded.centroid
-                let originAbsW = rT.Backward.TransformPos originR + mc
-                let dirLocal = (rT.Backward.TransformDir dirR).Normalized
+                let dispWorld = RigidTransform.renderToWorld sc cc (AVal.force (MeshView.displayedMeshT model name))
+                let serverOrigin = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc sc originR)
+                let serverDir = (dispWorld.Backward.TransformDir dirR).Normalized
                 async {
-                    let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 originAbsW dirLocal
-                    return hit |> Option.map (fun hh -> rT.Forward.TransformPos (hh.point - mc) / sc + cc)
+                    let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
+                    return hit |> Option.map (fun hh -> dispWorld.Forward.TransformPos hh.point)
                 }
             // Set mode: move = live 3D preview ghost (throttled), click = place + exit.
             // Otherwise: drag = pan.

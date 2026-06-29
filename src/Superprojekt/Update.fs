@@ -374,26 +374,21 @@ module Update =
             else { model with Selection = { model.Selection with FocusedMesh = Some m }
                               CorrSetMode = false; CorrPreview = None }
         | PickCorrespondenceAt(pinId, mesh, world) ->
-            // Set the mesh's correspondence marker for the pin, constrained to the
-            // pin's probe-cylinder ROI. Stored mesh-local via the displayed transform.
+            // Place the mesh's correspondence marker for the pin at the picked surface
+            // point. Stored mesh-local via the displayed transform so the before/after
+            // toggle moves it with the mesh. A pick is a pick — no ROI gate.
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
                 match ScanPin.correspondence pin with
-                | Some c ->
-                    let axis = ScanPin.axis pin
-                    let v = world - pin.Centre
-                    let axial = Vec.dot v axis
-                    let radial = (v - axis * axial).Length
-                    if radial <= pin.InnerRadius && abs axial <= ScanPin.fixedProbeLength * 0.5 then
-                        let own = (ModelTransforms.displayedWorld model mesh).Backward.TransformPos world
-                        let sp = updateCorr pinId (fun corr ->
-                                    { corr with
-                                        Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
-                                        InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
-                        // Placement ends set-correspondence mode and clears the ghost.
-                        showToast env "Correspondence placed"
-                            { model with ScanPins = sp; CorrSetMode = false; CorrPreview = None }
-                    else showToast env "Pick is outside the pin ROI" model
+                | Some _ ->
+                    let own = (ModelTransforms.displayedWorld model mesh).Backward.TransformPos world
+                    let sp = updateCorr pinId (fun corr ->
+                                { corr with
+                                    Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
+                                    InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
+                    // Placement ends set-correspondence mode and clears the ghost.
+                    showToast env "Correspondence placed"
+                        { model with ScanPins = sp; CorrSetMode = false; CorrPreview = None }
                 | None -> model
             | None -> model
         | ToggleCorrSetMode ->

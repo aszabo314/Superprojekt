@@ -2,7 +2,7 @@ namespace Superprojekt
 
 open FSharp.Data.Adaptive
 open Aardvark.Base
-open FSharp.Data.Adaptive
+open FSharp.Data.Adaptive // re-open after Aardvark.Base so HashSet resolves to the adaptive one
 open Adaptify
 open Aardvark.Dom
 
@@ -25,20 +25,16 @@ module WorkflowStep =
         | Inspect -> "Inspect"
     let mode = title
 
-// Pano = cylindrical from a mesh origin; Top = the world vertical drop; Oblique =
-// isometric axonometric (keeps the vertical/datum axis visible — displacement).
+// Pano = cylindrical unwrap from a mesh origin; Top = the world vertical drop.
 type FocusProjection =
     | ProjPano
     | ProjTop
-    | ProjOblique
 
 module FocusProjection =
-    let label = function ProjPano -> "Pano" | ProjTop -> "Top" | ProjOblique -> "Oblique"
-    let toInt = function ProjPano -> 0 | ProjTop -> 1 | ProjOblique -> 4
+    let label = function ProjPano -> "Pano" | ProjTop -> "Top"
 
-// Inspect focus-tile channel. Difference = pair signed-distance heatmap (surface
-// colour); Displacement = load→solved motion glyph field (arrows). The central 3D
-// stays the all-meshes variance map regardless of this toggle.
+// Inspect focus-tile channel: Difference = pair signed-distance heatmap, Displacement
+// = load→solved motion glyphs. The central-3D variance map ignores this toggle.
 type InspectChannel =
     | ChDifference
     | ChDisplacement
@@ -165,7 +161,6 @@ type Model =
         RegView               : RegView
         Registration          : RegistrationState
 
-        LastSolve             : Map<string, LastSolveEntry>
         Toast                 : string option
 
         MeshSensorTypes       : Map<string, SensorType>
@@ -190,8 +185,7 @@ type Model =
         MeshSolo            : MeshSoloState
         GearPopoverOpen     : bool
         WorkflowStep        : WorkflowStep
-        // Inspect focus-tile channel (difference vs displacement); the central 3D
-        // variance map is independent of it.
+        // Inspect focus-tile channel (difference vs displacement).
         InspectChannel      : InspectChannel
 
         // Pano / Top projection of the WebGL focus single.
@@ -232,9 +226,6 @@ module ModelTransforms =
         RigidTransform.renderToWorld
             (DatasetScale.forMesh model.DatasetScales mesh) model.CommonCentroid renderT
 
-    let loadWorld (model : Model) (mesh : string) =
-        toWorld model mesh (loadRender model mesh)
-
     let displayedWorld (model : Model) (mesh : string) =
         toWorld model mesh (displayedRender model mesh)
 
@@ -245,7 +236,7 @@ module ModelTransforms =
             match Map.tryFind mesh model.PanoCenters with
             | Some w -> w
             | None -> Map.tryFind mesh model.DatasetCentroids |> Option.defaultValue model.CommonCentroid
-        (world - model.CommonCentroid) * DatasetScale.forMesh model.DatasetScales mesh
+        ScanPin.renderCentre model.CommonCentroid (DatasetScale.forMesh model.DatasetScales mesh) world
 
     // The first mesh in the list's panorama centre (render space), the anchor for the
     // coordinate cross + the camera's resting target. Empty list → render origin.
@@ -285,7 +276,6 @@ module Model =
             SolvedTransforms      = Map.empty
             RegView               = RegBefore
             Registration          = RegistrationState.initial
-            LastSolve             = Map.empty
             Toast                 = None
             MeshSensorTypes       = Map.empty
             ExtrinsicZDiff        = false

@@ -105,7 +105,7 @@ module GuiInspector =
             let focused = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
             div {
                 Class "ros-row"
-                focused |> AVal.map (fun f -> if f then Some (Class "ros-row-active") else None)
+                classWhen "ros-row-active" focused
                 Dom.OnClick(fun _ -> emit (SetFocusedMesh (Some name)))
                 Dom.OnPointerMove(fun _ -> emit (SetHovered (Some (HoverMesh name))))
                 Dom.OnMouseLeave(fun _ -> emit (SetHovered None))
@@ -116,12 +116,12 @@ module GuiInspector =
                 span { Class "ros-cell"; triCount |> AVal.map (fun n -> sprintf "%d tris" n) }
                 span {
                     Class "ros-cell"
-                    isRef |> AVal.map (fun r -> if r then Some (Class "hidden") else None)
+                    showWhenNot isRef
                     overlap |> AVal.map (fun o -> if o then "overlaps ✓" else "no overlap")
                 }
                 button {
                     Class "mb"
-                    isVis |> AVal.map (fun v -> if v then Some (Class "mb-on") else None)
+                    classWhen "mb-on" isVis
                     Attribute("title", "Visible")
                     Dom.OnClick(fun _ -> emit (SetVisible(name, not (AVal.force isVis))))
                     isVis |> AVal.map (fun v -> if v then "●" else "○")
@@ -175,8 +175,8 @@ module GuiInspector =
             div {
                 Class "ins-mgr-row"
                 showWhen show
-                inRoi |> AVal.map (fun roi -> if roi then None else Some (Class "ins-mgr-out"))
-                active |> AVal.map (fun a -> if a then Some (Class "ins-mgr-active") else None)
+                classWhenNot "ins-mgr-out" inRoi
+                classWhen "ins-mgr-active" active
                 Dom.OnPointerMove(fun _ -> hoverEmit true)
                 Dom.OnMouseLeave(fun _ -> hoverEmit false)
                 span { Class "ins-sw"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (c4bToRgbCss c)])) }
@@ -185,14 +185,14 @@ module GuiInspector =
                 span { Class "ins-mgr-res"; resOrSpread }
                 button {
                     Class "mb ins-mgr-act"
-                    inRoi |> AVal.map (fun roi -> if roi then None else Some (Class "hidden"))
+                    showWhen inRoi
                     Attribute("title", "Re-seed this mesh")
                     Dom.OnClick(fun _ -> match AVal.force effId with Some id -> emit (ReseedMesh(id, mesh)) | None -> ())
                     "⟳"
                 }
                 button {
                     Class "mb ins-mgr-act"
-                    inRoi |> AVal.map (fun roi -> if roi then None else Some (Class "hidden"))
+                    showWhen inRoi
                     Attribute("title", "Focus camera + edit in the focus panel")
                     Dom.OnClick(fun _ -> emit (SetSelectedPoint (Some mesh)); emit (SetFocusedMesh (Some mesh)))
                     "⌖"
@@ -367,7 +367,7 @@ module GuiInspector =
         // Container-invariant cross-fade between the three modes.
         let stepA = model.WorkflowStep
         let modeOn (pred : WorkflowStep -> bool) =
-            stepA |> AVal.map (fun s -> if pred s then Some (Class "ins-mode-on") else None)
+            classWhen "ins-mode-on" (stepA |> AVal.map pred)
         div {
             Class "pin-inspector"
             div {

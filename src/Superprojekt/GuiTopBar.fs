@@ -35,7 +35,7 @@ module GuiTopBar =
             // both release so it can't stick.
             button {
                 Class "tb-btn"
-                model.ReferencePeekHeld |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                classWhen "tb-btn-active" model.ReferencePeekHeld
                 Attribute("title", "Peek reference: hold to show only the reference mesh (hotkey: R)")
                 Dom.OnPointerDown((fun _ -> env.Emit [SetReferencePeek true]), pointerCapture = true)
                 Dom.OnPointerUp((fun _ -> env.Emit [SetReferencePeek false]), pointerCapture = true)
@@ -45,13 +45,12 @@ module GuiTopBar =
 
             div {
                 Class "tb-regview"
-                solved |> AVal.map (fun s -> if s then None else Some (Class "tb-regview-off"))
+                classWhenNot "tb-regview-off" solved
                 Attribute("title", "Show meshes before or after registration")
                 let btn (label : string) (v : RegView) =
                     button {
                         Class "tb-regview-btn"
-                        (model.RegView, solved) ||> AVal.map2 (fun cur s ->
-                            if s && cur = v then Some (Class "btn-active") else None)
+                        classWhen "btn-active" ((model.RegView, solved) ||> AVal.map2 (fun cur s -> s && cur = v))
                         Dom.OnClick(fun _ -> if AVal.force solved then env.Emit [SetRegView v])
                         label
                     }
@@ -89,7 +88,7 @@ module GuiTopBar =
                     Class "tb-gear-wrap"
                     button {
                         Class "tb-btn-tiny"
-                        model.GearPopoverOpen |> AVal.map (fun on -> if on then Some (Class "tb-btn-active") else None)
+                        classWhen "tb-btn-active" model.GearPopoverOpen
                         Attribute("title", "Debug & settings")
                         Dom.OnClick(fun _ -> env.Emit [ToggleGearPopover])
                         "⚙"
@@ -106,7 +105,7 @@ module GuiTopBar =
                                     let isActive = model.ActiveDataset |> AVal.map (fun a -> a = Some dataset)
                                     button {
                                         Class "tb-gear-btn"
-                                        isActive |> AVal.map (fun on -> if on then Some (Class "active") else None)
+                                        classWhen "active" isActive
                                         Dom.OnClick(fun _ ->
                                             env.Emit [SetActiveDataset dataset]
                                             ServerActions.loadDataset env dataset)

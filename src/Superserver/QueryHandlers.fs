@@ -15,16 +15,6 @@ type RayRequest     = { Name: string; Index: int; Origin: float[]; Direction: fl
 type ClosestRequest = { Name: string; Index: int; Point: float[] }
 
 [<CLIMutable>]
-type PatchRequest = {
-    Name: string; Centre: float[]; Radius: float
-    // Triangle budget; over it the patch thins by a uniform stride.
-    MaxTris: int
-    // Optional shared-frame override (mesh-frame dirs); both must be present, else
-    // null → local plane fit.
-    FrameNormal: float[]; FrameRefDir: float[]
-}
-
-[<CLIMutable>]
 type LsqPairDto = { RefPoint: float[]; MovingPoint: float[]; Weight: float }
 
 [<CLIMutable>]
@@ -170,29 +160,6 @@ let regionDistanceHandler : HttpHandler =
             return! json {| dist = dist |} next ctx
         with ex ->
             log.LogError(ex, "region-distance failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
-    }
-
-let patchHandler : HttpHandler =
-    fun next ctx -> task {
-        let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<PatchRequest>()
-            let lm = loadMesh req.Name 0
-            let centre = toV3d req.Centre
-            let radius = if req.Radius <= 0.0 then 1.0 else req.Radius
-            let maxTris = if req.MaxTris <= 0 then 200000 else req.MaxTris
-            let frame =
-                if not (isNull req.FrameNormal) && req.FrameNormal.Length = 3
-                   && not (isNull req.FrameRefDir) && req.FrameRefDir.Length = 3 then
-                    Some (toV3d req.FrameNormal, toV3d req.FrameRefDir)
-                else None
-            let result = MeshAnalysis.patch lm centre radius maxTris frame
-            let pts = result.Points |> Array.map (fun p -> [| p.Px; p.Py; p.Wx; p.Wy; p.Wz; p.U; p.V |])
-            log.LogInformation("patch {Name} r={Radius:F2}: {Count} pts, {Tris} tris", req.Name, radius, pts.Length, result.Triangles.Length / 3)
-            return! json {| points = pts; triangles = result.Triangles; refDir = fromV3d result.RefDirWorld; normal = fromV3d result.NormalWorld |} next ctx
-        with ex ->
-            log.LogError(ex, "patch failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 

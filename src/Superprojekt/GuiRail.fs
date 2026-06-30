@@ -58,7 +58,7 @@ module GuiRail =
             let status = stepStatus step
             button {
                 Class "rail-step"
-                active |> AVal.map (fun a -> if a then Some (Class "rail-step-active") else None)
+                classWhen "rail-step-active" active
                 Dom.OnClick(fun _ -> env.Emit [SetWorkflowStep step])
                 span { Class "rail-step-no"; string (WorkflowStep.index step + 1) }
                 span { Class "rail-step-title"; WorkflowStep.title step }
@@ -87,8 +87,8 @@ module GuiRail =
             let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverMesh m) -> m = name | _ -> false)
             div {
                 Class "rail-mesh-row"
-                isVis |> AVal.map (fun v -> if v then None else Some (Class "rail-row-dim"))
-                hovered |> AVal.map (fun h -> if h then Some (Class "rail-row-hover") else None)
+                classWhenNot "rail-row-dim" isVis
+                classWhen "rail-row-hover" hovered
                 // hover = peek-isolate this mesh via the shared Selection.
                 Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
@@ -101,7 +101,7 @@ module GuiRail =
                 }
                 button {
                     Class "mb mb-ref"
-                    isRef |> AVal.map (fun r -> if r then Some (Class "mb-on") else None)
+                    classWhen "mb-on" isRef
                     Attribute("title", "Reference mesh — all error is relative to it")
                     Dom.OnClick(fun _ ->
                         let cur = AVal.force refMesh
@@ -110,14 +110,14 @@ module GuiRail =
                 }
                 button {
                     Class "mb"
-                    isVis |> AVal.map (fun v -> if v then Some (Class "mb-on") else None)
+                    classWhen "mb-on" isVis
                     Attribute("title", "Visible")
                     Dom.OnClick(fun _ -> env.Emit [SetVisible(name, not (AVal.force isVis))])
                     isVis |> AVal.map (fun v -> if v then "●" else "○")
                 }
                 button {
                     Class "mb"
-                    isSolo |> AVal.map (fun s -> if s then Some (Class "mb-on") else None)
+                    classWhen "mb-on" isSolo
                     Attribute("title", "Isolate this mesh (hide the others); click again to restore")
                     Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name])
                     "◐"
@@ -145,7 +145,7 @@ module GuiRail =
             let selected = model.Selection.SelectedPin |> AVal.map ((=) (Some id))
             div {
                 Class "rail-pin-row"
-                selected |> AVal.map (fun s -> if s then Some (Class "rail-pin-sel") else None)
+                classWhen "rail-pin-sel" selected
                 // hover = peek the pin's constellation via the shared Selection.
                 Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPin id))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
@@ -176,7 +176,7 @@ module GuiRail =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
         let corrBody =
-            let diags = ReadinessView.input model |> AVal.map (fun inp -> (Readiness.compute inp).Coarse)
+            let diags = ReadinessView.input model |> AVal.map Readiness.compute
             let sevClass = function Blocker -> "block" | Warning -> "warn" | Ready -> "ready" | Info -> "info"
             let sevIcon  = function Blocker -> "✖" | Warning -> "⚠" | Ready -> "✔" | Info -> "•"
             let diagRow (d : Diagnostic) =
@@ -197,7 +197,7 @@ module GuiRail =
                     span { Class "rail-section-title"; "Pins" }
                     button {
                         Class "rail-btn rail-pin-add"
-                        placing |> AVal.map (fun p -> if p then Some (Class "rail-btn-active") else None)
+                        classWhen "rail-btn-active" placing
                         Attribute("title", "Place a pin — tap on the reference surface")
                         Dom.OnClick(fun _ ->
                             if AVal.force placing then env.Emit [ScanPinMsg CancelPlacement]

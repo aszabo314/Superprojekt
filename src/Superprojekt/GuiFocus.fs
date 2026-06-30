@@ -44,7 +44,7 @@ module GuiFocus =
         let projBtn (p : FocusProjection) =
             button {
                 Class "focus-proj-btn"
-                model.FocusProjection |> AVal.map (fun a -> if a = p then Some (Class "btn-active") else None)
+                Primitives.classWhen "btn-active" (model.FocusProjection |> AVal.map ((=) p))
                 Dom.OnClick(fun _ -> env.Emit [SetFocusProjection p])
                 FocusProjection.label p
             }
@@ -60,7 +60,7 @@ module GuiFocus =
         let peekBtn =
             button {
                 Class "focus-peek"
-                corrStep |> AVal.map (fun on -> if on then None else Some (Class "hidden"))
+                Primitives.showWhen corrStep
                 Attribute("title", "Hold to peek the reference mesh in this frame")
                 Dom.OnPointerDown((fun _ -> env.Emit [SetFocusPeekReference true]), pointerCapture = true)
                 Dom.OnPointerUp((fun _ -> env.Emit [SetFocusPeekReference false]), pointerCapture = true)
@@ -72,8 +72,8 @@ module GuiFocus =
         let setBtn =
             button {
                 Class "focus-set"
-                setAvailable |> AVal.map (fun a -> if a then None else Some (Class "hidden"))
-                model.CorrSetMode |> AVal.map (fun on -> if on then Some (Class "btn-active") else None)
+                Primitives.showWhen setAvailable
+                Primitives.classWhen "btn-active" model.CorrSetMode
                 Attribute("title", "Set correspondence: click the surface to place")
                 Dom.OnClick(fun _ -> env.Emit [ToggleCorrSetMode])
                 model.CorrSetMode |> AVal.map (fun on -> if on then "⊙ aiming…" else "⊕ set point")

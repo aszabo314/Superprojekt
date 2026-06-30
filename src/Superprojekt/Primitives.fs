@@ -47,6 +47,13 @@ module Primitives =
     let showWhenNot (v : aval<bool>) =
         v |> AVal.map (fun on -> if on then Some (Class "hidden") else None)
 
+    // Adds `cls` while the flag holds; the Not form adds it while the flag is clear.
+    let classWhen (cls : string) (v : aval<bool>) =
+        v |> AVal.map (fun on -> if on then Some (Class cls) else None)
+
+    let classWhenNot (cls : string) (v : aval<bool>) =
+        v |> AVal.map (fun on -> if on then None else Some (Class cls))
+
     let compactToggle (labelText : string) (value : aval<bool>) (onToggle : unit -> unit) =
         div {
             Class "ct"
@@ -137,30 +144,10 @@ module Primitives =
             |> AList.map (fun (label, isActive, onClick) ->
                 button {
                     Class "cbb-btn"
-                    isActive |> AVal.map (fun a -> if a then Some (Class "cbb-btn-active") else None)
+                    classWhen "cbb-btn-active" isActive
                     Dom.OnClick(fun _ -> onClick ())
                     label
                 })
-        }
-
-    let collapsibleSection (title : string) (startExpanded : bool) (body : DomNode) =
-        let expanded = cval startExpanded
-        div {
-            Class "cs"
-            div {
-                Class "cs-header"
-                Dom.OnClick(fun _ -> transact (fun () -> expanded.Value <- not expanded.Value))
-                span {
-                    Class "cs-tri"
-                    (expanded :> aval<bool>) |> AVal.map (fun e -> if e then "▾" else "▸")
-                }
-                " " + title
-            }
-            div {
-                Class "cs-body"
-                showWhen (expanded :> aval<bool>)
-                body
-            }
         }
 
     // Attribute-driven SVG/DOM rendering via OnBoot JS (the Aardvark.Dom CE has no
@@ -196,9 +183,6 @@ module ReadinessView =
             let reg = model.Registration.GetValue t
             let names = meshNamesVal.GetValue t |> IndexList.toList
             let visible = model.MeshVisible.GetValue t
-            let pending = false
-            // "Committed step" = at least one solved mesh.
-            let hasCommitted = not (Map.isEmpty (model.SolvedTransforms.GetValue t))
             let movingVisible =
                 match reg.ReferenceMesh with
                 | Some r ->
@@ -226,7 +210,4 @@ module ReadinessView =
                 ReferenceMesh       = reg.ReferenceMesh
                 VisibleMovingMeshes = movingVisible
                 EnabledPins         = enabledPins
-                HasPending          = pending
-                HasCommittedStep    = hasCommitted
-                FineModeLabel       = "Fine ICP"
             })

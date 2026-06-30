@@ -64,13 +64,6 @@ let bboxesHandler (dataset : string) : HttpHandler =
         return! json result next ctx
     }
 
-let meshCountHandler (dataset : string, name : string) : HttpHandler =
-    fun next ctx -> task {
-        let count = MeshLoader.meshCount dataset name
-        if count = 0 then return! RequestErrors.notFound (text $"not found: {dataset}/{name}") next ctx
-        else            return! text (string count) next ctx
-    }
-
 let meshHandler (dataset : string, name : string, index : int) : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"
@@ -118,10 +111,8 @@ let webApp : HttpHandler =
         routef "/api/datasets/%s/bboxes"                        bboxesHandler
         routef "/api/datasets/%s/mesh/%s/%i/atlas"              (fun (d,n,i) -> atlasHandler(d,n,i))
         routef "/api/datasets/%s/mesh/%s/%i"                    (fun (d,n,i) -> meshHandler(d,n,i))
-        routef "/api/datasets/%s/mesh/%s"                       (fun (d,n)   -> meshCountHandler(d,n))
         route  "/api/query/ray"                                 >=> rayHandler
         route  "/api/query/closest"                             >=> closestHandler
-        route  "/api/query/patch"                               >=> patchHandler
         route  "/api/query/contact-rings"                       >=> contactRingsHandler
         route  "/api/query/lsq-pairs"                           >=> lsqPairsHandler
         route  "/api/query/probe"                               >=> probeHandler

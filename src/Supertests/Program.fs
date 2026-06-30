@@ -1,16 +1,15 @@
 module Supertests.Program
 
-// Unit tests for the pure registration pieces (spec §10.1/§10.2):
+// Unit tests for the pure registration pieces:
 //   • RegMath.solveRigid — weighted Umeyama (recovery, reflection handling,
 //     weight semantics, collinearity flag, <3-pairs rejection)
-//   • RegLog.effective — committed-then-delta pose composition
-//   • RegJson — workspace round-trip of correspondence + last-solve diagnostics,
-//     including missing-field defaults for old workspaces
+//   • RegConditioning — spread eigenvalues / collinearity / dominant axis
+//   • Readiness.compute — the correspondence readiness engine
+//   • FlyToMath — camera fly-to framing
 // Plain console runner (exit code = failure count) so no new packages enter
 // the paket lock.
 
 open System
-open System.Text.Json
 open Aardvark.Base
 open Superprojekt
 
@@ -41,8 +40,6 @@ let applyRigid (r : M33d) (t : V3d) (p : V3d) = r * p + t
 
 let rotPart (m : M44d) =
     M33d(m.M00, m.M01, m.M02, m.M10, m.M11, m.M12, m.M20, m.M21, m.M22)
-
-let transPart (m : M44d) = V3d(m.M03, m.M13, m.M23)
 
 let maxAbsDiff (a : M44d) (b : M44d) =
     [| a.M00-b.M00; a.M01-b.M01; a.M02-b.M02; a.M03-b.M03
@@ -132,30 +129,6 @@ let umeyamaTests () =
     // (e) fewer than 3 pairs is rejected (the HTTP handler maps this to 400).
     check "<3 pairs rejected" ((RegMath.solveRigid [| V3d.Zero, V3d.Zero, 1.0; V3d.IOO, V3d.IOO, 1.0 |]).IsNone)
 
-// ───────────────────────── RegJson: round-trips ───────────────────────────
-
-let parseRoot (json : string) =
-    (JsonDocument.Parse json).RootElement
-
-let regJsonTests () =
-    let corr = {
-        RefAnchor   = Some (V3d(1.25, -3.5, 0.001))
-        RefDistance = 0.125
-        Anchors     =
-            Map.ofList [
-                "ds/B", { Point = V3d(10.0, 20.0, 30.0); Source = AnchorPick3D }
-                "ds/C", { Point = V3d(-1.0, 2.5, 3.75); Source = AnchorAuto }
-            ]
-        Residuals   = Map.ofList [ "ds/B", 0.042 ]
-        InRoi       = Map.ofList [ "ds/B", true; "ds/C", false ]
-    }
-    let corr' = RegJson.readCorrespondence (parseRoot (RegJson.correspondenceJ corr))
-    check "correspondence round-trip" (corr' = corr)
-
-    let defaults = RegJson.readCorrespondence (parseRoot "{}")
-    check "correspondence missing fields → defaults"
-        (defaults.RefAnchor.IsNone && defaults.Anchors.IsEmpty && defaults.Residuals.IsEmpty)
-
 // ───────────────────────── RegConditioning sanity ─────────────────────────
 
 let conditioningTests () =
@@ -190,9 +163,6 @@ let readinessTests () =
         ReferenceMesh       = Some "ref"
         VisibleMovingMeshes = [ "A"; "B" ]
         EnabledPins         = []
-        HasPending          = false
-        HasCommittedStep    = false
-        FineModeLabel       = "Traditional ICP"
     }
     let ready (d : Diagnostic list) = d |> List.filter (fun x -> x.Severity = Severity.Ready)
     // non-collinear spread (parabola) with anchors accepted on both meshes
@@ -203,60 +173,42 @@ let readinessTests () =
                 [ "A"; "B" ] 2)
 
     let d = Readiness.compute { baseInput with ReferenceMesh = None }
-    check "no-ref blocker in both stages"
-        ((d.Coarse |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "reference"))
-         && (d.Fine |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "reference")))
+    check "no-ref blocker"
+        (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "reference"))
     check "no-ref highlight action"
-        (d.Coarse |> List.exists (fun x -> x.Action = Some HighlightReferenceColumn))
-    check "no-ref never ready" (ready d.Coarse |> List.isEmpty && ready d.Fine |> List.isEmpty)
+        (d |> List.exists (fun x -> x.Action = Some HighlightReferenceColumn))
+    check "no-ref never ready" (ready d |> List.isEmpty)
 
     let d = Readiness.compute baseInput
-    check "zero pins blocker" (d.Coarse |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "≥3 pins"))
+    check "zero pins blocker" (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "≥3 pins"))
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 2 }
     check "pair deficit blocker per mesh"
-        (d.Coarse |> List.filter (fun x -> x.Severity = Blocker && x.Text.Contains "more correspondence marker") |> List.length = 2)
-    check "deficit counts the gap" (d.Coarse |> List.exists (fun x -> x.Text.Contains "needs 1 more"))
+        (d |> List.filter (fun x -> x.Severity = Blocker && x.Text.Contains "more correspondence marker") |> List.length = 2)
+    check "deficit counts the gap" (d |> List.exists (fun x -> x.Text.Contains "needs 1 more"))
     check "deficit action reseeds the filtered mesh"
-        (d.Coarse |> List.exists (fun x -> x.Action = Some (ReseedCorrespondence (Some "A"))))
-    check "2 pins not ready" (ready d.Coarse |> List.isEmpty)
+        (d |> List.exists (fun x -> x.Action = Some (ReseedCorrespondence (Some "A"))))
+    check "2 pins not ready" (ready d |> List.isEmpty)
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 3 }
-    check "3 pins → exactly one coarse Ready" (ready d.Coarse |> List.length = 1)
-    check "coarse Ready action" ((ready d.Coarse |> List.head).Action = Some RunCoarse)
-    check "no coarse blockers when clear" (d.Coarse |> List.forall (fun x -> x.Severity <> Blocker))
-    check "fine info before any commit"
-        (d.Fine |> List.exists (fun x -> x.Severity = Severity.Info && x.Text.Contains "alignment first"))
-    check "fine not ready before commit" (ready d.Fine |> List.isEmpty)
-
-    let d = Readiness.compute { baseInput with EnabledPins = pinsN 3; HasCommittedStep = true }
-    check "fine → exactly one Ready after commit" (ready d.Fine |> List.length = 1)
-    check "fine Ready names the mode" ((ready d.Fine |> List.head).Text.Contains "Traditional ICP")
-    check "fine Ready action" ((ready d.Fine |> List.head).Action = Some RunFine)
+    check "3 pins → exactly one Ready" (ready d |> List.length = 1)
+    check "Ready action" ((ready d |> List.head).Action = Some RunCoarse)
+    check "no blockers when clear" (d |> List.forall (fun x -> x.Severity <> Blocker))
 
     let pinU = mkRPin "pu" (Some (V3d(9.0, 1.0, 2.0), 1.0)) [ "A" ] 2
     let d = Readiness.compute { baseInput with EnabledPins = pinU :: pinsN 3 }
     check "missing-marker mesh → warning"
-        (d.Coarse |> List.exists (fun x -> x.Severity = Warning && x.Text.Contains "without a marker"))
+        (d |> List.exists (fun x -> x.Severity = Warning && x.Text.Contains "without a marker"))
     check "unresolved action opens the pin card"
-        (d.Coarse |> List.exists (fun x -> x.Action = Some (SelectPinOpenCard pinU.Id)))
+        (d |> List.exists (fun x -> x.Action = Some (SelectPinOpenCard pinU.Id)))
 
     let colinear =
         List.init 4 (fun i -> mkRPin (sprintf "c%d" i) (Some (V3d(float i, 0.0, 0.0), 1.0)) [ "A"; "B" ] 2)
     let d = Readiness.compute { baseInput with EnabledPins = colinear }
-    check "collinear anchors → warning" (d.Coarse |> List.exists (fun x -> x.Text.Contains "near-collinear"))
+    check "collinear anchors → warning" (d |> List.exists (fun x -> x.Text.Contains "near-collinear"))
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 4 }
     check "spread anchors → no collinear warning"
-        (not (d.Coarse |> List.exists (fun x -> x.Text.Contains "near-collinear")))
-
-    let d = Readiness.compute { baseInput with EnabledPins = pinsN 3; HasPending = true; HasCommittedStep = true }
-    check "pending blocks coarse"
-        (d.Coarse |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "pending"))
-    check "pending blocks fine"
-        (d.Fine |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "pending"))
-    check "pending blocker carries no nav action"
-        (d.Coarse |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "pending" && x.Action = None))
-    check "pending kills both Ready entries" (ready d.Coarse @ ready d.Fine |> List.isEmpty)
+        (not (d |> List.exists (fun x -> x.Text.Contains "near-collinear")))
 
 // ────────────────────── Workflow panel: fly-to math ────────────────────────
 
@@ -274,39 +226,12 @@ let flyToTests () =
     check "sphere passthrough" (c2 = V3d(1.0, 2.0, 3.0) && r2 = 4.0)
     check "degenerate radius clamped" (snd (FlyToMath.boundingSphere (FlyToSphere(V3d.Zero, 0.0))) > 0.0)
 
-// ──────────────────── Workflow panel: lastSolve model ──────────────────────
-
-let lastSolveTests () =
-    let pid = ScanPinId.create ()
-    let entryCoarse = {
-        Stage           = StageCoarse
-        RmsBefore       = 1.25
-        RmsAfter        = 0.5
-        Conditioning    = Some { Eigenvalues = [| 3.0; 2.0; 0.125 |]; CollinearityWarning = false }
-        PerPinResiduals = Some (Map.ofList [ pid, 0.125 ])
-        Timestamp       = DateTime(2026, 6, 12, 10, 0, 0, DateTimeKind.Utc)
-    }
-    let entryFine = {
-        Stage           = StageFine
-        RmsBefore       = 0.5
-        RmsAfter        = 0.25
-        Conditioning    = None
-        PerPinResiduals = None
-        Timestamp       = DateTime(2026, 6, 12, 11, 0, 0, DateTimeKind.Utc)
-    }
-    let m = Map.ofList [ "ds/A", entryCoarse; "ds/B", entryFine ]
-    check "lastSolve round-trip" (RegJson.readLastSolve (parseRoot (RegJson.lastSolveJ m)) = m)
-    check "lastSolve empty round-trip"
-        (RegJson.readLastSolve (parseRoot (RegJson.lastSolveJ Map.empty)) = Map.empty)
-
 [<EntryPoint>]
 let main _ =
     umeyamaTests ()
-    regJsonTests ()
     conditioningTests ()
     readinessTests ()
     flyToTests ()
-    lastSolveTests ()
     printfn ""
     printfn "%d/%d passed%s" (total - failures) total (if failures = 0 then "" else sprintf " — %d FAILED" failures)
     failures

@@ -197,11 +197,13 @@ module ScanPinUpdate =
     // (inverse-transformed centre), rings mapped back. Displayed transforms → rings follow the before/after toggle.
     let ensureRings (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
-        let pending =
-            sp.Pins |> HashMap.toList
-            |> List.filter (fun (_, p) -> p.ContactRings = RingsNone)
-        if List.isEmpty pending || model.MeshNames.Count = 0 then model
+        // Cheap exists-check first: this postlude runs on every message (incl. per-frame
+        // Rendered), so avoid allocating the filtered list when nothing is pending.
+        if model.MeshNames.Count = 0 || not (sp.Pins |> HashMap.exists (fun _ p -> p.ContactRings = RingsNone)) then model
         else
+            let pending =
+                sp.Pins |> HashMap.toList
+                |> List.filter (fun (_, p) -> p.ContactRings = RingsNone)
             let meshes =
                 model.MeshNames |> IndexList.toList |> List.map (fun n ->
                     n, ModelTransforms.displayedWorld model n)

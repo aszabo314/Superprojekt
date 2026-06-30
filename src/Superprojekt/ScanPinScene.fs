@@ -80,10 +80,7 @@ module ScanPinScene =
             (model : AdaptiveModel) =
 
         let datasetScale =
-            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 (fun ds map ->
-                match ds with
-                | Some d -> Map.tryFind d map |> Option.defaultValue 1.0
-                | None -> 1.0)
+            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
 
         let notFullscreen = AVal.map not fullscreenActive
         // Shared chrome for every line overlay: alpha-blended, occluded by
@@ -177,16 +174,19 @@ module ScanPinScene =
         // Visible pin-centre marker: a small wire-box jack on top (so the invisible
         // pick proxy can't occlude it). Yellow when selected, brighter red on hover,
         // else red. Fixed render size — independent of pin radius.
+        // Project to centres only — depending on the whole pin map would rebuild the
+        // marker buffer on any pin field change (probe/ring result, rename, …).
+        let pinCentres = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre) |> AMap.toAVal
         let pinMarkerLines =
             let segs =
                 AVal.custom (fun t ->
-                    let pins = pinsVal.GetValue t
+                    let centres = pinCentres.GetValue t
                     let cc = model.CommonCentroid.GetValue t
                     let scale = datasetScale.GetValue t
                     let sel = selectedId.GetValue t
                     let hov = model.Selection.Hovered.GetValue t
                     let out = ResizeArray<V3d * V3d * V4d * float>()
-                    for (id, p) in HashMap.toSeq pins do
+                    for (id, centre) in HashMap.toSeq centres do
                         let isSel = sel = Some id
                         let hovered = hov = Some (HoverPin id)
                         let col =
@@ -194,7 +194,7 @@ module ScanPinScene =
                             elif hovered then V4d(1.0, 0.55, 0.45, 1.0)
                             else V4d(0.95, 0.35, 0.35, 0.9)
                         let w = if isSel || hovered then 2.0 else 1.2
-                        let cR = ScanPin.renderCentre cc scale p.Centre
+                        let cR = ScanPin.renderCentre cc scale centre
                         addBoxOutline out cR 0.07  0.014 0.014 col w
                         addBoxOutline out cR 0.014 0.07  0.014 col w
                         addBoxOutline out cR 0.014 0.014 0.07  col w
@@ -203,9 +203,8 @@ module ScanPinScene =
 
         // Pin influence visuals: a thin equator ring (⊥ probe axis, radius =
         // InnerRadius) + sphere–surface contact rings per visible mesh, in the
-        // pin's categorical colour. Unselected α 0.6 / 1.5 px, selected α 1.0 /
-        // 2.5 px. Normal depth testing on purpose — occlusion is the spatial
-        // cue.
+        // pin's categorical colour. Normal depth testing on purpose — occlusion
+        // is the spatial cue.
         let contactRingsOn = AVal.constant true
         let pinRings =
             pinIdSet |> ASet.collect (fun id ->
@@ -257,12 +256,11 @@ module ScanPinScene =
                             out.ToArray())
                 ASet.ofList [ linesNode notFullscreen segs ])
 
-        // Correspondence constellation (selected pin emphasized). Per moving
-        // mesh: a small sphere glyph at its correspondence point (palette
-        // colour); the reference point a larger haloed glyph; thin lines from
-        // each moving glyph to the reference glyph. Out-of-ROI meshes are
-        // omitted. Glyphs render on top (depth bias) and are pickable for
-        // brushing. Marker positions follow the displayed pose.
+        // Correspondence constellation (selected pin emphasized): per moving mesh a
+        // small sphere glyph at its correspondence point + the reference as a larger
+        // haloed glyph, with lines from each to the reference; out-of-ROI omitted.
+        // Glyphs render on top (depth bias), pickable for brushing, and follow the
+        // displayed pose.
         let refGlyphCol = V4d(0.706, 0.325, 0.035, 1.0)   // amber #b45309
 
         // World marker for a (pin, mesh): the mesh-local anchor mapped through the
@@ -331,10 +329,13 @@ module ScanPinScene =
         // plus a thin line from each moving glyph to the reference. Fixed render size
         // (independent of pin radius). Selection / hover brighten; out-of-ROI meshes
         // omitted. Rendered on top (depth bias) so the markers read against surfaces.
+        // Project to (correspondence, dataset colours) only — depending on the whole
+        // pin map would rebuild the constellation buffer on any pin field change.
+        let pinCorr = model.ScanPins.Pins |> AMap.map (fun _ p -> ScanPin.correspondence p, p.DatasetColors) |> AMap.toAVal
         let constLines =
             let segs =
                 AVal.custom (fun t ->
-                    let pins = pinsVal.GetValue t
+                    let pins = pinCorr.GetValue t
                     let cc = model.CommonCentroid.GetValue t
                     let scale = datasetScale.GetValue t
                     let sel = selectedId.GetValue t
@@ -344,8 +345,8 @@ module ScanPinScene =
                     let rf = (model.Registration.GetValue t).ReferenceMesh
                     let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
                     let out = ResizeArray<V3d * V3d * V4d * float>()
-                    for (id, p) in HashMap.toSeq pins do
-                        match ScanPin.correspondence p with
+                    for (id, (corr, datasetColors)) in HashMap.toSeq pins do
+                        match corr with
                         | Some c ->
                             match c.RefAnchor with
                             | Some ra ->
@@ -371,7 +372,7 @@ module ScanPinScene =
                                     match marker with
                                     | Some w ->
                                         let baseCol =
-                                            match Map.tryFind mesh p.DatasetColors with
+                                            match Map.tryFind mesh datasetColors with
                                             | Some cc4 -> Primitives.c4bToV3d cc4
                                             | None -> V3d(0.102, 0.337, 0.859)
                                         let rowHover = hov = Some (HoverPoint (id, mesh))

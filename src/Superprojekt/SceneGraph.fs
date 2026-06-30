@@ -153,7 +153,7 @@ module SceneGraph =
                                 V3d((if ix = 0 then box.Min.X else box.Max.X),
                                     (if iy = 0 then box.Min.Y else box.Max.Y),
                                     (if iz = 0 then box.Min.Z else box.Max.Z))
-                            tr.Forward.TransformPos ((w - cc) * scale)
+                            tr.Forward.TransformPos (ScanPin.renderCentre cc scale w)
                         let edges =
                             [|
                                 (0,0,0),(1,0,0); (0,1,0),(1,1,0); (0,0,1),(1,0,1); (0,1,1),(1,1,1)
@@ -207,7 +207,7 @@ module SceneGraph =
                         match Map.tryFind first (model.PanoCenters.GetValue t) with
                         | Some w -> w
                         | None -> Map.tryFind first (model.DatasetCentroids.GetValue t) |> Option.defaultValue cc
-                    (world - cc) * DatasetScale.forMesh (model.DatasetScales.GetValue t) first
+                    ScanPin.renderCentre cc (DatasetScale.forMesh (model.DatasetScales.GetValue t) first) world
                 | [] -> V3d.Zero)
         let cross         = originIndicator view proj notFullscreen crossCenter
         let labels        = originLabels    view proj notFullscreen crossCenter

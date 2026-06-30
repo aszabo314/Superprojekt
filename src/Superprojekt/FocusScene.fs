@@ -37,6 +37,9 @@ module FocusScene =
     // framebuffer-relative NDC. Binding ClientSize directly in this secondary
     // control left the single blank, so the dpr is shared instead.
     let dpr = cval 1.0
+    // Drag/hover state shared across focus controls — safe only because one large
+    // `single` exists at a time (the tiles are non-interactive). Would need per-control
+    // state if two singles ever coexisted.
     let mutable private dragging = false
     let mutable private lastPx = V2i.Zero
     // Hover-preview throttle + generation guard (drops out-of-order raycast results).
@@ -122,13 +125,12 @@ module FocusScene =
             "FocusScalar",                                  BufferView(scalarBuf, typeof<float32>)
         ]
 
-    // Robust colour-scale = 95th pct of |finite values|.
-    let private robustHi (arr : float32[]) =
-        let valid = arr |> Array.choose (fun x -> if abs x < 1e20f then Some (abs x) else None)
-        if valid.Length = 0 then 1.0f
-        else
-            Array.sortInPlace valid
-            max 1e-3f valid.[int (0.95 * float (valid.Length - 1))]
+    // load/solved forward maps (mesh-local → render) at token t, sharing the base
+    // render trafo (centroid-relative → common-relative → dataset scale → pose).
+    let private loadSolvedForwards (model : AdaptiveModel) (name : string) (loaded : LoadedMesh) (sc : float) (t : AdaptiveToken) =
+        let baseT = Trafo3d.Translation(loaded.centroid.GetValue t - model.CommonCentroid.GetValue t) * Trafo3d.Scale sc
+        let fwd (m : Map<string, Trafo3d>) = (baseT * (Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)).Forward
+        fwd (model.LoadTransforms.GetValue t), fwd (model.SolvedTransforms.GetValue t)
 
     // Inspect colour overlay for a mesh: (FocusMode, per-vertex scalar buffer, hi).
     // 0 = texture; 1 = difference (FocusDist, diverging); 2 = displacement (per-vertex
@@ -154,7 +156,7 @@ module FocusScene =
                 match modeA.GetValue t with
                 | 1 ->
                     match Map.tryFind name (model.FocusDist.GetValue t) with
-                    | Some arr -> (ArrayBuffer arr :> IBuffer, robustHi arr)
+                    | Some arr -> (ArrayBuffer arr :> IBuffer, MeshView.robustHi arr)
                     | None -> zero ()
                 | 2 ->
                     loaded.pos.GetValue t |> ignore
@@ -162,14 +164,11 @@ module FocusScene =
                     | Some md ->
                         let pos = md.positions
                         let sc = scale.GetValue t
-                        let baseT =
-                            Trafo3d.Translation(loaded.centroid.GetValue t - model.CommonCentroid.GetValue t) * Trafo3d.Scale sc
-                        let loadF = (baseT * (Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity)).Forward
-                        let solvedF = (baseT * (Map.tryFind name (model.SolvedTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity)).Forward
+                        let loadF, solvedF = loadSolvedForwards model name loaded sc t
                         let mag = Array.init pos.Length (fun i ->
                             let p = V3d pos.[i]
                             float32 ((solvedF.TransformPos p - loadF.TransformPos p).Length / sc))
-                        (ArrayBuffer mag :> IBuffer, robustHi mag)
+                        (ArrayBuffer mag :> IBuffer, MeshView.robustHi mag)
                     | None -> zero ()
                 | _ -> zero ())
         modeA, (scalarData |> AVal.map fst), (scalarData |> AVal.map snd)
@@ -200,9 +199,7 @@ module FocusScene =
                 | Some md when disp && Map.containsKey name (model.SolvedTransforms.GetValue t) ->
                     let pos = md.positions
                     let sc = scale.GetValue t
-                    let baseT = Trafo3d.Translation(loaded.centroid.GetValue t - model.CommonCentroid.GetValue t) * Trafo3d.Scale sc
-                    let loadF = (baseT * (Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity)).Forward
-                    let solvedF = (baseT * (Map.tryFind name (model.SolvedTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity)).Forward
+                    let loadF, solvedF = loadSolvedForwards model name loaded sc t
                     let n = pos.Length
                     let stride = max 1 (n / 250)
                     let mutable maxMag = 1e-9
@@ -424,7 +421,7 @@ module FocusScene =
         let active = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
         div {
             Class "focus-tile"
-            active |> AVal.map (fun a -> if a then Some (Class "fm-active") else None)
+            Primitives.classWhen "fm-active" active
             Attribute("title", "click → focus this mesh")
             Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
             rc

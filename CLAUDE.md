@@ -2,7 +2,7 @@
 
 Research prototype for interactive 3D inspection and **registration** of geological mesh datasets (multi-epoch scans of the same terrain). Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH ray/closest-point, sphere contact rings, surface patches, per-vertex signed distance, N-mesh M3C2 probes, weighted rigid landmark solve). Runs on `http://localhost:5000` and also hosts the WASM client.
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH ray/closest-point, sphere contact rings, per-vertex signed distance, N-mesh M3C2 probes, weighted rigid landmark solve). Runs on `http://localhost:5000` and also hosts the WASM client.
 - **Superprojekt** — Blazor WASM client. Aardvark.Dom Elm-style architecture, WebGL2 rendering. Must work on desktop and mobile; the client stays thin and pushes heavy compute to the server.
 
 See `README.md` for what the app does and how to run it.
@@ -16,7 +16,7 @@ See `README.md` for what the app does and how to run it.
 
 ## Render pipeline (single forward pass)
 
-The default path is **one forward pass** into the main framebuffer: meshes → pins → cross/labels. FBOs are allowed (the one offscreen consumer is the optional image-space outline pass); the historic ban was specific to removed WBOIT code.
+The default path is **one forward pass** into the main framebuffer: meshes → pins → cross/labels. FBOs are allowed (the one offscreen consumer is the image-space outline pass).
 
 ```
 [ passZero ]
@@ -44,7 +44,7 @@ Every mesh fragment ends up **opaque** (α = 1), **ghost** (α = effective ghost
 
 Consequences the rest of the stack relies on:
 
-- **α-gated depth**: fragments with `α ≥ 0.99` write their natural window-space depth (`v.fc.Z`); everything else writes `1.0` (far) so ghost/outside fragments never occlude and never produce pixel-picks. A `fullySolid` clamp pins ghost/outside fragments below the threshold. (There was a `lassoComponent`; the lasso was removed — `blobComponent` is the only mask now.)
+- **α-gated depth**: fragments with `α ≥ 0.99` write their natural window-space depth (`v.fc.Z`); everything else writes `1.0` (far) so ghost/outside fragments never occlude and never produce pixel-picks. A `fullySolid` clamp pins ghost/outside fragments below the threshold. `blobComponent` is the only mask.
 - **Ghost colour is uniform**: ghost fragments always use the solid per-mesh palette colour regardless of `RenderingMode`, so the silhouette reads as one shape.
 - The signed-distance / heatmap painters only touch **above-ghost** fragments.
 
@@ -52,15 +52,15 @@ Uniforms per draw call: `MeshActive`, `GhostOpacity` (pre-gated by `GhostSilhoue
 
 ### Error colour maps (in the mesh shader, above-ghost only)
 
-- `DistanceEncoding = 2` — **variance** map: per-reference-vertex disagreement std (std of every visible moving mesh's signed distance), sequential grey→red, painted on the reference. This is the Inspect central-3D aggregate; gated on `WorkflowStep = Inspect` (no toggle) and `DistScale`-normalised. (The historic `= 1` single-mesh signed-distance painter was removed — pair *difference* now lives in the focus tiles, not the main view.)
+- `DistanceEncoding = 2` — **variance** map: per-reference-vertex disagreement std (std of every visible moving mesh's signed distance), sequential grey→red, painted on the reference. This is the Inspect central-3D aggregate; gated on `WorkflowStep = Inspect` (no toggle) and `DistScale`-normalised. Pair *difference* lives in the focus tiles, not the main view.
 - `HeatmapMode = 1/2/3` — intrinsic incidence / range-from-own-origin / triangle-shape false colour (pre-existing acquisition channels; untouched by the Phase-2 Inspect work).
 
 The variance distances come from `POST /api/query/region-distance` (reference vs each moving mesh) reduced to a per-reference-vertex std by the generation-guarded debounced `Update.ensureVariance` postlude into `Model.SurfaceDistance` (keyed by the reference mesh); the `SurfaceDist` buffer aligns with `loaded.pos`, non-encoded meshes bind a zero buffer of the same length.
 
 ### Inspect visualizations
 
-The focus-tile channels are now rendered **in WebGL** (per-vertex-coloured mesh, not the old
-2D-canvas/`mesh-preview` path) — a unified `FocusShaders.focusColor` fragment driven by a
+The focus-tile channels are rendered **in WebGL** (per-vertex-coloured mesh) — a
+unified `FocusShaders.focusColor` fragment driven by a
 `FocusMode` uniform over a per-vertex `FocusScalar` buffer (`FocusScene.focusOverlay`), so the
 channel toggle is a uniform switch with no shader rebuild.
 
@@ -78,11 +78,11 @@ Do not add `Sg.DepthMask` anywhere — it is buggy in this Aardvark/Aardworx Web
 
 ### Image-space outlines (`OutlineView.fs`)
 
-The one offscreen pass, **always on** (no toggle): every visible mesh renders into an MRT G-buffer (`OutlineGBuffer` → **world-Z band parity** + window depth in target0, palette colour + coverage mask in target1); a fullscreen edge-detect (`OutlineEdge`) paints per-mesh lines in palette colour where **the window depth breaks** (silhouette + cliff/occlusion outlines) **or the world-Z band parity flips** (elevation isolines), both gated to covered pixels. `dEdge` is the **second difference** (depth Laplacian) `|l + r − 2c|`, *not* the first difference: window-space `gl_FragCoord.z` is linear in screen space across any planar primitive, so the Laplacian is ~0 on a smooth slope at any view angle/distance and spikes only at a genuine break — the earlier first-difference form measured screen-space depth *slope* and lit up every grazing/near surface as false banded lines. `dEdge` is tested against the **`OutlineThreshold`** uniform (gear slider "Outline edge threshold", `Model.OutlineThreshold`, default `0.004`, range `0.0001–0.01`); the useful range is low because target0 is **`Rgba8`** (`OutlineView.fs`), so the window depth in `target0.w` has only 256 levels — 1 LSB ≈ 0.004, and a threshold below the quantization floor lets the staircase risers of a smooth slope read as false bands. The old **normal-angle** edge term was removed (it produced view-dependent interior creases that drifted with the camera); the **coverage-mask (mEdge)** term was also dropped — the depth break already traces the silhouette in this data. `target0.xyz` used to hold the world normal for the normal-angle term; `.x` now carries the isoline band parity, `.yz` are unused.
+The one offscreen pass, **always on** (no toggle): every visible mesh renders into an MRT G-buffer (`OutlineGBuffer` → **world-Z band parity** + window depth in target0, palette colour + coverage mask in target1); a fullscreen edge-detect (`OutlineEdge`) paints per-mesh lines in palette colour where **the window depth breaks** (silhouette + cliff/occlusion outlines) **or the world-Z band parity flips** (elevation isolines), both gated to covered pixels. `dEdge` is the **second difference** (depth Laplacian) `|l + r − 2c|`, *not* the first difference: window-space `gl_FragCoord.z` is linear in screen space across any planar primitive, so the Laplacian is ~0 on a smooth slope at any view angle/distance and spikes only at a genuine break (a first difference would instead measure screen-space depth *slope* and light up every grazing surface as false banded lines). `dEdge` is tested against the **`OutlineThreshold`** uniform (gear slider "Outline edge threshold", `Model.OutlineThreshold`, default `0.004`, range `0.0001–0.01`); the useful range is low because target0 is **`Rgba8`** (`OutlineView.fs`), so the window depth in `target0.w` has only 256 levels — 1 LSB ≈ 0.004, and a threshold below the quantization floor lets the staircase risers of a smooth slope read as false bands. The depth break alone traces the silhouette in this data (no normal-angle or coverage-mask term). `target0.x` carries the isoline band parity; `.yz` are unused.
 
 ### World-Z isolines (edge-detected in the outline pass)
 
-Elevation contours locked to the **global Z axis** (render-Z ∥ global-Z, since the dataset transform is a similarity with no rotation). They share the **silhouette outline's crisp image-space edge-detect** rather than being shaded onto the surface — so they get the same hard 1px look, but their *position* is world-locked: `OutlineGBuffer` writes `parity = floor(wp.Z / ContourSpacing) mod 2` (a 0/1 value, robust at 8-bit, full-range jump at every band boundary) into `target0.x`; `OutlineEdge` flags `iEdge` as a first difference wherever that parity differs between adjacent texels (parity is a step function, so any flip is already a real band boundary — unlike the depth term, which needs the second-difference `dEdge` to reject smooth slopes). Because the band index is a pure function of world Z, each line stays welded to a fixed world-Z plane on the surface and does **not** crawl as the camera orbits — only its 1px rasterization updates per frame. (An earlier version shaded soft bands in the forward `MeshShader.shade` using a `ddx`/`ddy` width; it was replaced because the screen-space derivative made the bands crawl, and soft didn't match the outline look.) `ContourSpacing` (render-space Z step) is sized for `Model.IsolineBands` bands over the scene elevation range (`MeshView.buildOutlineNode`, from world-metric `SceneBounds.Size.Z × datasetScale`), shared across meshes so parity lines up. The band count is the gear slider "Isolines over Z range" (`Model.IsolineBands`, default `700`, range `4–2000`). Isolines render in the mesh **palette colour** and are **always on** (the silhouette outlines and isolines no longer have a toggle — both are part of the permanent outline pass). For a *solved* (rotated) mesh the parity follows the displayed elevation (`wp.Z` is post-pose), the intended true-height reading. **Caveat:** pure 1px, no AA (matches the silhouette); a steep face packing many bands into few pixels will merge/alias — controlled by the `IsolineBands` count (high values like the 700 default will alias on steep faces by design).
+Elevation contours locked to the **global Z axis** (render-Z ∥ global-Z, since the dataset transform is a similarity with no rotation). They share the **silhouette outline's crisp image-space edge-detect** rather than being shaded onto the surface — so they get the same hard 1px look, but their *position* is world-locked: `OutlineGBuffer` writes `parity = floor(wp.Z / ContourSpacing) mod 2` (a 0/1 value, robust at 8-bit, full-range jump at every band boundary) into `target0.x`; `OutlineEdge` flags `iEdge` as a first difference wherever that parity differs between adjacent texels (parity is a step function, so any flip is already a real band boundary — unlike the depth term, which needs the second-difference `dEdge` to reject smooth slopes). Because the band index is a pure function of world Z, each line stays welded to a fixed world-Z plane on the surface and does **not** crawl as the camera orbits — only its 1px rasterization updates per frame. `ContourSpacing` (render-space Z step) is sized for `Model.IsolineBands` bands over the scene elevation range (`MeshView.buildOutlineNode`, from world-metric `SceneBounds.Size.Z × datasetScale`), shared across meshes so parity lines up. The band count is the gear slider "Isolines over Z range" (`Model.IsolineBands`, default `700`, range `4–2000`). Isolines render in the mesh **palette colour** and are **always on** (the silhouette outlines and isolines no longer have a toggle — both are part of the permanent outline pass). For a *solved* (rotated) mesh the parity follows the displayed elevation (`wp.Z` is post-pose), the intended true-height reading. **Caveat:** pure 1px, no AA (matches the silhouette); a steep face packing many bands into few pixels will merge/alias — controlled by the `IsolineBands` count (high values like the 700 default will alias on steep faces by design).
 
 ### Picking
 
@@ -109,11 +109,11 @@ Three spaces, two transforms. Keep them strictly separate — every boundary cro
 **Two transforms — apply dataset first, then workspace:**
 
 1. **Dataset transform** — a *similarity* (uniform scale + translation, never rotation), fixed per dataset: `Translation(meshCentroid − commonCentroid) · Scale(datasetScale)`. It is the **only** place `DatasetScale` and `CommonCentroid` enter, and the per-mesh centroid stays hidden inside the server frame. Cross it with `ScanPin.renderCentre`/`worldCentre` (points) and `ScanPin.renderLength` (lengths) — metric world ↔ render.
-2. **Workspace transform** — a *rigid* pose (rotation + translation, no scale), per mesh: the before/after registration pose. `LoadTransform` (identity at load → before / reference / unsolved) or `SolvedTransform` (after / solved). Render-space form = `ModelTransforms.displayedRender` / `MeshView.displayedMeshT`; metric-world form = `ModelTransforms.displayedWorld` (`loadWorld` for the load pose). `RigidTransform.worldToRender` / `renderToWorld` conjugate a rigid pose between render and metric world (the dataset similarity is the conjugator). **`displayedWorld.Backward` maps metric world → that mesh's server frame; `.Forward` maps back.**
+2. **Workspace transform** — a *rigid* pose (rotation + translation, no scale), per mesh: the before/after registration pose. `LoadTransform` (identity at load → before / reference / unsolved) or `SolvedTransform` (after / solved). Render-space form = `ModelTransforms.displayedRender` / `MeshView.displayedMeshT`; metric-world form = `ModelTransforms.displayedWorld`. `RigidTransform.worldToRender` / `renderToWorld` conjugate a rigid pose between render and metric world (the dataset similarity is the conjugator). **`displayedWorld.Backward` maps metric world → that mesh's server frame; `.Forward` maps back.**
 
 **Discipline rules**
 
-- **Server queries** take/return the mesh's **server frame**: convert metric world in with `displayedWorld.Backward`, map results out with `displayedWorld.Forward`. Never hand a server query render-space or raw metric-world coordinates without that step — that was the latent bug in both `/query/ray` picks (`FocusScene.worldRayHit`, `View.resolveLayerPick`) until they un-applied the pose. Multi-mesh queries instead pass each mesh's `displayedWorld.Forward` matrix (`probe`, `region-distance`) and let the server place them.
+- **Server queries** take/return the mesh's **server frame**: convert metric world in with `displayedWorld.Backward`, map results out with `displayedWorld.Forward`. Never hand a server query render-space or raw metric-world coordinates without that step (both `/query/ray` picks — `FocusScene.worldRayHit`, `View.resolveLayerPick` — un-apply the pose first). Multi-mesh queries instead pass each mesh's `displayedWorld.Forward` matrix (`probe`, `region-distance`) and let the server place them.
 - **Scene-graph geometry** is render space: convert metric-world model values at the boundary (`renderCentre` / `renderLength`), or a metric-world pose with `worldToRender`.
 - **Directions** need no scale handling (render ↔ metric world is parallel — uniform scale); only the workspace rotation matters, via `displayedWorld.Backward/Forward.TransformDir`.
 - **Anchors** are stored in the mesh's **server frame** (`displayedWorld.Backward world` at placement time — pose-independent), so the before/after toggle moves their displayed world via `displayedWorld.Forward` with no re-baking.
@@ -154,7 +154,7 @@ The left rail (`GuiRail`) has exactly three modes — **Overview · Corresponden
 
 **One shared selection record drives all linking** (`Model.Selection = { SelectedPin; FocusedMesh; SelectedPoint; Hovered }`). Linked highlighting is a *consequence* of every region binding to `Selection` — there are no panel-to-panel hover emitters. Grammar everywhere: **hover = peek** (writes `Selection.Hovered` via the single `SetHovered`), **click = select/promote**, **drag = edit**. Pin selection lives in `Selection.SelectedPin` (NOT `ScanPinModel`); `ScanPinUpdate.handleMsg` maintains it and drops a dangling selection when its pin is deleted.
 
-**Focus panel** (`GuiFocus` + `FocusScene`) is **WebGL** — a large single (the focused mesh, rendered full-res + atlas-textured in render space at its displayed pose) over a strip of textured thumbnail tiles, one renderControl per visible mesh (`FocusScene.single`/`multiples`). The prior 2D-canvas/`mesh-preview`/`FocusMaps` path is gone. The earlier finding that a 2nd renderControl tanks the main view turned out wrong (measurement artefact) — many renderControls coexist fine here. **Top = strictly orthographic** (hand-built ortho matrix); **Pano = cylindrical unwrap in a vertex shader** (`FocusShaders.pano`, composed after `DefaultSurfaces.trafo` so the WorldPosition varying — and thus picking — survives; the camera is identity, the shader writes clip). The unwrap **eye** (`PanoEye` uniform + the pano pick-ray origin in `worldRayHit`) is the mesh's panorama centre: `Model.PanoCenters[mesh]` (absolute world) carried into the mesh's own frame (`− centroid`) then through `renderT` — so it scales and follows the before/after pose like the geometry; **no entry ⇒ the mesh origin** `(0,0,0)`, the prior behaviour. See *Panorama centre*. A tiny pan+zoom controller (module-level `panNorm`/`zoom` cvals in `FocusScene`, no orbit) drives the single with mouse-anchored zoom; `⟲ reset` calls `FocusScene.resetCam`. **Picking is Dom-driven, not `Sg.OnTap`** (that did not fire reliably in the 2nd render control): `worldRayHit` inverts the cursor to a render-space ray (hand-rolled ortho drop for Top / pano direction from the eye for Pano), carries it **render → metric world → the mesh's server frame** through that mesh's `displayedWorld` (correct in either before/after pose; no per-mesh-centroid juggling), hits `/query/ray`, and maps the hit back through `displayedWorld.Forward` to metric world (see *Coordinate systems & transform hierarchy*). The pick reads the cursor in **CSS px**: the NDC math divides `ViewportSize` (framebuffer px) by the **shared `FocusScene.dpr`** the main view publishes (computed from its `ViewportSize/ClientSize` in `OnRendered`); the focus controls don't bind `RenderControl.ClientSize` themselves. (Using framebuffer px there — the original bug — offset the pick on hi-dpi; the inverse math itself was already correct, so there was never a real y-flip.) In set-correspondence mode (⊕ set point) a **move** throttle-raycasts → `CorrPreviewComputed` (the live 3D ghost in the main viewport), and a **click** raycasts → `PickCorrespondenceAt` (places + exits the mode). Gated on a selected pin + a non-reference focused mesh. In Inspect the tiles recolour per channel via `focusColor`/`FocusMode` (see Inspect visualizations).
+**Focus panel** (`GuiFocus` + `FocusScene`) is **WebGL** — a large single (the focused mesh, rendered full-res + atlas-textured in render space at its displayed pose) over a strip of textured thumbnail tiles, one renderControl per visible mesh (`FocusScene.single`/`multiples`); many renderControls coexist fine here. **Top = strictly orthographic** (hand-built ortho matrix); **Pano = cylindrical unwrap in a vertex shader** (`FocusShaders.pano`, composed after `DefaultSurfaces.trafo` so the WorldPosition varying — and thus picking — survives; the camera is identity, the shader writes clip). The unwrap **eye** (`PanoEye` uniform + the pano pick-ray origin in `worldRayHit`) is the mesh's panorama centre: `Model.PanoCenters[mesh]` (absolute world) carried into the mesh's own frame (`− centroid`) then through `renderT` — so it scales and follows the before/after pose like the geometry; **no entry ⇒ the mesh origin** `(0,0,0)`. See *Panorama centre*. A tiny pan+zoom controller (per-mesh pan/zoom `cval`s kept in `FocusScene.camStates`, no orbit) drives the single with mouse-anchored zoom; `⟲ reset` calls `FocusScene.resetCam`. **Picking is Dom-driven, not `Sg.OnTap`** (that did not fire reliably in the 2nd render control): `worldRayHit` inverts the cursor to a render-space ray (hand-rolled ortho drop for Top / pano direction from the eye for Pano), carries it **render → metric world → the mesh's server frame** through that mesh's `displayedWorld` (correct in either before/after pose; no per-mesh-centroid juggling), hits `/query/ray`, and maps the hit back through `displayedWorld.Forward` to metric world (see *Coordinate systems & transform hierarchy*). The pick reads the cursor in **CSS px**: the NDC math divides `ViewportSize` (framebuffer px) by the **shared `FocusScene.dpr`** the main view publishes (computed from its `ViewportSize/ClientSize` in `OnRendered`); the focus controls don't bind `RenderControl.ClientSize` themselves (framebuffer px there would offset the pick on hi-dpi). In set-correspondence mode (⊕ set point) a **move** throttle-raycasts → `CorrPreviewComputed` (the live 3D ghost in the main viewport), and a **click** raycasts → `PickCorrespondenceAt` (places + exits the mode). Gated on a selected pin + a non-reference focused mesh. In Inspect the tiles recolour per channel via `focusColor`/`FocusMode` (see Inspect visualizations).
 
 ## ScanPin system
 
@@ -194,7 +194,7 @@ For scene-graph nodes (`Sg.Text`, `sg { ... }`) this matters even more: rebuildi
 
 Costly spatial queries (`probe`, `contact-rings`, `region-distance`) scale with mesh count × sample density:
 
-- **Never issue per-mesh requests sequentially.** Use `Query.rayHitMany` (parallel fan-out); if a multi-mesh operation becomes hot, add a batched server endpoint with `Parallel.For` instead.
+- **Never issue per-mesh requests sequentially.** Fan out in parallel (`Async.Parallel`) rather than looping; if a multi-mesh operation becomes hot, add a batched server endpoint with `Parallel.For` instead.
 - **Parallelise the heavy inner loop server-side** when inputs are independent — Embree `Scene.Intersect` is thread-safe.
 - **Cap density rather than grow linearly** (`maxPoints` / sample strides / `maxTris`).
 - **Debounce user-driven triggers** with a `CancellationTokenSource` + a generation counter so the next event cancels the previous and at most one fetch is in flight per invalidation (`ScanPinUpdate`/`UpdateHelpers` keep these CTS/generation refs at module level, NOT in the Elm model).
@@ -205,10 +205,10 @@ Costly spatial queries (`probe`, `contact-rings`, `region-distance`) scale with 
 ```
 MeshData.fs            mesh fetch/parse, ApiConfig, shared Http.client
 ProbeModel.fs          M3C2 probe DTOs (ProbeResult/ProbeState)
-Query.fs               server query wrappers (Async), rayHitMany fan-out
+Query.fs               server query wrappers (Async)
 CameraModel.fs / .g.fs OrbitState [<ModelType>]
 OrbitController.fs     OrbitMessage DU + orbit camera
-RegistrationModel.fs   ScanPinId, correspondence anchors, readiness engine (Readiness.compute), FlyToMath, NavAction, RegJson, HeatmapMode (WASM-free, shared with Supertests)
+RegistrationModel.fs   ScanPinId, correspondence anchors, readiness engine (Readiness.compute), FlyToMath, NavAction, HeatmapMode (WASM-free, shared with Supertests)
 ScanPinModel.fs / .g.fs ScanPin + placement state
 PinGeometry.fs         icosphere, sphere outline
 Model.fs / .g.fs       [<ModelType>] Model + Selection + RegView + ModelTransforms
@@ -241,7 +241,7 @@ ShaderCache.fs / Program.fs
 ```
 MeshLoader.fs     OBJ parse, centroid file, atlas paths
 MeshCache.fs      Embree scene + BbTree cache (lazy, permanent)
-MeshAnalysis.fs   sphere contact-ring tracing, patch sampling
+MeshAnalysis.fs   sphere contact-ring tracing
 MeshProbe.fs      N-mesh M3C2 probe (normal PCA, cylinder sampling, KDE, three sources)
 RegMath.fs        weighted Umeyama rigid landmark solve (Jacobi SVD, conditioning)
 QueryHandlers.fs  HTTP query handlers
@@ -257,19 +257,17 @@ GET  /api/datasets/default                      → string (from data/default.tx
 GET  /api/datasets/{dataset}/centroids          → { meshName: [x,y,z] }
 GET  /api/datasets/{dataset}/pano-centers       → { meshName: [x,y,z] }   (from {dataset}/pano-centers.txt; absent → {})
 GET  /api/datasets/{dataset}/bboxes             → { meshName: { min:[x,y,z], max:[x,y,z] } }   (also warms the cache)
-GET  /api/datasets/{dataset}/mesh/{name}        → count of OBJ files
 GET  /api/datasets/{dataset}/mesh/{name}/{i}    → binary mesh
 GET  /api/datasets/{dataset}/mesh/{name}/{i}/atlas → JPEG
 POST /api/query/ray                             → { hit, t, point, triangleId }     Name = "dataset/mesh"
 POST /api/query/closest                         → { found, point, distanceSquared, triangleId }
-POST /api/query/patch                           → frame-projected triangles (planar px,py + atlas UVs + index triples), optional frameNormal/frameRefDir override
 POST /api/query/contact-rings                   → sphere–surface intersection polylines (closed rings repeat the first point)
 POST /api/query/lsq-pairs                       → weighted rigid landmark solve (absolute world transform moving→reference + per-pair residuals + conditioning; 400 on <3 pairs)
 POST /api/query/probe                           → N-mesh M3C2 probe (per-mesh distributions + KDE + three sources)
 POST /api/query/region-distance                 → per-vertex signed M3C2 distance (mode 0) or vertical Δz (mode 1) of a target mesh to the reference, in the target's served vertex order; 1e30 sentinel where no closest point
 ```
 
-All query coordinates are **absolute world space**; the server converts `localPos = worldPos − meshCentroid`. (Removed for lack of consumers — don't re-add without one: `/query/icp`, sphere/box/ray-batch, grid-eval, isoline, curvature-ridge, region-grid.)
+All query coordinates are **absolute world space**; the server converts `localPos = worldPos − meshCentroid`. (Removed for lack of consumers — don't re-add without one: `/query/icp`, `/query/patch`, sphere/box/ray-batch, grid-eval, isoline, curvature-ridge, region-grid.)
 
 ## Client Model snapshot
 
@@ -279,11 +277,11 @@ Top-level `Model` fields (see `Model.fs`):
 - `Datasets`, `ActiveDataset`, `DatasetScales` (`{"SETSM_glacier" → 0.01}`), `DatasetCentroids`, `PanoCenters` (`Map<mesh, V3d>` = per-mesh panorama/camera centre, absolute world coords; from `pano-centers.txt`, see Panorama centre)
 - `GhostSilhouette` (default on), `GhostOpacity`, `ShadingStrength`, `SlopeThresholdDeg`, `AnchorGhostMode` ("Isolate pins", default on), `QuickPinRadius`, `OutlineThreshold` (outline edge-detect threshold, default `0.004`), `IsolineBands` (isolines over the scene Z range, default `700`)
 - `SceneBounds`, `MeshBounds`, `ActivePickingLayer`, `ReferencePeekHeld`
-- `LoadTransforms`, `SolvedTransforms`, `RegView` (`RegBefore`/`RegAfter`), `Registration` (`{ ReferenceMesh; Running }`), `LastSolve` (per-mesh solve diagnostics)
+- `LoadTransforms`, `SolvedTransforms`, `RegView` (`RegBefore`/`RegAfter`), `Registration` (`{ ReferenceMesh; Running }`)
 - `MeshSensorTypes`, `HeatmapMode` (`HeatOff | HeatIncidence | HeatRange | HeatShape`), `ExtrinsicZDiff` (difference sub-mode M3C2 ↔ Δz), `SurfaceDistance` (`Map<mesh, float32[]>`, the reference variance array), `FocusDist` (`Map<mesh, float32[]>`, per moving mesh signed distance for the focus difference channel)
 - `ScanPins` (`ScanPinModel`), `Selection` (`{ SelectedPin; FocusedMesh; SelectedPoint; Hovered }`)
 - `RenderingMode`, `MeshSolo`, `GearPopoverOpen`
-- `WorkflowStep` (`Overview | Correspondence | Inspect`), `InspectChannel` (`ChDifference | ChDisplacement`), `FocusProjection` (`ProjPano | ProjTop | ProjOblique`), `FocusPeekReference`, `CorrSetMode` (set-correspondence toggle) + `CorrPreview` (live 3D ghost point), `Toast`
+- `WorkflowStep` (`Overview | Correspondence | Inspect`), `InspectChannel` (`ChDifference | ChDisplacement`), `FocusProjection` (`ProjPano | ProjTop`), `FocusPeekReference`, `CorrSetMode` (set-correspondence toggle) + `CorrPreview` (live 3D ghost point), `Toast`
 
 GUI placement:
 - Top bar (`GuiTopBar`): hamburger, camera reset, **👁 Peek** (hold), the global **Before/After** toggle, gear popover (dataset switch, rendering mode, outline edge threshold + isoline count sliders, camera speed, ghost silhouette + opacity, isolate-pins, shading strength, slope threshold, quick-pin radius, dataset info, mesh centroids, debug log).
@@ -294,7 +292,7 @@ GUI placement:
 
 ## Tests
 
-`src/Supertests` is a console runner (paket-managed, no extra packages) that compiles `RegistrationModel.fs` + `RegMath.fs` directly and covers: the Umeyama solver (recovery, reflections, weights, collinearity, <3-pairs rejection), the `RegJson` correspondence + last-solve round-trips, `RegConditioning`, the readiness engine, and the fly-to math — `dotnet run --project src/Supertests`. Against a running server (`ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver`): `node tools/integration.mjs` (closest-point seed → rigid perturbation → `/query/lsq-pairs` recovers its inverse → `/query/probe` median error shrinks → patch frame echo).
+`src/Supertests` is a console runner (paket-managed, no extra packages) that compiles `RegistrationModel.fs` + `RegMath.fs` directly and covers: the Umeyama solver (recovery, reflections, weights, collinearity, <3-pairs rejection), `RegConditioning`, the readiness engine, and the fly-to math — `dotnet run --project src/Supertests`. Against a running server (`ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver`): `node tools/integration.mjs` (closest-point seed → rigid perturbation → `/query/lsq-pairs` recovers its inverse → `/query/probe` median error shrinks).
 
 ## Aardvark.Dom gotchas
 
@@ -303,7 +301,7 @@ GUI placement:
 - CSS `~` sibling combinator breaks (Aardvark inserts wrapper nodes) — use `:has()` on a known ancestor.
 - `RenderControlInfo` and `TraversalState` both have `.Runtime` — annotate `(info : Aardvark.Dom.RenderControlInfo)` when ambiguous.
 - `yield!` is not supported in Aardvark.Dom CE builders — use OnBoot JS with MutationObserver for dynamic SVG/canvas (the `observedRender` helper, the focus-panel canvas, the orientation indicator).
-- `renderControl { ... }` can be nested inside `div { ... }` — it creates a WebGL canvas child. The app has **several**: the main viewport plus the focus panel's single + one per visible mesh (`FocusScene`). Multiple controls coexist fine on this backend (an earlier "they tank the main view" finding was a measurement artefact). **`Sg.OnTap` (and the other Sg pointer events) did NOT fire reliably in the secondary focus controls** — the focus does its picking with Dom pointer handlers + a server `/query/ray` raycast instead (`FocusScene.worldRayHit`). Camera input there is also Dom-level (`Dom.OnPointerDown/Move/Up` without pointer capture — capture hijacked later clicks).
+- `renderControl { ... }` can be nested inside `div { ... }` — it creates a WebGL canvas child. The app has **several**: the main viewport plus the focus panel's single + one per visible mesh (`FocusScene`). Multiple controls coexist fine on this backend. **`Sg.OnTap` (and the other Sg pointer events) did NOT fire reliably in the secondary focus controls** — the focus does its picking with Dom pointer handlers + a server `/query/ray` raycast instead (`FocusScene.worldRayHit`). Camera input there is also Dom-level (`Dom.OnPointerDown/Move/Up` without pointer capture — capture hijacked later clicks).
 - `AVal.map4` does not exist — combine with `AVal.map2`/`AVal.map3`.
 - `Dom.Style` for renderControl; `Style` for HTML elements. `Css.Custom` does not exist — use CSS classes in `style.css`.
 - **`RenderControl.ViewportSize` is framebuffer pixels** (CSS × devicePixelRatio); `RenderControl.ClientSize` is CSS pixels. Anything mixing with DOM coordinates — overlay placement (scale bar, tooltips), cursor → NDC math (pickRay, focus-panel pick) — must work in CSS px or it breaks on hi-dpi. ClientSize is `V2i.II` until the first DOM event; `View.fs` derives `overlaySize` with a ViewportSize fallback. The main control binds `RenderControl.ClientSize`; the focus controls don't — they read `ViewportSize` and divide by the shared `FocusScene.dpr` the main view publishes (from its own `ViewportSize/ClientSize`).

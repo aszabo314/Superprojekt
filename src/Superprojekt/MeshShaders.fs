@@ -47,9 +47,8 @@ module MeshShader =
         member x.HeatmapMode      : int     = x?HeatmapMode
         member x.SensorOrigin     : V3f     = x?SensorOrigin
         member x.RangeMax         : float32 = x?RangeMax
-        // Render-space Z step between elevation isolines (global-Z locked). Read
-        // by the outline G-buffer pass, which writes a world-Z band parity that
-        // the edge-detect turns into crisp isolines; 0 disables. Not used by the
+        // Render-space Z step between global-Z-locked elevation isolines; 0 disables.
+        // Read by the outline G-buffer pass (band parity → edge-detect), not by the
         // forward mesh shader itself.
         member x.ContourSpacing   : float32 = x?ContourSpacing
 
@@ -188,9 +187,8 @@ module MeshShader =
         }
 
 // Outline G-buffer pass: world-Z band parity + window depth → target0, per-mesh
-// palette colour + coverage mask → target1 (MRT). (target0.xyz used to hold the
-// world normal for the removed normal-angle edge term; .x now carries the isoline
-// band parity, .yz unused.)
+// palette colour + coverage mask → target1 (MRT). (target0.xyz once held the world
+// normal for the removed normal-angle term; .x is now band parity, .yz unused.)
 [<ReflectedDefinition>]
 module OutlineGBuffer =
     open MeshShader
@@ -207,11 +205,9 @@ module OutlineGBuffer =
     let shade (v : FragIn) =
         fragment {
             let col = uniform.MeshColor
-            // target0.x = world-Z band parity (0/1) → the edge-detect turns every
-            // band boundary into a crisp 1px isoline, world-locked because the band
-            // index is a pure function of world Z. target0.w = window depth (the
-            // silhouette/depth edge). Normal channels (was target0.xyz) are free
-            // since the normal-angle edge term was removed.
+            // target0.x = world-Z band parity (0/1) → edge-detected into crisp 1px
+            // isolines, world-locked since the band index is a pure function of world Z.
+            // target0.w = window depth (silhouette/depth edge); .yz free (normal-angle removed).
             let parity =
                 if uniform.ContourSpacing > 1e-12f then
                     let band = floor (v.wp.Z / uniform.ContourSpacing)
@@ -223,15 +219,12 @@ module OutlineGBuffer =
             }
         }
 
-// Edge-detect fullscreen pass: sample the g-buffer at centre ±1 texel; an edge =
-// window-depth BREAK (silhouette + cliff/occlusion outlines — a second difference of
-// depth, so smooth grazing slopes don't register) OR a world-Z band-parity flip
-// (elevation isolines, world-locked — the band index is a pure function of world Z so
-// the line stays welded to the surface as the camera moves, while still rendering as a
-// crisp 1px screen-space edge). Both gated to covered pixels. The old normal-angle term
-// is gone. The coverage-mask (mEdge) term was dropped too — the depth break already
-// traces the silhouette in this data.
-// Output the per-pixel palette colour where an edge is found, transparent else.
+// Edge-detect fullscreen pass: sample the g-buffer at centre ±1 texel and paint the
+// per-pixel palette colour where an edge is found (transparent else). An edge = a
+// window-depth BREAK (silhouette/cliff — a SECOND difference of depth so smooth slopes
+// don't register; see below) OR a world-Z band-parity flip (world-locked isolines),
+// both gated to covered pixels. The old normal-angle term and the coverage-mask (mEdge)
+// term were dropped — the depth break already traces the silhouette in this data.
 [<ReflectedDefinition>]
 module OutlineEdge =
 

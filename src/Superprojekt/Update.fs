@@ -10,7 +10,6 @@ open UpdateHelpers
 
 module Update =
 
-
     let private updateCore (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
         | CameraMessage msg ->
@@ -70,10 +69,6 @@ module Update =
                 d.Style.PointerEvents <- "none"
                 Window.Document.Body.AppendChild(d) |> ignore
             model
-        | LogDebug s ->
-            let log = model.DebugLog.InsertAt(0, s)
-            let log = if log.Count > 20 then IndexList.take 20 log else log
-            { model with DebugLog = log }
         | ToggleGhostSilhouette ->
             { model with GhostSilhouette = not model.GhostSilhouette }
         | SetGhostOpacity v ->
@@ -99,9 +94,8 @@ module Update =
             if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
             else invalidateProbes (invalidateRings { model with RegView = v })
         | SetReferenceMesh mesh ->
-            // Reference change invalidates any solve (it was relative to the old
-            // reference): drop SolvedTransforms, snap back to Before, invalidate
-            // probes/rings, then re-seed all correspondence-enabled pins.
+            // Reference change invalidates any solve (it was relative to the old reference):
+            // drop SolvedTransforms, snap to Before, invalidate probes/rings, re-seed enabled pins.
             let model =
                 invalidateProbes (invalidateRings
                     { model with
@@ -148,48 +142,34 @@ module Update =
                     for mesh in solvable do
                         let pairs = pairsFor mesh
                         let pinIds = pairs |> Array.map (fun (pinId, _, _) -> pinId)
-                        let rmsBefore =
-                            sqrt ((pairs |> Array.sumBy (fun (_, ra, mp) -> (mp - ra).LengthSquared)) / float pairs.Length)
                         // (refAnchor world, moving anchor at load pose = own-frame point, weight 1).
                         let queryPairs = pairs |> Array.map (fun (_, ra, mp) -> ra, mp, 1.0)
                         task {
                             try
-                                let! world, residuals, eigen, collinear =
+                                let! world, residuals, _, _ =
                                     Query.lsqPairs ApiConfig.apiBase.Value mesh queryPairs
                                     |> Async.StartAsTask
                                 let pairResiduals = Array.zip pinIds residuals
-                                env.Emit [CoarseSolved(mesh, world, pairResiduals, rmsBefore, eigen, collinear)]
+                                env.Emit [CoarseSolved(mesh, world, pairResiduals)]
                             with ex ->
                                 env.Emit [CoarseFailed(mesh, ex.Message)]
                         } |> ignore
                     { model with Registration = { reg with Running = true } }
-        | CoarseSolved(mesh, world, pairResiduals, rmsBefore, eigenvalues, collinear) ->
+        | CoarseSolved(mesh, world, pairResiduals) ->
             // lsqPairs returns the absolute world transform mapping the load-pose
             // moving anchors onto the reference; store it as the SolvedTransform.
             let scale = DatasetScale.forMesh model.DatasetScales mesh
             let solvedRender =
                 RigidTransform.worldToRender scale model.CommonCentroid (Trafo3d(world, world.Inverse))
-            let rmsAfter =
-                if pairResiduals.Length = 0 then 0.0
-                else sqrt ((pairResiduals |> Array.sumBy (fun (_, r) -> r * r)) / float pairResiduals.Length)
             let sp =
                 pairResiduals |> Array.fold (fun sp (pinId, r) ->
                     updateCorr pinId (fun c -> { c with Residuals = Map.add mesh r c.Residuals }) sp)
                     model.ScanPins
-            let lastEntry = {
-                Stage           = StageCoarse
-                RmsBefore       = rmsBefore
-                RmsAfter        = rmsAfter
-                Conditioning    = Some { Eigenvalues = eigenvalues; CollinearityWarning = collinear }
-                PerPinResiduals = Some (Map.ofArray pairResiduals)
-                Timestamp       = System.DateTime.UtcNow
-            }
             invalidateRings (invalidateProbes
                 { model with
                     SolvedTransforms = Map.add mesh solvedRender model.SolvedTransforms
                     RegView = RegAfter
                     ScanPins = sp
-                    LastSolve = Map.add mesh lastEntry model.LastSolve
                     Registration = { model.Registration with Running = false } })
         | CoarseFailed(mesh, reason) ->
             showToast env (sprintf "Solve failed (%s)" (Primitives.shortName mesh))
@@ -232,8 +212,6 @@ module Update =
             showToast env "Correspondence seeding failed — see debug log"
                 { model with
                     DebugLog = model.DebugLog.InsertAt(0, sprintf "correspondence seeding failed: %s" reason) }
-        | ShowToast text ->
-            showToast env text model
         | ClearToast ->
             if model.Toast.IsNone then model else { model with Toast = None }
 
@@ -293,17 +271,6 @@ module Update =
                     LoadTransforms = Map.empty
                     RegView = RegBefore
                     Toast = None }
-        | JumpToMesh meshName ->
-            match Map.tryFind meshName model.DatasetCentroids with
-            | Some centroid ->
-                let renderPos = (centroid - model.CommonCentroid) * DatasetScale.forMesh model.DatasetScales meshName
-                let radius =
-                    if model.SceneBounds.IsInvalid then 50.0
-                    else model.SceneBounds.Size.Length * 0.6
-                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
-                env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
-            | None -> ()
-            model
         | SetRenderingMode m ->
             { model with RenderingMode = m }
         | ToggleMeshSolo name ->
@@ -320,12 +287,6 @@ module Update =
                         model.MeshNames |> IndexList.toSeq
                         |> Seq.map (fun n -> n, n = name) |> Map.ofSeq
                     { model with MeshVisible = vis; MeshSolo = Solo(name, restore) })
-        | ShowAllMeshes ->
-            let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, true) |> Map.ofSeq
-            invalidateProbes { model with MeshVisible = vis; MeshSolo = NoSolo }
-        | HideAllMeshes ->
-            let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, false) |> Map.ofSeq
-            invalidateProbes { model with MeshVisible = vis; MeshSolo = NoSolo }
         | ResetCamera ->
             let center = ModelTransforms.firstPanoCenterRender model
             let radius =
@@ -417,7 +378,7 @@ module Update =
         | FlyTo(target, aspect) ->
             let cW, rW = FlyToMath.boundingSphere target
             let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
-            let centreR = (cW - model.CommonCentroid) * scale
+            let centreR = ScanPin.renderCentre model.CommonCentroid scale cW
             let dist = FlyToMath.distance (FlyToMath.fovY 90.0 aspect) (rW * scale)
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, centreR))
                       CameraMessage (OrbitMessage.SetTargetRadius(true, dist))]
@@ -438,7 +399,6 @@ module Update =
                 pulse ".rail-mesh-list"
                 { model with MenuOpen = true; WorkflowStep = Overview }
             | RunCoarse -> env.Emit [SolveCoarse]; model
-            | RunFine | CommitPending | DiscardPending -> model
 
     // All-meshes variance: per reference vertex, the std of each visible moving
     // mesh's signed distance (target = reference, ref = moving). Debounced via the

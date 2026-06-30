@@ -16,8 +16,7 @@ type ContactRingState =
     | RingsRunning
     | RingsReady of Map<string, V3d[][]>
 
-// Human-readable short pin names (adjective + noun), derived deterministically
-// from the pin id so a pin always gets the same name.
+// Deterministic short pin names (adjective + noun) from the pin id — stable per pin.
 module PinNames =
     let private adjectives =
         [| "Amber"; "Brisk"; "Calm"; "Dusky"; "Early"; "Fleet"; "Grave"; "Hazel"

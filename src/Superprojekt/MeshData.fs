@@ -80,9 +80,10 @@ module MeshData =
             return doc.RootElement.GetString()
         }
 
-    let fetchCentroids (serverUrl : string) (dataset : string) : Async<(string * V3d)[]> =
+    // Server returns { meshName: [x,y,z] }; key each as "dataset/meshName".
+    let private fetchVecMap (segment : string) (serverUrl : string) (dataset : string) : Async<(string * V3d)[]> =
         async {
-            let url = sprintf "%s/datasets/%s/centroids" (serverUrl.TrimEnd('/')) dataset
+            let url = sprintf "%s/datasets/%s/%s" (serverUrl.TrimEnd('/')) dataset segment
             let! json = Http.client.GetStringAsync(url) |> Async.AwaitTask
             let doc = System.Text.Json.JsonDocument.Parse(json)
             return
@@ -94,19 +95,8 @@ module MeshData =
                 |> Seq.toArray
         }
 
-    let fetchPanoCenters (serverUrl : string) (dataset : string) : Async<(string * V3d)[]> =
-        async {
-            let url = sprintf "%s/datasets/%s/pano-centers" (serverUrl.TrimEnd('/')) dataset
-            let! json = Http.client.GetStringAsync(url) |> Async.AwaitTask
-            let doc = System.Text.Json.JsonDocument.Parse(json)
-            return
-                doc.RootElement.EnumerateObject()
-                |> Seq.map (fun prop ->
-                    let a = prop.Value.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                    dataset + "/" + prop.Name, V3d(a.[0], a.[1], a.[2])
-                )
-                |> Seq.toArray
-        }
+    let fetchCentroids   = fetchVecMap "centroids"
+    let fetchPanoCenters = fetchVecMap "pano-centers"
 
     let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d)[]> =
         async {

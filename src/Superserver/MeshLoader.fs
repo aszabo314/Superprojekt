@@ -76,9 +76,8 @@ let getCentroid (dataset : string) (name : string) : V3d option =
         | None   -> Some V3d.Zero
         | Some f -> Some (parseCentroidFile f)
 
-// Per-mesh panorama centre, read from a single dataset-level "pano-centers.txt"
-// (lines: <mesh-folder> x y z, absolute world coords — same frame as centroid.txt).
-// Missing file or unlisted mesh → no entry (the client falls back to the origin).
+// Per-mesh panorama centre from dataset-level "pano-centers.txt" (lines:
+// <mesh-folder> x y z, absolute world — same frame as centroid.txt). Unlisted → no entry.
 let getPanoCenters (dataset : string) : Map<string, V3d> =
     let path = Path.Combine(dataRoot.Value, dataset, "pano-centers.txt")
     if not (File.Exists path) then Map.empty

@@ -61,12 +61,7 @@ module GuiOverlays =
             AVal.custom (fun t ->
                 let radius = model.Camera.radius.GetValue t
                 let vp = viewportSize.GetValue t
-                let ds = model.ActiveDataset.GetValue t
-                let scales = model.DatasetScales.GetValue t
-                let scale =
-                    match ds with
-                    | Some d -> Map.tryFind d scales |> Option.defaultValue 1.0
-                    | None -> 1.0
+                let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
                 let h = max 1 vp.Y
                 let verticalFov = 90.0 * Constant.RadiansPerDegree
                 let renderPerPixel = 2.0 * tan (verticalFov * 0.5) * radius / float h

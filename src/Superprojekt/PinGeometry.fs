@@ -8,13 +8,13 @@ module PinGeometry =
         let phi = (1.0 + sqrt 5.0) * 0.5
         let a = 1.0 / sqrt (1.0 + phi * phi)
         let b = phi * a
-        let verts = System.Collections.Generic.List<V3d>([
+        let verts = ResizeArray<V3d>([
             V3d(-a,  b, 0.0); V3d( a,  b, 0.0); V3d(-a, -b, 0.0); V3d( a, -b, 0.0)
             V3d(0.0, -a,  b); V3d(0.0,  a,  b); V3d(0.0, -a, -b); V3d(0.0,  a, -b)
             V3d( b, 0.0, -a); V3d( b, 0.0,  a); V3d(-b, 0.0, -a); V3d(-b, 0.0,  a)
         ])
         let mutable faces =
-            System.Collections.Generic.List<int * int * int>([
+            ResizeArray<int * int * int>([
                 (0,11,5); (0,5,1); (0,1,7); (0,7,10); (0,10,11)
                 (1,5,9); (5,11,4); (11,10,2); (10,7,6); (7,1,8)
                 (3,9,4); (3,4,2); (3,2,6); (3,6,8); (3,8,9)
@@ -32,7 +32,7 @@ module PinGeometry =
                     let idx = verts.Count - 1
                     cache.[key] <- idx
                     idx
-            let newFaces = System.Collections.Generic.List<int * int * int>(faces.Count * 4)
+            let newFaces = ResizeArray<int * int * int>(faces.Count * 4)
             for (a, b, c) in faces do
                 let ab = getMid a b
                 let bc = getMid b c

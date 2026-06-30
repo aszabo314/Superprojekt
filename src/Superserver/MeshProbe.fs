@@ -208,10 +208,9 @@ let private sampleAlongAxis (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (r
             let stride = float arr.Length / float maxPoints
             Array.init maxPoints (fun i -> arr.[int (float i * stride)])
 
-// ROI-averaged intrinsic quality: incidence = surface-vs-probe-axis alignment
-// (view-independent), range = proximity to the mesh-origin sensor, shape =
-// triangle regularity. All in [0,1], higher = better; averaged over the ROI
-// cylinder.
+// ROI-cylinder-averaged intrinsic quality, all [0,1] higher = better: incidence =
+// surface-vs-probe-axis alignment (view-independent), range = proximity to the
+// mesh-origin sensor, shape = triangle regularity.
 let private meshIntrinsics (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (radius : float) (halfLen : float) =
     let pm = mi.Lm.parsed
     let inv = mi.Transform.Inverse

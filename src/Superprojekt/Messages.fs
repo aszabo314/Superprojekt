@@ -10,7 +10,6 @@ type Message =
     | LoadFinished       of string
     | SetVisible         of string * bool
     | ToggleMenu
-    | LogDebug           of string
     | ToggleGhostSilhouette
     | SetGhostOpacity of float
     | SetShadingStrength of float
@@ -26,13 +25,12 @@ type Message =
     // Writes SolvedTransform directly, per visible moving mesh with ≥3 in-ROI
     // pairs, in parallel.
     | SolveCoarse
-    | CoarseSolved of mesh:string * world:M44d * pairResiduals:(ScanPinId * float)[] * rmsBefore:float * eigenvalues:float[] * collinear:bool
+    | CoarseSolved of mesh:string * world:M44d * pairResiduals:(ScanPinId * float)[]
     | CoarseFailed of mesh:string * reason:string
     // inRoi carries per-(pin,mesh) ROI membership; out-of-ROI meshes are not
     // seeded and their stale auto markers are dropped.
     | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]
     | AnchorSeedFailed of string
-    | ShowToast of string
     | ClearToast
     | SetMeshSensorType of string * SensorType
     | SetHeatmapMode of HeatmapMode
@@ -45,11 +43,8 @@ type Message =
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
     | ScanPinMsg              of ScanPinMessage
-    | JumpToMesh of string
     | SetRenderingMode of RenderingMode
     | ToggleMeshSolo of string
-    | ShowAllMeshes
-    | HideAllMeshes
     | ResetCamera
     | ToggleGearPopover
     | RenamePin of ScanPinId * string

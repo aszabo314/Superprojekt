@@ -45,8 +45,8 @@ module View =
         ScanPin.worldCentre (AVal.force model.CommonCentroid) scale renderPos
 
     let private renderBox (worldBox : Box3d) (cc : V3d) (scale : float) =
-        let lo = (worldBox.Min - cc) * scale
-        let hi = (worldBox.Max - cc) * scale
+        let lo = ScanPin.renderCentre cc scale worldBox.Min
+        let hi = ScanPin.renderCentre cc scale worldBox.Max
         Box3d(V3d(min lo.X hi.X, min lo.Y hi.Y, min lo.Z hi.Z),
               V3d(max lo.X hi.X, max lo.Y hi.Y, max lo.Z hi.Z))
 
@@ -84,8 +84,7 @@ module View =
                 "const l = document.getElementById('loader');"
                 "if(l) l.remove();"
                 "document.body.classList.add('loaded');"
-                // Pulse outline for nav actions; delayed so just-opened targets
-                // are visible first.
+                // Pulse outline for nav actions; delayed so just-opened targets are visible first.
                 "window.SuperPulse = function(selector){"
                 "  setTimeout(function(){"
                 "    var el = document.querySelector(selector);"
@@ -121,13 +120,6 @@ module View =
                 let overlaySize =
                     (client, size) ||> AVal.map2 (fun c v ->
                         if c.X > 1 && c.Y > 1 then c else v)
-
-                let mutable eHandler = None
-
-                RenderControl.OnReady (fun e ->
-                    eHandler <- Some e
-                    ()
-                )
 
                 OrbitController.getAttributes (Env.map CameraMessage env)
 

@@ -1,5 +1,5 @@
-//4be2828c-62bd-945a-267c-c849a9adce27
-//f595e13a-c1d9-f8d9-a0fa-b7c8803e6e61
+//36bdb401-950d-5ed9-9aab-a1e27d789dac
+//0cbb4597-506e-5c9e-a2d1-b4751d61301d
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -63,7 +63,6 @@ type AdaptiveModel(value : Model) =
     let _SolvedTransforms_ = FSharp.Data.Adaptive.cval(value.SolvedTransforms)
     let _RegView_ = FSharp.Data.Adaptive.cval(value.RegView)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
-    let _LastSolve_ = FSharp.Data.Adaptive.cval(value.LastSolve)
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
     let _MeshSensorTypes_ = FSharp.Data.Adaptive.cval(value.MeshSensorTypes)
     let _HeatmapMode_ = FSharp.Data.Adaptive.cval(value.HeatmapMode)
@@ -119,7 +118,6 @@ type AdaptiveModel(value : Model) =
             _SolvedTransforms_.Value <- value.SolvedTransforms
             _RegView_.Value <- value.RegView
             _Registration_.Value <- value.Registration
-            _LastSolve_.Value <- value.LastSolve
             _Toast_.Value <- value.Toast
             _MeshSensorTypes_.Value <- value.MeshSensorTypes
             _HeatmapMode_.Value <- value.HeatmapMode
@@ -168,7 +166,6 @@ type AdaptiveModel(value : Model) =
     member __.SolvedTransforms = _SolvedTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.RegView = _RegView_ :> FSharp.Data.Adaptive.aval<RegView>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
-    member __.LastSolve = _LastSolve_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, LastSolveEntry>>
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MeshSensorTypes = _MeshSensorTypes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, SensorType>>
     member __.HeatmapMode = _HeatmapMode_ :> FSharp.Data.Adaptive.aval<HeatmapMode>

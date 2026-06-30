@@ -1,8 +1,6 @@
 namespace Superprojekt
 
 open System
-open System.Text
-open System.Text.Json
 open Aardvark.Base
 
 [<RequireQualifiedAccess>]
@@ -47,9 +45,6 @@ module Correspondence =
         Residuals   = Map.empty
         InRoi       = Map.empty
     }
-
-// StageFine is retained only for JSON round-trip; only StageCoarse is produced.
-type RegStage = StageCoarse | StageFine
 
 // λ2/λ1 of a weighted 3D point spread (client-side conditioning pre-check for the
 // readiness line; the authoritative value comes from the server).
@@ -151,22 +146,6 @@ module RegConditioning =
 
     let isCollinear (eigenvalues : float[]) = lambdaRatio eigenvalues < 1e-3
 
-// JSON (de)serialization kept here so the round-trip is unit-testable outside the
-// WASM project.
-type SolveConditioning = {
-    Eigenvalues         : float[]
-    CollinearityWarning : bool
-}
-
-type LastSolveEntry = {
-    Stage           : RegStage
-    RmsBefore       : float
-    RmsAfter        : float
-    Conditioning    : SolveConditioning option
-    PerPinResiduals : Map<ScanPinId, float> option
-    Timestamp       : DateTime
-}
-
 // Targets are world-space; reducer converts to render space at the boundary.
 type FlyToTarget =
     | FlyToSphere of centre : V3d * radius : float
@@ -200,9 +179,6 @@ type NavAction =
     | SelectPinOpenCard of ScanPinId
     | HighlightReferenceColumn
     | RunCoarse
-    | RunFine
-    | CommitPending
-    | DiscardPending
 
 type Diagnostic = {
     Severity : Severity
@@ -224,14 +200,6 @@ type ReadinessInput = {
     ReferenceMesh       : string option
     VisibleMovingMeshes : string list
     EnabledPins         : ReadinessPin list
-    HasPending          : bool
-    HasCommittedStep    : bool
-    FineModeLabel       : string
-}
-
-type StageDiagnostics = {
-    Coarse : Diagnostic list
-    Fine   : Diagnostic list
 }
 
 module Readiness =
@@ -249,34 +217,28 @@ module Readiness =
         |> RegConditioning.lambdaRatio
 
     // Rules evaluated in order, all matches emitted; display sorts by severity.
-    let compute (input : ReadinessInput) : StageDiagnostics =
-        let coarse = ResizeArray<Diagnostic>()
-        let fine = ResizeArray<Diagnostic>()
-        let add (l : ResizeArray<_>) severity text action =
-            l.Add { Severity = severity; Text = text; Action = action }
-
-        if input.HasPending then
-            for l in [ coarse; fine ] do
-                add l Blocker "Commit or discard the pending result first" None
+    let compute (input : ReadinessInput) : Diagnostic list =
+        let diags = ResizeArray<Diagnostic>()
+        let add severity text action =
+            diags.Add { Severity = severity; Text = text; Action = action }
 
         if input.ReferenceMesh.IsNone then
-            add coarse Blocker "Designate a reference mesh (★)" (Some HighlightReferenceColumn)
-            add fine Blocker "Designate a reference mesh (★)" (Some HighlightReferenceColumn)
+            add Blocker "Designate a reference mesh (★)" (Some HighlightReferenceColumn)
 
         if List.isEmpty input.EnabledPins then
-            add coarse Blocker "Enable correspondence on ≥3 pins" None
+            add Blocker "Enable correspondence on ≥3 pins" None
 
         let counts = pairCounts input
         if input.ReferenceMesh.IsSome then
             for mesh, n in counts do
                 if n < 3 then
-                    add coarse Blocker
+                    add Blocker
                         (sprintf "%s: needs %d more correspondence marker(s)" mesh (3 - n))
                         (Some (ReseedCorrespondence (Some mesh)))
 
         for pin in input.EnabledPins do
             if pin.Unresolved > 0 then
-                add coarse Warning
+                add Warning
                     (sprintf "Pin %s: %d mesh(es) without a marker" pin.Label pin.Unresolved)
                     (Some (SelectPinOpenCard pin.Id))
 
@@ -286,159 +248,17 @@ module Readiness =
             let suffix =
                 if List.isEmpty affected then ""
                 else sprintf " (%s)" (String.concat ", " affected)
-            add coarse Warning
+            add Warning
                 (sprintf "Pins near-collinear — rotation weakly constrained%s" suffix) None
 
         if input.ReferenceMesh.IsSome && List.isEmpty input.VisibleMovingMeshes then
-            add coarse Info "No visible moving meshes to solve" None
+            add Info "No visible moving meshes to solve" None
 
-        let coarseBlocked = coarse |> Seq.exists (fun d -> d.Severity = Blocker)
-        if not coarseBlocked && counts |> List.exists (fun (_, n) -> n >= 3) then
-            add coarse Ready "Ready for correspondence alignment" (Some RunCoarse)
+        let blocked = diags |> Seq.exists (fun d -> d.Severity = Blocker)
+        if not blocked && counts |> List.exists (fun (_, n) -> n >= 3) then
+            add Ready "Ready for correspondence alignment" (Some RunCoarse)
 
-        let fineBlocked = fine |> Seq.exists (fun d -> d.Severity = Blocker)
-        if not fineBlocked then
-            if not input.HasCommittedStep then
-                add fine Info "Run correspondence alignment first (recommended)" None
-            elif not (List.isEmpty input.VisibleMovingMeshes) then
-                add fine Ready (sprintf "Ready for fine ICP (%s)" input.FineModeLabel) (Some RunFine)
-
-        { Coarse = List.ofSeq coarse; Fine = List.ofSeq fine }
-
-module RegJson =
-    let private inv = System.Globalization.CultureInfo.InvariantCulture
-    let private f (v : float) = v.ToString("G17", inv)
-    let private q (s : string) =
-        let sb = StringBuilder(s.Length + 2)
-        sb.Append('"') |> ignore
-        for c in s do
-            match c with
-            | '"'  -> sb.Append("\\\"") |> ignore
-            | '\\' -> sb.Append("\\\\") |> ignore
-            | '\n' -> sb.Append("\\n")  |> ignore
-            | '\r' -> sb.Append("\\r")  |> ignore
-            | '\t' -> sb.Append("\\t")  |> ignore
-            | c when c < ' ' -> sb.Append(sprintf "\\u%04x" (int c)) |> ignore
-            | c -> sb.Append(c) |> ignore
-        sb.Append('"') |> ignore
-        sb.ToString()
-    let private v3 (v : V3d) = sprintf "[%s,%s,%s]" (f v.X) (f v.Y) (f v.Z)
-
-    let private rV3 (e : JsonElement) =
-        let a = e.EnumerateArray() |> Seq.map (fun x -> x.GetDouble()) |> Array.ofSeq
-        V3d(a.[0], a.[1], a.[2])
-    let private tryProp (name : string) (e : JsonElement) =
-        match e.TryGetProperty(name) with
-        | true, v -> Some v
-        | _ -> None
-
-    let correspondenceJ (c : Correspondence) =
-        let anchors =
-            c.Anchors |> Map.toSeq
-            |> Seq.map (fun (m, a) ->
-                sprintf "%s:{\"p\":%s,\"src\":%s}" (q m) (v3 a.Point) (q (AnchorSource.tag a.Source)))
-            |> String.concat ","
-        let residuals =
-            c.Residuals |> Map.toSeq
-            |> Seq.map (fun (m, r) -> sprintf "%s:%s" (q m) (f r))
-            |> String.concat ","
-        let inRoi =
-            c.InRoi |> Map.toSeq
-            |> Seq.map (fun (m, b) -> sprintf "%s:%b" (q m) b)
-            |> String.concat ","
-        sprintf "{\"refAnchor\":%s,\"refDist\":%s,\"anchors\":{%s},\"residuals\":{%s},\"inRoi\":{%s}}"
-            (match c.RefAnchor with Some a -> v3 a | None -> "null")
-            (f c.RefDistance) anchors residuals inRoi
-
-    let readCorrespondence (e : JsonElement) : Correspondence =
-        let anchors =
-            match tryProp "anchors" e with
-            | Some ae ->
-                ae.EnumerateObject()
-                |> Seq.map (fun p ->
-                    p.Name, {
-                        Point    = rV3 (p.Value.GetProperty "p")
-                        Source   = AnchorSource.ofTag (p.Value.GetProperty("src").GetString())
-                    })
-                |> Map.ofSeq
-            | None -> Map.empty
-        let residuals =
-            match tryProp "residuals" e with
-            | Some re ->
-                re.EnumerateObject() |> Seq.map (fun p -> p.Name, p.Value.GetDouble()) |> Map.ofSeq
-            | None -> Map.empty
-        let inRoi =
-            match tryProp "inRoi" e with
-            | Some re ->
-                re.EnumerateObject() |> Seq.map (fun p -> p.Name, p.Value.GetBoolean()) |> Map.ofSeq
-            | None -> Map.empty
-        {
-            RefAnchor   =
-                (match tryProp "refAnchor" e with
-                 | Some v when v.ValueKind <> JsonValueKind.Null -> Some (rV3 v)
-                 | _ -> None)
-            RefDistance = (match tryProp "refDist" e with Some v -> v.GetDouble() | None -> 0.0)
-            Anchors     = anchors
-            Residuals   = residuals
-            InRoi       = inRoi
-        }
-
-    let private stageTag = function StageCoarse -> "coarse" | StageFine -> "fine"
-    let private stageOf = function "fine" -> StageFine | _ -> StageCoarse
-
-    let lastSolveJ (m : Map<string, LastSolveEntry>) =
-        let entryJ (e : LastSolveEntry) =
-            let cond =
-                match e.Conditioning with
-                | Some c ->
-                    sprintf "{\"eigen\":[%s],\"collinear\":%b}"
-                        (c.Eigenvalues |> Array.map f |> String.concat ",") c.CollinearityWarning
-                | None -> "null"
-            let perPin =
-                match e.PerPinResiduals with
-                | Some r ->
-                    "{" + (r |> Map.toSeq
-                             |> Seq.map (fun (ScanPinId.ScanPinId g, v) -> sprintf "%s:%s" (q (g.ToString())) (f v))
-                             |> String.concat ",") + "}"
-                | None -> "null"
-            sprintf "{\"stage\":%s,\"rmsBefore\":%s,\"rmsAfter\":%s,\"cond\":%s,\"perPin\":%s,\"t\":%s}"
-                (q (stageTag e.Stage)) (f e.RmsBefore) (f e.RmsAfter) cond perPin
-                (q (e.Timestamp.ToString("O", inv)))
-        "{" + (m |> Map.toSeq |> Seq.map (fun (mesh, e) -> sprintf "%s:%s" (q mesh) (entryJ e)) |> String.concat ",") + "}"
-
-    let readLastSolve (e : JsonElement) : Map<string, LastSolveEntry> =
-        e.EnumerateObject()
-        |> Seq.map (fun p ->
-            let v = p.Value
-            let cond =
-                match tryProp "cond" v with
-                | Some c when c.ValueKind <> JsonValueKind.Null ->
-                    Some {
-                        Eigenvalues =
-                            c.GetProperty("eigen").EnumerateArray()
-                            |> Seq.map (fun x -> x.GetDouble()) |> Array.ofSeq
-                        CollinearityWarning = c.GetProperty("collinear").GetBoolean()
-                    }
-                | _ -> None
-            let perPin =
-                match tryProp "perPin" v with
-                | Some r when r.ValueKind <> JsonValueKind.Null ->
-                    Some (r.EnumerateObject()
-                          |> Seq.map (fun pr -> ScanPinId.ScanPinId (Guid.Parse pr.Name), pr.Value.GetDouble())
-                          |> Map.ofSeq)
-                | _ -> None
-            p.Name, {
-                Stage           = stageOf (v.GetProperty("stage").GetString())
-                RmsBefore       = v.GetProperty("rmsBefore").GetDouble()
-                RmsAfter        = v.GetProperty("rmsAfter").GetDouble()
-                Conditioning    = cond
-                PerPinResiduals = perPin
-                Timestamp       =
-                    match tryProp "t" v with
-                    | Some t -> DateTime.Parse(t.GetString(), inv, System.Globalization.DateTimeStyles.RoundtripKind)
-                    | None -> DateTime.MinValue
-            })
-        |> Map.ofSeq
+        List.ofSeq diags
 
 // Drives the intrinsic per-fragment channels in the mesh shader (the extrinsic
 // m3c2 surface map is the separate DistanceEncoding path).

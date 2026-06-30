@@ -84,10 +84,6 @@ module MeshView =
     let private scaleFor (model : AdaptiveModel) (name : string) =
         model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
 
-    let loadMeshT (model : AdaptiveModel) (name : string) =
-        model.LoadTransforms |> AVal.map (fun m ->
-            Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)
-
     let displayedMeshT (model : AdaptiveModel) (name : string) =
         (model.RegView, model.SolvedTransforms, model.LoadTransforms)
         |||> AVal.map3 (fun view solved load ->
@@ -95,23 +91,34 @@ module MeshView =
             | RegAfter, Some t -> t
             | _ -> Map.tryFind name load |> Option.defaultValue Trafo3d.Identity)
 
+    // Saturated end of a diverging/sequential scalar map: 95th percentile of the
+    // finite |values| (1e20 = sentinel for "no value"), floored at 1e-3.
+    let robustHi (arr : float32[]) =
+        let valid = arr |> Array.choose (fun x -> if abs x < 1e20f then Some (abs x) else None)
+        if valid.Length = 0 then 1.0f
+        else
+            Array.sortInPlace valid
+            max 1e-3f valid.[int (0.95 * float (valid.Length - 1))]
+
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
     // inner radius w), for the mesh shader's pin-isolation filter.
     let private pinBlobUniforms (model : AdaptiveModel) =
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
         let pinsF =
-            model.ScanPins.Pins |> AMap.toAVal |> AVal.map (fun pinsMap ->
-                HashMap.toArray pinsMap |> Array.map snd)
+            model.ScanPins.Pins
+            |> AMap.map (fun _ p -> p.Centre, p.InnerRadius)
+            |> AMap.toAVal
+            |> AVal.map (fun pinsMap -> HashMap.toArray pinsMap |> Array.map snd)
         let blobsArr =
             (pinsF, model.CommonCentroid, datasetScale)
             |||> AVal.map3 (fun pins cc scale ->
                 let n     = min pins.Length MeshShader.MaxBlobs
                 let centres  = Array.zeroCreate<V4f> MeshShader.MaxBlobs
                 for i in 0 .. n - 1 do
-                    let p  = pins.[i]
-                    let cr = (p.Centre - cc) * scale
-                    let ir = float32 (p.InnerRadius * scale)
+                    let centre, innerR = pins.[i]
+                    let cr = ScanPin.renderCentre cc scale centre
+                    let ir = float32 (ScanPin.renderLength scale innerR)
                     centres.[i]  <- V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, ir)
                 n, centres)
         blobsArr |> AVal.map (fun (n, _) -> n),
@@ -228,14 +235,7 @@ module MeshView =
                     else 0)
             // Saturated end of the diverging map: robust (95th pct |d|).
             let distScale =
-                myDist |> AVal.map (function
-                    | Some arr ->
-                        let valid = arr |> Array.choose (fun x -> if abs x < 1e20f then Some (abs x) else None)
-                        if valid.Length = 0 then 1.0f
-                        else
-                            Array.sortInPlace valid
-                            max 1e-3f valid.[int (0.95 * float (valid.Length - 1))]
-                    | None -> 1.0f)
+                myDist |> AVal.map (function Some arr -> robustHi arr | None -> 1.0f)
             let surface =
                 sg {
                     Sg.Active renderEnabled
@@ -293,9 +293,8 @@ module MeshView =
             surface
         ) |> AList.toASet
 
-    // Outline G-buffer: every visible mesh rendered solid with the
-    // OutlineGBuffer shader (world normal + depth → target0, palette colour +
-    // mask → target1). Consumed by OutlineView's offscreen pass.
+    // Outline G-buffer: every visible mesh rendered solid with OutlineGBuffer.shade,
+    // consumed by OutlineView's offscreen pass.
     let buildOutlineNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
         let meshIndices =
             model.MeshNames |> AList.toAVal |> AVal.map (fun names ->

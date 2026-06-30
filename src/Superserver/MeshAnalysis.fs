@@ -6,9 +6,8 @@ open Aardvark.Embree
 open MeshCache
 
 // Sphere–surface contact rings: level set of |p − centre| − radius traced by
-// marching-squares edge keys + linking over BVH candidate triangles. Returns
-// every ring; closed rings repeat their first point so rendering has no gap.
-// Points are world-space.
+// marching-squares edge keys + linking over BVH candidate triangles. Returns every
+// ring (closed rings repeat their first point so rendering has no gap); world-space.
 let contactRings (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : int) : V3d[][] =
     let positions = lm.parsed.positions
     let centroid = lm.parsed.centroid
@@ -150,89 +149,3 @@ let contactRings (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : 
                 kept.ToArray())
             |> Seq.filter (fun r -> r.Length >= 2)
             |> Array.ofSeq
-
-type PatchPoint = { Px : float; Py : float; Wx : float; Wy : float; Wz : float; U : float; V : float }
-type PatchResult = { Points : PatchPoint[]; Triangles : int[]; RefDirWorld : V3d; NormalWorld : V3d }
-
-// frame: optional (normal, refDir) override in the mesh's own frame — skips the
-// local plane fit and projects into the supplied frame (origin = centre) so
-// several meshes share one co-oriented projection.
-//
-// The data are height fields, so there is no overlap to disambiguate and mesh
-// connectivity is irrelevant: the patch is every triangle whose bbox overlaps
-// the footprint sphere, projected into the frame; a fragmented multi-tile mesh
-// fills the footprint like a watertight DEM. (Px,Py) is the orthographic
-// projection (origin = centre); Triangles index into Points. maxTris bounds the
-// output via a uniform stride over the (spatially grouped) BVH triangle order,
-// so a dense mesh thins evenly rather than collapsing to a core.
-let patch (lm : LoadedMesh) (centre : V3d) (radius : float) (maxTris : int) (frame : (V3d * V3d) option) : PatchResult =
-    let positions = lm.parsed.positions
-    let uvs = lm.parsed.uvs
-    let centroid = lm.parsed.centroid
-    let centreLocal = centre - centroid
-
-    let orthoRef (normal : V3d) (cand : V3d) =
-        let proj = cand - normal * Vec.dot cand normal
-        if proj.Length > 1e-9 then Vec.normalize proj
-        else
-            let projX = V3d.IOO - normal * Vec.dot V3d.IOO normal
-            if projX.Length > 1e-9 then Vec.normalize projX else V3d.IOO
-
-    let triBuf = trianglesInSphere lm (V3f centreLocal) (float32 (radius * 1.2))
-    let triCount = triBuf.Length / 3
-
-    let normal, refDir =
-        match frame with
-        | Some (n, r) ->
-            let nn = if n.Length > 1e-9 then n.Normalized else V3d.OOI
-            nn, orthoRef nn r
-        | None when triCount = 0 -> V3d.OOI, V3d.OIO
-        | None ->
-            let mutable nSum = V3d.Zero
-            for ti in 0 .. triCount - 1 do
-                let p0 = V3d positions.[triBuf.[ti * 3]]
-                let p1 = V3d positions.[triBuf.[ti * 3 + 1]]
-                let p2 = V3d positions.[triBuf.[ti * 3 + 2]]
-                nSum <- nSum + Vec.cross (p1 - p0) (p2 - p0)
-            let normal = if nSum.Length > 1e-9 then Vec.normalize nSum else V3d.OOI
-            normal, orthoRef normal V3d.OIO
-    let leftDir = Vec.cross normal refDir
-
-    // Footprint clip: keep a triangle if any corner falls inside the radius disc.
-    // The gathered sphere is slightly larger so straddling rim triangles fill the
-    // edge; this trims the annulus the client circle-clips away anyway.
-    let r2 = radius * radius
-    let inline planarIn v =
-        let dv = V3d positions.[v] - centreLocal
-        let px = Vec.dot dv refDir
-        let py = Vec.dot dv leftDir
-        px * px + py * py <= r2
-
-    let stride = if maxTris > 0 && triCount > maxTris then triCount / maxTris else 1
-    let indexOf = System.Collections.Generic.Dictionary<int, int>()
-    let pts = ResizeArray<PatchPoint>()
-    let emit v =
-        match indexOf.TryGetValue v with
-        | true, i -> i
-        | _ ->
-            let i = pts.Count
-            indexOf.[v] <- i
-            let vp = V3d positions.[v]
-            let dv = vp - centreLocal
-            let dvTan = dv - normal * Vec.dot dv normal
-            let world = vp + centroid
-            let uv = if v < uvs.Length then V2d uvs.[v] else V2d.Zero
-            pts.Add { Px = Vec.dot dvTan refDir; Py = Vec.dot dvTan leftDir
-                      Wx = world.X; Wy = world.Y; Wz = world.Z; U = uv.X; V = uv.Y }
-            i
-    let tris = ResizeArray<int>()
-    let mutable ti = 0
-    while ti < triCount do
-        let i0, i1, i2 = triBuf.[ti * 3], triBuf.[ti * 3 + 1], triBuf.[ti * 3 + 2]
-        if planarIn i0 || planarIn i1 || planarIn i2 then
-            let a = emit i0
-            let b = emit i1
-            let c = emit i2
-            tris.Add a; tris.Add b; tris.Add c
-        ti <- ti + stride
-    { Points = pts.ToArray(); Triangles = tris.ToArray(); RefDirWorld = refDir; NormalWorld = normal }

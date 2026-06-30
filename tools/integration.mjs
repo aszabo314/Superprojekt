@@ -3,11 +3,9 @@
 // Hessigheim dataset. Run: node tools/integration.mjs [baseUrl]
 //
 // Flow: seed correspondence points via /query/closest, perturb one mesh by a
-// known rigid T, build pairs, /query/lsq-pairs must recover ≈ T⁻¹; feed the
-// corrected transform to /query/icp and assert the RMS decreases; run
+// known rigid T, build pairs, /query/lsq-pairs must recover ≈ T⁻¹; run
 // /query/probe with the pre- and post-correction transforms and assert the
-// moving mesh's median |distance| shrinks; /query/patch with a frame
-// override must echo the requested frame (and now carries per-point UVs).
+// moving mesh's median |distance| shrinks.
 
 const base = (process.argv[2] || "http://localhost:8002") + "/api";
 
@@ -47,7 +45,6 @@ const apply = (m, p) => [
 ];
 const sub = (a, b) => a.map((v, i) => v - b[i]);
 const len = (a) => Math.hypot(...a);
-const maxAbsDiff = (a, b) => Math.max(...a.map((v, i) => Math.abs(v - b[i])));
 
 function rigidAbout(axisAngle, centre, t) {
   // rotation about z by angle through `centre`, plus translation t
@@ -165,25 +162,6 @@ const run = async () => {
         `baseline ${mBase.toFixed(3)} → perturbed ${mPre.toFixed(3)} m`);
   check("correction shrinks the median error", errPost < errPre && errPost < 0.05,
         `${errPre.toFixed(3)} → ${errPost.toFixed(3)} m`);
-
-  // 6 · patch frame override: response echoes the requested frame, points carry UVs
-  const patchSeed = await postJson("/query/closest", {
-    name: refMesh, index: 0, point: [refCentroid[0], refCentroid[1] + 20, refCentroid[2]],
-  });
-  const patchAt = patchSeed.point;
-  const patchFree = await postJson("/query/patch", {
-    name: refMesh, centre: patchAt, radius: 15, maxPoints: 800,
-  });
-  check("patch returns points", patchFree.points.length > 10, `${patchFree.points.length}`);
-  check("patch points carry UVs", patchFree.points.every((p) => p.length >= 7));
-  const patchFramed = await postJson("/query/patch", {
-    name: refMesh, centre: patchAt, radius: 15, maxPoints: 800,
-    frameNormal: [0, 0, 1], frameRefDir: [1, 0, 0],
-  });
-  check("patch echoes frame normal", maxAbsDiff(patchFramed.normal, [0, 0, 1]) < 1e-9,
-        patchFramed.normal.map((v) => v.toFixed(3)).join(","));
-  check("patch echoes frame refDir", maxAbsDiff(patchFramed.refDir, [1, 0, 0]) < 1e-9,
-        patchFramed.refDir.map((v) => v.toFixed(3)).join(","));
 
   console.log("");
   console.log(`${total - failures}/${total} passed${failures ? ` — ${failures} FAILED` : ""}`);

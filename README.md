@@ -2,7 +2,7 @@
 
 Research prototype for interactive 3D inspection and **registration** of geological mesh datasets (multi-epoch scans of the same terrain). Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH ray/closest-point, sphere contact rings, surface patches, per-vertex signed distance, N-mesh M3C2 probes, and a weighted rigid landmark solve). Also hosts the WASM client.
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH ray/closest-point, sphere contact rings, per-vertex signed distance, N-mesh M3C2 probes, and a weighted rigid landmark solve). Also hosts the WASM client.
 - **Superprojekt** — Blazor WebAssembly client. Aardvark.Dom Elm-style architecture, WebGL2 rendering. Runs on desktop and mobile browsers; thin client by design — heavy compute lives on the server.
 
 ## Run it
@@ -50,7 +50,7 @@ The first request for a mesh parses the OBJ + builds an Embree scene + BbTree; t
 - **Overview.** The rail lists every mesh with a colour swatch, visibility toggle, sensor-type tag (cycles), the reference **★**, and a frame-camera button; hovering a row peek-isolates that mesh in 3D. The bottom dock is a roster (sensor · triangle count · overlaps-the-reference · visibility). The focus panel shows atlas-textured WebGL tiles of each mesh.
 - **ScanPins.** Place a pin on a surface (**Correspondence → ○ Place pin**, then tap the reference). Each pin has a metric **inner radius** and runs a server-side **M3C2 distance probe**: a 20 m cylinder along the locally-estimated surface normal (PCA over the reference inside the pin sphere) samples every visible mesh and returns one signed-distance distribution per mesh, re-centred so 0 = the reference median. The pin's influence renders as a thin equator ring plus the exact per-mesh **sphere–surface contact rings** (server-computed, cached, invalidated on radius / centre / registration change).
 - **Correspondence registration.** Designate a reference mesh (**★** — every error metric is relative to it; there is no absolute ground truth). **Every pin is a registration pin**: on placement it auto-seeds one **correspondence marker** per other mesh by closest-point projection of the pin's reference marker, ROI-clamped to the pin. Markers are stored *mesh-local*, so the Before/After toggle moves each marker with its mesh. Refine a marker in the focus panel — toggle **⊕ set point** and click the focused mesh's surface to place it (a GPU pick, constrained to the pin's region). Set mode is off by default so the focus pans freely; placing exits it. With ≥3 markers per moving mesh, **Solve** runs a weighted rigid landmark solve (Umeyama/Arun, server-side) per mesh in parallel and writes each mesh's solved transform. A 3D **constellation** draws each marker, the haloed reference marker, and the lines between them. There is no preview/commit and no undo history — the solve writes the result directly and the Before/After toggle is the comparison.
-- **Focus panel (right).** A **WebGL** large single of the focused mesh (full-res, **atlas-textured**, pan + mouse-anchored zoom; **⊕ set point** to place correspondences) over a strip of textured thumbnail tiles, one per visible mesh — each its own render control. A **Pano / Top** toggle drives the single: **Top** is strictly orthographic, **Pano** a cylindrical unwrap (vertex shader). Click a tile to focus that mesh; **⟲ reset** recentres; hold **⇄ ref** to peek the reference. Picking is a GPU pick (`Sg.OnTap` → surface point → correspondence).
+- **Focus panel (right).** A **WebGL** large single of the focused mesh (full-res, **atlas-textured**, pan + mouse-anchored zoom; **⊕ set point** to place correspondences) over a strip of textured thumbnail tiles, one per visible mesh — each its own render control. A **Pano / Top** toggle drives the single: **Top** is strictly orthographic, **Pano** a cylindrical unwrap (vertex shader). Click a tile to focus that mesh; **⟲ reset** recentres; hold **⇄ ref** to peek the reference. Picking inverts the cursor to a ray and raycasts on the server (`Sg.OnTap` does not fire reliably in the secondary controls).
 - **Inspect.** The **central 3D** paints the all-meshes **variance** map (disagreement of every visible moving mesh) on the reference, the moving meshes dropped to faint context. The bottom **dock** holds the selected pin's **distribution** (jittered raw probe samples + median/IQR box on a shared signed-distance axis with the ±LoD₉₅ band) and a **shift readout** (the focused mesh's centroid displacement split into vertical-datum / horizontal + rotation angle, derived from its solved transform). The **focus tiles** recolour per channel (toggled in the dock): **difference** (signed M3C2 / Δz vs reference, diverging, per-vertex colour) or **displacement** (the large single shows white surface + load→solved **arrow glyphs** coloured by magnitude; tiles show a magnitude heatmap) — all rendered in WebGL. The intrinsic **incidence / range / triangle-shape** acquisition heatmaps are in the rail.
 - **Linked highlighting.** Hover anything — a rail row, a dock row, a 3D constellation glyph, a focus tile — and the same object lights up everywhere at once. There is a single shared selection record; no panel-to-panel wiring.
 
@@ -66,7 +66,7 @@ ProbeModel.fs          M3C2 probe result / state types
 Query.fs               server query wrappers (Async)
 CameraModel.fs / .g.fs OrbitState [<ModelType>]
 OrbitController.fs     orbit camera + messages
-RegistrationModel.fs   ScanPinId, correspondence anchors, readiness engine, RegJson, fly-to math (WASM-free, shared with Supertests)
+RegistrationModel.fs   ScanPinId, correspondence anchors, readiness engine, fly-to math (WASM-free, shared with Supertests)
 ScanPinModel.fs / .g.fs ScanPin + placement state
 PinGeometry.fs         icosphere + sphere outline
 Model.fs / .g.fs       application Model + Selection + transforms [<ModelType>]
@@ -97,7 +97,7 @@ The server (`src/Superserver/`):
 ```
 MeshLoader.fs    OBJ parse + centroid file + atlas paths
 MeshCache.fs     lazy Embree scene + BbTree cache (permanent)
-MeshAnalysis.fs  sphere contact-ring tracing, patch sampling
+MeshAnalysis.fs  sphere contact-ring tracing
 MeshProbe.fs     N-mesh M3C2 probe
 RegMath.fs       weighted Umeyama landmark solve (Jacobi SVD)
 QueryHandlers.fs HTTP query handlers
@@ -129,20 +129,20 @@ All query coordinates are **absolute world space**; the server converts to mesh-
 
 Costly queries scale with mesh count × sample density. Rules learned the hard way:
 
-- **Never issue per-mesh HTTP loops sequentially.** Multi-mesh raycasts go through the client-side parallel fan-out (`Query.rayHitMany`); if a multi-mesh operation gets hot, add a batched server endpoint with `Parallel.For` instead.
+- **Never issue per-mesh HTTP loops sequentially.** Multi-mesh raycasts fan out in parallel (`Async.Parallel`) rather than looping; if a multi-mesh operation gets hot, add a batched server endpoint with `Parallel.For` instead.
 - **Embree `Scene.Intersect` is thread-safe** — server inner loops parallelise over independent meshes/samples.
 - **Debounce user-driven triggers** with a `CancellationTokenSource` + a generation counter so only the final drag position hits the server, and at most one fetch is in flight per invalidation.
 - **Mesh caches are warmed at dataset load** by the bbox handler.
 
 ## Tests
 
-`src/Supertests` is a plain console runner (no test-framework packages) that compiles the pure modules directly (`RegistrationModel.fs` + `RegMath.fs`) and covers the weighted Umeyama solver (recovery, reflections, weights, collinearity, <3-pairs rejection), the `RegJson` correspondence + last-solve round-trips, the conditioning eigenvalue helpers, the registration readiness engine, and the camera fly-to math:
+`src/Supertests` is a plain console runner (no test-framework packages) that compiles the pure modules directly (`RegistrationModel.fs` + `RegMath.fs`) and covers the weighted Umeyama solver (recovery, reflections, weights, collinearity, <3-pairs rejection), the conditioning eigenvalue helpers, the registration readiness engine, and the camera fly-to math:
 
 ```bash
 dotnet run --project src/Supertests        # exit code = number of failures
 ```
 
-`tools/integration.mjs` exercises the HTTP flow end-to-end against a running server (closest-point seeding → known rigid perturbation → `/query/lsq-pairs` recovers its inverse → `/query/probe` median error shrinks → patch frame override echo):
+`tools/integration.mjs` exercises the HTTP flow end-to-end against a running server (closest-point seeding → known rigid perturbation → `/query/lsq-pairs` recovers its inverse → `/query/probe` median error shrinks):
 
 ```bash
 ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver   # terminal 1

@@ -31,6 +31,8 @@ module View =
         let p1 = vp.Backward.TransformPosProj(V3d(ndc, 1.0))
         Ray3d(p0, (p1 - p0) |> Vec.normalize)
 
+    let private nowMs () = float System.DateTime.UtcNow.Ticks / 10000.0
+
     // Cursor ray ∩ the render-space Z=0 plane. Render Z=0 ⟺ world Z = CommonCentroid.Z,
     // so this is a horizontal plane at the dataset's mean elevation — the readout
     // fallback when the ray misses every mesh.
@@ -60,6 +62,10 @@ module View =
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
         let cursorScreen    = cval<V2d option> None
+        // Throttle/generation guard for the placement-hover ghost raycast (server
+        // round-trip per move would flood; stale results must not overwrite).
+        let mutable placeHoverMs  = 0.0
+        let mutable placeHoverGen = 0
 
         let fullscreenActive = spaceHeld :> aval<bool>
 
@@ -180,6 +186,61 @@ module View =
                                     | None -> return frontmost
                                 }
 
+                // Cursor → nearest mesh surface via server raycast, ghost-agnostic
+                // (the server just intersects geometry, ignoring the GPU ghost).
+                // Bbox-culls visible+loaded meshes, raycasts the survivors in
+                // parallel, returns the render-space hit nearest the camera — the
+                // first surface the ray crosses wins, mesh and coordinate together.
+                let raycastNearest () : Async<V3d option> =
+                    match cursorScreen.Value with
+                    | None -> async.Return None
+                    | Some cursorPx ->
+                        let cc = AVal.force model.CommonCentroid
+                        let scales = AVal.force model.DatasetScales
+                        let visible = AVal.force model.MeshVisible
+                        let bounds = AVal.force model.MeshBounds
+                        let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
+                        let candidates =
+                            bounds |> Map.toSeq
+                            |> Seq.choose (fun (name, world) ->
+                                let vis = Map.tryFind name visible |> Option.defaultValue true
+                                if vis then
+                                    let scale = DatasetScale.forMesh scales name
+                                    if (rayBoxT ray (renderBox world cc scale)).IsSome
+                                    then Some (name, scale) else None
+                                else None)
+                            |> Array.ofSeq
+                        if candidates.Length = 0 then async.Return None
+                        else
+                            async {
+                                let! hits =
+                                    candidates
+                                    |> Array.map (fun (name, scale) ->
+                                        async {
+                                            let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model name))
+                                            let serverOrigin = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale ray.Origin)
+                                            let serverDir = (dispWorld.Backward.TransformDir ray.Direction).Normalized
+                                            let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
+                                            return hit |> Option.map (fun h ->
+                                                let rp = ScanPin.renderCentre cc scale (dispWorld.Forward.TransformPos h.point)
+                                                Vec.dot (rp - ray.Origin) ray.Direction, rp)
+                                        })
+                                    |> Async.Parallel
+                                return
+                                    hits |> Array.choose id |> Array.sortBy fst
+                                    |> Array.tryHead |> Option.map snd
+                            }
+
+                // Placement target: solid pixel pick (GPU / active layer) first,
+                // then fall through a ghost to the nearest raycast surface.
+                let resolvePlacement (frontmost : V3d option) : Async<V3d option> =
+                    async {
+                        let! r = resolveLayerPick frontmost
+                        match r with
+                        | Some _ -> return r
+                        | None -> return! raycastNearest ()
+                    }
+
                 Sg.View view
                 Sg.Proj proj
 
@@ -271,7 +332,10 @@ module View =
                     let frontmost =
                         if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
                     async {
-                        let! resolved = resolveLayerPick frontmost
+                        let! resolved =
+                            match placement with
+                            | AnchorPlacement -> resolvePlacement frontmost
+                            | _ -> resolveLayerPick frontmost
                         match placement, resolved with
                         | AnchorPlacement, Some renderPos ->
                             let worldPos = worldFromRender model renderPos
@@ -305,13 +369,31 @@ module View =
                                 |> rayPlaneZ0
                                 |> Option.map (worldFromRender model)
                             | None -> None
+                    // Solid placement preview is the instant GPU pick. None (cursor
+                    // over a ghost or background) is handled by the throttled raycast
+                    // below — keep the last preview meanwhile so it doesn't flicker.
                     let nextPlacement = if placementWanted then pick else None
                     let needHover     = hoverCoord.Value     <> nextHover
-                    let needPlacement = placementHover.Value <> nextPlacement
+                    let needPlacement =
+                        placementHover.Value <> nextPlacement
+                        && (nextPlacement.IsSome || not placementWanted)
                     if needHover || needPlacement then
                         transact (fun () ->
                             if needHover     then hoverCoord.Value     <- nextHover
                             if needPlacement then placementHover.Value <- nextPlacement)
+                    // Ghost/background: the GPU pick fell through, so raycast the
+                    // nearest surface (throttled + generation-guarded; lags slightly).
+                    if placementWanted && pick.IsNone then
+                        let now = nowMs ()
+                        if now - placeHoverMs > 60.0 then
+                            placeHoverMs <- now
+                            placeHoverGen <- placeHoverGen + 1
+                            let gen = placeHoverGen
+                            async {
+                                let! hit = resolvePlacement None
+                                if gen = placeHoverGen && placementHover.Value <> hit then
+                                    transact (fun () -> placementHover.Value <- hit)
+                            } |> Async.Start
                     // Moving over terrain (off a constellation glyph) ends a
                     // point-hover brush — the glyph re-sets it while hovered.
                     match AVal.force model.Selection.Hovered with

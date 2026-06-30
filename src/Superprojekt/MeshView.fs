@@ -314,12 +314,13 @@ module MeshView =
         let nodes =
             model.MeshNames |> AList.map (fun name ->
                 let loaded = loadMeshAsync (fun () -> ()) name
-                let isActive =
-                    model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
                 let scale = scaleFor model name
                 let meshT = displayedMeshT model name
+                // Render every loaded mesh into the outline G-buffer regardless of
+                // visibility, so disabled / isolated-away meshes still get crisp
+                // silhouette outlines + world-Z isolines on top of their ghost fill.
                 let renderEnabled =
-                    (loaded.fvc, isActive) ||> AVal.map2 (fun c a -> c > 3 && a)
+                    loaded.fvc |> AVal.map (fun c -> c > 3)
                 let meshColor =
                     meshIndices |> AVal.map (fun m ->
                         let i = Map.tryFind name m |> Option.defaultValue 0

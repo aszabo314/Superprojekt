@@ -73,7 +73,6 @@ module GuiRail =
             div {
                 Class "rail-body"
                 showWhen (curStep |> AVal.map ((=) step))
-                div { Class "rail-hint"; (stepStatus step) |> AVal.map snd }
                 body
             }
 
@@ -141,6 +140,31 @@ module GuiRail =
         let overviewBody =
             div { Class "rail-mesh-list"; model.MeshNames |> AList.map meshRow }
 
+        // Inspect-mode mesh list: hover peek-isolates in the 3D view; clicking the
+        // row isolates that mesh (solo) and focuses the panel on it. No reference
+        // toggle here — the reference is fixed by the time you reach Inspect.
+        let inspectMeshRow (name : string) =
+            let isVis   = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+            let isSolo  = model.MeshSolo |> AVal.map (function Solo(n, _) -> n = name | _ -> false)
+            let idxVal  = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+            let colorVal = idxVal |> AVal.map meshColor
+            let focused = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
+            let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverMesh m) -> m = name | _ -> false)
+            div {
+                Class "rail-mesh-row"
+                classWhenNot "rail-row-dim" isVis
+                classWhen "rail-row-hover" hovered
+                classWhen "rail-mesh-sel" focused
+                Attribute("title", name)
+                Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
+                Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name; SetFocusedMesh (Some name)])
+                span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
+                span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+                span { Class "rail-mesh-name"; shortName name }
+                span { Class "rail-mesh-iso"; isSolo |> AVal.map (fun s -> if s then "◐" else "") }
+            }
+
         let pinRow (id : ScanPinId) (name : string) =
             let selected = model.Selection.SelectedPin |> AVal.map ((=) (Some id))
             div {
@@ -191,7 +215,6 @@ module GuiRail =
                 }
             div {
                 Class "rail-step-controls"
-                div { Class "rail-note"; "Place pins on the reference; auto-seeded markers project onto each mesh. Edit handles in the focus panel; manage + solve in the dock below." }
                 div {
                     Class "rail-pins-head"
                     span { Class "rail-section-title"; "Pins" }
@@ -215,7 +238,7 @@ module GuiRail =
                 ||> AVal.map2 (fun fm o -> match fm with Some m -> numbered o m | None -> "— pick a mesh")
             div {
                 Class "rail-step-controls"
-                div { Class "rail-note"; "Difference & displacement show per-mesh in the focus; variance shows on the reference in 3D. Before/after follows the global toggle." }
+                div { Class "rail-mesh-list"; model.MeshNames |> AList.map inspectMeshRow }
                 div {
                     Class "rail-light-row"
                     span { Class "rail-sublabel"; "Focused:" }
@@ -238,10 +261,6 @@ module GuiRail =
                         "Range",     (model.HeatmapMode |> AVal.map (fun m -> m = HeatRange)),      (fun () -> env.Emit [SetHeatmapMode HeatRange])
                         "Shape",     (model.HeatmapMode |> AVal.map (fun m -> m = HeatShape)),      (fun () -> env.Emit [SetHeatmapMode HeatShape])
                     ]
-                }
-                div {
-                    Class "rail-note rail-note-sub"
-                    "Variance — disagreement of all visible moving meshes (≥2) — paints on the reference in 3D automatically while Inspect is active."
                 }
             }
 

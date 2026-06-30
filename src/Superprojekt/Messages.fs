@@ -16,6 +16,7 @@ type Message =
     | SetSlopeThresholdDeg of float
     | SetOutlineThreshold of float
     | SetIsolineBands of float
+    | SetDiffRangeScale of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
     | SetReferencePeek of bool

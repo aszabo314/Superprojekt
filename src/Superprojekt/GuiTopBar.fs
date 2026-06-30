@@ -134,6 +134,11 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            inlineSlider "Difference heatmap range" 0.1 5.0 0.05 (sprintf "×%.2f") model.DiffRangeScale (fun v ->
+                                env.Emit [SetDiffRangeScale v])
+                        }
+                        div {
+                            Class "tb-gear-row"
                             inlineSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v ->
                                 env.Emit [CameraMessage (OrbitMessage.SetSpeed v)])
                         }

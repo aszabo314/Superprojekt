@@ -208,6 +208,11 @@ type Model =
         // buildOutlineNode. Image-space outlines + isolines are always on.
         OutlineThreshold    : float
         IsolineBands        : float
+
+        // Multiplier on the Inspect difference (FocusMode 1) heatmap's per-tile
+        // range: >1 widens the value range mapped to full red/blue (compresses the
+        // colours toward neutral grey), <1 narrows it (saturates sooner). Gear slider.
+        DiffRangeScale      : float
     }
 
 // Displayed = the pose a mesh currently shows: at RegAfter a solved mesh uses its
@@ -300,4 +305,5 @@ module Model =
             Corr3DPick          = None
             OutlineThreshold    = 0.004
             IsolineBands        = 700.0
+            DiffRangeScale      = 1.0
         }

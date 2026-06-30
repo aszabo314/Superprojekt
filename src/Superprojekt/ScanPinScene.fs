@@ -83,6 +83,11 @@ module ScanPinScene =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
 
         let notFullscreen = AVal.map not fullscreenActive
+        // Correspondence point markers (the constellation) render only in the
+        // Correspondence workflow — Overview/Inspect stay clean (matches the focus
+        // panel's overlay, which is already gated the same way).
+        let inCorrespondence = model.WorkflowStep |> AVal.map ((=) Correspondence)
+        let constellationActive = (notFullscreen, inCorrespondence) ||> AVal.map2 (&&)
         // Shared chrome for every line overlay: alpha-blended, occluded by
         // foreground geometry (the spatial cue), non-interactive.
         let linesNode (active : aval<bool>) segs =
@@ -328,7 +333,7 @@ module ScanPinScene =
                             | None -> ()
                         | _ -> ()
                     out.ToArray())
-            ASet.ofList [ linesNodeTop notFullscreen segs ]
+            ASet.ofList [ linesNodeTop constellationActive segs ]
 
         let constellation = constLines
 

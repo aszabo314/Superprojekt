@@ -223,23 +223,23 @@ module Readiness =
             diags.Add { Severity = severity; Text = text; Action = action }
 
         if input.ReferenceMesh.IsNone then
-            add Blocker "Designate a reference mesh (★)" (Some HighlightReferenceColumn)
+            add Blocker "Set a reference (★)" (Some HighlightReferenceColumn)
 
         if List.isEmpty input.EnabledPins then
-            add Blocker "Enable correspondence on ≥3 pins" None
+            add Blocker "Need ≥3 pins" None
 
         let counts = pairCounts input
         if input.ReferenceMesh.IsSome then
             for mesh, n in counts do
                 if n < 3 then
                     add Blocker
-                        (sprintf "%s: needs %d more correspondence marker(s)" mesh (3 - n))
+                        (sprintf "%s: +%d marker(s)" mesh (3 - n))
                         (Some (ReseedCorrespondence (Some mesh)))
 
         for pin in input.EnabledPins do
             if pin.Unresolved > 0 then
                 add Warning
-                    (sprintf "Pin %s: %d mesh(es) without a marker" pin.Label pin.Unresolved)
+                    (sprintf "%s: %d without a marker" pin.Label pin.Unresolved)
                     (Some (SelectPinOpenCard pin.Id))
 
         if List.length input.EnabledPins >= 3 && lambdaRatioOf input < 1e-3 then
@@ -249,14 +249,14 @@ module Readiness =
                 if List.isEmpty affected then ""
                 else sprintf " (%s)" (String.concat ", " affected)
             add Warning
-                (sprintf "Pins near-collinear — rotation weakly constrained%s" suffix) None
+                (sprintf "Pins near-collinear%s" suffix) None
 
         if input.ReferenceMesh.IsSome && List.isEmpty input.VisibleMovingMeshes then
-            add Info "No visible moving meshes to solve" None
+            add Info "No moving meshes to solve" None
 
         let blocked = diags |> Seq.exists (fun d -> d.Severity = Blocker)
         if not blocked && counts |> List.exists (fun (_, n) -> n >= 3) then
-            add Ready "Ready for correspondence alignment" (Some RunCoarse)
+            add Ready "Ready to align" (Some RunCoarse)
 
         List.ofSeq diags
 

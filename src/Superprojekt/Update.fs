@@ -81,6 +81,8 @@ module Update =
             { model with OutlineThreshold = max 0.0 v }
         | SetIsolineBands v ->
             { model with IsolineBands = max 1.0 v }
+        | SetDiffRangeScale v ->
+            { model with DiffRangeScale = max 0.05 v }
         | ToggleAnchorGhostMode ->
             { model with AnchorGhostMode = not model.AnchorGhostMode }
         | SetQuickPinRadius v ->

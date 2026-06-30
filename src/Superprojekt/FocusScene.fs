@@ -183,7 +183,13 @@ module FocusScene =
                         (ArrayBuffer mag :> IBuffer, MeshView.robustHi mag)
                     | None -> zero ()
                 | _ -> zero ())
-        modeA, (scalarData |> AVal.map fst), (scalarData |> AVal.map snd)
+        // The difference channel's range (FocusMode 1) is user-scalable from the gear
+        // menu; fold DiffRangeScale into hi here (NOT into scalarData) so dragging the
+        // slider only updates the FocusHi uniform — the vertex buffer never re-uploads.
+        let hiA =
+            (scalarData |> AVal.map snd, modeA, model.DiffRangeScale) |||> AVal.map3 (fun hi m sc ->
+                if m = 1 then hi * float32 sc else hi)
+        modeA, (scalarData |> AVal.map fst), hiA
 
     // Large single: render-space, textured. Top = orthographic; Pano = cylindrical
     // unwrap (camera identity; the shader writes clip directly). Picking is Dom-driven

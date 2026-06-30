@@ -100,7 +100,7 @@ let closestHandler : HttpHandler =
 // farther than (queried-mesh bbox diagonal × this fraction) is treated as having no
 // correspondence (the meshes don't overlap there) → sentinel. Scales with the mesh
 // extent so it adapts across datasets (metres vs km); tune here.
-let private regionMaxDistFrac = 0.06
+let private regionMaxDistFrac = 0.02
 
 let private mat16 (a : float[]) =
     if not (isNull a) && a.Length = 16 then

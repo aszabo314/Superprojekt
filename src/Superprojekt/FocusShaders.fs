@@ -48,15 +48,18 @@ module FocusShaders =
                 let t = min 1.0f (max 0.0f (abs v.s / max 1e-6f uniform.FocusHi))
                 return V4f(0.933f + (0.114f - 0.933f) * t, 0.949f + (0.306f - 0.949f) * t, 0.965f + (0.847f - 0.965f) * t, 1.0f)
             else
+                // Diverging map with a MID-GREY zero (not near-white): the white
+                // centre vanished against the light page background, so 0 reads as a
+                // neutral grey (0.56,0.57,0.60) lerping to red (+) / blue (−).
                 let hi = max 1e-6f uniform.FocusHi
-                if abs v.s < uniform.FocusLod then return V4f(0.945f, 0.961f, 0.976f, 1.0f)
+                if abs v.s < uniform.FocusLod then return V4f(0.56f, 0.57f, 0.60f, 1.0f)
                 else
                     let tt = min 1.0f (max -1.0f (v.s / hi))
                     if tt >= 0.0f then
-                        return V4f(0.945f + (0.863f - 0.945f) * tt, 0.961f + (0.149f - 0.961f) * tt, 0.976f + (0.149f - 0.976f) * tt, 1.0f)
+                        return V4f(0.56f + (0.863f - 0.56f) * tt, 0.57f + (0.149f - 0.57f) * tt, 0.60f + (0.149f - 0.60f) * tt, 1.0f)
                     else
                         let u = 0.0f - tt
-                        return V4f(0.945f + (0.145f - 0.945f) * u, 0.961f + (0.388f - 0.961f) * u, 0.976f + (0.922f - 0.976f) * u, 1.0f)
+                        return V4f(0.56f + (0.145f - 0.56f) * u, 0.57f + (0.388f - 0.57f) * u, 0.60f + (0.922f - 0.60f) * u, 1.0f)
         }
 
     // Cylindrical from the mesh origin (PanoEye). u = azimuth/π, v = elevation/(π/2),

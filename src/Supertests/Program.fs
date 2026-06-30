@@ -184,8 +184,8 @@ let readinessTests () =
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 2 }
     check "pair deficit blocker per mesh"
-        (d |> List.filter (fun x -> x.Severity = Blocker && x.Text.Contains "more correspondence marker") |> List.length = 2)
-    check "deficit counts the gap" (d |> List.exists (fun x -> x.Text.Contains "needs 1 more"))
+        (d |> List.filter (fun x -> x.Severity = Blocker && x.Text.Contains "marker") |> List.length = 2)
+    check "deficit counts the gap" (d |> List.exists (fun x -> x.Text.Contains "+1 marker"))
     check "deficit action reseeds the filtered mesh"
         (d |> List.exists (fun x -> x.Action = Some (ReseedCorrespondence (Some "A"))))
     check "2 pins not ready" (ready d |> List.isEmpty)

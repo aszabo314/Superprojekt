@@ -1,5 +1,5 @@
-//34dbc842-010f-293b-0ca5-5eb4e7254c03
-//04bd741e-c320-271f-4266-9cc62f79ab9b
+//929c6062-e750-19c2-2d15-4941b37d7775
+//a418fa5c-ade3-2eaa-511f-93d3c86e4fb9
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -83,6 +83,7 @@ type AdaptiveModel(value : Model) =
     let _Corr3DPick_ = FSharp.Data.Adaptive.cval(value.Corr3DPick)
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
+    let _DiffRangeScale_ = FSharp.Data.Adaptive.cval(value.DiffRangeScale)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -139,6 +140,7 @@ type AdaptiveModel(value : Model) =
             _Corr3DPick_.Value <- value.Corr3DPick
             _OutlineThreshold_.Value <- value.OutlineThreshold
             _IsolineBands_.Value <- value.IsolineBands
+            _DiffRangeScale_.Value <- value.DiffRangeScale
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -188,4 +190,5 @@ type AdaptiveModel(value : Model) =
     member __.Corr3DPick = _Corr3DPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.DiffRangeScale = _DiffRangeScale_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
 

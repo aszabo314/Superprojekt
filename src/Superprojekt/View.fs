@@ -231,9 +231,10 @@ module View =
                                     |> Array.tryHead |> Option.map snd
                             }
 
-                // Placement target: solid pixel pick (GPU / active layer) first,
-                // then fall through a ghost to the nearest raycast surface.
-                let resolvePlacement (frontmost : V3d option) : Async<V3d option> =
+                // Solid pixel pick (GPU / active layer) first, then fall through a
+                // ghost to the nearest raycast surface. Used by pin placement and by
+                // double-tap-to-recenter, so both work on ghosted meshes too.
+                let resolvePick (frontmost : V3d option) : Async<V3d option> =
                     async {
                         let! r = resolveLayerPick frontmost
                         match r with
@@ -318,7 +319,9 @@ module View =
                     let frontmost =
                         if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
                     async {
-                        let! resolved = resolveLayerPick frontmost
+                        // Solid surface first, then fall through a ghost via raycast,
+                        // so double-tap-to-recenter works on ghosted meshes too.
+                        let! resolved = resolvePick frontmost
                         match resolved with
                         | Some renderPos ->
                             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
@@ -334,7 +337,7 @@ module View =
                     async {
                         let! resolved =
                             match placement with
-                            | AnchorPlacement -> resolvePlacement frontmost
+                            | AnchorPlacement -> resolvePick frontmost
                             | _ -> resolveLayerPick frontmost
                         match placement, resolved with
                         | AnchorPlacement, Some renderPos ->
@@ -390,7 +393,7 @@ module View =
                             placeHoverGen <- placeHoverGen + 1
                             let gen = placeHoverGen
                             async {
-                                let! hit = resolvePlacement None
+                                let! hit = resolvePick None
                                 if gen = placeHoverGen && placementHover.Value <> hit then
                                     transact (fun () -> placementHover.Value <- hit)
                             } |> Async.Start

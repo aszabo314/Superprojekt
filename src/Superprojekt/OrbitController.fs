@@ -311,9 +311,23 @@ module OrbitController =
                         let newRadius = model.radius
                         let newCenter =
                             let r = max newRadius 0.3
+                            // Lock the pan to the world XY plane (constant Z): view.Right
+                            // already lies in XY (= cross(sky,dir)); only view.Up carries
+                            // a Z component, so flatten + renormalize it. center.Z stays
+                            // fixed and the camera location follows via withView. At a
+                            // near-horizontal view screen-up ≈ world-Z (out of plane, so
+                            // its XY projection vanishes) — fall back to ground-forward so
+                            // vertical drag still pans (they coincide at moderate tilts).
+                            let flatXY (v : V3d) =
+                                let f = V3d(v.X, v.Y, 0.0)
+                                if f.Length > 1e-6 then Some f.Normalized else None
+                            let upXY =
+                                match flatXY model.view.Up with
+                                | Some u -> u
+                                | None -> flatXY model.view.Forward |> Option.defaultValue V3d.Zero
                             model.center +
-                            model.view.Right * float delta.X * -0.001 * r +
-                            model.view.Up    * float delta.Y *  0.001 * r
+                            model.view.Right * (float delta.X * -0.001 * r) +
+                            upXY             * (float delta.Y *  0.001 * r)
                         OrbitState.withView
                             { model with
                                 userModifiedCenter = false
@@ -453,7 +467,12 @@ module OrbitController =
         att {
             Dom.OnPointerDown((fun e ->
                 if e.PointerType = PointerType.Mouse then
-                    env.Emit [PointerDown(e.PointerId, e.Button, false, e.OffsetPosition)]
+                    // Shift + left drag = XY pan, for when no middle button is
+                    // available: remap to the pan (middle) button so the whole drag
+                    // path treats it as a pan. (Shift, not Ctrl — Ctrl+click is the
+                    // secondary click on macOS.)
+                    let btn = if e.Button = Button.Left && e.Shift then Button.Middle else e.Button
+                    env.Emit [PointerDown(e.PointerId, btn, false, e.OffsetPosition)]
             ), pointerCapture = true)
             Dom.OnPointerUp((fun e ->
                 if e.PointerType = PointerType.Mouse then

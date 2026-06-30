@@ -222,6 +222,9 @@ module Readiness =
         let add severity text action =
             diags.Add { Severity = severity; Text = text; Action = action }
 
+        // Hard blockers are only: no reference, and zero SOLVABLE meshes (so a
+        // partial overlap still solves the meshes that do have ≥3 markers). A mesh
+        // short of 3 markers is a per-mesh WARNING, not a global blocker.
         if input.ReferenceMesh.IsNone then
             add Blocker "Set a reference (★)" (Some HighlightReferenceColumn)
 
@@ -229,12 +232,21 @@ module Readiness =
             add Blocker "Need ≥3 pins" None
 
         let counts = pairCounts input
+        let anySolvable = counts |> List.exists (fun (_, n) -> n >= 3)
         if input.ReferenceMesh.IsSome then
             for mesh, n in counts do
                 if n < 3 then
-                    add Blocker
+                    add Warning
                         (sprintf "%s: +%d marker(s)" mesh (3 - n))
                         (Some (ReseedCorrespondence (Some mesh)))
+
+        // Zero solvable meshes (pins exist, moving meshes exist, none reaches 3) is
+        // the only marker-related hard blocker.
+        if input.ReferenceMesh.IsSome
+           && not (List.isEmpty input.EnabledPins)
+           && not (List.isEmpty input.VisibleMovingMeshes)
+           && not anySolvable then
+            add Blocker "No mesh has ≥3 markers yet" None
 
         for pin in input.EnabledPins do
             if pin.Unresolved > 0 then

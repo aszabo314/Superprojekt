@@ -38,9 +38,12 @@ module MeshShader =
         member x.ClipPlaneCount : int = x?ClipPlaneCount
         member x.ClipPlane0     : V4f = x?ClipPlane0
         member x.ClipPlane1     : V4f = x?ClipPlane1
-        // All-meshes variance map. DistanceEncoding = 2 paints SurfaceDist (the
-        // per-reference-vertex disagreement std ≥ 0) sequential; DistScale
-        // normalizes the high end; SurfaceDist = 1e30 → keep base colour.
+        // Per-vertex SurfaceDist painter (above-ghost only): 0 = none;
+        // 1 = signed difference, diverging blue↔grey↔red (soloed moving mesh, Inspect
+        //     Difference); 2 = variance std ≥0, sequential grey→red (reference,
+        //     Inspect ensemble); 3 = displacement magnitude ≥0, sequential light→blue
+        //     (soloed moving mesh, Inspect Displacement). DistScale normalizes the high
+        //     end; SurfaceDist = 1e30 → keep base colour.
         member x.DistanceEncoding : int     = x?DistanceEncoding
         member x.DistScale        : float32 = x?DistScale
         // 0 = off, 1 = incidence, 2 = range.
@@ -139,6 +142,17 @@ module MeshShader =
                 elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
+            // Difference map (soloed moving mesh, Inspect): signed distance, diverging
+            // blue ↔ mid-grey ↔ red about 0 — matches the focus difference tile.
+            if uniform.DistanceEncoding = 1 && aboveGhost then
+                let d = v.sd
+                if abs d < 1e20f then
+                    let hi = max 1e-6f uniform.DistScale
+                    let tt = clamp -1.0f 1.0f (d / hi)
+                    let mid = V3f(0.56f, 0.57f, 0.60f)
+                    baseRgb <-
+                        if tt >= 0.0f then mid + (V3f(0.863f, 0.149f, 0.149f) - mid) * tt
+                        else mid + (V3f(0.145f, 0.388f, 0.922f) - mid) * (0.0f - tt)
             // Variance map: per-reference-vertex disagreement std (≥0) from light
             // grey to strong red, normalised by DistScale.
             if uniform.DistanceEncoding = 2 && aboveGhost then
@@ -149,6 +163,14 @@ module MeshShader =
                     let loC = V3f(0.945f, 0.961f, 0.976f)
                     let hiC = V3f(0.725f, 0.110f, 0.110f)
                     baseRgb <- loC * (1.0f - tt) + hiC * tt
+            // Displacement magnitude (soloed moving mesh, Inspect): |load→solved| ≥0,
+            // light → dark blue — matches the focus displacement tile.
+            if uniform.DistanceEncoding = 3 && aboveGhost then
+                let d = v.sd
+                if abs d < 1e20f then
+                    let hi = max 1e-6f uniform.DistScale
+                    let tt = clamp 0.0f 1.0f (d / hi)
+                    baseRgb <- V3f(0.93f, 0.94f, 0.98f) * (1.0f - tt) + V3f(0.118f, 0.227f, 0.541f) * tt
             // Incidence heatmap: incidence angle to the scan sensor (the mesh's
             // panorama centre, fed via SensorOrigin), grazing = red, head-on = green.
             if uniform.HeatmapMode = 1 && aboveGhost then

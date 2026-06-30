@@ -225,7 +225,11 @@ body.loaded { background: #f4f6f8; }
 .rail-row-dim { opacity: 0.5; }
 .rail-mesh-row { cursor: pointer; border-radius: 3px; }
 .rail-mesh-sel { background: #eef2ff; box-shadow: inset 2px 0 0 #1a56db; }
-.rail-mesh-iso { flex-shrink: 0; width: 14px; text-align: center; color: #1a56db; font-size: 11px; }
+.rail-flag { flex-shrink: 0; font-size: 10px; padding: 0 5px; border-radius: 3px; white-space: nowrap; }
+.rail-flag-ref { color: #1a56db; }
+.rail-flag-ok { color: #16a34a; }
+.rail-flag-ready { color: #475569; }
+.rail-flag-low { color: #b45309; background: #fff7ed; }
 .rail-mesh-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-sensor { min-width: 38px; font-size: 10px; }
 .rail-step-controls { display: flex; flex-direction: column; gap: 8px; }
@@ -303,6 +307,19 @@ body.loaded { background: #f4f6f8; }
     background: #fff; color: #b45309; cursor: pointer; font-size: 11px;
 }
 .focus-peek:active { background: #fef3c7; }
+/* locate back-out (restore camera + solo) */
+.focus-back {
+    padding: 3px 8px; border: 1px solid #0891b2; border-radius: 4px;
+    background: #ecfeff; color: #0e7490; cursor: pointer; font-size: 11px;
+}
+.focus-back:hover { background: #cffafe; }
+/* link-views toggle */
+.focus-link {
+    padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
+    background: #fff; color: #475569; cursor: pointer; font-size: 11px;
+}
+.focus-link:hover { background: #eef2f6; }
+.focus-link.btn-active { background: #1a56db; color: #fff; border-color: #1a56db; }
 /* large single — WebGL render control (textured; pan/zoom/pick) */
 .focus-single { width: 100%; height: 280px; background: #eef2f6; position: relative; touch-action: none; }
 .focus-rc { display: block; width: 100%; height: 100%; }
@@ -1127,6 +1144,7 @@ body.loaded { background: #f4f6f8; }
 .ins-st-ok { color: #16a34a; } .ins-st-mid { color: #94a3b8; } .ins-st-out { color: #cbd5e1; } .ins-st-ref { color: #b45309; }
 .ins-mgr-res { width: 58px; text-align: right; color: #475569; }
 .ins-mgr-act { width: 20px; }
+.ins-mgr-need { flex-shrink: 0; font-size: 10px; color: #b45309; background: #fff7ed; padding: 0 5px; border-radius: 3px; }
 .ins-mgr-foot { display: flex; align-items: center; gap: 10px; padding-top: 4px; border-top: 1px solid #eef2f6; }
 .ins-solve { white-space: nowrap; }
 

@@ -177,6 +177,16 @@ module GuiInspector =
                     match c, id with
                     | Some (pid, m), Some sid -> pid = sid && m = mesh
                     | _ -> false)
+            // This mesh's TOTAL markers across all pins — <3 ⇒ unsolvable, flagged.
+            let totalMarkers =
+                pinsVal |> AVal.map (fun pins ->
+                    pins |> HashMap.toSeq
+                    |> Seq.filter (fun (_, p) ->
+                        match ScanPin.correspondence p with
+                        | Some c -> Map.containsKey mesh c.Anchors
+                        | None -> false)
+                    |> Seq.length)
+            let insufficient = (isMoving, totalMarkers) ||> AVal.map2 (fun mv k -> mv && k < 3)
             div {
                 Class "ins-mgr-row"
                 showWhen show
@@ -188,6 +198,12 @@ module GuiInspector =
                 span { Class "ins-mgr-name"; orderVal |> AVal.map (fun o -> numbered o mesh) }
                 span { stateCls |> AVal.map Some; Class "ins-mgr-state"; stateGlyph }
                 span { Class "ins-mgr-res"; resOrSpread }
+                span {
+                    Class "ins-mgr-need"
+                    showWhen insufficient
+                    Attribute("title", "Insufficient markers — this mesh stays at load pose on solve")
+                    totalMarkers |> AVal.map (fun k -> sprintf "%d/3" k)
+                }
                 button {
                     Class "mb ins-mgr-act"
                     showWhen inRoi
@@ -198,8 +214,22 @@ module GuiInspector =
                 button {
                     Class "mb ins-mgr-act"
                     showWhen inRoi
-                    Attribute("title", "Focus camera + edit in the focus panel")
-                    Dom.OnClick(fun _ -> emit (SetSelectedPoint (Some mesh)); emit (SetFocusedMesh (Some mesh)))
+                    Attribute("title", "Locate: solo + fly the 3D camera and zoom the focus onto this correspondence")
+                    // Atomic "frame correspondence": the reducer solos + flies + focuses
+                    // (and forces Top so the focus pan maths is valid); the focus zoom
+                    // onto the anchor's projected position is driven here.
+                    Dom.OnClick(fun _ ->
+                        match AVal.force effId with
+                        | Some id ->
+                            match AVal.force corrA |> Option.bind (fun c -> Map.tryFind mesh c.Anchors) with
+                            | Some a ->
+                                let cc = AVal.force model.CommonCentroid
+                                let s  = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
+                                let world = (RigidTransform.renderToWorld s cc (AVal.force (MeshView.displayedMeshT model mesh))).Forward.TransformPos a.Point
+                                emit (FrameCorrespondence(id, mesh))
+                                FocusScene.focusOnWorld model mesh world 4.0
+                            | None -> ()
+                        | None -> ())
                     "⌖"
                 }
                 button {

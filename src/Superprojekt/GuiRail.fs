@@ -14,6 +14,11 @@ module GuiRail =
 
     type private Pill = PillReady | PillWarn | PillBlock | PillInfo
 
+    // One mesh list, two column sets. Identity / order / selection / hover are
+    // identical; only the trailing affordances differ (Overview = setup controls,
+    // Inspect = solve state + quick isolate).
+    type private MeshRowMode = RowOverview | RowInspect
+
     let private pillClass = function
         | PillReady -> "rail-pill rail-pill-ready"
         | PillWarn  -> "rail-pill rail-pill-warn"
@@ -76,7 +81,10 @@ module GuiRail =
                 body
             }
 
-        let meshRow (name : string) =
+        // One mode-parameterized mesh row (§B). click = focus everywhere (Inspect
+        // additionally solos, per §C auto-solo); hover = peek everywhere. Columns
+        // differ by mode only.
+        let meshRow (mode : MeshRowMode) (name : string) =
             let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
             let isSolo = model.MeshSolo |> AVal.map (function Solo(n, _) -> n = name | _ -> false)
             let isRef  = refMesh |> AVal.map ((=) (Some name))
@@ -84,20 +92,24 @@ module GuiRail =
             let colorVal = idxVal |> AVal.map meshColor
             let sensor = model.MeshSensorTypes |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue UnknownSensor)
             let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverMesh m) -> m = name | _ -> false)
-            div {
-                Class "rail-mesh-row"
-                classWhenNot "rail-row-dim" isVis
-                classWhen "rail-row-hover" hovered
-                // hover = peek-isolate this mesh via the shared Selection.
-                Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
-                Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
-                span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
-                span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+            let focused = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
+            // click → focus (universal); Inspect adds auto-solo (idempotent — clicking
+            // the already-soloed mesh just keeps the focus).
+            let onClick () =
+                match mode with
+                | RowOverview -> env.Emit [SetFocusedMesh (Some name)]
+                | RowInspect ->
+                    if AVal.force isSolo then env.Emit [SetFocusedMesh (Some name)]
+                    else env.Emit [ToggleMeshSolo name; SetFocusedMesh (Some name)]
+            let swatch = span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
+            let num    = span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+            let nameSpan =
                 span {
-                    Class "rail-mesh-name"; Attribute("title", name)
-                    Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
+                    Class "rail-mesh-name"
+                    Dom.OnClick(fun _ -> onClick ())
                     shortName name
                 }
+            let refBtn =
                 button {
                     Class "mb mb-ref"
                     classWhen "mb-on" isRef
@@ -107,6 +119,7 @@ module GuiRail =
                         env.Emit [SetReferenceMesh (if cur = Some name then None else Some name)])
                     isRef |> AVal.map (fun r -> if r then "★" else "☆")
                 }
+            let visBtn =
                 button {
                     Class "mb"
                     classWhen "mb-on" isVis
@@ -114,6 +127,7 @@ module GuiRail =
                     Dom.OnClick(fun _ -> env.Emit [SetVisible(name, not (AVal.force isVis))])
                     isVis |> AVal.map (fun v -> if v then "●" else "○")
                 }
+            let soloBtn =
                 button {
                     Class "mb"
                     classWhen "mb-on" isSolo
@@ -121,12 +135,14 @@ module GuiRail =
                     Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name])
                     "◐"
                 }
+            let sensorBtn =
                 button {
                     Class "mb rail-sensor"
                     Attribute("title", "Sensor type (cycles)")
                     Dom.OnClick(fun _ -> env.Emit [SetMeshSensorType(name, sensorNext (AVal.force sensor))])
                     sensor |> AVal.map sensorLabel
                 }
+            let frameBtn =
                 button {
                     Class "mb"
                     Attribute("title", "Frame this mesh")
@@ -136,34 +152,52 @@ module GuiRail =
                         | None -> ())
                     "⌖"
                 }
-            }
-        let overviewBody =
-            div { Class "rail-mesh-list"; model.MeshNames |> AList.map meshRow }
-
-        // Inspect-mode mesh list: hover peek-isolates in the 3D view; clicking the
-        // row isolates that mesh (solo) and focuses the panel on it. No reference
-        // toggle here — the reference is fixed by the time you reach Inspect.
-        let inspectMeshRow (name : string) =
-            let isVis   = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-            let isSolo  = model.MeshSolo |> AVal.map (function Solo(n, _) -> n = name | _ -> false)
-            let idxVal  = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-            let colorVal = idxVal |> AVal.map meshColor
-            let focused = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
-            let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverMesh m) -> m = name | _ -> false)
+            // Inspect solve-state flag: ✓ solved · ready (≥3 markers) · k/3 short.
+            let markerCount =
+                model.ScanPins.Pins |> AMap.toAVal
+                |> AVal.map (fun pins ->
+                    pins |> HashMap.toSeq
+                    |> Seq.filter (fun (_, p) ->
+                        match ScanPin.correspondence p with
+                        | Some c -> Map.containsKey name c.Anchors
+                        | None -> false)
+                    |> Seq.length)
+            let solvedA = model.SolvedTransforms |> AVal.map (Map.containsKey name)
+            let flagSpan =
+                let txt =
+                    AVal.custom (fun t ->
+                        if isRef.GetValue t then "★ ref"
+                        elif solvedA.GetValue t then "✓ solved"
+                        elif markerCount.GetValue t >= 3 then "ready"
+                        else sprintf "%d/3" (markerCount.GetValue t))
+                let cls =
+                    AVal.custom (fun t ->
+                        if isRef.GetValue t then "rail-flag rail-flag-ref"
+                        elif solvedA.GetValue t then "rail-flag rail-flag-ok"
+                        elif markerCount.GetValue t >= 3 then "rail-flag rail-flag-ready"
+                        else "rail-flag rail-flag-low")
+                span {
+                    cls |> AVal.map (Class >> Some)
+                    Attribute("title", "Solve state: ✓ solved · ready (≥3 markers) · k/3 insufficient")
+                    txt
+                }
+            let trailing =
+                match mode with
+                | RowOverview -> [ refBtn; visBtn; soloBtn; sensorBtn; frameBtn ]
+                | RowInspect  -> [ flagSpan; visBtn; soloBtn ]
             div {
                 Class "rail-mesh-row"
                 classWhenNot "rail-row-dim" isVis
                 classWhen "rail-row-hover" hovered
                 classWhen "rail-mesh-sel" focused
                 Attribute("title", name)
+                // hover = peek-isolate this mesh via the shared Selection.
                 Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
-                Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name; SetFocusedMesh (Some name)])
-                span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
-                span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                span { Class "rail-mesh-name"; shortName name }
-                span { Class "rail-mesh-iso"; isSolo |> AVal.map (fun s -> if s then "◐" else "") }
+                AList.ofList ([ swatch; num; nameSpan ] @ trailing)
             }
+        let overviewBody =
+            div { Class "rail-mesh-list"; model.MeshNames |> AList.map (meshRow RowOverview) }
 
         let pinRow (id : ScanPinId) (name : string) =
             let selected = model.Selection.SelectedPin |> AVal.map ((=) (Some id))
@@ -238,7 +272,7 @@ module GuiRail =
                 ||> AVal.map2 (fun fm o -> match fm with Some m -> numbered o m | None -> "— pick a mesh")
             div {
                 Class "rail-step-controls"
-                div { Class "rail-mesh-list"; model.MeshNames |> AList.map inspectMeshRow }
+                div { Class "rail-mesh-list"; model.MeshNames |> AList.map (meshRow RowInspect) }
                 div {
                     Class "rail-light-row"
                     span { Class "rail-sublabel"; "Focused:" }

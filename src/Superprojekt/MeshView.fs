@@ -158,11 +158,14 @@ module MeshView =
         // ghost and only the existing pins + the live hover blob read solid — a
         // "flashlight" revealing where the new pin lands (auto-restored, no model
         // mutation).
+        // Pin isolation = the persistent per-mode default (AnchorGhostMode) OR the
+        // spring-loaded hold modifier (IsolatePeekHeld), forced on while placing.
         let anchorGhost =
-            (model.AnchorGhostMode, model.ScanPins.Placement) ||> AVal.map2 (fun on pl ->
+            (model.AnchorGhostMode, model.ScanPins.Placement, model.IsolatePeekHeld)
+            |||> AVal.map3 (fun on pl held ->
                 match pl with
                 | AnchorPlacement -> 1
-                | _ -> if on then 1 else 0)
+                | _ -> if on || held then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             // Isolation: reference peek wins, then wheelIsolation (Alt-wheel /
@@ -176,12 +179,15 @@ module MeshView =
                         | Some iso -> iso = name
                         | None ->
                             let vis = Map.tryFind name (model.MeshVisible.GetValue t) |> Option.defaultValue true
-                            // Inspect central 3D: the reference carries the variance
-                            // aggregate solid; moving meshes drop to faint ghost
-                            // context — unless an intrinsic channel wants them solid.
+                            // Inspect central 3D (§C): no solo → the reference carries the
+                            // variance aggregate solid and moving meshes drop to the ghost
+                            // floor; solo m → m stays solid (it paints its own difference /
+                            // displacement field). An intrinsic channel keeps all solid.
+                            let isSolo = match model.MeshSolo.GetValue t with Solo(s, _) -> s = name | _ -> false
                             let inspectGhost =
                                 model.WorkflowStep.GetValue t = Inspect
                                 && model.HeatmapMode.GetValue t = HeatOff
+                                && not isSolo
                                 && (match (model.Registration.GetValue t).ReferenceMesh with
                                     | Some rf -> rf <> name
                                     | None -> false)
@@ -221,11 +227,50 @@ module MeshView =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
-            // Per-vertex signed distance for this mesh (None unless soloed/
-            // encoded). Projected early so a refetch doesn't churn other meshes.
-            let myDist = model.SurfaceDistance |> AVal.map (Map.tryFind name)
+            // What this mesh paints in the MAIN 3D view (Inspect only) — the encoding
+            // + the per-vertex scalar array (§C):
+            //   reference, ensemble (no moving-mesh solo) → variance      (enc 2, SurfaceDistance)
+            //   soloed moving mesh + Difference channel    → signed dist   (enc 1, FocusDist)
+            //   soloed moving mesh + Displacement channel  → |load→solved| (enc 3, client-computed)
+            // Reading WorkflowStep / Registration / MeshSolo first keeps non-Inspect and
+            // non-soloed meshes cheap (they fall straight through to (0, None)).
+            let inspectField : aval<int * float32[] option> =
+                AVal.custom (fun t ->
+                    if model.WorkflowStep.GetValue t <> Inspect then (0, None)
+                    else
+                        let rf = (model.Registration.GetValue t).ReferenceMesh
+                        if Some name = rf then
+                            match Map.tryFind name (model.SurfaceDistance.GetValue t) with
+                            | Some arr -> (2, Some arr)
+                            | None -> (0, None)
+                        elif (match model.MeshSolo.GetValue t with Solo(s, _) -> s = name | _ -> false) then
+                            match model.InspectChannel.GetValue t with
+                            | ChDifference ->
+                                match Map.tryFind name (model.FocusDist.GetValue t) with
+                                | Some arr -> (1, Some arr)
+                                | None -> (0, None)
+                            | ChDisplacement ->
+                                loaded.pos.GetValue t |> ignore
+                                match loaded.mesh.Value, Map.tryFind name (model.SolvedTransforms.GetValue t) with
+                                | Some md, Some _ ->
+                                    let pos = md.positions
+                                    let sc  = scale.GetValue t
+                                    let c0  = loaded.centroid.GetValue t
+                                    let cc  = model.CommonCentroid.GetValue t
+                                    let baseT = Trafo3d.Translation(c0 - cc) * Trafo3d.Scale sc
+                                    let fwd (m : Map<string, Trafo3d>) =
+                                        (baseT * (Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)).Forward
+                                    let loadF   = fwd (model.LoadTransforms.GetValue t)
+                                    let solvedF = fwd (model.SolvedTransforms.GetValue t)
+                                    let mag = Array.init pos.Length (fun i ->
+                                        let p = V3d pos.[i]
+                                        float32 ((solvedF.TransformPos p - loadF.TransformPos p).Length / sc))
+                                    (3, Some mag)
+                                | _ -> (0, None)
+                        else (0, None))
+            let distArr = inspectField |> AVal.map snd
             let distBuf =
-                (myDist, loaded.pos) ||> AVal.map2 (fun d _pos ->
+                (distArr, loaded.pos) ||> AVal.map2 (fun d _pos ->
                     match d with
                     | Some arr -> ArrayBuffer arr :> IBuffer
                     | None ->
@@ -257,18 +302,14 @@ module MeshView =
                             if cnt.[i] > 0 then q.[i] <- q.[i] / float32 cnt.[i]
                         ArrayBuffer q :> IBuffer
                     | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
-            // 2 = variance (sequential) on the reference mesh — the Inspect central
-            // 3D aggregate. The single-mesh signed-distance difference moved to the
-            // focus tiles, so this is the only per-vertex main-view map now.
-            let distEncoding =
-                AVal.custom (fun t ->
-                    if (myDist.GetValue t).IsNone then 0
-                    elif model.WorkflowStep.GetValue t = Inspect
-                         && (model.Registration.GetValue t).ReferenceMesh = Some name then 2
-                    else 0)
-            // Saturated end of the diverging map: robust (95th pct |d|).
+            let distEncoding = inspectField |> AVal.map fst
+            // Saturated end of the map: robust (95th pct |value|). The difference map
+            // (enc 1) is gear-scalable (DiffRangeScale) to match the focus tile.
             let distScale =
-                myDist |> AVal.map (function Some arr -> robustHi arr | None -> 1.0f)
+                (distArr, distEncoding, model.DiffRangeScale) |||> AVal.map3 (fun d enc sc ->
+                    match d with
+                    | Some arr -> let hi = robustHi arr in (if enc = 1 then hi * float32 sc else hi)
+                    | None -> 1.0f)
             let surface =
                 sg {
                     Sg.Active renderEnabled
@@ -280,18 +321,20 @@ module MeshView =
                     }
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
                     Sg.Uniform("MeshActive",      isActive)
-                    // GhostSilhouette off → 0 → ghost path discards. Reference
-                    // peek + wheel isolation dim the others at fixed alphas
-                    // (explicit gestures, independent of the toggle).
+                    // The ghost FLOOR is the global GhostSilhouette toggle: on → faint
+                    // context, off → hidden (α discarded). Solo/peek/isolation all send
+                    // non-emphasized meshes to that same floor (§A.3) — when the floor is
+                    // off, peek/isolation hide the others rather than dim them.
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
+                            let floorOn = model.GhostSilhouette.GetValue t
                             match peekTarget.GetValue t with
-                            | Some target when target <> name -> 0.12f
+                            | Some target when target <> name -> (if floorOn then 0.12f else 0.0f)
                             | _ ->
                                 match wheelIsolation.GetValue t with
-                                | Some iso when iso <> name -> 0.15f
+                                | Some iso when iso <> name -> (if floorOn then 0.15f else 0.0f)
                                 | _ ->
-                                    if model.GhostSilhouette.GetValue t
+                                    if floorOn
                                     then float32 (model.GhostOpacity.GetValue t)
                                     else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
@@ -308,7 +351,13 @@ module MeshView =
                     Sg.Uniform("ClipPlane1",           clipPlane1)
                     Sg.Uniform("DistanceEncoding",     distEncoding)
                     Sg.Uniform("DistScale",            distScale)
-                    Sg.Uniform("HeatmapMode",          model.HeatmapMode |> AVal.map (function HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
+                    // Intrinsic channels are an Inspect-only "error layer" (§C). Force
+                    // off elsewhere so Overview/Correspondence stay plain textured even
+                    // if a channel was left selected in the Inspect rail.
+                    Sg.Uniform("HeatmapMode",
+                        AVal.custom (fun t ->
+                            if model.WorkflowStep.GetValue t <> Inspect then 0
+                            else match model.HeatmapMode.GetValue t with HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
                     Sg.VertexAttributes(

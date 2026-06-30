@@ -42,6 +42,8 @@ module FocusScene =
     // state if two singles ever coexisted.
     let mutable private dragging = false
     let mutable private lastPx = V2i.Zero
+    // Pointer-down position, to tell a click from a drag for the link-views fly.
+    let mutable private downPx = V2i.Zero
     // Hover-preview throttle + generation guard (drops out-of-order raycast results).
     let private nowMs () = float System.DateTime.UtcNow.Ticks / 10000.0
     let mutable private hoverGen = 0
@@ -95,6 +97,30 @@ module FocusScene =
                     | _ -> loaded.localMaxR.GetValue t
                 max 1e-4 (r * s * 0.98))
         centreWorld, centreRender, extent
+
+    // Pan/zoom a mesh's Top-view focus canvas so a metric-world point lands centred
+    // at `zoomLevel`. Top-projection maths only (the camera looks down −Z at
+    // fc + pan·ext), so callers force ProjTop first. Used by locate-correspondence
+    // and the link-views recenter; sets the per-mesh cval the single reads.
+    let focusOnWorld (model : AdaptiveModel) (name : string) (world : V3d) (zoomLevel : float) =
+        let loaded = MeshView.loadMeshAsync (fun () -> ()) name
+        let renderT, scale = renderTrafoOf model name loaded
+        let _, panoEye, fitExtent = framing model name loaded renderT scale
+        let cc = AVal.force model.CommonCentroid
+        let s  = AVal.force scale
+        let rp = ScanPin.renderCentre cc s world
+        let fc = AVal.force panoEye
+        let ext = max 1e-4 (AVal.force fitExtent)
+        let pan, zoom = camFor name
+        transact (fun () ->
+            zoom.Value <- zoomLevel
+            pan.Value <- V2d((rp.X - fc.X) / ext, (rp.Y - fc.Y) / ext))
+
+    // Recenter (keep the current zoom) the focus canvas on a metric-world point —
+    // the link-views 3D→focus side. Top-projection maths (see focusOnWorld).
+    let recenterOnWorld (model : AdaptiveModel) (name : string) (world : V3d) =
+        let _, zoom = camFor name
+        focusOnWorld model name world zoom.Value
 
     // Top-down ortho view + projection framing the displayed render centroid,
     // radius = localMaxR·scale, offset by (pan, zoom).
@@ -364,6 +390,7 @@ module FocusScene =
             Dom.OnPointerDown(fun e ->
                 let p = e.OffsetPosition
                 lastPx <- p
+                downPx <- p
                 if AVal.force model.CorrSetMode then
                     if e.Button = Button.Left then
                         match AVal.force model.Selection.SelectedPin with
@@ -375,7 +402,21 @@ module FocusScene =
                             } |> Async.Start
                         | None -> ()
                 elif e.Button = Button.Left then dragging <- true)
-            Dom.OnPointerUp(fun _ -> dragging <- false)
+            Dom.OnPointerUp(fun e ->
+                dragging <- false
+                // Link-views: a clean left click (no drag) flies the 3D camera to that
+                // world point. Skipped during set-correspondence (a click places there).
+                if AVal.force model.LinkViews && not (AVal.force model.CorrSetMode) then
+                    let p = e.OffsetPosition
+                    let dd = p - downPx
+                    if dd.X * dd.X + dd.Y * dd.Y < 16 then
+                        async {
+                            match! worldRayHit (float p.X) (float p.Y) with
+                            | Some world ->
+                                let r = max 1.0 (float (AVal.force fitExtent) / max 1e-6 (AVal.force scale) * 0.3)
+                                env.Emit [FlyToPoint(world, r)]
+                            | None -> ()
+                        } |> Async.Start)
             Dom.OnPointerMove(fun e ->
                 let p = e.OffsetPosition
                 if AVal.force model.CorrSetMode then

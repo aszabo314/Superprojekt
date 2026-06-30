@@ -43,6 +43,29 @@ module GuiTopBar =
                 "👁 Peek"
             }
 
+            // Spring-loaded hold-to-isolate (hotkey I): momentarily force pin isolation
+            // on in modes where it defaults off (Overview / Inspect).
+            button {
+                Class "tb-btn"
+                classWhen "tb-btn-active" model.IsolatePeekHeld
+                Attribute("title", "Isolate pins: hold to reveal only the pin regions (hotkey: I)")
+                Dom.OnPointerDown((fun _ -> env.Emit [SetIsolatePeek true]), pointerCapture = true)
+                Dom.OnPointerUp((fun _ -> env.Emit [SetIsolatePeek false]), pointerCapture = true)
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetIsolatePeek false])
+                "◎ Isolate"
+            }
+
+            // Global ghost floor: on = non-emphasized meshes render as faint context,
+            // off = hidden. Governs solo / peek / isolation appearance in every mode.
+            // The opacity slider stays in the gear popover.
+            button {
+                Class "tb-btn"
+                classWhen "tb-btn-active" model.GhostSilhouette
+                Attribute("title", "Ghost floor: faint context vs hidden for non-active meshes")
+                Dom.OnClick(fun _ -> env.Emit [ToggleGhostSilhouette])
+                model.GhostSilhouette |> AVal.map (fun on -> if on then "👻 Ghost" else "👻 Hidden")
+            }
+
             div {
                 Class "tb-regview"
                 classWhenNot "tb-regview-off" solved

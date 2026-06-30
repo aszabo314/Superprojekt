@@ -183,8 +183,10 @@ let readinessTests () =
     check "zero pins blocker" (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "≥3 pins"))
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 2 }
-    check "pair deficit blocker per mesh"
-        (d |> List.filter (fun x -> x.Severity = Blocker && x.Text.Contains "marker") |> List.length = 2)
+    check "pair deficit warning per mesh (not a global blocker)"
+        (d |> List.filter (fun x -> x.Severity = Warning && x.Text.Contains "marker(s)") |> List.length = 2)
+    check "zero solvable meshes is the hard blocker"
+        (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "≥3 markers"))
     check "deficit counts the gap" (d |> List.exists (fun x -> x.Text.Contains "+1 marker"))
     check "deficit action reseeds the filtered mesh"
         (d |> List.exists (fun x -> x.Action = Some (ReseedCorrespondence (Some "A"))))

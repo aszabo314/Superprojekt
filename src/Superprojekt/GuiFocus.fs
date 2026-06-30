@@ -57,6 +57,30 @@ module GuiFocus =
                 "⟲ reset"
             }
 
+        // Locate back-out: shown only while a "frame correspondence" is in effect;
+        // restores the camera + solo and clears the focus zoom.
+        let backBtn =
+            button {
+                Class "focus-back"
+                Primitives.showWhen (model.LocateBackup |> AVal.map Option.isSome)
+                Attribute("title", "Back out of locate: restore camera + visibility")
+                Dom.OnClick(fun _ ->
+                    env.Emit [BackOutLocate]
+                    FocusScene.resetCam (AVal.force focusMesh))
+                "⤺ back"
+            }
+
+        // Link-views toggle (off by default): focus click flies the 3D camera, a 3D
+        // recenter recenters the focus canvas. Pure camera.
+        let linkBtn =
+            button {
+                Class "focus-link"
+                Primitives.classWhen "btn-active" model.LinkViews
+                Attribute("title", "Link views: focus click flies the 3D camera; 3D recenter recenters the focus")
+                Dom.OnClick(fun _ -> env.Emit [ToggleLinkViews])
+                model.LinkViews |> AVal.map (fun on -> if on then "⇄ linked" else "⇄ link")
+            }
+
         let peekBtn =
             button {
                 Class "focus-peek"
@@ -88,6 +112,8 @@ module GuiFocus =
                 div {
                     Class "focus-head-right"
                     setBtn
+                    backBtn
+                    linkBtn
                     resetBtn
                     peekBtn
                 }

@@ -20,6 +20,10 @@ type Message =
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
     | SetReferencePeek of bool
+    // Spring-loaded hold-to-isolate modifier (forces pin isolation while held).
+    | SetIsolatePeek of bool
+    // Link-views toggle (focus ↔ 3D camera sync; pure camera).
+    | ToggleLinkViews
     | SetReferenceMesh of string option
     // Disabled until a solve exists.
     | SetRegView of RegView
@@ -69,6 +73,13 @@ type Message =
     | SetFocusPeekReference of bool
     // aspect from the view, fovY from the fixed 90° horizontal fov.
     | FlyTo of FlyToTarget * aspect:float
+    // Fly the orbit camera tight to a metric-world point: animate centre + radius
+    // directly (radius = the orbit distance, not derived from a subtend).
+    | FlyToPoint of world:V3d * radius:float
+    // Locate a correspondence: atomic solo + focus + tight 3D fly + focus zoom,
+    // capturing a back-out snapshot. BackOutLocate restores it.
+    | FrameCorrespondence of ScanPinId * mesh:string
+    | BackOutLocate
     | NavTo of NavAction
 
 and ScanPinMessage =

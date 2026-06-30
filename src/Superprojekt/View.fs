@@ -236,6 +236,49 @@ module View =
                                     |> Array.tryHead |> Option.map snd
                             }
 
+                // Like raycastNearest, but keeps the mesh NAME of the nearest hit —
+                // used to focus (§B) / solo (§C) the clicked mesh in 3D. Bbox-culls
+                // visible+loaded meshes, raycasts the survivors, takes the nearest.
+                let raycastNearestNamed () : Async<(string * V3d) option> =
+                    match cursorScreen.Value with
+                    | None -> async.Return None
+                    | Some cursorPx ->
+                        let cc = AVal.force model.CommonCentroid
+                        let scales = AVal.force model.DatasetScales
+                        let visible = AVal.force model.MeshVisible
+                        let bounds = AVal.force model.MeshBounds
+                        let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
+                        let candidates =
+                            bounds |> Map.toSeq
+                            |> Seq.choose (fun (name, world) ->
+                                let vis = Map.tryFind name visible |> Option.defaultValue true
+                                if vis then
+                                    let scale = DatasetScale.forMesh scales name
+                                    if (rayBoxT ray (renderBox world cc scale)).IsSome
+                                    then Some (name, scale) else None
+                                else None)
+                            |> Array.ofSeq
+                        if candidates.Length = 0 then async.Return None
+                        else
+                            async {
+                                let! hits =
+                                    candidates
+                                    |> Array.map (fun (name, scale) ->
+                                        async {
+                                            let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model name))
+                                            let serverOrigin = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale ray.Origin)
+                                            let serverDir = (dispWorld.Backward.TransformDir ray.Direction).Normalized
+                                            let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
+                                            return hit |> Option.map (fun h ->
+                                                let rp = ScanPin.renderCentre cc scale (dispWorld.Forward.TransformPos h.point)
+                                                Vec.dot (rp - ray.Origin) ray.Direction, name, rp)
+                                        })
+                                    |> Async.Parallel
+                                return
+                                    hits |> Array.choose id |> Array.sortBy (fun (d, _, _) -> d)
+                                    |> Array.tryHead |> Option.map (fun (_, n, rp) -> n, rp)
+                            }
+
                 // Cursor → a SPECIFIC mesh's surface via server raycast (render-space
                 // hit). Used by the 3D correspondence pick, which isolates one mesh and
                 // must land on it alone (ignoring whatever else the ray crosses).
@@ -348,6 +391,12 @@ module View =
                         match resolved with
                         | Some renderPos ->
                             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
+                            // Link-views 3D→focus: recenter the focused mesh's (Top) canvas
+                            // on the same world point. Top-only (the pan maths is ortho).
+                            if AVal.force model.LinkViews && AVal.force model.FocusProjection = ProjTop then
+                                match AVal.force model.Selection.FocusedMesh with
+                                | Some fm -> FocusScene.recenterOnWorld model fm (worldFromRender model renderPos)
+                                | None -> ()
                         | None -> ()
                     } |> Async.Start
                     false
@@ -377,7 +426,13 @@ module View =
                         async {
                             let! resolved =
                                 match placement with
-                                | AnchorPlacement -> resolvePick frontmost
+                                // During placement the terrain is ghosted AND the
+                                // translucent preview sphere writes depth in front of the
+                                // real surface, so the GPU pixel pick (`frontmost`) lands
+                                // ~QuickPinRadius toward the camera. Ignore it and resolve
+                                // on the server raycast, which intersects only real
+                                // geometry (the same surface the flashlight previews).
+                                | AnchorPlacement -> resolvePick None
                                 | _ -> resolveLayerPick frontmost
                             match placement, resolved with
                             | AnchorPlacement, Some renderPos ->
@@ -387,6 +442,19 @@ module View =
                             | _, Some renderPos ->
                                 let worldPos = worldFromRender model renderPos
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
+                                // Clicking a mesh in 3D focuses it (read/write parity
+                                // §B); in Inspect it also solos (§C). The named raycast
+                                // identifies which mesh the ray actually crossed first.
+                                let! named = raycastNearestNamed ()
+                                match named with
+                                | Some (mesh, _) ->
+                                    match AVal.force model.WorkflowStep with
+                                    | Inspect ->
+                                        let already = match AVal.force model.MeshSolo with Solo(s, _) -> s = mesh | _ -> false
+                                        if already then env.Emit [SetFocusedMesh (Some mesh)]
+                                        else env.Emit [ToggleMeshSolo mesh; SetFocusedMesh (Some mesh)]
+                                    | _ -> env.Emit [SetFocusedMesh (Some mesh)]
+                                | None -> ()
                             | _, None -> ()
                         } |> Async.Start
                         true
@@ -403,30 +471,29 @@ module View =
                     // onto the render Z=0 plane (dataset mean elevation) so the top-bar
                     // coordinate keeps reading over open ground / off-mesh.
                     let nextHover =
-                        match pick with
-                        | Some renderPos -> Some (worldFromRender model renderPos)
-                        | None ->
-                            match cursorScreen.Value with
-                            | Some cursorPx ->
-                                pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
-                                |> rayPlaneZ0
-                                |> Option.map (worldFromRender model)
-                            | None -> None
-                    // Solid placement preview is the instant GPU pick. None (cursor
-                    // over a ghost or background) is handled by the throttled raycast
-                    // below — keep the last preview meanwhile so it doesn't flicker.
-                    let nextPlacement = if placementWanted then pick else None
-                    let needHover     = hoverCoord.Value     <> nextHover
-                    let needPlacement =
-                        placementHover.Value <> nextPlacement
-                        && (nextPlacement.IsSome || not placementWanted)
-                    if needHover || needPlacement then
-                        transact (fun () ->
-                            if needHover     then hoverCoord.Value     <- nextHover
-                            if needPlacement then placementHover.Value <- nextPlacement)
-                    // Ghost/background: the GPU pick fell through, so raycast the
-                    // nearest surface (throttled + generation-guarded; lags slightly).
-                    if placementWanted && pick.IsNone then
+                        // While placing, `pick` hits the translucent preview sphere (not
+                        // the surface), so read the coordinate off the raycast-driven
+                        // placement preview instead — consistent with where the pin lands.
+                        if placementWanted then
+                            placementHover.Value |> Option.map (worldFromRender model)
+                        else
+                            match pick with
+                            | Some renderPos -> Some (worldFromRender model renderPos)
+                            | None ->
+                                match cursorScreen.Value with
+                                | Some cursorPx ->
+                                    pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
+                                    |> rayPlaneZ0
+                                    |> Option.map (worldFromRender model)
+                                | None -> None
+                    if hoverCoord.Value <> nextHover then
+                        transact (fun () -> hoverCoord.Value <- nextHover)
+                    // Placement preview (flashlight): drive it purely from the server
+                    // raycast — the GPU pixel pick is unusable here (ghosted terrain +
+                    // the preview sphere occluding the surface), and the raycast is the
+                    // same surface the click commits. Throttled + generation-guarded;
+                    // the last preview is held between hits (None on a true miss).
+                    if placementWanted then
                         let now = nowMs ()
                         if now - placeHoverMs > 60.0 then
                             placeHoverMs <- now
@@ -473,6 +540,9 @@ module View =
                 | "r" | "R" ->
                     // Hold-R reference peek.
                     env.Emit [SetReferencePeek true]
+                | "i" | "I" ->
+                    // Hold-I = momentary pin-isolation (where it defaults off).
+                    env.Emit [SetIsolatePeek true]
                 | "Escape" ->
                     env.Emit [ScanPinMsg CancelPlacement]
                 | _ -> ()
@@ -482,6 +552,7 @@ module View =
                 | " "     -> transact (fun () -> spaceHeld.Value <- false)
                 | "Alt"   -> transact (fun () -> altHeld.Value <- false)
                 | "r" | "R" -> env.Emit [SetReferencePeek false]
+                | "i" | "I" -> env.Emit [SetIsolatePeek false]
                 | _ -> ()
             )
 

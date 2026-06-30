@@ -115,6 +115,20 @@ type Selection = {
 module Selection =
     let initial = { SelectedPin = None; FocusedMesh = None; SelectedPoint = None; Hovered = None }
 
+// Snapshot captured when a "frame correspondence" (locate) starts, so a single
+// back-out restores the camera + solo/visibility to exactly what they were before.
+// Plain record (not a ModelType) → a single aval<LocateState option> in the model.
+type LocateState = {
+    Pin         : ScanPinId
+    Mesh        : string
+    PrevSolo    : MeshSoloState
+    PrevVisible : Map<string, bool>
+    PrevCenter  : V3d
+    PrevRadius  : float
+    PrevPhi     : float
+    PrevTheta   : float
+}
+
 [<ModelType>]
 type Model =
     {
@@ -152,6 +166,9 @@ type Model =
 
         // Spring-loaded reference peek (hold to show only the reference mesh).
         ReferencePeekHeld : bool
+        // Spring-loaded pin-isolation peek (hold to momentarily force pin isolation
+        // on in modes where it defaults off — mirrors the reference peek).
+        IsolatePeekHeld   : bool
 
         // LoadTransform is the immutable per-mesh baseline captured at load;
         // SolvedTransform (presence = solved) is written by the correspondence
@@ -213,6 +230,14 @@ type Model =
         // range: >1 widens the value range mapped to full red/blue (compresses the
         // colours toward neutral grey), <1 narrows it (saturates sooner). Gear slider.
         DiffRangeScale      : float
+
+        // Link-views: when on, a focus-surface click flies the 3D camera to that
+        // world point and a 3D recenter recenters the focus canvas. Pure camera,
+        // off by default.
+        LinkViews           : bool
+        // Active "frame correspondence" (locate) backup; Some while a locate is in
+        // effect so a single back-out restores the prior camera + solo state.
+        LocateBackup        : LocateState option
     }
 
 // Displayed = the pose a mesh currently shows: at RegAfter a solved mesh uses its
@@ -281,6 +306,7 @@ module Model =
             MeshBounds     = Map.empty
             ActivePickingLayer = None
             ReferencePeekHeld = false
+            IsolatePeekHeld   = false
             LoadTransforms        = Map.empty
             SolvedTransforms      = Map.empty
             RegView               = RegBefore
@@ -306,4 +332,6 @@ module Model =
             OutlineThreshold    = 0.004
             IsolineBands        = 700.0
             DiffRangeScale      = 1.0
+            LinkViews           = false
+            LocateBackup        = None
         }

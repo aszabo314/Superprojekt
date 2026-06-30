@@ -90,6 +90,11 @@ module Update =
         | SetReferencePeek held ->
             if model.ReferencePeekHeld = held then model
             else { model with ReferencePeekHeld = held }
+        | SetIsolatePeek held ->
+            if model.IsolatePeekHeld = held then model
+            else { model with IsolatePeekHeld = held }
+        | ToggleLinkViews ->
+            { model with LinkViews = not model.LinkViews }
 
         | SetRegView v ->
             // Only meaningful once a solve exists (the view disables it otherwise).
@@ -141,8 +146,10 @@ module Update =
                     |> Array.ofList
                 let solvable = visibleMoving |> List.filter (fun m -> (pairsFor m).Length >= 3)
                 if List.isEmpty solvable then
-                    showToast env "Need ≥3 correspondence markers on a visible moving mesh" model
+                    showToast env "No mesh has ≥3 correspondence markers yet" model
                 else
+                    // Solve every solvable mesh in parallel; unsolvable meshes keep no
+                    // SolvedTransform (stay at their load pose) and are flagged in the UI.
                     for mesh in solvable do
                         let pairs = pairsFor mesh
                         let pinIds = pairs |> Array.map (fun (pinId, _, _) -> pinId)
@@ -158,7 +165,18 @@ module Update =
                             with ex ->
                                 env.Emit [CoarseFailed(mesh, ex.Message)]
                         } |> ignore
-                    { model with Registration = { reg with Running = true } }
+                    let n = List.length solvable
+                    let total = List.length visibleMoving
+                    let unsolvable = visibleMoving |> List.filter (fun m -> (pairsFor m).Length < 3)
+                    let summary =
+                        match unsolvable with
+                        | [] -> sprintf "Solving %d of %d meshes…" n total
+                        | first :: rest ->
+                            let need = max 1 (3 - (pairsFor first).Length)
+                            let extra = if List.isEmpty rest then "" else sprintf " (+%d more)" (List.length rest)
+                            sprintf "Solving %d of %d; %s needs %d more%s"
+                                n total (Primitives.shortName first) need extra
+                    showToast env summary { model with Registration = { reg with Running = true } }
         | CoarseSolved(mesh, world, pairResiduals) ->
             // lsqPairs returns the absolute world transform mapping the load-pose
             // moving anchors onto the reference; store it as the SolvedTransform.
@@ -275,6 +293,7 @@ module Update =
                     SolvedTransforms = Map.empty
                     LoadTransforms = Map.empty
                     RegView = RegBefore
+                    LocateBackup = None
                     Toast = None }
         | SetRenderingMode m ->
             { model with RenderingMode = m }
@@ -334,12 +353,15 @@ module Update =
             else { model with Selection = { model.Selection with SelectedPoint = m } }
         | SetWorkflowStep step ->
             // Entering/leaving Inspect (re)drives the central-3D variance map, so drop
-            // its cache + bump the generation.
+            // its cache + bump the generation. Per-mode default (§C): pin isolation
+            // defaults on in Correspondence, off elsewhere (the hold modifier overrides
+            // momentarily where it's off).
             if model.WorkflowStep = step then model
             else
                 bumpSurfaceDist ()
                 bumpFocusDist ()
                 { model with WorkflowStep = step; SurfaceDistance = Map.empty; FocusDist = Map.empty
+                             AnchorGhostMode = (step = Correspondence)
                              CorrSetMode = false; CorrPreview = None; Corr3DPick = None }
         | SetInspectChannel ch ->
             { model with InspectChannel = ch }
@@ -407,6 +429,58 @@ module Update =
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, centreR))
                       CameraMessage (OrbitMessage.SetTargetRadius(true, dist))]
             model
+        // Tight fly to a metric-world point: centre on it, set the orbit radius
+        // directly (close-in), keeping orientation. The 3D side of locate + link-views.
+        | FlyToPoint(world, radius) ->
+            let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
+            let centreR = ScanPin.renderCentre model.CommonCentroid scale world
+            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, centreR))
+                      CameraMessage (OrbitMessage.SetTargetRadius(true, max 0.2 (radius * scale)))]
+            model
+        // Locate a correspondence (atomic "frame"): solo the mesh, focus it, fly the
+        // 3D camera tight to the anchor, force Top so the focus pan/zoom maths is
+        // valid (the focus zoom itself is driven from the manager-row handler). A
+        // back-out snapshot is captured on the first locate of a session.
+        | FrameCorrespondence(pinId, mesh) ->
+            match HashMap.tryFind pinId model.ScanPins.Pins with
+            | Some pin ->
+                match ScanPin.correspondence pin |> Option.bind (fun c -> Map.tryFind mesh c.Anchors) with
+                | Some a ->
+                    let world = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos a.Point
+                    let backup =
+                        match model.LocateBackup with
+                        | Some _ -> model.LocateBackup
+                        | None ->
+                            Some { Pin = pinId; Mesh = mesh
+                                   PrevSolo = model.MeshSolo; PrevVisible = model.MeshVisible
+                                   PrevCenter = model.Camera.center; PrevRadius = model.Camera.radius
+                                   PrevPhi = model.Camera.phi; PrevTheta = model.Camera.theta }
+                    let restore = match model.MeshSolo with Solo(_, r) -> r | NoSolo -> model.MeshVisible
+                    let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, n = mesh) |> Map.ofSeq
+                    let tight = max 0.5 (pin.InnerRadius * 4.0)
+                    env.Emit [FlyToPoint(world, tight)]
+                    invalidateProbes
+                        { model with
+                            Selection = { model.Selection with FocusedMesh = Some mesh; SelectedPoint = Some mesh; SelectedPin = Some pinId }
+                            MeshSolo = Solo(mesh, restore)
+                            MeshVisible = vis
+                            LocateBackup = backup
+                            FocusProjection = ProjTop
+                            CorrSetMode = false; CorrPreview = None; Corr3DPick = None }
+                | None -> showToast env "No marker on that mesh to locate" model
+            | None -> model
+        // Single back-out: restore the camera + solo/visibility captured at the first
+        // locate and clear the backup (the focus pan/zoom is reset from the view).
+        | BackOutLocate ->
+            match model.LocateBackup with
+            | None -> model
+            | Some b ->
+                env.Emit [CameraMessage (OrbitMessage.SetTarget(false, b.PrevCenter, b.PrevRadius, b.PrevPhi, b.PrevTheta))]
+                invalidateProbes
+                    { model with
+                        MeshSolo = b.PrevSolo
+                        MeshVisible = b.PrevVisible
+                        LocateBackup = None }
         // Diagnostics route through existing handlers; focus/highlight = open target + 1.5s pulse.
         | NavTo action ->
             let pulse (selector : string) =

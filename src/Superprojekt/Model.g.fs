@@ -1,5 +1,5 @@
-//929c6062-e750-19c2-2d15-4941b37d7775
-//a418fa5c-ade3-2eaa-511f-93d3c86e4fb9
+//bbd0d993-e83e-c98a-ed1a-3403bf0ff966
+//3bdcf2af-2b8b-1c3f-54b8-c8f0a880dbd2
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -59,6 +59,7 @@ type AdaptiveModel(value : Model) =
     let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
     let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
     let _ReferencePeekHeld_ = FSharp.Data.Adaptive.cval(value.ReferencePeekHeld)
+    let _IsolatePeekHeld_ = FSharp.Data.Adaptive.cval(value.IsolatePeekHeld)
     let _LoadTransforms_ = FSharp.Data.Adaptive.cval(value.LoadTransforms)
     let _SolvedTransforms_ = FSharp.Data.Adaptive.cval(value.SolvedTransforms)
     let _RegView_ = FSharp.Data.Adaptive.cval(value.RegView)
@@ -84,6 +85,8 @@ type AdaptiveModel(value : Model) =
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
     let _DiffRangeScale_ = FSharp.Data.Adaptive.cval(value.DiffRangeScale)
+    let _LinkViews_ = FSharp.Data.Adaptive.cval(value.LinkViews)
+    let _LocateBackup_ = FSharp.Data.Adaptive.cval(value.LocateBackup)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -116,6 +119,7 @@ type AdaptiveModel(value : Model) =
             _MeshBounds_.Value <- value.MeshBounds
             _ActivePickingLayer_.Value <- value.ActivePickingLayer
             _ReferencePeekHeld_.Value <- value.ReferencePeekHeld
+            _IsolatePeekHeld_.Value <- value.IsolatePeekHeld
             _LoadTransforms_.Value <- value.LoadTransforms
             _SolvedTransforms_.Value <- value.SolvedTransforms
             _RegView_.Value <- value.RegView
@@ -141,6 +145,8 @@ type AdaptiveModel(value : Model) =
             _OutlineThreshold_.Value <- value.OutlineThreshold
             _IsolineBands_.Value <- value.IsolineBands
             _DiffRangeScale_.Value <- value.DiffRangeScale
+            _LinkViews_.Value <- value.LinkViews
+            _LocateBackup_.Value <- value.LocateBackup
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -166,6 +172,7 @@ type AdaptiveModel(value : Model) =
     member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>
     member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.ReferencePeekHeld = _ReferencePeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.IsolatePeekHeld = _IsolatePeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.LoadTransforms = _LoadTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.SolvedTransforms = _SolvedTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.RegView = _RegView_ :> FSharp.Data.Adaptive.aval<RegView>
@@ -191,4 +198,6 @@ type AdaptiveModel(value : Model) =
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.DiffRangeScale = _DiffRangeScale_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.LinkViews = _LinkViews_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.LocateBackup = _LocateBackup_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LocateState>>
 

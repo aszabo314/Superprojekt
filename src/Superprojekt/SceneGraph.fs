@@ -172,6 +172,49 @@ module SceneGraph =
             Lines.render segs
         }
 
+    // The focused mesh's bbox edges in a cyan accent — the 3D "active" treatment
+    // mirroring the rail row + focus tile (read parity §B). Depth-tested + subtle,
+    // distinct from the reference (blue). Hidden when nothing is focused.
+    let private focusedOutline (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (model : AdaptiveModel) =
+        let col = V4d(0.031, 0.569, 0.698, 0.7)   // cyan #0891b2
+        let segs =
+            AVal.custom (fun t ->
+                match model.Selection.FocusedMesh.GetValue t with
+                | None -> [||]
+                | Some name ->
+                    match Map.tryFind name (model.MeshBounds.GetValue t) with
+                    | None -> [||]
+                    | Some box ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
+                        let tr =
+                            match model.RegView.GetValue t, Map.tryFind name (model.SolvedTransforms.GetValue t) with
+                            | RegAfter, Some s -> s
+                            | _ -> Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+                        let corner (ix : int) (iy : int) (iz : int) =
+                            let w =
+                                V3d((if ix = 0 then box.Min.X else box.Max.X),
+                                    (if iy = 0 then box.Min.Y else box.Max.Y),
+                                    (if iz = 0 then box.Min.Z else box.Max.Z))
+                            tr.Forward.TransformPos (ScanPin.renderCentre cc scale w)
+                        let edges =
+                            [|
+                                (0,0,0),(1,0,0); (0,1,0),(1,1,0); (0,0,1),(1,0,1); (0,1,1),(1,1,1)
+                                (0,0,0),(0,1,0); (1,0,0),(1,1,0); (0,0,1),(0,1,1); (1,0,1),(1,1,1)
+                                (0,0,0),(0,0,1); (1,0,0),(1,0,1); (0,1,0),(0,1,1); (1,1,0),(1,1,1)
+                            |]
+                        edges |> Array.map (fun ((ax, ay, az), (bx, by, bz)) ->
+                            corner ax ay az, corner bx by bz, col, 1.5))
+        sg {
+            Sg.Active active
+            Sg.View view
+            Sg.Proj proj
+            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+            Sg.BlendMode (AVal.constant BlendMode.Blend)
+            Sg.NoEvents
+            Lines.render segs
+        }
+
     let build
         (env : Env<Message>)
         (info : Aardvark.Dom.RenderControlInfo)
@@ -212,6 +255,7 @@ module SceneGraph =
         let cross         = originIndicator view proj notFullscreen crossCenter
         let labels        = originLabels    view proj notFullscreen crossCenter
         let refOutline    = referenceOutline view proj notFullscreen model
+        let focusOutline  = focusedOutline   view proj notFullscreen model
 
         let viewportUni =
             sg {
@@ -225,6 +269,7 @@ module SceneGraph =
                 cross
                 pinScene
                 refOutline
+                focusOutline
                 labels
             }
 

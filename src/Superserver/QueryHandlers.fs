@@ -96,6 +96,12 @@ let closestHandler : HttpHandler =
         with ex -> return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
+// M3C2 correspondence cutoff: a vertex whose nearest point on the other mesh is
+// farther than (queried-mesh bbox diagonal × this fraction) is treated as having no
+// correspondence (the meshes don't overlap there) → sentinel. Scales with the mesh
+// extent so it adapts across datasets (metres vs km); tune here.
+let private regionMaxDistFrac = 0.06
+
 let private mat16 (a : float[]) =
     if not (isNull a) && a.Length = 16 then
         M44d(a.[0],  a.[1],  a.[2],  a.[3],
@@ -139,11 +145,18 @@ let regionDistanceHandler : HttpHandler =
                             dist.[i] <- float32 (- hu.T)
                         else dist.[i] <- 1e30f) |> ignore
             else
+                // Reject correspondences farther than maxDist (no overlap there) so
+                // isolated points produce no error response — the M3C2 analogue of the
+                // z-diff ray missing the reference.
+                let maxDist =
+                    if refPos.Length = 0 then infinity
+                    else float (Box3f(refPos).Size.Length) * regionMaxDistFrac
                 System.Threading.Tasks.Parallel.For(0, pos.Length, fun i ->
                     let vWorld = tT.TransformPos (V3d pos.[i] + cT)
                     let vRefLocal = rInv.TransformPos vWorld - cR
                     let res = lmR.scene.GetClosestPoint(V3f vRefLocal)
-                    if res.IsValid then
+                    let d = if res.IsValid then sqrt (float res.DistanceSquared) else infinity
+                    if res.IsValid && d <= maxDist then
                         let cp = V3d res.Point
                         let pid = int res.PrimID
                         if pid * 3 + 2 < refIdx.Length then
@@ -153,8 +166,8 @@ let regionDistanceHandler : HttpHandler =
                             let nrm = Vec.cross (p1 - p0) (p2 - p0)
                             let nl  = nrm.Length
                             let s   = if nl > 1e-12 && Vec.dot (vRefLocal - cp) (nrm / nl) < 0.0 then -1.0 else 1.0
-                            dist.[i] <- float32 (s * sqrt (float res.DistanceSquared))
-                        else dist.[i] <- float32 (sqrt (float res.DistanceSquared))
+                            dist.[i] <- float32 (s * d)
+                        else dist.[i] <- float32 d
                     else dist.[i] <- 1e30f) |> ignore
             log.LogInformation("region-distance {Target} vs {Ref}: {Verts} verts", req.TargetName, req.RefName, pos.Length)
             return! json {| dist = dist |} next ctx

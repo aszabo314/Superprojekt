@@ -149,18 +149,19 @@ module MeshShader =
                     let loC = V3f(0.945f, 0.961f, 0.976f)
                     let hiC = V3f(0.725f, 0.110f, 0.110f)
                     baseRgb <- loC * (1.0f - tt) + hiC * tt
-            // Incidence heatmap: camera-incidence angle (grazing = red, head-on
-            // = green).
+            // Incidence heatmap: incidence angle to the scan sensor (the mesh's
+            // panorama centre, fed via SensorOrigin), grazing = red, head-on = green.
             if uniform.HeatmapMode = 1 && aboveGhost then
-                let incid = abs (Vec.dot n toCam)
+                let toSensor = (uniform.SensorOrigin - wp) |> Vec.normalize
+                let incid = abs (Vec.dot n toSensor)
                 let lo  = V3f(0.84f, 0.19f, 0.15f)
                 let mid = V3f(0.99f, 0.85f, 0.30f)
                 let hi  = V3f(0.18f, 0.55f, 0.34f)
                 baseRgb <-
                     if incid < 0.5f then lo + (mid - lo) * (incid * 2.0f)
                     else mid + (hi - mid) * ((incid - 0.5f) * 2.0f)
-            // Range heatmap: distance from the mesh's own origin (= sensor) over
-            // its max range, near = blue → far = red.
+            // Range heatmap: distance from the scan sensor (SensorOrigin = the mesh's
+            // panorama centre) over its max range, near = blue → far = red.
             if uniform.HeatmapMode = 2 && aboveGhost then
                 let rng = (wp - uniform.SensorOrigin).Length
                 let tr  = clamp 0.0f 1.0f (rng / max 1e-6f uniform.RangeMax)
@@ -170,7 +171,9 @@ module MeshShader =
             // Shape heatmap: per-vertex triangle quality (4√3·A/Σl², 1 =
             // equilateral, →0 = thin/degenerate). Red = poor, green = good.
             if uniform.HeatmapMode = 3 && aboveGhost then
-                let ts = clamp 0.0f 1.0f v.shq
+                // Raise the green threshold: quality ≥ 0.75 reads fully green, so a
+                // larger share of a well-formed mesh shows as good.
+                let ts = clamp 0.0f 1.0f (v.shq / 0.75f)
                 let loC = V3f(0.86f, 0.20f, 0.15f)
                 let hiC = V3f(0.18f, 0.55f, 0.34f)
                 baseRgb <- loC * (1.0f - ts) + hiC * ts

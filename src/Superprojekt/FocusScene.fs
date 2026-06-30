@@ -288,8 +288,12 @@ module FocusScene =
                             | None -> ()
                         | None -> ()
                     out.ToArray())
+        // passOne + DepthTest.None: the surface writes depth in the default pass, so a
+        // same-pass overlay was occluded (it rendered under the mesh); a later pass with
+        // no depth test draws it always-on-top (same trick as the main-view cross).
         let overlay =
             sg {
+                Sg.Pass RenderPass.passOne
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.NoEvents

@@ -188,11 +188,32 @@ module MeshView =
                             vis && not inspectGhost)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
-            // Range-heatmap inputs: sensor origin (mesh-local 0,0,0) in render
-            // space, and the normalising max range (metric maxR × dataset scale).
+            // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
+            // absolute world → mesh frame → render); no entry ⇒ the mesh origin.
+            // Drives the incidence + range heatmaps from the real sensor, not the
+            // interactive camera. RangeMax normalises range by the farthest mesh-bbox
+            // corner from that same sensor (so an off-surface origin doesn't skew it).
             let fullTrafo = meshTrafo model.CommonCentroid loaded scale meshT
-            let sensorOrigin = fullTrafo |> AVal.map (fun t -> V3f (t.Forward.TransformPos V3d.Zero))
-            let rangeMax = (loaded.localMaxR, scale) ||> AVal.map2 (fun r s -> float32 (max 1e-6 (r * s)))
+            let sensorOrigin =
+                (fullTrafo, model.PanoCenters, loaded.centroid) |||> AVal.map3 (fun t panos c ->
+                    let local = match Map.tryFind name panos with Some w -> w - c | None -> V3d.Zero
+                    V3f (t.Forward.TransformPos local))
+            let rangeMax =
+                AVal.custom (fun t ->
+                    let s = scale.GetValue t
+                    let panoW =
+                        match Map.tryFind name (model.PanoCenters.GetValue t) with
+                        | Some w -> w
+                        | None -> loaded.centroid.GetValue t
+                    let r =
+                        match Map.tryFind name (model.MeshBounds.GetValue t) with
+                        | Some (b : Box3d) when not b.IsInvalid ->
+                            let dx = max (abs (b.Min.X - panoW.X)) (abs (b.Max.X - panoW.X))
+                            let dy = max (abs (b.Min.Y - panoW.Y)) (abs (b.Max.Y - panoW.Y))
+                            let dz = max (abs (b.Min.Z - panoW.Z)) (abs (b.Max.Z - panoW.Z))
+                            sqrt (dx*dx + dy*dy + dz*dz)
+                        | _ -> loaded.localMaxR.GetValue t
+                    float32 (max 1e-6 (r * s)))
             // Inactive meshes still render (as ghost); gate only on load state.
             let renderEnabled =
                 loaded.fvc |> AVal.map (fun c -> c > 3)

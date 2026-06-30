@@ -191,7 +191,7 @@ module SceneGraph =
         // writes depth from its shader; ordering is steered via Sg.DepthTest +
         // Sg.Pass alone. Cross + labels run in passOne (DepthTest.None) on top.
 
-        let meshScene  = MeshView.buildScene loadFinished clipUniforms wheelIsolation model
+        let meshScene  = MeshView.buildScene loadFinished clipUniforms placementHover wheelIsolation model
         let outlineScene = OutlineView.build info model view proj
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
 

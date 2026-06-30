@@ -101,30 +101,40 @@ module MeshView =
             max 1e-3f valid.[int (0.95 * float (valid.Length - 1))]
 
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
-    // inner radius w), for the mesh shader's pin-isolation filter.
-    let private pinBlobUniforms (model : AdaptiveModel) =
+    // inner radius w), for the mesh shader's pin-isolation filter. The live
+    // placement hover is appended as a transient "flashlight" blob.
+    let private pinBlobUniforms (placementPreview : aval<V3d option>) (model : AdaptiveModel) =
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-        let pinsF =
-            model.ScanPins.Pins
-            |> AMap.map (fun _ p -> p.Centre, p.InnerRadius)
-            |> AMap.toAVal
-            |> AVal.map (fun pinsMap -> HashMap.toArray pinsMap |> Array.map snd)
-        let blobsArr =
+        let pinBlobs =
+            let pinsF =
+                model.ScanPins.Pins
+                |> AMap.map (fun _ p -> p.Centre, p.InnerRadius)
+                |> AMap.toAVal
+                |> AVal.map (fun pinsMap -> HashMap.toArray pinsMap |> Array.map snd)
             (pinsF, model.CommonCentroid, datasetScale)
             |||> AVal.map3 (fun pins cc scale ->
-                let n     = min pins.Length MeshShader.MaxBlobs
-                let centres  = Array.zeroCreate<V4f> MeshShader.MaxBlobs
-                for i in 0 .. n - 1 do
-                    let centre, innerR = pins.[i]
+                pins |> Array.map (fun (centre, innerR) ->
                     let cr = ScanPin.renderCentre cc scale centre
-                    let ir = float32 (ScanPin.renderLength scale innerR)
-                    centres.[i]  <- V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, ir)
+                    V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, float32 (ScanPin.renderLength scale innerR))))
+        // Placement hover → flashlight blob (already render space), sized to
+        // QuickPinRadius — previews exactly where the new pin will land.
+        let previewBlob =
+            (placementPreview, model.QuickPinRadius, datasetScale)
+            |||> AVal.map3 (fun prev qr scale ->
+                prev |> Option.map (fun p ->
+                    V4f(float32 p.X, float32 p.Y, float32 p.Z, float32 (ScanPin.renderLength scale qr))))
+        let blobsArr =
+            (pinBlobs, previewBlob) ||> AVal.map2 (fun pins prev ->
+                let all = match prev with Some b -> Array.append pins [| b |] | None -> pins
+                let n = min all.Length MeshShader.MaxBlobs
+                let centres = Array.zeroCreate<V4f> MeshShader.MaxBlobs
+                for i in 0 .. n - 1 do centres.[i] <- all.[i]
                 n, centres)
-        blobsArr |> AVal.map (fun (n, _) -> n),
-        blobsArr |> AVal.map (fun (_, c) -> c)
+        blobsArr |> AVal.map fst,
+        blobsArr |> AVal.map snd
 
-    let buildScene (loadFinished : string -> unit) (clip : aval<int * V4f * V4f>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
+    let buildScene (loadFinished : string -> unit) (clip : aval<int * V4f * V4f>) (placementPreview : aval<V3d option>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
         let renderingModeInt =
             model.RenderingMode |> AVal.map (function
                 | Textured     -> 0
@@ -135,7 +145,7 @@ module MeshView =
                 names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
         let palette = Primitives.meshPaletteV4d
 
-        let blobCount, blobs = pinBlobUniforms model
+        let blobCount, blobs = pinBlobUniforms placementPreview model
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
@@ -144,12 +154,14 @@ module MeshView =
         let peekTarget =
             (model.ReferencePeekHeld, model.Registration) ||> AVal.map2 (fun held reg ->
                 if held then reg.ReferenceMesh else None)
-        // Auto-suspend pin isolation while placing an anchor so the terrain
-        // stays visible for aiming (auto-restored, no model mutation).
+        // Force pin isolation on while placing an anchor: the terrain drops to
+        // ghost and only the existing pins + the live hover blob read solid — a
+        // "flashlight" revealing where the new pin lands (auto-restored, no model
+        // mutation).
         let anchorGhost =
             (model.AnchorGhostMode, model.ScanPins.Placement) ||> AVal.map2 (fun on pl ->
                 match pl with
-                | AnchorPlacement -> 0
+                | AnchorPlacement -> 1
                 | _ -> if on then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name

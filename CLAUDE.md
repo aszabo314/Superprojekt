@@ -39,7 +39,7 @@ Every mesh fragment ends up **opaque** (α = 1), **ghost** (α = effective ghost
 
 1. **Effective ghost level**: `ghost = GhostOpacity` if `GhostSilhouette` is on (pre-gated on upload), else `0` — with the silhouette off, ghost fragments are *discarded* (`α < 1e-4` → discard), so "no ghost" means invisible, not translucent.
 2. **MeshActive** (visibility / isolation): `false` → α = `ghost` for the whole mesh, uniformly.
-3. **Pin isolation** (only when pins exist *and* the "Isolate pins" toggle / `AnchorGhost` uniform is on): `blobComponent = 1` inside any pin's `InnerRadius`, `0` outside every pin's radius; no pins or toggle off → `1`.
+3. **Pin isolation** (only when pins exist *and* the "Isolate pins" toggle / `AnchorGhost` uniform is on): `blobComponent = 1` inside any pin's `InnerRadius`, `0` outside every pin's radius; no pins or toggle off → `1`. During anchor placement `AnchorGhost` is **forced on** regardless of the toggle and the live hover position is appended to `Blobs` as a transient "flashlight" blob (`MeshView.pinBlobUniforms`), so the terrain drops to ghost and only the existing pins + the hover preview read solid.
 4. **Final α**: `α = MeshActive ? lerp(ghost, 1, blobComponent) : ghost`.
 
 Consequences the rest of the stack relies on:

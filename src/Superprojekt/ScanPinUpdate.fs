@@ -8,9 +8,11 @@ open Superprojekt
 
 module ScanPinUpdate =
 
-    let mutable probeCts : System.Threading.CancellationTokenSource =
-        new System.Threading.CancellationTokenSource()
-    let mutable private probeOwner : ScanPinId option = None
+    // Probe queries run per pin — every pin is probed so the left-rail matrix has a
+    // cell for each (pin, mesh). One debounce token per pin (the next invalidation
+    // cancels the previous; stale responses are dropped by the ProbeRunning guard).
+    let private probeCtsMap =
+        System.Collections.Generic.Dictionary<ScanPinId, System.Threading.CancellationTokenSource>()
 
     // Contact-ring queries run per pin (several can recompute at once after a
     // registration), so each pin gets its own debounce token.
@@ -24,9 +26,27 @@ module ScanPinUpdate =
         DatasetScale.active model.ActiveDataset model.DatasetScales
 
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
+        let existing = model.ScanPins.Pins |> HashMap.toList |> List.map snd
+        // Least-used palette slot (round-robin), ties → lowest index. Glyph + colour
+        // share the slot (paired redundant coding).
+        let slot =
+            [ 0 .. Primitives.PinPalette.count - 1 ]
+            |> List.map (fun i -> i, existing |> List.filter (fun p -> p.PinColor = Primitives.PinPalette.color i) |> List.length)
+            |> List.minBy (fun (i, c) -> (c, i))
+            |> fst
+        // Collision-check the short name against existing pin names + mesh numbers.
+        let taken =
+            let pinNames = existing |> List.map (fun p -> p.ShortName) |> Set.ofList
+            let meshNums = model.MeshOrder |> HashMap.toList |> List.map (fun (_, i) -> string (i + 1)) |> Set.ofList
+            Set.union pinNames meshNums
+        let (ScanPinId.ScanPinId g) = id
+        let shortName = Primitives.PinIdentity.shortName taken (g.GetHashCode())
         {
             Id                   = id
             Name                 = PinNames.generate id
+            Glyph                = Primitives.PinPalette.glyph slot
+            ShortName            = shortName
+            PinColor             = Primitives.PinPalette.color slot
             Centre               = worldCentre
             InnerRadius          = max 0.01 model.QuickPinRadius
             Correspondence       = Some Correspondence.empty
@@ -130,66 +150,59 @@ module ScanPinUpdate =
         | None -> ()
         { model with ScanPins = sp'; Selection = selection }
 
-    // Lazy probe trigger, postlude after every reducer step: the effective pin
-    // (card open) with an invalidated probe gets one debounced server query.
-    // Drags coalesce; stale responses dropped by the ProbeRunning guard above.
+    // Lazy probe trigger, postlude after every reducer step: EVERY pin with an
+    // invalidated probe gets one debounced server query (so the rail matrix has a
+    // before/after-aware cell per (pin, mesh)). Per-pin debounce; drags coalesce;
+    // stale responses dropped by the ProbeRunning guard above.
     let ensureProbe (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
-        let effective =
-            model.Selection.SelectedPin
-            |> Option.bind (fun id -> HashMap.tryFind id sp.Pins)
-        match effective with
-        | Some pin when (match pin.Probe with ProbeNone -> true | _ -> false) ->
+        // Cheap exists-check first: this postlude runs on every message (incl. Rendered).
+        if not (sp.Pins |> HashMap.exists (fun _ p -> match p.Probe with ProbeNone -> true | _ -> false)) then model
+        else
             let visible =
                 model.MeshNames |> IndexList.toList
                 |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
-            let setProbe state =
-                { model with ScanPins = { sp with Pins = HashMap.add pin.Id { pin with Probe = state } sp.Pins } }
             match visible with
-            | [] -> setProbe (ProbeError "no visible meshes")
+            | [] -> model
             | _ ->
-                let refMesh =
-                    model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
-                    |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h visible))
-                    |> Option.defaultValue (List.head visible)
-                let meshes =
-                    visible |> List.map (fun n -> n, (ModelTransforms.displayedWorld model n).Forward)
-                let id = pin.Id
-                let centre = pin.Centre
-                let radius = pin.InnerRadius
-                let length = ScanPin.fixedProbeLength
-                probeCts.Cancel()
-                probeCts <- new System.Threading.CancellationTokenSource()
-                // The cancelled task never emits, so a different pin's in-flight probe would stay
-                // ProbeRunning forever — reset it to ProbeNone so it lazily recomputes when reselected.
-                let sp =
-                    match probeOwner with
-                    | Some prev when prev <> id ->
-                        match HashMap.tryFind prev sp.Pins with
-                        | Some p when p.Probe = ProbeRunning ->
-                            { sp with Pins = HashMap.add prev { p with Probe = ProbeNone } sp.Pins }
-                        | _ -> sp
-                    | _ -> sp
-                probeOwner <- Some id
-                let token = probeCts.Token
-                task {
-                    try
-                        do! System.Threading.Tasks.Task.Delay(250, token)
-                        let! res =
-                            Query.probe ApiConfig.apiBase.Value meshes refMesh centre radius length 8192
-                            |> Async.StartAsTask
-                        if not token.IsCancellationRequested then
-                            match res with
-                            | Result.Ok r -> env.Emit [ScanPinMsg (ProbeComputed(id, r))]
-                            | Result.Error e -> env.Emit [ScanPinMsg (ProbeFailed(id, e))]
-                    with
-                    | :? System.OperationCanceledException -> ()
-                    | ex ->
-                        if not token.IsCancellationRequested then
-                            env.Emit [ScanPinMsg (ProbeFailed(id, ex.Message))]
-                } |> ignore
-                { model with ScanPins = { sp with Pins = HashMap.add id { pin with Probe = ProbeRunning } sp.Pins } }
-        | _ -> model
+                let refMesh0 = model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
+                let meshes = visible |> List.map (fun n -> n, (ModelTransforms.displayedWorld model n).Forward)
+                let pending =
+                    sp.Pins |> HashMap.toList
+                    |> List.filter (fun (_, p) -> match p.Probe with ProbeNone -> true | _ -> false)
+                let mutable pins = sp.Pins
+                for (id, pin) in pending do
+                    let refMesh =
+                        refMesh0
+                        |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h visible))
+                        |> Option.defaultValue (List.head visible)
+                    match probeCtsMap.TryGetValue id with
+                    | true, cts -> cts.Cancel()
+                    | _ -> ()
+                    let cts = new System.Threading.CancellationTokenSource()
+                    probeCtsMap.[id] <- cts
+                    let token = cts.Token
+                    let centre = pin.Centre
+                    let radius = pin.InnerRadius
+                    let length = ScanPin.fixedProbeLength
+                    task {
+                        try
+                            do! System.Threading.Tasks.Task.Delay(250, token)
+                            let! res =
+                                Query.probe ApiConfig.apiBase.Value meshes refMesh centre radius length 8192
+                                |> Async.StartAsTask
+                            if not token.IsCancellationRequested then
+                                match res with
+                                | Result.Ok r -> env.Emit [ScanPinMsg (ProbeComputed(id, r))]
+                                | Result.Error e -> env.Emit [ScanPinMsg (ProbeFailed(id, e))]
+                        with
+                        | :? System.OperationCanceledException -> ()
+                        | ex ->
+                            if not token.IsCancellationRequested then
+                                env.Emit [ScanPinMsg (ProbeFailed(id, ex.Message))]
+                    } |> ignore
+                    pins <- HashMap.add id { pin with Probe = ProbeRunning } pins
+                { model with ScanPins = { sp with Pins = pins } }
 
     // Lazy contact-ring trigger, postlude after every reducer step: every RingsNone pin gets
     // one debounced fan-out over ALL meshes (visibility only gates rendering, so toggling never

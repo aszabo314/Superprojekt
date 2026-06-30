@@ -30,19 +30,6 @@ module GuiTopBar =
                 "⟲"
             }
 
-            // Spring-loaded reference peek: while held, ghost every mesh except
-            // the reference. Transient — never mutates the eye toggles; leave/up
-            // both release so it can't stick.
-            button {
-                Class "tb-btn"
-                classWhen "tb-btn-active" model.ReferencePeekHeld
-                Attribute("title", "Peek reference: hold to show only the reference mesh (hotkey: R)")
-                Dom.OnPointerDown((fun _ -> env.Emit [SetReferencePeek true]), pointerCapture = true)
-                Dom.OnPointerUp((fun _ -> env.Emit [SetReferencePeek false]), pointerCapture = true)
-                Dom.OnMouseLeave(fun _ -> env.Emit [SetReferencePeek false])
-                "👁 Peek"
-            }
-
             // Spring-loaded hold-to-isolate (hotkey I): momentarily force pin isolation
             // on in modes where it defaults off (Overview / Inspect).
             button {
@@ -53,6 +40,18 @@ module GuiTopBar =
                 Dom.OnPointerUp((fun _ -> env.Emit [SetIsolatePeek false]), pointerCapture = true)
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetIsolatePeek false])
                 "◎ Isolate"
+            }
+
+            // Spring-loaded show-overlays (hotkey O): greyscale the scene except the
+            // pin colours, so pin correspondence across views reads unmistakably.
+            button {
+                Class "tb-btn"
+                classWhen "tb-btn-active" model.ShowOverlaysHeld
+                Attribute("title", "Show overlays: hold to greyscale everything except pin colours (hotkey: O)")
+                Dom.OnPointerDown((fun _ -> env.Emit [SetShowOverlays true]), pointerCapture = true)
+                Dom.OnPointerUp((fun _ -> env.Emit [SetShowOverlays false]), pointerCapture = true)
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetShowOverlays false])
+                "🎨 Overlays"
             }
 
             // Global ghost floor: on = non-emphasized meshes render as faint context,

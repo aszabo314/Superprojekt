@@ -30,6 +30,11 @@ type ProbeDistribution = {
     Kde       : float[][]
     // Raw re-centred samples, subsampled to ≤300 for payload; stats use the full set.
     Samples   : float[]
+    // World-space surface position of each subsampled sample, flattened xyz, aligned
+    // 1:1 with Samples (so the chart can brush a sample back to its 3D surface cell).
+    Positions : float[]
+    // Approx spatial footprint (m) of a grid sample (the density-normalized cell size).
+    Footprint : float
     // ROI-averaged intrinsic quality [incidence; range; shape] ∈ [0,1].
     Intrinsics : float[]
 }
@@ -184,7 +189,8 @@ let private sampleAlongAxis (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (r
             areas.[ti] <- a
             areaSum <- areaSum + a
         let spacing2 = if areaSum > 1e-12 then areaSum / float maxPoints else 1.0
-        let hits = ResizeArray<float>()
+        // (axial distance, world surface position) per density-grid sample inside the cylinder.
+        let hits = ResizeArray<float * V3d>()
         let r2 = radius * radius
         for ti in 0 .. triCount - 1 do
             let p0 = V3d positions.[tris.[ti * 3]]
@@ -201,7 +207,9 @@ let private sampleAlongAxis (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (r
                     let t = Vec.dot d aL
                     if abs t <= halfLen then
                         let radial = d - t * aL
-                        if radial.LengthSquared <= r2 then hits.Add t
+                        if radial.LengthSquared <= r2 then
+                            // p is centroid-relative local → own frame (+centroid) → world.
+                            hits.Add(t, mi.Transform.TransformPos (p + pm.centroid))
         let arr = hits.ToArray()
         if arr.Length <= maxPoints then arr
         else
@@ -297,13 +305,17 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
                 |> Array.Parallel.map (fun mi -> meshIntrinsics mi args.Centre normal args.Radius halfLen)
             // Re-centre so 0 = the reference mesh's median.
             let refMedian =
-                let r = Array.sort raw.[refIdx]
+                let r = raw.[refIdx] |> Array.map fst |> Array.sort
                 quantile r 0.5
             let sorted =
-                raw |> Array.map (fun ts ->
-                    let a = ts |> Array.map (fun t -> t - refMedian)
+                raw |> Array.map (fun ps ->
+                    let a = ps |> Array.map (fun (t, _) -> t - refMedian)
                     Array.sortInPlace a
                     a)
+            // Unsorted re-centred (value, world-pos) pairs for the chart samples — kept
+            // value↔position aligned (the sorted array above is values-only, for stats).
+            let pairs =
+                raw |> Array.map (fun ps -> ps |> Array.map (fun (t, p) -> (t - refMedian, p)))
             let stats =
                 sorted |> Array.map (fun a ->
                     if a.Length = 0 then struct (0.0, 0.0, 0.0, 0.0)
@@ -365,15 +377,24 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
                                     let z = (x - t) / h
                                     if abs z < 6.0 then s <- s + exp (-0.5 * z * z)
                                 [| x; s * norm |])
-                    let samples =
-                        if a.Length <= 300 then a
+                    // Chart samples: subsample the UNSORTED pairs so value ↔ position
+                    // stay aligned (the chart can brush a point back to its surface cell).
+                    let pr = pairs.[i]
+                    let samples, positions =
+                        if pr.Length <= 300 then
+                            pr |> Array.map fst,
+                            pr |> Array.collect (fun (_, p) -> [| p.X; p.Y; p.Z |])
                         else
-                            let stride = float a.Length / 300.0
-                            Array.init 300 (fun k -> a.[min (a.Length - 1) (int (float k * stride))])
+                            let stride = float pr.Length / 300.0
+                            let idxs = Array.init 300 (fun k -> min (pr.Length - 1) (int (float k * stride)))
+                            idxs |> Array.map (fun j -> fst pr.[j]),
+                            idxs |> Array.collect (fun j -> let p = snd pr.[j] in [| p.X; p.Y; p.Z |])
+                    let footprint = max 1e-4 (args.Radius / sqrt (float (max 1 a.Length)))
                     { Name = args.Meshes.[i].Name; Count = a.Length
                       Median = med; Q1 = q1; Q3 = q3; Std = std
                       Bandwidth = h; Kde = kde
-                      Samples = samples; Intrinsics = intrinsics.[i] })
+                      Samples = samples; Positions = positions; Footprint = footprint
+                      Intrinsics = intrinsics.[i] })
             // Three-source decomposition: dataset = IQR of the union,
             // algorithm = RMS of non-reference median offsets, conditioning =
             // radius × observability deficiency (below).

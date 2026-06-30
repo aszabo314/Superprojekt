@@ -319,6 +319,18 @@ module FocusScene =
                                 addRingXY out aR (gr * 0.6) gcol gw 24
                             | None -> ()
                         | None -> ()
+                    // Live aim ghost (preview in both views, §T4): a cyan cross+ring at
+                    // the hovered pick point while armed for THIS mesh.
+                    match model.CorrArm.GetValue t with
+                    | Some (_, m) when m = name ->
+                        match model.CorrPreview.GetValue t with
+                        | Some w ->
+                            let pr = ScanPin.renderCentre cc s w
+                            let col = V4d(0.0, 0.78, 0.84, 1.0)
+                            addCrossXY out pr gr col 2.2
+                            addRingXY out pr (gr * 0.6) col 2.2 24
+                        | None -> ()
+                    | _ -> ()
                     out.ToArray())
         // passOne + DepthTest.None: the surface writes depth in the default pass, so a
         // same-pass overlay was occluded (it rendered under the mesh); a later pass with
@@ -385,28 +397,35 @@ module FocusScene =
                     let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
                     return hit |> Option.map (fun hh -> dispWorld.Forward.TransformPos hh.point)
                 }
-            // Set mode: move = live 3D preview ghost (throttled), click = place + exit.
-            // Otherwise: drag = pan.
+            // Armed for THIS mesh (CorrArm = Some(pin, name))? Then move = live aim
+            // ghost (throttled), click = place (stays armed). Otherwise: drag = pan.
+            let armedHere () =
+                match AVal.force model.CorrArm with
+                | Some (pid, m) when m = name -> Some pid
+                | _ -> None
             Dom.OnPointerDown(fun e ->
                 let p = e.OffsetPosition
                 lastPx <- p
                 downPx <- p
-                if AVal.force model.CorrSetMode then
-                    if e.Button = Button.Left then
-                        match AVal.force model.Selection.SelectedPin with
-                        | Some pinId ->
+                // Middle-drag always pans (matches the 3D view, §T10). Left = place when
+                // armed here, else pan.
+                if e.Button = Button.Middle then dragging <- true
+                else
+                    match armedHere () with
+                    | Some pinId ->
+                        if e.Button = Button.Left then
                             async {
                                 match! worldRayHit (float p.X) (float p.Y) with
                                 | Some world -> env.Emit [PickCorrespondenceAt(pinId, name, world)]
                                 | None -> ()
                             } |> Async.Start
-                        | None -> ()
-                elif e.Button = Button.Left then dragging <- true)
+                    | None ->
+                        if e.Button = Button.Left then dragging <- true)
             Dom.OnPointerUp(fun e ->
                 dragging <- false
                 // Link-views: a clean left click (no drag) flies the 3D camera to that
-                // world point. Skipped during set-correspondence (a click places there).
-                if AVal.force model.LinkViews && not (AVal.force model.CorrSetMode) then
+                // world point. Skipped while armed here (a click places there).
+                if AVal.force model.LinkViews && (armedHere ()).IsNone then
                     let p = e.OffsetPosition
                     let dd = p - downPx
                     if dd.X * dd.X + dd.Y * dd.Y < 16 then
@@ -419,7 +438,7 @@ module FocusScene =
                         } |> Async.Start)
             Dom.OnPointerMove(fun e ->
                 let p = e.OffsetPosition
-                if AVal.force model.CorrSetMode then
+                if (armedHere ()).IsSome then
                     let now = nowMs ()
                     if now - lastHoverMs > 60.0 then
                         lastHoverMs <- now
@@ -437,7 +456,7 @@ module FocusScene =
                         panNorm.Value <- panNorm.Value + V2d(-float d.X * k, float d.Y * k))
                 lastPx <- p)
             Dom.OnMouseLeave(fun _ ->
-                if AVal.force model.CorrSetMode then
+                if (armedHere ()).IsSome then
                     hoverGen <- hoverGen + 1
                     env.Emit [CorrPreviewComputed None])
             // Mouse-anchored zoom: keep the plane point under the cursor fixed.
@@ -500,7 +519,17 @@ module FocusScene =
             }
         }
 
-    // One static thumbnail tile per mesh, clickable to focus (always ortho top-down).
+    let private sensorLabel = function
+        | RoverStereo -> "Rover" | Satellite -> "Sat"
+        | Photogrammetry -> "Photo" | LiDAR -> "LiDAR" | UnknownSensor -> "—"
+    let private sensorNext = function
+        | UnknownSensor -> RoverStereo | RoverStereo -> Satellite
+        | Satellite -> Photogrammetry | Photogrammetry -> LiDAR | LiDAR -> UnknownSensor
+
+    // One thumbnail tile per mesh — the mesh browser (§B/T3). The render area selects
+    // (focus); a control strip carries the per-mesh controls that live ONCE here:
+    // ★ reference toggle, visibility, sensor. All meshes are tiled (hidden → dimmed)
+    // so a hidden mesh can be re-enabled. Reference tile = a prominent ★ indicator (T10).
     let private focusTile (env : Env<Message>) (model : AdaptiveModel) (name : string) : DomNode =
         let loaded = MeshView.loadMeshAsync (fun () -> ()) name
         let renderT, scale = renderTrafoOf model name loaded
@@ -531,16 +560,58 @@ module FocusScene =
         let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
         let colorCss = idxVal |> AVal.map (fun i -> Primitives.c4bToRgbCss (Primitives.meshColor i))
         let active = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
+        let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+        let isRef  = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some name)
+        let sensor = model.MeshSensorTypes |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue UnknownSensor)
+        let refBtn =
+            button {
+                Class "mb mb-ref"
+                Primitives.classWhen "mb-on" isRef
+                Attribute("title", "Reference mesh — all error is relative to it")
+                Dom.OnClick(fun _ ->
+                    let cur = AVal.force isRef
+                    env.Emit [SetReferenceMesh (if cur then None else Some name)])
+                isRef |> AVal.map (fun r -> if r then "★" else "☆")
+            }
+        let visBtn =
+            button {
+                Class "mb"
+                Primitives.classWhen "mb-on" isVis
+                Attribute("title", "Visible")
+                Dom.OnClick(fun _ -> env.Emit [SetVisible(name, not (AVal.force isVis))])
+                isVis |> AVal.map (fun v -> if v then "●" else "○")
+            }
+        let sensorBtn =
+            button {
+                Class "mb"
+                Attribute("title", "Sensor type (cycles)")
+                Dom.OnClick(fun _ -> env.Emit [SetMeshSensorType(name, sensorNext (AVal.force sensor))])
+                sensor |> AVal.map sensorLabel
+            }
         div {
             Class "focus-tile"
             Primitives.classWhen "fm-active" active
-            Attribute("title", "click → focus this mesh")
-            Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
-            rc
+            Primitives.classWhen "ft-ref" isRef
+            Primitives.classWhenNot "ft-hidden" isVis
+            // Render area = the selector (click → focus). Controls are a sibling strip
+            // so clicking them never also focuses.
             div {
-                Class "fm-label"
-                span { Class "fm-sw"; colorCss |> AVal.map (fun c -> Some (Style [Css.Background c])) }
-                Primitives.shortName name
+                Class "focus-tile-view"
+                Attribute("title", "click → focus this mesh")
+                Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
+                rc
+                div {
+                    Class "fm-label"
+                    span { Class "fm-sw"; colorCss |> AVal.map (fun c -> Some (Style [Css.Background c])) }
+                    span { Class "ft-refstar"; Primitives.showWhen isRef; "★" }
+                    Primitives.shortName name
+                }
+            }
+            div {
+                Class "focus-tile-ctrls"
+                refBtn
+                visBtn
+                sensorBtn
             }
         }
 
@@ -554,14 +625,12 @@ module FocusScene =
             // so this aval evaluated once (empty at startup) and never re-fired when the
             // meshes loaded → the single stayed blank.
             let chosen =
-                if model.FocusPeekReference.GetValue t then (model.Registration.GetValue t).ReferenceMesh
-                else
-                    let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                    let vis = model.MeshVisible.GetValue t
-                    let visible = names |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true)
-                    match model.Selection.FocusedMesh.GetValue t with
-                    | Some m when List.contains m visible -> Some m
-                    | _ -> List.tryHead visible
+                let names = model.MeshNames.Content.GetValue t |> IndexList.toList
+                let vis = model.MeshVisible.GetValue t
+                let visible = names |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true)
+                match model.Selection.FocusedMesh.GetValue t with
+                | Some m when List.contains m visible -> Some m
+                | _ -> List.tryHead visible
             match chosen with
             | None -> IndexList.empty
             | Some n ->
@@ -571,11 +640,7 @@ module FocusScene =
         |> AList.ofAVal
         |> AList.map (fun (n, proj) -> focusSingle env model n proj)
 
-    // One control per visible mesh, keyed by the stable mesh index.
+    // One tile per mesh — the mesh browser (T3). ALL meshes are listed (hidden ones
+    // dimmed) so a hidden mesh can be re-enabled from its tile.
     let multiples (env : Env<Message>) (model : AdaptiveModel) =
-        let tileNames =
-            AVal.custom (fun t ->
-                let vis = model.MeshVisible.GetValue t
-                model.MeshNames.Content.GetValue t
-                |> IndexList.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true))
-        tileNames |> AList.ofAVal |> AList.map (focusTile env model)
+        model.MeshNames |> AList.map (focusTile env model)

@@ -164,11 +164,12 @@ type Model =
 
         ActivePickingLayer : string option
 
-        // Spring-loaded reference peek (hold to show only the reference mesh).
-        ReferencePeekHeld : bool
         // Spring-loaded pin-isolation peek (hold to momentarily force pin isolation
         // on in modes where it defaults off — mirrors the reference peek).
         IsolatePeekHeld   : bool
+        // Spring-loaded show-overlays modifier (§T8): hold to greyscale the scene
+        // except the pin colours, making pin correspondence across views unmistakable.
+        ShowOverlaysHeld  : bool
 
         // LoadTransform is the immutable per-mesh baseline captured at load;
         // SolvedTransform (presence = solved) is written by the correspondence
@@ -207,18 +208,15 @@ type Model =
 
         // Pano / Top projection of the WebGL focus single.
         FocusProjection     : FocusProjection
-        // Hold → the focus re-renders the reference mesh in the same frame.
-        FocusPeekReference  : bool
 
-        // Set-correspondence interaction (focus panel): off = pan; on = the cursor
-        // hovers the correspondence point (no pan), CorrPreview shows a live 3D
-        // ghost, and a click places it + exits. Toggling off cancels (no commit).
-        CorrSetMode         : bool
+        // Unified armed correspondence editing (§T4): Some (pin, mesh) = the editor
+        // is armed for that pair. While armed, the mesh is isolated in the main view,
+        // the linked focus is brought onto it, and clicking in EITHER the focus or the
+        // 3D view sets the point (ROI-clamped). The mode STAYS armed until the user
+        // disarms (one mode, two surfaces). CorrPreview = the live aim ghost shown in
+        // both views. None = idle.
+        CorrArm             : (ScanPinId * string) option
         CorrPreview         : V3d option
-        // Live 3D-view correspondence pick (per-row "set in 3D" button): Some
-        // (pin, mesh) isolates that mesh in the main view, the cursor hovers the
-        // point (CorrPreview ghost), and a click commits + exits. None = idle.
-        Corr3DPick          : (ScanPinId * string) option
 
         // Outline edge-detect threshold (depth Laplacian) + isoline band count over
         // the scene Z range. Tunable from the gear menu; see OutlineEdge /
@@ -305,8 +303,8 @@ module Model =
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             ActivePickingLayer = None
-            ReferencePeekHeld = false
             IsolatePeekHeld   = false
+            ShowOverlaysHeld  = false
             LoadTransforms        = Map.empty
             SolvedTransforms      = Map.empty
             RegView               = RegBefore
@@ -325,10 +323,8 @@ module Model =
             WorkflowStep        = Overview
             InspectChannel      = ChDifference
             FocusProjection     = ProjTop
-            FocusPeekReference  = false
-            CorrSetMode         = false
+            CorrArm             = None
             CorrPreview         = None
-            Corr3DPick          = None
             OutlineThreshold    = 0.004
             IsolineBands        = 700.0
             DiffRangeScale      = 1.0

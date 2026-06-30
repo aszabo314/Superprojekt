@@ -54,6 +54,9 @@ module MeshShader =
         // Read by the outline G-buffer pass (band parity → edge-detect), not by the
         // forward mesh shader itself.
         member x.ContourSpacing   : float32 = x?ContourSpacing
+        // Show-overlays modifier (§T8): 1 → desaturate the mesh to luminance. Pins are
+        // separate geometry (unaffected), so they keep their colour and read clearly.
+        member x.Greyscale        : float32 = x?Greyscale
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -142,17 +145,19 @@ module MeshShader =
                 elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
-            // Difference map (soloed moving mesh, Inspect): signed distance, diverging
-            // blue ↔ mid-grey ↔ red about 0 — matches the focus difference tile.
+            // Difference map (soloed moving mesh, Inspect): signed distance on the
+            // linear-diverging map (§C) — neutral (0.62,0.63,0.66) → red (+)/blue (−)
+            // with a near-zero t^0.6 boost (no central flat-spot). Mirrors Primitives.Diff
+            // and the focus difference tile. (No per-vertex LoD here → gate = 0.)
             if uniform.DistanceEncoding = 1 && aboveGhost then
                 let d = v.sd
                 if abs d < 1e20f then
                     let hi = max 1e-6f uniform.DistScale
-                    let tt = clamp -1.0f 1.0f (d / hi)
-                    let mid = V3f(0.56f, 0.57f, 0.60f)
+                    let m = pow (min 1.0f (abs d / hi)) 0.6f
+                    let mid = V3f(0.62f, 0.63f, 0.66f)
                     baseRgb <-
-                        if tt >= 0.0f then mid + (V3f(0.863f, 0.149f, 0.149f) - mid) * tt
-                        else mid + (V3f(0.145f, 0.388f, 0.922f) - mid) * (0.0f - tt)
+                        if d >= 0.0f then mid + (V3f(0.80f, 0.12f, 0.12f) - mid) * m
+                        else mid + (V3f(0.13f, 0.34f, 0.74f) - mid) * m
             // Variance map: per-reference-vertex disagreement std (≥0) from light
             // grey to strong red, normalised by DistScale.
             if uniform.DistanceEncoding = 2 && aboveGhost then
@@ -202,6 +207,11 @@ module MeshShader =
             // (World-Z isolines are NOT drawn here — they are edge-detected from a
             // band-parity field in the offscreen outline pass, so they get the same
             // crisp 1px look as the silhouette outline. See OutlineGBuffer/OutlineEdge.)
+            // Show-overlays modifier (§T8): collapse the mesh to luminance so the
+            // (separately-rendered, still-coloured) pins stand out unmistakably.
+            if uniform.Greyscale > 0.5f then
+                let l = baseRgb.X * 0.299f + baseRgb.Y * 0.587f + baseRgb.Z * 0.114f
+                baseRgb <- V3f(l, l, l)
             let depth =
                 if alpha >= opaqueThreshold then v.fc.Z
                 else 1.0f
@@ -308,10 +318,18 @@ module OutlineEdge =
             let iEdge =
                 max (max (abs (c.X - l.X)) (abs (c.X - r.X)))
                     (max (abs (c.X - u.X)) (abs (c.X - d.X)))
-            let isEdge = dEdge > uniform.OutlineThreshold || iEdge > 0.5f
-            if isEdge && m0 > 0.5f then
-                let col = gColor.Sample(v.tc)
-                return V4f(col.X, col.Y, col.Z, 1.0f)
+            let depthEdge = dEdge > uniform.OutlineThreshold
+            let isoEdge   = iEdge > 0.5f
+            if (depthEdge || isoEdge) && m0 > 0.5f then
+                // Silhouette / cliff (a window-depth break) keeps the crisp per-mesh
+                // palette colour. A pure world-Z band-parity flip (an isoline) renders
+                // in a faint neutral grey at reduced intensity (§T10), so elevation
+                // contours read as subtle background reference, not bold palette lines.
+                if depthEdge then
+                    let col = gColor.Sample(v.tc)
+                    return V4f(col.X, col.Y, col.Z, 1.0f)
+                else
+                    return V4f(0.55f, 0.57f, 0.60f, 0.45f)
             else
                 return V4f(0.0f, 0.0f, 0.0f, 0.0f)
         }

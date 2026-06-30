@@ -143,6 +143,16 @@ module Query =
                                 match d.TryGetProperty "samples" with
                                 | true, se -> se.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                                 | _ -> [||]
+                            Positions =
+                                match d.TryGetProperty "positions" with
+                                | true, pe ->
+                                    let flat = pe.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                                    Array.init (flat.Length / 3) (fun i -> V3d(flat.[i*3], flat.[i*3+1], flat.[i*3+2]))
+                                | _ -> [||]
+                            Footprint =
+                                match d.TryGetProperty "footprint" with
+                                | true, fe -> fe.GetDouble()
+                                | _ -> 0.0
                             Intrinsics =
                                 match d.TryGetProperty "intr" with
                                 | true, ie -> ie.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray

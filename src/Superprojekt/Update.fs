@@ -87,12 +87,12 @@ module Update =
             { model with AnchorGhostMode = not model.AnchorGhostMode }
         | SetQuickPinRadius v ->
             { model with QuickPinRadius = max 0.01 v }
-        | SetReferencePeek held ->
-            if model.ReferencePeekHeld = held then model
-            else { model with ReferencePeekHeld = held }
         | SetIsolatePeek held ->
             if model.IsolatePeekHeld = held then model
             else { model with IsolatePeekHeld = held }
+        | SetShowOverlays held ->
+            if model.ShowOverlaysHeld = held then model
+            else { model with ShowOverlaysHeld = held }
         | ToggleLinkViews ->
             { model with LinkViews = not model.LinkViews }
 
@@ -109,7 +109,7 @@ module Update =
                         Registration = { model.Registration with ReferenceMesh = mesh }
                         SolvedTransforms = Map.empty
                         RegView = RegBefore
-                        CorrSetMode = false; CorrPreview = None })
+                        CorrArm = None; CorrPreview = None })
             match mesh with
             | Some _ -> seedAnchors env model (correspondenceEnabledIds model)
             | None -> model
@@ -120,7 +120,7 @@ module Update =
         // re-solve replaces wholesale.
         | SolveCoarse ->
             // Any other correspondence action cancels a live 3D pick.
-            let model = { model with Corr3DPick = None; CorrPreview = None }
+            let model = { model with CorrArm = None; CorrPreview = None }
             let reg = model.Registration
             match reg.ReferenceMesh with
             | None -> showToast env "Designate a reference mesh (★) first" model
@@ -225,7 +225,7 @@ module Update =
                     sp
             { model with ScanPins = sp }
         | ReseedMesh(pinId, mesh) ->
-            let model = { model with Corr3DPick = None; CorrPreview = None }
+            let model = { model with CorrArm = None; CorrPreview = None }
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin when (ScanPin.correspondence pin |> Option.isSome) ->
                 if model.Registration.ReferenceMesh.IsSome then reseedOneMesh env model pinId mesh
@@ -340,10 +340,17 @@ module Update =
             | _ -> model
         | ScanPinMsg msg ->
             let m = ScanPinUpdate.handleMsg env model msg
-            // Starting placement / switching / deleting a pin cancels a live 3D pick.
+            // §T9 camera sync: selecting a pin flies the 3D camera to its centre.
+            (match msg with
+             | SelectPin (Some id) ->
+                match HashMap.tryFind id m.ScanPins.Pins with
+                | Some p -> env.Emit [FlyToPoint(p.Centre, max 0.5 (p.InnerRadius * 4.0))]
+                | None -> ()
+             | _ -> ())
+            // Starting placement / switching / deleting a pin cancels the armed editor.
             match msg with
             | EnterAnchorPlacement | SelectPin _ | DeletePin _ ->
-                { m with Corr3DPick = None; CorrPreview = None }
+                { m with CorrArm = None; CorrPreview = None }
             | _ -> m
         | SetHovered h ->
             if model.Selection.Hovered = h then model
@@ -362,63 +369,67 @@ module Update =
                 bumpFocusDist ()
                 { model with WorkflowStep = step; SurfaceDistance = Map.empty; FocusDist = Map.empty
                              AnchorGhostMode = (step = Correspondence)
-                             CorrSetMode = false; CorrPreview = None; Corr3DPick = None }
+                             CorrArm = None; CorrPreview = None }
         | SetInspectChannel ch ->
             { model with InspectChannel = ch }
         | SetFocusProjection p ->
             { model with FocusProjection = p }
-        | SetFocusPeekReference held ->
-            // Peeking the reference suspends set-correspondence; drop a stale ghost.
-            if model.FocusPeekReference = held then model
-            else { model with FocusPeekReference = held; CorrPreview = (if held then None else model.CorrPreview) }
         | SetFocusedMesh None ->
             { model with Selection = { model.Selection with FocusedMesh = None }
-                         CorrSetMode = false; CorrPreview = None; Corr3DPick = None }
+                         CorrArm = None; CorrPreview = None }
         | SetFocusedMesh (Some m) ->
             // Promote to the large single (links rail + dock + focus enlargement).
             // Switching target cancels any in-progress set-correspondence (focus + 3D).
             if model.Selection.FocusedMesh = Some m then model
-            else { model with Selection = { model.Selection with FocusedMesh = Some m }
-                              CorrSetMode = false; CorrPreview = None; Corr3DPick = None }
+            else
+                // §T9 camera sync (the default, not a toggle): any focus change flies
+                // the 3D camera to frame the mesh — the focus single auto-shows it, so
+                // both cameras land on that spot.
+                (match Map.tryFind m model.MeshBounds with
+                 | Some b when not b.IsInvalid -> env.Emit [FlyToPoint(b.Center, max 0.5 (b.Size.Length * 0.6))]
+                 | _ -> ())
+                { model with Selection = { model.Selection with FocusedMesh = Some m }
+                             CorrArm = None; CorrPreview = None }
         | PickCorrespondenceAt(pinId, mesh, world) ->
-            // Place the mesh's correspondence marker for the pin at the picked surface
-            // point. Stored mesh-local via the displayed transform so the before/after
-            // toggle moves it with the mesh. A pick is a pick — no ROI gate.
+            // Set the (pin, mesh) correspondence point at the picked surface point,
+            // stored mesh-local via the displayed transform (so the before/after toggle
+            // moves it). ROI-clamped (§T4 — no point outside the pin). Editing the
+            // reference mesh moves its RefAnchor; any other mesh sets its anchor. The
+            // editor STAYS ARMED (only the aim ghost clears) so picks can be refined.
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
                 match ScanPin.correspondence pin with
                 | Some _ ->
-                    let own = (ModelTransforms.displayedWorld model mesh).Backward.TransformPos world
-                    let sp = updateCorr pinId (fun corr ->
-                                { corr with
-                                    Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
-                                    InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
-                    // Placement ends both pick modes (focus + 3D) and clears the ghost.
-                    showToast env "Correspondence placed"
-                        { model with ScanPins = sp; CorrSetMode = false; CorrPreview = None; Corr3DPick = None }
+                    if (world - pin.Centre).Length > pin.InnerRadius then
+                        showToast env "Pick inside the pin ROI" { model with CorrPreview = None }
+                    else
+                        let own = (ModelTransforms.displayedWorld model mesh).Backward.TransformPos world
+                        let isRef = model.Registration.ReferenceMesh = Some mesh
+                        let sp =
+                            updateCorr pinId (fun corr ->
+                                if isRef then
+                                    { corr with RefAnchor = Some own; InRoi = Map.add mesh true corr.InRoi }
+                                else
+                                    { corr with
+                                        Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
+                                        InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
+                        { model with ScanPins = sp; CorrPreview = None }
                 | None -> model
             | None -> model
-        | ToggleCorrSetMode ->
-            // Toggling off cancels (no commit) and drops the ghost; the focus tile
-            // redraws the committed marker since the anchor was never touched. Also
-            // cancels any in-progress 3D pick (mutually exclusive).
-            if model.CorrSetMode then { model with CorrSetMode = false; CorrPreview = None }
-            else { model with CorrSetMode = true; CorrPreview = None; Corr3DPick = None }
-        | StartCorr3DPick(pinId, mesh) ->
-            // Toggle the 3D-view pick for this (pin, mesh). Starting it cancels pin
-            // placement + the focus pick (all mutually exclusive) and selects the pin
-            // so the constellation/manager reflect it.
-            if model.Corr3DPick = Some(pinId, mesh) then
-                { model with Corr3DPick = None; CorrPreview = None }
+        | ToggleCorrArm(pinId, mesh) ->
+            // Arm/disarm the unified editor for (pin, mesh). Arming isolates the mesh
+            // (via wheelIsolation reading CorrArm), brings the linked focus onto it,
+            // selects the pin, and cancels pin placement. Re-issuing disarms.
+            if model.CorrArm = Some(pinId, mesh) then
+                { model with CorrArm = None; CorrPreview = None }
             else
                 { model with
-                    Corr3DPick = Some(pinId, mesh)
+                    CorrArm = Some(pinId, mesh)
                     CorrPreview = None
-                    CorrSetMode = false
                     ScanPins = { model.ScanPins with Placement = PlacementIdle }
-                    Selection = { model.Selection with SelectedPin = Some pinId } }
+                    Selection = { model.Selection with SelectedPin = Some pinId; FocusedMesh = Some mesh } }
         | CorrPreviewComputed p ->
-            if model.CorrSetMode || model.Corr3DPick.IsSome then { model with CorrPreview = p } else model
+            if model.CorrArm.IsSome then { model with CorrPreview = p } else model
         // Keep orientation, animate centre + radius so the target subtends ~25% of
         // viewport height. User nav input overrides via the orbit machinery.
         | FlyTo(target, aspect) ->
@@ -466,7 +477,7 @@ module Update =
                             MeshVisible = vis
                             LocateBackup = backup
                             FocusProjection = ProjTop
-                            CorrSetMode = false; CorrPreview = None; Corr3DPick = None }
+                            CorrArm = None; CorrPreview = None }
                 | None -> showToast env "No marker on that mesh to locate" model
             | None -> model
         // Single back-out: restore the camera + solo/visibility captured at the first

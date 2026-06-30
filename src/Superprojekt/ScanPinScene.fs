@@ -404,6 +404,39 @@ module ScanPinScene =
                     out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 
+        // Pin identity flag (§A): the pin's ShortName as a text label floating above
+        // the pin centre, in the pin's PinColor. Always-on-top (passOne, DepthTest.None)
+        // so it reads against the terrain. Identity is immutable → snapshot once per id
+        // (no atlas rebuild on probe/ring updates); only the position is adaptive.
+        let pinCentreRadius = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre, p.InnerRadius) |> AMap.toAVal
+        let pinLabels =
+            pinIdSet |> ASet.map (fun id ->
+                let p0 = HashMap.tryFind id (AVal.force pinsVal)
+                let labelSize = 0.2
+                let topVal =
+                    AVal.custom (fun t ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let scale = datasetScale.GetValue t
+                        match HashMap.tryFind id (pinCentreRadius.GetValue t) with
+                        | Some (centre, radius) ->
+                            let cR = ScanPin.renderCentre cc scale centre
+                            cR + V3d.OOI * (ScanPin.renderLength scale (radius * 1.5) + 0.55)
+                        | None -> V3d(0.0, 0.0, -1.0e6))
+                match p0 with
+                | Some pin ->
+                    sg {
+                        Sg.Active notFullscreen
+                        Sg.View view
+                        Sg.Proj proj
+                        Sg.Pass RenderPass.passOne
+                        Sg.DepthTest (AVal.constant DepthTest.None)
+                        Sg.NoEvents
+                        Sg.Trafo (topVal |> AVal.map (fun top ->
+                            Trafo3d.Scale labelSize * Trafo3d.RotationX(Constant.PiHalf) * Trafo3d.Translation top))
+                        Sg.Text(pin.ShortName, color = AVal.constant pin.PinColor, align = TextAlignment.Center)
+                    }
+                | None -> sg { Sg.NoEvents })
+
         // Live correspondence-pick preview: a cyan wire sphere + cross at the hovered
         // surface point while set-correspondence mode aims it (metric world → render).
         // On top so it reads against the surface. Fixed render size.
@@ -425,4 +458,31 @@ module ScanPinScene =
                     | None -> [||])
             linesNodeTop active segs
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; ghostPreview; constellation; ASet.ofList [corrPreview]])
+        // Brushed-pin sample cloud (§T6): the hovered pin's ROI samples as small
+        // crosses at their world surface positions, in the pin colour — the 3D side of
+        // the pin↔surface brushing. Only when a pin is hovered (outside Overview).
+        let sampleBrush =
+            let segs =
+                AVal.custom (fun t ->
+                    if model.WorkflowStep.GetValue t = Overview then [||]
+                    else
+                        match model.Selection.Hovered.GetValue t with
+                        | Some (HoverPin id) ->
+                            match HashMap.tryFind id (pinsVal.GetValue t) with
+                            | Some p ->
+                                match p.Probe with
+                                | ProbeReady r ->
+                                    let cc = model.CommonCentroid.GetValue t
+                                    let scale = datasetScale.GetValue t
+                                    let col = V4d(Primitives.c4bToV3d p.PinColor, 0.95)
+                                    let out = ResizeArray<V3d * V3d * V4d * float>()
+                                    for d in r.Distributions do
+                                        for pw in d.Positions do
+                                            addCross out (ScanPin.renderCentre cc scale pw) 0.035 col 1.0
+                                    out.ToArray()
+                                | _ -> [||]
+                            | None -> [||]
+                        | _ -> [||])
+            linesNodeTop notFullscreen segs
+
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [sampleBrush]])

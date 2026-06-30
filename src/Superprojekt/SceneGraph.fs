@@ -130,10 +130,10 @@ module SceneGraph =
             @ labelNodes yColor V3d.OIO V3d.IOO textTrafoY
             @ labelNodes zColor V3d.OOI V3d.IOO textTrafoZ)
 
-    // Subtle reference-mesh marker (★): its bbox edges in the accent colour,
-    // depth-tested so it stays unobtrusive.
+    // Prominent reference-mesh marker (§T10): its bbox edges in gold (matching the
+    // focus reference tile ★), thick + bright so the reference is unmistakable in 3D.
     let private referenceOutline (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (model : AdaptiveModel) =
-        let col = V4d(0.102, 0.337, 0.859, 0.5)
+        let col = V4d(0.831, 0.631, 0.024, 0.95)
         let segs =
             AVal.custom (fun t ->
                 match (model.Registration.GetValue t).ReferenceMesh with
@@ -161,7 +161,7 @@ module SceneGraph =
                                 (0,0,0),(0,0,1); (1,0,0),(1,0,1); (0,1,0),(0,1,1); (1,1,0),(1,1,1)
                             |]
                         edges |> Array.map (fun ((ax, ay, az), (bx, by, bz)) ->
-                            corner ax ay az, corner bx by bz, col, 1.5))
+                            corner ax ay az, corner bx by bz, col, 2.5))
         sg {
             Sg.Active active
             Sg.View view

@@ -74,9 +74,9 @@ module View =
         // Selection. Ghosts the rest while held.
         let wheelIsolation =
             AVal.custom (fun t ->
-                // A live 3D correspondence pick isolates its target mesh (solid; the
+                // The armed correspondence editor isolates its target mesh (solid; the
                 // rest drop to ghost) so the GPU pick lands on it alone.
-                match model.Corr3DPick.GetValue t with
+                match model.CorrArm.GetValue t with
                 | Some (_, mesh) -> Some mesh
                 | None ->
                     if altHeld.GetValue t then model.ActivePickingLayer.GetValue t
@@ -405,11 +405,11 @@ module View =
                 Sg.OnTap(fun e ->
                     let frontmost =
                         if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                    match AVal.force model.Corr3DPick with
+                    match AVal.force model.CorrArm with
                     | Some (pinId, mesh) ->
                         // Commit the picked surface point as this mesh's anchor (the
-                        // reducer stores it mesh-local + exits the pick mode). GPU pick
-                        // on the isolated solid first, else a single-mesh raycast.
+                        // reducer stores it mesh-local and STAYS armed). GPU pick on the
+                        // isolated solid first, else a single-mesh raycast.
                         async {
                             let! resolved =
                                 match frontmost with
@@ -504,11 +504,11 @@ module View =
                                 if gen = placeHoverGen && placementHover.Value <> hit then
                                     transact (fun () -> placementHover.Value <- hit)
                             } |> Async.Start
-                    // 3D correspondence pick (per-row "set in 3D" button): the
-                    // target mesh is isolated solid, so the GPU pick lands on it;
-                    // over a ghost/background fall back to a single-mesh raycast.
-                    // Throttled → bounded CorrPreview message rate.
-                    match AVal.force model.Corr3DPick with
+                    // Armed correspondence editor (3D side): the target mesh is
+                    // isolated solid, so the GPU pick lands on it; over a ghost/
+                    // background fall back to a single-mesh raycast. Throttled → bounded
+                    // CorrPreview message rate.
+                    match AVal.force model.CorrArm with
                     | Some (_, mesh) ->
                         let now = nowMs ()
                         if now - placeHoverMs > 60.0 then
@@ -537,12 +537,12 @@ module View =
                     if not altHeld.Value then transact (fun () -> altHeld.Value <- true)
                 | " " ->
                     transact (fun () -> spaceHeld.Value <- true)
-                | "r" | "R" ->
-                    // Hold-R reference peek.
-                    env.Emit [SetReferencePeek true]
                 | "i" | "I" ->
                     // Hold-I = momentary pin-isolation (where it defaults off).
                     env.Emit [SetIsolatePeek true]
+                | "o" | "O" ->
+                    // Hold-O = show-overlays (greyscale except pins).
+                    env.Emit [SetShowOverlays true]
                 | "Escape" ->
                     env.Emit [ScanPinMsg CancelPlacement]
                 | _ -> ()
@@ -551,8 +551,8 @@ module View =
                 match e.Key with
                 | " "     -> transact (fun () -> spaceHeld.Value <- false)
                 | "Alt"   -> transact (fun () -> altHeld.Value <- false)
-                | "r" | "R" -> env.Emit [SetReferencePeek false]
                 | "i" | "I" -> env.Emit [SetIsolatePeek false]
+                | "o" | "O" -> env.Emit [SetShowOverlays false]
                 | _ -> ()
             )
 

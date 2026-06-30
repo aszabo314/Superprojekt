@@ -1,5 +1,5 @@
-//bbd0d993-e83e-c98a-ed1a-3403bf0ff966
-//3bdcf2af-2b8b-1c3f-54b8-c8f0a880dbd2
+//4a135221-7e0d-44fd-9611-2b6d6daa4323
+//363fcc19-f0e5-5173-217a-9f0f3f2962ee
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -58,8 +58,8 @@ type AdaptiveModel(value : Model) =
     let _SceneBounds_ = FSharp.Data.Adaptive.cval(value.SceneBounds)
     let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
     let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
-    let _ReferencePeekHeld_ = FSharp.Data.Adaptive.cval(value.ReferencePeekHeld)
     let _IsolatePeekHeld_ = FSharp.Data.Adaptive.cval(value.IsolatePeekHeld)
+    let _ShowOverlaysHeld_ = FSharp.Data.Adaptive.cval(value.ShowOverlaysHeld)
     let _LoadTransforms_ = FSharp.Data.Adaptive.cval(value.LoadTransforms)
     let _SolvedTransforms_ = FSharp.Data.Adaptive.cval(value.SolvedTransforms)
     let _RegView_ = FSharp.Data.Adaptive.cval(value.RegView)
@@ -78,10 +78,8 @@ type AdaptiveModel(value : Model) =
     let _WorkflowStep_ = FSharp.Data.Adaptive.cval(value.WorkflowStep)
     let _InspectChannel_ = FSharp.Data.Adaptive.cval(value.InspectChannel)
     let _FocusProjection_ = FSharp.Data.Adaptive.cval(value.FocusProjection)
-    let _FocusPeekReference_ = FSharp.Data.Adaptive.cval(value.FocusPeekReference)
-    let _CorrSetMode_ = FSharp.Data.Adaptive.cval(value.CorrSetMode)
+    let _CorrArm_ = FSharp.Data.Adaptive.cval(value.CorrArm)
     let _CorrPreview_ = FSharp.Data.Adaptive.cval(value.CorrPreview)
-    let _Corr3DPick_ = FSharp.Data.Adaptive.cval(value.Corr3DPick)
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
     let _DiffRangeScale_ = FSharp.Data.Adaptive.cval(value.DiffRangeScale)
@@ -118,8 +116,8 @@ type AdaptiveModel(value : Model) =
             _SceneBounds_.Value <- value.SceneBounds
             _MeshBounds_.Value <- value.MeshBounds
             _ActivePickingLayer_.Value <- value.ActivePickingLayer
-            _ReferencePeekHeld_.Value <- value.ReferencePeekHeld
             _IsolatePeekHeld_.Value <- value.IsolatePeekHeld
+            _ShowOverlaysHeld_.Value <- value.ShowOverlaysHeld
             _LoadTransforms_.Value <- value.LoadTransforms
             _SolvedTransforms_.Value <- value.SolvedTransforms
             _RegView_.Value <- value.RegView
@@ -138,10 +136,8 @@ type AdaptiveModel(value : Model) =
             _WorkflowStep_.Value <- value.WorkflowStep
             _InspectChannel_.Value <- value.InspectChannel
             _FocusProjection_.Value <- value.FocusProjection
-            _FocusPeekReference_.Value <- value.FocusPeekReference
-            _CorrSetMode_.Value <- value.CorrSetMode
+            _CorrArm_.Value <- value.CorrArm
             _CorrPreview_.Value <- value.CorrPreview
-            _Corr3DPick_.Value <- value.Corr3DPick
             _OutlineThreshold_.Value <- value.OutlineThreshold
             _IsolineBands_.Value <- value.IsolineBands
             _DiffRangeScale_.Value <- value.DiffRangeScale
@@ -171,8 +167,8 @@ type AdaptiveModel(value : Model) =
     member __.SceneBounds = _SceneBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>
     member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
-    member __.ReferencePeekHeld = _ReferencePeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.IsolatePeekHeld = _IsolatePeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ShowOverlaysHeld = _ShowOverlaysHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.LoadTransforms = _LoadTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.SolvedTransforms = _SolvedTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.RegView = _RegView_ :> FSharp.Data.Adaptive.aval<RegView>
@@ -191,10 +187,8 @@ type AdaptiveModel(value : Model) =
     member __.WorkflowStep = _WorkflowStep_ :> FSharp.Data.Adaptive.aval<WorkflowStep>
     member __.InspectChannel = _InspectChannel_ :> FSharp.Data.Adaptive.aval<InspectChannel>
     member __.FocusProjection = _FocusProjection_ :> FSharp.Data.Adaptive.aval<FocusProjection>
-    member __.FocusPeekReference = _FocusPeekReference_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.CorrSetMode = _CorrSetMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.CorrArm = _CorrArm_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.CorrPreview = _CorrPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
-    member __.Corr3DPick = _Corr3DPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.DiffRangeScale = _DiffRangeScale_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>

@@ -19,9 +19,10 @@ type Message =
     | SetDiffRangeScale of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
-    | SetReferencePeek of bool
     // Spring-loaded hold-to-isolate modifier (forces pin isolation while held).
     | SetIsolatePeek of bool
+    // Spring-loaded show-overlays modifier (greyscale-except-pins while held).
+    | SetShowOverlays of bool
     // Link-views toggle (focus ↔ 3D camera sync; pure camera).
     | ToggleLinkViews
     | SetReferenceMesh of string option
@@ -63,14 +64,13 @@ type Message =
     | SetInspectChannel of InspectChannel
     | SetFocusProjection of FocusProjection
     | PickCorrespondenceAt of ScanPinId * mesh:string * world:V3d
-    | ToggleCorrSetMode
-    // Start/toggle the 3D-view correspondence pick for a (pin, mesh): isolates the
-    // mesh in the main view; hover aims, click commits via PickCorrespondenceAt.
-    | StartCorr3DPick of ScanPinId * mesh:string
+    // Arm/disarm the unified correspondence editor for a (pin, mesh): isolates the
+    // mesh, brings the linked focus onto it, and accepts picks from focus OR 3D until
+    // disarmed. Re-issuing for the armed pair disarms.
+    | ToggleCorrArm of ScanPinId * mesh:string
     // Transient hover preview of where a correspondence pick would land (metric
-    // world); drives the 3D ghost while CorrSetMode is on.
+    // world); drives the aim ghost in both views while armed.
     | CorrPreviewComputed of V3d option
-    | SetFocusPeekReference of bool
     // aspect from the view, fovY from the fixed 90° horizontal fov.
     | FlyTo of FlyToTarget * aspect:float
     // Fly the orbit camera tight to a metric-world point: animate centre + radius

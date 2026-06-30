@@ -19,7 +19,64 @@ module Primitives =
 
     let meshColor (idx : int) = meshPalette.[((idx % meshPalette.Length) + meshPalette.Length) % meshPalette.Length]
 
+    // Pin palette — a separate qualitative set (ColorBrewer Dark2 + extensions),
+    // visually distinct from the mesh palette (§C). Index-paired with the glyph set
+    // so colour + shape redundantly code the same pin identity (preattentive,
+    // greyscale- and colour-blind-robust).
+    module PinPalette =
+        let colors =
+            [| C4b( 27uy,158uy,119uy); C4b(217uy, 95uy,  2uy); C4b(117uy,112uy,179uy)
+               C4b(231uy, 41uy,138uy); C4b(102uy,166uy, 30uy); C4b(217uy,164uy,  6uy)
+               C4b(166uy,118uy, 29uy); C4b(  8uy,145uy,178uy); C4b(124uy, 58uy,237uy)
+               C4b(190uy, 24uy, 93uy) |]
+        // Distinct Unicode silhouettes; index-paired with `colors`.
+        let glyphs = [| "●"; "■"; "▲"; "◆"; "★"; "✚"; "▼"; "⬢"; "⬟"; "✦" |]
+        let count = colors.Length
+        let color (i : int) = colors.[((i % count) + count) % count]
+        let glyph (i : int) = glyphs.[((i % glyphs.Length) + glyphs.Length) % glyphs.Length]
+
+    // Pronounceable 2-char pin code = consonant + vowel, collision-checked against
+    // names already taken (other pins' short names + the mesh numbers). Seeded by the
+    // pin's guid hash, so it is effectively random yet deterministic per pin.
+    module PinIdentity =
+        let private consonants = "BDFGHJKLMNPRSTVWZ"
+        let private vowels = "AEIOU"
+        let shortName (taken : Set<string>) (seed : int) =
+            let total = consonants.Length * vowels.Length
+            let pick k =
+                let k = ((k % total) + total) % total
+                sprintf "%c%c" consonants.[k % consonants.Length] vowels.[k / consonants.Length]
+            let start = (abs seed) % total
+            let rec go i =
+                if i >= total then pick start
+                else
+                    let cand = pick (start + i)
+                    if Set.contains cand taken then go (i + 1) else cand
+            go 0
+
     let c4bToHex (c : C4b) = sprintf "#%02x%02x%02x" c.R c.G c.B
+
+    // Linear-diverging difference colourmap (§C — Kovesi CET-D style): blue (neg) →
+    // neutral → red (pos). A near-zero perceptual boost (|t|^0.6) keeps small
+    // deviations visible (no central flat-spot). Within ±lod → neutral (the LoD
+    // gate); outside, ramp from the gate edge out to `range`. The SAME constants +
+    // shape are mirrored in the FShade difference painters (FocusShaders / MeshShaders).
+    module Diff =
+        let neutral = V3d(0.62, 0.63, 0.66)
+        let blue    = V3d(0.13, 0.34, 0.74)
+        let red     = V3d(0.80, 0.12, 0.12)
+        let colorV3 (lod : float) (range : float) (v : float) =
+            let a = abs v
+            if a <= lod then neutral
+            else
+                let t = clamp 0.0 1.0 ((a - lod) / max 1.0e-6 (range - lod))
+                let m = t ** 0.6
+                let e = if v >= 0.0 then red else blue
+                neutral * (1.0 - m) + e * m
+        let color (lod : float) (range : float) (v : float) =
+            let c = colorV3 lod range v
+            let b x = byte (clamp 0.0 255.0 (x * 255.0))
+            C4b(b c.X, b c.Y, b c.Z)
 
     let shortName (name : string) =
         let mesh =

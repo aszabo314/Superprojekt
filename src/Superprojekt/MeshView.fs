@@ -149,11 +149,6 @@ module MeshView =
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
-        // Reference peek: while held with a reference set, the reference is the
-        // only solid mesh — transient, no model mutation.
-        let peekTarget =
-            (model.ReferencePeekHeld, model.Registration) ||> AVal.map2 (fun held reg ->
-                if held then reg.ReferenceMesh else None)
         // Force pin isolation on while placing an anchor: the terrain drops to
         // ghost and only the existing pins + the live hover blob read solid — a
         // "flashlight" revealing where the new pin lands (auto-restored, no model
@@ -172,9 +167,6 @@ module MeshView =
             // hover peek), else plain visibility.
             let isActive =
                 AVal.custom (fun t ->
-                    match peekTarget.GetValue t with
-                    | Some target -> target = name
-                    | None ->
                         match wheelIsolation.GetValue t with
                         | Some iso -> iso = name
                         | None ->
@@ -328,9 +320,16 @@ module MeshView =
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
                             let floorOn = model.GhostSilhouette.GetValue t
-                            match peekTarget.GetValue t with
-                            | Some target when target <> name -> (if floorOn then 0.12f else 0.0f)
-                            | _ ->
+                            // Inspect arity by rendering (§T5): when a mesh is soloed
+                            // (two-mesh difference / single-mesh intrinsic), every OTHER
+                            // mesh — the reference included — renders as an EMPTY OUTLINE
+                            // (fill discarded; the always-on outline pass keeps its
+                            // silhouette for overlap context), regardless of the floor.
+                            let inspectSoloOther =
+                                model.WorkflowStep.GetValue t = Inspect
+                                && (match model.MeshSolo.GetValue t with Solo(s, _) -> s <> name | NoSolo -> false)
+                            if inspectSoloOther then 0.0f
+                            else
                                 match wheelIsolation.GetValue t with
                                 | Some iso when iso <> name -> (if floorOn then 0.15f else 0.0f)
                                 | _ ->
@@ -360,6 +359,9 @@ module MeshView =
                             else match model.HeatmapMode.GetValue t with HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
+                    // Show-overlays modifier (§T8): greyscale the mesh while held; the
+                    // pin geometry (separate) keeps its colour.
+                    Sg.Uniform("Greyscale", model.ShowOverlaysHeld |> AVal.map (fun on -> if on then 1.0f else 0.0f))
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)

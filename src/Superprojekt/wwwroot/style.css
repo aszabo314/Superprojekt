@@ -252,6 +252,53 @@ body.loaded { background: #f4f6f8; }
 .rail-pin-name { flex: 1; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rail-pin-del { color: #dc2626; }
 
+/* ── pin × mesh matrix (§B) — the rail navigation backbone ── */
+.rail-matrix-wrap { overflow-x: auto; }
+.mx { display: flex; flex-direction: column; font-size: 11px; }
+.mx-head { display: flex; align-items: stretch; gap: 2px; margin-bottom: 2px; }
+.mx-corner { width: 104px; flex: 0 0 104px; color: #94a3b8; font-size: 9px; display: flex; align-items: center; padding-left: 2px; }
+.mx-colhead {
+    flex: 1 1 0; min-width: 26px; display: flex; flex-direction: column; align-items: center;
+    cursor: pointer; padding: 1px 0; border-radius: 3px; gap: 1px;
+}
+.mx-colhead:hover { background: #ecfeff; }
+.mx-colsw { width: 14px; height: 6px; border-radius: 2px; display: inline-block; }
+.mx-colnum { font-weight: 700; color: #334155; font-size: 10px; }
+.mx-colref { color: #1a56db; font-size: 9px; line-height: 1; }
+.mx-rows { display: flex; flex-direction: column; gap: 2px; }
+.mx-row { display: flex; align-items: stretch; gap: 2px; border-radius: 3px; }
+.mx-row-hover { background: #f1f5f9; }
+.mx-row-sel { background: #eaf1ff; box-shadow: inset 2px 0 0 #1a56db; }
+.mx-rowhead {
+    width: 104px; flex: 0 0 104px; display: flex; align-items: center; gap: 4px;
+    cursor: pointer; padding: 1px 3px; overflow: hidden;
+}
+.mx-glyph {
+    width: 15px; height: 15px; flex: 0 0 15px; border-radius: 3px; color: #fff;
+    display: inline-flex; align-items: center; justify-content: center; font-size: 10px; line-height: 1;
+}
+.mx-name { font-weight: 700; letter-spacing: 0.3px; color: #0f172a; flex: 1; }
+.mx-del { color: #dc2626; visibility: hidden; }
+.mx-rowhead:hover .mx-del { visibility: visible; }
+.mx-cell {
+    flex: 1 1 0; min-width: 26px; min-height: 18px; border-radius: 3px; cursor: pointer;
+    background: #e8edf3; border: 1px solid transparent;
+}
+.mx-cell:hover { border-color: #0891b2; }
+.mx-cell-active { border-color: #0891b2; box-shadow: 0 0 0 1px #0891b2; }
+/* out-of-ROI: a faint hairline hatch, not blank */
+.mx-cell-empty {
+    background: repeating-linear-gradient(45deg, #f4f6f8, #f4f6f8 3px, #e2e8f0 3px, #e2e8f0 4px) !important;
+}
+/* probe still running */
+.mx-cell-pending { background: #eef2f6 !important; opacity: 0.55; }
+
+/* dock pin-identity chip (Correspondence) */
+.ins-pinident { display: inline-flex; align-items: center; gap: 5px; }
+.ins-pinident-sw { width: 13px; height: 13px; border-radius: 3px; display: inline-block; }
+.ins-pinident-gn { font-weight: 700; letter-spacing: 0.3px; }
+.ins-insp-sub { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; }
+
 /* ── Focus panel: large single + canvas small multiples (spec v3) ──────── */
 .focus-panel {
     position: fixed;
@@ -266,11 +313,23 @@ body.loaded { background: #f4f6f8; }
     font-size: 12px;
     z-index: 998;
 }
+/* aspect-locked resize handle on the panel's left edge */
+.focus-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: ew-resize; z-index: 5; touch-action: none; }
+.focus-resize:hover { background: rgba(26,86,219,0.22); }
+/* displacement glyph legend (moved into the focus pane, §T10) */
+.focus-displeg { padding: 3px 8px; font-size: 10px; color: #475569; background: #f8fafc; border-top: 1px solid #eef2f6; }
 .focus-head {
     display: flex; align-items: center; gap: 8px;
     padding: 5px 8px; border-bottom: 1px solid #e6eaf0; background: #f8fafc;
 }
 .focus-title { font-weight: 600; color: #334155; }
+/* selected-pin identity chip (glyph + short name + pin-colour swatch) */
+.focus-pinchip {
+    display: inline-flex; align-items: center; gap: 5px;
+    font-weight: 700; font-size: 13px; letter-spacing: 0.3px;
+    padding: 1px 7px; border-radius: 10px; background: #f1f5f9; border: 1px solid #e2e8f0;
+}
+.focus-pinchip-sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
 .focus-close {
     margin-left: auto;
     border: none; background: none; cursor: pointer; font-size: 14px; color: #64748b;
@@ -331,17 +390,26 @@ body.loaded { background: #f4f6f8; }
 }
 .focus-tile {
     display: flex; flex-direction: column; gap: 2px;
-    border: 1px solid #e2e8f0; border-radius: 4px; padding: 2px; background: #fff; cursor: pointer;
+    border: 1px solid #e2e8f0; border-radius: 4px; padding: 2px; background: #fff;
     width: 100px;
 }
 .focus-tile:hover { border-color: #94a3b8; }
 .focus-tile.fm-active { border-color: #1a56db; box-shadow: 0 0 0 1px #1a56db inset; }
+/* reference tile: a prominent gold ring (T10) */
+.focus-tile.ft-ref { border-color: #d4a106; box-shadow: 0 0 0 1px #d4a106 inset; }
+.focus-tile.ft-hidden { opacity: 0.45; }
 .focus-tile .focus-rc { width: 100%; height: 72px; }
+.focus-tile-view { display: flex; flex-direction: column; gap: 2px; cursor: pointer; }
+.focus-tile-ctrls { display: flex; align-items: center; gap: 2px; justify-content: center; }
+.focus-tile-ctrls .mb { font-size: 11px; padding: 0 3px; }
+.ft-refstar { color: #d4a106; font-size: 10px; }
 .fm-label {
     display: flex; align-items: center; gap: 4px;
     font-size: 10px; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .fm-sw { width: 8px; height: 8px; flex-shrink: 0; border-radius: 1px; display: inline-block; }
+/* Overview drops the large single; tiles fill the panel */
+.fp-overview .focus-multiples { max-height: none; flex: 1; }
 .focus-reopen {
     position: fixed; top: 40px; right: 0;
     padding: 5px 8px; border: 1px solid #d7dce4; border-right: none;
@@ -1166,16 +1234,13 @@ body.loaded { background: #f4f6f8; }
 .rail-light-row { display: flex; align-items: baseline; gap: 8px; font-size: 12px; }
 .rail-light-v { color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* Overview dock — mesh roster */
-.ins-roster { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 6px 10px; font-size: 12px; }
-.ros-head, .ros-row { display: flex; align-items: center; gap: 8px; padding: 2px 4px; }
-.ros-head { color: #64748b; font-size: 11px; border-bottom: 1px solid #e2e8f0; }
-.ros-rows { flex: 1; overflow-y: auto; min-height: 0; }
-.ros-row { border-radius: 3px; cursor: pointer; }
-.ros-row:hover { background: #f1f5f9; }
-.ros-row-active { background: #ecfeff; box-shadow: inset 2px 0 0 #0891b2; }
-.ros-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ros-cell { width: 92px; color: #475569; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Overview dock — focused-mesh summary (the tiles are the mesh browser, T3) */
+.ins-ovw { flex: 1; display: flex; align-items: center; min-width: 0; padding: 6px 12px; font-size: 12px; }
+.ins-ovw-empty { color: #94a3b8; }
+.ins-ovw-card { display: flex; align-items: center; gap: 12px; }
+.ins-ovw-name { font-weight: 600; color: #0f172a; }
+.ins-ovw-role { color: #475569; }
+.ins-ovw-sensor { color: #475569; }
 
 /* Correspondence dock — manager head (name + radius) */
 .ins-mgr-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #eef2f6; margin-bottom: 4px; }
@@ -1189,9 +1254,15 @@ body.loaded { background: #f4f6f8; }
 .ins-insp-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #eef2f6; margin-bottom: 4px; }
 .ins-insp-label { font-size: 11px; color: #64748b; font-weight: 600; }
 .ins-insp-body { flex: 1; display: flex; min-width: 0; min-height: 0; gap: 8px; }
+.ins-dist-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .ins-dist { flex: 1; min-width: 0; position: relative; }
 .ins-dist-cv { display: block; }
 .ins-dist .ins-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 14px; }
+/* pin legend = the chart→3D brush handle */
+.ins-dist-legend { display: flex; flex-wrap: wrap; gap: 4px 10px; padding: 2px 4px 4px; font-size: 11px; }
+.ins-dist-leg { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; opacity: 0.62; border-radius: 3px; padding: 0 3px; }
+.ins-dist-leg-on { opacity: 1; background: #eef2ff; font-weight: 700; }
+.ins-dist-leg-sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
 .ins-shift { flex: 0 0 188px; border-left: 1px solid #eef2f6; padding-left: 10px; display: flex; flex-direction: column; gap: 6px; }
 .ins-shift-body { display: flex; flex-direction: column; gap: 4px; }
 .ins-shift-head { font-weight: 700; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

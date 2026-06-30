@@ -48,18 +48,21 @@ module FocusShaders =
                 let t = min 1.0f (max 0.0f (abs v.s / max 1e-6f uniform.FocusHi))
                 return V4f(0.933f + (0.114f - 0.933f) * t, 0.949f + (0.306f - 0.949f) * t, 0.965f + (0.847f - 0.965f) * t, 1.0f)
             else
-                // Diverging map with a MID-GREY zero (not near-white): the white
-                // centre vanished against the light page background, so 0 reads as a
-                // neutral grey (0.56,0.57,0.60) lerping to red (+) / blue (−).
+                // Linear-diverging difference map (§C, Kovesi CET-D style): neutral
+                // (0.62,0.63,0.66) → red (+) / blue (−), with a near-zero perceptual
+                // boost (t^0.6) so small deviations stay visible (no central flat-spot).
+                // ±LoD gate kept: within FocusLod → neutral; outside, ramp gate→FocusHi.
+                // Mirrors Primitives.Diff exactly.
                 let hi = max 1e-6f uniform.FocusHi
-                if abs v.s < uniform.FocusLod then return V4f(0.56f, 0.57f, 0.60f, 1.0f)
+                let a = abs v.s
+                if a < uniform.FocusLod then return V4f(0.62f, 0.63f, 0.66f, 1.0f)
                 else
-                    let tt = min 1.0f (max -1.0f (v.s / hi))
-                    if tt >= 0.0f then
-                        return V4f(0.56f + (0.863f - 0.56f) * tt, 0.57f + (0.149f - 0.57f) * tt, 0.60f + (0.149f - 0.60f) * tt, 1.0f)
+                    let denom = max 1e-6f (hi - uniform.FocusLod)
+                    let m = pow (min 1.0f (max 0.0f ((a - uniform.FocusLod) / denom))) 0.6f
+                    if v.s >= 0.0f then
+                        return V4f(0.62f + (0.80f - 0.62f) * m, 0.63f + (0.12f - 0.63f) * m, 0.66f + (0.12f - 0.66f) * m, 1.0f)
                     else
-                        let u = 0.0f - tt
-                        return V4f(0.56f + (0.145f - 0.56f) * u, 0.57f + (0.388f - 0.57f) * u, 0.60f + (0.922f - 0.60f) * u, 1.0f)
+                        return V4f(0.62f + (0.13f - 0.62f) * m, 0.63f + (0.34f - 0.63f) * m, 0.66f + (0.74f - 0.66f) * m, 1.0f)
         }
 
     // Cylindrical from the mesh origin (PanoEye). u = azimuth/π, v = elevation/(π/2),

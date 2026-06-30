@@ -35,6 +35,12 @@ module PinNames =
 type ScanPin = {
     Id                   : ScanPinId
     Name                 : string
+    // Immutable identity triple (§A), assigned at creation: a preattentive Glyph +
+    // a distinct PinColor (paired, from the pin palette) + a random 2-char ShortName.
+    // The pin's identity everywhere: matrix row, 3D flag label, focus label, samples.
+    Glyph                : string
+    ShortName            : string
+    PinColor             : C4b
     Centre               : V3d
     InnerRadius          : float
     Correspondence       : Correspondence option

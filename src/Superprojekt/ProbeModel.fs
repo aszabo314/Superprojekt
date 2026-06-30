@@ -14,6 +14,11 @@ type ProbeDistribution = {
     Std       : float
     Kde       : (float * float)[]
     Samples   : float[]
+    // World-space surface position of each sample (V3d), aligned 1:1 with Samples —
+    // lets the distribution chart brush a sample back to its 3D surface cell (§T6).
+    Positions : V3d[]
+    // Approx spatial footprint (m) of a density-grid sample.
+    Footprint : float
     // Intrinsic quality [incidence; range; shape] ∈ [0,1].
     Intrinsics : float[]
 }

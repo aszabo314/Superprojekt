@@ -59,6 +59,9 @@ type Message =
     | SetFocusProjection of FocusProjection
     | PickCorrespondenceAt of ScanPinId * mesh:string * world:V3d
     | ToggleCorrSetMode
+    // Start/toggle the 3D-view correspondence pick for a (pin, mesh): isolates the
+    // mesh in the main view; hover aims, click commits via PickCorrespondenceAt.
+    | StartCorr3DPick of ScanPinId * mesh:string
     // Transient hover preview of where a correspondence pick would land (metric
     // world); drives the 3D ghost while CorrSetMode is on.
     | CorrPreviewComputed of V3d option

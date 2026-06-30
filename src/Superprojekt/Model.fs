@@ -198,6 +198,10 @@ type Model =
         // ghost, and a click places it + exits. Toggling off cancels (no commit).
         CorrSetMode         : bool
         CorrPreview         : V3d option
+        // Live 3D-view correspondence pick (per-row "set in 3D" button): Some
+        // (pin, mesh) isolates that mesh in the main view, the cursor hovers the
+        // point (CorrPreview ghost), and a click commits + exits. None = idle.
+        Corr3DPick          : (ScanPinId * string) option
 
         // Outline edge-detect threshold (depth Laplacian) + isoline band count over
         // the scene Z range. Tunable from the gear menu; see OutlineEdge /
@@ -293,6 +297,7 @@ module Model =
             FocusPeekReference  = false
             CorrSetMode         = false
             CorrPreview         = None
+            Corr3DPick          = None
             OutlineThreshold    = 0.004
             IsolineBands        = 700.0
         }

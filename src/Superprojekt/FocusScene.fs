@@ -125,6 +125,18 @@ module FocusScene =
             "FocusScalar",                                  BufferView(scalarBuf, typeof<float32>)
         ]
 
+    // Top-view overlay primitives (render space; XY plane, since Top looks down −Z).
+    let private addRingXY (out : ResizeArray<V3d * V3d * V4d * float>)
+                          (c : V3d) (r : float) (col : V4d) (w : float) (segs : int) =
+        for i in 0 .. segs - 1 do
+            let a0 = float i       / float segs * Constant.PiTimesTwo
+            let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
+            out.Add(c + V3d(cos a0, sin a0, 0.0) * r, c + V3d(cos a1, sin a1, 0.0) * r, col, w)
+    let private addCrossXY (out : ResizeArray<V3d * V3d * V4d * float>)
+                           (c : V3d) (r : float) (col : V4d) (w : float) =
+        out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, w)
+        out.Add(c - V3d.OIO * r, c + V3d.OIO * r, col, w)
+
     // load/solved forward maps (mesh-local → render) at token t, sharing the base
     // render trafo (centroid-relative → common-relative → dataset scale → pose).
     let private loadSolvedForwards (model : AdaptiveModel) (name : string) (loaded : LoadedMesh) (sc : float) (t : AdaptiveToken) =
@@ -235,6 +247,54 @@ module FocusScene =
                         i <- i + stride
                     out.ToArray()
                 | _ -> [||])
+        // Correspondence-mode overlay (Top only): each pin's bounding-sphere circle
+        // (true InnerRadius footprint) + a screen-fixed always-on-top glyph at THIS
+        // mesh's anchor for each pin. Pano can't place render-space lines on the
+        // unwrapped surface, so it's Top-only (the request asked for the top view).
+        let pinsAval   = model.ScanPins.Pins |> AMap.toAVal
+        let dispRenderT = MeshView.displayedMeshT model name
+        let meshCol =
+            model.MeshOrder |> AMap.tryFind name
+            |> AVal.map (Option.defaultValue 0 >> Primitives.meshColor >> Primitives.c4bToV3d)
+        let overlaySegs =
+            AVal.custom (fun t ->
+                if isPano || model.WorkflowStep.GetValue t <> Correspondence then [||]
+                else
+                    let pins = pinsAval.GetValue t
+                    let cc = model.CommonCentroid.GetValue t
+                    let s = scale.GetValue t
+                    let sel = model.Selection.SelectedPin.GetValue t
+                    let ext = fitExtent.GetValue t
+                    let z = (zoom :> aval<_>).GetValue t
+                    let gr = 0.05 * ext / max 1e-3 z   // screen-fixed glyph half-size
+                    let baseCol = meshCol.GetValue t
+                    let dw = RigidTransform.renderToWorld s cc (dispRenderT.GetValue t)
+                    let out = ResizeArray<V3d * V3d * V4d * float>()
+                    for (id, p) in HashMap.toSeq pins do
+                        let isSel = sel = Some id
+                        let cR = ScanPin.renderCentre cc s p.Centre
+                        let rR = ScanPin.renderLength s p.InnerRadius
+                        let ringCol = if isSel then V4d(1.0, 0.85, 0.0, 0.95) else V4d(0.95, 0.35, 0.35, 0.8)
+                        addRingXY out cR rR ringCol (if isSel then 2.0 else 1.3) 48
+                        match ScanPin.correspondence p with
+                        | Some c ->
+                            match Map.tryFind name c.Anchors with
+                            | Some a ->
+                                let aR = ScanPin.renderCentre cc s (dw.Forward.TransformPos a.Point)
+                                let gcol = if isSel then V4d(1.0, 0.85, 0.0, 1.0) else V4d(baseCol, 0.95)
+                                let gw = if isSel then 2.5 else 1.8
+                                addCrossXY out aR gr gcol gw
+                                addRingXY out aR (gr * 0.6) gcol gw 24
+                            | None -> ()
+                        | None -> ()
+                    out.ToArray())
+        let overlay =
+            sg {
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                Lines.render overlaySegs
+            }
         renderControl {
             RenderControl.Samples 1
             Class "focus-rc"
@@ -385,6 +445,7 @@ module FocusScene =
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 surface
                 Lines.render arrowSegs
+                overlay
             }
         }
 

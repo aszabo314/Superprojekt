@@ -172,6 +172,11 @@ module GuiInspector =
                 match AVal.force effId with
                 | Some id -> emit (SetHovered (if on then Some (HoverPoint (id, mesh)) else None))
                 | None -> emit (SetHovered None)
+            let picking3D =
+                (model.Corr3DPick, effId) ||> AVal.map2 (fun c id ->
+                    match c, id with
+                    | Some (pid, m), Some sid -> pid = sid && m = mesh
+                    | _ -> false)
             div {
                 Class "ins-mgr-row"
                 showWhen show
@@ -196,6 +201,14 @@ module GuiInspector =
                     Attribute("title", "Focus camera + edit in the focus panel")
                     Dom.OnClick(fun _ -> emit (SetSelectedPoint (Some mesh)); emit (SetFocusedMesh (Some mesh)))
                     "⌖"
+                }
+                button {
+                    Class "mb ins-mgr-act"
+                    showWhen inRoi
+                    classWhen "mb-on" picking3D
+                    Attribute("title", "Set this point in the 3D view (isolates the mesh; click the surface)")
+                    Dom.OnClick(fun _ -> match AVal.force effId with Some id -> emit (StartCorr3DPick(id, mesh)) | None -> ())
+                    picking3D |> AVal.map (fun on -> if on then "⊙" else "⊕")
                 }
             }
         let refColorA =

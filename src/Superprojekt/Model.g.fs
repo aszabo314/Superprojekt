@@ -1,5 +1,5 @@
-//36bdb401-950d-5ed9-9aab-a1e27d789dac
-//0cbb4597-506e-5c9e-a2d1-b4751d61301d
+//34dbc842-010f-293b-0ca5-5eb4e7254c03
+//04bd741e-c320-271f-4266-9cc62f79ab9b
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -80,6 +80,7 @@ type AdaptiveModel(value : Model) =
     let _FocusPeekReference_ = FSharp.Data.Adaptive.cval(value.FocusPeekReference)
     let _CorrSetMode_ = FSharp.Data.Adaptive.cval(value.CorrSetMode)
     let _CorrPreview_ = FSharp.Data.Adaptive.cval(value.CorrPreview)
+    let _Corr3DPick_ = FSharp.Data.Adaptive.cval(value.Corr3DPick)
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
     let mutable __value = value
@@ -135,6 +136,7 @@ type AdaptiveModel(value : Model) =
             _FocusPeekReference_.Value <- value.FocusPeekReference
             _CorrSetMode_.Value <- value.CorrSetMode
             _CorrPreview_.Value <- value.CorrPreview
+            _Corr3DPick_.Value <- value.Corr3DPick
             _OutlineThreshold_.Value <- value.OutlineThreshold
             _IsolineBands_.Value <- value.IsolineBands
     member __.Current = __adaptive
@@ -183,6 +185,7 @@ type AdaptiveModel(value : Model) =
     member __.FocusPeekReference = _FocusPeekReference_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CorrSetMode = _CorrSetMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CorrPreview = _CorrPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
+    member __.Corr3DPick = _Corr3DPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
 

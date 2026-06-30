@@ -263,67 +263,6 @@ module ScanPinScene =
         // displayed pose.
         let refGlyphCol = V4d(0.706, 0.325, 0.035, 1.0)   // amber #b45309
 
-        // World marker for a (pin, mesh): the mesh-local anchor mapped through the
-        // mesh's displayed transform. None when out-of-ROI / no marker.
-        let markerWorldOf (pinVal : aval<ScanPin option>) (mesh : string) =
-            AVal.custom (fun t ->
-                match pinVal.GetValue t |> Option.bind ScanPin.correspondence with
-                | Some c ->
-                    let inRoi = Map.tryFind mesh c.InRoi |> Option.defaultValue true
-                    match Map.tryFind mesh c.Anchors with
-                    | Some a when inRoi ->
-                        Some ((dispWorldAt t mesh).Forward.TransformPos a.Point)
-                    | _ -> None
-                | _ -> None)
-
-        // Stable (pin × moving-mesh) key set — changes only on enabled-pins /
-        // mesh-list / reference / visibility, never on hover.
-        let corrPairs =
-            AVal.custom (fun t ->
-                let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                let vis = model.MeshVisible.GetValue t
-                let rf = (model.Registration.GetValue t).ReferenceMesh
-                let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
-                let enabled =
-                    pinsVal.GetValue t |> HashMap.toSeq
-                    |> Seq.choose (fun (id, p) -> match ScanPin.correspondence p with Some _ -> Some id | None -> None)
-                    |> List.ofSeq
-                seq { for id in enabled do for m in moving -> (id, m) } |> HashSet.ofSeq)
-
-        // Moving-mesh correspondence pick proxies: small invisible spheres carrying
-        // the hover/focus brushing (the visible glyph — wire sphere + cross — is
-        // drawn in constLines). Alpha 0 → invisible but still pickable. Fixed render
-        // size, independent of pin radius.
-        let glyphProxy (pinId : ScanPinId) (mesh : string) =
-            let pinVal = pinsVal |> AVal.map (HashMap.tryFind pinId)
-            let world = markerWorldOf pinVal mesh
-            let active = world |> AVal.map Option.isSome
-            let trafo =
-                AVal.custom (fun t ->
-                    match world.GetValue t with
-                    | Some w ->
-                        let cc = model.CommonCentroid.GetValue t
-                        let s = datasetScale.GetValue t
-                        Trafo3d.Scale 0.06 * Trafo3d.Translation (ScanPin.renderCentre cc s w)
-                    | None -> Trafo3d.Scale 0.0)
-            sg {
-                Sg.Active (AVal.map2 (&&) notFullscreen active)
-                Sg.View view
-                Sg.Proj proj
-                Sg.Trafo trafo
-                Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-                Sg.Uniform("FlatColor", AVal.constant (V4f(0.0, 0.0, 0.0, 0.0)))
-                Sg.DepthTest (AVal.constant DepthTest.None)
-                Sg.BlendMode (AVal.constant BlendMode.Blend)
-                Sg.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPoint (pinId, mesh)))]; true)
-                Sg.OnTap(fun _ -> env.Emit [SetFocusedMesh (Some mesh)]; false)
-                Sg.VertexAttributes(
-                    HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
-                Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
-                Sg.Render sphereIdxCnt
-            }
-        let movingGlyphs = corrPairs |> ASet.ofAVal |> ASet.map (fun (id, m) -> glyphProxy id m)
-
         // Correspondence constellation lines: per pin, a small wire-sphere + cross
         // glyph at each moving-mesh marker and a larger one at the reference point,
         // plus a thin line from each moving glyph to the reference. Fixed render size
@@ -391,7 +330,7 @@ module ScanPinScene =
                     out.ToArray())
             ASet.ofList [ linesNodeTop notFullscreen segs ]
 
-        let constellation = ASet.unionMany (ASet.ofList [ constLines; movingGlyphs ])
+        let constellation = constLines
 
         let ghostPreview =
             // Preview radius = the radius a click would place (QuickPinRadius,

@@ -74,12 +74,17 @@ module View =
         // Selection. Ghosts the rest while held.
         let wheelIsolation =
             AVal.custom (fun t ->
-                if altHeld.GetValue t then model.ActivePickingLayer.GetValue t
-                else
-                    match model.Selection.Hovered.GetValue t with
-                    | Some (HoverMesh m) -> Some m
-                    | Some (HoverPoint (_, m)) -> Some m
-                    | _ -> None)
+                // A live 3D correspondence pick isolates its target mesh (solid; the
+                // rest drop to ghost) so the GPU pick lands on it alone.
+                match model.Corr3DPick.GetValue t with
+                | Some (_, mesh) -> Some mesh
+                | None ->
+                    if altHeld.GetValue t then model.ActivePickingLayer.GetValue t
+                    else
+                        match model.Selection.Hovered.GetValue t with
+                        | Some (HoverMesh m) -> Some m
+                        | Some (HoverPoint (_, m)) -> Some m
+                        | _ -> None)
 
         // Section/cutaway clipping was removed; the mesh shader keeps generic
         // clip-plane support but is fed a constant no-clip.
@@ -231,6 +236,24 @@ module View =
                                     |> Array.tryHead |> Option.map snd
                             }
 
+                // Cursor → a SPECIFIC mesh's surface via server raycast (render-space
+                // hit). Used by the 3D correspondence pick, which isolates one mesh and
+                // must land on it alone (ignoring whatever else the ray crosses).
+                let raycastMesh (name : string) : Async<V3d option> =
+                    match cursorScreen.Value with
+                    | None -> async.Return None
+                    | Some cursorPx ->
+                        let cc = AVal.force model.CommonCentroid
+                        let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) name
+                        let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
+                        async {
+                            let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model name))
+                            let serverOrigin = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale ray.Origin)
+                            let serverDir = (dispWorld.Backward.TransformDir ray.Direction).Normalized
+                            let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
+                            return hit |> Option.map (fun h -> ScanPin.renderCentre cc scale (dispWorld.Forward.TransformPos h.point))
+                        }
+
                 // Solid pixel pick (GPU / active layer) first, then fall through a
                 // ghost to the nearest raycast surface. Used by pin placement and by
                 // double-tap-to-recenter, so both work on ghosted meshes too.
@@ -331,25 +354,42 @@ module View =
                 )
 
                 Sg.OnTap(fun e ->
-                    let placement = AVal.force model.ScanPins.Placement
                     let frontmost =
                         if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                    async {
-                        let! resolved =
-                            match placement with
-                            | AnchorPlacement -> resolvePick frontmost
-                            | _ -> resolveLayerPick frontmost
-                        match placement, resolved with
-                        | AnchorPlacement, Some renderPos ->
-                            let worldPos = worldFromRender model renderPos
-                            env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
-                        | AnchorPlacement, None -> ()
-                        | _, Some renderPos ->
-                            let worldPos = worldFromRender model renderPos
-                            transact (fun () -> hoverCoord.Value <- Some worldPos)
-                        | _, None -> ()
-                    } |> Async.Start
-                    true
+                    match AVal.force model.Corr3DPick with
+                    | Some (pinId, mesh) ->
+                        // Commit the picked surface point as this mesh's anchor (the
+                        // reducer stores it mesh-local + exits the pick mode). GPU pick
+                        // on the isolated solid first, else a single-mesh raycast.
+                        async {
+                            let! resolved =
+                                match frontmost with
+                                | Some _ -> async.Return frontmost
+                                | None -> raycastMesh mesh
+                            match resolved with
+                            | Some renderPos ->
+                                env.Emit [PickCorrespondenceAt(pinId, mesh, worldFromRender model renderPos)]
+                            | None -> ()
+                        } |> Async.Start
+                        true
+                    | None ->
+                        let placement = AVal.force model.ScanPins.Placement
+                        async {
+                            let! resolved =
+                                match placement with
+                                | AnchorPlacement -> resolvePick frontmost
+                                | _ -> resolveLayerPick frontmost
+                            match placement, resolved with
+                            | AnchorPlacement, Some renderPos ->
+                                let worldPos = worldFromRender model renderPos
+                                env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
+                            | AnchorPlacement, None -> ()
+                            | _, Some renderPos ->
+                                let worldPos = worldFromRender model renderPos
+                                transact (fun () -> hoverCoord.Value <- Some worldPos)
+                            | _, None -> ()
+                        } |> Async.Start
+                        true
                 )
 
                 Sg.OnPointerMove(fun e ->
@@ -397,11 +437,27 @@ module View =
                                 if gen = placeHoverGen && placementHover.Value <> hit then
                                     transact (fun () -> placementHover.Value <- hit)
                             } |> Async.Start
-                    // Moving over terrain (off a constellation glyph) ends a
-                    // point-hover brush — the glyph re-sets it while hovered.
-                    match AVal.force model.Selection.Hovered with
-                    | Some (HoverPoint _) -> env.Emit [SetHovered None]
-                    | _ -> ()
+                    // 3D correspondence pick (per-row "set in 3D" button): the
+                    // target mesh is isolated solid, so the GPU pick lands on it;
+                    // over a ghost/background fall back to a single-mesh raycast.
+                    // Throttled → bounded CorrPreview message rate.
+                    match AVal.force model.Corr3DPick with
+                    | Some (_, mesh) ->
+                        let now = nowMs ()
+                        if now - placeHoverMs > 60.0 then
+                            placeHoverMs <- now
+                            placeHoverGen <- placeHoverGen + 1
+                            let gen = placeHoverGen
+                            match pick with
+                            | Some renderPos ->
+                                env.Emit [CorrPreviewComputed (Some (worldFromRender model renderPos))]
+                            | None ->
+                                async {
+                                    let! hit = raycastMesh mesh
+                                    if gen = placeHoverGen then
+                                        env.Emit [CorrPreviewComputed (hit |> Option.map (worldFromRender model))]
+                                } |> Async.Start
+                    | None -> ()
                     true
                 )
 

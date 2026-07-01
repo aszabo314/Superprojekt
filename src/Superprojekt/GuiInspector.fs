@@ -20,14 +20,19 @@ module GuiInspector =
     let private brushChartJs = [
         "(function(){"
         "var el=__THIS__;"
-        "var bridge=el.parentElement?el.parentElement.querySelector('.ins-brush-bridge'):null;"
+        // Resolve the bridge lazily EACH emit (never captured at boot: the sibling input
+        // may not be mounted yet when this OnBoot runs → a boot capture would freeze null).
+        "function findBridge(){ return (el.parentElement&&el.parentElement.querySelector('.ins-brush-bridge'))||document.querySelector('.ins-brush-bridge'); }"
         "el._dots=[]; var dragging=false, brushed=new Set(), lastEmit=0;"
         "function jit(gid){ var x=Math.sin((gid+1)*12.9898)*43758.5453; return x-Math.floor(x); }"
-        "function emit(){ if(!bridge) return; bridge.value=Array.from(brushed).join(','); bridge.dispatchEvent(new Event('input',{bubbles:true})); }"
+        "function emit(){ var b=findBridge(); if(!b) return; b.value=Array.from(brushed).join(','); b.dispatchEvent(new Event('input',{bubbles:true})); }"
         "function ph(t){ el.innerHTML=''; el._dots=[]; var p=document.createElement('div'); p.className='ins-ph'; p.textContent=t; el.appendChild(p); }"
         "function render(){"
         "  var raw=el.getAttribute('data-dist')||'{}'; var d; try{d=JSON.parse(raw);}catch(e){return;}"
         "  var braw=el.getAttribute('data-brushed')||''; var bset=new Set(braw.length?braw.split(',').map(Number):[]);"
+        // Local-first: union the in-progress drag selection so the chart highlights
+        // immediately, independent of the model round-trip (data-brushed) landing.
+        "  brushed.forEach(function(gid){ bset.add(gid); });"
         "  if(!d||!d.rows){ ph(d&&d.pending?d.pending:'place pins to see ROI distributions'); return; }"
         "  if(d.rows.length===0){ ph('no moving meshes probed'); return; }"
         "  el.innerHTML=''; el._dots=[];"
@@ -59,9 +64,11 @@ module GuiInspector =
         "}"
         "function pick(e){ var r=el.getBoundingClientRect(); var mx=e.clientX-r.left, my=e.clientY-r.top; var R=11;"
         "  for(var i=0;i<el._dots.length;i++){ var dt=el._dots[i]; var dx=dt.x-mx, dy=dt.y-my; if(dx*dx+dy*dy<=R*R) brushed.add(dt.gid); } }"
-        "el.addEventListener('pointerdown',function(e){ if(e.button!==0) return; dragging=true; brushed=new Set(); pick(e); try{el.setPointerCapture(e.pointerId);}catch(_){} emit(); e.preventDefault(); });"
-        "el.addEventListener('pointermove',function(e){ if(!dragging) return; pick(e); var now=Date.now(); if(now-lastEmit>50){ lastEmit=now; emit(); } });"
-        "el.addEventListener('pointerup',function(e){ if(!dragging) return; dragging=false; try{el.releasePointerCapture(e.pointerId);}catch(_){} emit(); });"
+        // render() after each pick draws the local highlight now; emit() (throttled) drives
+        // the model + the 3D markers. render() is idempotent with the MutationObserver redraw.
+        "el.addEventListener('pointerdown',function(e){ if(e.button!==0) return; dragging=true; brushed=new Set(); pick(e); try{el.setPointerCapture(e.pointerId);}catch(_){} render(); emit(); e.preventDefault(); });"
+        "el.addEventListener('pointermove',function(e){ if(!dragging) return; pick(e); render(); var now=Date.now(); if(now-lastEmit>50){ lastEmit=now; emit(); } });"
+        "el.addEventListener('pointerup',function(e){ if(!dragging) return; dragging=false; try{el.releasePointerCapture(e.pointerId);}catch(_){} render(); emit(); });"
         "render();"
         "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed']});"
         "})();" ]

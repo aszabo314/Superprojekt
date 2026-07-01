@@ -217,6 +217,11 @@ type Model =
         // both views. None = idle.
         CorrArm             : (ScanPinId * string) option
         CorrPreview         : V3d option
+        // Per-sample distribution brushing (§T6): the set of brushed sample global
+        // ids (canonical order from ScanPinScene.brushSamples). Written by the chart
+        // canvas (via the hidden-input bridge) and by the 3D spatial hover; read by
+        // the chart highlight + the 3D brushed-sample markers.
+        BrushedSamples      : Set<int>
 
         // Outline edge-detect threshold (depth Laplacian) + isoline band count over
         // the scene Z range. Tunable from the gear menu; see OutlineEdge /
@@ -325,6 +330,7 @@ module Model =
             FocusProjection     = ProjTop
             CorrArm             = None
             CorrPreview         = None
+            BrushedSamples      = Set.empty
             OutlineThreshold    = 0.004
             IsolineBands        = 700.0
             DiffRangeScale      = 1.0

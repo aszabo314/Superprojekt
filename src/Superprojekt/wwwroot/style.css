@@ -1255,6 +1255,9 @@ body.loaded { background: #f4f6f8; }
 .ins-insp-label { font-size: 11px; color: #64748b; font-weight: 600; }
 .ins-insp-body { flex: 1; display: flex; min-width: 0; min-height: 0; gap: 8px; }
 .ins-dist-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* JS→Elm brush bridge: off-screen but still event-capable (not display:none) */
+.ins-brush-bridge { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.ins-dist { touch-action: none; }
 .ins-dist { flex: 1; min-width: 0; position: relative; }
 .ins-dist-cv { display: block; }
 .ins-dist .ins-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 14px; }

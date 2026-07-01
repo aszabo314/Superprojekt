@@ -71,6 +71,8 @@ type Message =
     // Transient hover preview of where a correspondence pick would land (metric
     // world); drives the aim ghost in both views while armed.
     | CorrPreviewComputed of V3d option
+    // Per-sample distribution brushing (§T6): replace the brushed-sample id set.
+    | SetBrushedSamples of int list
     // aspect from the view, fovY from the fixed 90° horizontal fov.
     | FlyTo of FlyToTarget * aspect:float
     // Fly the orbit camera tight to a metric-world point: animate centre + radius

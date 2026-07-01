@@ -294,6 +294,7 @@ module Update =
                     LoadTransforms = Map.empty
                     RegView = RegBefore
                     LocateBackup = None
+                    BrushedSamples = Set.empty
                     Toast = None }
         | SetRenderingMode m ->
             { model with RenderingMode = m }
@@ -369,7 +370,7 @@ module Update =
                 bumpFocusDist ()
                 { model with WorkflowStep = step; SurfaceDistance = Map.empty; FocusDist = Map.empty
                              AnchorGhostMode = (step = Correspondence)
-                             CorrArm = None; CorrPreview = None }
+                             CorrArm = None; CorrPreview = None; BrushedSamples = Set.empty }
         | SetInspectChannel ch ->
             { model with InspectChannel = ch }
         | SetFocusProjection p ->
@@ -430,6 +431,10 @@ module Update =
                     Selection = { model.Selection with SelectedPin = Some pinId; FocusedMesh = Some mesh } }
         | CorrPreviewComputed p ->
             if model.CorrArm.IsSome then { model with CorrPreview = p } else model
+        | SetBrushedSamples ids ->
+            // Cap the brushed set so a wide brush can't flood the 3D marker node.
+            let s = ids |> List.truncate 200 |> Set.ofList
+            if model.BrushedSamples = s then model else { model with BrushedSamples = s }
         // Keep orientation, animate centre + radius so the target subtends ~25% of
         // viewport height. User nav input overrides via the orbit machinery.
         | FlyTo(target, aspect) ->

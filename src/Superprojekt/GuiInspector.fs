@@ -12,13 +12,25 @@ module GuiInspector =
     open Primitives
 
     // Pin distribution canvas (§T6): per moving-mesh lane, the ROI sample "rain" of
-    // every pin coloured by pin, on a shared signed-distance axis with the ±LoD₉₅
-    // band + an axis scale and an LoD legend. A hovered pin's samples are bright; the
-    // rest dim (the chart side of the bidirectional pin↔surface brushing).
-    let private distJs = [
-        "  function ph(t){ var p=document.createElement('div'); p.className='ins-ph'; p.textContent=t; el.appendChild(p); }"
-        "  if(!d || !d.rows){ ph(d&&d.pending?d.pending:'place pins to see ROI distributions'); return; }"
+    // every pin coloured by pin, on a shared signed-distance axis with the ±LoD₉₅ band
+    // + axis scale. A hovered pin's samples brighten; a brushed sample set (data-brushed,
+    // gids) is emphasized. DRAG over samples → write their gids to the sibling hidden
+    // input (the JS→Elm bridge) → 3D markers. Self-contained OnBoot (observes data-dist
+    // + data-brushed); jitter is SEEDED by gid so dots don't drift across redraws.
+    let private brushChartJs = [
+        "(function(){"
+        "var el=__THIS__;"
+        "var bridge=el.parentElement?el.parentElement.querySelector('.ins-brush-bridge'):null;"
+        "el._dots=[]; var dragging=false, brushed=new Set(), lastEmit=0;"
+        "function jit(gid){ var x=Math.sin((gid+1)*12.9898)*43758.5453; return x-Math.floor(x); }"
+        "function emit(){ if(!bridge) return; bridge.value=Array.from(brushed).join(','); bridge.dispatchEvent(new Event('input',{bubbles:true})); }"
+        "function ph(t){ el.innerHTML=''; el._dots=[]; var p=document.createElement('div'); p.className='ins-ph'; p.textContent=t; el.appendChild(p); }"
+        "function render(){"
+        "  var raw=el.getAttribute('data-dist')||'{}'; var d; try{d=JSON.parse(raw);}catch(e){return;}"
+        "  var braw=el.getAttribute('data-brushed')||''; var bset=new Set(braw.length?braw.split(',').map(Number):[]);"
+        "  if(!d||!d.rows){ ph(d&&d.pending?d.pending:'place pins to see ROI distributions'); return; }"
         "  if(d.rows.length===0){ ph('no moving meshes probed'); return; }"
+        "  el.innerHTML=''; el._dots=[];"
         "  var W=el.clientWidth||320, H=el.clientHeight||150; var dpr=window.devicePixelRatio||1;"
         "  var cv=document.createElement('canvas'); cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);"
         "  cv.style.width=W+'px'; cv.style.height=H+'px'; cv.className='ins-dist-cv';"
@@ -29,23 +41,30 @@ module GuiInspector =
         "  g.fillStyle='#475569'; g.font='11px SF Mono,Monaco,monospace'; g.textAlign='left';"
         "  g.fillText(d.state+'  ·  signed distance to reference (mm)  ·  0 = reference median',8,13);"
         "  g.fillStyle='#94a3b8'; g.font='9px SF Mono,Monaco,monospace';"
-        "  g.fillText('░ ±LoD₉₅ (within = indistinguishable)', W-200, 13);"
+        "  g.fillText('░ ±LoD₉₅   ·   drag to brush', W-176, 13);"
         "  var n=d.rows.length; var laneH=(H-padT-padB)/n;"
         "  g.strokeStyle='#cbd5e1'; g.lineWidth=1; g.beginPath(); g.moveTo(X(0),padT-2); g.lineTo(X(0),H-padB+2); g.stroke();"
         "  g.fillStyle='#94a3b8'; g.font='9px SF Mono,Monaco,monospace'; g.textAlign='center';"
         "  [lo,(lo+hi)/2,hi].forEach(function(v){ g.fillText(v.toFixed(0),X(v),H-5); });"
-        "  g.textAlign='center'; g.fillText('mm', X(hi)+4, H-5);"
         "  g.textAlign='left';"
         "  d.rows.forEach(function(r,i){ var y0=padT+i*laneH;"
         "    if(r.lod>0){ g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-r.lod),y0+2,Math.max(1,X(r.lod)-X(-r.lod)),laneH-4); }"
-        "    r.pins.forEach(function(pn){ g.globalAlpha = pn.hl? 0.55 : 0.10; g.fillStyle=pn.color;"
-        "      for(var k=0;k<pn.s.length;k++){ var x=X(pn.s[k]); var yy=y0+laneH*0.30+Math.random()*(laneH*0.5); g.beginPath(); g.arc(x,yy,1.5,0,6.2832); g.fill(); }"
-        "      g.globalAlpha = pn.hl? 1 : 0.25; g.strokeStyle=pn.color; g.lineWidth=pn.hl?2.0:1.0;"
-        "      g.beginPath(); g.moveTo(X(pn.med),y0+laneH*0.22); g.lineTo(X(pn.med),y0+laneH*0.82); g.stroke(); });"
-        "    g.globalAlpha=1; g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace';"
-        "    g.fillText(r.name, padL, y0+11); });"
+        "    r.pins.forEach(function(pn){ for(var k=0;k<pn.s.length;k++){ var gid=pn.g[k]; var x=X(pn.s[k]); var yy=y0+laneH*0.30+jit(gid)*(laneH*0.5); var on=bset.has(gid);"
+        "      g.globalAlpha = on?1:(pn.hl?0.55:0.10); g.fillStyle=pn.color; g.beginPath(); g.arc(x,yy,on?2.6:1.5,0,6.2832); g.fill();"
+        "      if(on){ g.globalAlpha=1; g.strokeStyle='#0891b2'; g.lineWidth=1; g.beginPath(); g.arc(x,yy,3.6,0,6.2832); g.stroke(); }"
+        "      el._dots.push({x:x,y:yy,gid:gid}); }"
+        "      g.globalAlpha=pn.hl?1:0.25; g.strokeStyle=pn.color; g.lineWidth=pn.hl?2.0:1.0; g.beginPath(); g.moveTo(X(pn.med),y0+laneH*0.22); g.lineTo(X(pn.med),y0+laneH*0.82); g.stroke(); });"
+        "    g.globalAlpha=1; g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace'; g.fillText(r.name,padL,y0+11); });"
         "  el.appendChild(cv);"
-    ]
+        "}"
+        "function pick(e){ var r=el.getBoundingClientRect(); var mx=e.clientX-r.left, my=e.clientY-r.top; var R=11;"
+        "  for(var i=0;i<el._dots.length;i++){ var dt=el._dots[i]; var dx=dt.x-mx, dy=dt.y-my; if(dx*dx+dy*dy<=R*R) brushed.add(dt.gid); } }"
+        "el.addEventListener('pointerdown',function(e){ if(e.button!==0) return; dragging=true; brushed=new Set(); pick(e); try{el.setPointerCapture(e.pointerId);}catch(_){} emit(); e.preventDefault(); });"
+        "el.addEventListener('pointermove',function(e){ if(!dragging) return; pick(e); var now=Date.now(); if(now-lastEmit>50){ lastEmit=now; emit(); } });"
+        "el.addEventListener('pointerup',function(e){ if(!dragging) return; dragging=false; try{el.releasePointerCapture(e.pointerId);}catch(_){} emit(); });"
+        "render();"
+        "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed']});"
+        "})();" ]
 
     // 8-way unicode arrow for a heading in degrees (0 = +X/east, 90 = +Y/north).
     let private dirArrow (deg : float) =
@@ -199,6 +218,10 @@ module GuiInspector =
         // coloured by pin (§A) on the shared signed-distance axis with the ±LoD₉₅
         // band. Hovering a pin (anywhere — legend, matrix row, 3D) highlights its
         // samples (the others dim) — the chart side of the bidirectional brushing.
+        // Consumes the SAME canonical sample array as the 3D side (gid = array index)
+        // so a chart sample brushes back to the exact 3D surface cell. Each pin group
+        // carries parallel "g" (gids) + "s" (values) arrays.
+        let canonA = ScanPinScene.brushSamples model
         let distData =
             AVal.custom (fun t ->
                 let inv = System.Globalization.CultureInfo.InvariantCulture
@@ -214,18 +237,28 @@ module GuiInspector =
                 let readyPins =
                     pins |> HashMap.toList
                     |> List.choose (fun (id, p) -> match p.Probe with ProbeReady r -> Some (id, p, r) | _ -> None)
+                let canon = canonA.GetValue t
                 if List.isEmpty readyPins then "{\"pending\":\"probing pins…\"}"
-                elif List.isEmpty moving then "{\"rows\":[]}"
+                elif List.isEmpty moving || canon.Length = 0 then "{\"rows\":[]}"
                 else
                     let stateLbl = match model.RegView.GetValue t with RegBefore -> "Before" | RegAfter -> "After"
-                    let pooled = ResizeArray<float>()
-                    for (_, _, r) in readyPins do
-                        for d in r.Distributions do
-                            if d.MeshName <> r.ReferenceMesh then for s in d.Samples do pooled.Add (s * 1000.0)
+                    // Bucket the canonical samples by (mesh, pin) → (gid, valueMm), gid = index.
+                    let byMesh = System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<ScanPinId, ResizeArray<int * float>>>()
+                    canon |> Array.iteri (fun gid (id, mesh, _pos, valMm) ->
+                        let md =
+                            match byMesh.TryGetValue mesh with
+                            | true, x -> x
+                            | _ -> let x = System.Collections.Generic.Dictionary<ScanPinId, ResizeArray<int * float>>() in byMesh.[mesh] <- x; x
+                        let lst =
+                            match md.TryGetValue id with
+                            | true, x -> x
+                            | _ -> let x = ResizeArray<int * float>() in md.[id] <- x; x
+                        lst.Add(gid, valMm))
                     let lo, hi =
-                        if pooled.Count = 0 then -10.0, 10.0
+                        let s = canon |> Array.map (fun (_, _, _, v) -> v)
+                        if s.Length = 0 then -10.0, 10.0
                         else
-                            let s = pooled.ToArray() in Array.sortInPlace s
+                            Array.sortInPlace s
                             let q pp =
                                 let h = pp * float (s.Length - 1)
                                 let i = int h
@@ -238,24 +271,31 @@ module GuiInspector =
                         r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
                         |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
                     let rowJson mesh =
-                        let groups =
-                            readyPins |> List.choose (fun (id, p, r) ->
-                                match r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh) with
-                                | Some d when d.Count > 0 ->
-                                    let rs = refStdOf r
-                                    let lod = 1.96 * sqrt (rs * rs + d.Std * d.Std) * 1000.0
-                                    let stride = if d.Samples.Length > 120 then d.Samples.Length / 120 else 1
-                                    let sj = [ 0 .. stride .. d.Samples.Length - 1 ] |> List.map (fun k -> g (d.Samples.[k] * 1000.0)) |> String.concat ","
-                                    let hl = match hov with Some h -> (if h = id then 1 else 0) | None -> 1
-                                    Some (lod, sprintf "{\"color\":\"%s\",\"name\":\"%s %s\",\"lod\":%s,\"hl\":%d,\"med\":%s,\"s\":[%s]}"
-                                                    (c4bToHex p.PinColor) p.Glyph p.ShortName (g lod) hl (g (d.Median * 1000.0)) sj)
-                                | _ -> None)
-                        if List.isEmpty groups then None
-                        else
-                            let avgLod = groups |> List.averageBy fst
-                            Some (sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}" (numbered order mesh) (g avgLod) (groups |> List.map snd |> String.concat ","))
+                        match byMesh.TryGetValue mesh with
+                        | true, md ->
+                            let groups =
+                                readyPins |> List.choose (fun (id, p, r) ->
+                                    match md.TryGetValue id with
+                                    | true, lst when lst.Count > 0 ->
+                                        let dStd = r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh) |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
+                                        let med  = r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh) |> Option.map (fun d -> d.Median) |> Option.defaultValue 0.0
+                                        let rs = refStdOf r
+                                        let lod = 1.96 * sqrt (rs * rs + dStd * dStd) * 1000.0
+                                        let hl = match hov with Some h -> (if h = id then 1 else 0) | None -> 1
+                                        let gids = lst |> Seq.map (fun (gid, _) -> string gid) |> String.concat ","
+                                        let svals = lst |> Seq.map (fun (_, v) -> g v) |> String.concat ","
+                                        Some (lod, sprintf "{\"color\":\"%s\",\"name\":\"%s %s\",\"lod\":%s,\"hl\":%d,\"med\":%s,\"g\":[%s],\"s\":[%s]}"
+                                                        (c4bToHex p.PinColor) p.Glyph p.ShortName (g lod) hl (g (med * 1000.0)) gids svals)
+                                    | _ -> None)
+                            if List.isEmpty groups then None
+                            else
+                                let avgLod = groups |> List.averageBy fst
+                                Some (sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}" (numbered order mesh) (g avgLod) (groups |> List.map snd |> String.concat ","))
+                        | _ -> None
                     let rows = moving |> List.choose rowJson |> String.concat ","
                     sprintf "{\"state\":\"%s\",\"lo\":%s,\"hi\":%s,\"rows\":[%s]}" stateLbl (g lo) (g hi) rows)
+        // Comma-joined brushed gids → the canvas highlight (data-brushed).
+        let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
 
         let inspectDock =
             div {
@@ -317,7 +357,20 @@ module GuiInspector =
                         div {
                             Class "ins-dist"
                             distData |> AVal.map (fun j -> Some (Attribute("data-dist", j)))
-                            observedRender "data-dist" "{}" distJs
+                            brushedData |> AVal.map (fun b -> Some (Attribute("data-brushed", b)))
+                            OnBoot brushChartJs
+                        }
+                        // JS→Elm bridge: the canvas writes brushed gids here + fires an
+                        // input event; this forwards them to the model (§T6).
+                        input {
+                            Class "ins-brush-bridge"
+                            Attribute("type", "text")
+                            Dom.OnInput(fun e ->
+                                let ids =
+                                    e.Value.Split(',')
+                                    |> Array.choose (fun s -> match System.Int32.TryParse s with | true, v -> Some v | _ -> None)
+                                    |> Array.toList
+                                emit (SetBrushedSamples ids))
                         }
                     }
                     // Always mounted at a fixed width so the channel toggle never

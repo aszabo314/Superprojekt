@@ -1,5 +1,5 @@
-//4a135221-7e0d-44fd-9611-2b6d6daa4323
-//363fcc19-f0e5-5173-217a-9f0f3f2962ee
+//f5e09c9d-eb72-d090-ef3f-cb0fada8a707
+//164f0321-9ebf-767f-5545-064acbde133e
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -80,6 +80,7 @@ type AdaptiveModel(value : Model) =
     let _FocusProjection_ = FSharp.Data.Adaptive.cval(value.FocusProjection)
     let _CorrArm_ = FSharp.Data.Adaptive.cval(value.CorrArm)
     let _CorrPreview_ = FSharp.Data.Adaptive.cval(value.CorrPreview)
+    let _BrushedSamples_ = FSharp.Data.Adaptive.cval(value.BrushedSamples)
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
     let _DiffRangeScale_ = FSharp.Data.Adaptive.cval(value.DiffRangeScale)
@@ -138,6 +139,7 @@ type AdaptiveModel(value : Model) =
             _FocusProjection_.Value <- value.FocusProjection
             _CorrArm_.Value <- value.CorrArm
             _CorrPreview_.Value <- value.CorrPreview
+            _BrushedSamples_.Value <- value.BrushedSamples
             _OutlineThreshold_.Value <- value.OutlineThreshold
             _IsolineBands_.Value <- value.IsolineBands
             _DiffRangeScale_.Value <- value.DiffRangeScale
@@ -189,6 +191,7 @@ type AdaptiveModel(value : Model) =
     member __.FocusProjection = _FocusProjection_ :> FSharp.Data.Adaptive.aval<FocusProjection>
     member __.CorrArm = _CorrArm_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.CorrPreview = _CorrPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
+    member __.BrushedSamples = _BrushedSamples_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Set<Microsoft.FSharp.Core.int>>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.DiffRangeScale = _DiffRangeScale_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>

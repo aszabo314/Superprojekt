@@ -72,6 +72,39 @@ module ScanPinScene =
         let e = [| 0,1; 1,2; 2,3; 3,0; 4,5; 5,6; 6,7; 7,4; 0,4; 1,5; 2,6; 3,7 |]
         for (a, b) in e do out.Add(c + v.[a], c + v.[b], col, width)
 
+    // Canonical per-sample list for distribution brushing (§T6) — the single source
+    // of truth shared by the chart (gid labelling), the 3D brushed markers, and the
+    // 3D→chart spatial query. Order is fixed (moving meshes by MeshNames order × ready
+    // pins by (CreatedAt, guid) × sample, strided to ≤ brushMaxPerCell): the array
+    // index IS the sample's global id (gid). Returns (pin, mesh, world-pos, value-mm).
+    let private brushMaxPerCell = 100
+    let brushSamples (model : AdaptiveModel) : aval<(ScanPinId * string * V3d * float)[]> =
+        let pinsVal  = model.ScanPins.Pins |> AMap.toAVal
+        AVal.custom (fun t ->
+            let pins = pinsVal.GetValue t
+            let names = model.MeshNames.Content.GetValue t |> IndexList.toList
+            let vis = model.MeshVisible.GetValue t
+            let rf = (model.Registration.GetValue t).ReferenceMesh
+            let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
+            let ready =
+                pins |> HashMap.toList
+                |> List.choose (fun (id, p) -> match p.Probe with ProbeReady r -> Some (id, r) | _ -> None)
+                |> List.sortBy (fun (ScanPinId.ScanPinId g, _) ->
+                    (match HashMap.tryFind (ScanPinId.ScanPinId g) pins with Some p -> p.CreatedAt | None -> System.DateTime.MinValue), g)
+            let out = ResizeArray<ScanPinId * string * V3d * float>()
+            for mesh in moving do
+                for (id, r) in ready do
+                    match r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh) with
+                    | Some d when d.Count > 0 ->
+                        let n = min d.Samples.Length d.Positions.Length
+                        let stride = if n > brushMaxPerCell then n / brushMaxPerCell else 1
+                        let mutable i = 0
+                        while i < n do
+                            out.Add(id, mesh, d.Positions.[i], d.Samples.[i] * 1000.0)
+                            i <- i + stride
+                    | _ -> ()
+            out.ToArray())
+
     let build
             (env : Env<Message>)
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
@@ -485,4 +518,31 @@ module ScanPinScene =
                         | _ -> [||])
             linesNodeTop notFullscreen segs
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [sampleBrush]])
+        // Brushed individual samples (§T6): emphasized crosses at the brushed samples'
+        // surface positions (in their pin colour), looked up by gid in the SAME
+        // canonical array the chart labels with — so a chart brush lands on the exact
+        // 3D surface cells. Driven by Model.BrushedSamples (chart drag or 3D hover).
+        let brushedMarkers =
+            let canonA = brushSamples model
+            let segs =
+                AVal.custom (fun t ->
+                    let brushed = model.BrushedSamples.GetValue t
+                    if Set.isEmpty brushed then [||]
+                    else
+                        let canon = canonA.GetValue t
+                        let pins = pinsVal.GetValue t
+                        let cc = model.CommonCentroid.GetValue t
+                        let scale = datasetScale.GetValue t
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        for gid in brushed do
+                            if gid >= 0 && gid < canon.Length then
+                                let (pid, _mesh, pos, _v) = canon.[gid]
+                                let col =
+                                    match HashMap.tryFind pid pins with
+                                    | Some p -> V4d(Primitives.c4bToV3d p.PinColor, 1.0)
+                                    | None -> V4d(0.0, 0.78, 0.84, 1.0)
+                                addCross out (ScanPin.renderCentre cc scale pos) 0.06 col 2.4
+                        out.ToArray())
+            linesNodeTop notFullscreen segs
+
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [sampleBrush]; ASet.ofList [brushedMarkers]])

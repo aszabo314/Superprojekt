@@ -450,3 +450,43 @@ module MeshView =
             Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
             nodes
         }
+
+    // Silhouette-only outline G-buffer for whichever mesh is the current reference
+    // (ContourSpacing 0 ⇒ no isolines, just the depth-break silhouette), in a fixed
+    // colour. Feeds OutlineView.buildFromNode for the focus single's reference overlay.
+    // The node set is stable (one per mesh, keyed by name); only the reference's node is
+    // Active, gated by `show` (the focus single passes "a reference exists and it isn't
+    // the shown mesh"), so a reference change just flips Active — no rebuild.
+    let buildReferenceOutlineNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (color : V4f) (show : aval<bool>) : ISceneNode =
+        let refNameA = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
+        let nodes =
+            model.MeshNames |> AList.map (fun name ->
+                let loaded = loadMeshAsync (fun () -> ()) name
+                let scale = scaleFor model name
+                let meshT = displayedMeshT model name
+                let active =
+                    (refNameA, show, loaded.fvc) |||> AVal.map3 (fun rf s c ->
+                        s && c > 3 && rf = Some name)
+                sg {
+                    Sg.Active active
+                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                    Sg.Shader {
+                        DefaultSurfaces.trafo
+                        OutlineGBuffer.shade
+                    }
+                    Sg.Uniform("MeshColor", AVal.constant color)
+                    Sg.Uniform("ContourSpacing", AVal.constant 0.0f)
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
+                            string DefaultSemantic.Normals,   BufferView(loaded.nrm, typeof<V3f>)
+                        ])
+                    Sg.Index(BufferView(loaded.idx, typeof<int>))
+                    Sg.Render loaded.fvc
+                }) |> AList.toASet
+        sg {
+            Sg.View view
+            Sg.Proj proj
+            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+            nodes
+        }

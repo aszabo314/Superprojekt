@@ -20,11 +20,14 @@ module OutlineView =
 
     let private outline1 = Sym.ofString "Outline1"
 
-    let build
+    // Offscreen G-buffer + fullscreen edge-detect composite for an arbitrary outline
+    // node (already carrying its own View/Proj/Trafo). Shared by the main-view all-mesh
+    // outline and the focus single's reference-mesh silhouette overlay. The composite is
+    // DepthTest.None → it draws on top of whatever preceded it in the framebuffer.
+    let buildFromNode
         (info : Aardvark.Dom.RenderControlInfo)
-        (model : AdaptiveModel)
-        (view : aval<Trafo3d>)
-        (proj : aval<Trafo3d>) : aset<ISceneNode> =
+        (thresholdA : aval<float32>)
+        (node : ISceneNode) : aset<ISceneNode> =
 
         let runtime = info.Runtime
         let size = info.ViewportSize
@@ -50,7 +53,6 @@ module OutlineView =
                 DefaultSemantic.DepthStencil, depthAtt
             ])
 
-        let node = MeshView.buildOutlineNode model view proj
         let renderObjects, _ = node.GetObjects(TraversalState.empty runtime)
 
         let task = runtime.CompileRender(signature, renderObjects)
@@ -74,7 +76,7 @@ module OutlineView =
                 Sg.Uniform("GNormal", gNormal)
                 Sg.Uniform("GColor", gColor)
                 Sg.Uniform("OutlineTexel", texel)
-                Sg.Uniform("OutlineThreshold", model.OutlineThreshold |> AVal.map float32)
+                Sg.Uniform("OutlineThreshold", thresholdA)
                 Sg.VertexAttributes(
                     HashMap.ofList [
                         string DefaultSemantic.Positions,
@@ -86,3 +88,10 @@ module OutlineView =
             }
 
         ASet.single composite
+
+    let build
+        (info : Aardvark.Dom.RenderControlInfo)
+        (model : AdaptiveModel)
+        (view : aval<Trafo3d>)
+        (proj : aval<Trafo3d>) : aset<ISceneNode> =
+        buildFromNode info (model.OutlineThreshold |> AVal.map float32) (MeshView.buildOutlineNode model view proj)

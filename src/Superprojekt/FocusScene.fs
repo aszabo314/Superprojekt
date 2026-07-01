@@ -382,6 +382,7 @@ module FocusScene =
         renderControl {
             RenderControl.Samples 1
             Class "focus-rc"
+            let! info = RenderControl.Info
             let! size = RenderControl.ViewportSize
             // Cursor coords are CSS px (DOM); ViewportSize is framebuffer px (CSS ×
             // devicePixelRatio). Divide out the shared dpr to get CSS-px size for the
@@ -511,6 +512,19 @@ module FocusScene =
             let viewT, projT =
                 if isPano then AVal.constant Trafo3d.Identity, AVal.constant Trafo3d.Identity
                 else orthoCam size panoEye fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
+            // Reference-mesh silhouette overlaid on the enlarged single when a non-reference
+            // (moving) mesh is shown — the image-space outline reused from the 3D view, in
+            // gold, drawn on top (Correspondence + Inspect; the single only exists there).
+            // Top only: the pano unwrap isn't handled here (request). Reference is never
+            // solved, so the outline is pose-stable while the moving surface shifts under it.
+            let refOutline =
+                if isPano then ASet.empty
+                else
+                    let show =
+                        model.Registration |> AVal.map (fun r ->
+                            match r.ReferenceMesh with Some rf -> rf <> name | None -> false)
+                    let node = MeshView.buildReferenceOutlineNode model viewT projT (V4f(0.831f, 0.631f, 0.024f, 1.0f)) show
+                    OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) node
             let surface =
                 if isPano then
                     sg {
@@ -550,6 +564,7 @@ module FocusScene =
                 Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 surface
+                refOutline
                 Lines.render arrowSegs
                 overlay
             }

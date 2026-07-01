@@ -231,6 +231,13 @@ body.loaded { background: #f4f6f8; }
 .rail-flag-ready { color: #475569; }
 .rail-flag-low { color: #b45309; background: #fff7ed; }
 .rail-mesh-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Per-mesh intrinsic error-viz switches (Overview roster) — compact, right-aligned. */
+.rail-mesh-modes { margin-left: auto; flex-shrink: 0; }
+.rail-mesh-modes .cbb-btn { padding: 1px 5px; font-size: 10px; line-height: 13px; }
+/* Solve button + reconstruction-readiness hint at the top of the Correspondence body. */
+.rail-solve-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; }
+.rail-solve { flex-shrink: 0; }
+.rail-readiness { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
 .rail-step-controls { display: flex; flex-direction: column; gap: 8px; }
 .rail-toggle-row, .rail-commit-row { display: flex; gap: 6px; align-items: center; }
 .rail-btn {
@@ -262,6 +269,9 @@ body.loaded { background: #f4f6f8; }
 }
 .mx-colhead:hover { background: #ecfeff; }
 .mx-col-sel { background: #eaf1ff; box-shadow: inset 0 2px 0 #1a56db; }
+/* Reference mesh column: gold ring on the header + gold rails on its cells
+   (mirrors the reference tile's gold ring in the focus panel). */
+.mx-col-ref { background: #fffbeb; box-shadow: inset 0 0 0 2px #d4a106; }
 .mx-colsw { width: 14px; height: 6px; border-radius: 2px; display: inline-block; }
 .mx-colnum { font-weight: 700; color: #334155; font-size: 10px; }
 .mx-colref { color: #1a56db; font-size: 9px; line-height: 1; }
@@ -286,6 +296,8 @@ body.loaded { background: #f4f6f8; }
 }
 .mx-cell:hover { border-color: #0891b2; }
 .mx-cell-active { border-color: #0891b2; box-shadow: 0 0 0 1px #0891b2; }
+/* cells of the reference column: gold side-rails so the whole column reads gold */
+.mx-cell-ref { border-left-color: #d4a106; border-right-color: #d4a106; }
 /* out-of-ROI: a faint hairline hatch, not blank */
 .mx-cell-empty {
     background: repeating-linear-gradient(45deg, #f4f6f8, #f4f6f8 3px, #e2e8f0 3px, #e2e8f0 4px) !important;
@@ -388,16 +400,18 @@ body.loaded { background: #f4f6f8; }
 /* large single — WebGL render control (textured; pan/zoom/pick) */
 .focus-single { width: 100%; height: 280px; background: #eef2f6; position: relative; touch-action: none; }
 .focus-rc { display: block; width: 100%; height: 100%; }
-/* WebGL small-multiples strip */
+/* WebGL small-multiples strip — a grid so the tiles grow to fill each row exactly
+   (no ragged right-edge gap) and align column-to-column. */
 .focus-multiples {
-    display: flex; flex-wrap: wrap; gap: 6px; align-content: flex-start;
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+    gap: 4px; align-content: flex-start;
     padding: 6px; overflow-y: auto; max-height: 40vh;
     border-top: 1px solid #e6eaf0;
 }
 .focus-tile {
     display: flex; flex-direction: column; gap: 2px;
     border: 1px solid #e2e8f0; border-radius: 4px; padding: 2px; background: #fff;
-    width: 100px;
+    width: auto; min-width: 0;
 }
 .focus-tile:hover { border-color: #94a3b8; }
 .focus-tile.fm-active { border-color: #1a56db; box-shadow: 0 0 0 1px #1a56db inset; }

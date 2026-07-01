@@ -23,8 +23,10 @@ module FocusShaders =
         member x.PanoZoom   : float32 = uniform?PanoZoom
         member x.PanoAspect : float32 = uniform?PanoAspect
         member x.PanoRadFar : float32 = uniform?PanoRadFar
-        // Inspect channel overlay: 0 = texture (pass through), 1 = diverging signed
-        // difference, 2 = sequential displacement magnitude. FocusScalar is per vertex.
+        // Focus overlay: 0 = texture (pass through), 1 = diverging signed difference,
+        // 2 = sequential displacement magnitude, 3 = flat white; the per-mesh intrinsic
+        // layers 4 = incidence, 5 = range, 6 = shape carry a pre-normalized [0,1]
+        // FocusScalar and map to the same colours as the 3D mesh-shader heatmaps.
         member x.FocusMode : int     = uniform?FocusMode
         member x.FocusHi   : float32 = uniform?FocusHi
         member x.FocusLod  : float32 = uniform?FocusLod
@@ -43,6 +45,27 @@ module FocusShaders =
         fragment {
             if uniform.FocusMode = 0 then return v.c
             elif uniform.FocusMode = 3 then return V4f(0.957f, 0.969f, 0.980f, 1.0f)
+            // Intrinsic per-mesh heatmaps (pre-normalized scalar) — same ramps as the
+            // 3D mesh shader. Incidence: grazing red → head-on green (via yellow).
+            elif uniform.FocusMode = 4 then
+                let incid = clamp 0.0f 1.0f v.s
+                let lo  = V3f(0.84f, 0.19f, 0.15f)
+                let mid = V3f(0.99f, 0.85f, 0.30f)
+                let hi  = V3f(0.18f, 0.55f, 0.34f)
+                if incid < 0.5f then return V4f(lo + (mid - lo) * (incid * 2.0f), 1.0f)
+                else return V4f(mid + (hi - mid) * ((incid - 0.5f) * 2.0f), 1.0f)
+            // Range: near blue → far red.
+            elif uniform.FocusMode = 5 then
+                let tr = clamp 0.0f 1.0f v.s
+                let nearC = V3f(0.13f, 0.40f, 0.85f)
+                let farC  = V3f(0.86f, 0.20f, 0.15f)
+                return V4f(nearC * (1.0f - tr) + farC * tr, 1.0f)
+            // Shape: poor red → good green (quality ≥ 0.75 reads fully green).
+            elif uniform.FocusMode = 6 then
+                let ts = clamp 0.0f 1.0f (v.s / 0.75f)
+                let loC = V3f(0.86f, 0.20f, 0.15f)
+                let hiC = V3f(0.18f, 0.55f, 0.34f)
+                return V4f(loC * (1.0f - ts) + hiC * ts, 1.0f)
             elif abs v.s >= 1e20f then return V4f(0.886f, 0.910f, 0.941f, 1.0f)
             elif uniform.FocusMode = 2 then
                 let t = min 1.0f (max 0.0f (abs v.s / max 1e-6f uniform.FocusHi))

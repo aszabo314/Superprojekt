@@ -40,7 +40,8 @@ type Message =
     | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]
     | AnchorSeedFailed of string
     | ClearToast
-    | SetHeatmapMode of HeatmapMode
+    // Per-mesh intrinsic error visualization (Overview mesh list). HeatOff = textured.
+    | SetMeshHeatmap of mesh:string * HeatmapMode
     // Difference sub-mode (M3C2 ↔ Δz) for the Inspect focus tiles.
     | ToggleExtrinsicZDiff
     | VarianceComputed of mesh:string * float32[]

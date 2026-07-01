@@ -100,6 +100,27 @@ module MeshView =
             | RegAfter, Some t -> t
             | _ -> Map.tryFind name load |> Option.defaultValue Trafo3d.Identity)
 
+    // Per-vertex triangle shape quality (incident-face mean of 4√3·A/Σl², clamped
+    // 0..1; 1 = equilateral, →0 = thin/degenerate). Shared by the 3D shape heatmap
+    // buffer and the 2D focus tile shape overlay.
+    let shapeQuality (pos : V3f[]) (idx : int[]) : float32[] =
+        let q   = Array.zeroCreate<float32> pos.Length
+        let cnt = Array.zeroCreate<int> pos.Length
+        let mutable f = 0
+        while f + 2 < idx.Length do
+            let a, b, c = idx.[f], idx.[f+1], idx.[f+2]
+            let pa, pb, pc = pos.[a], pos.[b], pos.[c]
+            let denom = (pb - pa).LengthSquared + (pc - pb).LengthSquared + (pa - pc).LengthSquared
+            let area  = 0.5f * (Vec.cross (pb - pa) (pc - pa)).Length
+            let ql    = if denom > 1e-12f then clamp 0.0f 1.0f (4.0f * 1.7320508f * area / denom) else 0.0f
+            q.[a] <- q.[a] + ql; cnt.[a] <- cnt.[a] + 1
+            q.[b] <- q.[b] + ql; cnt.[b] <- cnt.[b] + 1
+            q.[c] <- q.[c] + ql; cnt.[c] <- cnt.[c] + 1
+            f <- f + 3
+        for i in 0 .. pos.Length - 1 do
+            if cnt.[i] > 0 then q.[i] <- q.[i] / float32 cnt.[i]
+        q
+
     // Saturated end of a diverging/sequential scalar map: 95th percentile of the
     // finite |values| (1e20 = sentinel for "no value"), floored at 1e-3.
     let robustHi (arr : float32[]) =
@@ -185,9 +206,13 @@ module MeshView =
                             // floor; solo m → m stays solid (it paints its own difference /
                             // displacement field). An intrinsic channel keeps all solid.
                             let isSolo = match model.MeshSolo.GetValue t with Solo(s, _) -> s = name | _ -> false
+                            // A mesh carrying its own intrinsic heatmap stays solid so
+                            // that error layer reads even in the Inspect no-solo aggregate.
+                            let hasHeatmap =
+                                (Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff) <> HeatOff
                             let inspectGhost =
                                 model.WorkflowStep.GetValue t = Inspect
-                                && model.HeatmapMode.GetValue t = HeatOff
+                                && not hasHeatmap
                                 && not isSolo
                                 && (match (model.Registration.GetValue t).ReferenceMesh with
                                     | Some rf -> rf <> name
@@ -278,30 +303,11 @@ module MeshView =
                         match loaded.mesh.Value with
                         | Some md -> ArrayBuffer (Array.zeroCreate<float32> md.positions.Length) :> IBuffer
                         | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
-            // Shape heatmap: per-vertex triangle quality (incident-face mean of
-            // 4√3·A/Σl², clamped 0..1). Recomputed once when geometry loads.
+            // Shape heatmap: per-vertex triangle quality. Recomputed once on load.
             let shapeBuf =
                 loaded.pos |> AVal.map (fun _ ->
                     match loaded.mesh.Value with
-                    | Some md ->
-                        let pos = md.positions
-                        let idx = md.indices
-                        let q   = Array.zeroCreate<float32> pos.Length
-                        let cnt = Array.zeroCreate<int> pos.Length
-                        let mutable f = 0
-                        while f + 2 < idx.Length do
-                            let a, b, c = idx.[f], idx.[f+1], idx.[f+2]
-                            let pa, pb, pc = pos.[a], pos.[b], pos.[c]
-                            let denom = (pb - pa).LengthSquared + (pc - pb).LengthSquared + (pa - pc).LengthSquared
-                            let area  = 0.5f * (Vec.cross (pb - pa) (pc - pa)).Length
-                            let ql    = if denom > 1e-12f then clamp 0.0f 1.0f (4.0f * 1.7320508f * area / denom) else 0.0f
-                            q.[a] <- q.[a] + ql; cnt.[a] <- cnt.[a] + 1
-                            q.[b] <- q.[b] + ql; cnt.[b] <- cnt.[b] + 1
-                            q.[c] <- q.[c] + ql; cnt.[c] <- cnt.[c] + 1
-                            f <- f + 3
-                        for i in 0 .. pos.Length - 1 do
-                            if cnt.[i] > 0 then q.[i] <- q.[i] / float32 cnt.[i]
-                        ArrayBuffer q :> IBuffer
+                    | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
                     | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
             let distEncoding = inspectField |> AVal.map fst
             // Saturated end of the map: robust (95th pct |value|). The difference map
@@ -359,13 +365,15 @@ module MeshView =
                     Sg.Uniform("ClipPlane1",           clipPlane1)
                     Sg.Uniform("DistanceEncoding",     distEncoding)
                     Sg.Uniform("DistScale",            distScale)
-                    // Intrinsic channels are an Inspect-only "error layer" (§C). Force
-                    // off elsewhere so Overview/Correspondence stay plain textured even
-                    // if a channel was left selected in the Inspect rail.
+                    // Per-mesh intrinsic error layer (set from the Overview mesh list),
+                    // respected in every workflow mode. Suppressed while this mesh paints
+                    // an Inspect comparison field (distEncoding ≠ 0) so the 2-mesh /
+                    // before-after encodings win where they apply.
                     Sg.Uniform("HeatmapMode",
-                        AVal.custom (fun t ->
-                            if model.WorkflowStep.GetValue t <> Inspect then 0
-                            else match model.HeatmapMode.GetValue t with HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
+                        (model.MeshHeatmap, distEncoding) ||> AVal.map2 (fun mh enc ->
+                            if enc <> 0 then 0
+                            else match Map.tryFind name mh |> Option.defaultValue HeatOff with
+                                 | HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
                     // Show-overlays modifier (§T8): greyscale the mesh while held; the

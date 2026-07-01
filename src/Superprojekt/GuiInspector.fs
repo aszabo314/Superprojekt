@@ -164,12 +164,9 @@ module GuiInspector =
                 }
                 div {
                     Class "ins-mgr-foot"
+                    // The Solve button moved to the Correspondence rail body (above the
+                    // matrix); this foot keeps the selected pin's k/n coverage badge.
                     span { Class "ins-kn"; kn |> AVal.map (fun (k, n) -> sprintf "k/n %d/%d" k n) }
-                    button {
-                        Class "rail-btn rail-btn-primary ins-solve"
-                        Dom.OnClick(fun _ -> emit SolveCoarse)
-                        "Solve"
-                    }
                 }
             }
 
@@ -305,6 +302,8 @@ module GuiInspector =
                     ]
                     // Difference sub-mode (M3C2 ↔ Δz) — only meaningful in the
                     // Difference channel. Moved here from the rail (rail = matrix now).
+                    // The single-mesh intrinsic channels (incidence / range / shape)
+                    // moved to the Overview mesh list as per-mesh switches.
                     div {
                         Class "ins-insp-sub"
                         showWhen (channelA |> AVal.map ((=) ChDifference))
@@ -312,17 +311,6 @@ module GuiInspector =
                         compactButtonBar [
                             "M3C2", (model.ExtrinsicZDiff |> AVal.map not),  (fun () -> if AVal.force model.ExtrinsicZDiff then emit ToggleExtrinsicZDiff)
                             "Δz",   (model.ExtrinsicZDiff :> aval<bool>),    (fun () -> if not (AVal.force model.ExtrinsicZDiff) then emit ToggleExtrinsicZDiff)
-                        ]
-                    }
-                    // Intrinsic per-fragment channel (camera incidence / range / shape).
-                    div {
-                        Class "ins-insp-sub"
-                        span { Class "ins-insp-label"; "Intrinsic" }
-                        compactButtonBar [
-                            "Off",       (model.HeatmapMode |> AVal.map (fun m -> m = HeatOff)),        (fun () -> emit (SetHeatmapMode HeatOff))
-                            "Incidence", (model.HeatmapMode |> AVal.map (fun m -> m = HeatIncidence)),  (fun () -> emit (SetHeatmapMode HeatIncidence))
-                            "Range",     (model.HeatmapMode |> AVal.map (fun m -> m = HeatRange)),      (fun () -> emit (SetHeatmapMode HeatRange))
-                            "Shape",     (model.HeatmapMode |> AVal.map (fun m -> m = HeatShape)),      (fun () -> emit (SetHeatmapMode HeatShape))
                         ]
                     }
                 }

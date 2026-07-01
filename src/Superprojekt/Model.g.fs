@@ -1,5 +1,5 @@
-//5c7a3ebc-50f9-5aa4-6d69-22da156122e6
-//74f0e4a1-d82d-89c3-62e6-955d5c365ce8
+//fa241c83-b280-257e-a949-187132333f7e
+//9278608f-0199-33cf-572b-9e1589e3f67b
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -66,7 +66,7 @@ type AdaptiveModel(value : Model) =
     let _RegPeekHeld_ = FSharp.Data.Adaptive.cval(value.RegPeekHeld)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
-    let _HeatmapMode_ = FSharp.Data.Adaptive.cval(value.HeatmapMode)
+    let _MeshHeatmap_ = FSharp.Data.Adaptive.cval(value.MeshHeatmap)
     let _ExtrinsicZDiff_ = FSharp.Data.Adaptive.cval(value.ExtrinsicZDiff)
     let _SurfaceDistance_ = FSharp.Data.Adaptive.cval(value.SurfaceDistance)
     let _FocusDist_ = FSharp.Data.Adaptive.cval(value.FocusDist)
@@ -125,7 +125,7 @@ type AdaptiveModel(value : Model) =
             _RegPeekHeld_.Value <- value.RegPeekHeld
             _Registration_.Value <- value.Registration
             _Toast_.Value <- value.Toast
-            _HeatmapMode_.Value <- value.HeatmapMode
+            _MeshHeatmap_.Value <- value.MeshHeatmap
             _ExtrinsicZDiff_.Value <- value.ExtrinsicZDiff
             _SurfaceDistance_.Value <- value.SurfaceDistance
             _FocusDist_.Value <- value.FocusDist
@@ -177,7 +177,7 @@ type AdaptiveModel(value : Model) =
     member __.RegPeekHeld = _RegPeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
-    member __.HeatmapMode = _HeatmapMode_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
+    member __.MeshHeatmap = _MeshHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, HeatmapMode>>
     member __.ExtrinsicZDiff = _ExtrinsicZDiff_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SurfaceDistance = _SurfaceDistance_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.FocusDist = _FocusDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>

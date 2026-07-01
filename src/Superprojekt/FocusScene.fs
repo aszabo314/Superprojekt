@@ -175,16 +175,24 @@ module FocusScene =
     // |load→solved| computed here, sequential). Texture/no-data → a zero buffer of the
     // right length (the shader ignores it).
     let private focusOverlay (model : AdaptiveModel) (name : string) (loaded : LoadedMesh) (scale : aval<float>) =
+        // Inspect comparison overlay (1 = difference, 2 = displacement) takes
+        // precedence; otherwise the per-mesh intrinsic heatmap (4/5/6) mirrors the 3D
+        // view. HeatOff / no comparison ⇒ 0 (texture).
         let modeA =
             AVal.custom (fun t ->
-                if model.WorkflowStep.GetValue t <> Inspect then 0
-                else
-                    let rf = (model.Registration.GetValue t).ReferenceMesh
-                    if Some name = rf then 0
+                let inspectMode =
+                    if model.WorkflowStep.GetValue t <> Inspect then 0
                     else
-                        match model.InspectChannel.GetValue t with
-                        | ChDifference -> if Map.containsKey name (model.FocusDist.GetValue t) then 1 else 0
-                        | ChDisplacement -> if Map.containsKey name (model.SolvedTransforms.GetValue t) then 2 else 0)
+                        let rf = (model.Registration.GetValue t).ReferenceMesh
+                        if Some name = rf then 0
+                        else
+                            match model.InspectChannel.GetValue t with
+                            | ChDifference -> if Map.containsKey name (model.FocusDist.GetValue t) then 1 else 0
+                            | ChDisplacement -> if Map.containsKey name (model.SolvedTransforms.GetValue t) then 2 else 0
+                if inspectMode <> 0 then inspectMode
+                else
+                    match Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff with
+                    | HeatOff -> 0 | HeatIncidence -> 4 | HeatRange -> 5 | HeatShape -> 6)
         let scalarData =
             AVal.custom (fun t ->
                 let zero () =
@@ -207,6 +215,34 @@ module FocusScene =
                             let p = V3d pos.[i]
                             float32 ((solvedF.TransformPos p - loadF.TransformPos p).Length / sc))
                         (ArrayBuffer mag :> IBuffer, MeshView.robustHi mag)
+                    | None -> zero ()
+                // Intrinsic per-mesh heatmaps: per-vertex scalar pre-normalized to [0,1]
+                // in the mesh's own (pose-independent) frame. Sensor = the pano centre in
+                // mesh-local coords (no entry ⇒ the mesh origin), matching MeshView.
+                | 4 | 5 | 6 as m ->
+                    loaded.pos.GetValue t |> ignore
+                    match loaded.mesh.Value with
+                    | Some md ->
+                        let pos = md.positions
+                        let sensor =
+                            match Map.tryFind name (model.PanoCenters.GetValue t) with
+                            | Some w -> V3f (w - loaded.centroid.GetValue t)
+                            | None -> V3f.Zero
+                        let arr =
+                            match m with
+                            | 4 ->
+                                let nrm = md.normals
+                                Array.init pos.Length (fun i ->
+                                    let toS = (sensor - pos.[i]).Normalized
+                                    abs (Vec.dot (nrm.[i].Normalized) toS))
+                            | 5 ->
+                                let mutable mx = 1e-6f
+                                for p in pos do
+                                    let d = (p - sensor).Length
+                                    if d > mx then mx <- d
+                                pos |> Array.map (fun p -> (p - sensor).Length / mx)
+                            | _ -> MeshView.shapeQuality pos md.indices
+                        (ArrayBuffer arr :> IBuffer, 1.0f)
                     | None -> zero ()
                 | _ -> zero ())
         // The difference channel's range (FocusMode 1) is user-scalable from the gear
@@ -407,9 +443,10 @@ module FocusScene =
                 let p = e.OffsetPosition
                 lastPx <- p
                 downPx <- p
-                // Middle-drag always pans (matches the 3D view, §T10). Left = place when
-                // armed here, else pan.
-                if e.Button = Button.Middle then dragging <- true
+                // Pan on middle-drag or Shift+left-drag — the same binding as the 3D
+                // view's in-plane pan. Plain left = place when armed here, else a click
+                // (link-views fly on pointer-up); it no longer pans.
+                if e.Button = Button.Middle || (e.Button = Button.Left && e.Shift) then dragging <- true
                 else
                     match armedHere () with
                     | Some pinId ->
@@ -419,8 +456,7 @@ module FocusScene =
                                 | Some world -> env.Emit [PickCorrespondenceAt(pinId, name, world)]
                                 | None -> ()
                             } |> Async.Start
-                    | None ->
-                        if e.Button = Button.Left then dragging <- true)
+                    | None -> ())
             Dom.OnPointerUp(fun e ->
                 dragging <- false
                 // Link-views: a clean left click (no drag) flies the 3D camera to that

@@ -72,22 +72,8 @@ module GuiTopBar =
                 }
             }
 
-            // Reconstruction readiness — the global correspondence status (moved out of
-            // the rail; per-mesh / per-pin hints are gone, superseded by the matrix).
-            // Only shown in the Correspondence workflow.
-            let readiness = ReadinessView.input model |> AVal.map Readiness.compute
-            let sevClass = function Blocker -> "block" | Warning -> "warn" | Ready -> "ready" | Info -> "info"
-            let sevIcon  = function Blocker -> "✖" | Warning -> "⚠" | Ready -> "✔" | Info -> "•"
-            div {
-                Class "tb-readiness"
-                showWhen (model.WorkflowStep |> AVal.map ((=) Correspondence))
-                readiness |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun d ->
-                    span {
-                        Class (sprintf "tb-ready-pill tb-ready-%s" (sevClass d.Severity))
-                        span { Class "tb-ready-ic"; sevIcon d.Severity }
-                        span { Class "tb-ready-tx"; d.Text }
-                    })
-            }
+            // The reconstruction-readiness hint moved to the Correspondence rail body,
+            // next to the Solve button (GuiRail).
 
             div {
                 Class "tb-right"

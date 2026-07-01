@@ -178,7 +178,10 @@ type Model =
 
         Toast                 : string option
 
-        HeatmapMode           : HeatmapMode
+        // Per-mesh intrinsic single-mesh error visualization (incidence / range /
+        // shape), set from the Overview mesh list. Absent ⇒ HeatOff (textured).
+        // Respected in the 3D view and the 2D focus tiles/single alike.
+        MeshHeatmap           : Map<string, HeatmapMode>
 
         // Difference sub-mode for the Inspect focus tiles: false = signed M3C2,
         // true = vertical Δz.
@@ -315,7 +318,7 @@ module Model =
             ExtrinsicZDiff        = false
             SurfaceDistance       = Map.empty
             FocusDist             = Map.empty
-            HeatmapMode           = HeatOff
+            MeshHeatmap           = Map.empty
             ScanPins              = ScanPinModel.initial
             Selection             = Selection.initial
             RenderingMode       = Textured

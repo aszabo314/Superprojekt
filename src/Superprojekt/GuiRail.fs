@@ -24,14 +24,6 @@ module GuiRail =
         | PillBlock -> "rail-pill rail-pill-block"
         | PillInfo  -> "rail-pill rail-pill-info"
 
-    let private sensorLabel = function
-        | RoverStereo -> "Rover" | Satellite -> "Sat"
-        | Photogrammetry -> "Photo" | LiDAR -> "LiDAR" | UnknownSensor -> "—"
-
-    let private sensorNext = function
-        | UnknownSensor -> RoverStereo | RoverStereo -> Satellite
-        | Satellite -> Photogrammetry | Photogrammetry -> LiDAR | LiDAR -> UnknownSensor
-
     let private hex = Primitives.c4bToRgbCss
 
     let rail (env : Env<Message>) (model : AdaptiveModel) (viewportSize : aval<V2i>) =
@@ -90,7 +82,6 @@ module GuiRail =
             let isRef  = refMesh |> AVal.map ((=) (Some name))
             let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
             let colorVal = idxVal |> AVal.map meshColor
-            let sensor = model.MeshSensorTypes |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue UnknownSensor)
             let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverMesh m) -> m = name | _ -> false)
             let focused = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
             let swatch = span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
@@ -127,13 +118,6 @@ module GuiRail =
                     Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name])
                     "◐"
                 }
-            let sensorBtn =
-                button {
-                    Class "mb rail-sensor"
-                    Attribute("title", "Sensor type (cycles)")
-                    Dom.OnClick(fun _ -> env.Emit [SetMeshSensorType(name, sensorNext (AVal.force sensor))])
-                    sensor |> AVal.map sensorLabel
-                }
             let frameBtn =
                 button {
                     Class "mb"
@@ -153,7 +137,7 @@ module GuiRail =
                 // hover = peek-isolate this mesh via the shared Selection.
                 Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
-                AList.ofList ([ swatch; num; nameSpan; refBtn; visBtn; soloBtn; sensorBtn; frameBtn ])
+                AList.ofList ([ swatch; num; nameSpan; refBtn; visBtn; soloBtn; frameBtn ])
             }
         let overviewBody =
             div { Class "rail-mesh-list"; model.MeshNames |> AList.map meshRow }
@@ -165,20 +149,29 @@ module GuiRail =
         // (the probe refetches on RegView), out-of-ROI → a faint emptiness glyph.
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         // (pin, mesh) selection + tight camera sync: locate when a marker exists,
-        // else select + focus + fly to the pin centre.
+        // else select + focus + fly to the pin centre. Clicking the ALREADY-selected
+        // cell toggles it off: clears the selection + isolation (BackOutLocate restores
+        // the pre-locate camera / solo / visibility) so the same click un-isolates.
         let selectCell (id : ScanPinId) (mesh : string) =
-            let corr = HashMap.tryFind id (AVal.force pinsVal) |> Option.bind ScanPin.correspondence
-            match corr |> Option.bind (fun c -> Map.tryFind mesh c.Anchors) with
-            | Some a ->
-                let cc = AVal.force model.CommonCentroid
-                let s  = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
-                let world = (RigidTransform.renderToWorld s cc (AVal.force (MeshView.displayedMeshT model mesh))).Forward.TransformPos a.Point
-                env.Emit [FrameCorrespondence(id, mesh)]
-                FocusScene.focusOnWorld model mesh world 4.0
-            | None ->
-                // No marker yet: select the pin + focus the mesh; the reducers fly
-                // both cameras (§T9).
-                env.Emit [ScanPinMsg (SelectPin (Some id)); SetFocusedMesh (Some mesh)]
+            let isSelected =
+                AVal.force model.Selection.SelectedPin = Some id
+                && AVal.force model.Selection.FocusedMesh = Some mesh
+            if isSelected then
+                env.Emit [BackOutLocate; SetFocusedMesh None; ScanPinMsg (SelectPin None)]
+                FocusScene.resetCam (Some mesh)
+            else
+                let corr = HashMap.tryFind id (AVal.force pinsVal) |> Option.bind ScanPin.correspondence
+                match corr |> Option.bind (fun c -> Map.tryFind mesh c.Anchors) with
+                | Some a ->
+                    let cc = AVal.force model.CommonCentroid
+                    let s  = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
+                    let world = (RigidTransform.renderToWorld s cc (AVal.force (MeshView.displayedMeshT model mesh))).Forward.TransformPos a.Point
+                    env.Emit [FrameCorrespondence(id, mesh)]
+                    FocusScene.focusOnWorld model mesh world 4.0
+                | None ->
+                    // No marker yet: select the pin + focus the mesh; the reducers fly
+                    // both cameras (§T9).
+                    env.Emit [ScanPinMsg (SelectPin (Some id)); SetFocusedMesh (Some mesh)]
         let matrixHead () =
             div {
                 Class "mx-head"

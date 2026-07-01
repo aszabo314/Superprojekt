@@ -43,7 +43,6 @@ module ScanPinUpdate =
         let shortName = Primitives.PinIdentity.shortName taken (g.GetHashCode())
         {
             Id                   = id
-            Name                 = PinNames.generate id
             Glyph                = Primitives.PinPalette.glyph slot
             ShortName            = shortName
             PinColor             = Primitives.PinPalette.color slot
@@ -159,14 +158,15 @@ module ScanPinUpdate =
         // Cheap exists-check first: this postlude runs on every message (incl. Rendered).
         if not (sp.Pins |> HashMap.exists (fun _ p -> match p.Probe with ProbeNone -> true | _ -> false)) then model
         else
-            let visible =
-                model.MeshNames |> IndexList.toList
-                |> List.filter (fun n -> Map.tryFind n model.MeshVisible |> Option.defaultValue true)
-            match visible with
+            // Probe every mesh regardless of visibility (like ensureRings) so the rail
+            // matrix has a stable cell per (pin, mesh) — visibility only gates rendering
+            // + the distribution/3D consumers, never the probe itself.
+            let allMeshes = model.MeshNames |> IndexList.toList
+            match allMeshes with
             | [] -> model
             | _ ->
-                let refMesh0 = model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r visible)
-                let meshes = visible |> List.map (fun n -> n, (ModelTransforms.displayedWorld model n).Forward)
+                let refMesh0 = model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r allMeshes)
+                let meshes = allMeshes |> List.map (fun n -> n, (ModelTransforms.displayedWorld model n).Forward)
                 let pending =
                     sp.Pins |> HashMap.toList
                     |> List.filter (fun (_, p) -> match p.Probe with ProbeNone -> true | _ -> false)
@@ -174,8 +174,8 @@ module ScanPinUpdate =
                 for (id, pin) in pending do
                     let refMesh =
                         refMesh0
-                        |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h visible))
-                        |> Option.defaultValue (List.head visible)
+                        |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h allMeshes))
+                        |> Option.defaultValue (List.head allMeshes)
                     match probeCtsMap.TryGetValue id with
                     | true, cts -> cts.Cancel()
                     | _ -> ()

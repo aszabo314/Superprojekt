@@ -1,5 +1,5 @@
-//f5e09c9d-eb72-d090-ef3f-cb0fada8a707
-//164f0321-9ebf-767f-5545-064acbde133e
+//2026a23a-b280-19bb-394d-1a47300e7189
+//3ba80cb9-e24b-f856-6de9-4cbc418ad7c9
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -65,7 +65,6 @@ type AdaptiveModel(value : Model) =
     let _RegView_ = FSharp.Data.Adaptive.cval(value.RegView)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
-    let _MeshSensorTypes_ = FSharp.Data.Adaptive.cval(value.MeshSensorTypes)
     let _HeatmapMode_ = FSharp.Data.Adaptive.cval(value.HeatmapMode)
     let _ExtrinsicZDiff_ = FSharp.Data.Adaptive.cval(value.ExtrinsicZDiff)
     let _SurfaceDistance_ = FSharp.Data.Adaptive.cval(value.SurfaceDistance)
@@ -124,7 +123,6 @@ type AdaptiveModel(value : Model) =
             _RegView_.Value <- value.RegView
             _Registration_.Value <- value.Registration
             _Toast_.Value <- value.Toast
-            _MeshSensorTypes_.Value <- value.MeshSensorTypes
             _HeatmapMode_.Value <- value.HeatmapMode
             _ExtrinsicZDiff_.Value <- value.ExtrinsicZDiff
             _SurfaceDistance_.Value <- value.SurfaceDistance
@@ -176,7 +174,6 @@ type AdaptiveModel(value : Model) =
     member __.RegView = _RegView_ :> FSharp.Data.Adaptive.aval<RegView>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
-    member __.MeshSensorTypes = _MeshSensorTypes_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, SensorType>>
     member __.HeatmapMode = _HeatmapMode_ :> FSharp.Data.Adaptive.aval<HeatmapMode>
     member __.ExtrinsicZDiff = _ExtrinsicZDiff_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SurfaceDistance = _SurfaceDistance_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>

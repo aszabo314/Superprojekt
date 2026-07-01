@@ -16,25 +16,10 @@ type ContactRingState =
     | RingsRunning
     | RingsReady of Map<string, V3d[][]>
 
-// Deterministic short pin names (adjective + noun) from the pin id — stable per pin.
-module PinNames =
-    let private adjectives =
-        [| "Amber"; "Brisk"; "Calm"; "Dusky"; "Early"; "Fleet"; "Grave"; "Hazel"
-           "Ivory"; "Jolly"; "Keen"; "Lush"; "Misty"; "Noble"; "Olive"; "Pale"
-           "Quiet"; "Rusty"; "Slate"; "Tawny"; "Umber"; "Vivid"; "Wry"; "Zesty" |]
-    let private nouns =
-        [| "Otter"; "Finch"; "Cedar"; "Ridge"; "Delta"; "Heron"; "Maple"; "Quartz"
-           "Birch"; "Coral"; "Dune"; "Ember"; "Fjord"; "Gull"; "Holly"; "Inlet"
-           "Jasper"; "Knoll"; "Larch"; "Moss"; "Nook"; "Reef"; "Spruce"; "Thorn" |]
-    let generate (ScanPinId.ScanPinId g : ScanPinId) =
-        let h = g.GetHashCode() &&& 0x7FFFFFFF
-        sprintf "%s %s" adjectives.[h % adjectives.Length] nouns.[(h / adjectives.Length) % nouns.Length]
-
 // Geometry is metric world-space (InnerRadius = hard-core radius); render-space
 // conversion happens at pipeline boundaries.
 type ScanPin = {
     Id                   : ScanPinId
-    Name                 : string
     // Immutable identity triple (§A), assigned at creation: a preattentive Glyph +
     // a distinct PinColor (paired, from the pin palette) + a random 2-char ShortName.
     // The pin's identity everywhere: matrix row, 3D flag label, focus label, samples.

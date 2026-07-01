@@ -38,7 +38,6 @@ type Message =
     | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]
     | AnchorSeedFailed of string
     | ClearToast
-    | SetMeshSensorType of string * SensorType
     | SetHeatmapMode of HeatmapMode
     // Difference sub-mode (M3C2 ↔ Δz) for the Inspect focus tiles.
     | ToggleExtrinsicZDiff
@@ -53,7 +52,6 @@ type Message =
     | ToggleMeshSolo of string
     | ResetCamera
     | ToggleGearPopover
-    | RenamePin of ScanPinId * string
     | SetActivePickingLayer of string option
     // hover = peek, click = select/promote.
     | SetHovered of HoverTarget option

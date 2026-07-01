@@ -257,7 +257,7 @@ module ReadinessView =
                             |> Set.ofList
                         Some {
                             Id            = id
-                            Label         = p.Name
+                            Label         = sprintf "%s %s" p.Glyph p.ShortName
                             RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, 1.0)
                             Accepted      = marked
                             Unresolved    = List.length movingVisible - Set.count marked

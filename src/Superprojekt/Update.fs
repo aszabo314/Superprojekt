@@ -49,10 +49,11 @@ module Update =
             let activePickingLayer =
                 if not v && model.ActivePickingLayer = Some name then None
                 else model.ActivePickingLayer
-            invalidateProbes
-                { model with
-                    MeshVisible = Map.add name v model.MeshVisible
-                    ActivePickingLayer = activePickingLayer }
+            // Probes sample every mesh regardless of visibility (like contact rings),
+            // so a visibility toggle keeps the matrix cells stable — no re-probe.
+            { model with
+                MeshVisible = Map.add name v model.MeshVisible
+                ActivePickingLayer = activePickingLayer }
         | ToggleMenu ->
             let sp = model.ScanPins
             if ScanPinModel.isPlacing sp then model
@@ -238,8 +239,6 @@ module Update =
         | ClearToast ->
             if model.Toast.IsNone then model else { model with Toast = None }
 
-        | SetMeshSensorType(name, sensor) ->
-            { model with MeshSensorTypes = Map.add name sensor model.MeshSensorTypes }
         | SetHeatmapMode m ->
             { model with HeatmapMode = m }
         | VarianceComputed(mesh, arr) ->
@@ -299,19 +298,20 @@ module Update =
         | SetRenderingMode m ->
             { model with RenderingMode = m }
         | ToggleMeshSolo name ->
-            invalidateProbes (
-                match model.MeshSolo with
-                | Solo(soloName, restore) when soloName = name ->
-                    { model with MeshVisible = restore; MeshSolo = NoSolo }
-                | Solo(_, restore) ->
-                    let vis = restore |> Map.map (fun k _ -> k = name)
-                    { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
-                | NoSolo ->
-                    let restore = model.MeshVisible
-                    let vis =
-                        model.MeshNames |> IndexList.toSeq
-                        |> Seq.map (fun n -> n, n = name) |> Map.ofSeq
-                    { model with MeshVisible = vis; MeshSolo = Solo(name, restore) })
+            // Isolation is a visibility state only; probes cover every mesh so cells
+            // stay stable (no invalidateProbes).
+            match model.MeshSolo with
+            | Solo(soloName, restore) when soloName = name ->
+                { model with MeshVisible = restore; MeshSolo = NoSolo }
+            | Solo(_, restore) ->
+                let vis = restore |> Map.map (fun k _ -> k = name)
+                { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
+            | NoSolo ->
+                let restore = model.MeshVisible
+                let vis =
+                    model.MeshNames |> IndexList.toSeq
+                    |> Seq.map (fun n -> n, n = name) |> Map.ofSeq
+                { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
         | ResetCamera ->
             let center = ModelTransforms.firstPanoCenterRender model
             let radius =
@@ -322,14 +322,6 @@ module Update =
             model
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
-        | RenamePin(id, name) ->
-            match HashMap.tryFind id model.ScanPins.Pins with
-            | Some pin ->
-                let nm = name.Trim()
-                let nm = if nm = "" then pin.Name else nm
-                let sp = { model.ScanPins with Pins = HashMap.add id { pin with Name = nm } model.ScanPins.Pins }
-                { model with ScanPins = sp }
-            | None -> model
         | SetActivePickingLayer name ->
             { model with ActivePickingLayer = name }
         | ScanPinMsg (PlaceAnchor _ as msg) ->
@@ -475,14 +467,13 @@ module Update =
                     let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, n = mesh) |> Map.ofSeq
                     let tight = max 0.5 (pin.InnerRadius * 4.0)
                     env.Emit [FlyToPoint(world, tight)]
-                    invalidateProbes
-                        { model with
-                            Selection = { model.Selection with FocusedMesh = Some mesh; SelectedPoint = Some mesh; SelectedPin = Some pinId }
-                            MeshSolo = Solo(mesh, restore)
-                            MeshVisible = vis
-                            LocateBackup = backup
-                            FocusProjection = ProjTop
-                            CorrArm = None; CorrPreview = None }
+                    { model with
+                        Selection = { model.Selection with FocusedMesh = Some mesh; SelectedPoint = Some mesh; SelectedPin = Some pinId }
+                        MeshSolo = Solo(mesh, restore)
+                        MeshVisible = vis
+                        LocateBackup = backup
+                        FocusProjection = ProjTop
+                        CorrArm = None; CorrPreview = None }
                 | None -> showToast env "No marker on that mesh to locate" model
             | None -> model
         // Single back-out: restore the camera + solo/visibility captured at the first
@@ -492,11 +483,10 @@ module Update =
             | None -> model
             | Some b ->
                 env.Emit [CameraMessage (OrbitMessage.SetTarget(false, b.PrevCenter, b.PrevRadius, b.PrevPhi, b.PrevTheta))]
-                invalidateProbes
-                    { model with
-                        MeshSolo = b.PrevSolo
-                        MeshVisible = b.PrevVisible
-                        LocateBackup = None }
+                { model with
+                    MeshSolo = b.PrevSolo
+                    MeshVisible = b.PrevVisible
+                    LocateBackup = None }
         // Diagnostics route through existing handlers; focus/highlight = open target + 1.5s pulse.
         | NavTo action ->
             let pulse (selector : string) =

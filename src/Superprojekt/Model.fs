@@ -72,13 +72,6 @@ type MeshSoloState =
     | NoSolo
     | Solo of name:string * restore:Map<string,bool>
 
-type SensorType =
-    | RoverStereo
-    | Satellite
-    | Photogrammetry
-    | LiDAR
-    | UnknownSensor
-
 type RegistrationState = {
     ReferenceMesh    : string option
     Running          : bool
@@ -181,7 +174,6 @@ type Model =
 
         Toast                 : string option
 
-        MeshSensorTypes       : Map<string, SensorType>
         HeatmapMode           : HeatmapMode
 
         // Difference sub-mode for the Inspect focus tiles: false = signed M3C2,
@@ -315,7 +307,6 @@ module Model =
             RegView               = RegBefore
             Registration          = RegistrationState.initial
             Toast                 = None
-            MeshSensorTypes       = Map.empty
             ExtrinsicZDiff        = false
             SurfaceDistance       = Map.empty
             FocusDist             = Map.empty

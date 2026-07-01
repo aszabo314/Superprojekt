@@ -105,11 +105,8 @@ module GuiInspector =
                 k, List.length inRoiMoving)
 
         // Overview dock (T3): the focus tiles are the mesh browser now, so the dock is
-        // a compact summary of the focused mesh (colour · number · role · sensor),
-        // not a second mesh list.
-        let sensorTxt = function
-            | RoverStereo -> "Rover" | Satellite -> "Sat" | Photogrammetry -> "Photo"
-            | LiDAR -> "LiDAR" | UnknownSensor -> "—"
+        // a compact summary of the focused mesh (colour · number · role), not a second
+        // mesh list.
         let focusedSummary =
             AVal.custom (fun t ->
                 match model.Selection.FocusedMesh.GetValue t with
@@ -118,8 +115,7 @@ module GuiInspector =
                     let order = orderVal.GetValue t
                     let isRef = (model.Registration.GetValue t).ReferenceMesh = Some name
                     let idx = HashMap.tryFind name order |> Option.defaultValue 0
-                    let sensor = Map.tryFind name (model.MeshSensorTypes.GetValue t) |> Option.defaultValue UnknownSensor
-                    Some (numbered order name, isRef, sensorTxt sensor, meshColor idx))
+                    Some (numbered order name, isRef, meshColor idx))
         let overviewCard =
             div {
                 Class "ins-ovw"
@@ -129,18 +125,16 @@ module GuiInspector =
                     showWhen (focusedSummary |> AVal.map Option.isSome)
                     span {
                         Class "ins-sw"
-                        focusedSummary |> AVal.map (function Some (_, _, _, c) -> Some (Style [Css.Background (c4bToRgbCss c)]) | None -> None)
+                        focusedSummary |> AVal.map (function Some (_, _, c) -> Some (Style [Css.Background (c4bToRgbCss c)]) | None -> None)
                     }
-                    span { Class "ins-ovw-name"; focusedSummary |> AVal.map (function Some (n, _, _, _) -> n | None -> "") }
-                    span { Class "ins-ovw-role"; focusedSummary |> AVal.map (function Some (_, r, _, _) -> (if r then "★ reference" else "moving") | None -> "") }
-                    span { Class "ins-ovw-sensor"; focusedSummary |> AVal.map (function Some (_, _, s, _) -> s | None -> "") }
+                    span { Class "ins-ovw-name"; focusedSummary |> AVal.map (function Some (n, _, _) -> n | None -> "") }
+                    span { Class "ins-ovw-role"; focusedSummary |> AVal.map (function Some (_, r, _) -> (if r then "★ reference" else "moving") | None -> "") }
                 }
             }
 
         // The matrix (left rail) is now the per-(pin,mesh) browser (§B); the
-        // Correspondence dock reduces to pin meta: identity chip · name · radius ·
-        // k/n · Solve. The per-mesh list, ref row, and dual pick buttons are gone.
-        let nameVal   = effPin |> AVal.map (Option.map (fun p -> p.Name) >> Option.defaultValue "")
+        // Correspondence dock reduces to pin meta: identity chip (glyph · colour · code)
+        // · radius · k/n · Solve. The per-mesh list, ref row, and dual pick buttons are gone.
         let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 0.5)
         let pinIdentChip =
             div {
@@ -157,13 +151,6 @@ module GuiInspector =
                 div {
                     Class "ins-mgr-head"
                     pinIdentChip
-                    input {
-                        Class "ins-name"
-                        Attribute("type", "text"); Attribute("title", "pin name")
-                        nameVal |> AVal.map (fun n -> Some (Attribute("value", n)))
-                        Dom.OnChange(fun e ->
-                            match AVal.force effId with Some id -> emit (RenamePin(id, e.Value)) | None -> ())
-                    }
                     inlineLogSlider "r" 0.01 10000.0 (sprintf "%.2f m") radiusVal (fun v ->
                         emit (ScanPinMsg (SetInnerRadius v)))
                 }

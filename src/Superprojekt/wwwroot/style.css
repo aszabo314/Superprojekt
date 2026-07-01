@@ -231,7 +231,6 @@ body.loaded { background: #f4f6f8; }
 .rail-flag-ready { color: #475569; }
 .rail-flag-low { color: #b45309; background: #fff7ed; }
 .rail-mesh-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rail-sensor { min-width: 38px; font-size: 10px; }
 .rail-step-controls { display: flex; flex-direction: column; gap: 8px; }
 .rail-toggle-row, .rail-commit-row { display: flex; gap: 6px; align-items: center; }
 .rail-btn {
@@ -313,9 +312,15 @@ body.loaded { background: #f4f6f8; }
     font-size: 12px;
     z-index: 998;
 }
-/* aspect-locked resize handle on the panel's left edge */
-.focus-resize { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: ew-resize; z-index: 5; touch-action: none; }
-.focus-resize:hover { background: rgba(26,86,219,0.22); }
+/* aspect-locked resize handle on the panel's left edge, with a visible grip bar */
+.focus-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 10px; cursor: ew-resize; z-index: 5; touch-action: none; display: flex; align-items: center; justify-content: center; }
+.focus-resize::before {
+  content: ""; width: 5px; height: 48px; border-radius: 3px;
+  background: #cbd5e1; border: 1px solid #94a3b8;
+  background-image: repeating-linear-gradient(to bottom, #64748b 0, #64748b 1px, transparent 1px, transparent 4px);
+  background-position: center; background-repeat: no-repeat; background-size: 1px 20px;
+}
+.focus-resize:hover::before { background-color: #1a56db; border-color: #1a56db; }
 /* displacement glyph legend (moved into the focus pane, §T10) */
 .focus-displeg { padding: 3px 8px; font-size: 10px; color: #475569; background: #f8fafc; border-top: 1px solid #eef2f6; }
 .focus-head {
@@ -1216,12 +1221,7 @@ body.loaded { background: #f4f6f8; }
 .ins-mgr-foot { display: flex; align-items: center; gap: 10px; padding-top: 4px; border-top: 1px solid #eef2f6; }
 .ins-solve { white-space: nowrap; }
 
-/* pin name input (manager head) + k/n counter (manager foot) + colour swatch */
-.ins-name {
-    width: 100%; height: 24px; padding: 0 6px;
-    border: 1px solid #c5cdd8; border-radius: 3px;
-    font-size: 12px; font-weight: 600; color: #0f172a;
-}
+/* k/n counter (manager foot) + colour swatch */
 .ins-kn {
     flex: 1; font-family: 'SF Mono', 'Monaco', monospace;
     font-size: 11px; color: #475569;
@@ -1240,11 +1240,9 @@ body.loaded { background: #f4f6f8; }
 .ins-ovw-card { display: flex; align-items: center; gap: 12px; }
 .ins-ovw-name { font-weight: 600; color: #0f172a; }
 .ins-ovw-role { color: #475569; }
-.ins-ovw-sensor { color: #475569; }
 
-/* Correspondence dock — manager head (name + radius) */
+/* Correspondence dock — manager head (identity chip + radius) */
 .ins-mgr-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #eef2f6; margin-bottom: 4px; }
-.ins-mgr-head .ins-name { flex: 1; }
 
 /* Inspect dock — stub note */
 .ins-stub-note { font-size: 11px; color: #64748b; line-height: 1.4; margin-top: 4px; }

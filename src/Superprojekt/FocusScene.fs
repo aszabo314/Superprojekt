@@ -519,17 +519,11 @@ module FocusScene =
             }
         }
 
-    let private sensorLabel = function
-        | RoverStereo -> "Rover" | Satellite -> "Sat"
-        | Photogrammetry -> "Photo" | LiDAR -> "LiDAR" | UnknownSensor -> "—"
-    let private sensorNext = function
-        | UnknownSensor -> RoverStereo | RoverStereo -> Satellite
-        | Satellite -> Photogrammetry | Photogrammetry -> LiDAR | LiDAR -> UnknownSensor
-
     // One thumbnail tile per mesh — the mesh browser (§B/T3). The render area selects
-    // (focus); a control strip carries the per-mesh controls that live ONCE here:
-    // ★ reference toggle, visibility, sensor. All meshes are tiled (hidden → dimmed)
-    // so a hidden mesh can be re-enabled. Reference tile = a prominent ★ indicator (T10).
+    // (focus) and peek-isolates on hover (mirrors the Overview rail roster); a control
+    // strip carries the per-mesh controls that live ONCE here: ★ reference toggle,
+    // visibility, ◐ isolate. All meshes are tiled (hidden → dimmed) so a hidden mesh
+    // can be re-enabled. Reference tile = a prominent ★ indicator (T10).
     let private focusTile (env : Env<Message>) (model : AdaptiveModel) (name : string) : DomNode =
         let loaded = MeshView.loadMeshAsync (fun () -> ()) name
         let renderT, scale = renderTrafoOf model name loaded
@@ -562,7 +556,7 @@ module FocusScene =
         let active = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
         let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
         let isRef  = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some name)
-        let sensor = model.MeshSensorTypes |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue UnknownSensor)
+        let isSolo = model.MeshSolo |> AVal.map (function Solo(n, _) -> n = name | _ -> false)
         let refBtn =
             button {
                 Class "mb mb-ref"
@@ -581,12 +575,13 @@ module FocusScene =
                 Dom.OnClick(fun _ -> env.Emit [SetVisible(name, not (AVal.force isVis))])
                 isVis |> AVal.map (fun v -> if v then "●" else "○")
             }
-        let sensorBtn =
+        let soloBtn =
             button {
                 Class "mb"
-                Attribute("title", "Sensor type (cycles)")
-                Dom.OnClick(fun _ -> env.Emit [SetMeshSensorType(name, sensorNext (AVal.force sensor))])
-                sensor |> AVal.map sensorLabel
+                Primitives.classWhen "mb-on" isSolo
+                Attribute("title", "Isolate this mesh (hide the others); click again to restore")
+                Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name])
+                "◐"
             }
         div {
             Class "focus-tile"
@@ -597,8 +592,11 @@ module FocusScene =
             // so clicking them never also focuses.
             div {
                 Class "focus-tile-view"
-                Attribute("title", "click → focus this mesh")
+                Attribute("title", "click → focus · hover → isolate this mesh")
                 Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
+                // hover = peek-isolate this mesh in the 3D view (mirrors the rail roster).
+                Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                 rc
                 div {
                     Class "fm-label"
@@ -611,7 +609,7 @@ module FocusScene =
                 Class "focus-tile-ctrls"
                 refBtn
                 visBtn
-                sensorBtn
+                soloBtn
             }
         }
 

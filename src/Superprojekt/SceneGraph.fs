@@ -144,8 +144,13 @@ module SceneGraph =
                     | Some box ->
                         let cc = model.CommonCentroid.GetValue t
                         let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
+                        let view =
+                            match model.RegView.GetValue t, model.RegPeekHeld.GetValue t with
+                            | RegBefore, true -> RegAfter
+                            | RegAfter, true -> RegBefore
+                            | v, false -> v
                         let tr =
-                            match model.RegView.GetValue t, Map.tryFind name (model.SolvedTransforms.GetValue t) with
+                            match view, Map.tryFind name (model.SolvedTransforms.GetValue t) with
                             | RegAfter, Some s -> s
                             | _ -> Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
                         let corner (ix : int) (iy : int) (iz : int) =
@@ -187,8 +192,13 @@ module SceneGraph =
                     | Some box ->
                         let cc = model.CommonCentroid.GetValue t
                         let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
+                        let view =
+                            match model.RegView.GetValue t, model.RegPeekHeld.GetValue t with
+                            | RegBefore, true -> RegAfter
+                            | RegAfter, true -> RegBefore
+                            | v, false -> v
                         let tr =
-                            match model.RegView.GetValue t, Map.tryFind name (model.SolvedTransforms.GetValue t) with
+                            match view, Map.tryFind name (model.SolvedTransforms.GetValue t) with
                             | RegAfter, Some s -> s
                             | _ -> Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
                         let corner (ix : int) (iy : int) (iz : int) =

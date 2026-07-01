@@ -28,6 +28,8 @@ type Message =
     | SetReferenceMesh of string option
     // Disabled until a solve exists.
     | SetRegView of RegView
+    // Spring-loaded hold: momentarily show the other registration state (visual only).
+    | SetRegPeek of bool
     // Writes SolvedTransform directly, per visible moving mesh with ≥3 in-ROI
     // pairs, in parallel.
     | SolveCoarse

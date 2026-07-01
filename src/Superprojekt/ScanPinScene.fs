@@ -156,8 +156,13 @@ module ScanPinScene =
         let dispWorldAt (t : AdaptiveToken) (mesh : string) =
             let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
             let cc = model.CommonCentroid.GetValue t
+            let view =
+                match model.RegView.GetValue t, model.RegPeekHeld.GetValue t with
+                | RegBefore, true -> RegAfter
+                | RegAfter, true -> RegBefore
+                | v, false -> v
             let disp =
-                match model.RegView.GetValue t, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
+                match view, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
                 | RegAfter, Some s -> s
                 | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
             RigidTransform.renderToWorld scale cc disp

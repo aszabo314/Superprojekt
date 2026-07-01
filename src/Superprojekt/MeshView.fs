@@ -84,8 +84,17 @@ module MeshView =
     let private scaleFor (model : AdaptiveModel) (name : string) =
         model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
 
+    // Effective registration view: the committed RegView, flipped while the before/after
+    // PEEK is held (§spring-loaded hold — purely visual).
+    let effectiveRegView (model : AdaptiveModel) =
+        (model.RegView, model.RegPeekHeld) ||> AVal.map2 (fun v held ->
+            match held, v with
+            | true, RegBefore -> RegAfter
+            | true, RegAfter -> RegBefore
+            | false, v -> v)
+
     let displayedMeshT (model : AdaptiveModel) (name : string) =
-        (model.RegView, model.SolvedTransforms, model.LoadTransforms)
+        (effectiveRegView model, model.SolvedTransforms, model.LoadTransforms)
         |||> AVal.map3 (fun view solved load ->
             match view, Map.tryFind name solved with
             | RegAfter, Some t -> t

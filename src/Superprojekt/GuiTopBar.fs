@@ -23,13 +23,6 @@ module GuiTopBar =
                 div { Class "burger-line" }
             }
 
-            button {
-                Class "tb-btn tb-btn-icon"
-                Attribute("title", "Reset camera")
-                Dom.OnClick(fun _ -> env.Emit [ResetCamera])
-                "⟲"
-            }
-
             // Spring-loaded hold-to-isolate (hotkey I): momentarily force pin isolation
             // on in modes where it defaults off (Overview / Inspect).
             button {
@@ -54,17 +47,6 @@ module GuiTopBar =
                 "🎨 Overlays"
             }
 
-            // Global ghost floor: on = non-emphasized meshes render as faint context,
-            // off = hidden. Governs solo / peek / isolation appearance in every mode.
-            // The opacity slider stays in the gear popover.
-            button {
-                Class "tb-btn"
-                classWhen "tb-btn-active" model.GhostSilhouette
-                Attribute("title", "Ghost floor: faint context vs hidden for non-active meshes")
-                Dom.OnClick(fun _ -> env.Emit [ToggleGhostSilhouette])
-                model.GhostSilhouette |> AVal.map (fun on -> if on then "👻 Ghost" else "👻 Hidden")
-            }
-
             div {
                 Class "tb-regview"
                 classWhenNot "tb-regview-off" solved
@@ -78,6 +60,33 @@ module GuiTopBar =
                     }
                 btn "Before" RegBefore
                 btn "After" RegAfter
+                // Spring-loaded peek: hold to momentarily show the OTHER state.
+                button {
+                    Class "tb-regview-btn tb-regview-peek"
+                    classWhen "btn-active" model.RegPeekHeld
+                    Attribute("title", "Peek: hold to momentarily show the other registration state")
+                    Dom.OnPointerDown((fun _ -> if AVal.force solved then env.Emit [SetRegPeek true]), pointerCapture = true)
+                    Dom.OnPointerUp((fun _ -> env.Emit [SetRegPeek false]), pointerCapture = true)
+                    Dom.OnMouseLeave(fun _ -> env.Emit [SetRegPeek false])
+                    "Peek"
+                }
+            }
+
+            // Reconstruction readiness — the global correspondence status (moved out of
+            // the rail; per-mesh / per-pin hints are gone, superseded by the matrix).
+            // Only shown in the Correspondence workflow.
+            let readiness = ReadinessView.input model |> AVal.map Readiness.compute
+            let sevClass = function Blocker -> "block" | Warning -> "warn" | Ready -> "ready" | Info -> "info"
+            let sevIcon  = function Blocker -> "✖" | Warning -> "⚠" | Ready -> "✔" | Info -> "•"
+            div {
+                Class "tb-readiness"
+                showWhen (model.WorkflowStep |> AVal.map ((=) Correspondence))
+                readiness |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map (fun d ->
+                    span {
+                        Class (sprintf "tb-ready-pill tb-ready-%s" (sevClass d.Severity))
+                        span { Class "tb-ready-ic"; sevIcon d.Severity }
+                        span { Class "tb-ready-tx"; d.Text }
+                    })
             }
 
             div {
@@ -96,12 +105,13 @@ module GuiTopBar =
                     }
                     span {
                         Class "tb-coord-l"
-                        (hoverCoord, model.Selection.FocusedMesh, model.DatasetCentroids)
-                        |||> AVal.map3 (fun hc fm cents ->
+                        let centsNames = (model.DatasetCentroids, model.MeshNames.Content) ||> AVal.map2 (fun c n -> c, IndexList.toList n)
+                        (hoverCoord, model.Selection.FocusedMesh, centsNames)
+                        |||> AVal.map3 (fun hc fm (cents, names) ->
                             match hc, fm with
                             | Some p, Some name ->
                                 match Map.tryFind name cents with
-                                | Some c -> sprintf "    %s  %s" (Primitives.shortName name) (fmt (p - c))
+                                | Some c -> sprintf "    %s  %s" (Primitives.friendlyName names name) (fmt (p - c))
                                 | None -> ""
                             | _ -> "")
                     }
@@ -217,8 +227,8 @@ module GuiTopBar =
                             model.MeshNames |> AList.map (fun name ->
                                 let centroid = model.DatasetCentroids |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue V3d.Zero)
                                 let numName =
-                                    model.MeshOrder |> AMap.tryFind name |> AVal.map (fun o ->
-                                        sprintf "%d  %s" ((Option.defaultValue 0 o) + 1) (Primitives.shortName name))
+                                    (model.MeshOrder |> AMap.tryFind name, model.MeshNames.Content) ||> AVal.map2 (fun o ns ->
+                                        sprintf "%d  %s" ((Option.defaultValue 0 o) + 1) (Primitives.friendlyName (IndexList.toList ns) name))
                                 div {
                                     Class "tb-gear-mesh-row"
                                     span { Class "tb-gear-mesh-name"; numName }

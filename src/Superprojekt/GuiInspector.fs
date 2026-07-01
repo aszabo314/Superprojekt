@@ -113,9 +113,10 @@ module GuiInspector =
                 | None -> None
                 | Some name ->
                     let order = orderVal.GetValue t
+                    let names = model.MeshNames.Content.GetValue t |> IndexList.toList
                     let isRef = (model.Registration.GetValue t).ReferenceMesh = Some name
                     let idx = HashMap.tryFind name order |> Option.defaultValue 0
-                    Some (numbered order name, isRef, meshColor idx))
+                    Some (numberedFriendly order names name, isRef, meshColor idx))
         let overviewCard =
             div {
                 Class "ins-ovw"
@@ -193,7 +194,8 @@ module GuiInspector =
                         let heading = atan2 shift.Y shift.X * 180.0 / System.Math.PI
                         let trace = sw.M00 + sw.M11 + sw.M22
                         let ang = acos (max -1.0 (min 1.0 ((trace - 1.0) / 2.0))) * 180.0 / System.Math.PI
-                        Some (numbered (orderVal.GetValue t) m, total, vertical, horizontal, heading, ang))
+                        let names = model.MeshNames.Content.GetValue t |> IndexList.toList
+                        Some (numberedFriendly (orderVal.GetValue t) names m, total, vertical, horizontal, heading, ang))
         let hasShift = shiftData |> AVal.map Option.isSome
         let shiftBody = (isDisplacement, hasShift) ||> AVal.map2 (&&)
         let shiftEmpty = (isDisplacement, hasShift) ||> AVal.map2 (fun d h -> d && not h)
@@ -277,7 +279,7 @@ module GuiInspector =
                             if List.isEmpty groups then None
                             else
                                 let avgLod = groups |> List.averageBy fst
-                                Some (sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}" (numbered order mesh) (g avgLod) (groups |> List.map snd |> String.concat ","))
+                                Some (sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}" (numberedFriendly order names mesh) (g avgLod) (groups |> List.map snd |> String.concat ","))
                         | _ -> None
                     let rows = moving |> List.choose rowJson |> String.concat ","
                     sprintf "{\"state\":\"%s\",\"lo\":%s,\"hi\":%s,\"rows\":[%s]}" stateLbl (g lo) (g hi) rows)

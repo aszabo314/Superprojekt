@@ -183,13 +183,10 @@ let readinessTests () =
     check "zero pins blocker" (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "≥3 pins"))
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 2 }
-    check "pair deficit warning per mesh (not a global blocker)"
-        (d |> List.filter (fun x -> x.Severity = Warning && x.Text.Contains "marker(s)") |> List.length = 2)
     check "zero solvable meshes is the hard blocker"
         (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "≥3 markers"))
-    check "deficit counts the gap" (d |> List.exists (fun x -> x.Text.Contains "+1 marker"))
-    check "deficit action reseeds the filtered mesh"
-        (d |> List.exists (fun x -> x.Action = Some (ReseedCorrespondence (Some "A"))))
+    check "no per-mesh marker hints (superseded by the matrix)"
+        (not (d |> List.exists (fun x -> x.Text.Contains "marker(s)")))
     check "2 pins not ready" (ready d |> List.isEmpty)
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 3 }
@@ -199,10 +196,9 @@ let readinessTests () =
 
     let pinU = mkRPin "pu" (Some (V3d(9.0, 1.0, 2.0), 1.0)) [ "A" ] 2
     let d = Readiness.compute { baseInput with EnabledPins = pinU :: pinsN 3 }
-    check "missing-marker mesh → warning"
-        (d |> List.exists (fun x -> x.Severity = Warning && x.Text.Contains "without a marker"))
-    check "unresolved action opens the pin card"
-        (d |> List.exists (fun x -> x.Action = Some (SelectPinOpenCard pinU.Id)))
+    check "no per-pin unresolved hints (superseded by the matrix)"
+        (not (d |> List.exists (fun x -> x.Text.Contains "without a marker")))
+    check "extra pins still ready" (ready d |> List.length = 1)
 
     let colinear =
         List.init 4 (fun i -> mkRPin (sprintf "c%d" i) (Some (V3d(float i, 0.0, 0.0), 1.0)) [ "A"; "B" ] 2)

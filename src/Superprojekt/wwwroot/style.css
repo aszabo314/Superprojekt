@@ -522,6 +522,23 @@ body.loaded { background: #f4f6f8; }
 }
 .tb-regview-btn + .tb-regview-btn { border-left: 1px solid #e2e8f0; }
 .tb-regview-btn.btn-active { background: #1a56db; color: #fff; }
+/* spring-loaded peek: amber while held (momentary), to read apart from the committed toggle */
+.tb-regview-peek { font-style: italic; }
+.tb-regview-peek.btn-active { background: #d97706; color: #fff; }
+
+/* Reconstruction-readiness hint in the top bar (Correspondence only) */
+.tb-readiness { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; min-width: 0; overflow: hidden; }
+.tb-ready-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; padding: 2px 8px; border-radius: 10px; border: 1px solid #e2e8f0; background: #f8fafc; }
+.tb-ready-ic { flex-shrink: 0; }
+.tb-ready-tx { overflow: hidden; text-overflow: ellipsis; }
+.tb-ready-block { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
+.tb-ready-block .tb-ready-ic { color: #dc2626; }
+.tb-ready-warn { background: #fffbeb; border-color: #fde68a; color: #b45309; }
+.tb-ready-warn .tb-ready-ic { color: #d97706; }
+.tb-ready-ready { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
+.tb-ready-ready .tb-ready-ic { color: #16a34a; }
+.tb-ready-info { color: #475569; }
+.tb-ready-info .tb-ready-ic { color: #94a3b8; }
 
 /* ── Toast ─────────────────────────────────────────────────────────── */
 

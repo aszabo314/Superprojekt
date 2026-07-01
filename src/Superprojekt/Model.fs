@@ -170,6 +170,10 @@ type Model =
         LoadTransforms        : Map<string, Trafo3d>
         SolvedTransforms      : Map<string, Trafo3d>
         RegView               : RegView
+        // Spring-loaded before/after peek: hold to momentarily show the OTHER
+        // registration state (purely visual — flips the displayed transform, not
+        // the committed RegView or any query).
+        RegPeekHeld           : bool
         Registration          : RegistrationState
 
         Toast                 : string option
@@ -305,6 +309,7 @@ module Model =
             LoadTransforms        = Map.empty
             SolvedTransforms      = Map.empty
             RegView               = RegBefore
+            RegPeekHeld           = false
             Registration          = RegistrationState.initial
             Toast                 = None
             ExtrinsicZDiff        = false

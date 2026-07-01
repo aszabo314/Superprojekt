@@ -101,6 +101,9 @@ module Update =
             // Only meaningful once a solve exists (the view disables it otherwise).
             if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
             else invalidateProbes (invalidateRings { model with RegView = v })
+        | SetRegPeek held ->
+            // Purely visual (the displayed transform flips); no probe/ring invalidation.
+            if model.RegPeekHeld = held then model else { model with RegPeekHeld = held }
         | SetReferenceMesh mesh ->
             // Reference change invalidates any solve (it was relative to the old reference):
             // drop SolvedTransforms, snap to Before, invalidate probes/rings, re-seed enabled pins.

@@ -90,7 +90,7 @@ module GuiRail =
                 span {
                     Class "rail-mesh-name"
                     Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
-                    shortName name
+                    model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
                 }
             let refBtn =
                 button {
@@ -280,20 +280,9 @@ module GuiRail =
         let placing =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
+        // The reconstruction-readiness hints moved to the top bar (next to before/after);
+        // the individual mesh/pin hints were removed (superseded by the matrix).
         let corrBody =
-            let diags = ReadinessView.input model |> AVal.map Readiness.compute
-            let sevClass = function Blocker -> "block" | Warning -> "warn" | Ready -> "ready" | Info -> "info"
-            let sevIcon  = function Blocker -> "✖" | Warning -> "⚠" | Ready -> "✔" | Info -> "•"
-            let diagRow (d : Diagnostic) =
-                div {
-                    Class (sprintf "rail-diag rail-diag-%s" (sevClass d.Severity))
-                    span { Class "rail-diag-ic"; sevIcon d.Severity }
-                    span { Class "rail-diag-tx"; d.Text }
-                    match d.Action with
-                    | Some a ->
-                        button { Class "rail-diag-go"; Attribute("title", "go"); Dom.OnClick(fun _ -> env.Emit [NavTo a]); "→" }
-                    | None -> span { Class "hidden" }
-                }
             div {
                 Class "rail-step-controls"
                 div {
@@ -310,7 +299,6 @@ module GuiRail =
                     }
                 }
                 div { Class "rail-matrix-wrap"; matrixView () }
-                div { Class "rail-diags"; diags |> AVal.map IndexList.ofList |> AList.ofAVal |> AList.map diagRow }
             }
 
         // Inspect rail = the same pin×mesh matrix (identical metric to Correspondence,

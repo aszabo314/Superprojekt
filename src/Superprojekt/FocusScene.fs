@@ -602,7 +602,7 @@ module FocusScene =
                     Class "fm-label"
                     span { Class "fm-sw"; colorCss |> AVal.map (fun c -> Some (Style [Css.Background c])) }
                     span { Class "ft-refstar"; Primitives.showWhen isRef; "★" }
-                    Primitives.shortName name
+                    model.MeshNames.Content |> AVal.map (fun ns -> Primitives.friendlyName (IndexList.toList ns) name)
                 }
             }
             div {

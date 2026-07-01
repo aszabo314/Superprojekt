@@ -233,12 +233,10 @@ module Readiness =
 
         let counts = pairCounts input
         let anySolvable = counts |> List.exists (fun (_, n) -> n >= 3)
-        if input.ReferenceMesh.IsSome then
-            for mesh, n in counts do
-                if n < 3 then
-                    add Warning
-                        (sprintf "%s: +%d marker(s)" mesh (3 - n))
-                        (Some (ReseedCorrespondence (Some mesh)))
+
+        // Per-mesh ("+N marker(s)") and per-pin ("N without a marker") hints were
+        // removed — the pin×mesh matrix now surfaces that detail. Only the GLOBAL
+        // reconstruction readiness remains (it moves to the top bar).
 
         // Zero solvable meshes (pins exist, moving meshes exist, none reaches 3) is
         // the only marker-related hard blocker.
@@ -247,12 +245,6 @@ module Readiness =
            && not (List.isEmpty input.VisibleMovingMeshes)
            && not anySolvable then
             add Blocker "No mesh has ≥3 markers yet" None
-
-        for pin in input.EnabledPins do
-            if pin.Unresolved > 0 then
-                add Warning
-                    (sprintf "%s: %d without a marker" pin.Label pin.Unresolved)
-                    (Some (SelectPinOpenCard pin.Id))
 
         if List.length input.EnabledPins >= 3 && lambdaRatioOf input < 1e-3 then
             let affected =

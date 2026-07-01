@@ -1,8 +1,10 @@
 namespace Superprojekt
 
 open Aardvark.Base
+open Aardworx.WebAssembly
 open FSharp.Data.Adaptive
 open Aardvark.Dom
+open Microsoft.JSInterop
 
 // Left rail: three modes (Overview · Correspondence · Inspect), one expanded at
 // a time; the container never moves, only the active mode's detail changes.
@@ -178,10 +180,14 @@ module GuiRail =
                 div { Class "mx-corner"; "pin \\ mesh" }
                 model.MeshNames |> AList.map (fun name ->
                     // Columns show only mesh colour + number (T3); per-mesh controls
-                    // and the ★ reference live on the focus tile strip.
+                    // and the ★ reference live on the focus tile strip. Clicking a column
+                    // focuses the mesh (identical to clicking its focus tile); the column
+                    // highlights when that mesh is focused (the reverse link).
                     let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                    let colFocused = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
                     div {
                         Class "mx-colhead"
+                        classWhen "mx-col-sel" colFocused
                         Attribute("title", name)
                         Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
                         Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
@@ -255,7 +261,10 @@ module GuiRail =
                     button {
                         Class "mb mx-del"
                         Attribute("title", "Delete pin")
-                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (DeletePin id)])
+                        // Native confirmation dialog before the destructive delete.
+                        Dom.OnClick(fun _ ->
+                            let ok = try JSRuntime.Instance.Invoke<bool>("confirm", sprintf "Delete pin %s %s? This cannot be undone." glyph shortNm) with _ -> false
+                            if ok then env.Emit [ScanPinMsg (DeletePin id)])
                         "✕"
                     }
                 }

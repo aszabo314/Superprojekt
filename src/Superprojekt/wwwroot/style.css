@@ -261,6 +261,7 @@ body.loaded { background: #f4f6f8; }
     cursor: pointer; padding: 1px 0; border-radius: 3px; gap: 1px;
 }
 .mx-colhead:hover { background: #ecfeff; }
+.mx-col-sel { background: #eaf1ff; box-shadow: inset 0 2px 0 #1a56db; }
 .mx-colsw { width: 14px; height: 6px; border-radius: 2px; display: inline-block; }
 .mx-colnum { font-weight: 700; color: #334155; font-size: 10px; }
 .mx-colref { color: #1a56db; font-size: 9px; line-height: 1; }

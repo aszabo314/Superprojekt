@@ -95,6 +95,13 @@ module View =
         // clip-plane support but is fed a constant no-clip.
         let clipUniforms : aval<int * V4f * V4f> = AVal.constant (0, V4f.Zero, V4f.Zero)
 
+        // Shown = clickable: the raycast candidate set mirrors what renders solid or
+        // could be revealed (per-mesh toggles + the solo overlay), evaluated at event time.
+        let shownNow () =
+            let solo = AVal.force model.MeshSolo
+            let vis = AVal.force model.MeshVisible
+            fun (name : string) -> MeshVisibility.shown solo vis name
+
         body {
             OnBoot [
                 "const l = document.getElementById('loader');"
@@ -207,14 +214,13 @@ module View =
                     | Some cursorPx ->
                         let cc = AVal.force model.CommonCentroid
                         let scales = AVal.force model.DatasetScales
-                        let visible = AVal.force model.MeshVisible
+                        let shown = shownNow ()
                         let bounds = AVal.force model.MeshBounds
                         let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
                         let candidates =
                             bounds |> Map.toSeq
                             |> Seq.choose (fun (name, world) ->
-                                let vis = Map.tryFind name visible |> Option.defaultValue true
-                                if vis then
+                                if shown name then
                                     let scale = DatasetScale.forMesh scales name
                                     if (rayBoxT ray (renderBox world cc scale)).IsSome
                                     then Some (name, scale) else None
@@ -250,14 +256,13 @@ module View =
                     | Some cursorPx ->
                         let cc = AVal.force model.CommonCentroid
                         let scales = AVal.force model.DatasetScales
-                        let visible = AVal.force model.MeshVisible
+                        let shown = shownNow ()
                         let bounds = AVal.force model.MeshBounds
                         let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
                         let candidates =
                             bounds |> Map.toSeq
                             |> Seq.choose (fun (name, world) ->
-                                let vis = Map.tryFind name visible |> Option.defaultValue true
-                                if vis then
+                                if shown name then
                                     let scale = DatasetScale.forMesh scales name
                                     if (rayBoxT ray (renderBox world cc scale)).IsSome
                                     then Some (name, scale) else None
@@ -350,11 +355,10 @@ module View =
                         let v = AVal.force view
                         let p = AVal.force proj
                         let ray = pickRay cursorPx vpSize v p
-                        let visible = AVal.force model.MeshVisible
                         let bounds = AVal.force model.MeshBounds
                         let cc = AVal.force model.CommonCentroid
                         let scales = AVal.force model.DatasetScales
-                        let isVisible name = Map.tryFind name visible |> Option.defaultValue true
+                        let isVisible = shownNow ()
                         let hits =
                             bounds |> Map.toSeq
                             |> Seq.choose (fun (name, world) ->
@@ -448,17 +452,13 @@ module View =
                                 let worldPos = worldFromRender model renderPos
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
                                 // Clicking a mesh in 3D focuses it (read/write parity
-                                // §B); in Inspect it also solos (§C). The named raycast
-                                // identifies which mesh the ray actually crossed first.
+                                // §B); the reducer applies the Inspect auto-solo (§C),
+                                // and the focus single frames the mesh tightly there.
                                 let! named = raycastNearestNamed ()
                                 match named with
                                 | Some (mesh, _) ->
-                                    match AVal.force model.WorkflowStep with
-                                    | Inspect ->
-                                        let already = match AVal.force model.MeshSolo with Solo(s, _) -> s = mesh | _ -> false
-                                        if already then env.Emit [SetFocusedMesh (Some mesh)]
-                                        else env.Emit [ToggleMeshSolo mesh; SetFocusedMesh (Some mesh)]
-                                    | _ -> env.Emit [SetFocusedMesh (Some mesh)]
+                                    env.Emit [SetFocusedMesh (Some mesh)]
+                                    FocusScene.onMeshFocused model mesh
                                 | None -> ()
                             | _, None -> ()
                         } |> Async.Start

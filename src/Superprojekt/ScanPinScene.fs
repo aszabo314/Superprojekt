@@ -273,6 +273,9 @@ module ScanPinScene =
                             let hovered = model.Selection.Hovered.GetValue t = Some (HoverPin id)
                             let cc = model.CommonCentroid.GetValue t
                             let scale = datasetScale.GetValue t
+                            // Shown-set gating (toggles + solo overlay): rings on a
+                            // ghosted-away mesh would float without their surface.
+                            let solo = model.MeshSolo.GetValue t
                             let vis = model.MeshVisible.GetValue t
                             let col =
                                 if hovered then V4d(colour * 0.45 + V3d.III * 0.55, 1.0)
@@ -290,7 +293,7 @@ module ScanPinScene =
                             out.Add(cR, cR + nN * ScanPin.renderLength scale 1.0, axisCol, 1.0)
                             for KeyValue(mesh, meshRings) in rings do
                                 if contactRingsOn.GetValue t
-                                   && (Map.tryFind mesh vis |> Option.defaultValue true) then
+                                   && MeshVisibility.shown solo vis mesh then
                                     for ring in meshRings do
                                         if ring.Length >= 2 then
                                             let rp = ring |> Array.map (ScanPin.renderCentre cc scale)
@@ -325,7 +328,12 @@ module ScanPinScene =
                     let names = model.MeshNames.Content.GetValue t |> IndexList.toList
                     let vis = model.MeshVisible.GetValue t
                     let rf = (model.Registration.GetValue t).ReferenceMesh
-                    let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
+                    // Shown-set gating (toggles + solo overlay), so a locate shows
+                    // only the located mesh's markers.
+                    let solo = model.MeshSolo.GetValue t
+                    let moving =
+                        names |> List.filter (fun n ->
+                            Some n <> rf && MeshVisibility.shown solo vis n)
                     let out = ResizeArray<V3d * V3d * V4d * float>()
                     for (id, (corr, datasetColors)) in HashMap.toSeq pins do
                         match corr with

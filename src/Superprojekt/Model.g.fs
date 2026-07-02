@@ -1,5 +1,5 @@
-//fa241c83-b280-257e-a949-187132333f7e
-//9278608f-0199-33cf-572b-9e1589e3f67b
+//91469c22-7494-e1dc-7652-ab2f70dfae55
+//5a403e29-6a52-3120-fbfd-e4abb4f819f7
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -14,7 +14,6 @@ open Superprojekt
 type AdaptiveSelection(value : Selection) =
     let _SelectedPin_ = FSharp.Data.Adaptive.cval(value.SelectedPin)
     let _FocusedMesh_ = FSharp.Data.Adaptive.cval(value.FocusedMesh)
-    let _SelectedPoint_ = FSharp.Data.Adaptive.cval(value.SelectedPoint)
     let _Hovered_ = FSharp.Data.Adaptive.cval(value.Hovered)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
@@ -26,12 +25,10 @@ type AdaptiveSelection(value : Selection) =
             __adaptive.MarkOutdated()
             _SelectedPin_.Value <- value.SelectedPin
             _FocusedMesh_.Value <- value.FocusedMesh
-            _SelectedPoint_.Value <- value.SelectedPoint
             _Hovered_.Value <- value.Hovered
     member __.Current = __adaptive
     member __.SelectedPin = _SelectedPin_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
     member __.FocusedMesh = _FocusedMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
-    member __.SelectedPoint = _SelectedPoint_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.Hovered = _Hovered_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<HoverTarget>>
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveModel(value : Model) =
@@ -184,7 +181,7 @@ type AdaptiveModel(value : Model) =
     member __.ScanPins = _ScanPins_
     member __.Selection = _Selection_
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
-    member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<MeshSoloState>
+    member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.WorkflowStep = _WorkflowStep_ :> FSharp.Data.Adaptive.aval<WorkflowStep>
     member __.InspectChannel = _InspectChannel_ :> FSharp.Data.Adaptive.aval<InspectChannel>

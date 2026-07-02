@@ -122,6 +122,41 @@ module FocusScene =
         let _, zoom = camFor name
         focusOnWorld model name world zoom.Value
 
+    // The mesh the enlarged single currently resolves to (the same rule `single`
+    // uses: the focused mesh if visible, else the first visible one). Forced at
+    // event time by the click handlers that link the 2D camera.
+    let currentSingleMesh (model : AdaptiveModel) : string option =
+        let names = AVal.force model.MeshNames.Content |> IndexList.toList
+        let vis = AVal.force model.MeshVisible
+        let visible = names |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true)
+        match AVal.force model.Selection.FocusedMesh with
+        | Some m when List.contains m visible -> Some m
+        | _ -> List.tryHead visible
+
+    // Zoom a mesh's Top canvas so a metric-world sphere (halfExtent metres around
+    // `world`) roughly fills the view — the 2D side of the tight pin / correspondence
+    // fly (mirrors the 3D FlyToPoint radius convention).
+    let zoomOnWorldRadius (model : AdaptiveModel) (name : string) (world : V3d) (metricHalfExtent : float) =
+        let loaded = MeshView.loadMeshAsync (fun () -> ()) name
+        let renderT, scale = renderTrafoOf model name loaded
+        let _, _, fitExtent = framing model name loaded renderT scale
+        let s = AVal.force scale
+        let ext = max 1e-4 (AVal.force fitExtent)
+        let target = max 1e-4 (ScanPin.renderLength s metricHalfExtent)
+        focusOnWorld model name world (clamp 1.0 200.0 (ext / target))
+
+    // Pin-click linking: the focus panel stays on the current single mesh and zooms
+    // tightly onto the pin (the 3D side is the reducer's FlyToPoint).
+    let zoomOnPin (model : AdaptiveModel) (centre : V3d) (innerRadius : float) =
+        match currentSingleMesh model with
+        | Some m -> zoomOnWorldRadius model m centre (max 0.5 (innerRadius * 4.0))
+        | None -> ()
+
+    // Inspect mesh-focus (§C): the single frames the newly focused mesh tightly
+    // (fit = pan 0 / zoom 1); other modes keep the per-mesh pan/zoom memory.
+    let onMeshFocused (model : AdaptiveModel) (name : string) =
+        if AVal.force model.WorkflowStep = Inspect then resetCam (Some name)
+
     // Top-down ortho view + projection framing the displayed render centroid,
     // radius = localMaxR·scale, offset by (pan, zoom).
     let private orthoCam
@@ -607,7 +642,8 @@ module FocusScene =
         let active = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
         let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
         let isRef  = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some name)
-        let isSolo = model.MeshSolo |> AVal.map (function Solo(n, _) -> n = name | _ -> false)
+        let isSolo = model.MeshSolo |> AVal.map ((=) (Some name))
+        let anySolo = model.MeshSolo |> AVal.map Option.isSome
         let refBtn =
             button {
                 Class "mb mb-ref"
@@ -618,12 +654,19 @@ module FocusScene =
                     env.Emit [SetReferenceMesh (if cur then None else Some name)])
                 isRef |> AVal.map (fun r -> if r then "★" else "☆")
             }
+        // The visibility toggle is frozen while a mesh is isolated (isolation
+        // overrides it; ending isolation resets every toggle to ON).
         let visBtn =
             button {
                 Class "mb"
                 Primitives.classWhen "mb-on" isVis
-                Attribute("title", "Visible")
-                Dom.OnClick(fun _ -> env.Emit [SetVisible(name, not (AVal.force isVis))])
+                anySolo |> AVal.map (fun s ->
+                    if s then Some (Attribute("disabled", "disabled")) else None)
+                anySolo |> AVal.map (fun s ->
+                    Some (Attribute("title", if s then "Visibility is locked while a mesh is isolated" else "Visible")))
+                Dom.OnClick(fun _ ->
+                    if not (AVal.force anySolo) then
+                        env.Emit [SetVisible(name, not (AVal.force isVis))])
                 isVis |> AVal.map (fun v -> if v then "●" else "○")
             }
         let soloBtn =
@@ -644,7 +687,9 @@ module FocusScene =
             div {
                 Class "focus-tile-view"
                 Attribute("title", "click → focus · hover → isolate this mesh")
-                Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
+                Dom.OnClick(fun _ ->
+                    env.Emit [SetFocusedMesh (Some name)]
+                    onMeshFocused model name)
                 // hover = peek-isolate this mesh in the 3D view (mirrors the rail roster).
                 Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])

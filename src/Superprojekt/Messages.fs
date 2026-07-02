@@ -59,7 +59,6 @@ type Message =
     // hover = peek, click = select/promote.
     | SetHovered of HoverTarget option
     | SetFocusedMesh of string option
-    | SetSelectedPoint of string option
     | ReseedMesh of ScanPinId * string
     | SetWorkflowStep of WorkflowStep
     | SetInspectChannel of InspectChannel

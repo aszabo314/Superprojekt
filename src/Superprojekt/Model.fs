@@ -68,10 +68,6 @@ module RigidTransform =
         * Trafo3d.Scale(1.0 / scale)
         * Trafo3d.Translation(cc)
 
-type MeshSoloState =
-    | NoSolo
-    | Solo of name:string * restore:Map<string,bool>
-
 type RegistrationState = {
     ReferenceMesh    : string option
     Running          : bool
@@ -101,20 +97,28 @@ type HoverTarget =
 type Selection = {
     SelectedPin   : ScanPinId option
     FocusedMesh   : string option
-    SelectedPoint : string option
     Hovered       : HoverTarget option
 }
 
 module Selection =
-    let initial = { SelectedPin = None; FocusedMesh = None; SelectedPoint = None; Hovered = None }
+    let initial = { SelectedPin = None; FocusedMesh = None; Hovered = None }
+
+// Mesh isolation (solo) is a pure overlay over the per-mesh visibility toggles —
+// it never mutates MeshVisible. While isolated, ONLY the isolated mesh is shown
+// (the reference included would occlude it in Inspect); with no isolation the
+// per-mesh toggles decide. Every shown/clickable consumer (render MeshActive,
+// raycasts, ring gating) goes through this one rule.
+module MeshVisibility =
+    let shown (solo : string option) (visible : Map<string, bool>) (name : string) =
+        match solo with
+        | Some s -> name = s
+        | None -> Map.tryFind name visible |> Option.defaultValue true
 
 // Snapshot captured when a "frame correspondence" (locate) starts, so a single
 // back-out restores the camera + solo/visibility to exactly what they were before.
 // Plain record (not a ModelType) → a single aval<LocateState option> in the model.
 type LocateState = {
-    Pin         : ScanPinId
-    Mesh        : string
-    PrevSolo    : MeshSoloState
+    PrevSolo    : string option
     PrevVisible : Map<string, bool>
     PrevCenter  : V3d
     PrevRadius  : float
@@ -199,7 +203,9 @@ type Model =
         Selection             : Selection
 
         RenderingMode       : RenderingMode
-        MeshSolo            : MeshSoloState
+        // Isolated mesh (◐) — an overlay over MeshVisible (see MeshVisibility.shown).
+        // Exiting isolation resets every visibility toggle to ON.
+        MeshSolo            : string option
         GearPopoverOpen     : bool
         WorkflowStep        : WorkflowStep
         // Inspect focus-tile channel (difference vs displacement).
@@ -322,7 +328,7 @@ module Model =
             ScanPins              = ScanPinModel.initial
             Selection             = Selection.initial
             RenderingMode       = Textured
-            MeshSolo            = NoSolo
+            MeshSolo            = None
             GearPopoverOpen     = false
             WorkflowStep        = Overview
             InspectChannel      = ChDifference

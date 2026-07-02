@@ -193,31 +193,33 @@ module MeshView =
                 | _ -> if on || held then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
-            // Isolation: reference peek wins, then wheelIsolation (Alt-wheel /
-            // hover peek), else plain visibility.
+            // Isolation: wheelIsolation (Alt-wheel / hover peek / armed editor) wins,
+            // then the solo overlay via MeshVisibility.shown (only the isolated mesh
+            // solid, the rest at the ghost floor), else the per-mesh toggles + the
+            // Inspect no-solo ensemble ghosting.
             let isActive =
                 AVal.custom (fun t ->
                         match wheelIsolation.GetValue t with
                         | Some iso -> iso = name
                         | None ->
-                            let vis = Map.tryFind name (model.MeshVisible.GetValue t) |> Option.defaultValue true
-                            // Inspect central 3D (§C): no solo → the reference carries the
-                            // variance aggregate solid and moving meshes drop to the ghost
-                            // floor; solo m → m stays solid (it paints its own difference /
-                            // displacement field). An intrinsic channel keeps all solid.
-                            let isSolo = match model.MeshSolo.GetValue t with Solo(s, _) -> s = name | _ -> false
-                            // A mesh carrying its own intrinsic heatmap stays solid so
-                            // that error layer reads even in the Inspect no-solo aggregate.
-                            let hasHeatmap =
-                                (Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff) <> HeatOff
-                            let inspectGhost =
-                                model.WorkflowStep.GetValue t = Inspect
-                                && not hasHeatmap
-                                && not isSolo
-                                && (match (model.Registration.GetValue t).ReferenceMesh with
-                                    | Some rf -> rf <> name
-                                    | None -> false)
-                            vis && not inspectGhost)
+                            match model.MeshSolo.GetValue t with
+                            | Some _ as solo ->
+                                MeshVisibility.shown solo (model.MeshVisible.GetValue t) name
+                            | None ->
+                                let vis = Map.tryFind name (model.MeshVisible.GetValue t) |> Option.defaultValue true
+                                // Inspect central 3D (§C), no solo: the reference carries
+                                // the variance aggregate solid, moving meshes drop to the
+                                // ghost floor. A mesh carrying its own intrinsic heatmap
+                                // stays solid so that error layer reads in the aggregate.
+                                let hasHeatmap =
+                                    (Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff) <> HeatOff
+                                let inspectGhost =
+                                    model.WorkflowStep.GetValue t = Inspect
+                                    && not hasHeatmap
+                                    && (match (model.Registration.GetValue t).ReferenceMesh with
+                                        | Some r -> r <> name
+                                        | None -> false)
+                                vis && not inspectGhost)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
             // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
@@ -266,10 +268,15 @@ module MeshView =
                     else
                         let rf = (model.Registration.GetValue t).ReferenceMesh
                         if Some name = rf then
-                            match Map.tryFind name (model.SurfaceDistance.GetValue t) with
-                            | Some arr -> (2, Some arr)
-                            | None -> (0, None)
-                        elif (match model.MeshSolo.GetValue t with Solo(s, _) -> s = name | _ -> false) then
+                            // While a moving mesh is isolated the reference is plain
+                            // context (the isolated mesh paints its field against it);
+                            // the variance aggregate paints only in the no-solo ensemble.
+                            if (model.MeshSolo.GetValue t).IsSome then (0, None)
+                            else
+                                match Map.tryFind name (model.SurfaceDistance.GetValue t) with
+                                | Some arr -> (2, Some arr)
+                                | None -> (0, None)
+                        elif model.MeshSolo.GetValue t = Some name then
                             match model.InspectChannel.GetValue t with
                             | ChDifference ->
                                 match Map.tryFind name (model.FocusDist.GetValue t) with
@@ -335,22 +342,12 @@ module MeshView =
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
                             let floorOn = model.GhostSilhouette.GetValue t
-                            // Inspect arity by rendering (§T5): when a mesh is soloed
-                            // (two-mesh difference / single-mesh intrinsic), every OTHER
-                            // mesh — the reference included — renders as an EMPTY OUTLINE
-                            // (fill discarded; the always-on outline pass keeps its
-                            // silhouette for overlap context), regardless of the floor.
-                            let inspectSoloOther =
-                                model.WorkflowStep.GetValue t = Inspect
-                                && (match model.MeshSolo.GetValue t with Solo(s, _) -> s <> name | NoSolo -> false)
-                            if inspectSoloOther then 0.0f
-                            else
-                                match wheelIsolation.GetValue t with
-                                | Some iso when iso <> name -> (if floorOn then 0.15f else 0.0f)
-                                | _ ->
-                                    if floorOn
-                                    then float32 (model.GhostOpacity.GetValue t)
-                                    else 0.0f))
+                            match wheelIsolation.GetValue t with
+                            | Some iso when iso <> name -> (if floorOn then 0.15f else 0.0f)
+                            | _ ->
+                                if floorOn
+                                then float32 (model.GhostOpacity.GetValue t)
+                                else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
                     Sg.Uniform("MeshColor",       meshColor)
                     Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)

@@ -526,6 +526,8 @@ body.loaded { background: #f4f6f8; }
 .mb:hover { background: #e2e8f0; color: #0f172a; }
 .mb-on { color: #1a56db; }
 .mb-ref.mb-on { color: #b45309; }
+.mb:disabled { opacity: 0.35; cursor: not-allowed; }
+.mb:disabled:hover { background: transparent; color: #94a3b8; }
 
 /* ── Global before/after registration toggle (top bar) ─────────────── */
 

@@ -46,14 +46,18 @@ module Update =
         | PanoCentersLoaded pcs ->
             { model with PanoCenters = Map.ofArray pcs }
         | SetVisible(name, v) ->
-            let activePickingLayer =
-                if not v && model.ActivePickingLayer = Some name then None
-                else model.ActivePickingLayer
-            // Probes sample every mesh regardless of visibility (like contact rings),
-            // so a visibility toggle keeps the matrix cells stable — no re-probe.
-            { model with
-                MeshVisible = Map.add name v model.MeshVisible
-                ActivePickingLayer = activePickingLayer }
+            // Visibility toggles are frozen while a mesh is isolated (the tile
+            // buttons are disabled too; this is the reducer-side guard).
+            if model.MeshSolo.IsSome then model
+            else
+                let activePickingLayer =
+                    if not v && model.ActivePickingLayer = Some name then None
+                    else model.ActivePickingLayer
+                // Probes sample every mesh regardless of visibility (like contact rings),
+                // so a visibility toggle keeps the matrix cells stable — no re-probe.
+                // setMeshVisible refreshes the visibility-derived Inspect caches.
+                setMeshVisible (Map.add name v model.MeshVisible)
+                    { model with ActivePickingLayer = activePickingLayer }
         | ToggleMenu ->
             let sp = model.ScanPins
             if ScanPinModel.isPlacing sp then model
@@ -291,7 +295,7 @@ module Update =
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
                     Selection = Selection.initial
-                    MeshSolo = NoSolo
+                    MeshSolo = None
                     MeshBounds = Map.empty
                     ActivePickingLayer = None
                     SolvedTransforms = Map.empty
@@ -303,20 +307,12 @@ module Update =
         | SetRenderingMode m ->
             { model with RenderingMode = m }
         | ToggleMeshSolo name ->
-            // Isolation is a visibility state only; probes cover every mesh so cells
-            // stay stable (no invalidateProbes).
+            // Isolation is an overlay (MeshVisibility.shown); probes cover every mesh
+            // so the matrix cells stay stable. Re-clicking the active ◐ deactivates
+            // and resets every visibility toggle to ON; clicking another ◐ retargets.
             match model.MeshSolo with
-            | Solo(soloName, restore) when soloName = name ->
-                { model with MeshVisible = restore; MeshSolo = NoSolo }
-            | Solo(_, restore) ->
-                let vis = restore |> Map.map (fun k _ -> k = name)
-                { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
-            | NoSolo ->
-                let restore = model.MeshVisible
-                let vis =
-                    model.MeshNames |> IndexList.toSeq
-                    |> Seq.map (fun n -> n, n = name) |> Map.ofSeq
-                { model with MeshVisible = vis; MeshSolo = Solo(name, restore) }
+            | Some s when s = name -> exitSolo model
+            | _ -> enterSolo name model
         | ResetCamera ->
             let center = ModelTransforms.firstPanoCenterRender model
             let radius =
@@ -345,6 +341,17 @@ module Update =
                 | Some p -> env.Emit [FlyToPoint(p.Centre, max 0.5 (p.InnerRadius * 4.0))]
                 | None -> ()
              | _ -> ())
+            // Inspect isolation swap: focusing a pin turns mesh isolation off (the
+            // visibility toggles reset to ON) and pin isolation on; losing the pin
+            // (deselect / delete) returns pin isolation to the Inspect default (off).
+            let m =
+                if m.WorkflowStep <> Inspect then m
+                else
+                    match msg with
+                    | SelectPin (Some _) -> { exitSolo m with AnchorGhostMode = true }
+                    | SelectPin None -> { m with AnchorGhostMode = false }
+                    | DeletePin _ when m.Selection.SelectedPin.IsNone -> { m with AnchorGhostMode = false }
+                    | _ -> m
             // Starting placement / switching / deleting a pin cancels the armed editor.
             match msg with
             | EnterAnchorPlacement | SelectPin _ | DeletePin _ ->
@@ -353,21 +360,23 @@ module Update =
         | SetHovered h ->
             if model.Selection.Hovered = h then model
             else { model with Selection = { model.Selection with Hovered = h } }
-        | SetSelectedPoint m ->
-            if model.Selection.SelectedPoint = m then model
-            else { model with Selection = { model.Selection with SelectedPoint = m } }
         | SetWorkflowStep step ->
             // Entering/leaving Inspect (re)drives the central-3D variance map, so drop
             // its cache + bump the generation. Per-mode default (§C): pin isolation
             // defaults on in Correspondence, off elsewhere (the hold modifier overrides
-            // momentarily where it's off).
+            // momentarily where it's off). A workflow switch ends any mesh isolation
+            // (exitSolo resets the visibility toggles to ON) and drops the locate
+            // backup + the hover peek, both bound to the previous mode's view.
             if model.WorkflowStep = step then model
             else
                 bumpSurfaceDist ()
                 bumpFocusDist ()
-                { model with WorkflowStep = step; SurfaceDistance = Map.empty; FocusDist = Map.empty
-                             AnchorGhostMode = (step = Correspondence)
-                             CorrArm = None; CorrPreview = None; BrushedSamples = Set.empty }
+                exitSolo
+                    { model with WorkflowStep = step; SurfaceDistance = Map.empty; FocusDist = Map.empty
+                                 AnchorGhostMode = (step = Correspondence)
+                                 CorrArm = None; CorrPreview = None; BrushedSamples = Set.empty
+                                 LocateBackup = None
+                                 Selection = { model.Selection with Hovered = None } }
         | SetInspectChannel ch ->
             { model with InspectChannel = ch }
         | SetFocusProjection p ->
@@ -378,16 +387,32 @@ module Update =
         | SetFocusedMesh (Some m) ->
             // Promote to the large single (links rail + dock + focus enlargement).
             // Switching target cancels any in-progress set-correspondence (focus + 3D).
-            if model.Selection.FocusedMesh = Some m then model
-            else
-                // §T9 camera sync (the default, not a toggle): any focus change flies
-                // the 3D camera to frame the mesh — the focus single auto-shows it, so
-                // both cameras land on that spot.
-                (match Map.tryFind m model.MeshBounds with
-                 | Some b when not b.IsInvalid -> env.Emit [FlyToPoint(b.Center, max 0.5 (b.Size.Length * 0.6))]
-                 | _ -> ())
-                { model with Selection = { model.Selection with FocusedMesh = Some m }
-                             CorrArm = None; CorrPreview = None }
+            let changed = model.Selection.FocusedMesh <> Some m
+            // §T9 camera sync (the default, not a toggle): any focus change flies
+            // the 3D camera to frame the mesh — the focus single auto-shows it, so
+            // both cameras land on that spot.
+            if changed then
+                match Map.tryFind m model.MeshBounds with
+                | Some b when not b.IsInvalid -> env.Emit [FlyToPoint(b.Center, max 0.5 (b.Size.Length * 0.6))]
+                | _ -> ()
+            let model =
+                if changed then
+                    { model with Selection = { model.Selection with FocusedMesh = Some m }
+                                 CorrArm = None; CorrPreview = None }
+                else model
+            // A focused mesh must be visible — the single and the focus-head buttons
+            // resolve against the raw toggles, so focusing a hidden mesh re-enables it.
+            let model =
+                if Map.tryFind m model.MeshVisible |> Option.defaultValue true then model
+                else setMeshVisible (Map.add m true model.MeshVisible) model
+            // Inspect focus policy (§C): focusing a moving mesh isolates it with the
+            // reference (it paints its own difference/displacement field) and swaps
+            // pin isolation off; focusing the reference returns to the ensemble view.
+            if model.WorkflowStep = Inspect then
+                if model.Registration.ReferenceMesh <> Some m then
+                    { enterSolo m model with AnchorGhostMode = false }
+                else exitSolo model
+            else model
         | PickCorrespondenceAt(pinId, mesh, world) ->
             // Set the (pin, mesh) correspondence point at the picked surface point,
             // stored mesh-local via the displayed transform (so the before/after toggle
@@ -464,21 +489,25 @@ module Update =
                         match model.LocateBackup with
                         | Some _ -> model.LocateBackup
                         | None ->
-                            Some { Pin = pinId; Mesh = mesh
-                                   PrevSolo = model.MeshSolo; PrevVisible = model.MeshVisible
+                            Some { PrevSolo = model.MeshSolo; PrevVisible = model.MeshVisible
                                    PrevCenter = model.Camera.center; PrevRadius = model.Camera.radius
                                    PrevPhi = model.Camera.phi; PrevTheta = model.Camera.theta }
-                    let restore = match model.MeshSolo with Solo(_, r) -> r | NoSolo -> model.MeshVisible
-                    let vis = model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, n = mesh) |> Map.ofSeq
                     let tight = max 0.5 (pin.InnerRadius * 4.0)
                     env.Emit [FlyToPoint(world, tight)]
-                    { model with
-                        Selection = { model.Selection with FocusedMesh = Some mesh; SelectedPoint = Some mesh; SelectedPin = Some pinId }
-                        MeshSolo = Solo(mesh, restore)
-                        MeshVisible = vis
-                        LocateBackup = backup
-                        FocusProjection = ProjTop
-                        CorrArm = None; CorrPreview = None }
+                    // The located mesh must resolve in the focus single (raw toggles) —
+                    // re-enable it if hidden; the backup above restores the prior map.
+                    let model =
+                        if Map.tryFind mesh model.MeshVisible |> Option.defaultValue true then model
+                        else setMeshVisible (Map.add mesh true model.MeshVisible) model
+                    enterSolo mesh
+                        { model with
+                            Selection = { model.Selection with FocusedMesh = Some mesh; SelectedPin = Some pinId }
+                            LocateBackup = backup
+                            FocusProjection = ProjTop
+                            // An Inspect locate also lights the pin ROI (pin isolation
+                            // on, like a pin click); Correspondence keeps its default.
+                            AnchorGhostMode = (model.WorkflowStep = Inspect) || model.AnchorGhostMode
+                            CorrArm = None; CorrPreview = None }
                 | None -> showToast env "No marker on that mesh to locate" model
             | None -> model
         // Single back-out: restore the camera + solo/visibility captured at the first
@@ -488,10 +517,10 @@ module Update =
             | None -> model
             | Some b ->
                 env.Emit [CameraMessage (OrbitMessage.SetTarget(false, b.PrevCenter, b.PrevRadius, b.PrevPhi, b.PrevTheta))]
-                { model with
-                    MeshSolo = b.PrevSolo
-                    MeshVisible = b.PrevVisible
-                    LocateBackup = None }
+                setMeshVisible b.PrevVisible
+                    { model with
+                        MeshSolo = b.PrevSolo
+                        LocateBackup = None }
         // Diagnostics route through existing handlers; focus/highlight = open target + 1.5s pulse.
         | NavTo action ->
             let pulse (selector : string) =
@@ -513,7 +542,10 @@ module Update =
     // mesh's signed distance (target = reference, ref = moving). Debounced via the
     // surface-distance generation/CTS.
     let private ensureVariance (env : Env<Message>) (model : Model) : Model =
-        if model.WorkflowStep <> Inspect then model
+        // The variance aggregate only paints in the no-solo ensemble — don't fetch
+        // while a mesh is isolated (exitSolo resets the visibility map, which
+        // invalidates and re-arms this fetch).
+        if model.WorkflowStep <> Inspect || model.MeshSolo.IsSome then model
         else
             match model.Registration.ReferenceMesh with
             | Some refMesh
@@ -574,9 +606,12 @@ module Update =
             match model.Registration.ReferenceMesh with
             | None -> model
             | Some refMesh ->
+                // Shown moving meshes (isolation-aware): under solo only the isolated
+                // mesh needs its field — and it needs it even if its raw toggle is off.
                 let moving =
                     model.MeshNames |> IndexList.toList
-                    |> List.filter (fun n -> n <> refMesh && (Map.tryFind n model.MeshVisible |> Option.defaultValue true))
+                    |> List.filter (fun n ->
+                        n <> refMesh && MeshVisibility.shown model.MeshSolo model.MeshVisible n)
                 let missing = moving |> List.filter (fun m -> not (Map.containsKey m model.FocusDist))
                 if List.isEmpty missing || focusDistReqGen = focusDistGen then model
                 else

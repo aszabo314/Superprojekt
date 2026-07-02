@@ -33,15 +33,12 @@ module GuiFocus =
                 selectedPin |> AVal.map (function Some p -> sprintf "%s %s" p.Glyph p.ShortName | None -> "")
             }
 
-        // A hard solo in the main view falls back to its restore set so the focus
-        // still resolves a mesh.
+        // Same resolution rule as FocusScene.single (solo is an overlay, so the raw
+        // toggles decide) — the head buttons always target the mesh the single shows.
         let visibleMeshes =
             AVal.custom (fun t ->
                 let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                let vis =
-                    match model.MeshSolo.GetValue t with
-                    | Solo(_, restore) -> restore
-                    | NoSolo -> model.MeshVisible.GetValue t
+                let vis = model.MeshVisible.GetValue t
                 names |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true))
         let focusMesh =
             (model.Selection.FocusedMesh, visibleMeshes) ||> AVal.map2 (fun fm vis ->

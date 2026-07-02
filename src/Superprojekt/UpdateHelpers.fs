@@ -76,6 +76,36 @@ module UpdateHelpers =
     let invalidateRings (model : Model) =
         { model with ScanPins = ScanPinModel.invalidateRings model.ScanPins }
 
+    // Replace the visibility map, invalidating the visibility-derived Inspect data:
+    // the variance aggregate is defined over the visible moving meshes (refetch), a
+    // newly shown mesh may still lack its difference field (bump lets ensureFocusDist
+    // fetch the missing entries; present entries are kept), and the brushed sample
+    // ids index a visibility-dependent canonical array (would dangle).
+    let setMeshVisible (vis : Map<string, bool>) (model : Model) =
+        if vis = model.MeshVisible then model
+        else
+            if not (Map.isEmpty model.SurfaceDistance) then bumpSurfaceDist ()
+            bumpFocusDist ()
+            { model with MeshVisible = vis; SurfaceDistance = Map.empty; BrushedSamples = Set.empty }
+
+    let allVisible (model : Model) =
+        model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, true) |> Map.ofSeq
+
+    // Isolation is an overlay (MeshVisible untouched on entry). The bump lets
+    // ensureFocusDist fetch the isolated mesh's difference field if it is missing
+    // (e.g. the mesh was hidden when Inspect fetched the visible set).
+    let enterSolo (name : string) (model : Model) =
+        if model.MeshSolo = Some name then model
+        else
+            bumpFocusDist ()
+            { model with MeshSolo = Some name }
+
+    // Ending isolation — ◐ re-click, workflow switch, or the Inspect pin-focus swap —
+    // resets every visibility toggle to ON (spec: leaving isolation shows everything).
+    let exitSolo (model : Model) =
+        if model.MeshSolo.IsNone then model
+        else setMeshVisible (allVisible model) { model with MeshSolo = None }
+
     let showToast (env : Env<Message>) (text : string) (model : Model) =
         toastCts.Cancel()
         toastCts <- new System.Threading.CancellationTokenSource()

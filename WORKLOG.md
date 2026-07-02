@@ -10,6 +10,26 @@
 ## In progress
 - (nothing — pass complete; user verified in browser, adjustments below applied)
 
+## Polish round 2 (2026-07-02)
+- **Reference-marker parity**: the reference's correspondence point (RefAnchor) now
+  draws exactly like a moving-mesh marker — same wire-sphere+cross glyph/size in the
+  reference mesh's colour in the 3D constellation (hover-linked via its matrix cell),
+  and shown in the focus Top overlay when the single shows the reference. Ref-column
+  matrix cells now locate (FrameCorrespondence/selectCell read RefAnchor). Pick/place
+  already worked (✎ edit point + PickCorrespondenceAt isRef branch) — verified.
+- **Distribution chart**: X-axis ruler (nice-step ticks, labels, faint gridlines,
+  zero line, axis baseline); brushing reworked from dot-lasso to an X-RANGE drag —
+  selects every sample in the range, band edges show exact mm values, click clears.
+- **Pin visuals**: centre jack now small + faint neutral (was bright yellow when
+  selected / red otherwise); equator + contact rings + focus ROI circles use the
+  pin's own colour (was host-mesh colour falling back to fixed blue / red-gold in
+  the focus); verdict flag pole is neutral grey (red/green semantics dropped) and
+  takes the pin colour while the 🎨 Overlays hold is down.
+- **Focus head slimmed**: ⤺ back, ⇄ link, ⟲ reset buttons removed with their code —
+  `Model.LinkViews` + `ToggleLinkViews` + both link-views camera paths +
+  `FocusScene.recenterOnWorld` + dead CSS (incl. stale `.focus-peek`). Locate
+  back-out remains via re-clicking the located matrix cell (BackOutLocate kept).
+
 ## Docs cleanup (2026-07-02)
 - CLAUDE.md rewritten: kept only rules/pitfalls (state rules, render-pipeline
   contracts, coordinate discipline, adaptive-performance rules, query-perf rules,

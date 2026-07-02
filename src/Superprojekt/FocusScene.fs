@@ -42,8 +42,6 @@ module FocusScene =
     // state if two singles ever coexisted.
     let mutable private dragging = false
     let mutable private lastPx = V2i.Zero
-    // Pointer-down position, to tell a click from a drag for the link-views fly.
-    let mutable private downPx = V2i.Zero
     // Hover-preview throttle + generation guard (drops out-of-order raycast results).
     let private nowMs () = float System.DateTime.UtcNow.Ticks / 10000.0
     let mutable private hoverGen = 0
@@ -115,12 +113,6 @@ module FocusScene =
         transact (fun () ->
             zoom.Value <- zoomLevel
             pan.Value <- V2d((rp.X - fc.X) / ext, (rp.Y - fc.Y) / ext))
-
-    // Recenter (keep the current zoom) the focus canvas on a metric-world point —
-    // the link-views 3D→focus side. Top-projection maths (see focusOnWorld).
-    let recenterOnWorld (model : AdaptiveModel) (name : string) (world : V3d) =
-        let _, zoom = camFor name
-        focusOnWorld model name world zoom.Value
 
     // The mesh the enlarged single currently resolves to (the same rule `single`
     // uses: the focused mesh if visible, else the first visible one). Forced at
@@ -371,20 +363,28 @@ module FocusScene =
                     let z = (zoom :> aval<_>).GetValue t
                     let gr = 0.05 * ext / max 1e-3 z   // screen-fixed glyph half-size
                     let baseCol = meshCol.GetValue t
+                    let isRef = (model.Registration.GetValue t).ReferenceMesh = Some name
                     let dw = RigidTransform.renderToWorld s cc (dispRenderT.GetValue t)
                     let out = ResizeArray<V3d * V3d * V4d * float>()
                     for (id, p) in HashMap.toSeq pins do
                         let isSel = sel = Some id
                         let cR = ScanPin.renderCentre cc s p.Centre
                         let rR = ScanPin.renderLength s p.InnerRadius
-                        let ringCol = if isSel then V4d(1.0, 0.85, 0.0, 0.95) else V4d(0.95, 0.35, 0.35, 0.8)
-                        addRingXY out cR rR ringCol (if isSel then 2.0 else 1.3) 48
+                        // ROI circle in the pin's own colour (selection = weight/alpha).
+                        let pinCol = Primitives.c4bToV3d p.PinColor
+                        let ringCol = V4d(pinCol, if isSel then 0.95 else 0.6)
+                        addRingXY out cR rR ringCol (if isSel then 2.2 else 1.3) 48
                         match ScanPin.correspondence p with
                         | Some c ->
-                            match Map.tryFind name c.Anchors with
-                            | Some a ->
-                                let aR = ScanPin.renderCentre cc s (dw.Forward.TransformPos a.Point)
-                                let gcol = if isSel then V4d(1.0, 0.85, 0.0, 1.0) else V4d(baseCol, 0.95)
+                            // The reference's marker is its RefAnchor (own-frame like
+                            // Anchors), drawn with the same glyph as any other mesh.
+                            let anchorOwn =
+                                if isRef then c.RefAnchor
+                                else Map.tryFind name c.Anchors |> Option.map (fun a -> a.Point)
+                            match anchorOwn with
+                            | Some own ->
+                                let aR = ScanPin.renderCentre cc s (dw.Forward.TransformPos own)
+                                let gcol = V4d(baseCol, if isSel then 1.0 else 0.95)
                                 let gw = if isSel then 2.5 else 1.8
                                 addCrossXY out aR gr gcol gw
                                 addRingXY out aR (gr * 0.6) gcol gw 24
@@ -478,10 +478,8 @@ module FocusScene =
             Dom.OnPointerDown(fun e ->
                 let p = e.OffsetPosition
                 lastPx <- p
-                downPx <- p
                 // Pan on middle-drag or Shift+left-drag — the same binding as the 3D
-                // view's in-plane pan. Plain left = place when armed here, else a click
-                // (link-views fly on pointer-up); it no longer pans.
+                // view's in-plane pan. Plain left = place when armed here; it never pans.
                 if e.Button = Button.Middle || (e.Button = Button.Left && e.Shift) then dragging <- true
                 else
                     match armedHere () with
@@ -493,21 +491,7 @@ module FocusScene =
                                 | None -> ()
                             } |> Async.Start
                     | None -> ())
-            Dom.OnPointerUp(fun e ->
-                dragging <- false
-                // Link-views: a clean left click (no drag) flies the 3D camera to that
-                // world point. Skipped while armed here (a click places there).
-                if AVal.force model.LinkViews && (armedHere ()).IsNone then
-                    let p = e.OffsetPosition
-                    let dd = p - downPx
-                    if dd.X * dd.X + dd.Y * dd.Y < 16 then
-                        async {
-                            match! worldRayHit (float p.X) (float p.Y) with
-                            | Some world ->
-                                let r = max 1.0 (float (AVal.force fitExtent) / max 1e-6 (AVal.force scale) * 0.3)
-                                env.Emit [FlyToPoint(world, r)]
-                            | None -> ()
-                        } |> Async.Start)
+            Dom.OnPointerUp(fun _ -> dragging <- false)
             Dom.OnPointerMove(fun e ->
                 let p = e.OffsetPosition
                 if (armedHere ()).IsSome then

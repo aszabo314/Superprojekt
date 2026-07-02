@@ -23,8 +23,6 @@ type Message =
     | SetIsolatePeek of bool
     // Spring-loaded show-overlays modifier (greyscale-except-pins while held).
     | SetShowOverlays of bool
-    // Link-views toggle (focus ↔ 3D camera sync; pure camera).
-    | ToggleLinkViews
     | SetReferenceMesh of string option
     // Disabled until a solve exists.
     | SetRegView of RegView

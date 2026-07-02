@@ -371,32 +371,6 @@ body.loaded { background: #f4f6f8; }
 }
 .focus-set:hover { background: #eef2f6; }
 .focus-set.btn-active { background: #1a56db; color: #fff; border-color: #1a56db; }
-/* reset pan/zoom of the focused tile */
-.focus-reset {
-    padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
-    background: #fff; color: #475569; cursor: pointer; font-size: 11px;
-}
-.focus-reset:hover { background: #eef2f6; }
-.focus-reset:active { background: #e2e8f0; }
-/* peek-reference modifier (hold) */
-.focus-peek {
-    padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
-    background: #fff; color: #b45309; cursor: pointer; font-size: 11px;
-}
-.focus-peek:active { background: #fef3c7; }
-/* locate back-out (restore camera + solo) */
-.focus-back {
-    padding: 3px 8px; border: 1px solid #0891b2; border-radius: 4px;
-    background: #ecfeff; color: #0e7490; cursor: pointer; font-size: 11px;
-}
-.focus-back:hover { background: #cffafe; }
-/* link-views toggle */
-.focus-link {
-    padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
-    background: #fff; color: #475569; cursor: pointer; font-size: 11px;
-}
-.focus-link:hover { background: #eef2f6; }
-.focus-link.btn-active { background: #1a56db; color: #fff; border-color: #1a56db; }
 /* large single — WebGL render control (textured; pan/zoom/pick) */
 .focus-single { width: 100%; height: 280px; background: #eef2f6; position: relative; touch-action: none; }
 .focus-rc { display: block; width: 100%; height: 100%; }

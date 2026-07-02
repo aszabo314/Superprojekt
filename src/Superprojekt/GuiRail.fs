@@ -139,11 +139,18 @@ module GuiRail =
             else
                 let pin = HashMap.tryFind id (AVal.force pinsVal)
                 let corr = pin |> Option.bind ScanPin.correspondence
-                match corr |> Option.bind (fun c -> Map.tryFind mesh c.Anchors) with
-                | Some a ->
+                // The reference's marker is its RefAnchor — a ref-column cell locates
+                // like any other cell.
+                let isRef = (AVal.force model.Registration).ReferenceMesh = Some mesh
+                let anchorOwn =
+                    corr |> Option.bind (fun c ->
+                        if isRef then c.RefAnchor
+                        else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point))
+                match anchorOwn with
+                | Some own ->
                     let cc = AVal.force model.CommonCentroid
                     let s  = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
-                    let world = (RigidTransform.renderToWorld s cc (AVal.force (MeshView.displayedMeshT model mesh))).Forward.TransformPos a.Point
+                    let world = (RigidTransform.renderToWorld s cc (AVal.force (MeshView.displayedMeshT model mesh))).Forward.TransformPos own
                     env.Emit [FrameCorrespondence(id, mesh)]
                     // Focus panel: switch to that mesh and zoom onto the correspondence,
                     // as tight as the 3D FlyToPoint (same metric half-extent).

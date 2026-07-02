@@ -98,9 +98,6 @@ module Update =
         | SetShowOverlays held ->
             if model.ShowOverlaysHeld = held then model
             else { model with ShowOverlaysHeld = held }
-        | ToggleLinkViews ->
-            { model with LinkViews = not model.LinkViews }
-
         | SetRegView v ->
             // Only meaningful once a solve exists (the view disables it otherwise).
             if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
@@ -482,9 +479,15 @@ module Update =
         | FrameCorrespondence(pinId, mesh) ->
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
-                match ScanPin.correspondence pin |> Option.bind (fun c -> Map.tryFind mesh c.Anchors) with
-                | Some a ->
-                    let world = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos a.Point
+                // The reference's marker is its RefAnchor — locate works on it like on
+                // any moving-mesh marker (both are own-frame points).
+                let anchorOwn =
+                    ScanPin.correspondence pin |> Option.bind (fun c ->
+                        if model.Registration.ReferenceMesh = Some mesh then c.RefAnchor
+                        else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point))
+                match anchorOwn with
+                | Some own ->
+                    let world = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos own
                     let backup =
                         match model.LocateBackup with
                         | Some _ -> model.LocateBackup

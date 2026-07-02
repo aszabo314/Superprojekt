@@ -4,10 +4,10 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-// Right focus panel: a large WebGL single (focused mesh, textured, pan/zoom + GPU
-// correspondence pick) over a small-multiples strip of textured thumbnails, both
-// from FocusScene. The Pano / Top projection toggle drives the single. Head = the
-// projection toggle, ⊕ set point, ⟲ reset, ⇄ peek-reference.
+// Right focus panel: a large WebGL single (focused mesh, textured, pan/zoom +
+// server-raycast correspondence pick) over a small-multiples strip of textured
+// thumbnails, both from FocusScene. Head = the selected-pin chip, the Pano / Top
+// projection toggle, and ✎ edit point (the armed correspondence editor).
 module GuiFocus =
 
     let panel (env : Env<Message>) (model : AdaptiveModel) =
@@ -67,38 +67,6 @@ module GuiFocus =
                 FocusProjection.label p
             }
 
-        let resetBtn =
-            button {
-                Class "focus-reset"
-                Attribute("title", "Reset pan / zoom")
-                Dom.OnClick(fun _ -> FocusScene.resetCam (AVal.force focusMesh))
-                "⟲ reset"
-            }
-
-        // Locate back-out: shown only while a "frame correspondence" is in effect;
-        // restores the camera + solo and clears the focus zoom.
-        let backBtn =
-            button {
-                Class "focus-back"
-                Primitives.showWhen (model.LocateBackup |> AVal.map Option.isSome)
-                Attribute("title", "Back out of locate: restore camera + visibility")
-                Dom.OnClick(fun _ ->
-                    env.Emit [BackOutLocate]
-                    FocusScene.resetCam (AVal.force focusMesh))
-                "⤺ back"
-            }
-
-        // Link-views toggle (off by default): focus click flies the 3D camera, a 3D
-        // recenter recenters the focus canvas. Pure camera.
-        let linkBtn =
-            button {
-                Class "focus-link"
-                Primitives.classWhen "btn-active" model.LinkViews
-                Attribute("title", "Link views: focus click flies the 3D camera; 3D recenter recenters the focus")
-                Dom.OnClick(fun _ -> env.Emit [ToggleLinkViews])
-                model.LinkViews |> AVal.map (fun on -> if on then "⇄ linked" else "⇄ link")
-            }
-
         // Unified arm button (§T4): one mode, two surfaces. Armed → clicking the focus
         // OR the 3D surface sets the (pin, mesh) point (ROI-clamped); stays armed.
         let setBtn =
@@ -155,9 +123,6 @@ module GuiFocus =
                 div {
                     Class "focus-head-right"
                     setBtn
-                    backBtn
-                    linkBtn
-                    resetBtn
                 }
             }
             div { Class "focus-single"; Primitives.showWhenNot isOverview; FocusScene.single env model }

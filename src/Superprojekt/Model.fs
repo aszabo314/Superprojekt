@@ -239,12 +239,9 @@ type Model =
         // colours toward neutral grey), <1 narrows it (saturates sooner). Gear slider.
         DiffRangeScale      : float
 
-        // Link-views: when on, a focus-surface click flies the 3D camera to that
-        // world point and a 3D recenter recenters the focus canvas. Pure camera,
-        // off by default.
-        LinkViews           : bool
         // Active "frame correspondence" (locate) backup; Some while a locate is in
-        // effect so a single back-out restores the prior camera + solo state.
+        // effect so re-clicking the located matrix cell restores the prior camera +
+        // solo state.
         LocateBackup        : LocateState option
     }
 
@@ -339,6 +336,5 @@ module Model =
             OutlineThreshold    = 0.004
             IsolineBands        = 700.0
             DiffRangeScale      = 1.0
-            LinkViews           = false
             LocateBackup        = None
         }

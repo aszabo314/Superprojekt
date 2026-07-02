@@ -13,26 +13,29 @@ module GuiInspector =
 
     // Pin distribution canvas (§T6): per moving-mesh lane, the ROI sample "rain" of
     // every pin coloured by pin, on a shared signed-distance axis with the ±LoD₉₅ band
-    // + axis scale. A hovered pin's samples brighten; a brushed sample set (data-brushed,
-    // gids) is emphasized. DRAG over samples → write their gids to the sibling hidden
-    // input (the JS→Elm bridge) → 3D markers. Self-contained OnBoot (observes data-dist
-    // + data-brushed); jitter is SEEDED by gid so dots don't drift across redraws.
+    // and a proper X-axis ruler (nice-step ticks + faint gridlines + zero line).
+    // Brushing is an X-RANGE selection: drag horizontally to select every sample whose
+    // value falls in the range; the band's two edges display their exact values (mm)
+    // and a plain click clears it. The selected gids go to the sibling hidden input
+    // (the JS→Elm bridge) → 3D markers; 3D-hover highlights arrive via data-brushed.
+    // Self-contained OnBoot (observes data-dist + data-brushed); jitter is SEEDED by
+    // gid so dots don't drift across redraws.
     let private brushChartJs = [
         "(function(){"
         "var el=__THIS__;"
         // Resolve the bridge lazily EACH emit (never captured at boot: the sibling input
         // may not be mounted yet when this OnBoot runs → a boot capture would freeze null).
         "function findBridge(){ return (el.parentElement&&el.parentElement.querySelector('.ins-brush-bridge'))||document.querySelector('.ins-brush-bridge'); }"
-        "el._dots=[]; var dragging=false, brushed=new Set(), lastEmit=0;"
+        "el._dots=[]; var dragging=false, range=null, anchorV=0, lastEmit=0;"
         "function jit(gid){ var x=Math.sin((gid+1)*12.9898)*43758.5453; return x-Math.floor(x); }"
-        "function emit(){ var b=findBridge(); if(!b) return; b.value=Array.from(brushed).join(','); b.dispatchEvent(new Event('input',{bubbles:true})); }"
+        "function emit(){ var b=findBridge(); if(!b) return; var ids=[];"
+        "  if(range){ for(var i=0;i<el._dots.length;i++){ var dt=el._dots[i]; if(dt.v>=range[0]&&dt.v<=range[1]) ids.push(dt.gid); } }"
+        "  b.value=ids.join(','); b.dispatchEvent(new Event('input',{bubbles:true})); }"
         "function ph(t){ el.innerHTML=''; el._dots=[]; var p=document.createElement('div'); p.className='ins-ph'; p.textContent=t; el.appendChild(p); }"
+        "function niceStep(raw){ var mag=Math.pow(10,Math.floor(Math.log(raw)/Math.LN10)); var n=raw/mag; return (n<1.5?1:n<3.5?2:n<7.5?5:10)*mag; }"
         "function render(){"
         "  var raw=el.getAttribute('data-dist')||'{}'; var d; try{d=JSON.parse(raw);}catch(e){return;}"
         "  var braw=el.getAttribute('data-brushed')||''; var bset=new Set(braw.length?braw.split(',').map(Number):[]);"
-        // Local-first: union the in-progress drag selection so the chart highlights
-        // immediately, independent of the model round-trip (data-brushed) landing.
-        "  brushed.forEach(function(gid){ bset.add(gid); });"
         "  if(!d||!d.rows){ ph(d&&d.pending?d.pending:'place pins to see ROI distributions'); return; }"
         "  if(d.rows.length===0){ ph('no moving meshes probed'); return; }"
         "  el.innerHTML=''; el._dots=[];"
@@ -41,34 +44,56 @@ module GuiInspector =
         "  cv.style.width=W+'px'; cv.style.height=H+'px'; cv.className='ins-dist-cv';"
         "  var g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);"
         "  g.fillStyle='#ffffff'; g.fillRect(0,0,W,H);"
-        "  var padL=10,padR=12,padT=26,padB=18; var lo=d.lo,hi=d.hi; var span=Math.max(1e-6,hi-lo);"
+        "  var padL=10,padR=12,padT=26,padB=24; var lo=d.lo,hi=d.hi; var span=Math.max(1e-6,hi-lo);"
         "  function X(v){ return padL+(v-lo)/span*(W-padL-padR); }"
+        "  el._XV=function(x){ return lo+(x-padL)/Math.max(1,W-padL-padR)*span; };"
+        "  el._padL=padL; el._padR=padR;"
         "  g.fillStyle='#475569'; g.font='11px SF Mono,Monaco,monospace'; g.textAlign='left';"
         "  g.fillText(d.state+'  ·  signed distance to reference (mm)  ·  0 = reference median',8,13);"
         "  g.fillStyle='#94a3b8'; g.font='9px SF Mono,Monaco,monospace';"
-        "  g.fillText('░ ±LoD₉₅   ·   drag to brush', W-176, 13);"
-        "  var n=d.rows.length; var laneH=(H-padT-padB)/n;"
-        "  g.strokeStyle='#cbd5e1'; g.lineWidth=1; g.beginPath(); g.moveTo(X(0),padT-2); g.lineTo(X(0),H-padB+2); g.stroke();"
-        "  g.fillStyle='#94a3b8'; g.font='9px SF Mono,Monaco,monospace'; g.textAlign='center';"
-        "  [lo,(lo+hi)/2,hi].forEach(function(v){ g.fillText(v.toFixed(0),X(v),H-5); });"
+        "  g.fillText('░ ±LoD₉₅   ·   drag an X-range to brush', W-196, 13);"
+        "  var n=d.rows.length; var axY=H-padB; var laneH=(axY-padT)/n;"
+        // X-axis ruler: baseline, nice-step ticks with labels, faint gridlines, zero line.
+        "  var step=niceStep(span/5); var dec=step>=1?0:(step>=0.1?1:2);"
+        "  g.strokeStyle='#94a3b8'; g.lineWidth=1; g.beginPath(); g.moveTo(padL,axY+0.5); g.lineTo(W-padR,axY+0.5); g.stroke();"
+        "  g.font='9px SF Mono,Monaco,monospace'; g.textAlign='center';"
+        "  for(var v=Math.ceil(lo/step)*step; v<=hi+1e-9; v+=step){ var x=X(v);"
+        "    g.strokeStyle='#eef2f6'; g.beginPath(); g.moveTo(x,padT-2); g.lineTo(x,axY); g.stroke();"
+        "    g.strokeStyle='#94a3b8'; g.beginPath(); g.moveTo(x,axY); g.lineTo(x,axY+4); g.stroke();"
+        "    g.fillStyle='#64748b'; g.fillText(v.toFixed(dec),x,axY+14); }"
+        "  if(lo<=0&&hi>=0){ g.strokeStyle='#cbd5e1'; g.lineWidth=1.2; g.beginPath(); g.moveTo(X(0),padT-2); g.lineTo(X(0),axY); g.stroke(); g.lineWidth=1; }"
         "  g.textAlign='left';"
         "  d.rows.forEach(function(r,i){ var y0=padT+i*laneH;"
         "    if(r.lod>0){ g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-r.lod),y0+2,Math.max(1,X(r.lod)-X(-r.lod)),laneH-4); }"
-        "    r.pins.forEach(function(pn){ for(var k=0;k<pn.s.length;k++){ var gid=pn.g[k]; var x=X(pn.s[k]); var yy=y0+laneH*0.30+jit(gid)*(laneH*0.5); var on=bset.has(gid);"
+        "    r.pins.forEach(function(pn){ for(var k=0;k<pn.s.length;k++){ var gid=pn.g[k]; var vv=pn.s[k]; var x=X(vv); var yy=y0+laneH*0.30+jit(gid)*(laneH*0.5);"
+        "      var on=bset.has(gid)||(range&&vv>=range[0]&&vv<=range[1]);"
         "      g.globalAlpha = on?1:(pn.hl?0.55:0.10); g.fillStyle=pn.color; g.beginPath(); g.arc(x,yy,on?2.6:1.5,0,6.2832); g.fill();"
         "      if(on){ g.globalAlpha=1; g.strokeStyle='#0891b2'; g.lineWidth=1; g.beginPath(); g.arc(x,yy,3.6,0,6.2832); g.stroke(); }"
-        "      el._dots.push({x:x,y:yy,gid:gid}); }"
+        "      el._dots.push({gid:gid,v:vv}); }"
         "      g.globalAlpha=pn.hl?1:0.25; g.strokeStyle=pn.color; g.lineWidth=pn.hl?2.0:1.0; g.beginPath(); g.moveTo(X(pn.med),y0+laneH*0.22); g.lineTo(X(pn.med),y0+laneH*0.82); g.stroke(); });"
-        "    g.globalAlpha=1; g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace'; g.fillText(r.name,padL,y0+11); });"
+        "    g.globalAlpha=1; g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace'; g.textAlign='left'; g.fillText(r.name,padL,y0+11); });"
+        // Selection band: translucent fill, edge lines, exact value labels at both ends.
+        "  if(range){ var x0=X(range[0]), x1=X(range[1]);"
+        "    g.fillStyle='rgba(8,145,178,0.10)'; g.fillRect(x0,padT-2,Math.max(1,x1-x0),axY-padT+2);"
+        "    g.strokeStyle='#0891b2'; g.lineWidth=1.2; g.beginPath(); g.moveTo(x0,padT-2); g.lineTo(x0,axY); g.moveTo(x1,padT-2); g.lineTo(x1,axY); g.stroke(); g.lineWidth=1;"
+        "    g.fillStyle='#0891b2'; g.font='10px SF Mono,Monaco,monospace';"
+        "    g.textAlign='right'; g.fillText(range[0].toFixed(1),x0-3,padT+8);"
+        "    g.textAlign='left';  g.fillText(range[1].toFixed(1),x1+3,padT+8); g.textAlign='left'; }"
         "  el.appendChild(cv);"
         "}"
-        "function pick(e){ var r=el.getBoundingClientRect(); var mx=e.clientX-r.left, my=e.clientY-r.top; var R=11;"
-        "  for(var i=0;i<el._dots.length;i++){ var dt=el._dots[i]; var dx=dt.x-mx, dy=dt.y-my; if(dx*dx+dy*dy<=R*R) brushed.add(dt.gid); } }"
-        // render() after each pick draws the local highlight now; emit() (throttled) drives
-        // the model + the 3D markers. render() is idempotent with the MutationObserver redraw.
-        "el.addEventListener('pointerdown',function(e){ if(e.button!==0) return; dragging=true; brushed=new Set(); pick(e); try{el.setPointerCapture(e.pointerId);}catch(_){} render(); emit(); e.preventDefault(); });"
-        "el.addEventListener('pointermove',function(e){ if(!dragging) return; pick(e); render(); var now=Date.now(); if(now-lastEmit>50){ lastEmit=now; emit(); } });"
-        "el.addEventListener('pointerup',function(e){ if(!dragging) return; dragging=false; try{el.releasePointerCapture(e.pointerId);}catch(_){} render(); emit(); });"
+        "function cursorV(e){ var r=el.getBoundingClientRect(); var W=el.clientWidth||320;"
+        "  var x=Math.max(el._padL,Math.min(W-el._padR,e.clientX-r.left)); return el._XV(x); }"
+        // render() after each move draws the band + highlight now; emit() (throttled)
+        // drives the model + the 3D markers. A click (zero-width range) clears the brush.
+        "el.addEventListener('pointerdown',function(e){ if(e.button!==0||!el._XV) return; dragging=true;"
+        "  anchorV=cursorV(e); range=[anchorV,anchorV]; try{el.setPointerCapture(e.pointerId);}catch(_){} render(); e.preventDefault(); });"
+        "el.addEventListener('pointermove',function(e){ if(!dragging||!el._XV) return; var v=cursorV(e);"
+        "  range=[Math.min(anchorV,v),Math.max(anchorV,v)]; render();"
+        "  var now=Date.now(); if(now-lastEmit>50){ lastEmit=now; emit(); } });"
+        "el.addEventListener('pointerup',function(e){ if(!dragging) return; dragging=false;"
+        "  try{el.releasePointerCapture(e.pointerId);}catch(_){}"
+        "  if(range&&range[1]-range[0]<1e-9){ range=null; }"
+        "  render(); emit(); });"
         "render();"
         "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed']});"
         "})();" ]

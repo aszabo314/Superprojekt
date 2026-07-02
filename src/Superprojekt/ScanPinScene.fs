@@ -214,9 +214,9 @@ module ScanPinScene =
                 }
             )
 
-        // Visible pin-centre marker: a small wire-box jack on top (so the invisible
-        // pick proxy can't occlude it). Yellow when selected, brighter red on hover,
-        // else red. Fixed render size — independent of pin radius.
+        // Visible pin-centre marker: a small, faint neutral wire-box jack on top (so
+        // the invisible pick proxy can't occlude it); slightly darker when selected
+        // or hovered. Fixed render size — independent of pin radius.
         // Project to centres only — depending on the whole pin map would rebuild the
         // marker buffer on any pin field change (probe/ring result, rename, …).
         let pinCentres = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre) |> AMap.toAVal
@@ -233,14 +233,13 @@ module ScanPinScene =
                         let isSel = sel = Some id
                         let hovered = hov = Some (HoverPin id)
                         let col =
-                            if isSel then V4d(1.0, 0.85, 0.0, 1.0)
-                            elif hovered then V4d(1.0, 0.55, 0.45, 1.0)
-                            else V4d(0.95, 0.35, 0.35, 0.9)
-                        let w = if isSel || hovered then 2.0 else 1.2
+                            if isSel || hovered then V4d(0.25, 0.28, 0.33, 0.85)
+                            else V4d(0.45, 0.48, 0.53, 0.4)
+                        let w = if isSel || hovered then 1.6 else 1.0
                         let cR = ScanPin.renderCentre cc scale centre
-                        addBoxOutline out cR 0.07  0.014 0.014 col w
-                        addBoxOutline out cR 0.014 0.07  0.014 col w
-                        addBoxOutline out cR 0.014 0.014 0.07  col w
+                        addBoxOutline out cR 0.035 0.007 0.007 col w
+                        addBoxOutline out cR 0.007 0.035 0.007 col w
+                        addBoxOutline out cR 0.007 0.007 0.035 col w
                     out.ToArray())
             linesNodeTop notFullscreen segs
 
@@ -256,10 +255,7 @@ module ScanPinScene =
                 let ringData =
                     pinVal |> AVal.map (fun po ->
                         po |> Option.map (fun p ->
-                            let colour =
-                                match p.HostMeshName |> Option.bind (fun h -> Map.tryFind h p.DatasetColors) with
-                                | Some c -> Primitives.c4bToV3d c
-                                | None -> V3d(0.102, 0.337, 0.859)
+                            let colour = Primitives.c4bToV3d p.PinColor
                             let rings = match p.ContactRings with RingsReady m -> m | _ -> Map.empty
                             p.Centre, p.InnerRadius, ScanPin.axis p, colour, rings))
                 let segs =
@@ -302,18 +298,12 @@ module ScanPinScene =
                             out.ToArray())
                 ASet.ofList [ linesNode notFullscreen segs ])
 
-        // Correspondence constellation (selected pin emphasized): per moving mesh a
-        // small sphere glyph at its correspondence point + the reference as a larger
-        // haloed glyph, with lines from each to the reference; out-of-ROI omitted.
-        // Glyphs render on top (depth bias), pickable for brushing, and follow the
-        // displayed pose.
-        let refGlyphCol = V4d(0.706, 0.325, 0.035, 1.0)   // amber #b45309
-
         // Correspondence constellation lines: per pin, a small wire-sphere + cross
-        // glyph at each moving-mesh marker and a larger one at the reference point,
-        // plus a thin line from each moving glyph to the reference. Fixed render size
-        // (independent of pin radius). Selection / hover brighten; out-of-ROI meshes
-        // omitted. Rendered on top (depth bias) so the markers read against surfaces.
+        // glyph at every mesh's marker — the reference's RefAnchor drawn exactly like
+        // a moving-mesh marker (same glyph, its mesh colour) — plus a thin line from
+        // each moving glyph to the reference point. Fixed render size (independent of
+        // pin radius). Selection / hover brighten; out-of-ROI meshes omitted.
+        // Rendered on top (depth bias) so the markers read against surfaces.
         // Project to (correspondence, dataset colours) only — depending on the whole
         // pin map would rebuild the constellation buffer on any pin field change.
         let pinCorr = model.ScanPins.Pins |> AMap.map (fun _ p -> ScanPin.correspondence p, p.DatasetColors) |> AMap.toAVal
@@ -344,10 +334,21 @@ module ScanPinScene =
                                 let pinHover = hov = Some (HoverPin id)
                                 let emph = isSel || pinHover
                                 let raR = ScanPin.renderCentre cc scale ra
-                                let gw = if emph then 2.0 else 1.4
-                                let refCol = if emph then refGlyphCol else V4d(refGlyphCol.XYZ, 0.4)
-                                addWireSphere out raR 0.07 refCol gw 20
-                                addCross out raR 0.09 refCol gw
+                                (match rf with
+                                 | Some rn when MeshVisibility.shown solo vis rn ->
+                                    let baseCol =
+                                        match Map.tryFind rn datasetColors with
+                                        | Some c4 -> Primitives.c4bToV3d c4
+                                        | None -> V3d(0.102, 0.337, 0.859)
+                                    let refHover = hov = Some (HoverPoint (id, rn))
+                                    let col =
+                                        if refHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
+                                        elif emph then V4d(baseCol, 1.0)
+                                        else V4d(baseCol, 0.4)
+                                    let gw = if refHover || isSel then 2.0 else 1.4
+                                    addWireSphere out raR 0.055 col gw 16
+                                    addCross out raR 0.07 col gw
+                                 | _ -> ())
                                 for mesh in moving do
                                     // Inline marker resolution: read dispWorldAt with THIS
                                     // aval's token so the displayed (before/after) transform
@@ -407,46 +408,37 @@ module ScanPinScene =
                 linesNode active outlineSegs
             ]
 
-        // Pin glyph (far view): a pole + head per committed pin. Head colour =
-        // verdict (green if every moving mesh's |median| ≤ LoD₉₅, red if any is
-        // significant; grey when no probe yet). Pole height grows with magnitude
-        // (max |median offset| across moving meshes).
+        // Pin pole (far view): a neutral flag along the probe axis per committed pin;
+        // pole height grows with magnitude (max |median offset| across moving meshes).
+        // While the show-overlays hold is down it takes the pin colour, matching the
+        // greyscale-except-pins read.
         let pinGlyphs =
-            let green = V4d(0.086, 0.639, 0.290, 1.0)   // #16a34a
-            let red   = V4d(0.863, 0.149, 0.149, 1.0)   // #dc2626
-            let grey  = V4d(0.60, 0.62, 0.66, 0.9)
+            let neutral = V4d(0.52, 0.55, 0.60, 0.75)
             let segs =
                 AVal.custom (fun t ->
                     let pins  = pinsVal.GetValue t
                     let cc    = model.CommonCentroid.GetValue t
                     let scale = datasetScale.GetValue t
+                    let overlays = model.ShowOverlaysHeld.GetValue t
                     let out   = ResizeArray<V3d * V3d * V4d * float>()
                     for (_, p) in HashMap.toSeq pins do
-                        let verdict, magnitude =
+                        let magnitude =
                             match p.Probe with
                             | ProbeReady r ->
                                 let moving =
                                     r.Distributions
                                     |> Array.filter (fun d -> d.MeshName <> r.ReferenceMesh && d.Count > 0)
-                                if moving.Length = 0 then grey, 0.0
-                                else
-                                    let refD = r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
-                                    let refStd = refD |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
-                                    let refN = refD |> Option.map (fun d -> float (max 1 d.Count)) |> Option.defaultValue 1.0
-                                    let anySig =
-                                        moving |> Array.exists (fun d ->
-                                            let lod = 1.96 * sqrt (refStd*refStd/refN + d.Std*d.Std/float (max 1 d.Count))
-                                            abs d.Median > lod)
-                                    let mag = moving |> Array.map (fun d -> abs d.Median) |> Array.max
-                                    (if anySig then red else green), mag
-                            | _ -> grey, 0.0
+                                if moving.Length = 0 then 0.0
+                                else moving |> Array.map (fun d -> abs d.Median) |> Array.max
+                            | _ -> 0.0
+                        let col = if overlays then V4d(Primitives.c4bToV3d p.PinColor, 1.0) else neutral
                         let axisN, u, v = basisFromNormal (ScanPin.axis p)
                         let c   = ScanPin.renderCentre cc scale p.Centre
                         let h   = ScanPin.renderLength scale (p.InnerRadius * 1.5 + magnitude * 3.0)
                         let top = c + axisN * h
                         let hr  = ScanPin.renderLength scale (p.InnerRadius * 0.5)
-                        out.Add(c, top, verdict, 2.5)
-                        addRing out top u v hr verdict 2.5 24
+                        out.Add(c, top, col, 2.5)
+                        addRing out top u v hr col 2.5 24
                     out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 

@@ -400,12 +400,6 @@ module View =
                         match resolved with
                         | Some renderPos ->
                             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
-                            // Link-views 3D→focus: recenter the focused mesh's (Top) canvas
-                            // on the same world point. Top-only (the pan maths is ortho).
-                            if AVal.force model.LinkViews && AVal.force model.FocusProjection = ProjTop then
-                                match AVal.force model.Selection.FocusedMesh with
-                                | Some fm -> FocusScene.recenterOnWorld model fm (worldFromRender model renderPos)
-                                | None -> ()
                         | None -> ()
                     } |> Async.Start
                     false

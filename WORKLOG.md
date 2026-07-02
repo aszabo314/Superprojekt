@@ -10,6 +10,18 @@
 ## In progress
 - (nothing — pass complete; user verified in browser, adjustments below applied)
 
+## Docs cleanup (2026-07-02)
+- CLAUDE.md rewritten: kept only rules/pitfalls (state rules, render-pipeline
+  contracts, coordinate discipline, adaptive-performance rules, query-perf rules,
+  compile order, API reference, Aardvark.Dom gotchas, fsproj/CSS notes); dropped
+  the feature-behaviour catalogue (ghosting §-tables, Inspect channels, camera
+  controls, GUI placement, Model snapshot — all readable from code). ~350 → ~200 lines.
+- README rewritten: fixed stale claims (readiness lives in the Correspondence rail,
+  not the top bar; intrinsic heatmaps are Overview-roster per-mesh switches, not in
+  the dock; focus-single pan is middle/Shift+left, not plain left; ghost floor is in
+  the gear, not a 👻 toggle), documented pano-centers.txt in the dataset layout, and
+  dropped the duplicated architecture/pipeline/perf sections (now CLAUDE.md-only).
+
 ## Adjustments after user testing (2026-07-02)
 - Inspect mesh focus isolates **only the moving mesh** — the reference is no longer
   part of the solo shown-set (a co-located reference occluded the field);

@@ -184,7 +184,7 @@ POST /api/query/closest                         → { found, point, distanceSqua
 POST /api/query/contact-rings                   → sphere–surface intersection polylines
 POST /api/query/lsq-pairs                       → weighted rigid solve (absolute world transform + residuals + conditioning; 400 on <3 pairs)
 POST /api/query/probe                           → N-mesh M3C2 probe (per-mesh distributions, per-sample positions + footprint)
-POST /api/query/region-distance                 → per-vertex signed M3C2 distance (mode 0) or vertical Δz (mode 1) of a target mesh to the reference, in the target's served vertex order; 1e30 sentinel where no closest point; mode 0 also sentinels vertices whose nearest reference point exceeds 0.02 × bbox diagonal (non-overlap ⇒ no spurious error)
+POST /api/query/region-distance                 → per-vertex signed M3C2 distance (mode 0) or vertical Δz (mode 1) of a target mesh to the reference, in the target's served vertex order; both modes share one support rule — a vertex responds only where the vertical world line through it pierces the reference (Z-overlap), else 1e30 sentinel — so M3C2 never fabricates error in non-overlap fringes, and the variance map (which skips sentinels per mesh) only aggregates meshes that overlap there
 ```
 
 All query coordinates are **absolute world space**; the server computes `localPos = worldPos − meshCentroid`. (Endpoints without consumers were removed — `/query/icp`, `/query/patch`, sphere/box/ray-batch, grid-eval, isoline, curvature-ridge, region-grid; don't re-add one without a consumer.)

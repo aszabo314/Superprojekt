@@ -8,9 +8,31 @@
 5. Fix stale state / code smells along the way.
 
 ## In progress
-- Histogram rework + dock chrome trim implemented, build/JS-smoke green —
-  awaiting the user's visual inspection (bar readability, outline contrast,
-  head-row density, shift panel appearing only in Displacement).
+- Z-overlap gating for M3C2 implemented + live-verified — awaiting the user's
+  visual inspection (the running dev server on :8002 has the old code; restart
+  it to see the change).
+## M3C2 restricted to Z-overlap (2026-07-03)
+- User report: in Inspect, the M3C2 difference map (moving mesh focused) and
+  the disagreement/variance map (reference focused) extended into regions with
+  no mesh overlap — unlike Δz, which only responds where the meshes overlap
+  in Z. Fix is server-side only, in `region-distance` mode 0
+  (QueryHandlers.fs): the closest-point M3C2 value is now gated by the exact
+  same support test mode 1 uses — a vertical world ray from the vertex (down,
+  then up, both transformed into the ref-local frame) must pierce the
+  reference, else the 1e30 sentinel. The old approximation (reject closest
+  points beyond 0.02 × ref-bbox diagonal, `regionMaxDistFrac`) is deleted —
+  it both leaked fringe error (near-miss side regions within the cutoff) and
+  could disagree with Δz's support in the other direction.
+- The variance map needed no change: `ensureVariance` issues mode-0 queries
+  (target = reference, ref = each moving mesh) and already skips sentinels per
+  mesh per vertex (`abs v < 1e20`, cnt ≥ 2) — so a moving mesh now simply
+  contributes nothing at reference vertices it doesn't Z-overlap.
+- Verified live (scratchpad `check-overlap.mjs`, server on :8003 via
+  `--no-launch-profile` — launchSettings pins `dotnet run` to :8002, which the
+  user's own dev server holds): modes 0 and 1 sentinel exactly the same
+  37831/40382 vertices on JOB_lowpoly2 0789 vs 0791; mode 0 costs 71 ms for
+  40k verts (ray gate + closest point). Client untouched; shaders/legend
+  already treat 1e30 as "no encoding".
 
 ## One-sided histogram + dock chrome trim (2026-07-03, after user review)
 - Violin → one-sided stacked HISTOGRAM (user pick: the mirror halved the

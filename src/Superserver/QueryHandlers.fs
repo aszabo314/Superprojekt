@@ -96,12 +96,6 @@ let closestHandler : HttpHandler =
         with ex -> return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
-// M3C2 correspondence cutoff: a vertex whose nearest point on the other mesh is
-// farther than (queried-mesh bbox diagonal × this fraction) is treated as having no
-// correspondence (the meshes don't overlap there) → sentinel. Scales with the mesh
-// extent so it adapts across datasets (metres vs km); tune here.
-let private regionMaxDistFrac = 0.02
-
 let private mat16 (a : float[]) =
     if not (isNull a) && a.Length = 16 then
         M44d(a.[0],  a.[1],  a.[2],  a.[3],
@@ -111,8 +105,11 @@ let private mat16 (a : float[]) =
     else M44d.Identity
 
 // Per-vertex signed M3C2-style distance (cloud-to-mesh), signed by the ref
-// surface normal at the closest point. No closest point → large sentinel the
-// shader treats as "no encoding".
+// surface normal at the closest point. Both modes share one support rule: a
+// vertex responds only where the vertical world line through it pierces the
+// reference (the meshes overlap in Z there); everywhere else → large sentinel
+// the shader treats as "no encoding". Without that gate the closest-point
+// distance fabricates error along the fringe of non-overlapping regions.
 let regionDistanceHandler : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"
@@ -128,11 +125,11 @@ let regionDistanceHandler : HttpHandler =
             let refPos = lmR.parsed.positions
             let refIdx = lmR.parsed.indices
             let dist = Array.zeroCreate<float32> pos.Length
+            let dnLocal = (rInv.TransformDir (V3d(0.0, 0.0, -1.0))).Normalized
+            let upLocal = (rInv.TransformDir (V3d(0.0, 0.0,  1.0))).Normalized
             if req.Mode = 1 then
                 // z-diff: vertical world ray onto the reference; signed Δz
                 // (moving above reference → positive). Down then up.
-                let dnLocal = (rInv.TransformDir (V3d(0.0, 0.0, -1.0))).Normalized
-                let upLocal = (rInv.TransformDir (V3d(0.0, 0.0,  1.0))).Normalized
                 System.Threading.Tasks.Parallel.For(0, pos.Length, fun i ->
                     let vWorld = tT.TransformPos (V3d pos.[i] + cT)
                     let vRefLocal = rInv.TransformPos vWorld - cR
@@ -145,30 +142,32 @@ let regionDistanceHandler : HttpHandler =
                             dist.[i] <- float32 (- hu.T)
                         else dist.[i] <- 1e30f) |> ignore
             else
-                // Reject correspondences farther than maxDist (no overlap there) so
-                // isolated points produce no error response — the M3C2 analogue of the
-                // z-diff ray missing the reference.
-                let maxDist =
-                    if refPos.Length = 0 then infinity
-                    else float (Box3f(refPos).Size.Length) * regionMaxDistFrac
+                // M3C2 closest point, but with mode-1 support: the vertical line
+                // through the vertex must pierce the reference, else no response.
                 System.Threading.Tasks.Parallel.For(0, pos.Length, fun i ->
                     let vWorld = tT.TransformPos (V3d pos.[i] + cT)
                     let vRefLocal = rInv.TransformPos vWorld - cR
-                    let res = lmR.scene.GetClosestPoint(V3f vRefLocal)
-                    let d = if res.IsValid then sqrt (float res.DistanceSquared) else infinity
-                    if res.IsValid && d <= maxDist then
-                        let cp = V3d res.Point
-                        let pid = int res.PrimID
-                        if pid * 3 + 2 < refIdx.Length then
-                            let p0 = V3d refPos.[refIdx.[pid*3]]
-                            let p1 = V3d refPos.[refIdx.[pid*3+1]]
-                            let p2 = V3d refPos.[refIdx.[pid*3+2]]
-                            let nrm = Vec.cross (p1 - p0) (p2 - p0)
-                            let nl  = nrm.Length
-                            let s   = if nl > 1e-12 && Vec.dot (vRefLocal - cp) (nrm / nl) < 0.0 then -1.0 else 1.0
-                            dist.[i] <- float32 (s * d)
-                        else dist.[i] <- float32 d
-                    else dist.[i] <- 1e30f) |> ignore
+                    let mutable h = RayHit()
+                    let overlapsZ =
+                        lmR.scene.Intersect(V3f vRefLocal, V3f dnLocal, &h)
+                        || lmR.scene.Intersect(V3f vRefLocal, V3f upLocal, &h)
+                    if not overlapsZ then dist.[i] <- 1e30f
+                    else
+                        let res = lmR.scene.GetClosestPoint(V3f vRefLocal)
+                        if res.IsValid then
+                            let d  = sqrt (float res.DistanceSquared)
+                            let cp = V3d res.Point
+                            let pid = int res.PrimID
+                            if pid * 3 + 2 < refIdx.Length then
+                                let p0 = V3d refPos.[refIdx.[pid*3]]
+                                let p1 = V3d refPos.[refIdx.[pid*3+1]]
+                                let p2 = V3d refPos.[refIdx.[pid*3+2]]
+                                let nrm = Vec.cross (p1 - p0) (p2 - p0)
+                                let nl  = nrm.Length
+                                let s   = if nl > 1e-12 && Vec.dot (vRefLocal - cp) (nrm / nl) < 0.0 then -1.0 else 1.0
+                                dist.[i] <- float32 (s * d)
+                            else dist.[i] <- float32 d
+                        else dist.[i] <- 1e30f) |> ignore
             log.LogInformation("region-distance {Target} vs {Ref}: {Verts} verts", req.TargetName, req.RefName, pos.Length)
             return! json {| dist = dist |} next ctx
         with ex ->

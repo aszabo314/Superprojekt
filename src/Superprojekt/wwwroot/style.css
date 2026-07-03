@@ -58,10 +58,15 @@ body.loaded { background: #f4f6f8; }
 
 /* ── Render canvas ──────────────────────────────────────────────────── */
 
+/* Bottom-dock height — dragged via the dock's top-edge handle (.dock-resize).
+   Everything anchored to the dock (render control, bottom overlays) reads
+   this one value, so a resize moves them all together. */
+:root { --dock-h: 220px; }
+
 .render-control {
     width: 100%;
     /* Reserve the bottom dock height so the 3D scene never sits under it. */
-    height: calc(100% - 220px);
+    height: calc(100% - var(--dock-h));
     background: rgb(244, 246, 248);
 }
 
@@ -847,7 +852,7 @@ body.loaded { background: #f4f6f8; }
 
 .scale-bar {
     position: fixed;
-    left: 12px; bottom: 230px;
+    left: 12px; bottom: calc(var(--dock-h) + 10px);
     pointer-events: none; z-index: 100;
     background: rgba(255,255,255,0.6);
     padding: 4px 6px 2px 6px;
@@ -874,7 +879,7 @@ body.loaded { background: #f4f6f8; }
 
 .orient-indicator {
     position: fixed;
-    right: 10px; bottom: 230px;
+    right: 10px; bottom: calc(var(--dock-h) + 10px);
     width: 60px; height: 60px;
     pointer-events: none; z-index: 100;
 }
@@ -883,7 +888,7 @@ body.loaded { background: #f4f6f8; }
 
 .color-legend {
     position: fixed;
-    left: 50%; bottom: 230px;
+    left: 50%; bottom: calc(var(--dock-h) + 10px);
     transform: translateX(-50%);
     pointer-events: none; z-index: 100;
     background: rgba(255,255,255,0.75);
@@ -1199,7 +1204,7 @@ body.loaded { background: #f4f6f8; }
 .pin-inspector {
     position: fixed;
     left: 0; right: 0; bottom: 0;
-    height: 220px;
+    height: var(--dock-h);
     background: #ffffff;
     border-top: 1px solid #d7dce4;
     box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
@@ -1207,6 +1212,15 @@ body.loaded { background: #f4f6f8; }
     display: flex; flex-direction: column;
     font-size: 12px;
 }
+/* dock resize handle on the top edge — the horizontal twin of .focus-resize */
+.dock-resize { position: absolute; top: -4px; left: 0; right: 0; height: 10px; cursor: ns-resize; z-index: 5; touch-action: none; display: flex; align-items: center; justify-content: center; }
+.dock-resize::before {
+  content: ""; width: 48px; height: 5px; border-radius: 3px;
+  background: #cbd5e1; border: 1px solid #94a3b8;
+  background-image: repeating-linear-gradient(to right, #64748b 0, #64748b 1px, transparent 1px, transparent 4px);
+  background-position: center; background-repeat: no-repeat; background-size: 20px 1px;
+}
+.dock-resize:hover::before { background-color: #1a56db; border-color: #1a56db; }
 /* step-contextual modes, cross-faded (containers never move); no mode-label
    header row — the rail names the mode, the dock height goes to content */
 .ins-modes { position: relative; flex: 1; min-height: 0; }

@@ -484,6 +484,25 @@ module GuiInspector =
                 }
             }
 
+        // Vertical resize handle on the dock's top edge — same pure-JS pattern as
+        // the focus panel's aspect-locked handle. Writes the --dock-h root var, the
+        // single source the dock, the render control and the bottom-anchored
+        // overlays all read, so everything follows one drag.
+        let resizeHandle =
+            div {
+                Class "dock-resize"
+                Attribute("title", "Drag to resize the detail dock")
+                OnBoot [
+                    "(function(){"
+                    "var h=__THIS__; var dock=h.closest('.pin-inspector'); if(!dock) return;"
+                    "var dragging=false, startY=0, startH=0;"
+                    "function setH(v){ v=Math.max(120,Math.min(Math.round(window.innerHeight*0.6),v)); document.documentElement.style.setProperty('--dock-h', v+'px'); }"
+                    "h.addEventListener('pointerdown',function(e){ dragging=true; startY=e.clientY; startH=dock.getBoundingClientRect().height; h.setPointerCapture(e.pointerId); e.preventDefault(); e.stopPropagation(); });"
+                    "h.addEventListener('pointermove',function(e){ if(!dragging) return; setH(startH + (startY - e.clientY)); });"
+                    "h.addEventListener('pointerup',function(e){ dragging=false; try{h.releasePointerCapture(e.pointerId);}catch(_){} });"
+                    "})();" ]
+            }
+
         // Container-invariant cross-fade between the three modes. (The old mode-label
         // header row is gone — the rail already names the mode; the dock height goes
         // to content.)
@@ -492,6 +511,7 @@ module GuiInspector =
             classWhen "ins-mode-on" (stepA |> AVal.map pred)
         div {
             Class "pin-inspector"
+            resizeHandle
             div {
                 Class "ins-modes"
                 div { Class "ins-mode"; modeOn ((=) Overview); overviewCard }

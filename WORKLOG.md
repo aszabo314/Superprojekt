@@ -11,6 +11,24 @@
 - Z-overlap gating for M3C2 implemented + live-verified — awaiting the user's
   visual inspection (the running dev server on :8002 has the old code; restart
   it to see the change).
+- Dock resize handle implemented, build + JS parse green — awaiting visual
+  inspection (grip visibility, drag feel, overlays following, chart re-render
+  while dragging).
+
+## Dock resize handle (2026-07-03)
+- The bottom dock got a drag-to-resize handle on its top edge (`.dock-resize`
+  in GuiInspector.dock) — the horizontal twin of the focus panel's
+  `.focus-resize`, same pure-JS OnBoot pattern (pointer capture, no Elm state).
+- One source of truth: the drag writes the `--dock-h` root CSS var
+  (default `:root { --dock-h: 220px }`); consumers are `.pin-inspector`
+  (height), `.render-control` (`calc(100% - var(--dock-h))` — so the 3D
+  render control genuinely resizes, Aardvark tracks the canvas size), and the
+  three bottom-anchored overlays (scale bar, orientation indicator, colour
+  legend) at `calc(var(--dock-h) + 10px)`. No more hardcoded 220/230 pairs.
+- Clamp: 120px … 60% of window height, evaluated at drag time. The chart
+  re-renders during the drag via its ResizeObserver (added last round);
+  style.css → ?v=4.
+
 ## M3C2 restricted to Z-overlap (2026-07-03)
 - User report: in Inspect, the M3C2 difference map (moving mesh focused) and
   the disagreement/variance map (reference focused) extended into regions with

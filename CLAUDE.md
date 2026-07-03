@@ -223,4 +223,5 @@ All query coordinates are **absolute world space**; the server computes `localPo
 - Light theme, `'Inter'`/`'Segoe UI'`, accent `#1a56db`. Body bg `#f4f6f8`, panel bg `#ffffff`, text `#0f172a`.
 - All styles in `wwwroot/style.css`; no inline styles except model-dependent ones (positions, data-driven colours, cursor).
 - Conditional visibility uses `Primitives.showWhen`/`showWhenNot` → `.hidden` (`display: none !important`), not inline display styles.
+- The bottom dock's height is the `--dock-h` root var (default 220px, dragged via the dock's top-edge `.dock-resize` handle). Anything anchored to the dock top — the render-control height, the bottom-anchored overlays — must read `var(--dock-h)`, never a hardcoded px offset.
 - `.btn-active`: darker blue with inset shadow for toggle buttons.

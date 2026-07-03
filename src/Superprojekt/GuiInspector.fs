@@ -17,9 +17,10 @@ module GuiInspector =
     // Brushing is an X-RANGE selection: drag horizontally to select every sample whose
     // value falls in the range; the band's two edges display their exact values (mm)
     // and a plain click clears it. The selected gids go to the sibling hidden input
-    // (the JS→Elm bridge) → 3D markers; 3D-hover highlights arrive via data-brushed.
-    // Self-contained OnBoot (observes data-dist + data-brushed); jitter is SEEDED by
-    // gid so dots don't drift across redraws.
+    // (the JS→Elm bridge) → the 3D sample dots. This chart drag is the ONLY way to
+    // brush samples (no 3D hover reveal); data-brushed echoes the model state back
+    // (e.g. cleared on visibility changes). Self-contained OnBoot (observes
+    // data-dist + data-brushed); jitter is SEEDED by gid so dots don't drift.
     let private brushChartJs = [
         "(function(){"
         "var el=__THIS__;"

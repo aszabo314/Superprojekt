@@ -8,7 +8,53 @@
 5. Fix stale state / code smells along the way.
 
 ## In progress
-- (nothing — select/zoom separation implemented, awaiting in-browser verification)
+- (nothing — Inspect colour/sample pass implemented, awaiting in-browser verification)
+
+## Legend placement report (2026-07-03) — stale-CSS root cause
+- Headless-browser measurement (real click into Inspect): the legend renders
+  exactly as specced — horizontally centred (translateX(-50%) applied), bottom
+  edge at viewport−230px = the scale bar's bottom edge, 10px above the dock
+  (which is fixed height 220px). The reported "in-flow bottom-left, behind the
+  dock" is precisely how the element renders when `.color-legend` CSS is
+  missing → the browser had a STALE CACHED style.css.
+- Fix: Superserver now serves the hand-edited shell assets (css/html/js incl.
+  the index fallback) with `Cache-Control: no-cache` (ETag revalidation each
+  load, cheap 304s), so CSS edits always reach the browser.
+- Second report (legend below the scale bar, behind the dock) = the same
+  missing-rule rendering; the no-cache header can't evict an ALREADY-cached
+  copy. index.html now links `style.css?v=2` — a changed URL bypasses both the
+  disk cache and the service-worker cache with no user action. Bump `?v=` if a
+  stale stylesheet would ever break layout again. Verified end-to-end
+  (headless browser, Inspect mode): legend centred, bottom edge =
+  viewport−230px = scale-bar bottom edge, 10px above the 220px dock.
+
+## Inspect colours + samples (2026-07-03)
+- **One error range** (`ScanPin.inspectRange` + adaptive `MeshView.inspectRange`):
+  signed (lo, hi) metres over every ready pin's ROI probe samples on moving
+  meshes, spanning 0, hard-capped ±0.5 m; no pins ⇒ ±0.5 m. Drives the 3D
+  difference painter (new `DistLoNeg` uniform, asymmetric piecewise — neutral
+  welded to 0, each sign normalized by its own end), the variance σ map
+  (saturates at max(|lo|, hi)) and the focus tiles/single (`FocusLoNeg`).
+  Per-mesh robust-percentile normalization (`robustHi`) and the gear
+  "Difference heatmap range" slider (`DiffRangeScale` model field + message)
+  are GONE — ranges must stay comparable.
+- **Displacement range** (`MeshView.displacementRange`): global max
+  |load→solved| over each solved mesh's world-bbox corners (rigid ⇒ exact at a
+  corner), uncapped — displacement is not an error metric.
+- **Legend** (`GuiOverlays.colorLegend`, bottom centre, Inspect only): active
+  map's gradient (variance σ / difference M3C2 or Δz / displacement) as an SVG
+  via observedRender — nice-step ticks + exact range ends; mm/cm/m formatting
+  by span.
+- **Sample dots**: brushed samples render as small solid icosphere dots
+  (`Dots.render` in LineShader.fs — vertex-coloured triangle batches), coloured
+  by the sample's value on the diverging gradient normalized to its own pin's
+  range (`ScanPin.pinErrorRange`) — replaced the pin-coloured crosses.
+- **Hover-reveal removed**: the 3D surface-hover → chart brush (View.fs) and
+  the hovered-pin ROI sample cloud (`sampleBrush`) are gone with their
+  throttles; chart X-range drag is the ONLY brushing path.
+- Docs: CLAUDE.md "One Inspect error range" contract section; README workflow
+  bullets updated (select vs double-click zoom, one range + legend, chart-only
+  brushing).
 
 ## Select ≠ zoom separation (2026-07-03)
 Single click/tap = selection + visibility only; double click/tap = camera zoom.
@@ -118,6 +164,18 @@ Single click/tap = selection + visibility only; double click/tap = camera zoom.
   (`-p:WasmBuildNative=false`), Supertests 43/43 pass.
 
 ## Follow-ups / open questions
+- Shader verification status: `MeshShader.shade` (+`DistLoNeg`) and the focus
+  shaders compiled clean in a real headless-Chromium WebGL2 run (puppeteer,
+  `?nocache=true`); the run can't reach `#loading-done` in THIS environment —
+  an offscreen framebuffer fails identically on the unmodified HEAD build
+  (environmental, headless GL). Still to eyeball live: the new `Dots` shader
+  (first brushed selection), legend SVG (all three map kinds), dot
+  size/readability, and variance-map contrast on the pin-derived scale (σ is
+  usually smaller than the error envelope — if too pale, consider a separate
+  σ range).
+- `ShaderCache.fs` no longer covers the changed mesh/focus shaders (new
+  hashes) — first load live-compiles them (few seconds). Re-run
+  `./precompileShaders.sh` on a machine where headless WebGL works to re-bake.
 - 3D pin-dot double-tap zooms 3D only — the 2D focus canvas is unreachable from
   ScanPinScene (compiles before FocusScene); the rail pin-row is the fully
   linked path per spec.

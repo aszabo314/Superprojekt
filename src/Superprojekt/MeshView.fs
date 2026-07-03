@@ -121,14 +121,43 @@ module MeshView =
             if cnt.[i] > 0 then q.[i] <- q.[i] / float32 cnt.[i]
         q
 
-    // Saturated end of a diverging/sequential scalar map: 95th percentile of the
-    // finite |values| (1e20 = sentinel for "no value"), floored at 1e-3.
-    let robustHi (arr : float32[]) =
-        let valid = arr |> Array.choose (fun x -> if abs x < 1e20f then Some (abs x) else None)
-        if valid.Length = 0 then 1.0f
-        else
-            Array.sortInPlace valid
-            max 1e-3f valid.[int (0.95 * float (valid.Length - 1))]
+    // The ONE Inspect error range (§C): signed (lo, hi) in metres from the pin ROI
+    // samples, capped ±0.5 m (ScanPin.inspectRange). Shared by the 3D difference +
+    // variance painters, the focus tiles/single, the sample dots' per-pin gradient
+    // envelope, and the on-screen legend — so every false-colour map is comparable.
+    let inspectRange (model : AdaptiveModel) : aval<float * float> =
+        let pinsV = model.ScanPins.Pins |> AMap.toAVal
+        let refV = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
+        (pinsV, refV) ||> AVal.map2 (fun pins rf ->
+            ScanPin.inspectRange rf (pins |> HashMap.toSeq |> Seq.map snd))
+
+    // Saturation end (m) of the displacement map: the largest |load→solved| over
+    // every solved mesh. The displacement of a rigid pose change is an affine
+    // function of position, so its maximum over a mesh is attained at a bbox
+    // corner — 8 corners per mesh, exact and cheap. One global value keeps the
+    // displacement colours comparable across meshes (not capped at 0.5 m — a solve
+    // may legitimately move a mesh further).
+    let displacementRange (model : AdaptiveModel) : aval<float> =
+        AVal.custom (fun t ->
+            let solved = model.SolvedTransforms.GetValue t
+            if Map.isEmpty solved then 1.0
+            else
+                let bounds = model.MeshBounds.GetValue t
+                let loads = model.LoadTransforms.GetValue t
+                let cc = model.CommonCentroid.GetValue t
+                let scales = model.DatasetScales.GetValue t
+                let mutable mx = 1e-6
+                for KeyValue(name, sT) in solved do
+                    match Map.tryFind name bounds with
+                    | Some (b : Box3d) when not b.IsInvalid ->
+                        let s = DatasetScale.forMesh scales name
+                        let lT = Map.tryFind name loads |> Option.defaultValue Trafo3d.Identity
+                        for corner in b.ComputeCorners() do
+                            let rc = ScanPin.renderCentre cc s corner
+                            let d = (sT.Forward.TransformPos rc - lT.Forward.TransformPos rc).Length / s
+                            if d > mx then mx <- d
+                    | _ -> ()
+                mx)
 
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
     // inner radius w), for the mesh shader's pin-isolation filter. The live
@@ -176,6 +205,8 @@ module MeshView =
         let palette = Primitives.meshPaletteV4d
 
         let blobCount, blobs = pinBlobUniforms placementPreview model
+        let inspectRangeA = inspectRange model
+        let dispRangeA = displacementRange model
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
@@ -317,13 +348,17 @@ module MeshView =
                     | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
                     | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
             let distEncoding = inspectField |> AVal.map fst
-            // Saturated end of the map: robust (95th pct |value|). The difference map
-            // (enc 1) is gear-scalable (DiffRangeScale) to match the focus tile.
+            // Map ends from the unified pin-derived range (§C): enc 1 saturates at
+            // (lo, hi); enc 2 (variance σ, same units) at max(|lo|, hi); enc 3 at the
+            // global displacement range.
             let distScale =
-                (distArr, distEncoding, model.DiffRangeScale) |||> AVal.map3 (fun d enc sc ->
-                    match d with
-                    | Some arr -> let hi = robustHi arr in (if enc = 1 then hi * float32 sc else hi)
-                    | None -> 1.0f)
+                (distEncoding, inspectRangeA, dispRangeA) |||> AVal.map3 (fun enc (lo, hi) disp ->
+                    match enc with
+                    | 1 -> float32 hi
+                    | 2 -> float32 (max (abs lo) hi)
+                    | 3 -> float32 disp
+                    | _ -> 1.0f)
+            let distLoNeg = inspectRangeA |> AVal.map (fun (lo, _) -> float32 (abs lo))
             let surface =
                 sg {
                     Sg.Active renderEnabled
@@ -362,6 +397,7 @@ module MeshView =
                     Sg.Uniform("ClipPlane1",           clipPlane1)
                     Sg.Uniform("DistanceEncoding",     distEncoding)
                     Sg.Uniform("DistScale",            distScale)
+                    Sg.Uniform("DistLoNeg",            distLoNeg)
                     // Per-mesh intrinsic error layer (set from the Overview mesh list),
                     // respected in every workflow mode. Suppressed while this mesh paints
                     // an Inspect comparison field (distEncoding ≠ 0) so the 2-mesh /

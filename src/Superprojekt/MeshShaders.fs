@@ -42,10 +42,13 @@ module MeshShader =
         // 1 = signed difference, diverging blue↔grey↔red (soloed moving mesh, Inspect
         //     Difference); 2 = variance std ≥0, sequential grey→red (reference,
         //     Inspect ensemble); 3 = displacement magnitude ≥0, sequential light→blue
-        //     (soloed moving mesh, Inspect Displacement). DistScale normalizes the high
-        //     end; SurfaceDist = 1e30 → keep base colour.
+        //     (soloed moving mesh, Inspect Displacement). DistScale saturates the
+        //     positive end, DistLoNeg (enc 1 only) the |negative| end — both come from
+        //     the ONE pin-derived Inspect range (§C, ScanPin.inspectRange), so every
+        //     map shares a scale. SurfaceDist = 1e30 → keep base colour.
         member x.DistanceEncoding : int     = x?DistanceEncoding
         member x.DistScale        : float32 = x?DistScale
+        member x.DistLoNeg        : float32 = x?DistLoNeg
         // 0 = off, 1 = incidence, 2 = range.
         member x.HeatmapMode      : int     = x?HeatmapMode
         member x.SensorOrigin     : V3f     = x?SensorOrigin
@@ -152,8 +155,10 @@ module MeshShader =
             if uniform.DistanceEncoding = 1 && aboveGhost then
                 let d = v.sd
                 if abs d < 1e20f then
-                    let hi = max 1e-6f uniform.DistScale
-                    let m = pow (min 1.0f (abs d / hi)) 0.6f
+                    let hiP = max 1e-6f uniform.DistScale
+                    let hiN = max 1e-6f uniform.DistLoNeg
+                    let t = if d >= 0.0f then d / hiP else -d / hiN
+                    let m = pow (min 1.0f t) 0.6f
                     let mid = V3f(0.62f, 0.63f, 0.66f)
                     baseRgb <-
                         if d >= 0.0f then mid + (V3f(0.80f, 0.12f, 0.12f) - mid) * m

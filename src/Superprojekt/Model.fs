@@ -234,11 +234,6 @@ type Model =
         OutlineThreshold    : float
         IsolineBands        : float
 
-        // Multiplier on the Inspect difference (FocusMode 1) heatmap's per-tile
-        // range: >1 widens the value range mapped to full red/blue (compresses the
-        // colours toward neutral grey), <1 narrows it (saturates sooner). Gear slider.
-        DiffRangeScale      : float
-
         // Active "frame correspondence" (locate) backup; Some while a locate is in
         // effect so re-clicking the located matrix cell restores the prior camera +
         // solo state.
@@ -335,6 +330,5 @@ module Model =
             BrushedSamples      = Set.empty
             OutlineThreshold    = 0.004
             IsolineBands        = 700.0
-            DiffRangeScale      = 1.0
             LocateBackup        = None
         }

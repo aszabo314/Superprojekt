@@ -34,6 +34,16 @@ Contracts the rest of the stack relies on (`MeshShader.shade`):
 - **Ghost colour is uniform**: ghost fragments always use the solid per-mesh palette colour regardless of rendering mode, so a ghost silhouette reads as one shape.
 - Solid/ghost/invisible is decided per fragment from `MeshActive` × the global ghost floor (`GhostSilhouette`/`GhostOpacity`; floor off ⇒ ghost fragments are *discarded*, i.e. hidden not translucent) × the pin-isolation blob mask (`Blobs` uniform array, hard cap 32, metric → render at upload). The scalar-field painters (difference/variance/displacement/heatmaps) only touch **above-ghost** fragments.
 
+### One Inspect error range (never per-mesh normalization)
+
+Every Inspect false-colour map reads on the **same pin-derived scale** — do not reintroduce per-mesh/per-tile normalization (robust percentiles, user range sliders):
+
+- `ScanPin.inspectRange` (ScanPinModel.fs) = signed (lo, hi) in metres over every ready pin's ROI probe samples on the moving meshes, always spanning 0, **hard-capped at ±0.5 m**; no pins ⇒ the full ±0.5 m. Adaptive wrapper: `MeshView.inspectRange`.
+- Consumers: 3D `MeshShader` (`DistScale` = hi, `DistLoNeg` = |lo|; variance σ saturates at max(|lo|, hi)), focus tiles/single (`FocusHi`/`FocusLoNeg`), the bottom-centre legend (`GuiOverlays.colorLegend`, Inspect only), and the brushed sample dots (per-**pin** envelope via `ScanPin.pinErrorRange`).
+- The diverging map is **asymmetric piecewise**: neutral stays welded to 0; each sign normalizes by its own end (`Primitives.Diff.colorSignedV3`, mirrored in `MeshShaders`/`FocusShaders` — keep all three in sync). Values outside clamp to the end colours.
+- Displacement is *not* an error metric: it saturates at `MeshView.displacementRange` — the exact global max |load→solved| over each solved mesh's world-bbox corners (rigid ⇒ max at a corner), uncapped.
+- Sample brushing is **chart-drag only** (`SetBrushedSamples` from the dock chart's JS bridge). There is deliberately no 3D hover-reveal of samples; brushed samples render as small solid dots coloured by value on their pin's own range (`ScanPinScene.brushedDots`, `Dots.render`).
+
 ### `Sg.DepthMask` is forbidden
 
 Buggy in this Aardvark/Aardworx WebGL build — it silently breaks the depth pipeline. Steer ordering with `Sg.DepthTest` + `Sg.Pass` alone. Lines, pin geometry and text therefore all write depth; that violates the textbook "translucent shouldn't write depth" rule but is the only combination that renders correctly in this stack. Leave the in-code reminders in `LineShader.fs` / `SceneGraph.fs`.
@@ -122,7 +132,7 @@ RegistrationModel.fs   ScanPinId, anchors, readiness engine, fly-to math (WASM-f
 ScanPinModel.fs / .g.fs ScanPin + placement state
 PinGeometry.fs         icosphere, sphere outline
 Model.fs / .g.fs       [<ModelType>] Model + Selection + MeshVisibility + ModelTransforms
-LineShader.fs          flat colour + pixel-constant 3D lines
+LineShader.fs          flat colour + pixel-constant 3D lines + vertex-coloured dot batches
 Primitives.fs          widgets, showWhen, observedRender, palettes, Diff colormap, friendly names
 Messages.fs            Message DU
 ScanPinUpdate.fs       pin sub-reducer + probe/rings postludes

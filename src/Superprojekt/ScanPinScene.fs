@@ -507,58 +507,70 @@ module ScanPinScene =
                     | None -> [||])
             linesNodeTop active segs
 
-        // Brushed-pin sample cloud (§T6): the hovered pin's ROI samples as small
-        // crosses at their world surface positions, in the pin colour — the 3D side of
-        // the pin↔surface brushing. Only when a pin is hovered (outside Overview).
-        let sampleBrush =
-            let segs =
-                AVal.custom (fun t ->
-                    if model.WorkflowStep.GetValue t = Overview then [||]
-                    else
-                        match model.Selection.Hovered.GetValue t with
-                        | Some (HoverPin id) ->
-                            match HashMap.tryFind id (pinsVal.GetValue t) with
-                            | Some p ->
-                                match p.Probe with
-                                | ProbeReady r ->
-                                    let cc = model.CommonCentroid.GetValue t
-                                    let scale = datasetScale.GetValue t
-                                    let col = V4d(Primitives.c4bToV3d p.PinColor, 0.95)
-                                    let out = ResizeArray<V3d * V3d * V4d * float>()
-                                    for d in r.Distributions do
-                                        for pw in d.Positions do
-                                            addCross out (ScanPin.renderCentre cc scale pw) 0.035 col 1.0
-                                    out.ToArray()
-                                | _ -> [||]
-                            | None -> [||]
-                        | _ -> [||])
-            linesNodeTop notFullscreen segs
-
-        // Brushed individual samples (§T6): emphasized crosses at the brushed samples'
-        // surface positions (in their pin colour), looked up by gid in the SAME
-        // canonical array the chart labels with — so a chart brush lands on the exact
-        // 3D surface cells. Driven by Model.BrushedSamples (chart drag or 3D hover).
-        let brushedMarkers =
+        // Brushed individual samples (§T6): small solid dots at the brushed samples'
+        // surface positions, looked up by gid in the SAME canonical array the chart
+        // labels with — so a chart range-brush lands on the exact 3D surface cells.
+        // Driven by Model.BrushedSamples (chart drag ONLY — no hover reveal). Dot
+        // colour = the sample's value on the diverging error gradient, normalized to
+        // its own pin's error range — so the dots read as a mini heatmap.
+        let brushedDots =
             let canonA = brushSamples model
-            let segs =
+            let spherePos, sphereIdx = PinGeometry.buildIcosphere 1
+            let refA = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
+            let geo =
                 AVal.custom (fun t ->
                     let brushed = model.BrushedSamples.GetValue t
-                    if Set.isEmpty brushed then [||]
+                    if Set.isEmpty brushed then [||], [||], [||]
                     else
                         let canon = canonA.GetValue t
                         let pins = pinsVal.GetValue t
+                        let rf = refA.GetValue t
                         let cc = model.CommonCentroid.GetValue t
                         let scale = datasetScale.GetValue t
-                        let out = ResizeArray<V3d * V3d * V4d * float>()
-                        for gid in brushed do
-                            if gid >= 0 && gid < canon.Length then
-                                let (pid, _mesh, pos, _v) = canon.[gid]
-                                let col =
-                                    match HashMap.tryFind pid pins with
-                                    | Some p -> V4d(Primitives.c4bToV3d p.PinColor, 1.0)
-                                    | None -> V4d(0.0, 0.78, 0.84, 1.0)
-                                addCross out (ScanPin.renderCentre cc scale pos) 0.06 col 2.4
-                        out.ToArray())
-            linesNodeTop notFullscreen segs
+                        let ranges = System.Collections.Generic.Dictionary<ScanPinId, (float * float) option>()
+                        let rangeOf pid =
+                            match ranges.TryGetValue pid with
+                            | true, r -> r
+                            | _ ->
+                                let r = HashMap.tryFind pid pins |> Option.bind (ScanPin.pinErrorRange rf)
+                                ranges.[pid] <- r
+                                r
+                        let dots =
+                            brushed |> Seq.choose (fun gid ->
+                                if gid >= 0 && gid < canon.Length then
+                                    let (pid, _mesh, pos, vMm) = canon.[gid]
+                                    let col =
+                                        match rangeOf pid with
+                                        | Some (lo, hi) -> Primitives.Diff.colorSignedV3 lo hi (vMm / 1000.0)
+                                        | None -> Primitives.Diff.neutral
+                                    Some (ScanPin.renderCentre cc scale pos, col)
+                                else None)
+                            |> Array.ofSeq
+                        let r = 0.03
+                        let nv = spherePos.Length
+                        let posOut = Array.zeroCreate<V3f> (dots.Length * nv)
+                        let colOut = Array.zeroCreate<V4f> (dots.Length * nv)
+                        let idxOut = Array.zeroCreate<int> (dots.Length * sphereIdx.Length)
+                        for di in 0 .. dots.Length - 1 do
+                            let (c, col) = dots.[di]
+                            let cf = V3f c
+                            let colF = V4f(float32 col.X, float32 col.Y, float32 col.Z, 1.0f)
+                            let vb = di * nv
+                            for vi in 0 .. nv - 1 do
+                                posOut.[vb + vi] <- cf + spherePos.[vi] * float32 r
+                                colOut.[vb + vi] <- colF
+                            let ib = di * sphereIdx.Length
+                            for ii in 0 .. sphereIdx.Length - 1 do
+                                idxOut.[ib + ii] <- vb + sphereIdx.[ii]
+                        posOut, colOut, idxOut)
+            sg {
+                Sg.Active notFullscreen
+                Sg.View view
+                Sg.Proj proj
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                Dots.render geo
+            }
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [sampleBrush]; ASet.ofList [brushedMarkers]])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [brushedDots]])

@@ -66,11 +66,6 @@ module View =
         // round-trip per move would flood; stale results must not overwrite).
         let mutable placeHoverMs  = 0.0
         let mutable placeHoverGen = 0
-        // Throttle for the 3D→chart sample brush (cheap sync scan; §T6).
-        let mutable brushMs = 0.0
-        // Canonical sample array for the 3D→chart spatial brush (stable aval, forced
-        // at event time). Same array the chart labels with → gids align.
-        let canonForBrush = ScanPinScene.brushSamples model
 
         let fullscreenActive = spaceHeld :> aval<bool>
 
@@ -522,31 +517,6 @@ module View =
                                         env.Emit [CorrPreviewComputed (hit |> Option.map (worldFromRender model))]
                                 } |> Async.Start
                     | None -> ()
-                    // 3D → chart brushing (§T6): in Inspect, hovering the surface brushes
-                    // the canonical samples within a small world radius of the hit so the
-                    // chart highlights them. Cheap sync scan; throttled; only on a real
-                    // surface hit (off-surface leaves the current brush untouched).
-                    if AVal.force model.WorkflowStep = Inspect
-                       && not placementWanted
-                       && (AVal.force model.CorrArm).IsNone then
-                        match pick with
-                        | Some renderPos ->
-                            let now = nowMs ()
-                            if now - brushMs > 60.0 then
-                                brushMs <- now
-                                let world = worldFromRender model renderPos
-                                let canon = AVal.force canonForBrush
-                                let sb = AVal.force model.SceneBounds
-                                let rad = if sb.IsInvalid then 1.0 else max 0.05 (sb.Size.Length * 0.01)
-                                let r2 = rad * rad
-                                let ids =
-                                    canon
-                                    |> Array.mapi (fun i (_, _, pos, _) -> i, (pos : V3d))
-                                    |> Array.choose (fun (i, pos) -> if (pos - world).LengthSquared <= r2 then Some i else None)
-                                    |> Array.truncate 200
-                                    |> Array.toList
-                                env.Emit [SetBrushedSamples ids]
-                        | None -> ()
                     true
                 )
 
@@ -587,6 +557,7 @@ module View =
             GuiOverlays.toast model
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
+            GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model
             GuiInspector.dock env model
         }

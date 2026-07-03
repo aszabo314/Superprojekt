@@ -84,6 +84,116 @@ module GuiOverlays =
             div { Class "sb-label"; barLabel }
         }
 
+    // Colormap legend (Inspect only, bottom centre): the active false-colour map's
+    // gradient with nice-step ticks and the exact range ends. The three Inspect maps
+    // all read on the unified pin-derived scale (§C): the ensemble variance σ
+    // [0, max(|lo|,hi)], the soloed mesh's signed difference [lo, hi], and the
+    // displacement magnitude [0, global max |load→solved|].
+    let colorLegend (model : AdaptiveModel) =
+        let rangeA = MeshView.inspectRange model
+        let dispA = MeshView.displacementRange model
+        let fmt (span : float) (v : float) =
+            if span < 0.095 then sprintf "%.0f mm" (v * 1000.0)
+            elif span < 0.95 then sprintf "%.0f cm" (v * 100.0)
+            else sprintf "%.2f m" v
+        let legendJson =
+            AVal.custom (fun t ->
+                let (lo, hi) = rangeA.GetValue t
+                let solo = (model.MeshSolo.GetValue t).IsSome
+                let title, vLo, vHi, colorAt =
+                    if not solo then
+                        let m = max 1e-6 (max (abs lo) hi)
+                        "Disagreement σ", 0.0, m,
+                        (fun (v : float) ->
+                            let tt = clamp 0.0 1.0 (v / m)
+                            V3d(0.945, 0.961, 0.976) * (1.0 - tt) + V3d(0.725, 0.110, 0.110) * tt)
+                    else
+                        match model.InspectChannel.GetValue t with
+                        | ChDisplacement ->
+                            let m = max 1e-6 (dispA.GetValue t)
+                            "Displacement", 0.0, m,
+                            (fun v ->
+                                let tt = clamp 0.0 1.0 (v / m)
+                                V3d(0.93, 0.94, 0.98) * (1.0 - tt) + V3d(0.118, 0.227, 0.541) * tt)
+                        | ChDifference ->
+                            let title = if model.ExtrinsicZDiff.GetValue t then "Difference (Δz)" else "Difference (M3C2)"
+                            title, lo, hi, Primitives.Diff.colorSignedV3 lo hi
+                let span = vHi - vLo
+                let hexAt (v : float) =
+                    let c = colorAt v
+                    let b (x : float) = byte (clamp 0.0 255.0 (x * 255.0))
+                    Primitives.c4bToHex (C4b(b c.X, b c.Y, b c.Z))
+                let stops =
+                    [ for i in 0 .. 23 -> sprintf "\"%s\"" (hexAt (vLo + span * float i / 23.0)) ]
+                    |> String.concat ","
+                // Nice-step ticks; ends carry the exact range values, so ticks that
+                // would collide with them (outer 12%) are dropped.
+                let step = niceRoundDistance (span / 4.0)
+                let ticks =
+                    if step <= 0.0 || span <= 0.0 then []
+                    else
+                        [ for k in int (ceil (vLo / step)) .. int (floor (vHi / step)) do
+                            let v = float k * step
+                            let p = (v - vLo) / span
+                            if p > 0.12 && p < 0.88 then
+                                yield sprintf "{\"p\":%.4f,\"l\":\"%s\"}" p (fmt span v) ]
+                    |> String.concat ","
+                sprintf "{\"title\":\"%s\",\"min\":\"%s\",\"max\":\"%s\",\"stops\":[%s],\"ticks\":[%s]}"
+                    title (fmt span vLo) (fmt span vHi) stops ticks)
+        div {
+            Class "color-legend"
+            Primitives.showWhen (model.WorkflowStep |> AVal.map ((=) Inspect))
+            legendJson |> AVal.map (fun json -> Some (Attribute("data-legend", json)))
+            Primitives.observedRender "data-legend" "{}" [
+                "  if(!d.stops) return;"
+                "  var W = 240, BH = 12, H = 44, PAD = 6;"
+                "  var svg = document.createElementNS(ns, 'svg');"
+                "  svg.setAttribute('width', W); svg.setAttribute('height', H);"
+                "  svg.setAttribute('viewBox', '0 0 ' + W + ' ' + H);"
+                "  var bw = W - 2 * PAD, n = d.stops.length;"
+                "  var gid = 'clg' + Math.floor(Math.random() * 1e9);"
+                "  var defs = document.createElementNS(ns, 'defs');"
+                "  var gr = document.createElementNS(ns, 'linearGradient');"
+                "  gr.setAttribute('id', gid);"
+                "  d.stops.forEach(function(c, i){"
+                "    var st = document.createElementNS(ns, 'stop');"
+                "    st.setAttribute('offset', (100 * i / (n - 1)) + '%');"
+                "    st.setAttribute('stop-color', c);"
+                "    gr.appendChild(st);"
+                "  });"
+                "  defs.appendChild(gr); svg.appendChild(defs);"
+                "  var bar = document.createElementNS(ns, 'rect');"
+                "  bar.setAttribute('x', PAD); bar.setAttribute('y', 2);"
+                "  bar.setAttribute('width', bw); bar.setAttribute('height', BH);"
+                "  bar.setAttribute('fill', 'url(#' + gid + ')');"
+                "  bar.setAttribute('stroke', '#94a3b8'); bar.setAttribute('stroke-width', '0.5');"
+                "  svg.appendChild(bar);"
+                "  function txt(x, anchor, s, y){"
+                "    var tx = document.createElementNS(ns, 'text');"
+                "    tx.setAttribute('x', x); tx.setAttribute('y', y || 28);"
+                "    tx.setAttribute('fill', '#0f172a'); tx.setAttribute('font-size', '9');"
+                "    tx.setAttribute('font-family', 'SF Mono, Monaco, monospace');"
+                "    tx.setAttribute('text-anchor', anchor); tx.textContent = s;"
+                "    svg.appendChild(tx);"
+                "  }"
+                "  (d.ticks || []).forEach(function(tk){"
+                "    var x = PAD + tk.p * bw;"
+                "    var ln = document.createElementNS(ns, 'line');"
+                "    ln.setAttribute('x1', x); ln.setAttribute('y1', 2);"
+                "    ln.setAttribute('x2', x); ln.setAttribute('y2', BH + 6);"
+                "    ln.setAttribute('stroke', '#475569'); ln.setAttribute('stroke-width', '1');"
+                "    svg.appendChild(ln);"
+                "    txt(x, 'middle', tk.l);"
+                "  });"
+                "  txt(PAD, 'start', d.min, 28);"
+                "  txt(W - PAD, 'end', d.max, 28);"
+                "  el.innerHTML = '';"
+                "  var tt = document.createElement('div'); tt.className = 'cl-title';"
+                "  tt.textContent = d.title; el.appendChild(tt);"
+                "  el.appendChild(svg);"
+            ]
+        }
+
     let orientationIndicator (model : AdaptiveModel) =
         let axisJson =
             model.Camera.view |> AVal.map (fun cv ->

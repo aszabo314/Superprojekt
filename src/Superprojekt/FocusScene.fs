@@ -220,11 +220,11 @@ module FocusScene =
                 let zero () =
                     loaded.pos.GetValue t |> ignore
                     let n = match loaded.mesh.Value with Some md -> md.positions.Length | None -> 3
-                    (ArrayBuffer (Array.zeroCreate<float32> n) :> IBuffer, 1.0f)
+                    ArrayBuffer (Array.zeroCreate<float32> n) :> IBuffer
                 match modeA.GetValue t with
                 | 1 ->
                     match Map.tryFind name (model.FocusDist.GetValue t) with
-                    | Some arr -> (ArrayBuffer arr :> IBuffer, MeshView.robustHi arr)
+                    | Some arr -> ArrayBuffer arr :> IBuffer
                     | None -> zero ()
                 | 2 ->
                     loaded.pos.GetValue t |> ignore
@@ -236,7 +236,7 @@ module FocusScene =
                         let mag = Array.init pos.Length (fun i ->
                             let p = V3d pos.[i]
                             float32 ((solvedF.TransformPos p - loadF.TransformPos p).Length / sc))
-                        (ArrayBuffer mag :> IBuffer, MeshView.robustHi mag)
+                        ArrayBuffer mag :> IBuffer
                     | None -> zero ()
                 // Intrinsic per-mesh heatmaps: per-vertex scalar pre-normalized to [0,1]
                 // in the mesh's own (pose-independent) frame. Sensor = the pano centre in
@@ -264,16 +264,23 @@ module FocusScene =
                                     if d > mx then mx <- d
                                 pos |> Array.map (fun p -> (p - sensor).Length / mx)
                             | _ -> MeshView.shapeQuality pos md.indices
-                        (ArrayBuffer arr :> IBuffer, 1.0f)
+                        ArrayBuffer arr :> IBuffer
                     | None -> zero ()
                 | _ -> zero ())
-        // The difference channel's range (FocusMode 1) is user-scalable from the gear
-        // menu; fold DiffRangeScale into hi here (NOT into scalarData) so dragging the
-        // slider only updates the FocusHi uniform — the vertex buffer never re-uploads.
+        // Map ends from the unified pin-derived range (§C) — same scale as the 3D
+        // painters, so every tile and the single are directly comparable.
+        let rangeA = MeshView.inspectRange model
+        let dispA = MeshView.displacementRange model
         let hiA =
-            (scalarData |> AVal.map snd, modeA, model.DiffRangeScale) |||> AVal.map3 (fun hi m sc ->
-                if m = 1 then hi * float32 sc else hi)
-        modeA, (scalarData |> AVal.map fst), hiA
+            (modeA, rangeA, dispA) |||> AVal.map3 (fun m (_, hi) disp ->
+                match m with
+                | 1 -> float32 hi
+                | 2 -> float32 disp
+                | _ -> 1.0f)
+        let loNegA =
+            (modeA, rangeA) ||> AVal.map2 (fun m (lo, _) ->
+                if m = 1 then float32 (abs lo) else 1.0f)
+        modeA, scalarData, hiA, loNegA
 
     // Large single: render-space, textured. Top = orthographic; Pano = cylindrical
     // unwrap (camera identity; the shader writes clip directly). Picking is Dom-driven
@@ -289,7 +296,7 @@ module FocusScene =
         // panorama centre in render space); fitExtent frames the mesh around it.
         let _, panoEye, fitExtent = framing model name loaded renderT scale
         let isPano = (proj = ProjPano)
-        let modeA, scalarBuf, hiA = focusOverlay model name loaded scale
+        let modeA, scalarBuf, hiA, loNegA = focusOverlay model name loaded scale
         // Displacement single: white surface (mode 2 → 3) so the arrow glyphs read.
         let surfaceMode = modeA |> AVal.map (fun m -> if m = 2 then 3 else m)
         // Load→solved arrow glyphs (render space, exaggerated for visibility; colour =
@@ -552,6 +559,7 @@ module FocusScene =
                         Sg.Uniform("PanoRadFar", fitExtent |> AVal.map (fun e -> float32 (e * 2.0)))
                         Sg.Uniform("FocusMode", surfaceMode)
                         Sg.Uniform("FocusHi",   hiA)
+                        Sg.Uniform("FocusLoNeg", loNegA)
                         Sg.Uniform("FocusLod",  AVal.constant 0.0f)
                         Sg.NoEvents
                         Sg.VertexAttributes(vattrs loaded scalarBuf)
@@ -565,6 +573,7 @@ module FocusScene =
                         Sg.Uniform("DiffuseColorTexture", loaded.tex)
                         Sg.Uniform("FocusMode", surfaceMode)
                         Sg.Uniform("FocusHi",   hiA)
+                        Sg.Uniform("FocusLoNeg", loNegA)
                         Sg.Uniform("FocusLod",  AVal.constant 0.0f)
                         Sg.NoEvents
                         Sg.VertexAttributes(vattrs loaded scalarBuf)
@@ -594,7 +603,7 @@ module FocusScene =
         let renderT, scale = renderTrafoOf model name loaded
         // Centre the thumbnail on the same panorama centre as the single.
         let _, fitCenter, fitExtent = framing model name loaded renderT scale
-        let modeA, scalarBuf, hiA = focusOverlay model name loaded scale
+        let modeA, scalarBuf, hiA, loNegA = focusOverlay model name loaded scale
         let rc =
             renderControl {
                 RenderControl.Samples 1
@@ -609,6 +618,7 @@ module FocusScene =
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
                     Sg.Uniform("FocusMode", modeA)
                     Sg.Uniform("FocusHi",   hiA)
+                    Sg.Uniform("FocusLoNeg", loNegA)
                     Sg.Uniform("FocusLod",  AVal.constant 0.0f)
                     Sg.NoEvents
                     Sg.VertexAttributes(vattrs loaded scalarBuf)

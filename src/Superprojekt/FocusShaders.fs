@@ -27,9 +27,13 @@ module FocusShaders =
         // 2 = sequential displacement magnitude, 3 = flat white; the per-mesh intrinsic
         // layers 4 = incidence, 5 = range, 6 = shape carry a pre-normalized [0,1]
         // FocusScalar and map to the same colours as the 3D mesh-shader heatmaps.
-        member x.FocusMode : int     = uniform?FocusMode
-        member x.FocusHi   : float32 = uniform?FocusHi
-        member x.FocusLod  : float32 = uniform?FocusLod
+        // FocusHi saturates the positive end; FocusLoNeg (mode 1 only) the |negative|
+        // end — both from the unified pin-derived Inspect range (§C), matching the 3D
+        // mesh shader so tiles, single and 3D read on one scale.
+        member x.FocusMode  : int     = uniform?FocusMode
+        member x.FocusHi    : float32 = uniform?FocusHi
+        member x.FocusLoNeg : float32 = uniform?FocusLoNeg
+        member x.FocusLod   : float32 = uniform?FocusLod
 
     type ColorVertex =
         {
@@ -74,12 +78,12 @@ module FocusShaders =
                 // Linear-diverging difference map (§C, Kovesi CET-D style): neutral
                 // (0.62,0.63,0.66) → red (+) / blue (−), with a near-zero perceptual
                 // boost (t^0.6) so small deviations stay visible (no central flat-spot).
-                // ±LoD gate kept: within FocusLod → neutral; outside, ramp gate→FocusHi.
-                // Mirrors Primitives.Diff exactly.
-                let hi = max 1e-6f uniform.FocusHi
+                // Asymmetric ends: + saturates at FocusHi, − at FocusLoNeg. ±LoD gate
+                // kept: within FocusLod → neutral. Mirrors Primitives.Diff.colorSignedV3.
                 let a = abs v.s
                 if a < uniform.FocusLod then return V4f(0.62f, 0.63f, 0.66f, 1.0f)
                 else
+                    let hi = if v.s >= 0.0f then max 1e-6f uniform.FocusHi else max 1e-6f uniform.FocusLoNeg
                     let denom = max 1e-6f (hi - uniform.FocusLod)
                     let m = pow (min 1.0f (max 0.0f ((a - uniform.FocusLod) / denom))) 0.6f
                     if v.s >= 0.0f then

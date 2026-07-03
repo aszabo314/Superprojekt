@@ -16,7 +16,6 @@ type Message =
     | SetSlopeThresholdDeg of float
     | SetOutlineThreshold of float
     | SetIsolineBands of float
-    | SetDiffRangeScale of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
     // Spring-loaded hold-to-isolate modifier (forces pin isolation while held).

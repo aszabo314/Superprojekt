@@ -77,6 +77,16 @@ module Primitives =
             let c = colorV3 lod range v
             let b x = byte (clamp 0.0 255.0 (x * 255.0))
             C4b(b c.X, b c.Y, b c.Z)
+        // Asymmetric signed range [lo ≤ 0, hi ≥ 0]: neutral stays welded to 0,
+        // negatives ramp to full blue at lo, positives to full red at hi (each side
+        // normalized by its own end, same t^0.6 boost). Values outside clamp.
+        let colorSignedV3 (lo : float) (hi : float) (v : float) =
+            let t =
+                if v >= 0.0 then clamp 0.0 1.0 (v / max 1.0e-6 hi)
+                else clamp 0.0 1.0 (v / min -1.0e-6 lo)
+            let m = t ** 0.6
+            let e = if v >= 0.0 then red else blue
+            neutral * (1.0 - m) + e * m
 
     let shortName (name : string) =
         let mesh =

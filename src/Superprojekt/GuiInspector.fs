@@ -11,22 +11,23 @@ module GuiInspector =
 
     open Primitives
 
-    // Pin distribution canvas (§T6): per moving-mesh lane, a STACKED VIOLIN of every
-    // pin's ROI samples on a shared signed-distance axis — histogram bins (48 over
-    // [lo,hi], smoothed 1-2-1 on the CUMULATIVE outlines so stacked layers never
-    // cross), pin layers stacked outward from the lane axis in the canonical pin
-    // order (CreatedAt, guid — same as the legend and brushSamples).
-    // No registration → the top half mirrors the bottom (classic violin). Once a
-    // solve exists the halves split: ▼ bottom = Before, ▲ top = After; the inactive
-    // half renders muted/near-greyscale, and the spring-loaded Peek flips only this
-    // emphasis (visual, like the 3D peek).
+    // Pin distribution canvas (§T6): per moving-mesh lane, a one-sided STACKED
+    // HISTOGRAM of every pin's ROI samples on a shared signed-distance axis —
+    // 48 crisp bins growing up from the lane baseline, pin segments stacked in the
+    // canonical pin order (CreatedAt, guid — same as the legend and brushSamples).
+    // Once a solve exists the same lane carries BOTH poses: the emphasized pose
+    // (committed view, flipped by the spring-loaded Peek — visual only) is the
+    // filled stack, the other pose is a plain near-black step OUTLINE of its total
+    // (shape only, no colour/subdivision). One count→height scale across all lanes
+    // and both poses keeps areas comparable.
     // Brushing is unchanged from the rain chart: an X-RANGE drag over the CONCEPTUAL
     // samples (el._dots, from the canonical g/s arrays of the COMMITTED pose — no
     // dots are painted); selected gids go to the sibling hidden input (the JS→Elm
     // bridge) → the 3D sample dots. A plain click clears. This chart drag is the
     // ONLY way to brush samples. data-brushed echoes the model back (a model-side
     // clear also drops the local band); with no local drag the band is reconstructed
-    // from the echoed gids. Self-contained OnBoot (observes data-dist + data-brushed);
+    // from the echoed gids. Self-contained OnBoot (observes data-dist + data-brushed
+    // + its own size — the shift panel toggling with the channel resizes the chart);
     // the bridge is resolved lazily EACH emit (a boot capture would freeze null).
     let private brushChartJs = [
         "(function(){"
@@ -38,10 +39,6 @@ module GuiInspector =
         "  b.value=ids.join(','); b.dispatchEvent(new Event('input',{bubbles:true})); }"
         "function ph(t){ el.innerHTML=''; el._dots=[]; var p=document.createElement('div'); p.className='ins-ph'; p.textContent=t; el.appendChild(p); }"
         "function niceStep(raw){ var mag=Math.pow(10,Math.floor(Math.log(raw)/Math.LN10)); var n=raw/mag; return (n<1.5?1:n<3.5?2:n<7.5?5:10)*mag; }"
-        // Muted = 88% luminance grey + 12% hue, lifted 60% toward white.
-        "function mute(hex){ var r=parseInt(hex.substr(1,2),16),gg=parseInt(hex.substr(3,2),16),b=parseInt(hex.substr(5,2),16);"
-        "  var l=0.3*r+0.59*gg+0.11*b; function m(c){ return Math.round((l*0.88+c*0.12)*0.4+255*0.6); }"
-        "  return 'rgb('+m(r)+','+m(gg)+','+m(b)+')'; }"
         "function render(){"
         "  var raw=el.getAttribute('data-dist')||'{}'; var d; try{d=JSON.parse(raw);}catch(e){return;}"
         "  var braw=el.getAttribute('data-brushed')||''; var bset=new Set(braw.length?braw.split(',').map(Number):[]);"
@@ -53,20 +50,15 @@ module GuiInspector =
         "  cv.style.width=W+'px'; cv.style.height=H+'px'; cv.className='ins-dist-cv';"
         "  var g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);"
         "  g.fillStyle='#ffffff'; g.fillRect(0,0,W,H);"
-        "  var padL=10,padR=12,padT=26,padB=24; var lo=d.lo,hi=d.hi; var span=Math.max(1e-6,hi-lo);"
+        "  var padL=10,padR=12,padT=14,padB=20; var lo=d.lo,hi=d.hi; var span=Math.max(1e-6,hi-lo);"
         "  function X(v){ return padL+(v-lo)/span*(W-padL-padR); }"
         "  el._XV=function(x){ return lo+(x-padL)/Math.max(1,W-padL-padR)*span; };"
         "  el._padL=padL; el._padR=padR;"
-        "  var B=d.bins||48; var bw=span/B; function xb(b){ return X(lo+(b+0.5)*bw); }"
-        // hf: 0 = before/bottom half, 1 = after/top half. Unregistered → mirror.
-        "  function cnts(pn,hf){ var a=d.reg?(hf?pn.ha:pn.hb):((pn.hb&&pn.hb.length)?pn.hb:pn.ha); return (a&&a.length===B)?a:null; }"
-        "  function sm(u){ var o=new Array(B); for(var b=0;b<B;b++){ o[b]=(u[Math.max(0,b-1)]+2*u[b]+u[Math.min(B-1,b+1)])/4; } return o; }"
-        "  var hasB=false,hasA=false; d.rows.forEach(function(r){ r.pins.forEach(function(pn){ if(cnts(pn,0))hasB=true; if(cnts(pn,1))hasA=true; }); });"
-        "  g.fillStyle='#475569'; g.font='11px SF Mono,Monaco,monospace'; g.textAlign='left';"
-        "  var hdr=d.reg?((d.act==='a'?'After':'Before')+' active'):d.state;"
-        "  g.fillText(hdr+'  ·  signed distance to reference (mm)  ·  0 = reference median',8,13);"
-        "  g.fillStyle='#94a3b8'; g.font='9px SF Mono,Monaco,monospace';"
-        "  g.fillText('░ ±LoD₉₅   ·   drag an X-range to brush', W-196, 13);"
+        "  var B=d.bins||48; var bw=span/B;"
+        "  function poseC(pn,ps){ var a=ps==='a'?pn.ha:pn.hb; return (a&&a.length===B)?a:null; }"
+        "  var anyB=false,anyA=false; d.rows.forEach(function(r){ r.pins.forEach(function(pn){ if(poseC(pn,'b'))anyB=true; if(poseC(pn,'a'))anyA=true; }); });"
+        // Emphasized pose = filled stack; the other pose (solved only) = outline.
+        "  var fillP=d.reg?d.act:(anyB?'b':'a'); var outP=d.reg?(fillP==='a'?'b':'a'):null;"
         "  var n=d.rows.length; var axY=H-padB; var laneH=(axY-padT)/n;"
         // X-axis ruler: baseline, nice-step ticks with labels, faint gridlines, zero line.
         "  var step=niceStep(span/5); var dec=step>=1?0:(step>=0.1?1:2);"
@@ -75,50 +67,48 @@ module GuiInspector =
         "  for(var v=Math.ceil(lo/step)*step; v<=hi+1e-9; v+=step){ var x=X(v);"
         "    g.strokeStyle='#eef2f6'; g.beginPath(); g.moveTo(x,padT-2); g.lineTo(x,axY); g.stroke();"
         "    g.strokeStyle='#94a3b8'; g.beginPath(); g.moveTo(x,axY); g.lineTo(x,axY+4); g.stroke();"
-        "    g.fillStyle='#64748b'; g.fillText(v.toFixed(dec),x,axY+14); }"
+        "    g.fillStyle='#64748b'; g.fillText(v.toFixed(dec),x,axY+13); }"
         "  if(lo<=0&&hi>=0){ g.strokeStyle='#cbd5e1'; g.lineWidth=1.2; g.beginPath(); g.moveTo(X(0),padT-2); g.lineTo(X(0),axY); g.stroke(); g.lineWidth=1; }"
         "  g.textAlign='left';"
-        // One shared count→height scale across ALL lanes and BOTH halves, so violin
-        // areas stay comparable between meshes and between before/after.
-        "  var maxC=1; d.rows.forEach(function(r){ [0,1].forEach(function(hf){ for(var b=0;b<B;b++){ var s=0; r.pins.forEach(function(pn){ var a=cnts(pn,hf); if(a) s+=a[b]; }); if(s>maxC)maxC=s; } }); });"
-        "  d.rows.forEach(function(r,i){ var y0=padT+i*laneH; var yc=y0+laneH/2; var hh=Math.max(3,laneH/2-4); var k=hh/maxC;"
-        "    if(r.lod>0){ g.globalAlpha=1; g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-r.lod),y0+2,Math.max(1,X(r.lod)-X(-r.lod)),laneH-4); }"
-        "    g.globalAlpha=1; g.strokeStyle='#e2e8f0'; g.beginPath(); g.moveTo(padL,yc+0.5); g.lineTo(W-padR,yc+0.5); g.stroke();"
-        "    [0,1].forEach(function(hf){ var dir=hf?-1:1; var actH=d.reg?((hf?'a':'b')===d.act):true;"
-        "      var prev=new Array(B).fill(0); var tot=null;"
-        "      r.pins.forEach(function(pn){ var a=cnts(pn,hf); if(!a) return;"
-        "        var cur=new Array(B); for(var b=0;b<B;b++) cur[b]=prev[b]+a[b];"
-        "        var p_=sm(prev), c_=sm(cur);"
-        "        g.beginPath(); g.moveTo(xb(0),yc+dir*c_[0]*k);"
-        "        for(var b=1;b<B;b++) g.lineTo(xb(b),yc+dir*c_[b]*k);"
-        "        for(var b=B-1;b>=0;b--) g.lineTo(xb(b),yc+dir*p_[b]*k);"
-        "        g.closePath();"
-        "        g.globalAlpha=actH?(pn.hl?0.8:0.25):(pn.hl?0.85:0.5);"
-        "        g.fillStyle=actH?pn.color:mute(pn.color); g.fill();"
-        "        prev=cur; tot=cur; });"
-        "      if(tot){ var t_=sm(tot); g.globalAlpha=actH?0.85:0.45; g.strokeStyle=actH?'#334155':'#94a3b8'; g.lineWidth=1;"
-        "        g.beginPath(); g.moveTo(xb(0),yc+dir*t_[0]*k);"
-        "        for(var b=1;b<B;b++) g.lineTo(xb(b),yc+dir*t_[b]*k); g.stroke(); }"
-        "      if(actH){ r.pins.forEach(function(pn){ if(pn.med==null) return; g.globalAlpha=pn.hl?0.9:0.3; g.strokeStyle=pn.color; g.lineWidth=pn.hl?2:1;"
-        "        g.beginPath(); g.moveTo(X(pn.med),yc); g.lineTo(X(pn.med),yc+dir*hh*0.7); g.stroke(); g.lineWidth=1; }); }"
-        "    });"
+        // One shared count→height scale across ALL lanes and BOTH poses.
+        "  var maxC=1; d.rows.forEach(function(r){ ['b','a'].forEach(function(ps){ for(var b=0;b<B;b++){ var s=0; r.pins.forEach(function(pn){ var a=poseC(pn,ps); if(a) s+=a[b]; }); if(s>maxC)maxC=s; } }); });"
+        "  d.rows.forEach(function(r,i){ var y0=padT+i*laneH; var yB=y0+laneH-1; var k=Math.max(0.5,laneH-13)/maxC;"
+        "    if(i>0){ g.globalAlpha=1; g.strokeStyle='#eef2f6'; g.beginPath(); g.moveTo(padL,y0+0.5); g.lineTo(W-padR,y0+0.5); g.stroke(); }"
+        "    if(r.lod>0){ g.globalAlpha=1; g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-r.lod),y0+2,Math.max(1,X(r.lod)-X(-r.lod)),laneH-3); }"
+        // Filled stack: crisp per-bin rects, pin segments bottom-up in canonical order.
+        "    var prev=new Array(B).fill(0);"
+        "    r.pins.forEach(function(pn){ var a=poseC(pn,fillP); if(!a) return;"
+        "      g.globalAlpha=pn.hl?0.85:0.25; g.fillStyle=pn.color;"
+        "      for(var b=0;b<B;b++){ var c=a[b]; if(c>0){ var x0=X(lo+b*bw); var wd=Math.max(1,X(lo+(b+1)*bw)-x0);"
+        "        g.fillRect(x0,yB-(prev[b]+c)*k,wd,c*k); } prev[b]+=c; } });"
+        // Other pose: near-black step outline of the TOTAL (shape only, no colour).
+        "    if(outP){ var tot=new Array(B).fill(0); var anyO=false;"
+        "      r.pins.forEach(function(pn){ var a=poseC(pn,outP); if(!a) return; anyO=true; for(var b=0;b<B;b++) tot[b]+=a[b]; });"
+        "      if(anyO){ g.globalAlpha=0.9; g.strokeStyle='#0f172a'; g.lineWidth=1;"
+        "        g.beginPath(); g.moveTo(X(lo),yB);"
+        "        for(var b=0;b<B;b++){ var yT=yB-tot[b]*k; g.lineTo(X(lo+b*bw),yT); g.lineTo(X(lo+(b+1)*bw),yT); }"
+        "        g.lineTo(X(hi),yB); g.stroke(); } }"
+        // Median ticks (committed pose) on the baseline.
+        "    r.pins.forEach(function(pn){ if(pn.med==null) return; g.globalAlpha=pn.hl?0.95:0.35; g.strokeStyle=pn.color; g.lineWidth=pn.hl?2:1;"
+        "      g.beginPath(); g.moveTo(X(pn.med),yB); g.lineTo(X(pn.med),yB-9); g.stroke(); g.lineWidth=1; });"
         // The conceptual samples: never painted, but they ARE the brush targets.
         "    r.pins.forEach(function(pn){ if(pn.g) for(var q=0;q<pn.g.length;q++) el._dots.push({gid:pn.g[q],v:pn.s[q]}); });"
-        "    if(d.reg&&i===0){ g.globalAlpha=1; g.font='8px SF Mono,Monaco,monospace'; g.textAlign='right';"
-        "      g.fillStyle=(d.act==='a')?'#334155':'#94a3b8'; g.fillText('\\u25b2 after'+(hasA?'':' \\u2014 probing\\u2026'),W-padR-2,yc-4);"
-        "      g.fillStyle=(d.act==='b')?'#334155':'#94a3b8'; g.fillText('\\u25bc before'+(hasB?'':' \\u2014 probing\\u2026'),W-padR-2,yc+11); g.textAlign='left'; }"
-        "    g.globalAlpha=1; g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace'; g.textAlign='left'; g.fillText(r.name,padL,y0+11); });"
+        "    g.globalAlpha=1; g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace'; g.textAlign='left'; g.fillText(r.name,padL,y0+10); });"
+        "  if(d.reg){ g.globalAlpha=1; g.font='9px SF Mono,Monaco,monospace'; g.textAlign='right'; g.fillStyle='#64748b';"
+        "    var fw=fillP==='a'?'after':'before'; var oMiss=(outP==='b'?!anyB:!anyA);"
+        "    g.fillText('fill = '+fw+' \\u00b7 outline = '+(fillP==='a'?'before':'after')+(oMiss?' (probing\\u2026)':''),W-padR-2,padT-4); g.textAlign='left'; }"
         // Selection band: local drag range, else reconstructed from the model echo
         // (bset) so a remount keeps the band. Labels: exact mm + brushed count.
         "  var dispRange=range;"
         "  if(!dispRange&&bset.size){ var mn=1/0,mx=-1/0; for(var q1=0;q1<el._dots.length;q1++){ var dd=el._dots[q1]; if(bset.has(dd.gid)){ if(dd.v<mn)mn=dd.v; if(dd.v>mx)mx=dd.v; } } if(mx>=mn) dispRange=[mn,mx]; }"
         "  if(dispRange){ var x0=X(dispRange[0]), x1=X(dispRange[1]);"
         "    g.fillStyle='rgba(8,145,178,0.10)'; g.fillRect(x0,padT-2,Math.max(1,x1-x0),axY-padT+2);"
-        "    g.strokeStyle='#0891b2'; g.lineWidth=1.2; g.beginPath(); g.moveTo(x0,padT-2); g.lineTo(x0,axY); g.moveTo(x1,padT-2); g.lineTo(x1,axY); g.stroke(); g.lineWidth=1;"
+        "    g.strokeStyle='#0891b2'; g.lineWidth=1.2; g.beginPath(); g.moveTo(x0,padT-2); g.lineTo(x0,axY); g.moveTo(x1,padT-2); g.lineTo(x1,axY); g.stroke();"
         "    var cnt=0; for(var q2=0;q2<el._dots.length;q2++){ if(el._dots[q2].v>=dispRange[0]&&el._dots[q2].v<=dispRange[1]) cnt++; }"
-        "    g.fillStyle='#0891b2'; g.font='10px SF Mono,Monaco,monospace';"
-        "    g.textAlign='right'; g.fillText(dispRange[0].toFixed(1),x0-3,padT+8);"
-        "    g.textAlign='left';  g.fillText(dispRange[1].toFixed(1)+' \\u00b7 n='+cnt,x1+3,padT+8); g.textAlign='left'; }"
+        "    g.font='10px SF Mono,Monaco,monospace'; g.lineWidth=3; g.strokeStyle='rgba(255,255,255,0.85)'; g.fillStyle='#0891b2';"
+        "    var lab0=dispRange[0].toFixed(1), lab1=dispRange[1].toFixed(1)+' \\u00b7 n='+cnt;"
+        "    g.textAlign='right'; g.strokeText(lab0,x0-3,padT+9); g.fillText(lab0,x0-3,padT+9);"
+        "    g.textAlign='left';  g.strokeText(lab1,x1+3,padT+9); g.fillText(lab1,x1+3,padT+9); g.lineWidth=1; }"
         "  el.appendChild(cv);"
         "}"
         "function cursorV(e){ var r=el.getBoundingClientRect(); var W=el.clientWidth||320;"
@@ -139,6 +129,8 @@ module GuiInspector =
         "new MutationObserver(function(muts){"
         "  if(!dragging&&range){ for(var q=0;q<muts.length;q++){ if(muts[q].attributeName==='data-brushed'&&!(el.getAttribute('data-brushed')||'').length){ range=null; break; } } }"
         "  render(); }).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed']});"
+        // The chart width changes when the shift panel toggles with the channel.
+        "if(window.ResizeObserver){ new ResizeObserver(function(){ render(); }).observe(el); }"
         "})();" ]
 
     // 8-way unicode arrow for a heading in degrees (0 = +X/east, 90 = +Y/north).
@@ -309,8 +301,7 @@ module GuiInspector =
                 if List.isEmpty readyPins then "{\"pending\":\"probing pins…\"}"
                 elif List.isEmpty moving || canon.Length = 0 then "{\"rows\":[]}"
                 else
-                    let stateLbl = match regView with RegBefore -> "Before" | RegAfter -> "After"
-                    // Emphasized half: the committed view, flipped while Peek is held
+                    // Emphasized pose: the committed view, flipped while Peek is held
                     // (the flip is purely visual — same contract as the 3D peek).
                     let actView = if peek then (match regView with RegBefore -> RegAfter | RegAfter -> RegBefore) else regView
                     let act = match actView with RegBefore -> "b" | RegAfter -> "a"
@@ -403,59 +394,59 @@ module GuiInspector =
                             let avgLod = if List.isEmpty lods then 0.0 else List.average lods
                             Some (sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}" (numberedFriendly order names mesh) (g avgLod) (groups |> List.map snd |> String.concat ","))
                     let rows = moving |> List.choose rowJson |> String.concat ","
-                    sprintf "{\"state\":\"%s\",\"reg\":%s,\"act\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"rows\":[%s]}"
-                        stateLbl (if solved then "1" else "0") act (g lo) (g hi) bins rows)
+                    sprintf "{\"reg\":%s,\"act\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"rows\":[%s]}"
+                        (if solved then "1" else "0") act (g lo) (g hi) bins rows)
         // Comma-joined brushed gids → the canvas highlight (data-brushed).
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
 
+        // One compact head row: channel toggles + Δ sub-mode + pin legend chips +
+        // axis note — everything that used to burn chart height, on one line.
         let inspectDock =
             div {
                 Class "ins-inspect"
                 div {
                     Class "ins-insp-head"
-                    span { Class "ins-insp-label"; "Focus channel" }
                     compactButtonBar [
                         "Difference",   (channelA |> AVal.map ((=) ChDifference)),   (fun () -> emit (SetInspectChannel ChDifference))
                         "Displacement", (channelA |> AVal.map ((=) ChDisplacement)), (fun () -> emit (SetInspectChannel ChDisplacement))
                     ]
                     // Difference sub-mode (M3C2 ↔ Δz) — only meaningful in the
-                    // Difference channel. Moved here from the rail (rail = matrix now).
-                    // The single-mesh intrinsic channels (incidence / range / shape)
-                    // moved to the Overview mesh list as per-mesh switches.
+                    // Difference channel. The single-mesh intrinsic channels
+                    // (incidence / range / shape) live in the Overview mesh list.
                     div {
                         Class "ins-insp-sub"
                         showWhen (channelA |> AVal.map ((=) ChDifference))
-                        span { Class "ins-insp-label"; "Δ" }
                         compactButtonBar [
                             "M3C2", (model.ExtrinsicZDiff |> AVal.map not),  (fun () -> if AVal.force model.ExtrinsicZDiff then emit ToggleExtrinsicZDiff)
                             "Δz",   (model.ExtrinsicZDiff :> aval<bool>),    (fun () -> if not (AVal.force model.ExtrinsicZDiff) then emit ToggleExtrinsicZDiff)
                         ]
                     }
+                    // Pin legend — hovering a chip brushes that pin (highlights its
+                    // layer in the chart AND its surface cells in 3D). The chart
+                    // canvas is display-only, so this is the chart→3D brush handle.
+                    div {
+                        Class "ins-dist-legend"
+                        model.ScanPins.Pins
+                        |> AMap.map (fun _ p -> p.Glyph, p.ShortName, p.PinColor, p.CreatedAt)
+                        |> AMap.toASet
+                        |> ASet.sortBy (fun (ScanPinId.ScanPinId gg, (_, _, _, c)) -> c, gg)
+                        |> AList.map (fun (id, (glyph, sn, col, _)) ->
+                            let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverPin i) -> i = id | _ -> false)
+                            div {
+                                Class "ins-dist-leg"
+                                classWhen "ins-dist-leg-on" hovered
+                                Dom.OnPointerMove(fun _ -> emit (SetHovered (Some (HoverPin id))))
+                                Dom.OnMouseLeave(fun _ -> emit (SetHovered None))
+                                span { Class "ins-dist-leg-sw"; Style [Css.Background (c4bToRgbCss col)] }
+                                span { sprintf "%s %s" glyph sn }
+                            })
+                    }
+                    span { Class "ins-axis-note"; "signed distance to reference (mm) · 0 = ref median · ░ ±LoD₉₅ · drag X to brush" }
                 }
                 div {
                     Class "ins-insp-body"
                     div {
                         Class "ins-dist-col"
-                        // Pin legend — hovering a chip brushes that pin (highlights its
-                        // samples in the chart AND its surface cells in 3D). The chart
-                        // canvas is display-only, so this is the chart→3D brush handle.
-                        div {
-                            Class "ins-dist-legend"
-                            model.ScanPins.Pins
-                            |> AMap.map (fun _ p -> p.Glyph, p.ShortName, p.PinColor, p.CreatedAt)
-                            |> AMap.toASet
-                            |> ASet.sortBy (fun (ScanPinId.ScanPinId gg, (_, _, _, c)) -> c, gg)
-                            |> AList.map (fun (id, (glyph, sn, col, _)) ->
-                                let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverPin i) -> i = id | _ -> false)
-                                div {
-                                    Class "ins-dist-leg"
-                                    classWhen "ins-dist-leg-on" hovered
-                                    Dom.OnPointerMove(fun _ -> emit (SetHovered (Some (HoverPin id))))
-                                    Dom.OnMouseLeave(fun _ -> emit (SetHovered None))
-                                    span { Class "ins-dist-leg-sw"; Style [Css.Background (c4bToRgbCss col)] }
-                                    span { sprintf "%s %s" glyph sn }
-                                })
-                        }
                         div {
                             Class "ins-dist"
                             distData |> AVal.map (fun j -> Some (Attribute("data-dist", j)))
@@ -475,11 +466,11 @@ module GuiInspector =
                                 emit (SetBrushedSamples ids))
                         }
                     }
-                    // Always mounted at a fixed width so the channel toggle never
-                    // reflows the distribution panel; only the inner content swaps.
+                    // Displacement-only side panel; hidden in Difference so the chart
+                    // takes the full width (the chart re-renders via ResizeObserver).
                     div {
                         Class "ins-shift"
-                        div { Class "ins-stub-note"; showWhenNot isDisplacement; "Shift readout shows in the Displacement channel." }
+                        showWhen isDisplacement
                         div { Class "ins-stub-note"; showWhen shiftEmpty; "Focus a solved mesh to read its shift." }
                         div {
                             Class "ins-shift-body"; showWhen shiftBody
@@ -493,16 +484,14 @@ module GuiInspector =
                 }
             }
 
-        // Container-invariant cross-fade between the three modes.
+        // Container-invariant cross-fade between the three modes. (The old mode-label
+        // header row is gone — the rail already names the mode; the dock height goes
+        // to content.)
         let stepA = model.WorkflowStep
         let modeOn (pred : WorkflowStep -> bool) =
             classWhen "ins-mode-on" (stepA |> AVal.map pred)
         div {
             Class "pin-inspector"
-            div {
-                Class "ins-header"
-                span { Class "ins-mode-label"; stepA |> AVal.map WorkflowStep.mode }
-            }
             div {
                 Class "ins-modes"
                 div { Class "ins-mode"; modeOn ((=) Overview); overviewCard }

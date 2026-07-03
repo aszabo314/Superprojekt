@@ -8,8 +8,33 @@
 5. Fix stale state / code smells along the way.
 
 ## In progress
-- Violin chart rework implemented, build/tests/JS-smoke green — awaiting the
-  user's visual inspection (esp. muted-half tone, layer alphas, half labels).
+- Histogram rework + dock chrome trim implemented, build/JS-smoke green —
+  awaiting the user's visual inspection (bar readability, outline contrast,
+  head-row density, shift panel appearing only in Displacement).
+
+## One-sided histogram + dock chrome trim (2026-07-03, after user review)
+- Violin → one-sided stacked HISTOGRAM (user pick: the mirror halved the
+  already-scarce height for zero information): crisp per-bin rects growing up
+  from each lane's baseline, pin segments stacked in canonical order. With a
+  solve, the inactive pose is a near-black step OUTLINE of its total (shape
+  only, no colour/subdivision) over the filled emphasized pose; in-canvas
+  caption "fill = after · outline = before" (flips with Peek). Same shared
+  count scale across lanes and poses. Median ticks now sit on the baseline.
+- Aggressive vertical reclaim, dock height UNCHANGED (220px): dock mode-label
+  header row removed (all three modes gain ~22px; the rail names the mode);
+  in-canvas title + hint lines removed (padT 26→14, padB 24→20); "Focus
+  channel"/"Δ" labels dropped; pin legend chips moved into the single head row
+  next to the channel toggles; axis meaning is a muted one-liner at the head
+  row's right (`.ins-axis-note`). Chart canvas height ≈ doubled, per-lane data
+  height ≈ 4× (no mirror + more canvas).
+- Shift panel (`.ins-shift`, 188px) now mounts ONLY in the Displacement
+  channel (the "shows in Displacement" stub note is gone) — the chart takes
+  the full dock width in Difference. The canvas re-renders on size change via
+  ResizeObserver (it only re-rendered on data mutations before — a resize
+  would have left a stale-sized canvas).
+- Brush-band value labels get a white halo (they now overlap bars). JSON:
+  `state` field dropped (no in-canvas header consumes it). style.css → ?v=3
+  (layout-affecting CSS change, per the stale-CSS rule).
 
 ## Violin distribution chart (2026-07-03)
 - The dock's Inspect chart (`GuiInspector.brushChartJs`) is now a stacked

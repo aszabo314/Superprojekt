@@ -199,13 +199,24 @@ module ScanPinScene =
                     // LessOrEqual marker would self-occlude behind it.
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    // Tap toggles selection — ClickGate-deferred so a double-tap's two
+                    // taps can't toggle twice; double-tap = select + 3D zoom (the 2D
+                    // focus zoom is out of reach here: FocusScene compiles later — the
+                    // matrix pin row is the fully linked path).
                     Sg.OnTap(fun _ ->
                         match AVal.force placementActive with
                         | true -> true
                         | false ->
-                            let sel = AVal.force selectedId
-                            if sel = Some id then env.Emit [ScanPinMsg (SelectPin None)]
-                            else env.Emit [ScanPinMsg (SelectPin (Some id))]
+                            ClickGate.single "pin-dot" (fun () ->
+                                if AVal.force selectedId = Some id then env.Emit [ScanPinMsg (SelectPin None)]
+                                else env.Emit [ScanPinMsg (SelectPin (Some id))])
+                            false)
+                    Sg.OnDoubleTap(fun _ ->
+                        match AVal.force placementActive with
+                        | true -> true
+                        | false ->
+                            ClickGate.double "pin-dot" (fun () ->
+                                env.Emit [ScanPinMsg (SelectPin (Some id)); ZoomToPin id])
                             false)
                     Sg.VertexAttributes(
                         HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])

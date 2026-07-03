@@ -8,7 +8,33 @@
 5. Fix stale state / code smells along the way.
 
 ## In progress
-- (nothing — pass complete; user verified in browser, adjustments below applied)
+- (nothing — select/zoom separation implemented, awaiting in-browser verification)
+
+## Select ≠ zoom separation (2026-07-03)
+Single click/tap = selection + visibility only; double click/tap = camera zoom.
+- **Reducer**: `SetFocusedMesh`, `SelectPin`, `FrameCorrespondence` no longer emit
+  `FlyToPoint`. New `ZoomToMesh` / `ZoomToPin` messages own the 3D framing radius
+  conventions (bbox ×0.6 / pin ROI ×4). Dead `FlyTo(target, aspect)` message +
+  handler removed (no emitter existed).
+- **Double-click sites** (each: emit select + Zoom* and call the 2D FocusScene
+  helper): Overview roster row, matrix column head (mesh → `ZoomToMesh` +
+  `resetCam` fit), matrix pin row-head (`ZoomToPin` + `zoomOnPin`), matrix cell
+  (re-`FrameCorrespondence` + `FlyToPoint` on the anchor + `zoomOnWorldRadius`;
+  no-marker cells fall back to mesh framing), focus tile (`ZoomToMesh` +
+  `resetCam`), 3D pin dot (`Sg.OnDoubleTap` → select + `ZoomToPin`; 2D zoom
+  unreachable there — compile order, matrix pin row is the linked path).
+- **ClickGate** (Primitives.fs): defer-and-cancel discriminator used ONLY by the
+  two toggle-on-single-click controls (matrix cell locate/back-out, 3D pin dot
+  select/deselect) — the `tap`/`click` events fire on both leading clicks of a
+  double, which would toggle twice. Double handlers are written to END in
+  "selected + zoomed" regardless, so slow double-clicks stay correct.
+- `FocusScene.onMeshFocused` (Inspect auto-tight-fit on select) removed — it was
+  an automatic zoom on selection, exactly what this pass separates. Mesh
+  double-click now resets that mesh's 2D camera to fit in every mode.
+- 3D viewport: mesh tap = select only (dropped its 2D zoom side-effect);
+  double-tap keeps the existing recenter-on-point behaviour.
+- CLAUDE.md grammar line extended (double-click = zoom, ClickGate rule).
+- Verified: typecheck build green, Supertests 43/43.
 
 ## Polish round 2 (2026-07-02)
 - **Reference-marker parity**: the reference's correspondence point (RefAnchor) now
@@ -92,9 +118,13 @@
   (`-p:WasmBuildNative=false`), Supertests 43/43 pass.
 
 ## Follow-ups / open questions
-- 3D pin-dot tap selects the pin (reducer policies apply) but cannot zoom the 2D
-  focus canvas (ScanPinScene compiles before FocusScene); the rail pin-row is the
-  linked path per spec. Revisit if 3D pin taps should also drive the 2D zoom.
+- 3D pin-dot double-tap zooms 3D only — the 2D focus canvas is unreachable from
+  ScanPinScene (compiles before FocusScene); the rail pin-row is the fully
+  linked path per spec.
+- In-browser verification of the select/zoom split pending: single-click cell
+  select now lands after the 350 ms ClickGate window — check it doesn't feel
+  laggy; check double-click on roster/tiles/cells zooms without visible
+  toggle flicker.
 - In-browser verification of the full Inspect flow still pending (shader paths
   unchanged, but ghost-floor appearance of "others" during Inspect solo is a
   visual change worth eyeballing).

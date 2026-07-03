@@ -71,13 +71,16 @@ type Message =
     | CorrPreviewComputed of V3d option
     // Per-sample distribution brushing (§T6): replace the brushed-sample id set.
     | SetBrushedSamples of int list
-    // aspect from the view, fovY from the fixed 90° horizontal fov.
-    | FlyTo of FlyToTarget * aspect:float
     // Fly the orbit camera tight to a metric-world point: animate centre + radius
     // directly (radius = the orbit distance, not derived from a subtend).
     | FlyToPoint of world:V3d * radius:float
-    // Locate a correspondence: atomic solo + focus + tight 3D fly + focus zoom,
-    // capturing a back-out snapshot. BackOutLocate restores it.
+    // Explicit camera framing (the double-click grammar) — selection messages never
+    // move a camera; these own the 3D radius conventions.
+    | ZoomToMesh of string
+    | ZoomToPin of ScanPinId
+    // Locate a correspondence: atomic solo + focus (+ pin isolation in Inspect),
+    // capturing a back-out snapshot. BackOutLocate restores it. No camera — the
+    // zoom is the double-click handler's job.
     | FrameCorrespondence of ScanPinId * mesh:string
     | BackOutLocate
     | NavTo of NavAction

@@ -274,6 +274,36 @@ module Primitives =
               sprintf "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['%s']});" attr
               "})();" ])
 
+// Single-vs-double click discrimination for controls whose SINGLE click toggles
+// state (matrix cell locate/back-out, 3D pin-dot select/deselect): a double-click's
+// two leading clicks/taps would toggle twice before the dblclick fires. `single`
+// defers the action one double-click window; `double` on the same key supersedes
+// any pending single and runs immediately. Double handlers must still be written
+// to END in the desired state (select + zoom, not toggle) — a slow double-click
+// can let the deferred single fire in between. Controls with idempotent single
+// clicks bind plain OnClick + OnDoubleClick instead.
+module ClickGate =
+
+    let private pending = System.Collections.Generic.Dictionary<string, System.Threading.CancellationTokenSource>()
+
+    let single (key : string) (action : unit -> unit) =
+        match pending.TryGetValue key with
+        | true, cts -> cts.Cancel()
+        | _ -> ()
+        let cts = new System.Threading.CancellationTokenSource()
+        pending.[key] <- cts
+        Async.Start(async {
+            do! Async.Sleep 350
+            // State is read at fire time, not click time, so a superseded toggle
+            // never acts on a stale snapshot.
+            if not cts.IsCancellationRequested then action () }, cts.Token)
+
+    let double (key : string) (action : unit -> unit) =
+        match pending.TryGetValue key with
+        | true, cts -> cts.Cancel(); pending.Remove key |> ignore
+        | _ -> ()
+        action ()
+
 // Readiness-engine adapter: builds the engine input from individual model leaves
 // (adaptive-performance rule — never depend on the whole record).
 module ReadinessView =

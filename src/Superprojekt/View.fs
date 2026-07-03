@@ -446,13 +446,11 @@ module View =
                                 let worldPos = worldFromRender model renderPos
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
                                 // Clicking a mesh in 3D focuses it (read/write parity
-                                // §B); the reducer applies the Inspect auto-solo (§C),
-                                // and the focus single frames the mesh tightly there.
+                                // §B); the reducer applies the Inspect auto-solo (§C).
+                                // Select only — no camera; double-tap recenters.
                                 let! named = raycastNearestNamed ()
                                 match named with
-                                | Some (mesh, _) ->
-                                    env.Emit [SetFocusedMesh (Some mesh)]
-                                    FocusScene.onMeshFocused model mesh
+                                | Some (mesh, _) -> env.Emit [SetFocusedMesh (Some mesh)]
                                 | None -> ()
                             | _, None -> ()
                         } |> Async.Start

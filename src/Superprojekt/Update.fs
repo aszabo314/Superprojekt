@@ -331,13 +331,6 @@ module Update =
             | _ -> model
         | ScanPinMsg msg ->
             let m = ScanPinUpdate.handleMsg env model msg
-            // §T9 camera sync: selecting a pin flies the 3D camera to its centre.
-            (match msg with
-             | SelectPin (Some id) ->
-                match HashMap.tryFind id m.ScanPins.Pins with
-                | Some p -> env.Emit [FlyToPoint(p.Centre, max 0.5 (p.InnerRadius * 4.0))]
-                | None -> ()
-             | _ -> ())
             // Inspect isolation swap: focusing a pin turns mesh isolation off (the
             // visibility toggles reset to ON) and pin isolation on; losing the pin
             // (deselect / delete) returns pin isolation to the Inspect default (off).
@@ -384,14 +377,8 @@ module Update =
         | SetFocusedMesh (Some m) ->
             // Promote to the large single (links rail + dock + focus enlargement).
             // Switching target cancels any in-progress set-correspondence (focus + 3D).
+            // Selection never moves a camera — double-click (ZoomToMesh) does.
             let changed = model.Selection.FocusedMesh <> Some m
-            // §T9 camera sync (the default, not a toggle): any focus change flies
-            // the 3D camera to frame the mesh — the focus single auto-shows it, so
-            // both cameras land on that spot.
-            if changed then
-                match Map.tryFind m model.MeshBounds with
-                | Some b when not b.IsInvalid -> env.Emit [FlyToPoint(b.Center, max 0.5 (b.Size.Length * 0.6))]
-                | _ -> ()
             let model =
                 if changed then
                     { model with Selection = { model.Selection with FocusedMesh = Some m }
@@ -454,28 +441,30 @@ module Update =
             // Cap the brushed set so a wide brush can't flood the 3D marker node.
             let s = ids |> List.truncate 200 |> Set.ofList
             if model.BrushedSamples = s then model else { model with BrushedSamples = s }
-        // Keep orientation, animate centre + radius so the target subtends ~25% of
-        // viewport height. User nav input overrides via the orbit machinery.
-        | FlyTo(target, aspect) ->
-            let cW, rW = FlyToMath.boundingSphere target
-            let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
-            let centreR = ScanPin.renderCentre model.CommonCentroid scale cW
-            let dist = FlyToMath.distance (FlyToMath.fovY 90.0 aspect) (rW * scale)
-            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, centreR))
-                      CameraMessage (OrbitMessage.SetTargetRadius(true, dist))]
-            model
         // Tight fly to a metric-world point: centre on it, set the orbit radius
-        // directly (close-in), keeping orientation. The 3D side of locate + link-views.
+        // directly (close-in), keeping orientation. The 3D side of the double-click zooms.
         | FlyToPoint(world, radius) ->
             let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
             let centreR = ScanPin.renderCentre model.CommonCentroid scale world
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, centreR))
                       CameraMessage (OrbitMessage.SetTargetRadius(true, max 0.2 (radius * scale)))]
             model
-        // Locate a correspondence (atomic "frame"): solo the mesh, focus it, fly the
-        // 3D camera tight to the anchor, force Top so the focus pan/zoom maths is
-        // valid (the focus zoom itself is driven from the manager-row handler). A
-        // back-out snapshot is captured on the first locate of a session.
+        // 3D framing conventions for the double-click zoom grammar (the 2D focus side
+        // lives in the FocusScene.* helpers called at the same click sites).
+        | ZoomToMesh m ->
+            (match Map.tryFind m model.MeshBounds with
+             | Some b when not b.IsInvalid -> env.Emit [FlyToPoint(b.Center, max 0.5 (b.Size.Length * 0.6))]
+             | _ -> ())
+            model
+        | ZoomToPin id ->
+            (match HashMap.tryFind id model.ScanPins.Pins with
+             | Some p -> env.Emit [FlyToPoint(p.Centre, max 0.5 (p.InnerRadius * 4.0))]
+             | None -> ())
+            model
+        // Locate a correspondence (atomic "frame"): solo the mesh, focus it, force Top
+        // so the focus pan/zoom maths is valid. No camera motion — that is the cell's
+        // double-click (FlyToPoint + FocusScene.zoomOnWorldRadius). A back-out
+        // snapshot is captured on the first locate of a session.
         | FrameCorrespondence(pinId, mesh) ->
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
@@ -486,8 +475,7 @@ module Update =
                         if model.Registration.ReferenceMesh = Some mesh then c.RefAnchor
                         else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point))
                 match anchorOwn with
-                | Some own ->
-                    let world = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos own
+                | Some _ ->
                     let backup =
                         match model.LocateBackup with
                         | Some _ -> model.LocateBackup
@@ -495,8 +483,6 @@ module Update =
                             Some { PrevSolo = model.MeshSolo; PrevVisible = model.MeshVisible
                                    PrevCenter = model.Camera.center; PrevRadius = model.Camera.radius
                                    PrevPhi = model.Camera.phi; PrevTheta = model.Camera.theta }
-                    let tight = max 0.5 (pin.InnerRadius * 4.0)
-                    env.Emit [FlyToPoint(world, tight)]
                     // The located mesh must resolve in the focus single (raw toggles) —
                     // re-enable it if hidden; the backup above restores the prior map.
                     let model =

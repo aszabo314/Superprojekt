@@ -98,8 +98,8 @@ module FocusScene =
 
     // Pan/zoom a mesh's Top-view focus canvas so a metric-world point lands centred
     // at `zoomLevel`. Top-projection maths only (the camera looks down −Z at
-    // fc + pan·ext), so callers force ProjTop first. Used by locate-correspondence
-    // and the link-views recenter; sets the per-mesh cval the single reads.
+    // fc + pan·ext), so callers force ProjTop first. Used by the double-click zooms;
+    // sets the per-mesh cval the single reads.
     let focusOnWorld (model : AdaptiveModel) (name : string) (world : V3d) (zoomLevel : float) =
         let loaded = MeshView.loadMeshAsync (fun () -> ()) name
         let renderT, scale = renderTrafoOf model name loaded
@@ -137,17 +137,12 @@ module FocusScene =
         let target = max 1e-4 (ScanPin.renderLength s metricHalfExtent)
         focusOnWorld model name world (clamp 1.0 200.0 (ext / target))
 
-    // Pin-click linking: the focus panel stays on the current single mesh and zooms
-    // tightly onto the pin (the 3D side is the reducer's FlyToPoint).
+    // Pin double-click linking: the focus panel stays on the current single mesh and
+    // zooms tightly onto the pin (the 3D side is the reducer's ZoomToPin).
     let zoomOnPin (model : AdaptiveModel) (centre : V3d) (innerRadius : float) =
         match currentSingleMesh model with
         | Some m -> zoomOnWorldRadius model m centre (max 0.5 (innerRadius * 4.0))
         | None -> ()
-
-    // Inspect mesh-focus (§C): the single frames the newly focused mesh tightly
-    // (fit = pan 0 / zoom 1); other modes keep the per-mesh pan/zoom memory.
-    let onMeshFocused (model : AdaptiveModel) (name : string) =
-        if AVal.force model.WorkflowStep = Inspect then resetCam (Some name)
 
     // Top-down ortho view + projection framing the displayed render centroid,
     // radius = localMaxR·scale, offset by (pan, zoom).
@@ -670,10 +665,11 @@ module FocusScene =
             // so clicking them never also focuses.
             div {
                 Class "focus-tile-view"
-                Attribute("title", "click → focus · hover → isolate this mesh")
-                Dom.OnClick(fun _ ->
-                    env.Emit [SetFocusedMesh (Some name)]
-                    onMeshFocused model name)
+                Attribute("title", "click → focus · double-click → zoom · hover → isolate this mesh")
+                Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
+                Dom.OnDoubleClick(fun _ ->
+                    env.Emit [SetFocusedMesh (Some name); ZoomToMesh name]
+                    resetCam (Some name))
                 // hover = peek-isolate this mesh in the 3D view (mirrors the rail roster).
                 Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])

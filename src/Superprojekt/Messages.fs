@@ -93,4 +93,6 @@ and ScanPinMessage =
     | SelectPin of ScanPinId option
     | ProbeComputed of ScanPinId * ProbeResult
     | ProbeFailed of ScanPinId * string
+    | ProbeOtherComputed of ScanPinId * ProbeResult
+    | ProbeOtherFailed of ScanPinId * string
     | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>

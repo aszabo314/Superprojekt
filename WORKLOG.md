@@ -8,7 +8,39 @@
 5. Fix stale state / code smells along the way.
 
 ## In progress
-- (nothing — Inspect colour/sample pass implemented, awaiting in-browser verification)
+- Violin chart rework implemented, build/tests/JS-smoke green — awaiting the
+  user's visual inspection (esp. muted-half tone, layer alphas, half labels).
+
+## Violin distribution chart (2026-07-03)
+- The dock's Inspect chart (`GuiInspector.brushChartJs`) is now a stacked
+  violin per moving-mesh lane: 48 histogram bins over the shared mm x-range
+  (1–99% quantiles over BOTH poses' full probe samples, span-0, 8% pad),
+  binned in F# (`distData` ships per-pin `hb`/`ha` count arrays — small JSON,
+  full samples never shipped); JS smooths the CUMULATIVE stack outlines
+  (1-2-1) so layers never cross, stacks pin layers outward from the lane axis
+  in the canonical pin order (CreatedAt, guid), strokes the total silhouette.
+  One count→height scale across all lanes AND both halves (comparable areas).
+- Before/After: no solve → mirrored halves (classic violin). Solved → fixed
+  halves ▼ bottom = Before, ▲ top = After; the non-committed half renders
+  muted (12% hue + 88% luminance grey, lifted 60% toward white); Peek flips
+  ONLY the emphasis (visual, matching the 3D peek contract). Data: new
+  `ScanPin.ProbeOther` = the same probe at the opposite pose (`ensureProbe`
+  fires it only when solved, sharing the pin's CTS + debounce);
+  `ModelTransforms.displayedRenderAt`/`displayedWorldAt` provide the pose.
+  `SetRegView` now SWAPS a ready (Probe, ProbeOther) pair in place — the
+  Before/After toggle no longer blanks the matrix/chart — and clears
+  `BrushedSamples` (gids re-index); unpaired states invalidate both.
+- Brushing unchanged by design: the conceptual samples (canonical
+  `brushSamples` gid array, committed pose) still populate `el._dots`; the
+  x-range drag, 50 ms-throttled bridge emit, click-clear and `data-brushed`
+  echo work as before — the dots are simply not painted. New: brushed count
+  next to the range label; a model-side clear drops the local band; without a
+  local drag the band is reconstructed from the echoed gids.
+- Verified headlessly: typecheck build green, Supertests 43/43, and a node
+  harness (scratchpad `check-violin.js` + `smoke-violin.js`) that extracts the
+  inline JS from the .fs source, parse-checks it, renders pending/reg=0/reg=1
+  against a stubbed canvas, simulates a brush drag (partial gid emit
+  verified), click-clear, and echo-band reconstruction.
 
 ## Legend placement report (2026-07-03) — stale-CSS root cause
 - Headless-browser measurement (real click into Inspect): the legend renders

@@ -32,7 +32,12 @@ type ScanPin = {
     HostMeshName         : string option
     CreatedAt            : DateTime
     DatasetColors        : Map<string, C4b>
+    // Probe = the committed displayed pose (every consumer reads this one).
+    // ProbeOther = the SAME probe at the opposite Before/After pose — fetched only
+    // once a solve exists; feeds the violin chart's inactive half. SetRegView swaps
+    // the two when both are ready (no refetch).
     Probe                : ProbeState
+    ProbeOther           : ProbeState
     ContactRings         : ContactRingState
 }
 
@@ -63,9 +68,20 @@ module ScanPinModel =
     let invalidateProbes (sp : ScanPinModel) =
         let pins =
             sp.Pins |> HashMap.map (fun _ p ->
-                match p.Probe with
-                | ProbeNone -> p
-                | _ -> { p with Probe = ProbeNone })
+                match p.Probe, p.ProbeOther with
+                | ProbeNone, ProbeNone -> p
+                | _ -> { p with Probe = ProbeNone; ProbeOther = ProbeNone })
+        { sp with Pins = pins }
+
+    // Before/After toggled: a ready (Probe, ProbeOther) pair is exactly the two
+    // poses, so swap in place — no server round trip; anything unpaired refetches.
+    let swapProbeViews (sp : ScanPinModel) =
+        let pins =
+            sp.Pins |> HashMap.map (fun _ p ->
+                match p.Probe, p.ProbeOther with
+                | ProbeReady a, ProbeReady b -> { p with Probe = ProbeReady b; ProbeOther = ProbeReady a }
+                | ProbeNone, ProbeNone -> p
+                | _ -> { p with Probe = ProbeNone; ProbeOther = ProbeNone })
         { sp with Pins = pins }
 
     let invalidateRings (sp : ScanPinModel) =

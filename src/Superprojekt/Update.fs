@@ -98,8 +98,17 @@ module Update =
             else { model with ShowOverlaysHeld = held }
         | SetRegView v ->
             // Only meaningful once a solve exists (the view disables it otherwise).
+            // Probes: a ready (Probe, ProbeOther) pair IS the two poses — swap in
+            // place instead of refetching; rings have no other-pose cache, refetch.
             if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
-            else invalidateProbes (invalidateRings { model with RegView = v })
+            else
+                // Brushed gids index the canonical sample array of the committed
+                // pose — the swap re-indexes it, so drop them.
+                invalidateRings
+                    { model with
+                        RegView = v
+                        BrushedSamples = Set.empty
+                        ScanPins = ScanPinModel.swapProbeViews model.ScanPins }
         | SetRegPeek held ->
             // Purely visual (the displayed transform flips); no probe/ring invalidation.
             if model.RegPeekHeld = held then model else { model with RegPeekHeld = held }

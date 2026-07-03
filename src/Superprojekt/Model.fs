@@ -251,10 +251,13 @@ module ModelTransforms =
     let solvedRender (model : Model) (mesh : string) =
         Map.tryFind mesh model.SolvedTransforms
 
-    let displayedRender (model : Model) (mesh : string) =
-        match model.RegView, Map.tryFind mesh model.SolvedTransforms with
+    let displayedRenderAt (view : RegView) (model : Model) (mesh : string) =
+        match view, Map.tryFind mesh model.SolvedTransforms with
         | RegAfter, Some t -> t
         | _ -> loadRender model mesh
+
+    let displayedRender (model : Model) (mesh : string) =
+        displayedRenderAt model.RegView model mesh
 
     let private toWorld (model : Model) (mesh : string) (renderT : Trafo3d) =
         RigidTransform.renderToWorld
@@ -262,6 +265,9 @@ module ModelTransforms =
 
     let displayedWorld (model : Model) (mesh : string) =
         toWorld model mesh (displayedRender model mesh)
+
+    let displayedWorldAt (view : RegView) (model : Model) (mesh : string) =
+        toWorld model mesh (displayedRenderAt view model mesh)
 
     // A mesh's panorama centre in render space (load pose): stored PanoCenters[mesh]
     // (absolute world), else the centroid (= the mesh origin) — then (world − common)·scale.

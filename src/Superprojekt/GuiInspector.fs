@@ -11,29 +11,37 @@ module GuiInspector =
 
     open Primitives
 
-    // Pin distribution canvas (§T6): per moving-mesh lane, the ROI sample "rain" of
-    // every pin coloured by pin, on a shared signed-distance axis with the ±LoD₉₅ band
-    // and a proper X-axis ruler (nice-step ticks + faint gridlines + zero line).
-    // Brushing is an X-RANGE selection: drag horizontally to select every sample whose
-    // value falls in the range; the band's two edges display their exact values (mm)
-    // and a plain click clears it. The selected gids go to the sibling hidden input
-    // (the JS→Elm bridge) → the 3D sample dots. This chart drag is the ONLY way to
-    // brush samples (no 3D hover reveal); data-brushed echoes the model state back
-    // (e.g. cleared on visibility changes). Self-contained OnBoot (observes
-    // data-dist + data-brushed); jitter is SEEDED by gid so dots don't drift.
+    // Pin distribution canvas (§T6): per moving-mesh lane, a STACKED VIOLIN of every
+    // pin's ROI samples on a shared signed-distance axis — histogram bins (48 over
+    // [lo,hi], smoothed 1-2-1 on the CUMULATIVE outlines so stacked layers never
+    // cross), pin layers stacked outward from the lane axis in the canonical pin
+    // order (CreatedAt, guid — same as the legend and brushSamples).
+    // No registration → the top half mirrors the bottom (classic violin). Once a
+    // solve exists the halves split: ▼ bottom = Before, ▲ top = After; the inactive
+    // half renders muted/near-greyscale, and the spring-loaded Peek flips only this
+    // emphasis (visual, like the 3D peek).
+    // Brushing is unchanged from the rain chart: an X-RANGE drag over the CONCEPTUAL
+    // samples (el._dots, from the canonical g/s arrays of the COMMITTED pose — no
+    // dots are painted); selected gids go to the sibling hidden input (the JS→Elm
+    // bridge) → the 3D sample dots. A plain click clears. This chart drag is the
+    // ONLY way to brush samples. data-brushed echoes the model back (a model-side
+    // clear also drops the local band); with no local drag the band is reconstructed
+    // from the echoed gids. Self-contained OnBoot (observes data-dist + data-brushed);
+    // the bridge is resolved lazily EACH emit (a boot capture would freeze null).
     let private brushChartJs = [
         "(function(){"
         "var el=__THIS__;"
-        // Resolve the bridge lazily EACH emit (never captured at boot: the sibling input
-        // may not be mounted yet when this OnBoot runs → a boot capture would freeze null).
         "function findBridge(){ return (el.parentElement&&el.parentElement.querySelector('.ins-brush-bridge'))||document.querySelector('.ins-brush-bridge'); }"
         "el._dots=[]; var dragging=false, range=null, anchorV=0, lastEmit=0;"
-        "function jit(gid){ var x=Math.sin((gid+1)*12.9898)*43758.5453; return x-Math.floor(x); }"
         "function emit(){ var b=findBridge(); if(!b) return; var ids=[];"
         "  if(range){ for(var i=0;i<el._dots.length;i++){ var dt=el._dots[i]; if(dt.v>=range[0]&&dt.v<=range[1]) ids.push(dt.gid); } }"
         "  b.value=ids.join(','); b.dispatchEvent(new Event('input',{bubbles:true})); }"
         "function ph(t){ el.innerHTML=''; el._dots=[]; var p=document.createElement('div'); p.className='ins-ph'; p.textContent=t; el.appendChild(p); }"
         "function niceStep(raw){ var mag=Math.pow(10,Math.floor(Math.log(raw)/Math.LN10)); var n=raw/mag; return (n<1.5?1:n<3.5?2:n<7.5?5:10)*mag; }"
+        // Muted = 88% luminance grey + 12% hue, lifted 60% toward white.
+        "function mute(hex){ var r=parseInt(hex.substr(1,2),16),gg=parseInt(hex.substr(3,2),16),b=parseInt(hex.substr(5,2),16);"
+        "  var l=0.3*r+0.59*gg+0.11*b; function m(c){ return Math.round((l*0.88+c*0.12)*0.4+255*0.6); }"
+        "  return 'rgb('+m(r)+','+m(gg)+','+m(b)+')'; }"
         "function render(){"
         "  var raw=el.getAttribute('data-dist')||'{}'; var d; try{d=JSON.parse(raw);}catch(e){return;}"
         "  var braw=el.getAttribute('data-brushed')||''; var bset=new Set(braw.length?braw.split(',').map(Number):[]);"
@@ -49,8 +57,14 @@ module GuiInspector =
         "  function X(v){ return padL+(v-lo)/span*(W-padL-padR); }"
         "  el._XV=function(x){ return lo+(x-padL)/Math.max(1,W-padL-padR)*span; };"
         "  el._padL=padL; el._padR=padR;"
+        "  var B=d.bins||48; var bw=span/B; function xb(b){ return X(lo+(b+0.5)*bw); }"
+        // hf: 0 = before/bottom half, 1 = after/top half. Unregistered → mirror.
+        "  function cnts(pn,hf){ var a=d.reg?(hf?pn.ha:pn.hb):((pn.hb&&pn.hb.length)?pn.hb:pn.ha); return (a&&a.length===B)?a:null; }"
+        "  function sm(u){ var o=new Array(B); for(var b=0;b<B;b++){ o[b]=(u[Math.max(0,b-1)]+2*u[b]+u[Math.min(B-1,b+1)])/4; } return o; }"
+        "  var hasB=false,hasA=false; d.rows.forEach(function(r){ r.pins.forEach(function(pn){ if(cnts(pn,0))hasB=true; if(cnts(pn,1))hasA=true; }); });"
         "  g.fillStyle='#475569'; g.font='11px SF Mono,Monaco,monospace'; g.textAlign='left';"
-        "  g.fillText(d.state+'  ·  signed distance to reference (mm)  ·  0 = reference median',8,13);"
+        "  var hdr=d.reg?((d.act==='a'?'After':'Before')+' active'):d.state;"
+        "  g.fillText(hdr+'  ·  signed distance to reference (mm)  ·  0 = reference median',8,13);"
         "  g.fillStyle='#94a3b8'; g.font='9px SF Mono,Monaco,monospace';"
         "  g.fillText('░ ±LoD₉₅   ·   drag an X-range to brush', W-196, 13);"
         "  var n=d.rows.length; var axY=H-padB; var laneH=(axY-padT)/n;"
@@ -64,28 +78,53 @@ module GuiInspector =
         "    g.fillStyle='#64748b'; g.fillText(v.toFixed(dec),x,axY+14); }"
         "  if(lo<=0&&hi>=0){ g.strokeStyle='#cbd5e1'; g.lineWidth=1.2; g.beginPath(); g.moveTo(X(0),padT-2); g.lineTo(X(0),axY); g.stroke(); g.lineWidth=1; }"
         "  g.textAlign='left';"
-        "  d.rows.forEach(function(r,i){ var y0=padT+i*laneH;"
-        "    if(r.lod>0){ g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-r.lod),y0+2,Math.max(1,X(r.lod)-X(-r.lod)),laneH-4); }"
-        "    r.pins.forEach(function(pn){ for(var k=0;k<pn.s.length;k++){ var gid=pn.g[k]; var vv=pn.s[k]; var x=X(vv); var yy=y0+laneH*0.30+jit(gid)*(laneH*0.5);"
-        "      var on=bset.has(gid)||(range&&vv>=range[0]&&vv<=range[1]);"
-        "      g.globalAlpha = on?1:(pn.hl?0.55:0.10); g.fillStyle=pn.color; g.beginPath(); g.arc(x,yy,on?2.6:1.5,0,6.2832); g.fill();"
-        "      if(on){ g.globalAlpha=1; g.strokeStyle='#0891b2'; g.lineWidth=1; g.beginPath(); g.arc(x,yy,3.6,0,6.2832); g.stroke(); }"
-        "      el._dots.push({gid:gid,v:vv}); }"
-        "      g.globalAlpha=pn.hl?1:0.25; g.strokeStyle=pn.color; g.lineWidth=pn.hl?2.0:1.0; g.beginPath(); g.moveTo(X(pn.med),y0+laneH*0.22); g.lineTo(X(pn.med),y0+laneH*0.82); g.stroke(); });"
+        // One shared count→height scale across ALL lanes and BOTH halves, so violin
+        // areas stay comparable between meshes and between before/after.
+        "  var maxC=1; d.rows.forEach(function(r){ [0,1].forEach(function(hf){ for(var b=0;b<B;b++){ var s=0; r.pins.forEach(function(pn){ var a=cnts(pn,hf); if(a) s+=a[b]; }); if(s>maxC)maxC=s; } }); });"
+        "  d.rows.forEach(function(r,i){ var y0=padT+i*laneH; var yc=y0+laneH/2; var hh=Math.max(3,laneH/2-4); var k=hh/maxC;"
+        "    if(r.lod>0){ g.globalAlpha=1; g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-r.lod),y0+2,Math.max(1,X(r.lod)-X(-r.lod)),laneH-4); }"
+        "    g.globalAlpha=1; g.strokeStyle='#e2e8f0'; g.beginPath(); g.moveTo(padL,yc+0.5); g.lineTo(W-padR,yc+0.5); g.stroke();"
+        "    [0,1].forEach(function(hf){ var dir=hf?-1:1; var actH=d.reg?((hf?'a':'b')===d.act):true;"
+        "      var prev=new Array(B).fill(0); var tot=null;"
+        "      r.pins.forEach(function(pn){ var a=cnts(pn,hf); if(!a) return;"
+        "        var cur=new Array(B); for(var b=0;b<B;b++) cur[b]=prev[b]+a[b];"
+        "        var p_=sm(prev), c_=sm(cur);"
+        "        g.beginPath(); g.moveTo(xb(0),yc+dir*c_[0]*k);"
+        "        for(var b=1;b<B;b++) g.lineTo(xb(b),yc+dir*c_[b]*k);"
+        "        for(var b=B-1;b>=0;b--) g.lineTo(xb(b),yc+dir*p_[b]*k);"
+        "        g.closePath();"
+        "        g.globalAlpha=actH?(pn.hl?0.8:0.25):(pn.hl?0.85:0.5);"
+        "        g.fillStyle=actH?pn.color:mute(pn.color); g.fill();"
+        "        prev=cur; tot=cur; });"
+        "      if(tot){ var t_=sm(tot); g.globalAlpha=actH?0.85:0.45; g.strokeStyle=actH?'#334155':'#94a3b8'; g.lineWidth=1;"
+        "        g.beginPath(); g.moveTo(xb(0),yc+dir*t_[0]*k);"
+        "        for(var b=1;b<B;b++) g.lineTo(xb(b),yc+dir*t_[b]*k); g.stroke(); }"
+        "      if(actH){ r.pins.forEach(function(pn){ if(pn.med==null) return; g.globalAlpha=pn.hl?0.9:0.3; g.strokeStyle=pn.color; g.lineWidth=pn.hl?2:1;"
+        "        g.beginPath(); g.moveTo(X(pn.med),yc); g.lineTo(X(pn.med),yc+dir*hh*0.7); g.stroke(); g.lineWidth=1; }); }"
+        "    });"
+        // The conceptual samples: never painted, but they ARE the brush targets.
+        "    r.pins.forEach(function(pn){ if(pn.g) for(var q=0;q<pn.g.length;q++) el._dots.push({gid:pn.g[q],v:pn.s[q]}); });"
+        "    if(d.reg&&i===0){ g.globalAlpha=1; g.font='8px SF Mono,Monaco,monospace'; g.textAlign='right';"
+        "      g.fillStyle=(d.act==='a')?'#334155':'#94a3b8'; g.fillText('\\u25b2 after'+(hasA?'':' \\u2014 probing\\u2026'),W-padR-2,yc-4);"
+        "      g.fillStyle=(d.act==='b')?'#334155':'#94a3b8'; g.fillText('\\u25bc before'+(hasB?'':' \\u2014 probing\\u2026'),W-padR-2,yc+11); g.textAlign='left'; }"
         "    g.globalAlpha=1; g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace'; g.textAlign='left'; g.fillText(r.name,padL,y0+11); });"
-        // Selection band: translucent fill, edge lines, exact value labels at both ends.
-        "  if(range){ var x0=X(range[0]), x1=X(range[1]);"
+        // Selection band: local drag range, else reconstructed from the model echo
+        // (bset) so a remount keeps the band. Labels: exact mm + brushed count.
+        "  var dispRange=range;"
+        "  if(!dispRange&&bset.size){ var mn=1/0,mx=-1/0; for(var q1=0;q1<el._dots.length;q1++){ var dd=el._dots[q1]; if(bset.has(dd.gid)){ if(dd.v<mn)mn=dd.v; if(dd.v>mx)mx=dd.v; } } if(mx>=mn) dispRange=[mn,mx]; }"
+        "  if(dispRange){ var x0=X(dispRange[0]), x1=X(dispRange[1]);"
         "    g.fillStyle='rgba(8,145,178,0.10)'; g.fillRect(x0,padT-2,Math.max(1,x1-x0),axY-padT+2);"
         "    g.strokeStyle='#0891b2'; g.lineWidth=1.2; g.beginPath(); g.moveTo(x0,padT-2); g.lineTo(x0,axY); g.moveTo(x1,padT-2); g.lineTo(x1,axY); g.stroke(); g.lineWidth=1;"
+        "    var cnt=0; for(var q2=0;q2<el._dots.length;q2++){ if(el._dots[q2].v>=dispRange[0]&&el._dots[q2].v<=dispRange[1]) cnt++; }"
         "    g.fillStyle='#0891b2'; g.font='10px SF Mono,Monaco,monospace';"
-        "    g.textAlign='right'; g.fillText(range[0].toFixed(1),x0-3,padT+8);"
-        "    g.textAlign='left';  g.fillText(range[1].toFixed(1),x1+3,padT+8); g.textAlign='left'; }"
+        "    g.textAlign='right'; g.fillText(dispRange[0].toFixed(1),x0-3,padT+8);"
+        "    g.textAlign='left';  g.fillText(dispRange[1].toFixed(1)+' \\u00b7 n='+cnt,x1+3,padT+8); g.textAlign='left'; }"
         "  el.appendChild(cv);"
         "}"
         "function cursorV(e){ var r=el.getBoundingClientRect(); var W=el.clientWidth||320;"
         "  var x=Math.max(el._padL,Math.min(W-el._padR,e.clientX-r.left)); return el._XV(x); }"
-        // render() after each move draws the band + highlight now; emit() (throttled)
-        // drives the model + the 3D markers. A click (zero-width range) clears the brush.
+        // render() after each move draws the band now; emit() (throttled) drives the
+        // model + the 3D markers. A click (zero-width range) clears the brush.
         "el.addEventListener('pointerdown',function(e){ if(e.button!==0||!el._XV) return; dragging=true;"
         "  anchorV=cursorV(e); range=[anchorV,anchorV]; try{el.setPointerCapture(e.pointerId);}catch(_){} render(); e.preventDefault(); });"
         "el.addEventListener('pointermove',function(e){ if(!dragging||!el._XV) return; var v=cursorV(e);"
@@ -96,7 +135,10 @@ module GuiInspector =
         "  if(range&&range[1]-range[0]<1e-9){ range=null; }"
         "  render(); emit(); });"
         "render();"
-        "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed']});"
+        // A model-side clear (empty data-brushed while not dragging) drops the local band.
+        "new MutationObserver(function(muts){"
+        "  if(!dragging&&range){ for(var q=0;q<muts.length;q++){ if(muts[q].attributeName==='data-brushed'&&!(el.getAttribute('data-brushed')||'').length){ range=null; break; } } }"
+        "  render(); }).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed']});"
         "})();" ]
 
     // 8-way unicode arrow for a heading in degrees (0 = +X/east, 90 = +Y/north).
@@ -233,13 +275,14 @@ module GuiInspector =
         let shiftRow (k : string) (v : aval<string>) =
             div { Class "ins-shift-row"; span { Class "ins-shift-k"; k }; span { Class "ins-shift-v"; v } }
 
-        // Distribution (§T6): per moving mesh lane, the ROI samples of EVERY pin,
-        // coloured by pin (§A) on the shared signed-distance axis with the ±LoD₉₅
-        // band. Hovering a pin (anywhere — legend, matrix row, 3D) highlights its
-        // samples (the others dim) — the chart side of the bidirectional brushing.
-        // Consumes the SAME canonical sample array as the 3D side (gid = array index)
-        // so a chart sample brushes back to the exact 3D surface cell. Each pin group
-        // carries parallel "g" (gids) + "s" (values) arrays.
+        // Distribution (§T6): per moving mesh lane, a stacked violin of EVERY pin's
+        // ROI samples (§A) on the shared signed-distance axis with the ±LoD₉₅ band.
+        // Hovering a pin (anywhere — legend, matrix row, 3D) highlights its layer.
+        // Histogram counts (48 bins over the shared range) are computed HERE from the
+        // FULL probe sample sets — both Before/After halves once a solve exists
+        // (Probe = committed pose, ProbeOther = the opposite) — while the brushable
+        // conceptual samples stay the SAME canonical array as the 3D side (gid =
+        // array index, committed pose only): parallel "g"/"s" arrays per pin group.
         let canonA = ScanPinScene.brushSamples model
         let distData =
             AVal.custom (fun t ->
@@ -253,14 +296,32 @@ module GuiInspector =
                 let names = model.MeshNames.Content.GetValue t |> IndexList.toList
                 let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
                 let hov = match model.Selection.Hovered.GetValue t with Some (HoverPin id) -> Some id | _ -> None
+                let regView = model.RegView.GetValue t
+                let solved = not (Map.isEmpty (model.SolvedTransforms.GetValue t))
+                let peek = model.RegPeekHeld.GetValue t
+                // Canonical stack order (CreatedAt, guid) — same as the legend and
+                // brushSamples, so the violin layers stack identically everywhere.
                 let readyPins =
                     pins |> HashMap.toList
                     |> List.choose (fun (id, p) -> match p.Probe with ProbeReady r -> Some (id, p, r) | _ -> None)
+                    |> List.sortBy (fun (id, p, _) -> let (ScanPinId.ScanPinId gg) = id in p.CreatedAt, gg)
                 let canon = canonA.GetValue t
                 if List.isEmpty readyPins then "{\"pending\":\"probing pins…\"}"
                 elif List.isEmpty moving || canon.Length = 0 then "{\"rows\":[]}"
                 else
-                    let stateLbl = match model.RegView.GetValue t with RegBefore -> "Before" | RegAfter -> "After"
+                    let stateLbl = match regView with RegBefore -> "Before" | RegAfter -> "After"
+                    // Emphasized half: the committed view, flipped while Peek is held
+                    // (the flip is purely visual — same contract as the 3D peek).
+                    let actView = if peek then (match regView with RegBefore -> RegAfter | RegAfter -> RegBefore) else regView
+                    let act = match actView with RegBefore -> "b" | RegAfter -> "a"
+                    // Fixed halves: bottom = Before, top = After. Probe is the
+                    // committed pose, ProbeOther the opposite — map accordingly.
+                    let halves =
+                        readyPins |> List.map (fun (id, p, r) ->
+                            let other = match p.ProbeOther with ProbeReady o when solved -> Some o | _ -> None
+                            match regView with
+                            | RegBefore -> id, p, r, Some r, other
+                            | RegAfter  -> id, p, r, other, Some r)
                     // Bucket the canonical samples by (mesh, pin) → (gid, valueMm), gid = index.
                     let byMesh = System.Collections.Generic.Dictionary<string, System.Collections.Generic.Dictionary<ScanPinId, ResizeArray<int * float>>>()
                     canon |> Array.iteri (fun gid (id, mesh, _pos, valMm) ->
@@ -273,8 +334,19 @@ module GuiInspector =
                             | true, x -> x
                             | _ -> let x = ResizeArray<int * float>() in md.[id] <- x; x
                         lst.Add(gid, valMm))
+                    // Shared x-range: 1–99% quantiles over the FULL sample sets of
+                    // BOTH halves, so before/after stay comparable.
                     let lo, hi =
-                        let s = canon |> Array.map (fun (_, _, _, v) -> v)
+                        let acc = ResizeArray<float>()
+                        let add (ro : ProbeResult option) =
+                            match ro with
+                            | Some r ->
+                                for d in r.Distributions do
+                                    if List.contains d.MeshName moving then
+                                        for v in d.Samples do acc.Add(v * 1000.0)
+                            | None -> ()
+                        for (_, _, _, b, a) in halves do add b; add a
+                        let s = acc.ToArray()
                         if s.Length = 0 then -10.0, 10.0
                         else
                             Array.sortInPlace s
@@ -286,33 +358,53 @@ module GuiInspector =
                     let lo, hi = min lo 0.0, max hi 0.0
                     let pad = max 1.0 (hi - lo) * 0.08
                     let lo, hi = lo - pad, hi + pad
+                    let bins = 48
+                    let binW = (hi - lo) / float bins
+                    let histFor (mesh : string) (ro : ProbeResult option) =
+                        ro |> Option.bind (fun r ->
+                            r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh && d.Count > 0)
+                            |> Option.map (fun d ->
+                                let c : int[] = Array.zeroCreate bins
+                                for v in d.Samples do
+                                    let idx = max 0 (min (bins - 1) (int ((v * 1000.0 - lo) / binW)))
+                                    c.[idx] <- c.[idx] + 1
+                                c))
                     let refStdOf (r : ProbeResult) =
                         r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
                         |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
                     let rowJson mesh =
-                        match byMesh.TryGetValue mesh with
-                        | true, md ->
-                            let groups =
-                                readyPins |> List.choose (fun (id, p, r) ->
-                                    match md.TryGetValue id with
-                                    | true, lst when lst.Count > 0 ->
-                                        let dStd = r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh) |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
-                                        let med  = r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh) |> Option.map (fun d -> d.Median) |> Option.defaultValue 0.0
-                                        let rs = refStdOf r
-                                        let lod = 1.96 * sqrt (rs * rs + dStd * dStd) * 1000.0
-                                        let hl = match hov with Some h -> (if h = id then 1 else 0) | None -> 1
-                                        let gids = lst |> Seq.map (fun (gid, _) -> string gid) |> String.concat ","
-                                        let svals = lst |> Seq.map (fun (_, v) -> g v) |> String.concat ","
-                                        Some (lod, sprintf "{\"color\":\"%s\",\"name\":\"%s %s\",\"lod\":%s,\"hl\":%d,\"med\":%s,\"g\":[%s],\"s\":[%s]}"
-                                                        (c4bToHex p.PinColor) p.Glyph p.ShortName (g lod) hl (g (med * 1000.0)) gids svals)
-                                    | _ -> None)
-                            if List.isEmpty groups then None
-                            else
-                                let avgLod = groups |> List.averageBy fst
-                                Some (sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}" (numberedFriendly order names mesh) (g avgLod) (groups |> List.map snd |> String.concat ","))
-                        | _ -> None
+                        let md = match byMesh.TryGetValue mesh with true, x -> Some x | _ -> None
+                        let groups =
+                            halves |> List.choose (fun (id, p, r, bR, aR) ->
+                                let brush =
+                                    md |> Option.bind (fun m ->
+                                        match m.TryGetValue id with
+                                        | true, lst when lst.Count > 0 -> Some lst
+                                        | _ -> None)
+                                let hb = histFor mesh bR
+                                let ha = histFor mesh aR
+                                if brush.IsNone && hb.IsNone && ha.IsNone then None
+                                else
+                                    let committed = r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh)
+                                    let lod =
+                                        committed |> Option.map (fun d ->
+                                            let rs = refStdOf r
+                                            1.96 * sqrt (rs * rs + d.Std * d.Std) * 1000.0)
+                                    let med = committed |> Option.map (fun d -> g (d.Median * 1000.0)) |> Option.defaultValue "null"
+                                    let hl = match hov with Some h -> (if h = id then 1 else 0) | None -> 1
+                                    let gids  = brush |> Option.map (fun lst -> lst |> Seq.map (fun (gid, _) -> string gid) |> String.concat ",") |> Option.defaultValue ""
+                                    let svals = brush |> Option.map (fun lst -> lst |> Seq.map (fun (_, v) -> g v) |> String.concat ",") |> Option.defaultValue ""
+                                    let hist (h : int[] option) = h |> Option.map (fun c -> c |> Array.map string |> String.concat ",") |> Option.defaultValue ""
+                                    Some (lod, sprintf "{\"color\":\"%s\",\"name\":\"%s %s\",\"hl\":%d,\"med\":%s,\"g\":[%s],\"s\":[%s],\"hb\":[%s],\"ha\":[%s]}"
+                                                    (c4bToHex p.PinColor) p.Glyph p.ShortName hl med gids svals (hist hb) (hist ha)))
+                        if List.isEmpty groups then None
+                        else
+                            let lods = groups |> List.choose fst
+                            let avgLod = if List.isEmpty lods then 0.0 else List.average lods
+                            Some (sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}" (numberedFriendly order names mesh) (g avgLod) (groups |> List.map snd |> String.concat ","))
                     let rows = moving |> List.choose rowJson |> String.concat ","
-                    sprintf "{\"state\":\"%s\",\"lo\":%s,\"hi\":%s,\"rows\":[%s]}" stateLbl (g lo) (g hi) rows)
+                    sprintf "{\"state\":\"%s\",\"reg\":%s,\"act\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"rows\":[%s]}"
+                        stateLbl (if solved then "1" else "0") act (g lo) (g hi) bins rows)
         // Comma-joined brushed gids → the canvas highlight (data-brushed).
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
 

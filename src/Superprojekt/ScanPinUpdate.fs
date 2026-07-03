@@ -53,6 +53,7 @@ module ScanPinUpdate =
             CreatedAt            = System.DateTime.UtcNow
             DatasetColors        = assignColors model.MeshNames
             Probe                = ProbeNone
+            ProbeOther           = ProbeNone
             ContactRings         = RingsNone
         }
 
@@ -86,7 +87,7 @@ module ScanPinUpdate =
             match model.Selection.SelectedPin with
             | Some id -> sp |> updatePin id (fun pin ->
                 let r' = max 0.01 r
-                { pin with InnerRadius = r'; Probe = ProbeNone; ContactRings = RingsNone })
+                { pin with InnerRadius = r'; Probe = ProbeNone; ProbeOther = ProbeNone; ContactRings = RingsNone })
             | None -> sp
 
         | DeletePin id ->
@@ -103,6 +104,14 @@ module ScanPinUpdate =
         | ProbeFailed(id, reason) ->
             sp |> updatePin id (fun pin ->
                 if pin.Probe = ProbeRunning then { pin with Probe = ProbeError reason } else pin)
+
+        | ProbeOtherComputed(id, result) ->
+            sp |> updatePin id (fun pin ->
+                if pin.ProbeOther = ProbeRunning then { pin with ProbeOther = ProbeReady result } else pin)
+
+        | ProbeOtherFailed(id, reason) ->
+            sp |> updatePin id (fun pin ->
+                if pin.ProbeOther = ProbeRunning then { pin with ProbeOther = ProbeError reason } else pin)
 
         | ContactRingsComputed(id, rings) ->
             sp |> updatePin id (fun pin ->
@@ -155,8 +164,14 @@ module ScanPinUpdate =
     // stale responses dropped by the ProbeRunning guard above.
     let ensureProbe (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
+        // Once a solve exists, the OTHER pose is probed too (ProbeOther) — it feeds
+        // the violin chart's inactive Before/After half.
+        let solved = not (Map.isEmpty model.SolvedTransforms)
+        let pendingPin (p : ScanPin) =
+            (match p.Probe with ProbeNone -> true | _ -> false)
+            || (solved && (match p.ProbeOther with ProbeNone -> true | _ -> false))
         // Cheap exists-check first: this postlude runs on every message (incl. Rendered).
-        if not (sp.Pins |> HashMap.exists (fun _ p -> match p.Probe with ProbeNone -> true | _ -> false)) then model
+        if not (sp.Pins |> HashMap.exists (fun _ p -> pendingPin p)) then model
         else
             // Probe every mesh regardless of visibility (like ensureRings) so the rail
             // matrix has a stable cell per (pin, mesh) — visibility only gates rendering
@@ -167,9 +182,11 @@ module ScanPinUpdate =
             | _ ->
                 let refMesh0 = model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r allMeshes)
                 let meshes = allMeshes |> List.map (fun n -> n, (ModelTransforms.displayedWorld model n).Forward)
+                let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
+                let meshesOther = allMeshes |> List.map (fun n -> n, (ModelTransforms.displayedWorldAt otherView model n).Forward)
                 let pending =
                     sp.Pins |> HashMap.toList
-                    |> List.filter (fun (_, p) -> match p.Probe with ProbeNone -> true | _ -> false)
+                    |> List.filter (fun (_, p) -> pendingPin p)
                 let mutable pins = sp.Pins
                 for (id, pin) in pending do
                     let refMesh =
@@ -185,23 +202,30 @@ module ScanPinUpdate =
                     let centre = pin.Centre
                     let radius = pin.InnerRadius
                     let length = ScanPin.fixedProbeLength
-                    task {
-                        try
-                            do! System.Threading.Tasks.Task.Delay(250, token)
-                            let! res =
-                                Query.probe ApiConfig.apiBase.Value meshes refMesh centre radius length 8192
-                                |> Async.StartAsTask
-                            if not token.IsCancellationRequested then
-                                match res with
-                                | Result.Ok r -> env.Emit [ScanPinMsg (ProbeComputed(id, r))]
-                                | Result.Error e -> env.Emit [ScanPinMsg (ProbeFailed(id, e))]
-                        with
-                        | :? System.OperationCanceledException -> ()
-                        | ex ->
-                            if not token.IsCancellationRequested then
-                                env.Emit [ScanPinMsg (ProbeFailed(id, ex.Message))]
-                    } |> ignore
-                    pins <- HashMap.add id { pin with Probe = ProbeRunning } pins
+                    let needMain  = match pin.Probe with ProbeNone -> true | _ -> false
+                    let needOther = solved && (match pin.ProbeOther with ProbeNone -> true | _ -> false)
+                    let fire ms ok fail =
+                        task {
+                            try
+                                do! System.Threading.Tasks.Task.Delay(250, token)
+                                let! res =
+                                    Query.probe ApiConfig.apiBase.Value ms refMesh centre radius length 8192
+                                    |> Async.StartAsTask
+                                if not token.IsCancellationRequested then
+                                    match res with
+                                    | Result.Ok r -> env.Emit [ScanPinMsg (ok r)]
+                                    | Result.Error e -> env.Emit [ScanPinMsg (fail e)]
+                            with
+                            | :? System.OperationCanceledException -> ()
+                            | ex ->
+                                if not token.IsCancellationRequested then
+                                    env.Emit [ScanPinMsg (fail ex.Message)]
+                        } |> ignore
+                    if needMain then fire meshes (fun r -> ProbeComputed(id, r)) (fun e -> ProbeFailed(id, e))
+                    if needOther then fire meshesOther (fun r -> ProbeOtherComputed(id, r)) (fun e -> ProbeOtherFailed(id, e))
+                    let pin = if needMain then { pin with Probe = ProbeRunning } else pin
+                    let pin = if needOther then { pin with ProbeOther = ProbeRunning } else pin
+                    pins <- HashMap.add id pin pins
                 { model with ScanPins = { sp with Pins = pins } }
 
     // Lazy contact-ring trigger, postlude after every reducer step: every RingsNone pin gets

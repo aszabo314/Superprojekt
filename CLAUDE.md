@@ -130,7 +130,7 @@ ProbeModel.fs          M3C2 probe DTOs
 Query.fs               server query wrappers (Async)
 CameraModel.fs / .g.fs OrbitState [<ModelType>]
 OrbitController.fs     orbit camera + messages (project file, NOT the Aardvark library one)
-RegistrationModel.fs   ScanPinId, anchors, readiness engine, fly-to math (WASM-free, shared with Supertests)
+RegistrationModel.fs   ScanPinId, anchors, readiness engine (WASM-free, shared with Supertests)
 ScanPinModel.fs / .g.fs ScanPin + placement state
 PinGeometry.fs         icosphere, sphere outline
 Model.fs / .g.fs       [<ModelType>] Model + Selection + MeshVisibility + ModelTransforms
@@ -183,7 +183,7 @@ POST /api/query/ray                             → { hit, t, point, triangleId 
 POST /api/query/closest                         → { found, point, distanceSquared, triangleId }
 POST /api/query/contact-rings                   → sphere–surface intersection polylines
 POST /api/query/lsq-pairs                       → weighted rigid solve (absolute world transform + residuals + conditioning; 400 on <3 pairs)
-POST /api/query/probe                           → N-mesh M3C2 probe (per-mesh distributions, per-sample positions + footprint)
+POST /api/query/probe                           → N-mesh M3C2 probe (per-mesh distributions + per-sample positions)
 POST /api/query/region-distance                 → per-vertex signed M3C2 distance (mode 0) or vertical Δz (mode 1) of a target mesh to the reference, in the target's served vertex order; both modes share one support rule — a vertex responds only where the vertical world line through it pierces the reference (Z-overlap), else 1e30 sentinel — so M3C2 never fabricates error in non-overlap fringes, and the variance map (which skips sentinels per mesh) only aggregates meshes that overlap there
 ```
 

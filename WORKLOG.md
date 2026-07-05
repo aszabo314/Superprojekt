@@ -14,6 +14,57 @@
 - Dock resize handle implemented, build + JS parse green — awaiting visual
   inspection (grip visibility, drag feel, overlays following, chart re-render
   while dragging).
+- Dead-code prune (below) — builds + tests + integration all green; awaiting a
+  browser smoke pass (probe → matrix/chart, solve, seeding, no missing styles).
+
+## Dead-code prune (2026-07-05)
+Repo-wide audit (4 parallel read-only sweeps + a mechanical whole-repo
+identifier cross-reference, 1070 defs) then a full prune. User decisions:
+prune everything including PWA, test-only math, and ProbeResult.Sources; keep
+the camera files (OrbitController.fs / CameraModel.fs) untouched.
+
+- **Study/PWA stragglers deleted**: `tools/study-integration.mjs` (targeted
+  removed `/api/study/*`), `sw.js`, `manifest.json`, `icon-192/512.png`, the
+  apple/PWA meta tags, the stale `/s/{token}` comment, and the inert
+  `data-bs-theme`. index.html now unregisters any previously-installed service
+  worker once; with no SW cache the `style.css?v=N` bump ritual is gone
+  (the link is plain `style.css` again — server no-cache headers cover edits).
+- **CSS**: 171 dead selectors removed (~590 lines): all `study-*`, panorama,
+  fusion, retarget/cards, prov-hover, ruler, old left-panel/`lp-*` (except the
+  live `.lp-sublabel`), old `.mesh-list`/`.pin-list` rows (`.mesh-swatch`/
+  `.mesh-num` live on), CollapsibleSection `.cs*`, rail diagnostics/pin-list/
+  flags, `.tb-dataset*`, correspondence-manager rows (`.ins-mgr` shell kept),
+  `.pulse-outline`+`superPulse`, misc singletons. Verified by exact-token scan
+  (scratchpad `csscheck.mjs`) honouring sprintf-built class prefixes — reruns
+  report 0 dead classes.
+- **Dead messages/handlers**: `ResetCamera`, `ReseedMesh` (+`reseedOneMesh` and
+  the now-pointless `forceMeshes` param of `seedAnchorsCore`), `NavTo` +
+  `NavAction` + `Diagnostic.Action` (rail diagnostics render severity+text
+  only) + the `SuperPulse` JS bootstrap.
+- **Write-only model state**: `RegistrationState.Running`,
+  `Correspondence.RefDistance`/`Residuals` (so `CoarseSolved` and
+  `AnchorsSeeded` payloads slimmed; `Query.lsqPairs` now returns only the
+  transform — the server lsq response is unchanged and still tested),
+  `ReadinessPin.Id`/`Label`/`Unresolved`, `ModelTransforms.solvedRender`,
+  `WorkflowStep.all`/`mode`, `InspectChannel.label`, `AnchorSource.tag`/`ofTag`,
+  two unused `refMeshA` locals.
+- **Probe DTO slimmed end-to-end** (server compute → JSON → client decode →
+  fields): dropped q1/q3/kde/bandwidth/footprint/intrinsics per distribution
+  (incl. the whole KDE grid + `meshIntrinsics` server loops — real per-probe
+  CPU savings) and planarity/length/autoLength/refOffset/xAuto/xFit/sources
+  (incl. the three-source decomposition + `PerMeshSource`) on the result.
+  Live surface is exactly: `normal` + per-mesh `name/count/median/std/
+  samples/positions`.
+- **Test-only math pruned with its tests**: `FlyToMath`/`FlyToTarget`,
+  `RegConditioning.dominantAxis`/`isCollinear` (collinearity checks now assert
+  on `lambdaRatio` directly), `RegMath.observabilityDeficiency`. Supertests
+  43 → 29, all green.
+- Verified: server + client (native off) builds, Supertests 29/29,
+  `node tools/integration.mjs http://localhost:8003` 13/13 against a freshly
+  built server (probe + lsq assertions unaffected), CSS token scan clean.
+  Camera files untouched by request (their dead `AnimationKind` cases,
+  `animationRunning`, 9 never-emitted `OrbitMessage` cases, `isOrtho`/`pick`/
+  pan-shift branches remain — documented here for a future pass).
 
 ## Dock resize handle (2026-07-03)
 - The bottom dock got a drag-to-resize handle on its top edge (`.dock-resize`

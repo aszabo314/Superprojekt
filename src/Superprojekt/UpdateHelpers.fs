@@ -144,9 +144,8 @@ module UpdateHelpers =
     // point to refAnchor. Anchors are stored mesh-local (own-frame closest point),
     // so the before/after toggle moves them with the mesh. Membership = the
     // candidate mapped to displayed world within roiReach of the pin centre;
-    // out-of-ROI meshes are not seeded. forceMeshes overrides the keep-manual rule.
-    let private seedAnchorsCore (env : Env<Message>) (model : Model) (pinIds : ScanPinId list)
-                                (forceMeshes : Set<string>) : unit =
+    // out-of-ROI meshes are not seeded. Manually-picked markers are kept.
+    let private seedAnchorsCore (env : Env<Message>) (model : Model) (pinIds : ScanPinId list) : unit =
         match model.Registration.ReferenceMesh with
         | None -> ()
         | Some refMesh ->
@@ -164,7 +163,7 @@ module UpdateHelpers =
                     pins |> List.map (fun pin ->
                         let keep =
                             match ScanPin.correspondence pin with
-                            | Some c -> c.Anchors |> Map.filter (fun m a -> a.Source <> AnchorAuto && not (Set.contains m forceMeshes))
+                            | Some c -> c.Anchors |> Map.filter (fun _ a -> a.Source <> AnchorAuto)
                             | None -> Map.empty
                         pin.Id, pin.Centre, pin.InnerRadius, pin.HostMeshName, keep)
                 task {
@@ -177,19 +176,17 @@ module UpdateHelpers =
                                 // since the reference always sits at its LoadTransform).
                                 let! refAnchor =
                                     if host = Some refMesh then
-                                        async.Return (Some (refT.Backward.TransformPos centre, 0.0))
+                                        async.Return (Some (refT.Backward.TransformPos centre))
                                     else async {
                                         try
                                             let cOwn = refT.Backward.TransformPos centre
                                             let! res = Query.closestPoint ApiConfig.apiBase.Value refMesh 0 cOwn
-                                            return res |> Option.map (fun r ->
-                                                let world = refT.Forward.TransformPos r.point
-                                                r.point, (world - centre).Length)
+                                            return res |> Option.map (fun r -> r.point)
                                         with _ -> return None
                                     }
                                 match refAnchor with
                                 | None -> return (pinId, None, [||], [||])
-                                | Some (raOwn, dist) ->
+                                | Some raOwn ->
                                     let raWorld = refT.Forward.TransformPos raOwn
                                     let targets =
                                         meshes |> List.filter (fun m ->
@@ -219,13 +216,13 @@ module UpdateHelpers =
                                             match cand with
                                             | Some (own, w) when (w - centre).Length <= reach -> Some (pinId, mesh, own)
                                             | _ -> None)
-                                    return (pinId, Some (raWorld, dist), seeded, inRoi)
+                                    return (pinId, Some raWorld, seeded, inRoi)
                             })
                             |> Async.Parallel
                             |> Async.StartAsTask
                         let refUpdates =
                             perPin |> Array.choose (fun (pinId, raOpt, _, _) ->
-                                raOpt |> Option.map (fun (ra, d) -> pinId, ra, d))
+                                raOpt |> Option.map (fun ra -> pinId, ra))
                         let seeded = perPin |> Array.collect (fun (_, _, s, _) -> s)
                         let inRoi = perPin |> Array.collect (fun (_, _, _, r) -> r)
                         env.Emit [AnchorsSeeded(refUpdates, seeded, inRoi)]
@@ -234,11 +231,5 @@ module UpdateHelpers =
                 } |> ignore
 
     let seedAnchors (env : Env<Message>) (model : Model) (pinIds : ScanPinId list) : Model =
-        seedAnchorsCore env model pinIds Set.empty
-        model
-
-    // Re-seed one mesh's correspondence for one pin — force-overwrites even a
-    // manually-picked marker for that mesh.
-    let reseedOneMesh (env : Env<Message>) (model : Model) (pinId : ScanPinId) (mesh : string) : Model =
-        seedAnchorsCore env model [pinId] (Set.singleton mesh)
+        seedAnchorsCore env model pinIds
         model

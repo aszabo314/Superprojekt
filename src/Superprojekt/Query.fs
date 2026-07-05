@@ -56,10 +56,9 @@ module Query =
         }
 
     // Weighted rigid landmark solve. pairs = (refPoint, movingPoint, weight); the
-    // moving point is taken at the load pose, so the returned transform is absolute
-    // (refTransform, perPairResiduals, covEigenvalues, collinearityWarning).
+    // moving point is taken at the load pose, so the returned transform is absolute.
     let lsqPairs (serverUrl : string) (movingName : string) (pairs : (V3d * V3d * float)[])
-            : Async<M44d * float[] * float[] * bool> =
+            : Async<M44d> =
         async {
             let pairJson =
                 pairs
@@ -71,20 +70,11 @@ module Query =
             let tf =
                 r.GetProperty("transform").EnumerateArray()
                 |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-            let delta =
+            return
                 M44d(tf.[0],  tf.[1],  tf.[2],  tf.[3],
                      tf.[4],  tf.[5],  tf.[6],  tf.[7],
                      tf.[8],  tf.[9],  tf.[10], tf.[11],
                      tf.[12], tf.[13], tf.[14], tf.[15])
-            let residuals =
-                r.GetProperty("perPairResiduals").EnumerateArray()
-                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-            let cond = r.GetProperty("conditioning")
-            let eigen =
-                cond.GetProperty("eigenvalues").EnumerateArray()
-                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-            let collinear = cond.GetProperty("collinearityWarning").GetBoolean()
-            return delta, residuals, eigen, collinear
         }
 
     // Sphere–surface contact rings; centre is in the mesh's own (untransformed)
@@ -120,9 +110,6 @@ module Query =
             if not (r.GetProperty("ok").GetBoolean()) then
                 return Result.Error (r.GetProperty("reason").GetString())
             else
-                let readRange (prop : string) =
-                    let a = r.GetProperty(prop).EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                    Range1d(a.[0], a.[1])
                 let dists =
                     r.GetProperty("distributions").EnumerateArray()
                     |> Seq.map (fun d ->
@@ -130,15 +117,7 @@ module Query =
                             MeshName  = d.GetProperty("name").GetString()
                             Count     = d.GetProperty("count").GetInt32()
                             Median    = d.GetProperty("median").GetDouble()
-                            Q1        = d.GetProperty("q1").GetDouble()
-                            Q3        = d.GetProperty("q3").GetDouble()
                             Std       = d.GetProperty("std").GetDouble()
-                            Kde       =
-                                d.GetProperty("kde").EnumerateArray()
-                                |> Seq.map (fun p ->
-                                    let a = p.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                                    a.[0], a.[1])
-                                |> Seq.toArray
                             Samples   =
                                 match d.TryGetProperty "samples" with
                                 | true, se -> se.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
@@ -149,33 +128,12 @@ module Query =
                                     let flat = pe.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                                     Array.init (flat.Length / 3) (fun i -> V3d(flat.[i*3], flat.[i*3+1], flat.[i*3+2]))
                                 | _ -> [||]
-                            Footprint =
-                                match d.TryGetProperty "footprint" with
-                                | true, fe -> fe.GetDouble()
-                                | _ -> 0.0
-                            Intrinsics =
-                                match d.TryGetProperty "intr" with
-                                | true, ie -> ie.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                                | _ -> [||]
                         })
                     |> Seq.toArray
-                let s = r.GetProperty("sources")
                 return Result.Ok {
                     ReferenceMesh = referenceName
                     Normal        = readV3 (r.GetProperty "normal")
-                    Length        = r.GetProperty("length").GetDouble()
-                    RefOffset     =
-                        (match r.TryGetProperty "refOffset" with
-                         | true, v -> v.GetDouble()
-                         | _ -> 0.0)
-                    XAuto         = readRange "xAuto"
                     Distributions = dists
-                    Sources       =
-                        {
-                            DatasetError      = s.GetProperty("dataset").GetDouble()
-                            AlgorithmResid    = s.GetProperty("algorithm").GetDouble()
-                            LocalConditioning = s.GetProperty("conditioning").GetDouble()
-                        }
                 }
         }
 

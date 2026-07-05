@@ -163,17 +163,14 @@ module Update =
                     // Solve every solvable mesh in parallel; unsolvable meshes keep no
                     // SolvedTransform (stay at their load pose) and are flagged in the UI.
                     for mesh in solvable do
-                        let pairs = pairsFor mesh
-                        let pinIds = pairs |> Array.map (fun (pinId, _, _) -> pinId)
                         // (refAnchor world, moving anchor at load pose = own-frame point, weight 1).
-                        let queryPairs = pairs |> Array.map (fun (_, ra, mp) -> ra, mp, 1.0)
+                        let queryPairs = pairsFor mesh |> Array.map (fun (_, ra, mp) -> ra, mp, 1.0)
                         task {
                             try
-                                let! world, residuals, _, _ =
+                                let! world =
                                     Query.lsqPairs ApiConfig.apiBase.Value mesh queryPairs
                                     |> Async.StartAsTask
-                                let pairResiduals = Array.zip pinIds residuals
-                                env.Emit [CoarseSolved(mesh, world, pairResiduals)]
+                                env.Emit [CoarseSolved(mesh, world)]
                             with ex ->
                                 env.Emit [CoarseFailed(mesh, ex.Message)]
                         } |> ignore
@@ -188,33 +185,26 @@ module Update =
                             let extra = if List.isEmpty rest then "" else sprintf " (+%d more)" (List.length rest)
                             sprintf "Solving %d of %d; %s needs %d more%s"
                                 n total (Primitives.shortName first) need extra
-                    showToast env summary { model with Registration = { reg with Running = true } }
-        | CoarseSolved(mesh, world, pairResiduals) ->
+                    showToast env summary model
+        | CoarseSolved(mesh, world) ->
             // lsqPairs returns the absolute world transform mapping the load-pose
             // moving anchors onto the reference; store it as the SolvedTransform.
             let scale = DatasetScale.forMesh model.DatasetScales mesh
             let solvedRender =
                 RigidTransform.worldToRender scale model.CommonCentroid (Trafo3d(world, world.Inverse))
-            let sp =
-                pairResiduals |> Array.fold (fun sp (pinId, r) ->
-                    updateCorr pinId (fun c -> { c with Residuals = Map.add mesh r c.Residuals }) sp)
-                    model.ScanPins
             invalidateRings (invalidateProbes
                 { model with
                     SolvedTransforms = Map.add mesh solvedRender model.SolvedTransforms
-                    RegView = RegAfter
-                    ScanPins = sp
-                    Registration = { model.Registration with Running = false } })
+                    RegView = RegAfter })
         | CoarseFailed(mesh, reason) ->
             showToast env (sprintf "Solve failed (%s)" (Primitives.shortName mesh))
                 { model with
-                    DebugLog = model.DebugLog.InsertAt(0, sprintf "coarse solve failed (%s): %s" mesh reason)
-                    Registration = { model.Registration with Running = false } }
+                    DebugLog = model.DebugLog.InsertAt(0, sprintf "coarse solve failed (%s): %s" mesh reason) }
 
         | AnchorsSeeded(refUpdates, seeded, inRoi) ->
             let sp =
-                refUpdates |> Array.fold (fun sp (pinId, ra, dist) ->
-                    updateCorr pinId (fun c -> { c with RefAnchor = Some ra; RefDistance = dist }) sp)
+                refUpdates |> Array.fold (fun sp (pinId, ra) ->
+                    updateCorr pinId (fun c -> { c with RefAnchor = Some ra }) sp)
                     model.ScanPins
             // Record ROI membership; drop a stale auto marker for any mesh that
             // resolved out-of-ROI (a manual pick is kept).
@@ -236,13 +226,6 @@ module Update =
                         { corr with Anchors = Map.add mesh { Point = point; Source = AnchorAuto } corr.Anchors }) sp)
                     sp
             { model with ScanPins = sp }
-        | ReseedMesh(pinId, mesh) ->
-            let model = { model with CorrArm = None; CorrPreview = None }
-            match HashMap.tryFind pinId model.ScanPins.Pins with
-            | Some pin when (ScanPin.correspondence pin |> Option.isSome) ->
-                if model.Registration.ReferenceMesh.IsSome then reseedOneMesh env model pinId mesh
-                else showToast env "Set a ★ reference mesh first to re-seed" model
-            | _ -> model
         | AnchorSeedFailed reason ->
             showToast env "Correspondence seeding failed — see debug log"
                 { model with
@@ -317,14 +300,6 @@ module Update =
             match model.MeshSolo with
             | Some s when s = name -> exitSolo model
             | _ -> enterSolo name model
-        | ResetCamera ->
-            let center = ModelTransforms.firstPanoCenterRender model
-            let radius =
-                if model.SceneBounds.IsInvalid then 50.0
-                else max 1.0 (model.SceneBounds.Size.Length * 0.6)
-            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, center))]
-            env.Emit [CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
-            model
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
         | SetActivePickingLayer name ->
@@ -517,22 +492,6 @@ module Update =
                     { model with
                         MeshSolo = b.PrevSolo
                         LocateBackup = None }
-        // Diagnostics route through existing handlers; focus/highlight = open target + 1.5s pulse.
-        | NavTo action ->
-            let pulse (selector : string) =
-                try JSRuntime.Instance.InvokeVoid("SuperPulse", selector) with _ -> ()
-            match action with
-            | ReseedCorrespondence _ ->
-                seedAnchors env model (correspondenceEnabledIds model)
-            | SelectPinOpenCard pinId ->
-                pulse ".pin-inspector"
-                { model with
-                    Selection = { model.Selection with SelectedPin = Some pinId }
-                    WorkflowStep = Correspondence }
-            | HighlightReferenceColumn ->
-                pulse ".rail-mesh-list"
-                { model with MenuOpen = true; WorkflowStep = Overview }
-            | RunCoarse -> env.Emit [SolveCoarse]; model
 
     // All-meshes variance: per reference vertex, the std of each visible moving
     // mesh's signed distance (target = reference, ref = moving). Debounced via the

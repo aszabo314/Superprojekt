@@ -11,7 +11,6 @@ open Aardvark.Dom
 module GuiFocus =
 
     let panel (env : Env<Message>) (model : AdaptiveModel) =
-        let refMeshA = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let corrStep = model.WorkflowStep |> AVal.map ((=) Correspondence)
 
         // The selected pin's identity (§A) — shown as a colour chip + glyph + name in

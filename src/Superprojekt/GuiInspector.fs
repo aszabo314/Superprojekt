@@ -145,7 +145,6 @@ module GuiInspector =
         let effPin    = (effId, pinsVal) ||> AVal.map2 (fun id pins -> id |> Option.bind (fun i -> HashMap.tryFind i pins))
         let hasPin    = effPin |> AVal.map Option.isSome
         let orderVal  = model.MeshOrder.Content
-        let refMeshA  = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let corrA     = effPin |> AVal.map (Option.bind ScanPin.correspondence)
         let emit (m : Message) = env.Emit [m]
 

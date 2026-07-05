@@ -17,13 +17,11 @@ type WorkflowStep =
     | Inspect
 
 module WorkflowStep =
-    let all = [ Overview; Correspondence; Inspect ]
     let index = function Overview -> 0 | Correspondence -> 1 | Inspect -> 2
     let title = function
         | Overview -> "Overview"
         | Correspondence -> "Correspondence"
         | Inspect -> "Inspect"
-    let mode = title
 
 // Pano = cylindrical unwrap from a mesh origin; Top = the world vertical drop.
 type FocusProjection =
@@ -38,9 +36,6 @@ module FocusProjection =
 type InspectChannel =
     | ChDifference
     | ChDisplacement
-
-module InspectChannel =
-    let label = function ChDifference -> "Difference" | ChDisplacement -> "Displacement"
 
 module DatasetScale =
     let forMesh (scales : Map<string, float>) (meshName : string) =
@@ -70,13 +65,11 @@ module RigidTransform =
 
 type RegistrationState = {
     ReferenceMesh    : string option
-    Running          : bool
 }
 
 module RegistrationState =
     let initial = {
         ReferenceMesh  = None
-        Running        = false
     }
 
 // Before shows every mesh at its immutable LoadTransform; After shows solved
@@ -247,9 +240,6 @@ type Model =
 module ModelTransforms =
     let loadRender (model : Model) (mesh : string) =
         Map.tryFind mesh model.LoadTransforms |> Option.defaultValue Trafo3d.Identity
-
-    let solvedRender (model : Model) (mesh : string) =
-        Map.tryFind mesh model.SolvedTransforms
 
     let displayedRenderAt (view : RegView) (model : Model) (mesh : string) =
         match view, Map.tryFind mesh model.SolvedTransforms with

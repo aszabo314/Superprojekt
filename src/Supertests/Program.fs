@@ -3,9 +3,8 @@ module Supertests.Program
 // Unit tests for the pure registration pieces:
 //   • RegMath.solveRigid — weighted Umeyama (recovery, reflection handling,
 //     weight semantics, collinearity flag, <3-pairs rejection)
-//   • RegConditioning — spread eigenvalues / collinearity / dominant axis
+//   • RegConditioning — spread eigenvalues / collinearity ratio
 //   • Readiness.compute — the correspondence readiness engine
-//   • FlyToMath — camera fly-to framing
 // Plain console runner (exit code = failure count) so no new packages enter
 // the paket lock.
 
@@ -132,31 +131,17 @@ let umeyamaTests () =
 // ───────────────────────── RegConditioning sanity ─────────────────────────
 
 let conditioningTests () =
+    // λ2/λ1 < 1e-3 is the near-collinear threshold Readiness.compute applies.
     let line = Array.init 6 (fun i -> V3d(float i, 0.0, 0.0), 1.0)
-    check "collinear spread flagged" (RegConditioning.isCollinear (RegConditioning.spreadEigenvalues line))
+    check "collinear spread flagged" (RegConditioning.lambdaRatio (RegConditioning.spreadEigenvalues line) < 1e-3)
     let spread = Array.init 24 (fun _ -> randV3 10.0, 1.0)
-    check "spread set not flagged" (not (RegConditioning.isCollinear (RegConditioning.spreadEigenvalues spread)))
-    // dominantAxis (anchor cutaway): the PCA axis aligns with the line of
-    // maximum spread regardless of sign.
-    let axisDir = V3d(1.0, 2.0, -0.5) |> Vec.normalize
-    let alongLine = Array.init 8 (fun i -> V3d.Zero + axisDir * (float i - 3.5) + randV3 0.01)
-    let recovered = RegConditioning.dominantAxis alongLine
-    checkLe "dominantAxis recovers spread line" (1.0 - abs (Vec.dot recovered axisDir)) 1e-3
-    check "dominantAxis degenerate → up" (RegConditioning.dominantAxis [| V3d.Zero |] = V3d.OOI)
-    // observabilityDeficiency: near-planar neighbourhood → high (weakly
-    // conditioned), isotropic → ~0. Genuine ~0 distinct from absent (1.0).
-    check "planar neighbourhood weakly conditioned" (RegMath.observabilityDeficiency [| 1.0; 1.0; 1e-5 |] > 0.99)
-    check "isotropic neighbourhood well conditioned" (RegMath.observabilityDeficiency [| 1.0; 1.0; 1.0 |] < 1e-6)
-    check "empty eigenvalues default degenerate" (RegMath.observabilityDeficiency [||] = 1.0)
+    check "spread set not flagged" (RegConditioning.lambdaRatio (RegConditioning.spreadEigenvalues spread) >= 1e-3)
 
 // ─────────────────── Workflow panel: readiness engine ─────────────────────
 
-let private mkRPin label refAnchor (accepted : string list) (total : int) : ReadinessPin =
-    { Id = ScanPinId.create ()
-      Label = label
-      RefAnchor = refAnchor
-      Accepted = Set.ofList accepted
-      Unresolved = total - List.length accepted }
+let private mkRPin refAnchor (accepted : string list) : ReadinessPin =
+    { RefAnchor = refAnchor
+      Accepted = Set.ofList accepted }
 
 let readinessTests () =
     let baseInput = {
@@ -168,15 +153,11 @@ let readinessTests () =
     // non-collinear spread (parabola) with anchors accepted on both meshes
     let pinsN n =
         List.init n (fun i ->
-            mkRPin (sprintf "p%d" i)
-                (Some (V3d(float i * 3.0, float (i * i), 0.5), 1.0))
-                [ "A"; "B" ] 2)
+            mkRPin (Some (V3d(float i * 3.0, float (i * i), 0.5), 1.0)) [ "A"; "B" ])
 
     let d = Readiness.compute { baseInput with ReferenceMesh = None }
     check "no-ref blocker"
         (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "reference"))
-    check "no-ref highlight action"
-        (d |> List.exists (fun x -> x.Action = Some HighlightReferenceColumn))
     check "no-ref never ready" (ready d |> List.isEmpty)
 
     let d = Readiness.compute baseInput
@@ -191,45 +172,27 @@ let readinessTests () =
 
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 3 }
     check "3 pins → exactly one Ready" (ready d |> List.length = 1)
-    check "Ready action" ((ready d |> List.head).Action = Some RunCoarse)
     check "no blockers when clear" (d |> List.forall (fun x -> x.Severity <> Blocker))
 
-    let pinU = mkRPin "pu" (Some (V3d(9.0, 1.0, 2.0), 1.0)) [ "A" ] 2
+    let pinU = mkRPin (Some (V3d(9.0, 1.0, 2.0), 1.0)) [ "A" ]
     let d = Readiness.compute { baseInput with EnabledPins = pinU :: pinsN 3 }
     check "no per-pin unresolved hints (superseded by the matrix)"
         (not (d |> List.exists (fun x -> x.Text.Contains "without a marker")))
     check "extra pins still ready" (ready d |> List.length = 1)
 
     let colinear =
-        List.init 4 (fun i -> mkRPin (sprintf "c%d" i) (Some (V3d(float i, 0.0, 0.0), 1.0)) [ "A"; "B" ] 2)
+        List.init 4 (fun i -> mkRPin (Some (V3d(float i, 0.0, 0.0), 1.0)) [ "A"; "B" ])
     let d = Readiness.compute { baseInput with EnabledPins = colinear }
     check "collinear anchors → warning" (d |> List.exists (fun x -> x.Text.Contains "near-collinear"))
     let d = Readiness.compute { baseInput with EnabledPins = pinsN 4 }
     check "spread anchors → no collinear warning"
         (not (d |> List.exists (fun x -> x.Text.Contains "near-collinear")))
 
-// ────────────────────── Workflow panel: fly-to math ────────────────────────
-
-let flyToTests () =
-    let aspect = 16.0 / 9.0
-    let fovY = FlyToMath.fovY 90.0 aspect
-    checkLe "fovY closed form" (abs (fovY - 2.0 * atan (tan (Math.PI / 4.0) / aspect))) 1e-12
-    let d = FlyToMath.distance fovY 5.0
-    checkLe "fly-to distance closed form" (abs (d - 5.0 / tan (fovY * 0.125))) 1e-12
-    check "distance grows with radius" (FlyToMath.distance fovY 10.0 > d)
-    let c, r = FlyToMath.boundingSphere (FlyToBounds (Box3d(V3d(-1.0, -2.0, -3.0), V3d(1.0, 2.0, 3.0))))
-    checkLe "bounds → sphere centre" (c - V3d.Zero).Length 1e-12
-    checkLe "bounds → sphere radius" (abs (r - V3d(2.0, 4.0, 6.0).Length * 0.5)) 1e-12
-    let c2, r2 = FlyToMath.boundingSphere (FlyToSphere(V3d(1.0, 2.0, 3.0), 4.0))
-    check "sphere passthrough" (c2 = V3d(1.0, 2.0, 3.0) && r2 = 4.0)
-    check "degenerate radius clamped" (snd (FlyToMath.boundingSphere (FlyToSphere(V3d.Zero, 0.0))) > 0.0)
-
 [<EntryPoint>]
 let main _ =
     umeyamaTests ()
     conditioningTests ()
     readinessTests ()
-    flyToTests ()
     printfn ""
     printfn "%d/%d passed%s" (total - failures) total (if failures = 0 then "" else sprintf " — %d FAILED" failures)
     failures

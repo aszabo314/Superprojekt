@@ -30,11 +30,11 @@ type Message =
     // Writes SolvedTransform directly, per visible moving mesh with ≥3 in-ROI
     // pairs, in parallel.
     | SolveCoarse
-    | CoarseSolved of mesh:string * world:M44d * pairResiduals:(ScanPinId * float)[]
+    | CoarseSolved of mesh:string * world:M44d
     | CoarseFailed of mesh:string * reason:string
     // inRoi carries per-(pin,mesh) ROI membership; out-of-ROI meshes are not
     // seeded and their stale auto markers are dropped.
-    | AnchorsSeeded of refUpdates:(ScanPinId * V3d * float)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]
+    | AnchorsSeeded of refUpdates:(ScanPinId * V3d)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]
     | AnchorSeedFailed of string
     | ClearToast
     // Per-mesh intrinsic error visualization (Overview mesh list). HeatOff = textured.
@@ -50,13 +50,11 @@ type Message =
     | ScanPinMsg              of ScanPinMessage
     | SetRenderingMode of RenderingMode
     | ToggleMeshSolo of string
-    | ResetCamera
     | ToggleGearPopover
     | SetActivePickingLayer of string option
     // hover = peek, click = select/promote.
     | SetHovered of HoverTarget option
     | SetFocusedMesh of string option
-    | ReseedMesh of ScanPinId * string
     | SetWorkflowStep of WorkflowStep
     | SetInspectChannel of InspectChannel
     | SetFocusProjection of FocusProjection
@@ -82,7 +80,6 @@ type Message =
     // zoom is the double-click handler's job.
     | FrameCorrespondence of ScanPinId * mesh:string
     | BackOutLocate
-    | NavTo of NavAction
 
 and ScanPinMessage =
     | EnterAnchorPlacement

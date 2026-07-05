@@ -225,30 +225,15 @@ let probeHandler : HttpHandler =
                 let dists =
                     r.Distributions |> Array.map (fun d ->
                         {| name = d.Name; count = d.Count
-                           median = d.Median; q1 = d.Q1; q3 = d.Q3; std = d.Std
-                           bandwidth = d.Bandwidth; kde = d.Kde; samples = d.Samples
-                           positions = d.Positions; footprint = d.Footprint
-                           intr = d.Intrinsics |})
-                let perMesh =
-                    r.PerMesh |> Array.map (fun p ->
-                        {| name = p.Name; iqr = p.Iqr; medianOffset = p.MedianOffset; count = p.Count |})
+                           median = d.Median; std = d.Std
+                           samples = d.Samples; positions = d.Positions |})
                 log.LogInformation("probe ref={Ref} r={Radius:F2} L={Length:F1}: {Meshes} meshes, {Points} pts",
                     req.ReferenceName, args.Radius, r.Length,
                     r.Distributions.Length, (r.Distributions |> Array.sumBy (fun d -> d.Count)))
                 return! json {|
                     ok = true
                     normal = fromV3d r.Normal
-                    planarity = r.Planarity
-                    length = r.Length
-                    autoLength = r.AutoLength
-                    refOffset = r.RefOffset
-                    xAuto = [| fst r.XAuto; snd r.XAuto |]
-                    xFit = [| fst r.XFit; snd r.XFit |]
                     distributions = dists
-                    sources = {| dataset = r.DatasetError
-                                 algorithm = r.AlgorithmResid
-                                 conditioning = r.LocalConditioning
-                                 perMesh = perMesh |}
                 |} next ctx
         with ex ->
             log.LogError(ex, "probe failed")

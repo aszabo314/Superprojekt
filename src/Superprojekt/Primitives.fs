@@ -336,7 +336,7 @@ module ReadinessView =
                 | None -> []
             let enabledPins =
                 pins |> HashMap.toList
-                |> List.choose (fun (id, p) ->
+                |> List.choose (fun (_, p) ->
                     match ScanPin.correspondence p with
                     | Some c ->
                         let marked =
@@ -344,11 +344,8 @@ module ReadinessView =
                             |> List.filter (fun m -> Map.containsKey m c.Anchors)
                             |> Set.ofList
                         Some {
-                            Id            = id
-                            Label         = sprintf "%s %s" p.Glyph p.ShortName
                             RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, 1.0)
                             Accepted      = marked
-                            Unresolved    = List.length movingVisible - Set.count marked
                         }
                     | _ -> None)
             {

@@ -11,10 +11,6 @@ type AnchorSource =
     | AnchorAuto
     | AnchorPick3D
 
-module AnchorSource =
-    let tag = function AnchorAuto -> "auto" | AnchorPick3D -> "pick3d"
-    let ofTag = function "pick3d" -> AnchorPick3D | _ -> AnchorAuto
-
 // Point is mesh-local (the mesh's own untransformed frame); the world position is
 // derived via the mesh's displayed transform, so the before/after toggle moves
 // each anchor with its mesh automatically.
@@ -29,9 +25,7 @@ type Correspondence = {
     // Pin centre if the host is the reference mesh, else its closest-point
     // projection onto the reference. None until seeded.
     RefAnchor   : V3d option
-    RefDistance : float
     Anchors     : Map<string, MeshAnchor>
-    Residuals   : Map<string, float>
     // ROI membership computed server-side during seed: true = the mesh has surface
     // inside the pin ROI (closest point ≤ roiRadius). Absent ⇒ not yet evaluated.
     InRoi       : Map<string, bool>
@@ -40,9 +34,7 @@ type Correspondence = {
 module Correspondence =
     let empty = {
         RefAnchor   = None
-        RefDistance = 0.0
         Anchors     = Map.empty
-        Residuals   = Map.empty
         InRoi       = Map.empty
     }
 
@@ -106,64 +98,9 @@ module RegConditioning =
                                     xy * s, yy * s, yz * s,
                                     xz * s, yz * s, zz * s))
 
-    // First principal axis (dominant eigenvector) of an unweighted point set,
-    // via power iteration on the covariance — used by the anchor cutaway to
-    // orient the section plane along the line of maximum anchor spread.
-    let dominantAxis (points : V3d[]) =
-        if points.Length < 2 then V3d.OOI
-        else
-            let mean = (points |> Array.fold (+) V3d.Zero) / float points.Length
-            let mutable xx = 0.0
-            let mutable xy = 0.0
-            let mutable xz = 0.0
-            let mutable yy = 0.0
-            let mutable yz = 0.0
-            let mutable zz = 0.0
-            for p in points do
-                let d = p - mean
-                xx <- xx + d.X * d.X
-                xy <- xy + d.X * d.Y
-                xz <- xz + d.X * d.Z
-                yy <- yy + d.Y * d.Y
-                yz <- yz + d.Y * d.Z
-                zz <- zz + d.Z * d.Z
-            let cov = M33d(xx, xy, xz, xy, yy, yz, xz, yz, zz)
-            // seed with the coordinate axis of largest variance (not orthogonal
-            // to the dominant eigenvector for non-degenerate sets)
-            let mutable v =
-                if xx >= yy && xx >= zz then V3d.IOO
-                elif yy >= zz then V3d.OIO
-                else V3d.OOI
-            for _ in 0 .. 63 do
-                let p = cov * v
-                let l = p.Length
-                if l > 1e-15 then v <- p / l
-            if v.Length > 1e-9 then v.Normalized else V3d.OOI
-
     let lambdaRatio (eigenvalues : float[]) =
         if eigenvalues.Length < 2 || eigenvalues.[0] <= 1e-12 then 0.0
         else max 0.0 eigenvalues.[1] / eigenvalues.[0]
-
-    let isCollinear (eigenvalues : float[]) = lambdaRatio eigenvalues < 1e-3
-
-// Targets are world-space; reducer converts to render space at the boundary.
-type FlyToTarget =
-    | FlyToSphere of centre : V3d * radius : float
-    | FlyToBounds of Box3d
-
-module FlyToMath =
-    // Vertical fov from the app's fixed 90° horizontal fov + viewport aspect.
-    let fovY (horizontalFovDeg : float) (aspect : float) =
-        2.0 * atan (tan (horizontalFovDeg * Math.PI / 360.0) / max 0.1 aspect)
-
-    // The target sphere subtends ~25 % of the viewport height.
-    let distance (fovYRad : float) (radius : float) =
-        radius / tan (fovYRad * 0.125)
-
-    let boundingSphere (target : FlyToTarget) =
-        match target with
-        | FlyToSphere (c, r) -> c, max 1e-3 r
-        | FlyToBounds b -> b.Center, max 1e-3 (b.Size.Length * 0.5)
 
 // Readiness engine: pure over a dedicated input DTO so Supertests can table-drive
 // it; the adaptive adapter is in Primitives.ReadinessView.
@@ -174,26 +111,16 @@ type Severity =
     | Ready
     | Info
 
-type NavAction =
-    | ReseedCorrespondence of meshFilter : string option
-    | SelectPinOpenCard of ScanPinId
-    | HighlightReferenceColumn
-    | RunCoarse
-
 type Diagnostic = {
     Severity : Severity
     Text     : string
-    Action   : NavAction option
 }
 
 type ReadinessPin = {
-    Id            : ScanPinId
-    Label         : string
     // reference anchor + reliability (the collinearity input)
     RefAnchor     : (V3d * float) option
-    // visible moving meshes with an anchor for this pin; Unresolved = those without
+    // visible moving meshes with an anchor for this pin
     Accepted      : Set<string>
-    Unresolved    : int
 }
 
 type ReadinessInput = {
@@ -219,17 +146,17 @@ module Readiness =
     // Rules evaluated in order, all matches emitted; display sorts by severity.
     let compute (input : ReadinessInput) : Diagnostic list =
         let diags = ResizeArray<Diagnostic>()
-        let add severity text action =
-            diags.Add { Severity = severity; Text = text; Action = action }
+        let add severity text =
+            diags.Add { Severity = severity; Text = text }
 
         // Hard blockers are only: no reference, and zero SOLVABLE meshes (so a
         // partial overlap still solves the meshes that do have ≥3 markers). A mesh
         // short of 3 markers is a per-mesh WARNING, not a global blocker.
         if input.ReferenceMesh.IsNone then
-            add Blocker "Set a reference (★)" (Some HighlightReferenceColumn)
+            add Blocker "Set a reference (★)"
 
         if List.isEmpty input.EnabledPins then
-            add Blocker "Need ≥3 pins" None
+            add Blocker "Need ≥3 pins"
 
         let counts = pairCounts input
         let anySolvable = counts |> List.exists (fun (_, n) -> n >= 3)
@@ -244,7 +171,7 @@ module Readiness =
            && not (List.isEmpty input.EnabledPins)
            && not (List.isEmpty input.VisibleMovingMeshes)
            && not anySolvable then
-            add Blocker "No mesh has ≥3 markers yet" None
+            add Blocker "No mesh has ≥3 markers yet"
 
         if List.length input.EnabledPins >= 3 && lambdaRatioOf input < 1e-3 then
             let affected =
@@ -252,15 +179,14 @@ module Readiness =
             let suffix =
                 if List.isEmpty affected then ""
                 else sprintf " (%s)" (String.concat ", " affected)
-            add Warning
-                (sprintf "Pins near-collinear%s" suffix) None
+            add Warning (sprintf "Pins near-collinear%s" suffix)
 
         if input.ReferenceMesh.IsSome && List.isEmpty input.VisibleMovingMeshes then
-            add Info "No moving meshes to solve" None
+            add Info "No moving meshes to solve"
 
         let blocked = diags |> Seq.exists (fun d -> d.Severity = Blocker)
         if not blocked && counts |> List.exists (fun (_, n) -> n >= 3) then
-            add Ready "Ready to align" (Some RunCoarse)
+            add Ready "Ready to align"
 
         List.ofSeq diags
 

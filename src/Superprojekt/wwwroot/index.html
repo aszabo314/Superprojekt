@@ -1,23 +1,15 @@
 <!DOCTYPE html>
-<html data-bs-theme="dark">
+<html>
     <head>
         <meta charset="utf-8" />
-        <!-- the /s/{token} study route is virtual; assets always live at root -->
         <base href="/" />
         <title>SUPER</title>
         <link rel="icon" type="image/x-icon" href="./favicon.ico">
-        <link rel="apple-touch-icon" href="./icon-192.png">
         <meta
              name='viewport'
              content='width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no'
         />
-        <meta name="apple-mobile-web-app-capable" content="yes">
-        <meta name="apple-mobile-web-app-status-bar-style" content="black">
-        <meta name="theme-color" content="#000000">
-        <link rel="manifest" href="./manifest.json" />
-        <!-- ?v= busts the browser + service-worker caches; bump it whenever a stale
-             stylesheet would break layout (the no-cache header covers future edits). -->
-        <link rel="stylesheet" href="./style.css?v=4" />
+        <link rel="stylesheet" href="./style.css" />
     </head>
 
     <body>
@@ -36,8 +28,12 @@
             </div>
         </div>
         <script>
+        // The PWA service worker was removed; unregister any worker a previous
+        // build installed so it stops intercepting fetches.
         if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('./sw.js');
+            navigator.serviceWorker.getRegistrations().then(function (rs) {
+                rs.forEach(function (r) { r.unregister(); });
+            });
         }
         </script>
     </body>

@@ -359,6 +359,9 @@ module MeshView =
                     | 3 -> float32 disp
                     | _ -> 1.0f)
             let distLoNeg = inspectRangeA |> AVal.map (fun (lo, _) -> float32 (abs lo))
+            let diffIsoStep =
+                (distEncoding, inspectRangeA) ||> AVal.map2 (fun enc (lo, hi) ->
+                    if enc = 1 then float32 (Primitives.Diff.isoStep lo hi) else 0.0f)
             let surface =
                 sg {
                     Sg.Active renderEnabled
@@ -398,6 +401,7 @@ module MeshView =
                     Sg.Uniform("DistanceEncoding",     distEncoding)
                     Sg.Uniform("DistScale",            distScale)
                     Sg.Uniform("DistLoNeg",            distLoNeg)
+                    Sg.Uniform("DiffIsoStep",          diffIsoStep)
                     // Per-mesh intrinsic error layer (set from the Overview mesh list),
                     // respected in every workflow mode. Suppressed while this mesh paints
                     // an Inspect comparison field (distEncoding ≠ 0) so the 2-mesh /

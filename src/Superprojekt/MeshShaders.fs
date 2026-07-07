@@ -49,6 +49,8 @@ module MeshShader =
         member x.DistanceEncoding : int     = x?DistanceEncoding
         member x.DistScale        : float32 = x?DistScale
         member x.DistLoNeg        : float32 = x?DistLoNeg
+        // Value step (m) of the difference isolines (enc 1 only); 0 disables.
+        member x.DiffIsoStep      : float32 = x?DiffIsoStep
         // 0 = off, 1 = incidence, 2 = range.
         member x.HeatmapMode      : int     = x?HeatmapMode
         member x.SensorOrigin     : V3f     = x?SensorOrigin
@@ -149,9 +151,12 @@ module MeshShader =
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
             // Difference map (soloed moving mesh, Inspect): signed distance on the
-            // linear-diverging map (§C) — neutral (0.62,0.63,0.66) → red (+)/blue (−)
-            // with a near-zero t^0.6 boost (no central flat-spot). Mirrors Primitives.Diff
-            // and the focus difference tile. (No per-vertex LoD here → gate = 0.)
+            // RdYlBu-style diverging map (§C) — zero = light yellow (welded to 0),
+            // + through orange to dark red, − through steel blue to dark blue, each
+            // sign normalized by its own end, near-zero t^0.6 boost. Mirrors
+            // Primitives.Diff and the focus difference tile. On top: constant-value
+            // isolines every DiffIsoStep metres (derivative-antialiased darkening),
+            // suppressed beyond the range where the colour clamps.
             if uniform.DistanceEncoding = 1 && aboveGhost then
                 let d = v.sd
                 if abs d < 1e20f then
@@ -159,10 +164,22 @@ module MeshShader =
                     let hiN = max 1e-6f uniform.DistLoNeg
                     let t = if d >= 0.0f then d / hiP else -d / hiN
                     let m = pow (min 1.0f t) 0.6f
-                    let mid = V3f(0.62f, 0.63f, 0.66f)
+                    let zeroC = V3f(1.0f, 0.906f, 0.541f)
+                    let midC = if d >= 0.0f then V3f(0.957f, 0.427f, 0.263f) else V3f(0.455f, 0.678f, 0.820f)
+                    let endC = if d >= 0.0f then V3f(0.647f, 0.0f, 0.149f) else V3f(0.192f, 0.212f, 0.584f)
                     baseRgb <-
-                        if d >= 0.0f then mid + (V3f(0.80f, 0.12f, 0.12f) - mid) * m
-                        else mid + (V3f(0.13f, 0.34f, 0.74f) - mid) * m
+                        if m < 0.5f then zeroC + (midC - zeroC) * (m * 2.0f)
+                        else midC + (endC - midC) * ((m - 0.5f) * 2.0f)
+                    let step = uniform.DiffIsoStep
+                    if step > 1e-9f && t <= 1.0f then
+                        let x = d / step
+                        let g = abs (x - floor (x + 0.5f))
+                        let aa = max (abs (ddx x) + abs (ddy x)) 1e-6f
+                        // Fade lines out where contours pack denser than ~2 px apart
+                        // (steep/grazing fragments) — else they smear into a dark blotch.
+                        let fade = clamp 0.0f 1.0f ((0.5f - aa) * 4.0f)
+                        let line = 0.45f + 0.55f * min 1.0f (g / (aa * 1.3f))
+                        baseRgb <- baseRgb * (1.0f - fade * (1.0f - line))
             // Variance map: per-reference-vertex disagreement std (≥0) from light
             // grey to strong red, normalised by DistScale.
             if uniform.DistanceEncoding = 2 && aboveGhost then

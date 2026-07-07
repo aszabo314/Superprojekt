@@ -62,31 +62,47 @@ module Primitives =
     // gate); outside, ramp from the gate edge out to `range`. The SAME constants +
     // shape are mirrored in the FShade difference painters (FocusShaders / MeshShaders).
     module Diff =
+        // RdYlBu-style diverging map: zero = light yellow (visible against the white
+        // page — a grey/white centre vanished there), each sign runs through a vivid
+        // mid hue to a dark end. `neutral` is reserved for NO SIGNAL (within the LoD
+        // gate / no data), so grey now always means "nothing detectable", never "0".
+        // Mirrored in MeshShaders (enc 1) + FocusShaders (mode 1) — keep in sync.
         let neutral = V3d(0.62, 0.63, 0.66)
-        let blue    = V3d(0.13, 0.34, 0.74)
-        let red     = V3d(0.80, 0.12, 0.12)
+        let zero    = V3d(1.0, 0.906, 0.541)
+        let private posMid = V3d(0.957, 0.427, 0.263)
+        let private posEnd = V3d(0.647, 0.0, 0.149)
+        let private negMid = V3d(0.455, 0.678, 0.820)
+        let private negEnd = V3d(0.192, 0.212, 0.584)
+        let private ramp (v : float) (m : float) =
+            let mid, e = if v >= 0.0 then posMid, posEnd else negMid, negEnd
+            if m < 0.5 then zero + (mid - zero) * (m * 2.0)
+            else mid + (e - mid) * ((m - 0.5) * 2.0)
         let colorV3 (lod : float) (range : float) (v : float) =
             let a = abs v
             if a <= lod then neutral
             else
                 let t = clamp 0.0 1.0 ((a - lod) / max 1.0e-6 (range - lod))
-                let m = t ** 0.6
-                let e = if v >= 0.0 then red else blue
-                neutral * (1.0 - m) + e * m
+                ramp v (t ** 0.6)
         let color (lod : float) (range : float) (v : float) =
             let c = colorV3 lod range v
             let b x = byte (clamp 0.0 255.0 (x * 255.0))
             C4b(b c.X, b c.Y, b c.Z)
-        // Asymmetric signed range [lo ≤ 0, hi ≥ 0]: neutral stays welded to 0,
-        // negatives ramp to full blue at lo, positives to full red at hi (each side
-        // normalized by its own end, same t^0.6 boost). Values outside clamp.
+        // Asymmetric signed range [lo ≤ 0, hi ≥ 0]: the zero yellow stays welded to 0,
+        // each side normalized by its own end (same t^0.6 near-zero boost). Values
+        // outside clamp to the end colours.
         let colorSignedV3 (lo : float) (hi : float) (v : float) =
             let t =
                 if v >= 0.0 then clamp 0.0 1.0 (v / max 1.0e-6 hi)
                 else clamp 0.0 1.0 (v / min -1.0e-6 lo)
-            let m = t ** 0.6
-            let e = if v >= 0.0 then red else blue
-            neutral * (1.0 - m) + e * m
+            ramp v (t ** 0.6)
+        // Value step (m) of the difference isolines: nice 1/2/5 step giving ~8 bands
+        // over the signed span, so contour k sits at exactly k·step (0 included).
+        let isoStep (lo : float) (hi : float) =
+            let span = max 1.0e-6 (hi - lo)
+            let raw = span / 8.0
+            let mag = 10.0 ** floor (log10 raw)
+            let n = raw / mag
+            (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
 
     let shortName (name : string) =
         let mesh =

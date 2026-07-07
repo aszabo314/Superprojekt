@@ -26,6 +26,41 @@
 - Pick-buffer fix (below) — build green; awaiting a browser check that
   double-click recenter lands on the mesh again, armed 3D-surface
   correspondence clicks land on the surface, and outlines/isolines still draw.
+- Difference gradient + value isolines (below) — build green, but BOTH mesh
+  shaders changed: needs the in-browser compile check (ddx/ddy → dFdx/dFdy in
+  ESSL3) plus a visual pass (yellow zero readable, isoline density/width,
+  clamp-region suppression, matrix-cell grey-vs-yellow gate step). ShaderCache
+  entries stale again → runtime compile fallback.
+
+## Difference map: RdYlBu-style gradient + value isolines (2026-07-07)
+The diverging difference map's grey centre vanished (against the white page and
+the washed-out surface); replaced with an RdYlBu-style ramp and added
+constant-value contour lines:
+
+- **New gradient** (all consumers in sync — CPU colormap, 3D mesh shader enc 1,
+  focus shader mode 1; legend/matrix/dots pick it up automatically): zero =
+  light yellow #FFE78A, + → orange #F46D43 → dark red #A50026, − → steel blue
+  #74ADD1 → dark blue #313695; per-sign normalization + t^0.6 boost kept.
+  Grey (0.62,0.63,0.66) now exclusively means "no signal" (within-LoD matrix
+  cells, no-data sentinel, dot fallback) — never "0".
+- **Isolines**: dark contours at every k·step of the difference value, step =
+  nice 1/2/5 ≈ (shared range span)/8 (so 0 is always a contour), computed
+  client-side and passed as a uniform (3D `DiffIsoStep`, focus
+  `FocusIsoStep`); shader draws them from the interpolated field with
+  ddx/ddy-based antialiasing (~2.5 px), multiplicative darkening to 45 % at
+  the core, suppressed where the colour clamps (t ≥ 1), and faded out where
+  contours pack denser than ~2 px (steep/grazing fragments would smear into a
+  dark blotch). NOTE: FShade has `ddx`/`ddy` but NOT `fwidth`.
+- Docs: CLAUDE.md colour-map bullet rewritten + isoline rule; GUI.md §4.4.
+
+## GUI.md — as-is GUI & interaction reference (2026-07-07)
+New repo-root `GUI.md`: a complete, honest, code-free writeup of the GUI for
+review — layout, interaction grammar, global state/holds, 3D view (picking,
+ghosting, false-colour math, outlines, pins), the three workflow steps, rail /
+focus panel / dock, probe/seed/solve data flow, end-to-end interaction chains,
+input table, and an explicit limitations section (incl. the scale-bar
+fov-axis defect spotted while writing: it treats the 90° fov as vertical but
+the renderer applies it horizontally → lengths off by ~the aspect ratio).
 
 ## Fix: GPU picks landed ~2 units in front of the camera (2026-07-07)
 Double-click recenter (and any GPU pixel pick in the main view) returned a

@@ -21,6 +21,8 @@ module FocusShaders =
         member x.FocusHi    : float32 = uniform?FocusHi
         member x.FocusLoNeg : float32 = uniform?FocusLoNeg
         member x.FocusLod   : float32 = uniform?FocusLod
+        // Value step (m) of the difference isolines (mode 1 only); 0 disables.
+        member x.FocusIsoStep : float32 = uniform?FocusIsoStep
 
     type ColorVertex =
         {
@@ -62,19 +64,36 @@ module FocusShaders =
                 let t = min 1.0f (max 0.0f (abs v.s / max 1e-6f uniform.FocusHi))
                 return V4f(0.933f + (0.114f - 0.933f) * t, 0.949f + (0.306f - 0.949f) * t, 0.965f + (0.847f - 0.965f) * t, 1.0f)
             else
-                // Linear-diverging difference map (§C, Kovesi CET-D style): neutral
-                // (0.62,0.63,0.66) → red (+) / blue (−), with a near-zero perceptual
-                // boost (t^0.6) so small deviations stay visible (no central flat-spot).
-                // Asymmetric ends: + saturates at FocusHi, − at FocusLoNeg. ±LoD gate
-                // kept: within FocusLod → neutral. Mirrors Primitives.Diff.colorSignedV3.
+                // RdYlBu-style diverging difference map (§C): zero = light yellow
+                // (welded to 0; grey means "no signal", not "0"), + through orange to
+                // dark red, − through steel blue to dark blue, each sign normalized by
+                // its own end (FocusHi / FocusLoNeg) with the near-zero t^0.6 boost.
+                // ±LoD gate kept: within FocusLod → neutral grey. Constant-value
+                // isolines every FocusIsoStep metres (derivative-antialiased darkening,
+                // suppressed where the colour clamps). Mirrors Primitives.Diff +
+                // MeshShader.shade enc 1.
                 let a = abs v.s
                 if a < uniform.FocusLod then return V4f(0.62f, 0.63f, 0.66f, 1.0f)
                 else
                     let hi = if v.s >= 0.0f then max 1e-6f uniform.FocusHi else max 1e-6f uniform.FocusLoNeg
                     let denom = max 1e-6f (hi - uniform.FocusLod)
-                    let m = pow (min 1.0f (max 0.0f ((a - uniform.FocusLod) / denom))) 0.6f
-                    if v.s >= 0.0f then
-                        return V4f(0.62f + (0.80f - 0.62f) * m, 0.63f + (0.12f - 0.63f) * m, 0.66f + (0.12f - 0.66f) * m, 1.0f)
-                    else
-                        return V4f(0.62f + (0.13f - 0.62f) * m, 0.63f + (0.34f - 0.63f) * m, 0.66f + (0.74f - 0.66f) * m, 1.0f)
+                    let t = min 1.0f (max 0.0f ((a - uniform.FocusLod) / denom))
+                    let m = pow t 0.6f
+                    let zeroC = V3f(1.0f, 0.906f, 0.541f)
+                    let midC = if v.s >= 0.0f then V3f(0.957f, 0.427f, 0.263f) else V3f(0.455f, 0.678f, 0.820f)
+                    let endC = if v.s >= 0.0f then V3f(0.647f, 0.0f, 0.149f) else V3f(0.192f, 0.212f, 0.584f)
+                    let mutable rgb =
+                        if m < 0.5f then zeroC + (midC - zeroC) * (m * 2.0f)
+                        else midC + (endC - midC) * ((m - 0.5f) * 2.0f)
+                    let step = uniform.FocusIsoStep
+                    if step > 1e-9f && t < 1.0f then
+                        let x = v.s / step
+                        let g = abs (x - floor (x + 0.5f))
+                        let aa = max (abs (ddx x) + abs (ddy x)) 1e-6f
+                        // Fade lines out where contours pack denser than ~2 px apart
+                        // (steep fragments) — else they smear into a dark blotch.
+                        let fade = clamp 0.0f 1.0f ((0.5f - aa) * 4.0f)
+                        let line = 0.45f + 0.55f * min 1.0f (g / (aa * 1.3f))
+                        rgb <- rgb * (1.0f - fade * (1.0f - line))
+                    return V4f(rgb, 1.0f)
         }

@@ -324,7 +324,10 @@ module FocusScene =
         let loNegA =
             (modeA, rangeA) ||> AVal.map2 (fun m (lo, _) ->
                 if m = 1 then float32 (abs lo) else 1.0f)
-        modeA, scalarData, hiA, loNegA
+        let isoA =
+            (modeA, rangeA) ||> AVal.map2 (fun m (lo, hi) ->
+                if m = 1 then float32 (Primitives.Diff.isoStep lo hi) else 0.0f)
+        modeA, scalarData, hiA, loNegA, isoA
 
     // Large single: render-space, textured. Top = orthographic pan/zoom; 360° = a
     // perspective camera fixed at the panorama eye (drag = look around, wheel = fov
@@ -341,7 +344,7 @@ module FocusScene =
         // panoEye = the 360° camera position AND the Top-view camera centre (the
         // mesh's panorama centre in render space); fitExtent frames the mesh around it.
         let _, panoEye, fitExtent = framing model name loaded renderT scale
-        let modeA, scalarBuf, hiA, loNegA = focusOverlay model name loaded scale
+        let modeA, scalarBuf, hiA, loNegA, isoA = focusOverlay model name loaded scale
         // Displacement single: white surface (mode 2 → 3) so the arrow glyphs read.
         let surfaceMode = modeA |> AVal.map (fun m -> if m = 2 then 3 else m)
         // Load→solved arrow glyphs (render space, exaggerated for visibility; colour =
@@ -629,6 +632,7 @@ module FocusScene =
                     Sg.Uniform("FocusHi",   hiA)
                     Sg.Uniform("FocusLoNeg", loNegA)
                     Sg.Uniform("FocusLod",  AVal.constant 0.0f)
+                    Sg.Uniform("FocusIsoStep", isoA)
                     Sg.NoEvents
                     Sg.VertexAttributes(vattrs loaded scalarBuf)
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
@@ -657,7 +661,7 @@ module FocusScene =
         let renderT, scale = renderTrafoOf model name loaded
         // Centre the thumbnail on the same panorama centre as the single.
         let _, fitCenter, fitExtent = framing model name loaded renderT scale
-        let modeA, scalarBuf, hiA, loNegA = focusOverlay model name loaded scale
+        let modeA, scalarBuf, hiA, loNegA, isoA = focusOverlay model name loaded scale
         let rc =
             renderControl {
                 RenderControl.Samples 1
@@ -674,6 +678,7 @@ module FocusScene =
                     Sg.Uniform("FocusHi",   hiA)
                     Sg.Uniform("FocusLoNeg", loNegA)
                     Sg.Uniform("FocusLod",  AVal.constant 0.0f)
+                    Sg.Uniform("FocusIsoStep", isoA)
                     Sg.NoEvents
                     Sg.VertexAttributes(vattrs loaded scalarBuf)
                     Sg.Index(BufferView(loaded.idx, typeof<int>))

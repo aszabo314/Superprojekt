@@ -67,6 +67,11 @@ module OutlineView =
 
         let composite =
             sg {
+                // NoEvents is load-bearing: pickable nodes write (id, gl_FragCoord.z)
+                // into the pick attachment with blending OFF — a fullscreen quad at
+                // NDC z=0 would stamp depth 0.5 over every pick pixel (its screen
+                // alpha is irrelevant there), breaking every GPU pick in the view.
+                Sg.NoEvents
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Shader {

@@ -62,6 +62,7 @@ MRT G-buffer (world-Z band parity + window depth → target0, palette colour + c
 
 - `Sg.OnTap` / `OnDoubleTap` / `OnLongPress` **fire on background misses too** — every handler that builds state from the hit must gate: `if e.Location.Depth < 0.9999 then Some e.WorldPosition else None` (background leaves depth at the clear value 1.0).
 - Ghost fragments leave depth at 1.0, so the GPU pixel pick cannot land on them. Anything that needs a 3D point on a possibly-ghosted surface keeps the GPU pick as the fast path and falls back to a server raycast (`View.resolvePick` / `raycastNearest*` / `raycastMesh`) — un-apply the mesh's displayed pose before the query, re-apply it to the hit. Hover-driven raycasts must be throttled (~60 ms) + generation-guarded.
+- **Every node without `Sg.NoEvents` writes the GPU pick buffer** (id + `gl_FragCoord.z`, blending forced off there — screen alpha is irrelevant, `DepthTest.None` wins unconditionally). Overlay/composite geometry — especially fullscreen quads like the outline composite — must set `Sg.NoEvents` or it hijacks every pick with its own depth.
 - The focus panel picks are **Dom-driven + server raycast** (`FocusScene.worldRayHit`) — `Sg.OnTap` does not fire reliably in the secondary render controls. Its cursor→NDC math must run in **CSS px**: the focus controls read `ViewportSize` ÷ the shared `FocusScene.dpr` published by the main view (binding `RenderControl.ClientSize` in a secondary control blanks it).
 
 ## Coordinate systems & transform hierarchy
@@ -148,7 +149,7 @@ SceneGraph.fs          scene composition + cross + labels + reference/focus outl
 FocusShaders.fs        focus colour fragment (Inspect/heatmap overlays)
 FocusScene.fs          focus render controls (single + tiles), 360°/Top cameras, pick
 GuiTopBar.fs           top bar + gear popover
-GuiOverlays.fs         toast, scale bar, orientation indicator, wheel label
+GuiOverlays.fs         toast, scale bar, orientation indicator, wheel label, pin flag tags
 GuiRail.fs             three-mode left rail (roster · pin×mesh matrix · Solve)
 GuiFocus.fs            focus panel head + FocusScene mounts
 GuiInspector.fs        mode-contextual bottom dock (distribution + brush bridge)

@@ -19,6 +19,49 @@
 - 360° focus view (below) — client build green, no new shader; awaiting a
   browser pass (look-around drag feel, fov zoom anchoring, correspondence
   pick/aim-ghost in 360°, per-mesh view memory, Top view unchanged).
+- Show-overlays rework (below) — client build green; awaiting a browser pass
+  (white-out read, thick flags, name-tag placement/tracking while orbiting,
+  in-browser compile of the edited mesh shader — ShaderCache entry is stale,
+  falls back to runtime compile; rerun ./precompileShaders.sh at leisure).
+- Pick-buffer fix (below) — build green; awaiting a browser check that
+  double-click recenter lands on the mesh again, armed 3D-surface
+  correspondence clicks land on the surface, and outlines/isolines still draw.
+
+## Fix: GPU picks landed ~2 units in front of the camera (2026-07-07)
+Double-click recenter (and any GPU pixel pick in the main view) returned a
+point near the image plane instead of the mesh. Cause: Aardvark.Dom picking
+writes (id, gl_FragCoord.z) into a pick attachment from every **pickable**
+node during the forward render — with blending forced OFF on that attachment,
+so screen-alpha-0 fragments still stamp it. The image-space outline composite
+(fullscreen quad, NDC z=0, DepthTest.None, no Sg.NoEvents) therefore
+overwrote the whole pick buffer with depth 0.5 every frame; depth 0.5 passes
+the `< 0.9999` background gate and unprojects to ~2 render units in front of
+the camera (near=1). Broken since 47d0625 (2026-06-29) made outlines
+always-on — the old `Sg.Active OutlineMode` (default off) had masked it.
+Armed correspondence placement via 3D-surface click was equally affected
+(false "hit" at depth 0.5 pre-empted the raycast fallback). Pin-dot taps
+survived (pinScene draws after the composite), hover coords survived (server
+raycast). Fix: `Sg.NoEvents` on the composite (OutlineView.fs) + a
+load-bearing comment; CLAUDE.md picking rule added.
+
+## Show-overlays hold: white-out + thick flags + 2D name tags (2026-07-07)
+The hold-O / 🎨 Overlays modifier now spotlights the pins much harder:
+
+- **Meshes paint plain white** while held (shading kept for relief): the
+  `Greyscale` uniform/branch in `MeshShader.shade` became `Whiteout` and runs
+  last, so every false-colour map (Inspect/heatmaps) is overridden too. Only
+  the separately-rendered pin geometry carries colour.
+- **Flag poles get much thicker** while held (line width 2.5 → 7.0, pole +
+  tip ring, still pin-coloured; unchanged when not held). The pole-tip maths
+  moved to shared helpers `ScanPin.flagMagnitude` / `ScanPin.flagTopRender`
+  (ScanPinModel.fs) so geometry and labels agree.
+- **2D name tags at the flag tips** (`GuiOverlays.pinFlagLabels`): DOM pills
+  (glyph + ShortName, pin-coloured border/text on white) projected from
+  `flagTopRender` through the same 90°-horizontal frustum as the main view,
+  re-placed every frame via the `observedRender` JSON-attribute pattern;
+  behind-camera / far-offscreen pins are dropped, overlap is accepted. The
+  3D `Sg.Text` pin labels hide while held so names don't double up.
+- CSS: `.pin-flag-labels` / `.pfl` in style.css (fixed, pointer-events none).
 
 ## 360° focus view replaces the pano unwrap (2026-07-06)
 The focus panel's "Pano" projection is no longer a cylindrical full-unwrap; it

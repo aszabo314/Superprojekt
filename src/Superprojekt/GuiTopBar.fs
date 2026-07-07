@@ -35,12 +35,12 @@ module GuiTopBar =
                 "◎ Isolate"
             }
 
-            // Spring-loaded show-overlays (hotkey O): greyscale the scene except the
-            // pin colours, so pin correspondence across views reads unmistakably.
+            // Spring-loaded show-overlays (hotkey O): white-out the meshes so only the
+            // pins carry colour (thick coloured flags + 2D name tags at their tips).
             button {
                 Class "tb-btn"
                 classWhen "tb-btn-active" model.ShowOverlaysHeld
-                Attribute("title", "Show overlays: hold to greyscale everything except pin colours (hotkey: O)")
+                Attribute("title", "Show overlays: hold to white-out the meshes — only the pins stay coloured, with name tags (hotkey: O)")
                 Dom.OnPointerDown((fun _ -> env.Emit [SetShowOverlays true]), pointerCapture = true)
                 Dom.OnPointerUp((fun _ -> env.Emit [SetShowOverlays false]), pointerCapture = true)
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetShowOverlays false])

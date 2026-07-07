@@ -110,6 +110,26 @@ module ScanPin =
         | ProbeReady r -> r.Normal
         | _ -> V3d.OOI
 
+    // Far-view flag pole: height grows with the pin's error magnitude
+    // (max |median offset| across moving meshes; 0 until the probe lands).
+    let flagMagnitude (p : ScanPin) =
+        match p.Probe with
+        | ProbeReady r ->
+            let moving =
+                r.Distributions
+                |> Array.filter (fun d -> d.MeshName <> r.ReferenceMesh && d.Count > 0)
+            if moving.Length = 0 then 0.0
+            else moving |> Array.map (fun d -> abs d.Median) |> Array.max
+        | _ -> 0.0
+
+    // Render-space tip of the flag pole (base = pin centre, along the pin axis) —
+    // shared by the 3D pole geometry and the show-overlays 2D name tags.
+    let flagTopRender (commonCentroid : V3d) (datasetScale : float) (p : ScanPin) =
+        let a = axis p
+        let aN = if a.Length > 1e-9 then a.Normalized else V3d.OOI
+        let h = renderLength datasetScale (p.InnerRadius * 1.5 + flagMagnitude p * 3.0)
+        renderCentre commonCentroid datasetScale p.Centre + aN * h
+
     let correspondence (p : ScanPin) = p.Correspondence
 
     let withCorrespondence (c : Correspondence option) (p : ScanPin) =

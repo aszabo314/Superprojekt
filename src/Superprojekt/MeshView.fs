@@ -409,9 +409,9 @@ module MeshView =
                                  | HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
-                    // Show-overlays modifier (§T8): greyscale the mesh while held; the
+                    // Show-overlays modifier (§T8): white-out the mesh while held; the
                     // pin geometry (separate) keeps its colour.
-                    Sg.Uniform("Greyscale", model.ShowOverlaysHeld |> AVal.map (fun on -> if on then 1.0f else 0.0f))
+                    Sg.Uniform("Whiteout", model.ShowOverlaysHeld |> AVal.map (fun on -> if on then 1.0f else 0.0f))
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)

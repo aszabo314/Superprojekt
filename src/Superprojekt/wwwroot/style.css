@@ -558,6 +558,28 @@ body.loaded { background: #f4f6f8; }
     white-space: nowrap;
 }
 
+/* ── Show-overlays pin name tags (flag-pole tips, hold-O) ─────────── */
+
+.pin-flag-labels {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+    z-index: 100;
+}
+.pin-flag-labels .pfl {
+    position: absolute;
+    transform: translate(-50%, -100%) translateY(-8px);
+    background: rgba(255, 255, 255, 0.94);
+    border: 2px solid;
+    border-radius: 4px;
+    padding: 1px 8px;
+    font-size: 14px;
+    font-weight: 600;
+    white-space: nowrap;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+}
+
 /* ── Scale bar ────────────────────────────────────────────────────── */
 
 .scale-bar {

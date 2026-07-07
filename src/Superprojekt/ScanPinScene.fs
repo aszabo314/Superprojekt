@@ -420,9 +420,9 @@ module ScanPinScene =
             ]
 
         // Pin pole (far view): a neutral flag along the probe axis per committed pin;
-        // pole height grows with magnitude (max |median offset| across moving meshes).
-        // While the show-overlays hold is down it takes the pin colour, matching the
-        // greyscale-except-pins read.
+        // pole height grows with magnitude (ScanPin.flagMagnitude). While the
+        // show-overlays hold is down it takes the pin colour and gets much thicker,
+        // matching the white-out-except-pins read.
         let pinGlyphs =
             let neutral = V4d(0.52, 0.55, 0.60, 0.75)
             let segs =
@@ -433,23 +433,14 @@ module ScanPinScene =
                     let overlays = model.ShowOverlaysHeld.GetValue t
                     let out   = ResizeArray<V3d * V3d * V4d * float>()
                     for (_, p) in HashMap.toSeq pins do
-                        let magnitude =
-                            match p.Probe with
-                            | ProbeReady r ->
-                                let moving =
-                                    r.Distributions
-                                    |> Array.filter (fun d -> d.MeshName <> r.ReferenceMesh && d.Count > 0)
-                                if moving.Length = 0 then 0.0
-                                else moving |> Array.map (fun d -> abs d.Median) |> Array.max
-                            | _ -> 0.0
                         let col = if overlays then V4d(Primitives.c4bToV3d p.PinColor, 1.0) else neutral
-                        let axisN, u, v = basisFromNormal (ScanPin.axis p)
+                        let w   = if overlays then 7.0 else 2.5
+                        let _, u, v = basisFromNormal (ScanPin.axis p)
                         let c   = ScanPin.renderCentre cc scale p.Centre
-                        let h   = ScanPin.renderLength scale (p.InnerRadius * 1.5 + magnitude * 3.0)
-                        let top = c + axisN * h
+                        let top = ScanPin.flagTopRender cc scale p
                         let hr  = ScanPin.renderLength scale (p.InnerRadius * 0.5)
-                        out.Add(c, top, col, 2.5)
-                        addRing out top u v hr col 2.5 24
+                        out.Add(c, top, col, w)
+                        addRing out top u v hr col w 24
                     out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 
@@ -457,7 +448,11 @@ module ScanPinScene =
         // the pin centre, in the pin's PinColor. Always-on-top (passOne, DepthTest.None)
         // so it reads against the terrain. Identity is immutable → snapshot once per id
         // (no atlas rebuild on probe/ring updates); only the position is adaptive.
+        // Hidden while the show-overlays hold is down — the 2D flag-tip name tags
+        // (GuiOverlays.pinFlagLabels) take over there.
         let pinCentreRadius = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre, p.InnerRadius) |> AMap.toAVal
+        let labelsActive =
+            (notFullscreen, model.ShowOverlaysHeld) ||> AVal.map2 (fun nf ov -> nf && not ov)
         let pinLabels =
             pinIdSet |> ASet.map (fun id ->
                 let p0 = HashMap.tryFind id (AVal.force pinsVal)
@@ -474,7 +469,7 @@ module ScanPinScene =
                 match p0 with
                 | Some pin ->
                     sg {
-                        Sg.Active notFullscreen
+                        Sg.Active labelsActive
                         Sg.View view
                         Sg.Proj proj
                         Sg.Pass RenderPass.passOne

@@ -57,9 +57,9 @@ module MeshShader =
         // Read by the outline G-buffer pass (band parity → edge-detect), not by the
         // forward mesh shader itself.
         member x.ContourSpacing   : float32 = x?ContourSpacing
-        // Show-overlays modifier (§T8): 1 → desaturate the mesh to luminance. Pins are
-        // separate geometry (unaffected), so they keep their colour and read clearly.
-        member x.Greyscale        : float32 = x?Greyscale
+        // Show-overlays modifier (§T8): 1 → paint the mesh plain white (shading kept).
+        // Pins are separate geometry (unaffected), so only they carry colour.
+        member x.Whiteout         : float32 = x?Whiteout
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -212,11 +212,11 @@ module MeshShader =
             // (World-Z isolines are NOT drawn here — they are edge-detected from a
             // band-parity field in the offscreen outline pass, so they get the same
             // crisp 1px look as the silhouette outline. See OutlineGBuffer/OutlineEdge.)
-            // Show-overlays modifier (§T8): collapse the mesh to luminance so the
-            // (separately-rendered, still-coloured) pins stand out unmistakably.
-            if uniform.Greyscale > 0.5f then
-                let l = baseRgb.X * 0.299f + baseRgb.Y * 0.587f + baseRgb.Z * 0.114f
-                baseRgb <- V3f(l, l, l)
+            // Show-overlays modifier (§T8): collapse the mesh to plain white (last, so
+            // every false-colour map above is overridden too) — only the
+            // separately-rendered pin geometry carries colour while held.
+            if uniform.Whiteout > 0.5f then
+                baseRgb <- V3f(1.0f, 1.0f, 1.0f)
             let depth =
                 if alpha >= opaqueThreshold then v.fc.Z
                 else 1.0f

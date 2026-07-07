@@ -25,6 +25,56 @@ module GuiOverlays =
                 | None -> "")
         }
 
+    // Show-overlays hold (§T8): a 2D name tag per pin, floating at its flag-pole tip
+    // (ScanPin.flagTopRender projected to CSS px every frame). DOM, not Sg.Text, so
+    // the tags keep a constant readable size; overlap is accepted. Same 90° horizontal
+    // fov as the main projection — only the NDC x/y matter here, near/far don't.
+    let pinFlagLabels (model : AdaptiveModel) (viewportSize : aval<V2i>) =
+        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let labelsJson =
+            AVal.custom (fun t ->
+                if not (model.ShowOverlaysHeld.GetValue t) then "[]"
+                else
+                    let pins  = pinsVal.GetValue t
+                    let cc    = model.CommonCentroid.GetValue t
+                    let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
+                    let vp    = viewportSize.GetValue t
+                    let viewT = model.Camera.view.GetValue t |> CameraView.viewTrafo
+                    let projT =
+                        Frustum.perspective 90.0 1.0 5000.0 (float vp.X / float (max 1 vp.Y))
+                        |> Frustum.projTrafo
+                    let vpFwd = (viewT * projT).Forward
+                    let items =
+                        HashMap.toList pins |> List.choose (fun (_, p) ->
+                            let h = vpFwd * V4d(ScanPin.flagTopRender cc scale p, 1.0)
+                            if h.W <= 1e-6 then None
+                            else
+                                let ndc = h.XYZ / h.W
+                                if abs ndc.X > 1.1 || abs ndc.Y > 1.1 then None
+                                else
+                                    Some (sprintf "{\"x\":%.1f,\"y\":%.1f,\"n\":\"%s %s\",\"c\":\"%s\"}"
+                                            ((ndc.X * 0.5 + 0.5) * float vp.X)
+                                            ((0.5 - ndc.Y * 0.5) * float vp.Y)
+                                            p.Glyph p.ShortName (Primitives.c4bToHex p.PinColor)))
+                    "[" + String.concat "," items + "]")
+        div {
+            Class "pin-flag-labels"
+            Primitives.showWhen model.ShowOverlaysHeld
+            labelsJson |> AVal.map (fun json -> Some (Attribute("data-labels", json)))
+            Primitives.observedRender "data-labels" "[]" [
+                "  d.forEach(function(p){"
+                "    var s = document.createElement('div');"
+                "    s.className = 'pfl';"
+                "    s.textContent = p.n;"
+                "    s.style.left = p.x + 'px';"
+                "    s.style.top = p.y + 'px';"
+                "    s.style.borderColor = p.c;"
+                "    s.style.color = p.c;"
+                "    el.appendChild(s);"
+                "  });"
+            ]
+        }
+
     // Transient feedback for blocked/failed actions (auto-clears).
     let toast (model : AdaptiveModel) =
         div {

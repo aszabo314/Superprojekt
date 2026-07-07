@@ -522,7 +522,7 @@ module View =
                     // Hold-I = momentary pin-isolation (where it defaults off).
                     env.Emit [SetIsolatePeek true]
                 | "o" | "O" ->
-                    // Hold-O = show-overlays (greyscale except pins).
+                    // Hold-O = show-overlays (white-out except pins).
                     env.Emit [SetShowOverlays true]
                 | "Escape" ->
                     env.Emit [ScanPinMsg CancelPlacement]
@@ -544,6 +544,7 @@ module View =
             }
             GuiFocus.panel env model
             GuiOverlays.toast model
+            GuiOverlays.pinFlagLabels model (viewportSize :> aval<V2i>)
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.colorLegend model

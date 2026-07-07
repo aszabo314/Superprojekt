@@ -6,7 +6,7 @@ open Aardvark.Dom
 
 // Right focus panel: a large WebGL single (focused mesh, textured, pan/zoom +
 // server-raycast correspondence pick) over a small-multiples strip of textured
-// thumbnails, both from FocusScene. Head = the selected-pin chip, the Pano / Top
+// thumbnails, both from FocusScene. Head = the selected-pin chip, the 360° / Top
 // projection toggle, and ✎ edit point (the armed correspondence editor).
 module GuiFocus =
 

@@ -16,6 +16,39 @@
   while dragging).
 - Dead-code prune (below) — builds + tests + integration all green; awaiting a
   browser smoke pass (probe → matrix/chart, solve, seeding, no missing styles).
+- 360° focus view (below) — client build green, no new shader; awaiting a
+  browser pass (look-around drag feel, fov zoom anchoring, correspondence
+  pick/aim-ghost in 360°, per-mesh view memory, Top view unchanged).
+
+## 360° focus view replaces the pano unwrap (2026-07-06)
+The focus panel's "Pano" projection is no longer a cylindrical full-unwrap; it
+is now a standard rotate-able perspective view fixed at the mesh's panorama
+centre (street-view style). Button label is now "360°".
+
+- **Deleted** `FocusShaders.pano` (cylindrical vertex stage) + its
+  `PanoEye/PanoCenter/PanoZoom/PanoAspect/PanoRadFar` uniforms; FocusShaders is
+  now fragment-only (`focusColor`). Both projections render through the same
+  `trafo → diffuseTexture → focusColor` pipeline — **no new shader**, so no
+  in-browser shader-compile risk; the camera (view/proj) carries the difference.
+- **Camera** (`FocusScene.panoCam`): eye = the existing per-mesh panorama
+  centre (`pano-centers.txt` else mesh origin), Z-up `lookAt`,
+  `Frustum.perspective` (same convention as the main view's 90° horizontal);
+  fov = 90°/zoom clamped [4°, 120°]; near/far = fitExtent × 1e-3 / × 4.
+- **Input**: drag = grab-the-world look-around (per-axis atan offsets so the
+  point under the cursor tracks it; azimuth wraps, elevation clamps short of
+  the poles); wheel = fov zoom anchored at the cursor. Plain left-drag now
+  drags the camera in BOTH projections when no correspondence edit is armed
+  (armed plain-left still places the point; middle / Shift+left always drag).
+- **State**: the 360° view keeps its own per-mesh (azimuth, elevation, zoom)
+  under a separate `camFor` key (`name + "†pano"`) — no more cross-talk with
+  the Top pan/zoom semantics; `resetCam` clears both.
+- **Pick**: `worldRayHit`'s pano branch is a standard perspective unproject
+  (forward + right/up scaled by the half-fov tangents) — correspondence
+  placement and the live aim ghost work in the 360° view as before.
+- Unchanged/kept Top-only: the correspondence ring/glyph overlay, the gold
+  reference outline, and the displacement arrows (all laid out in Top-view XY
+  maths; the displacement channel still collapses 360° → Top).
+- Docs: CLAUDE.md compile-order + panorama-centre lines updated.
 
 ## Dead-code prune (2026-07-05)
 Repo-wide audit (4 parallel read-only sweeps + a mechanical whole-repo

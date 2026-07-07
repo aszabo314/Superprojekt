@@ -23,13 +23,14 @@ module WorkflowStep =
         | Correspondence -> "Correspondence"
         | Inspect -> "Inspect"
 
-// Pano = cylindrical unwrap from a mesh origin; Top = the world vertical drop.
+// ProjPano = 360° perspective look-around fixed at the mesh's panorama centre;
+// Top = the world vertical drop.
 type FocusProjection =
     | ProjPano
     | ProjTop
 
 module FocusProjection =
-    let label = function ProjPano -> "Pano" | ProjTop -> "Top"
+    let label = function ProjPano -> "360°" | ProjTop -> "Top"
 
 // Inspect focus-tile channel: Difference = pair signed-distance heatmap, Displacement
 // = load→solved motion glyphs. The central-3D variance map ignores this toggle.

@@ -8,29 +8,35 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 
 // WebGL focus panel. Each mesh is rendered full-res and textured in render space at
-// its displayed pose (same frame as the main view). Top = strictly orthographic; Pano
-// = cylindrical unwrap in the vertex shader. A tiny pan+zoom controller (no orbit)
-// drives the single; the tiles are static thumbnails. Correspondence picking is
-// Dom-driven (cursor → render ray → server raycast → 3D preview ghost on move, place
-// on click); the `Sg.OnTap` GPU pick did not fire reliably in this 2nd render control.
+// its displayed pose (same frame as the main view). Top = strictly orthographic;
+// 360° = a standard perspective camera fixed at the mesh's panorama centre (drag =
+// look around, wheel = fov zoom). A tiny controller (no orbit) drives the single;
+// the tiles are static thumbnails. Correspondence picking is Dom-driven (cursor →
+// render ray → server raycast → 3D preview ghost on move, place on click); the
+// `Sg.OnTap` GPU pick did not fire reliably in this 2nd render control.
 module FocusScene =
 
-    // Pan/zoom of the single, in fit-relative units (a mesh frames at zoom 1 / pan 0).
-    // Kept PER MESH so switching small-multiples restores each view's own state —
-    // module-level singletons made every mesh share one camera. Survives rebuilds.
+    // Camera state of the single, per (mesh, projection): Top reads (pan, zoom) in
+    // fit-relative units; the 360° view reuses the same pair as (azimuth/π,
+    // elevation/(π/2)) + magnification, under its own key — the two states are not
+    // interconvertible, so they never share. Kept PER MESH so switching
+    // small-multiples restores each view's own state. Survives rebuilds.
     let private camStates = System.Collections.Generic.Dictionary<string, cval<V2d> * cval<float>>()
-    let private camFor (name : string) =
-        match camStates.TryGetValue name with
+    let private camFor (key : string) =
+        match camStates.TryGetValue key with
         | true, v -> v
         | _ ->
             let v = (cval V2d.Zero, cval 1.0)
-            camStates.[name] <- v
+            camStates.[key] <- v
             v
-    // ⟲ reset: clears the focused mesh's own camera (None = all, e.g. dataset switch).
+    let private panoKey (name : string) = name + "†pano"
+    // ⟲ reset: clears the focused mesh's own cameras (None = all, e.g. dataset switch).
     let resetCam (name : string option) =
         transact (fun () ->
             match name with
-            | Some n -> let pan, z = camFor n in pan.Value <- V2d.Zero; z.Value <- 1.0
+            | Some n ->
+                for key in [n; panoKey n] do
+                    let pan, z = camFor key in pan.Value <- V2d.Zero; z.Value <- 1.0
             | None   -> for KeyValue(_, (pan, z)) in camStates do pan.Value <- V2d.Zero; z.Value <- 1.0)
     // Device-pixel-ratio (framebuffer ÷ CSS px). Set by the main view (where
     // RenderControl.ClientSize works); used to turn the focus cursor (CSS px) into
@@ -70,7 +76,7 @@ module FocusScene =
     //  • centreWorld  = stored PanoCenters[mesh] (absolute world) else the centroid
     //                   (= the mesh origin) — request: no entry ⇒ origin, as before.
     //  • centreRender = that carried through renderT (− centroid → mesh frame → render):
-    //                   the pano cylinder eye AND the Top-view camera centre.
+    //                   the 360° camera position AND the Top-view camera centre.
     //  • extent       = farthest mesh-bbox corner from the centre (render units), so a
     //                   centre off the geometry still frames it; ×0.98 zooms in a touch.
     let private framing (model : AdaptiveModel) (name : string) (loaded : LoadedMesh)
@@ -143,6 +149,44 @@ module FocusScene =
         match currentSingleMesh model with
         | Some m -> zoomOnWorldRadius model m centre (max 0.5 (innerRadius * 4.0))
         | None -> ()
+
+    // 360° view state, reusing the per-mesh (pan, zoom) pair: pan.X = azimuth/π,
+    // pan.Y = elevation/(π/2) (clamped short of the poles so the Z-up lookAt never
+    // degenerates), zoom = magnification. Fov is HORIZONTAL degrees (the
+    // Frustum.perspective convention, same as the main view's 90°).
+    let private panoFov (zoom : float) = clamp 4.0 120.0 (90.0 / max 1e-3 zoom)
+    // NDC → view-direction scales: x = tan(fovH/2), y = x / aspect.
+    let private panoHalfTans (zoom : float) (aspect : float) =
+        let tx = tan (panoFov zoom * Constant.RadiansPerDegree * 0.5)
+        tx, tx / aspect
+    let private panoAngles (pan : V2d) =
+        pan.X * Constant.Pi,
+        clamp (-0.495 * Constant.Pi) (0.495 * Constant.Pi) (pan.Y * Constant.PiHalf)
+    let private panoForward (pan : V2d) =
+        let az, el = panoAngles pan
+        V3d(cos el * cos az, cos el * sin az, sin el)
+    // Rotate the 360° view by (Δazimuth, Δelevation) radians; azimuth wraps, elevation
+    // clamps. Call inside a transact.
+    let private panoRotate (pan : cval<V2d>) (dAz : float) (dEl : float) =
+        let v = pan.Value + V2d(dAz / Constant.Pi, dEl / Constant.PiHalf)
+        pan.Value <- V2d(((v.X + 1.0) % 2.0 + 2.0) % 2.0 - 1.0, clamp (-1.0) 1.0 v.Y)
+
+    // Perspective camera fixed at the panorama eye — only the view direction (drag)
+    // and fov (wheel) change; near/far scale with the framing extent.
+    let private panoCam
+            (size : aval<V2i>) (eye : aval<V3d>) (fitExtent : aval<float>)
+            (pan : aval<V2d>) (zoomA : aval<float>) =
+        let view =
+            (eye, pan) ||> AVal.map2 (fun e p ->
+                CameraView.lookAt e (e + panoForward p) V3d.OOI |> CameraView.viewTrafo)
+        let proj =
+            AVal.custom (fun t ->
+                let s = size.GetValue t
+                let ext = max 1e-4 (fitExtent.GetValue t)
+                let aspect = float s.X / float (max 1 s.Y)
+                Frustum.perspective (panoFov (zoomA.GetValue t)) (ext * 1e-3) (ext * 4.0) aspect
+                |> Frustum.projTrafo)
+        view, proj
 
     // Top-down ortho view + projection framing the displayed render centroid,
     // radius = localMaxR·scale, offset by (pan, zoom).
@@ -282,20 +326,21 @@ module FocusScene =
                 if m = 1 then float32 (abs lo) else 1.0f)
         modeA, scalarData, hiA, loNegA
 
-    // Large single: render-space, textured. Top = orthographic; Pano = cylindrical
-    // unwrap (camera identity; the shader writes clip directly). Picking is Dom-driven
-    // (the Sg pick didn't fire reliably in this 2nd control): the cursor is inverted to
-    // a render-space ray, raycast on the server, and the hit drives a live 3D preview
-    // ghost on move + the placement on click. Per-mesh pan/zoom, mouse-anchored zoom.
+    // Large single: render-space, textured. Top = orthographic pan/zoom; 360° = a
+    // perspective camera fixed at the panorama eye (drag = look around, wheel = fov
+    // zoom). Picking is Dom-driven (the Sg pick didn't fire reliably in this 2nd
+    // control): the cursor is inverted to a render-space ray, raycast on the server,
+    // and the hit drives a live 3D preview ghost on move + the placement on click.
     let private focusSingle (env : Env<Message>) (model : AdaptiveModel) (name : string) (proj : FocusProjection) : DomNode =
         let loaded = MeshView.loadMeshAsync (fun () -> ()) name
         let renderT, scale = renderTrafoOf model name loaded
-        // Per-mesh pan/zoom so each small-multiple keeps its own camera on switch.
-        let panNorm, zoom = camFor name
-        // panoEye = the pano cylinder eye AND the Top-view camera centre (the mesh's
-        // panorama centre in render space); fitExtent frames the mesh around it.
-        let _, panoEye, fitExtent = framing model name loaded renderT scale
         let isPano = (proj = ProjPano)
+        // Per-(mesh, projection) camera so each small-multiple keeps its own view on
+        // switch, and the 360° angles never collide with the Top pan.
+        let panNorm, zoom = camFor (if isPano then panoKey name else name)
+        // panoEye = the 360° camera position AND the Top-view camera centre (the
+        // mesh's panorama centre in render space); fitExtent frames the mesh around it.
+        let _, panoEye, fitExtent = framing model name loaded renderT scale
         let modeA, scalarBuf, hiA, loNegA = focusOverlay model name loaded scale
         // Displacement single: white surface (mode 2 → 3) so the arrow glyphs read.
         let surfaceMode = modeA |> AVal.map (fun m -> if m = 2 then 3 else m)
@@ -346,8 +391,8 @@ module FocusScene =
                 | _ -> [||])
         // Correspondence-mode overlay (Top only): each pin's bounding-sphere circle
         // (true InnerRadius footprint) + a screen-fixed always-on-top glyph at THIS
-        // mesh's anchor for each pin. Pano can't place render-space lines on the
-        // unwrapped surface, so it's Top-only (the request asked for the top view).
+        // mesh's anchor for each pin. The ring layout (flat XY circles) and the
+        // screen-fixed glyph sizing are Top-projection maths, so it stays Top-only.
         let pinsAval   = model.ScanPins.Pins |> AMap.toAVal
         let dispRenderT = MeshView.displayedMeshT model name
         let meshCol =
@@ -444,19 +489,22 @@ module FocusScene =
                 let aspect = w / h
                 let clipX = 2.0 * px / w - 1.0
                 let clipY = 1.0 - 2.0 * py / h
-                // fc = the pano centre (cylinder eye for Pano; ortho frame centre for
-                // Top) — matches the render uniform / Top camera.
+                // fc = the pano centre (the 360° camera position; the ortho frame
+                // centre for Top) — matches the render camera.
                 let fc = AVal.force panoEye
                 let ext = AVal.force fitExtent
                 let z = zoom.Value
                 let pan = panNorm.Value
                 let originR, dirR =
                     if isPano then
-                        let u = pan.X + clipX * aspect / z
-                        let v = pan.Y + clipY / z
-                        let az = u * System.Math.PI
-                        let el = v * System.Math.PI * 0.5
-                        fc, V3d(cos el * cos az, cos el * sin az, sin el)
+                        // Perspective unproject: forward + the NDC offsets along the
+                        // camera's right/up, scaled by the half-fov tangents — exactly
+                        // the panoCam frustum.
+                        let fwd = panoForward pan
+                        let right = (Vec.cross fwd V3d.OOI).Normalized
+                        let up = Vec.cross right fwd
+                        let tx, ty = panoHalfTans z aspect
+                        fc, (fwd + right * (clipX * tx) + up * (clipY * ty)).Normalized
                     else
                         let halfE = ext / max 1e-3 z
                         V3d(fc.X + pan.X * ext + clipX * halfE * aspect,
@@ -480,19 +528,18 @@ module FocusScene =
             Dom.OnPointerDown(fun e ->
                 let p = e.OffsetPosition
                 lastPx <- p
-                // Pan on middle-drag or Shift+left-drag — the same binding as the 3D
-                // view's in-plane pan. Plain left = place when armed here; it never pans.
-                if e.Button = Button.Middle || (e.Button = Button.Left && e.Shift) then dragging <- true
-                else
-                    match armedHere () with
-                    | Some pinId ->
-                        if e.Button = Button.Left then
-                            async {
-                                match! worldRayHit (float p.X) (float p.Y) with
-                                | Some world -> env.Emit [PickCorrespondenceAt(pinId, name, world)]
-                                | None -> ()
-                            } |> Async.Start
-                    | None -> ())
+                // Drag = camera (pan in Top, look-around in 360°): middle or Shift+left
+                // always; plain left too when no correspondence edit is armed. Armed
+                // plain left stays reserved for placing the point.
+                match armedHere () with
+                | Some pinId when e.Button = Button.Left && not e.Shift ->
+                    async {
+                        match! worldRayHit (float p.X) (float p.Y) with
+                        | Some world -> env.Emit [PickCorrespondenceAt(pinId, name, world)]
+                        | None -> ()
+                    } |> Async.Start
+                | _ ->
+                    if e.Button = Button.Middle || e.Button = Button.Left then dragging <- true)
             Dom.OnPointerUp(fun _ -> dragging <- false)
             Dom.OnPointerMove(fun e ->
                 let p = e.OffsetPosition
@@ -507,17 +554,32 @@ module FocusScene =
                             if gen = hoverGen then env.Emit [CorrPreviewComputed wld]
                         } |> Async.Start
                 elif dragging then
-                    let hh = float (max 1 (AVal.force overlaySize).Y)
-                    let d = p - lastPx
-                    let k = 2.0 / (hh * max 1e-3 zoom.Value)
-                    transact (fun () ->
-                        panNorm.Value <- panNorm.Value + V2d(-float d.X * k, float d.Y * k))
+                    let s = AVal.force overlaySize
+                    let w = float (max 1 s.X)
+                    let h = float (max 1 s.Y)
+                    if isPano then
+                        // Grab-the-world look-around: the surface point under the cursor
+                        // stays under it — per-axis atan offsets at the current fov, old
+                        // vs new cursor position.
+                        let tx, ty = panoHalfTans zoom.Value (w / h)
+                        let thX (px : float) = atan ((2.0 * px / w - 1.0) * tx)
+                        let thY (py : float) = atan ((1.0 - 2.0 * py / h) * ty)
+                        let dAz = thX (float p.X) - thX (float lastPx.X)
+                        let dEl = thY (float lastPx.Y) - thY (float p.Y)
+                        transact (fun () -> panoRotate panNorm dAz dEl)
+                    else
+                        let d = p - lastPx
+                        let k = 2.0 / (h * max 1e-3 zoom.Value)
+                        transact (fun () ->
+                            panNorm.Value <- panNorm.Value + V2d(-float d.X * k, float d.Y * k))
                 lastPx <- p)
             Dom.OnMouseLeave(fun _ ->
                 if (armedHere ()).IsSome then
                     hoverGen <- hoverGen + 1
                     env.Emit [CorrPreviewComputed None])
-            // Mouse-anchored zoom: keep the plane point under the cursor fixed.
+            // Mouse-anchored zoom: keep the point under the cursor fixed — Top shifts
+            // the pan, 360° rotates so the view direction under the cursor keeps its
+            // screen position across the fov change.
             Dom.OnMouseWheel(fun e ->
                 let s = AVal.force overlaySize
                 let w = float (max 1 s.X)
@@ -527,17 +589,27 @@ module FocusScene =
                 let clipY = 1.0 - 2.0 * float lastPx.Y / h
                 let z = zoom.Value
                 let z' = clamp 0.05 200.0 (z * (1.1 ** (-e.DeltaY / 120.0)))
-                transact (fun () ->
-                    zoom.Value <- z'
-                    panNorm.Value <- panNorm.Value + V2d(clipX * aspect * (1.0/z - 1.0/z'), clipY * (1.0/z - 1.0/z'))))
+                if isPano then
+                    let txOld, tyOld = panoHalfTans z  aspect
+                    let txNew, tyNew = panoHalfTans z' aspect
+                    let dAz = atan (clipX * txNew) - atan (clipX * txOld)
+                    let dEl = atan (clipY * tyOld) - atan (clipY * tyNew)
+                    transact (fun () ->
+                        zoom.Value <- z'
+                        panoRotate panNorm dAz dEl)
+                else
+                    transact (fun () ->
+                        zoom.Value <- z'
+                        panNorm.Value <- panNorm.Value + V2d(clipX * aspect * (1.0/z - 1.0/z'), clipY * (1.0/z - 1.0/z'))))
             let viewT, projT =
-                if isPano then AVal.constant Trafo3d.Identity, AVal.constant Trafo3d.Identity
+                if isPano then panoCam size panoEye fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
                 else orthoCam size panoEye fitExtent (panNorm :> aval<_>) (zoom :> aval<_>)
             // Reference-mesh silhouette overlaid on the enlarged single when a non-reference
             // (moving) mesh is shown — the image-space outline reused from the 3D view, in
             // gold, drawn on top (Correspondence + Inspect; the single only exists there).
-            // Top only: the pano unwrap isn't handled here (request). Reference is never
-            // solved, so the outline is pose-stable while the moving surface shifts under it.
+            // Top only: the outline pass is untried from an inside-the-mesh perspective
+            // camera. Reference is never solved, so the outline is pose-stable while the
+            // moving surface shifts under it.
             let refOutline =
                 if isPano then ASet.empty
                 else
@@ -546,40 +618,22 @@ module FocusScene =
                             match r.ReferenceMesh with Some rf -> rf <> name | None -> false)
                     let node = MeshView.buildReferenceOutlineNode model viewT projT (V4f(0.831f, 0.631f, 0.024f, 1.0f)) show
                     OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) node
+            // One standard pipeline for both projections — the camera (viewT/projT)
+            // carries the whole difference.
             let surface =
-                if isPano then
-                    sg {
-                        Sg.Trafo renderT
-                        Sg.Shader { DefaultSurfaces.trafo; FocusShaders.pano; DefaultSurfaces.diffuseTexture; FocusShaders.focusColor }
-                        Sg.Uniform("DiffuseColorTexture", loaded.tex)
-                        Sg.Uniform("PanoEye",    panoEye |> AVal.map (fun c -> V3f(float32 c.X, float32 c.Y, float32 c.Z)))
-                        Sg.Uniform("PanoCenter", (panNorm :> aval<_>) |> AVal.map (fun p -> V2f(float32 p.X, float32 p.Y)))
-                        Sg.Uniform("PanoZoom",   (zoom :> aval<_>) |> AVal.map float32)
-                        Sg.Uniform("PanoAspect", size |> AVal.map (fun s -> float32 (float s.X / float (max 1 s.Y))))
-                        Sg.Uniform("PanoRadFar", fitExtent |> AVal.map (fun e -> float32 (e * 2.0)))
-                        Sg.Uniform("FocusMode", surfaceMode)
-                        Sg.Uniform("FocusHi",   hiA)
-                        Sg.Uniform("FocusLoNeg", loNegA)
-                        Sg.Uniform("FocusLod",  AVal.constant 0.0f)
-                        Sg.NoEvents
-                        Sg.VertexAttributes(vattrs loaded scalarBuf)
-                        Sg.Index(BufferView(loaded.idx, typeof<int>))
-                        Sg.Render loaded.fvc
-                    }
-                else
-                    sg {
-                        Sg.Trafo renderT
-                        Sg.Shader { DefaultSurfaces.trafo; DefaultSurfaces.diffuseTexture; FocusShaders.focusColor }
-                        Sg.Uniform("DiffuseColorTexture", loaded.tex)
-                        Sg.Uniform("FocusMode", surfaceMode)
-                        Sg.Uniform("FocusHi",   hiA)
-                        Sg.Uniform("FocusLoNeg", loNegA)
-                        Sg.Uniform("FocusLod",  AVal.constant 0.0f)
-                        Sg.NoEvents
-                        Sg.VertexAttributes(vattrs loaded scalarBuf)
-                        Sg.Index(BufferView(loaded.idx, typeof<int>))
-                        Sg.Render loaded.fvc
-                    }
+                sg {
+                    Sg.Trafo renderT
+                    Sg.Shader { DefaultSurfaces.trafo; DefaultSurfaces.diffuseTexture; FocusShaders.focusColor }
+                    Sg.Uniform("DiffuseColorTexture", loaded.tex)
+                    Sg.Uniform("FocusMode", surfaceMode)
+                    Sg.Uniform("FocusHi",   hiA)
+                    Sg.Uniform("FocusLoNeg", loNegA)
+                    Sg.Uniform("FocusLod",  AVal.constant 0.0f)
+                    Sg.NoEvents
+                    Sg.VertexAttributes(vattrs loaded scalarBuf)
+                    Sg.Index(BufferView(loaded.idx, typeof<int>))
+                    Sg.Render loaded.fvc
+                }
             sg {
                 Sg.View viewT
                 Sg.Proj projT
@@ -700,8 +754,8 @@ module FocusScene =
         }
 
     // The large single, keyed by (mesh, effective projection) so a projection toggle
-    // rebuilds. The displacement channel forces ortho (its arrow line-glyphs can't go
-    // through the pano unwrap), so Pano collapses to Top there.
+    // rebuilds. The displacement channel forces ortho (its arrowheads are laid out in
+    // the Top view's XY screen plane), so 360° collapses to Top there.
     let single (env : Env<Message>) (model : AdaptiveModel) =
         AVal.custom (fun t ->
             // Resolve the focused mesh INLINE — building a transient AVal.custom here

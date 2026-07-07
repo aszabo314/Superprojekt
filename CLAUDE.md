@@ -88,7 +88,7 @@ Three spaces, two transforms. Keep them strictly separate — every boundary cro
 
 ## Panorama centre (`pano-centers.txt`)
 
-Each mesh's OBJ origin is *supposed* to be its scan camera, but the data is often not centred on it — so the panorama eye is data-driven: one optional file per dataset, `data/{dataset}/pano-centers.txt`, lines `<mesh-folder> x y z` in **absolute world coords** (same frame as `*centroid.txt`); unlisted meshes fall back to the mesh origin. Served at `/api/datasets/{d}/pano-centers`, held in `Model.PanoCenters`. It is the sensor origin for the incidence/range heatmaps, the pano-unwrap eye, and the pano pick-ray origin. To add centres: isolate a mesh, read the top-bar **world** coordinate at its visual centre, write a line — no code change.
+Each mesh's OBJ origin is *supposed* to be its scan camera, but the data is often not centred on it — so the panorama eye is data-driven: one optional file per dataset, `data/{dataset}/pano-centers.txt`, lines `<mesh-folder> x y z` in **absolute world coords** (same frame as `*centroid.txt`); unlisted meshes fall back to the mesh origin. Served at `/api/datasets/{d}/pano-centers`, held in `Model.PanoCenters`. It is the sensor origin for the incidence/range heatmaps and the position of the focus panel's 360° camera (rendering and pick rays). To add centres: isolate a mesh, read the top-bar **world** coordinate at its visual centre, write a line — no code change.
 
 ## Adaptive performance (critical)
 
@@ -145,8 +145,8 @@ MeshView.fs            LoadedMesh, buildScene, displayed transforms, pin blobs
 OutlineView.fs         offscreen image-space outline pass
 ScanPinScene.fs        pin sg nodes + constellation + brushed samples
 SceneGraph.fs          scene composition + cross + labels + reference/focus outlines
-FocusShaders.fs        pano (cylindrical) vertex + focus colour fragment
-FocusScene.fs          focus render controls (single + tiles), pan/zoom, pick, camera helpers
+FocusShaders.fs        focus colour fragment (Inspect/heatmap overlays)
+FocusScene.fs          focus render controls (single + tiles), 360°/Top cameras, pick
 GuiTopBar.fs           top bar + gear popover
 GuiOverlays.fs         toast, scale bar, orientation indicator, wheel label
 GuiRail.fs             three-mode left rail (roster · pin×mesh matrix · Solve)

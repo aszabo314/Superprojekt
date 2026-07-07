@@ -137,6 +137,42 @@ module Query =
                 }
         }
 
+    // Vertical cross-sections through a pin: mesh∩plane polylines for every mesh ×
+    // parallel offset in one request, in the slice's 2D chart frame ((u, v) metres
+    // about the pin centre). Transforms are world-space rigid M44 (Forward), probe
+    // convention.
+    let slice
+            (serverUrl : string)
+            (meshes : (string * M44d) list)
+            (centre : V3d) (uDir : V3d) (normal : V3d)
+            (radius : float) (offsets : float[]) (maxPointsPerPlane : int)
+            : Async<(string * V2d[][][])[]> =
+        async {
+            let meshesJson =
+                meshes
+                |> List.map (fun (n, t) -> sprintf """{"name":"%s","transform":[%s]}""" n (m44json t))
+                |> String.concat ","
+            let offsetsJson = offsets |> Array.map (sprintf "%.17g") |> String.concat ","
+            let json =
+                sprintf """{"meshes":[%s],"centre":%s,"uDir":%s,"normal":%s,"radius":%.17g,"offsets":[%s],"maxPointsPerPlane":%d}"""
+                    meshesJson (v3 centre) (v3 uDir) (v3 normal) radius offsetsJson maxPointsPerPlane
+            let! r = post serverUrl "/query/slice" json
+            return
+                r.GetProperty("meshes").EnumerateArray()
+                |> Seq.map (fun m ->
+                    let planes =
+                        m.GetProperty("planes").EnumerateArray()
+                        |> Seq.map (fun pl ->
+                            pl.EnumerateArray()
+                            |> Seq.map (fun line ->
+                                let flat = line.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                                Array.init (flat.Length / 2) (fun i -> V2d(flat.[i * 2], flat.[i * 2 + 1])))
+                            |> Seq.toArray)
+                        |> Seq.toArray
+                    m.GetProperty("name").GetString(), planes)
+                |> Seq.toArray
+        }
+
     // Per-vertex signed distance of a target mesh to the reference, in the
     // target's served vertex order. Transforms are world-space rigid M44 (Forward).
     let regionDistance

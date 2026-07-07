@@ -31,6 +31,59 @@
   ESSL3) plus a visual pass (yellow zero readable, isoline density/width,
   clamp-region suppression, matrix-cell grey-vs-yellow gate step). ShaderCache
   entries stale again → runtime compile fallback.
+- Pin cross-section charts in the Overlays hold (below) — server endpoint
+  live-verified on :8004 (disc-clip radii exact, posed-mesh v-shift exact,
+  contact-rings regression clean after the tracer refactor), client typecheck
+  green, no shader changes; awaiting a browser pass (chart legibility /
+  vertical exaggeration, faint parallel-slice read, anchor dots, Before/After
+  swap + Peek flip, 3D centre-cut lines on the white-out, orbit smoothness of
+  the two-attribute label renderer).
+
+## Pin cross-section charts in the Overlays hold (2026-07-07)
+While the Overlays hold is down, each pin's 2D name tag now carries a vertical
+cross-section profile chart, and the centre cut is traced in 3D inside the pin.
+Everything is precomputed + cached per pose so the hold stays a pure toggle.
+
+- **Server** `/api/query/slice` (QueryHandlers.sliceHandler): all meshes × all
+  parallel plane offsets in one request (per-mesh world transforms, probe
+  convention), `Array.Parallel` over meshes. `MeshAnalysis.planeSlices` cuts
+  the mesh with each plane (BVH sphere candidates fetched ONCE for all
+  offsets), clips to the probe sphere in the chart frame (u²+v² ≤ r²−w², rim
+  crossings interpolated, chains split), and returns flat (u,v) pairs.
+  The marching/chaining core of contactRings was extracted into a shared
+  `traceLevelSet (triBuf) (signedDist) (edgePoint)` + generic `decimate`;
+  contactRings is now a thin wrapper (sphere field + exact sphere-root edge
+  points, unchanged behaviour — live-verified |p−c| ≡ 2.0000 on a real mesh).
+- **Slice frame** (ScanPin module): fixed world direction for every pin —
+  cut plane spans world X (chart u) × world Z (chart v), parallel offsets
+  along world Y at radius/4, three each side (7 planes). Helpers
+  `sliceToWorld`/`sliceUV`/`sliceCentreIndex` keep chart↔world at one place.
+- **Cache** mirrors the probes exactly: `ScanPin.Slice` (committed pose) /
+  `SliceOther` (opposite pose, fetched once a solve exists); SliceState DU with
+  the Running stale-guard; `ensureSlices` postlude clones the ensureProbe
+  debounce (per-pin CTS, 250 ms, both poses fired off one token, 140 pts/plane
+  cap); `invalidateProbes` drops slices with probes (same triggers: transforms,
+  reference, radius via SetInnerRadius); `swapProbeViews` swaps ready pairs on
+  SetRegView; the reg peek only SELECTS the other cache — no query reads it.
+- **Label charts** (GuiOverlays.pinFlagLabels): the pill is now name row +
+  SVG chart. Two attributes, one JS renderer keyed by pin id: `data-labels`
+  (positions, every frame) only moves pills; `data-charts` (paths/dots/grid,
+  changes only on slice arrival / pose display / visibility) rebuilds chart
+  DOM. Paths are prebuilt in F# as SVG `d` strings in chart px (culture-safe
+  sprintf — AppendFormat would emit comma decimals); x spans the pin diameter,
+  y auto-fits BOTH poses' data (peek flips without rescale; deliberately
+  exaggerated, ⌀/Δ footnotes state window + span); centre slice full-strength,
+  parallel slices fade by |offset| (0.26/0.17/0.09), centre drawn last;
+  correspondence anchors (ref + in-ROI moving, peek-aware displayed pose via
+  the new `MeshView.displayedWorldPeekAt`) projected onto the centre plane as
+  mesh-coloured dots; hairlines at u=0 and v=0.
+- **3D centre cut** (ScanPinScene.pinSliceLines): the cached centre-plane
+  polylines per shown mesh in its dataset colour, always-on-top (they lie
+  exactly ON the whited-out surfaces — coplanar depth would stitch), gated on
+  the hold, peek selects Slice/SliceOther. ScanPinScene's local dispWorldAt
+  became `MeshView.displayedWorldPeekAt` (shared with the chart anchors).
+- Docs: GUI.md §4.6 (chart + 3D cut paragraphs), CLAUDE.md state-rules bullet +
+  endpoint list.
 
 ## Difference map: RdYlBu-style gradient + value isolines (2026-07-07)
 The diverging difference map's grey centre vanished (against the white page and

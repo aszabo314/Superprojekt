@@ -98,7 +98,7 @@ module Update =
             else { model with ShowOverlaysHeld = held }
         | SetRegView v ->
             // Only meaningful once a solve exists (the view disables it otherwise).
-            // Probes: a ready (Probe, ProbeOther) pair IS the two poses — swap in
+            // Probes + slices: a ready (main, other) pair IS the two poses — swap in
             // place instead of refetching; rings have no other-pose cache, refetch.
             if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
             else
@@ -601,6 +601,7 @@ module Update =
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
         |> ScanPinUpdate.ensureProbe env
+        |> ScanPinUpdate.ensureSlices env
         |> ScanPinUpdate.ensureRings env
         |> ensureVariance env
         |> ensureFocusDist env

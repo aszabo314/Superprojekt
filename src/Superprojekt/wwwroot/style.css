@@ -573,11 +573,26 @@ body.loaded { background: #f4f6f8; }
     background: rgba(255, 255, 255, 0.94);
     border: 2px solid;
     border-radius: 4px;
-    padding: 1px 8px;
+    padding: 1px 8px 4px 8px;
     font-size: 14px;
     font-weight: 600;
     white-space: nowrap;
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+}
+.pin-flag-labels .pfl-chart {
+    line-height: 0;
+    margin-top: 2px;
+}
+.pin-flag-labels .pfl-chart svg {
+    display: block;
+    background: #ffffff;
+    border-radius: 2px;
+}
+.pin-flag-labels .pfl-nochart {
+    padding-bottom: 1px;
+}
+.pin-flag-labels .pfl-nochart .pfl-chart {
+    display: none;
 }
 
 /* ── Scale bar ────────────────────────────────────────────────────── */

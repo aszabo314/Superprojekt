@@ -25,64 +25,6 @@ module GuiOverlays =
                 | None -> "")
         }
 
-    // Show-overlays hold (§T8): a 2D name tag per pin, floating at its flag-pole tip
-    // (ScanPin.flagTopRender projected to CSS px every frame). DOM, not Sg.Text, so
-    // the tags keep a constant readable size; overlap is accepted. Same 90° horizontal
-    // fov as the main projection — only the NDC x/y matter here, near/far don't.
-    let pinFlagLabels (model : AdaptiveModel) (viewportSize : aval<V2i>) =
-        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-        let labelsJson =
-            AVal.custom (fun t ->
-                if not (model.ShowOverlaysHeld.GetValue t) then "[]"
-                else
-                    let pins  = pinsVal.GetValue t
-                    let cc    = model.CommonCentroid.GetValue t
-                    let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
-                    let vp    = viewportSize.GetValue t
-                    let viewT = model.Camera.view.GetValue t |> CameraView.viewTrafo
-                    let projT =
-                        Frustum.perspective 90.0 1.0 5000.0 (float vp.X / float (max 1 vp.Y))
-                        |> Frustum.projTrafo
-                    let vpFwd = (viewT * projT).Forward
-                    let items =
-                        HashMap.toList pins |> List.choose (fun (_, p) ->
-                            let h = vpFwd * V4d(ScanPin.flagTopRender cc scale p, 1.0)
-                            if h.W <= 1e-6 then None
-                            else
-                                let ndc = h.XYZ / h.W
-                                if abs ndc.X > 1.1 || abs ndc.Y > 1.1 then None
-                                else
-                                    Some (sprintf "{\"x\":%.1f,\"y\":%.1f,\"n\":\"%s %s\",\"c\":\"%s\"}"
-                                            ((ndc.X * 0.5 + 0.5) * float vp.X)
-                                            ((0.5 - ndc.Y * 0.5) * float vp.Y)
-                                            p.Glyph p.ShortName (Primitives.c4bToHex p.PinColor)))
-                    "[" + String.concat "," items + "]")
-        div {
-            Class "pin-flag-labels"
-            Primitives.showWhen model.ShowOverlaysHeld
-            labelsJson |> AVal.map (fun json -> Some (Attribute("data-labels", json)))
-            Primitives.observedRender "data-labels" "[]" [
-                "  d.forEach(function(p){"
-                "    var s = document.createElement('div');"
-                "    s.className = 'pfl';"
-                "    s.textContent = p.n;"
-                "    s.style.left = p.x + 'px';"
-                "    s.style.top = p.y + 'px';"
-                "    s.style.borderColor = p.c;"
-                "    s.style.color = p.c;"
-                "    el.appendChild(s);"
-                "  });"
-            ]
-        }
-
-    // Transient feedback for blocked/failed actions (auto-clears).
-    let toast (model : AdaptiveModel) =
-        div {
-            Class "app-toast"
-            Primitives.showWhen (model.Toast |> AVal.map Option.isSome)
-            model.Toast |> AVal.map (Option.defaultValue "")
-        }
-
     let private niceRoundDistance (d : float) =
         if d <= 0.0 || System.Double.IsNaN d || System.Double.IsInfinity d then 1.0
         else
@@ -104,6 +46,254 @@ module GuiOverlays =
         if m >= 1000.0 then sprintf "%g km" (m / 1000.0)
         elif m >= 1.0 then sprintf "%g m" m
         else sprintf "%g cm" (m * 100.0)
+
+    // Show-overlays hold (§T8): a 2D name tag per pin floating at its flag-pole tip
+    // (ScanPin.flagTopRender projected to CSS px every frame), extended with the
+    // pin's precomputed vertical cross-section as a small profile chart. Two
+    // attributes drive one JS renderer: data-labels re-projects the tag positions
+    // every frame (cheap), data-charts carries the SVG chart content and changes
+    // only when a slice cache / displayed pose / mesh visibility changes — so
+    // orbiting while the hold is down moves the pills without rebuilding chart DOM.
+    // Same 90° horizontal fov as the main projection — only NDC x/y matter here.
+    let pinFlagLabels (model : AdaptiveModel) (viewportSize : aval<V2i>) =
+        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
+        let idStr (id : ScanPinId) = let (ScanPinId.ScanPinId g) = id in g.ToString "N"
+        let labelsJson =
+            AVal.custom (fun t ->
+                if not (model.ShowOverlaysHeld.GetValue t) then "[]"
+                else
+                    let pins  = pinsVal.GetValue t
+                    let cc    = model.CommonCentroid.GetValue t
+                    let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
+                    let vp    = viewportSize.GetValue t
+                    let viewT = model.Camera.view.GetValue t |> CameraView.viewTrafo
+                    let projT =
+                        Frustum.perspective 90.0 1.0 5000.0 (float vp.X / float (max 1 vp.Y))
+                        |> Frustum.projTrafo
+                    let vpFwd = (viewT * projT).Forward
+                    let items =
+                        HashMap.toList pins |> List.choose (fun (id, p) ->
+                            let h = vpFwd * V4d(ScanPin.flagTopRender cc scale p, 1.0)
+                            if h.W <= 1e-6 then None
+                            else
+                                let ndc = h.XYZ / h.W
+                                if abs ndc.X > 1.1 || abs ndc.Y > 1.1 then None
+                                else
+                                    Some (sprintf "{\"id\":\"%s\",\"x\":%.1f,\"y\":%.1f,\"n\":\"%s %s\",\"c\":\"%s\"}"
+                                            (idStr id)
+                                            ((ndc.X * 0.5 + 0.5) * float vp.X)
+                                            ((0.5 - ndc.Y * 0.5) * float vp.Y)
+                                            p.Glyph p.ShortName (Primitives.c4bToHex p.PinColor)))
+                    "[" + String.concat "," items + "]")
+        // Chart geometry (CSS px). The x axis spans the slice window (±Extent about
+        // the pin centre); the y axis auto-fits the v-range of BOTH pose caches so
+        // the peek flips emphasis without rescaling (vertical exaggeration is the
+        // point — surface separations are far smaller than the window width).
+        let cw, ch = 170.0, 92.0
+        let padX, padT, padB = 5.0, 4.0, 13.0
+        let chartsJson =
+            AVal.custom (fun t ->
+                let pins  = pinsVal.GetValue t
+                let peek  = model.RegPeekHeld.GetValue t
+                let solo  = model.MeshSolo.GetValue t
+                let vis   = model.MeshVisible.GetValue t
+                let order = model.MeshOrder.Content.GetValue t
+                let rf    = (model.Registration.GetValue t).ReferenceMesh
+                let sb = System.Text.StringBuilder()
+                sb.Append '{' |> ignore
+                let mutable firstPin = true
+                for (id, p) in HashMap.toList pins do
+                    let chosen, other =
+                        if peek then p.SliceOther, p.Slice else p.Slice, p.SliceOther
+                    match chosen with
+                    | SliceReady s when s.Extent > 1e-9 ->
+                        // One v-range across both poses, all meshes, all planes.
+                        let mutable lo = infinity
+                        let mutable hi = -infinity
+                        let scan (sl : PinSlice) =
+                            for m in sl.Meshes do
+                                for pl in m.Planes do
+                                    for line in pl do
+                                        for q in line do
+                                            if q.Y < lo then lo <- q.Y
+                                            if q.Y > hi then hi <- q.Y
+                        scan s
+                        (match other with SliceReady o -> scan o | _ -> ())
+                        if hi >= lo then
+                            let span0 = hi - lo
+                            let mid = (lo + hi) * 0.5
+                            let span = max span0 0.01
+                            let lo = mid - span * 0.54
+                            let hi = mid + span * 0.54
+                            let e = s.Extent
+                            let x (u : float) = padX + (u + e) / (2.0 * e) * (cw - 2.0 * padX)
+                            let y (v : float) = ch - padB - (v - lo) / (hi - lo) * (ch - padT - padB)
+                            let ci = ScanPin.sliceCentreIndex s
+                            let laneOrder (name : string) =
+                                HashMap.tryFind name order |> Option.defaultValue System.Int32.MaxValue
+                            let meshes =
+                                s.Meshes
+                                |> Array.filter (fun m -> MeshVisibility.shown solo vis m.MeshName)
+                                |> Array.sortBy (fun m -> laneOrder m.MeshName)
+                            let colorOf (name : string) =
+                                match Map.tryFind name p.DatasetColors with
+                                | Some c4 -> Primitives.c4bToHex c4
+                                | None -> "#1a56db"
+                            // Draw order: outermost planes first, the centre slice last.
+                            let planeOrder =
+                                Array.init s.Offsets.Length (fun k -> k)
+                                |> Array.sortByDescending (fun k -> abs s.Offsets.[k])
+                            let paths = ResizeArray<string>()
+                            for k in planeOrder do
+                                let o, sw =
+                                    if k = ci then 1.0, 1.6
+                                    else max 0.08 (0.34 - 0.34 * (abs s.Offsets.[k] / e)), 1.0
+                                for m in meshes do
+                                    if k < m.Planes.Length && m.Planes.[k].Length > 0 then
+                                        let d = System.Text.StringBuilder()
+                                        for line in m.Planes.[k] do
+                                            for i in 0 .. line.Length - 1 do
+                                                d.Append(if i = 0 then "M" else "L") |> ignore
+                                                d.Append(sprintf "%.1f %.1f" (x line.[i].X) (y line.[i].Y)) |> ignore
+                                        paths.Add (sprintf "{\"d\":\"%s\",\"c\":\"%s\",\"o\":%.2f,\"sw\":%.1f}"
+                                                    (d.ToString()) (colorOf m.MeshName) o sw)
+                            // Correspondence markers, projected onto the centre slice
+                            // (the out-of-plane offset is dropped deliberately).
+                            let dots = ResizeArray<string>()
+                            (match p.Correspondence with
+                             | Some c ->
+                                for m in meshes do
+                                    let world =
+                                        if Some m.MeshName = rf then c.RefAnchor
+                                        else
+                                            let inRoi = Map.tryFind m.MeshName c.InRoi |> Option.defaultValue true
+                                            match Map.tryFind m.MeshName c.Anchors with
+                                            | Some a when inRoi ->
+                                                Some ((MeshView.displayedWorldPeekAt model t m.MeshName).Forward.TransformPos a.Point)
+                                            | _ -> None
+                                    match world with
+                                    | Some w ->
+                                        let uv = ScanPin.sliceUV p.Centre w
+                                        let dx = min (cw - padX) (max padX (x uv.X))
+                                        let dy = min (ch - padB) (max padT (y uv.Y))
+                                        dots.Add (sprintf "{\"x\":%.1f,\"y\":%.1f,\"c\":\"%s\"}" dx dy (colorOf m.MeshName))
+                                    | None -> ()
+                             | None -> ())
+                            let grid = ResizeArray<string>()
+                            if lo < 0.0 && hi > 0.0 then
+                                grid.Add (sprintf "{\"x1\":%.1f,\"y1\":%.1f,\"x2\":%.1f,\"y2\":%.1f}" padX (y 0.0) (cw - padX) (y 0.0))
+                            grid.Add (sprintf "{\"x1\":%.1f,\"y1\":%.1f,\"x2\":%.1f,\"y2\":%.1f}" (x 0.0) padT (x 0.0) (ch - padB))
+                            if not firstPin then sb.Append ',' |> ignore
+                            firstPin <- false
+                            sb.Append(sprintf "\"%s\":{\"w\":%.0f,\"h\":%.0f,\"paths\":[%s],\"dots\":[%s],\"grid\":[%s],\"dl\":\"⌀ %s\",\"dr\":\"Δ %s\"}"
+                                        (idStr id) cw ch
+                                        (String.concat "," paths)
+                                        (String.concat "," dots)
+                                        (String.concat "," grid)
+                                        (formatMeters (2.0 * e)) (formatMeters span0)) |> ignore
+                    | _ -> ()
+                sb.Append '}' |> ignore
+                sb.ToString())
+        div {
+            Class "pin-flag-labels"
+            Primitives.showWhen model.ShowOverlaysHeld
+            labelsJson |> AVal.map (fun json -> Some (Attribute("data-labels", json)))
+            chartsJson |> AVal.map (fun json -> Some (Attribute("data-charts", json)))
+            OnBoot [
+                "(function(){"
+                "var el = __THIS__;"
+                "var ns = 'http://www.w3.org/2000/svg';"
+                "var lastL = '', lastC = '';"
+                "var charts = {}, pills = {};"
+                "function buildChart(id){"
+                "  var pill = pills[id]; if(!pill) return;"
+                "  var host = pill.querySelector('.pfl-chart');"
+                "  host.innerHTML = '';"
+                "  var ch = charts[id];"
+                "  if(!ch){ pill.classList.add('pfl-nochart'); return; }"
+                "  pill.classList.remove('pfl-nochart');"
+                "  var svg = document.createElementNS(ns, 'svg');"
+                "  svg.setAttribute('width', ch.w); svg.setAttribute('height', ch.h);"
+                "  svg.setAttribute('viewBox', '0 0 ' + ch.w + ' ' + ch.h);"
+                "  (ch.grid||[]).forEach(function(g){"
+                "    var ln = document.createElementNS(ns, 'line');"
+                "    ln.setAttribute('x1', g.x1); ln.setAttribute('y1', g.y1);"
+                "    ln.setAttribute('x2', g.x2); ln.setAttribute('y2', g.y2);"
+                "    ln.setAttribute('stroke', '#dbe2ea'); ln.setAttribute('stroke-width', '1');"
+                "    svg.appendChild(ln);"
+                "  });"
+                "  (ch.paths||[]).forEach(function(p){"
+                "    var pa = document.createElementNS(ns, 'path');"
+                "    pa.setAttribute('d', p.d); pa.setAttribute('fill', 'none');"
+                "    pa.setAttribute('stroke', p.c); pa.setAttribute('stroke-opacity', p.o);"
+                "    pa.setAttribute('stroke-width', p.sw); pa.setAttribute('stroke-linejoin', 'round');"
+                "    svg.appendChild(pa);"
+                "  });"
+                "  (ch.dots||[]).forEach(function(dt){"
+                "    var ci = document.createElementNS(ns, 'circle');"
+                "    ci.setAttribute('cx', dt.x); ci.setAttribute('cy', dt.y); ci.setAttribute('r', '3');"
+                "    ci.setAttribute('fill', dt.c); ci.setAttribute('stroke', '#ffffff'); ci.setAttribute('stroke-width', '1.2');"
+                "    svg.appendChild(ci);"
+                "  });"
+                "  function lab(x, anchor, s){"
+                "    var tx = document.createElementNS(ns, 'text');"
+                "    tx.setAttribute('x', x); tx.setAttribute('y', ch.h - 3);"
+                "    tx.setAttribute('fill', '#64748b'); tx.setAttribute('font-size', '8');"
+                "    tx.setAttribute('font-family', 'SF Mono, Monaco, monospace');"
+                "    tx.setAttribute('text-anchor', anchor); tx.textContent = s;"
+                "    svg.appendChild(tx);"
+                "  }"
+                "  if(ch.dl) lab(3, 'start', ch.dl);"
+                "  if(ch.dr) lab(ch.w - 3, 'end', ch.dr);"
+                "  host.appendChild(svg);"
+                "}"
+                "function render(){"
+                "  var rawL = el.getAttribute('data-labels') || '[]';"
+                "  var rawC = el.getAttribute('data-charts') || '{}';"
+                "  var chartsChanged = rawC !== lastC;"
+                "  if(rawL === lastL && !chartsChanged) return;"
+                "  lastL = rawL; lastC = rawC;"
+                "  var items; try { items = JSON.parse(rawL); } catch(e) { return; }"
+                "  if(chartsChanged){ try { charts = JSON.parse(rawC); } catch(e) { charts = {}; } }"
+                "  var seen = {};"
+                "  items.forEach(function(p){"
+                "    seen[p.id] = true;"
+                "    var pill = pills[p.id];"
+                "    if(!pill){"
+                "      pill = document.createElement('div');"
+                "      pill.className = 'pfl';"
+                "      var nm = document.createElement('div'); nm.className = 'pfl-name';"
+                "      var chd = document.createElement('div'); chd.className = 'pfl-chart';"
+                "      pill.appendChild(nm); pill.appendChild(chd);"
+                "      el.appendChild(pill);"
+                "      pills[p.id] = pill;"
+                "      pill._n = '';"
+                "      buildChart(p.id);"
+                "    } else if(chartsChanged){ buildChart(p.id); }"
+                "    if(pill._n !== p.n){"
+                "      pill._n = p.n;"
+                "      pill.querySelector('.pfl-name').textContent = p.n;"
+                "      pill.style.borderColor = p.c; pill.style.color = p.c;"
+                "    }"
+                "    pill.style.left = p.x + 'px'; pill.style.top = p.y + 'px';"
+                "  });"
+                "  Object.keys(pills).forEach(function(id){"
+                "    if(!seen[id]){ el.removeChild(pills[id]); delete pills[id]; }"
+                "  });"
+                "}"
+                "render();"
+                "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-labels','data-charts']});"
+                "})();"
+            ]
+        }
+
+    // Transient feedback for blocked/failed actions (auto-clears).
+    let toast (model : AdaptiveModel) =
+        div {
+            Class "app-toast"
+            Primitives.showWhen (model.Toast |> AVal.map Option.isSome)
+            model.Toast |> AVal.map (Option.defaultValue "")
+        }
 
     let scaleBar (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let targetPx = 100.0

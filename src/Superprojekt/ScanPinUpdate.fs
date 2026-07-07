@@ -19,6 +19,10 @@ module ScanPinUpdate =
     let private ringsCts =
         System.Collections.Generic.Dictionary<ScanPinId, System.Threading.CancellationTokenSource>()
 
+    // Cross-section slice queries: same per-pin debounce discipline as the probes.
+    let private sliceCtsMap =
+        System.Collections.Generic.Dictionary<ScanPinId, System.Threading.CancellationTokenSource>()
+
     let private assignColors (meshNames : IndexList<string>) =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
 
@@ -54,6 +58,8 @@ module ScanPinUpdate =
             DatasetColors        = assignColors model.MeshNames
             Probe                = ProbeNone
             ProbeOther           = ProbeNone
+            Slice                = SliceNone
+            SliceOther           = SliceNone
             ContactRings         = RingsNone
         }
 
@@ -87,7 +93,8 @@ module ScanPinUpdate =
             match model.Selection.SelectedPin with
             | Some id -> sp |> updatePin id (fun pin ->
                 let r' = max 0.01 r
-                { pin with InnerRadius = r'; Probe = ProbeNone; ProbeOther = ProbeNone; ContactRings = RingsNone })
+                { pin with InnerRadius = r'; Probe = ProbeNone; ProbeOther = ProbeNone
+                           Slice = SliceNone; SliceOther = SliceNone; ContactRings = RingsNone })
             | None -> sp
 
         | DeletePin id ->
@@ -112,6 +119,22 @@ module ScanPinUpdate =
         | ProbeOtherFailed(id, reason) ->
             sp |> updatePin id (fun pin ->
                 if pin.ProbeOther = ProbeRunning then { pin with ProbeOther = ProbeError reason } else pin)
+
+        | SliceComputed(id, result) ->
+            sp |> updatePin id (fun pin ->
+                if pin.Slice = SliceRunning then { pin with Slice = SliceReady result } else pin)
+
+        | SliceFailed(id, reason) ->
+            sp |> updatePin id (fun pin ->
+                if pin.Slice = SliceRunning then { pin with Slice = SliceError reason } else pin)
+
+        | SliceOtherComputed(id, result) ->
+            sp |> updatePin id (fun pin ->
+                if pin.SliceOther = SliceRunning then { pin with SliceOther = SliceReady result } else pin)
+
+        | SliceOtherFailed(id, reason) ->
+            sp |> updatePin id (fun pin ->
+                if pin.SliceOther = SliceRunning then { pin with SliceOther = SliceError reason } else pin)
 
         | ContactRingsComputed(id, rings) ->
             sp |> updatePin id (fun pin ->
@@ -225,6 +248,72 @@ module ScanPinUpdate =
                     if needOther then fire meshesOther (fun r -> ProbeOtherComputed(id, r)) (fun e -> ProbeOtherFailed(id, e))
                     let pin = if needMain then { pin with Probe = ProbeRunning } else pin
                     let pin = if needOther then { pin with ProbeOther = ProbeRunning } else pin
+                    pins <- HashMap.add id pin pins
+                { model with ScanPins = { sp with Pins = pins } }
+
+    // Lazy cross-section trigger, postlude after every reducer step, mirroring
+    // ensureProbe: every pin with an invalidated Slice (and SliceOther once a
+    // solve exists) gets one debounced server query per pose. The slices feed
+    // only the show-overlays hold, but are precomputed here so the hold itself
+    // never fetches. All meshes regardless of visibility — visibility gates
+    // rendering only.
+    let ensureSlices (env : Env<Message>) (model : Model) : Model =
+        let sp = model.ScanPins
+        let solved = not (Map.isEmpty model.SolvedTransforms)
+        let pendingPin (p : ScanPin) =
+            (match p.Slice with SliceNone -> true | _ -> false)
+            || (solved && (match p.SliceOther with SliceNone -> true | _ -> false))
+        // Cheap exists-check first: this postlude runs on every message (incl. Rendered).
+        if not (sp.Pins |> HashMap.exists (fun _ p -> pendingPin p)) then model
+        else
+            let allMeshes = model.MeshNames |> IndexList.toList
+            match allMeshes with
+            | [] -> model
+            | _ ->
+                let meshes = allMeshes |> List.map (fun n -> n, (ModelTransforms.displayedWorld model n).Forward)
+                let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
+                let meshesOther = allMeshes |> List.map (fun n -> n, (ModelTransforms.displayedWorldAt otherView model n).Forward)
+                let pending =
+                    sp.Pins |> HashMap.toList
+                    |> List.filter (fun (_, p) -> pendingPin p)
+                let mutable pins = sp.Pins
+                for (id, pin) in pending do
+                    match sliceCtsMap.TryGetValue id with
+                    | true, cts -> cts.Cancel()
+                    | _ -> ()
+                    let cts = new System.Threading.CancellationTokenSource()
+                    sliceCtsMap.[id] <- cts
+                    let token = cts.Token
+                    let centre = pin.Centre
+                    let radius = pin.InnerRadius
+                    let offsets = ScanPin.sliceOffsets radius
+                    let needMain  = match pin.Slice with SliceNone -> true | _ -> false
+                    let needOther = solved && (match pin.SliceOther with SliceNone -> true | _ -> false)
+                    let fire ms ok fail =
+                        task {
+                            try
+                                do! System.Threading.Tasks.Task.Delay(250, token)
+                                let! res =
+                                    Query.slice ApiConfig.apiBase.Value ms centre
+                                        ScanPin.sliceUDir ScanPin.sliceNormal radius offsets 140
+                                    |> Async.StartAsTask
+                                if not token.IsCancellationRequested then
+                                    let s = {
+                                        Extent  = radius
+                                        Offsets = offsets
+                                        Meshes  = res |> Array.map (fun (n, planes) -> { MeshName = n; Planes = planes })
+                                    }
+                                    env.Emit [ScanPinMsg (ok s)]
+                            with
+                            | :? System.OperationCanceledException -> ()
+                            | ex ->
+                                if not token.IsCancellationRequested then
+                                    env.Emit [ScanPinMsg (fail ex.Message)]
+                        } |> ignore
+                    if needMain then fire meshes (fun s -> SliceComputed(id, s)) (fun e -> SliceFailed(id, e))
+                    if needOther then fire meshesOther (fun s -> SliceOtherComputed(id, s)) (fun e -> SliceOtherFailed(id, e))
+                    let pin = if needMain then { pin with Slice = SliceRunning } else pin
+                    let pin = if needOther then { pin with SliceOther = SliceRunning } else pin
                     pins <- HashMap.add id pin pins
                 { model with ScanPins = { sp with Pins = pins } }
 

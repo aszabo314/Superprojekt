@@ -42,7 +42,8 @@ as false-colour layers and distributions.
   window); the 3D viewport and all bottom-anchored overlays follow.
 - Floating overlays over the 3D view: scale bar (bottom left), colour legend
   (bottom centre, Inspect only), orientation gizmo (bottom right), toast
-  messages, and — while the Overlays hold is down — 2D pin name tags.
+  messages, and — while the Overlays hold is down — 2D pin name tags, each
+  carrying its pin's vertical cross-section profile chart.
 
 ---
 
@@ -109,7 +110,7 @@ never moves a camera; camera motion only ever originates from double-clicks
 |---|---|---|
 | **Peek** | top bar button | Displayed poses flip Before↔After; the dock histogram flips which pose is emphasized. Visual only. |
 | **◎ Isolate** (key `I`) | top bar button | Forces pin isolation on in modes where it defaults off: terrain drops to ghost except inside pin regions. |
-| **🎨 Overlays** (key `O`) | top bar button | Meshes paint plain white (shading kept), pin flag poles become thick and pin-coloured, and 2D name tags appear at the flag tips. Every false-colour layer is overridden while held. |
+| **🎨 Overlays** (key `O`) | top bar button | Meshes paint plain white (shading kept), pin flag poles become thick and pin-coloured, and 2D name tags appear at the flag tips — each with the pin's vertical cross-section profile chart (§4.6); the centre cut is also traced on the surfaces inside each pin. Every false-colour layer is overridden while held. |
 | **Space** | keyboard | Hides all 3D annotation (pins, rings, constellation, coordinate cross, axis labels, reference/focus outlines) — a clean terrain view. |
 | **Alt** | keyboard | Activates the "picking layer": the layer mesh renders solid, the rest ghost; picks prefer it. Alt+wheel cycles which mesh is the layer (meshes stacked under the cursor first, else all visible ones); a small label at the cursor names the current layer. |
 
@@ -325,6 +326,35 @@ per pin). Each pin has an immutable identity: a glyph + colour pair from a
 While the **Overlays hold** is down, additional 2D name tags (glyph + name,
 pin-coloured, on white pills) float at each flag tip, projected to screen every
 frame. Overlap is accepted; tags behind the camera or far off-screen drop out.
+
+Each tag also carries a small **cross-section profile chart** of its pin: the
+meshes are cut by a fixed vertical plane through the pin centre (the plane
+contains world X and world Z — one global direction shared by every pin, not
+aligned to the surface or the camera), clipped to the pin's probe sphere. The
+centre cut of every shown mesh is a full-strength polyline in the mesh colour;
+three parallel cuts on each side (spaced radius/4 along world Y and disc-
+clipped, so the outermost still spans about ⅔ of the window) are drawn as
+progressively fainter lines — context for how the surfaces behave around the
+section, not a measurement. Each shown mesh's correspondence marker is
+projected straight onto the centre plane (its out-of-plane offset is
+deliberately discarded) and drawn as a dot in the mesh colour. The x axis
+spans the pin diameter (noted bottom-left, "⌀"); the y axis auto-fits the data
+of *both* registration poses (noted bottom-right, "Δ" = its span). Honest: the
+chart is vertically exaggerated, not to aspect — the surface separations under
+scrutiny are usually far smaller than the window width — and hairlines mark
+the pin centre (vertical) and the pin-centre elevation (horizontal).
+
+The same centre cut is drawn in the 3D view while the hold is down: the
+intersection polylines inside each pin's sphere, per shown mesh in its colour,
+always-on-top (they lie exactly on the whited-out surfaces, where a normal
+depth test would stitch).
+
+The slices are precomputed on the server per pin (like the probes) and cached
+for **both** Before/After poses, so the hold itself never fetches anything:
+toggling Before/After swaps the two caches in place, the Peek hold merely
+displays the other one, and pose/reference/radius changes invalidate them
+together with the probes. Charts and 3D cut lines respect mesh visibility and
+isolation at draw time.
 
 ### 4.7 Overlays and readouts
 

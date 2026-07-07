@@ -151,21 +151,10 @@ module ScanPinScene =
         let placementActive =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
-        // Displayed (before/after) world transform of a mesh at the given token —
-        // anchors are mesh-local, so their world follows this.
+        // Displayed (before/after, peek-aware) world transform of a mesh at the
+        // given token — anchors are mesh-local, so their world follows this.
         let dispWorldAt (t : AdaptiveToken) (mesh : string) =
-            let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
-            let cc = model.CommonCentroid.GetValue t
-            let view =
-                match model.RegView.GetValue t, model.RegPeekHeld.GetValue t with
-                | RegBefore, true -> RegAfter
-                | RegAfter, true -> RegBefore
-                | v, false -> v
-            let disp =
-                match view, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
-                | RegAfter, Some s -> s
-                | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
-            RigidTransform.renderToWorld scale cc disp
+            MeshView.displayedWorldPeekAt model t mesh
 
         // Pin centres/radii are metric world-space; the scene graph is render-
         // space (post centroid translate + dataset scale). Project before use.
@@ -444,6 +433,54 @@ module ScanPinScene =
                     out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 
+        // Centre-slice intersection lines (show-overlays hold): the cached vertical
+        // cross-section's centre plane per pin, one polyline set per shown mesh in
+        // its dataset colour — the 3D locator for the label profile charts. Slice
+        // data is pose-baked (Slice = committed, SliceOther = opposite), so the reg
+        // peek just selects the other cache. Drawn on top: the lines lie exactly ON
+        // the whited-out surfaces, where a coplanar depth test would stitch.
+        let pinSliceData =
+            model.ScanPins.Pins
+            |> AMap.map (fun _ p -> p.Centre, p.Slice, p.SliceOther, p.DatasetColors)
+            |> AMap.toAVal
+        let slicesActive = (notFullscreen, model.ShowOverlaysHeld) ||> AVal.map2 (&&)
+        let pinSliceLines =
+            let segs =
+                AVal.custom (fun t ->
+                    if not (model.ShowOverlaysHeld.GetValue t) then [||]
+                    else
+                        let pins  = pinSliceData.GetValue t
+                        let cc    = model.CommonCentroid.GetValue t
+                        let scale = datasetScale.GetValue t
+                        let peek  = model.RegPeekHeld.GetValue t
+                        let solo  = model.MeshSolo.GetValue t
+                        let vis   = model.MeshVisible.GetValue t
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        for (_, (centre, slice, sliceOther, colors)) in HashMap.toSeq pins do
+                            let chosen =
+                                match (if peek then sliceOther else slice) with
+                                | SliceReady s -> Some s
+                                | _ -> None
+                            match chosen with
+                            | Some s ->
+                                let ci = ScanPin.sliceCentreIndex s
+                                let w = s.Offsets.[ci]
+                                for sm in s.Meshes do
+                                    if MeshVisibility.shown solo vis sm.MeshName && ci < sm.Planes.Length then
+                                        let col =
+                                            match Map.tryFind sm.MeshName colors with
+                                            | Some c4 -> V4d(Primitives.c4bToV3d c4, 0.95)
+                                            | None -> V4d(0.102, 0.337, 0.859, 0.95)
+                                        for line in sm.Planes.[ci] do
+                                            for i in 0 .. line.Length - 2 do
+                                                let a = ScanPin.sliceToWorld centre w line.[i]
+                                                let b = ScanPin.sliceToWorld centre w line.[i + 1]
+                                                out.Add(ScanPin.renderCentre cc scale a,
+                                                        ScanPin.renderCentre cc scale b, col, 2.0)
+                            | None -> ()
+                        out.ToArray())
+            ASet.ofList [ linesNodeTop slicesActive segs ]
+
         // Pin identity flag (§A): the pin's ShortName as a text label floating above
         // the pin centre, in the pin's PinColor. Always-on-top (passOne, DepthTest.None)
         // so it reads against the terrain. Identity is immutable → snapshot once per id
@@ -568,4 +605,4 @@ module ScanPinScene =
                 Dots.render geo
             }
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [brushedDots]])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; pinSliceLines; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [brushedDots]])

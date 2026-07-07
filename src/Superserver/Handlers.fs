@@ -116,5 +116,6 @@ let webApp : HttpHandler =
         route  "/api/query/contact-rings"                       >=> contactRingsHandler
         route  "/api/query/lsq-pairs"                           >=> lsqPairsHandler
         route  "/api/query/probe"                               >=> probeHandler
+        route  "/api/query/slice"                               >=> sliceHandler
         route  "/api/query/region-distance"                     >=> regionDistanceHandler
     ]

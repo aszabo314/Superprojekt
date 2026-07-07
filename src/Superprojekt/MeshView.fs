@@ -100,6 +100,24 @@ module MeshView =
             | RegAfter, Some t -> t
             | _ -> Map.tryFind name load |> Option.defaultValue Trafo3d.Identity)
 
+    // Token-based sibling of displayedMeshT in metric world — the pose the mesh
+    // currently SHOWS (peek included), for AVal.custom computes that place
+    // mesh-local data (anchors, slice caches). Reads hit the caller's token
+    // directly; never build transient avals for this (see CLAUDE.md).
+    let displayedWorldPeekAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (mesh : string) =
+        let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
+        let cc = model.CommonCentroid.GetValue t
+        let view =
+            match model.RegView.GetValue t, model.RegPeekHeld.GetValue t with
+            | RegBefore, true -> RegAfter
+            | RegAfter, true -> RegBefore
+            | v, false -> v
+        let disp =
+            match view, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
+            | RegAfter, Some s -> s
+            | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+        RigidTransform.renderToWorld scale cc disp
+
     // Per-vertex triangle shape quality (incident-face mean of 4√3·A/Σl², clamped
     // 0..1; 1 = equilateral, →0 = thin/degenerate). Shared by the 3D shape heatmap
     // buffer and the 2D focus tile shape overlay.

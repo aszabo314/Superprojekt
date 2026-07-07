@@ -92,4 +92,8 @@ and ScanPinMessage =
     | ProbeFailed of ScanPinId * string
     | ProbeOtherComputed of ScanPinId * ProbeResult
     | ProbeOtherFailed of ScanPinId * string
+    | SliceComputed of ScanPinId * PinSlice
+    | SliceFailed of ScanPinId * string
+    | SliceOtherComputed of ScanPinId * PinSlice
+    | SliceOtherFailed of ScanPinId * string
     | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>

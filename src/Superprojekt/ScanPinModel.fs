@@ -38,6 +38,12 @@ type ScanPin = {
     // the two when both are ready (no refetch).
     Probe                : ProbeState
     ProbeOther           : ProbeState
+    // Vertical cross-section cache for the show-overlays hold, same pose pairing
+    // as the probes: Slice = committed displayed pose, SliceOther = the opposite
+    // Before/After pose. SetRegView swaps a ready pair; the reg peek merely
+    // selects the other cache (visual only).
+    Slice                : SliceState
+    SliceOther           : SliceState
     ContactRings         : ContactRingState
 }
 
@@ -65,23 +71,36 @@ module ScanPinModel =
         | _ -> true
 
     // Unchanged pins are returned as-is so the adaptive map diff sees no change.
+    // Slices share every probe trigger (poses / reference / pin geometry), so
+    // they invalidate together.
     let invalidateProbes (sp : ScanPinModel) =
         let pins =
             sp.Pins |> HashMap.map (fun _ p ->
-                match p.Probe, p.ProbeOther with
-                | ProbeNone, ProbeNone -> p
-                | _ -> { p with Probe = ProbeNone; ProbeOther = ProbeNone })
+                match p.Probe, p.ProbeOther, p.Slice, p.SliceOther with
+                | ProbeNone, ProbeNone, SliceNone, SliceNone -> p
+                | _ -> { p with Probe = ProbeNone; ProbeOther = ProbeNone
+                                Slice = SliceNone; SliceOther = SliceNone })
         { sp with Pins = pins }
 
     // Before/After toggled: a ready (Probe, ProbeOther) pair is exactly the two
     // poses, so swap in place — no server round trip; anything unpaired refetches.
+    // Slices carry the same pose pairing and swap alongside.
     let swapProbeViews (sp : ScanPinModel) =
         let pins =
             sp.Pins |> HashMap.map (fun _ p ->
-                match p.Probe, p.ProbeOther with
-                | ProbeReady a, ProbeReady b -> { p with Probe = ProbeReady b; ProbeOther = ProbeReady a }
-                | ProbeNone, ProbeNone -> p
-                | _ -> { p with Probe = ProbeNone; ProbeOther = ProbeNone })
+                match p.Probe, p.ProbeOther, p.Slice, p.SliceOther with
+                | ProbeNone, ProbeNone, SliceNone, SliceNone -> p
+                | _ ->
+                    let probe, probeOther =
+                        match p.Probe, p.ProbeOther with
+                        | ProbeReady a, ProbeReady b -> ProbeReady b, ProbeReady a
+                        | _ -> ProbeNone, ProbeNone
+                    let slice, sliceOther =
+                        match p.Slice, p.SliceOther with
+                        | SliceReady a, SliceReady b -> SliceReady b, SliceReady a
+                        | _ -> SliceNone, SliceNone
+                    { p with Probe = probe; ProbeOther = probeOther
+                             Slice = slice; SliceOther = sliceOther })
         { sp with Pins = pins }
 
     let invalidateRings (sp : ScanPinModel) =
@@ -94,6 +113,33 @@ module ScanPinModel =
 
 module ScanPin =
     let fixedProbeLength   = 20.0
+
+    // Fixed frame of the vertical cross-section cache: the cut plane contains
+    // world X (chart u) and world Z (chart v); parallel planes offset along
+    // world Y, three each side at radius/4 (disc-clipped, so the outermost still
+    // spans ~⅔ of the pin). A fixed direction keeps the slices comparable across
+    // pins and poses.
+    let sliceUDir   = V3d.IOO
+    let sliceNormal = V3d.OIO
+    let sliceOffsets (radius : float) =
+        [| -3 .. 3 |] |> Array.map (fun i -> float i * radius * 0.25)
+
+    // Chart frame (u, v) at plane offset w → metric world.
+    let sliceToWorld (centre : V3d) (w : float) (q : V2d) =
+        centre + sliceUDir * q.X + sliceNormal * w + V3d.OOI * q.Y
+
+    // Metric world → chart frame of the CENTRE slice (the Y component drops —
+    // i.e. the point is projected onto the centre plane).
+    let sliceUV (centre : V3d) (p : V3d) =
+        let q = p - centre
+        V2d(Vec.dot q sliceUDir, q.Z)
+
+    // Index of the centre plane (offset closest to 0).
+    let sliceCentreIndex (s : PinSlice) =
+        let mutable best = 0
+        for k in 1 .. s.Offsets.Length - 1 do
+            if abs s.Offsets.[k] < abs s.Offsets.[best] then best <- k
+        best
 
     // World-space (metric) → render-space (post centroid translate, post scale).
     let renderCentre (commonCentroid : V3d) (datasetScale : float) (worldCentre : V3d) =

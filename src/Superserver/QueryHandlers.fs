@@ -27,6 +27,17 @@ type ContactRingsRequest = { Name: string; Centre: float[]; Radius: float; MaxPo
 type ProbeMeshDto = { Name: string; Transform: float[] }
 
 [<CLIMutable>]
+type SliceRequest = {
+    Meshes            : ProbeMeshDto[]
+    Centre            : float[]
+    UDir              : float[]
+    Normal            : float[]
+    Radius            : float
+    Offsets           : float[]
+    MaxPointsPerPlane : int
+}
+
+[<CLIMutable>]
 type ProbeRequest = {
     Meshes           : ProbeMeshDto[]
     ReferenceName    : string
@@ -190,6 +201,42 @@ let contactRingsHandler : HttpHandler =
             return! json {| rings = out |} next ctx
         with ex ->
             log.LogError(ex, "contact-rings failed")
+            return! RequestErrors.notFound (text ex.Message) next ctx
+    }
+
+// Vertical cross-sections through a pin: every mesh × every parallel plane in
+// one request (per-mesh world transforms, probe convention), 2D chart-frame
+// polylines back — see MeshAnalysis.planeSlices.
+let sliceHandler : HttpHandler =
+    fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        try
+            let! req = ctx.BindJsonAsync<SliceRequest>()
+            let radius  = if req.Radius <= 0.0 then 1.0 else req.Radius
+            let maxPts  = if req.MaxPointsPerPlane <= 0 then 400 else req.MaxPointsPerPlane
+            let offsets = if isNull req.Offsets || req.Offsets.Length = 0 then [| 0.0 |] else req.Offsets
+            let centre  = toV3d req.Centre
+            let uDir    = toV3d req.UDir
+            let normal  = toV3d req.Normal
+            let meshes  = req.Meshes |> Array.map (fun m -> m.Name, loadMesh m.Name 0, mat16 m.Transform)
+            let results =
+                meshes
+                |> Array.Parallel.map (fun (name, lm, trafo) ->
+                    let planes = MeshAnalysis.planeSlices lm trafo centre uDir normal radius offsets maxPts
+                    {| name = name
+                       planes =
+                        planes |> Array.map (Array.map (fun line ->
+                            let flat = Array.zeroCreate<float> (line.Length * 2)
+                            for i in 0 .. line.Length - 1 do
+                                flat.[i * 2]     <- line.[i].X
+                                flat.[i * 2 + 1] <- line.[i].Y
+                            flat)) |})
+            let pts = results |> Array.sumBy (fun m -> m.planes |> Array.sumBy (Array.sumBy (fun (l : float[]) -> l.Length / 2)))
+            log.LogInformation("slice r={Radius:F2} ×{Planes} planes: {Meshes} meshes, {Points} pts",
+                radius, offsets.Length, results.Length, pts)
+            return! json {| meshes = results |} next ctx
+        with ex ->
+            log.LogError(ex, "slice failed")
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 

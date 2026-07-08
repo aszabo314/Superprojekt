@@ -38,6 +38,41 @@
   vertical exaggeration, faint parallel-slice read, anchor dots, Before/After
   swap + Peek flip, 3D centre-cut lines on the white-out, orbit smoothness of
   the two-attribute label renderer).
+- Per-pose Inspect maps (below) — client typecheck green, no server or shader
+  changes; awaiting a browser pass (Before/After toggle repaints difference +
+  variance, Peek flips paint with geometry in 3D and the focus views, no
+  flash-of-stale colour right after a solve).
+
+## Inspect false-colour maps are per-pose (Before/After + Peek) (2026-07-08)
+The Inspect scalar fields (per-mesh difference, ensemble variance) were fetched
+at the committed pose only: toggling Before/After kept painting the old pose's
+values (stale — the geometry moved, the colours didn't), and the Peek hold
+flipped the geometry but not the paint. They now carry the same per-pose pair
+cache as probes and slices.
+
+- **Model**: `SurfaceDistanceOther` / `FocusDistOther` alongside the existing
+  maps — main = committed displayed pose, Other = the opposite Before/After
+  pose, fetched only once a solve exists.
+- **Fetch** (`ensureVariance` / `ensureFocusDist`): one debounced batch fetches
+  whatever is missing for both poses (committed first, so the visible paint
+  lands sooner; variance aggregation refactored into a local `aggregate`).
+  Transforms via `ModelTransforms.displayedWorldAt view`.
+- **`SetRegView`** swaps both pairs wholesale (always correct — each cached
+  array is pose-baked, the toggle just relabels which pose is committed) and
+  cancels the in-flight CTSes + bumps both generations: a result landing after
+  the swap would file under the wrong pose.
+- **Peek** selects the Other cache at the two paint sites
+  (`MeshView.inspectField`, `FocusScene.focusOverlay` mode 1) — flips together
+  with `displayedMeshT` geometry in the 3D view and the focus tiles/single.
+  Purely visual, no query. Peek is only reachable once solved (GuiTopBar gates
+  the hold), so an empty Other never shows for an unsolved workspace; while an
+  Other fetch is still in flight the mesh paints plain rather than stale.
+- **Invalidation**: all existing triggers drop/keep the pairs together
+  (`invalidateProbes`, `invalidateFocusDist`, `setMeshVisible`, workflow
+  switch); `CoarseSolved` → `invalidateProbes` re-arms both poses after every
+  re-solve. Displacement needs no pair — it is itself the Before→After delta.
+- Docs: CLAUDE.md per-pose bullet. (GUI.md was retired in the same commit —
+  the as-is GUI reference is no longer maintained.)
 
 ## Pin cross-section charts in the Overlays hold (2026-07-07)
 While the Overlays hold is down, each pin's 2D name tag now carries a vertical

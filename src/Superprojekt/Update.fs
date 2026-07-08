@@ -98,17 +98,28 @@ module Update =
             else { model with ShowOverlaysHeld = held }
         | SetRegView v ->
             // Only meaningful once a solve exists (the view disables it otherwise).
-            // Probes + slices: a ready (main, other) pair IS the two poses — swap in
-            // place instead of refetching; rings have no other-pose cache, refetch.
+            // Probes + slices + the Inspect scalar maps: a ready (main, other) pair IS
+            // the two poses — swap in place instead of refetching; rings have no
+            // other-pose cache, refetch. In-flight scalar fetches were built against
+            // the pre-swap pose labels and would file under the wrong pose — cancel
+            // them and re-arm the generations (the postludes refetch what's missing).
             if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
             else
+                surfaceDistCts.Cancel()
+                focusDistCts.Cancel()
+                bumpSurfaceDist ()
+                bumpFocusDist ()
                 // Brushed gids index the canonical sample array of the committed
                 // pose — the swap re-indexes it, so drop them.
                 invalidateRings
                     { model with
                         RegView = v
                         BrushedSamples = Set.empty
-                        ScanPins = ScanPinModel.swapProbeViews model.ScanPins }
+                        ScanPins = ScanPinModel.swapProbeViews model.ScanPins
+                        SurfaceDistance = model.SurfaceDistanceOther
+                        SurfaceDistanceOther = model.SurfaceDistance
+                        FocusDist = model.FocusDistOther
+                        FocusDistOther = model.FocusDist }
         | SetRegPeek held ->
             // Purely visual (the displayed transform flips); no probe/ring invalidation.
             if model.RegPeekHeld = held then model else { model with RegPeekHeld = held }
@@ -242,9 +253,17 @@ module Update =
             if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
             else model
+        | VarianceOtherComputed(mesh, arr) ->
+            if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
+                { model with SurfaceDistanceOther = Map.add mesh arr model.SurfaceDistanceOther }
+            else model
         | FocusDistComputed(mesh, arr) ->
             if model.WorkflowStep = Inspect then
                 { model with FocusDist = Map.add mesh arr model.FocusDist }
+            else model
+        | FocusDistOtherComputed(mesh, arr) ->
+            if model.WorkflowStep = Inspect then
+                { model with FocusDistOther = Map.add mesh arr model.FocusDistOther }
             else model
         | ToggleExtrinsicZDiff ->
             // The difference values change with the sub-mode (M3C2 ↔ Δz) → refetch.
@@ -344,7 +363,9 @@ module Update =
                 bumpSurfaceDist ()
                 bumpFocusDist ()
                 exitSolo
-                    { model with WorkflowStep = step; SurfaceDistance = Map.empty; FocusDist = Map.empty
+                    { model with WorkflowStep = step
+                                 SurfaceDistance = Map.empty; SurfaceDistanceOther = Map.empty
+                                 FocusDist = Map.empty; FocusDistOther = Map.empty
                                  AnchorGhostMode = (step = Correspondence)
                                  CorrArm = None; CorrPreview = None; BrushedSamples = Set.empty
                                  LocateBackup = None
@@ -495,7 +516,9 @@ module Update =
 
     // All-meshes variance: per reference vertex, the std of each visible moving
     // mesh's signed distance (target = reference, ref = moving). Debounced via the
-    // surface-distance generation/CTS.
+    // surface-distance generation/CTS. Both Before/After poses are cached (Other is
+    // fetched only once a solve exists) so the reg toggle/peek never repaints stale
+    // values — the committed pose lands first, the opposite pose follows.
     let private ensureVariance (env : Env<Message>) (model : Model) : Model =
         // The variance aggregate only paints in the no-solo ensemble — don't fetch
         // while a mesh is isolated (exitSolo resets the visibility map, which
@@ -503,46 +526,62 @@ module Update =
         if model.WorkflowStep <> Inspect || model.MeshSolo.IsSome then model
         else
             match model.Registration.ReferenceMesh with
-            | Some refMesh
-                  when not (Map.containsKey refMesh model.SurfaceDistance)
-                       && surfaceDistReqGen <> surfaceDistGen ->
+            | Some refMesh when surfaceDistReqGen <> surfaceDistGen ->
+                let needMain = not (Map.containsKey refMesh model.SurfaceDistance)
+                let needOther =
+                    not (Map.isEmpty model.SolvedTransforms)
+                    && not (Map.containsKey refMesh model.SurfaceDistanceOther)
                 let moving =
                     model.MeshNames |> IndexList.toList
                     |> List.filter (fun n -> n <> refMesh && (Map.tryFind n model.MeshVisible |> Option.defaultValue true))
-                if List.length moving < 2 then model
+                if (not needMain && not needOther) || List.length moving < 2 then model
                 else
                     surfaceDistReqGen <- surfaceDistGen
-                    let refT = (ModelTransforms.displayedWorld model refMesh).Forward
-                    let jobs =
+                    let jobsAt view =
+                        let refT = (ModelTransforms.displayedWorldAt view model refMesh).Forward
                         moving |> List.map (fun m ->
-                            let mT = (ModelTransforms.displayedWorld model m).Forward
+                            let mT = (ModelTransforms.displayedWorldAt view model m).Forward
                             Query.regionDistance ApiConfig.apiBase.Value refMesh 0 m 0 refT mT 0)
+                    let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
+                    let mainJobs  = if needMain then Some (jobsAt model.RegView) else None
+                    let otherJobs = if needOther then Some (jobsAt otherView) else None
+                    let aggregate (results : float32[][]) =
+                        let n = results.[0].Length
+                        let outv = Array.zeroCreate<float32> n
+                        for i in 0 .. n - 1 do
+                            let mutable sum = 0.0
+                            let mutable sum2 = 0.0
+                            let mutable cnt = 0
+                            for r in results do
+                                if i < r.Length then
+                                    let v = float r.[i]
+                                    if abs v < 1e20 then
+                                        sum  <- sum + v
+                                        sum2 <- sum2 + v * v
+                                        cnt  <- cnt + 1
+                            if cnt >= 2 then
+                                let mean = sum / float cnt
+                                outv.[i] <- float32 (sqrt (max 0.0 (sum2 / float cnt - mean * mean)))
+                            else outv.[i] <- 1e30f
+                        outv
                     surfaceDistCts.Cancel()
                     surfaceDistCts <- new System.Threading.CancellationTokenSource()
                     let token = surfaceDistCts.Token
                     task {
                         try
                             do! System.Threading.Tasks.Task.Delay(150, token)
-                            let! results = jobs |> Async.Parallel |> Async.StartAsTask
-                            if not token.IsCancellationRequested && results.Length >= 2 then
-                                let n = results.[0].Length
-                                let outv = Array.zeroCreate<float32> n
-                                for i in 0 .. n - 1 do
-                                    let mutable sum = 0.0
-                                    let mutable sum2 = 0.0
-                                    let mutable cnt = 0
-                                    for r in results do
-                                        if i < r.Length then
-                                            let v = float r.[i]
-                                            if abs v < 1e20 then
-                                                sum  <- sum + v
-                                                sum2 <- sum2 + v * v
-                                                cnt  <- cnt + 1
-                                    if cnt >= 2 then
-                                        let mean = sum / float cnt
-                                        outv.[i] <- float32 (sqrt (max 0.0 (sum2 / float cnt - mean * mean)))
-                                    else outv.[i] <- 1e30f
-                                env.Emit [VarianceComputed(refMesh, outv)]
+                            match mainJobs with
+                            | Some jobs ->
+                                let! results = jobs |> Async.Parallel |> Async.StartAsTask
+                                if not token.IsCancellationRequested && results.Length >= 2 then
+                                    env.Emit [VarianceComputed(refMesh, aggregate results)]
+                            | None -> ()
+                            match otherJobs with
+                            | Some jobs ->
+                                let! results = jobs |> Async.Parallel |> Async.StartAsTask
+                                if not token.IsCancellationRequested && results.Length >= 2 then
+                                    env.Emit [VarianceOtherComputed(refMesh, aggregate results)]
+                            | None -> ()
                         with
                         | :? System.OperationCanceledException -> ()
                         | ex ->
@@ -554,7 +593,8 @@ module Update =
 
     // Inspect Difference channel: per visible moving mesh, fetch its signed distance
     // to the reference (the mesh's own served vertex order) for the focus heatmap.
-    // Same generation-guarded debounce as ensureVariance.
+    // Same generation-guarded debounce as ensureVariance, same per-pose pairing:
+    // the Other pose is fetched only once a solve exists, in the same batch.
     let private ensureFocusDist (env : Env<Message>) (model : Model) : Model =
         if model.WorkflowStep <> Inspect || model.InspectChannel <> ChDifference then model
         else
@@ -567,19 +607,24 @@ module Update =
                     model.MeshNames |> IndexList.toList
                     |> List.filter (fun n ->
                         n <> refMesh && MeshVisibility.shown model.MeshSolo model.MeshVisible n)
-                let missing = moving |> List.filter (fun m -> not (Map.containsKey m model.FocusDist))
-                if List.isEmpty missing || focusDistReqGen = focusDistGen then model
+                let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
+                let solved = not (Map.isEmpty model.SolvedTransforms)
+                let wanted =
+                    [ for m in moving do
+                        if not (Map.containsKey m model.FocusDist) then yield m, model.RegView, false
+                        if solved && not (Map.containsKey m model.FocusDistOther) then yield m, otherView, true ]
+                if List.isEmpty wanted || focusDistReqGen = focusDistGen then model
                 else
                     focusDistReqGen <- focusDistGen
                     let mode = if model.ExtrinsicZDiff then 1 else 0
-                    let refT = (ModelTransforms.displayedWorld model refMesh).Forward
                     let jobs =
-                        missing |> List.map (fun m ->
-                            let mT = (ModelTransforms.displayedWorld model m).Forward
+                        wanted |> List.map (fun (m, view, isOther) ->
+                            let refT = (ModelTransforms.displayedWorldAt view model refMesh).Forward
+                            let mT = (ModelTransforms.displayedWorldAt view model m).Forward
                             async {
                                 try
                                     let! d = Query.regionDistance ApiConfig.apiBase.Value m 0 refMesh 0 mT refT mode
-                                    return Some (m, d)
+                                    return Some (m, d, isOther)
                                 with _ -> return None
                             })
                     focusDistCts.Cancel()
@@ -591,7 +636,10 @@ module Update =
                             let! results = jobs |> Async.Parallel |> Async.StartAsTask
                             if not token.IsCancellationRequested then
                                 for r in results do
-                                    match r with Some (m, d) -> env.Emit [FocusDistComputed(m, d)] | None -> ()
+                                    match r with
+                                    | Some (m, d, false) -> env.Emit [FocusDistComputed(m, d)]
+                                    | Some (m, d, true) -> env.Emit [FocusDistOtherComputed(m, d)]
+                                    | None -> ()
                         with
                         | :? System.OperationCanceledException -> ()
                         | _ -> ()

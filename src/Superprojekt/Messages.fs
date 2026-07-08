@@ -42,7 +42,9 @@ type Message =
     // Difference sub-mode (M3C2 ↔ Δz) for the Inspect focus tiles.
     | ToggleExtrinsicZDiff
     | VarianceComputed of mesh:string * float32[]
+    | VarianceOtherComputed of mesh:string * float32[]
     | FocusDistComputed of mesh:string * float32[]
+    | FocusDistOtherComputed of mesh:string * float32[]
     | SurfaceDistanceFailed of mesh:string * reason:string
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]

@@ -253,7 +253,13 @@ module FocusScene =
                         if Some name = rf then 0
                         else
                             match model.InspectChannel.GetValue t with
-                            | ChDifference -> if Map.containsKey name (model.FocusDist.GetValue t) then 1 else 0
+                            | ChDifference ->
+                                // Pose-baked pair — the reg peek selects the Other
+                                // cache so the paint flips with the geometry.
+                                let fd =
+                                    if model.RegPeekHeld.GetValue t then model.FocusDistOther
+                                    else model.FocusDist
+                                if Map.containsKey name (fd.GetValue t) then 1 else 0
                             | ChDisplacement -> if Map.containsKey name (model.SolvedTransforms.GetValue t) then 2 else 0
                 if inspectMode <> 0 then inspectMode
                 else
@@ -267,7 +273,10 @@ module FocusScene =
                     ArrayBuffer (Array.zeroCreate<float32> n) :> IBuffer
                 match modeA.GetValue t with
                 | 1 ->
-                    match Map.tryFind name (model.FocusDist.GetValue t) with
+                    let fd =
+                        if model.RegPeekHeld.GetValue t then model.FocusDistOther
+                        else model.FocusDist
+                    match Map.tryFind name (fd.GetValue t) with
                     | Some arr -> ArrayBuffer arr :> IBuffer
                     | None -> zero ()
                 | 2 ->

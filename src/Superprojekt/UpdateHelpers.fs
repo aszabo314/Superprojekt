@@ -58,18 +58,20 @@ module UpdateHelpers =
     let mutable focusDistReqGen = -1
     let bumpFocusDist () = focusDistGen <- focusDistGen + 1
     let invalidateFocusDist (model : Model) =
-        if not (Map.isEmpty model.FocusDist) then bumpFocusDist ()
-        { model with FocusDist = Map.empty }
+        if not (Map.isEmpty model.FocusDist && Map.isEmpty model.FocusDistOther) then bumpFocusDist ()
+        { model with FocusDist = Map.empty; FocusDistOther = Map.empty }
 
     let invalidateProbes (model : Model) =
-        // The variance + focus-difference maps share the same triggers — drop to
-        // re-fetch lazily.
-        if not (Map.isEmpty model.SurfaceDistance) then bumpSurfaceDist ()
-        if not (Map.isEmpty model.FocusDist) then bumpFocusDist ()
+        // The variance + focus-difference maps (both poses) share the same
+        // triggers — drop to re-fetch lazily.
+        if not (Map.isEmpty model.SurfaceDistance && Map.isEmpty model.SurfaceDistanceOther) then bumpSurfaceDist ()
+        if not (Map.isEmpty model.FocusDist && Map.isEmpty model.FocusDistOther) then bumpFocusDist ()
         { model with
             ScanPins = ScanPinModel.invalidateProbes model.ScanPins
             SurfaceDistance = Map.empty
-            FocusDist = Map.empty }
+            SurfaceDistanceOther = Map.empty
+            FocusDist = Map.empty
+            FocusDistOther = Map.empty }
 
     // Rings depend on pin geometry + transforms, NOT visibility (which gates
     // rendering only) — so this is applied on transform changes alone, unlike invalidateProbes.
@@ -84,9 +86,13 @@ module UpdateHelpers =
     let setMeshVisible (vis : Map<string, bool>) (model : Model) =
         if vis = model.MeshVisible then model
         else
-            if not (Map.isEmpty model.SurfaceDistance) then bumpSurfaceDist ()
+            if not (Map.isEmpty model.SurfaceDistance && Map.isEmpty model.SurfaceDistanceOther) then bumpSurfaceDist ()
             bumpFocusDist ()
-            { model with MeshVisible = vis; SurfaceDistance = Map.empty; BrushedSamples = Set.empty }
+            { model with
+                MeshVisible = vis
+                SurfaceDistance = Map.empty
+                SurfaceDistanceOther = Map.empty
+                BrushedSamples = Set.empty }
 
     let allVisible (model : Model) =
         model.MeshNames |> IndexList.toSeq |> Seq.map (fun n -> n, true) |> Map.ofSeq

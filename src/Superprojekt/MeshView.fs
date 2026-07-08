@@ -311,6 +311,10 @@ module MeshView =
             //   soloed moving mesh + Displacement channel  → |load→solved| (enc 3, client-computed)
             // Reading WorkflowStep / Registration / MeshSolo first keeps non-Inspect and
             // non-soloed meshes cheap (they fall straight through to (0, None)).
+            // The scalar caches are pose-baked pairs (main = committed, Other = the
+            // opposite Before/After pose) — the reg peek selects the Other cache so
+            // the paint flips with the geometry (peek is only reachable once solved;
+            // Other not ready yet ⇒ unpainted while held, never stale values).
             let inspectField : aval<int * float32[] option> =
                 AVal.custom (fun t ->
                     if model.WorkflowStep.GetValue t <> Inspect then (0, None)
@@ -322,13 +326,19 @@ module MeshView =
                             // the variance aggregate paints only in the no-solo ensemble.
                             if (model.MeshSolo.GetValue t).IsSome then (0, None)
                             else
-                                match Map.tryFind name (model.SurfaceDistance.GetValue t) with
+                                let surf =
+                                    if model.RegPeekHeld.GetValue t then model.SurfaceDistanceOther
+                                    else model.SurfaceDistance
+                                match Map.tryFind name (surf.GetValue t) with
                                 | Some arr -> (2, Some arr)
                                 | None -> (0, None)
                         elif model.MeshSolo.GetValue t = Some name then
                             match model.InspectChannel.GetValue t with
                             | ChDifference ->
-                                match Map.tryFind name (model.FocusDist.GetValue t) with
+                                let fd =
+                                    if model.RegPeekHeld.GetValue t then model.FocusDistOther
+                                    else model.FocusDist
+                                match Map.tryFind name (fd.GetValue t) with
                                 | Some arr -> (1, Some arr)
                                 | None -> (0, None)
                             | ChDisplacement ->

@@ -1,5 +1,5 @@
-//42dfb9c3-93a5-d3ee-b292-75a8bdfc0f3a
-//9b8402b6-7d7f-dd7a-00cf-1515875ce93c
+//1b20b849-4780-dfb2-e718-04df5cb5eadd
+//976c1049-8fd5-0fbc-d612-2ffb24521e4f
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -66,7 +66,9 @@ type AdaptiveModel(value : Model) =
     let _MeshHeatmap_ = FSharp.Data.Adaptive.cval(value.MeshHeatmap)
     let _ExtrinsicZDiff_ = FSharp.Data.Adaptive.cval(value.ExtrinsicZDiff)
     let _SurfaceDistance_ = FSharp.Data.Adaptive.cval(value.SurfaceDistance)
+    let _SurfaceDistanceOther_ = FSharp.Data.Adaptive.cval(value.SurfaceDistanceOther)
     let _FocusDist_ = FSharp.Data.Adaptive.cval(value.FocusDist)
+    let _FocusDistOther_ = FSharp.Data.Adaptive.cval(value.FocusDistOther)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _Selection_ = AdaptiveSelection(value.Selection)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
@@ -123,7 +125,9 @@ type AdaptiveModel(value : Model) =
             _MeshHeatmap_.Value <- value.MeshHeatmap
             _ExtrinsicZDiff_.Value <- value.ExtrinsicZDiff
             _SurfaceDistance_.Value <- value.SurfaceDistance
+            _SurfaceDistanceOther_.Value <- value.SurfaceDistanceOther
             _FocusDist_.Value <- value.FocusDist
+            _FocusDistOther_.Value <- value.FocusDistOther
             _ScanPins_.Update(value.ScanPins)
             _Selection_.Update(value.Selection)
             _RenderingMode_.Value <- value.RenderingMode
@@ -173,7 +177,9 @@ type AdaptiveModel(value : Model) =
     member __.MeshHeatmap = _MeshHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, HeatmapMode>>
     member __.ExtrinsicZDiff = _ExtrinsicZDiff_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SurfaceDistance = _SurfaceDistance_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
+    member __.SurfaceDistanceOther = _SurfaceDistanceOther_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.FocusDist = _FocusDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
+    member __.FocusDistOther = _FocusDistOther_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.ScanPins = _ScanPins_
     member __.Selection = _Selection_
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>

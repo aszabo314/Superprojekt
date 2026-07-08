@@ -187,11 +187,16 @@ type Model =
         // All-meshes variance map (std of each visible moving mesh's distance),
         // painted on the reference whenever Inspect is the active mode (the central
         // 3D aggregate). SurfaceDistance holds the fetched per-reference-vertex
-        // array, keyed by the reference mesh.
+        // array, keyed by the reference mesh. Like the pin probes, the maps are
+        // per-pose pairs: main = the committed displayed pose, Other = the opposite
+        // Before/After pose (fetched only once a solve exists). SetRegView swaps the
+        // pairs in place; the reg peek selects the Other cache (visual, no query).
         SurfaceDistance       : Map<string, float32[]>
+        SurfaceDistanceOther  : Map<string, float32[]>
         // Inspect difference channel: per moving mesh, signed distance to the reference
         // (the mesh's served vertex order), painted on the focus tile. Lazily fetched.
         FocusDist             : Map<string, float32[]>
+        FocusDistOther        : Map<string, float32[]>
 
         ScanPins              : ScanPinModel
         Selection             : Selection
@@ -312,7 +317,9 @@ module Model =
             Toast                 = None
             ExtrinsicZDiff        = false
             SurfaceDistance       = Map.empty
+            SurfaceDistanceOther  = Map.empty
             FocusDist             = Map.empty
+            FocusDistOther        = Map.empty
             MeshHeatmap           = Map.empty
             ScanPins              = ScanPinModel.initial
             Selection             = Selection.initial

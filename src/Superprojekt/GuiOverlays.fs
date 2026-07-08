@@ -332,6 +332,7 @@ module GuiOverlays =
     let colorLegend (model : AdaptiveModel) =
         let rangeA = MeshView.inspectRange model
         let dispA = MeshView.displacementRange model
+        let orderContent = model.MeshOrder.Content
         let fmt (span : float) (v : float) =
             if span < 0.095 then sprintf "%.0f mm" (v * 1000.0)
             elif span < 0.95 then sprintf "%.0f cm" (v * 100.0)
@@ -339,11 +340,11 @@ module GuiOverlays =
         let legendJson =
             AVal.custom (fun t ->
                 let (lo, hi) = rangeA.GetValue t
-                let solo = (model.MeshSolo.GetValue t).IsSome
+                let soloName = model.MeshSolo.GetValue t
                 let title, vLo, vHi, colorAt =
-                    if not solo then
+                    if soloName.IsNone then
                         let m = max 1e-6 (max (abs lo) hi)
-                        "Disagreement σ", 0.0, m,
+                        "Variance σ", 0.0, m,
                         (fun (v : float) ->
                             let tt = clamp 0.0 1.0 (v / m)
                             V3d(0.945, 0.961, 0.976) * (1.0 - tt) + V3d(0.725, 0.110, 0.110) * tt)
@@ -356,8 +357,16 @@ module GuiOverlays =
                                 let tt = clamp 0.0 1.0 (v / m)
                                 V3d(0.93, 0.94, 0.98) * (1.0 - tt) + V3d(0.118, 0.227, 0.541) * tt)
                         | ChDifference ->
-                            let title = if model.ExtrinsicZDiff.GetValue t then "Difference (Δz)" else "Difference (M3C2)"
-                            title, lo, hi, Primitives.Diff.colorSignedV3 lo hi
+                            // Title names the compared meshes by display number
+                            // (soloed moving mesh vs the reference).
+                            let order = orderContent.GetValue t
+                            let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
+                            let pair =
+                                match soloName, (model.Registration.GetValue t).ReferenceMesh with
+                                | Some s, Some r -> sprintf " %d vs %d" (numOf s) (numOf r)
+                                | _ -> ""
+                            let sub = if model.ExtrinsicZDiff.GetValue t then "Δz" else "M3C2"
+                            sprintf "Difference%s (%s)" pair sub, lo, hi, Primitives.Diff.colorSignedV3 lo hi
                 let span = vHi - vLo
                 let hexAt (v : float) =
                     let c = colorAt v
@@ -367,7 +376,9 @@ module GuiOverlays =
                     [ for i in 0 .. 23 -> sprintf "\"%s\"" (hexAt (vLo + span * float i / 23.0)) ]
                     |> String.concat ","
                 // Nice-step ticks; ends carry the exact range values, so ticks that
-                // would collide with them (outer 12%) are dropped.
+                // would collide with them (outer 12%) are dropped. The zero tick is
+                // flagged — its label renders one line lower so it can never overlap
+                // an edge label on an asymmetric range.
                 let step = niceRoundDistance (span / 4.0)
                 let ticks =
                     if step <= 0.0 || span <= 0.0 then []
@@ -376,7 +387,7 @@ module GuiOverlays =
                             let v = float k * step
                             let p = (v - vLo) / span
                             if p > 0.12 && p < 0.88 then
-                                yield sprintf "{\"p\":%.4f,\"l\":\"%s\"}" p (fmt span v) ]
+                                yield sprintf "{\"p\":%.4f,\"l\":\"%s\",\"z\":%d}" p (fmt span v) (if k = 0 then 1 else 0) ]
                     |> String.concat ","
                 sprintf "{\"title\":\"%s\",\"min\":\"%s\",\"max\":\"%s\",\"stops\":[%s],\"ticks\":[%s]}"
                     title (fmt span vLo) (fmt span vHi) stops ticks)
@@ -423,7 +434,7 @@ module GuiOverlays =
                 "    ln.setAttribute('x2', x); ln.setAttribute('y2', BH + 6);"
                 "    ln.setAttribute('stroke', '#475569'); ln.setAttribute('stroke-width', '1');"
                 "    svg.appendChild(ln);"
-                "    txt(x, 'middle', tk.l);"
+                "    txt(x, 'middle', tk.l, tk.z ? 37 : 28);"
                 "  });"
                 "  txt(PAD, 'start', d.min, 28);"
                 "  txt(W - PAD, 'end', d.max, 28);"

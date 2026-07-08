@@ -88,19 +88,6 @@ body.loaded { background: #f4f6f8; }
     font-size: 12px;
 }
 
-.tb-burger {
-    display: flex; flex-direction: column; justify-content: center; align-items: center;
-    width: 28px; height: 24px;
-    gap: 3px; padding: 0;
-    border: none; border-radius: 3px;
-    background: transparent; cursor: pointer;
-}
-.tb-burger:hover { background: #edf0f4; }
-.tb-burger .burger-line {
-    width: 16px; height: 2px;
-    background: #0f172a; border-radius: 1px;
-}
-
 .tb-btn {
     height: 24px; padding: 0 10px;
     background: #ffffff; border: 1px solid #c5cdd8;
@@ -190,14 +177,14 @@ body.loaded { background: #f4f6f8; }
 .rail-btn-primary { background: #1a56db; border-color: #1a56db; color: #fff; }
 .rail-btn-primary:hover { background: #1648b8; }
 .rail-btn-active { background: #1a56db; border-color: #1a56db; color: #fff; }
-.rail-pins-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 6px; }
-.rail-section-title { font-weight: 600; color: #334155; }
+.rail-pins-head { display: flex; align-items: center; margin-bottom: 6px; }
 
 /* ── pin × mesh matrix (§B) — the rail navigation backbone ── */
 .rail-matrix-wrap { overflow-x: auto; }
 .mx { display: flex; flex-direction: column; font-size: 11px; }
 .mx-head { display: flex; align-items: stretch; gap: 2px; margin-bottom: 2px; }
-.mx-corner { width: 104px; flex: 0 0 104px; color: #94a3b8; font-size: 9px; display: flex; align-items: center; padding-left: 2px; }
+/* empty spacer aligning the column heads over the cells */
+.mx-corner { width: 104px; flex: 0 0 104px; }
 .mx-colhead {
     flex: 1 1 0; min-width: 26px; display: flex; flex-direction: column; align-items: center;
     cursor: pointer; padding: 1px 0; border-radius: 3px; gap: 1px;
@@ -693,27 +680,36 @@ body.loaded { background: #f4f6f8; }
 
 /* correspondence manager */
 .ins-mgr { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 6px 10px; }
-.ins-mgr-foot { display: flex; align-items: center; gap: 10px; padding-top: 4px; border-top: 1px solid #eef2f6; }
-
-/* k/n counter (manager foot) + colour swatch */
-.ins-kn {
-    flex: 1; font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 11px; color: #475569;
-}
-.ins-sw { width: 8px; height: 8px; flex-shrink: 0; border-radius: 1px; display: inline-block; }
 
 /* ── Phase-1 three-mode rail / dock additions ──────────────────────── */
 .rail-row-hover { background: #ecfeff; box-shadow: inset 2px 0 0 #0891b2; }
 
-/* Overview dock — focused-mesh summary (the tiles are the mesh browser, T3) */
+/* Overview dock — a single hint line (the tiles are the mesh browser, T3) */
 .ins-ovw { flex: 1; display: flex; align-items: center; min-width: 0; padding: 6px 12px; font-size: 12px; }
 .ins-ovw-empty { color: #94a3b8; }
-.ins-ovw-card { display: flex; align-items: center; gap: 12px; }
-.ins-ovw-name { font-weight: 600; color: #0f172a; }
-.ins-ovw-role { color: #475569; }
 
-/* Correspondence dock — manager head (identity chip + radius) */
+/* Register dock — manager head (identity chip + radius) */
 .ins-mgr-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #eef2f6; margin-bottom: 4px; }
+
+/* Register dock — per-mesh correspondence coordinate editor */
+.ins-anchor-rows { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
+.ins-anchor-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
+.ins-anchor-name {
+    width: 120px; flex: 0 0 120px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: #0f172a;
+}
+.ins-anchor-ref { width: 12px; flex: 0 0 12px; color: #b45309; text-align: center; }
+.ins-anchor-axis { display: flex; align-items: center; gap: 3px; }
+.ins-anchor-axlabel { color: #94a3b8; font-size: 10px; }
+.ins-anchor-num {
+    width: 88px; height: 20px; padding: 0 4px;
+    border: 1px solid #c5cdd8; border-radius: 3px;
+    font-family: 'SF Mono', 'Monaco', monospace; font-size: 11px; color: #0f172a;
+    background: #ffffff;
+}
+.ins-anchor-num:disabled { background: #f4f6f8; color: #cbd5e1; }
+.ins-anchor-note { margin-left: auto; color: #b45309; font-size: 10px; white-space: nowrap; }
 
 /* Inspect dock — stub note */
 .ins-stub-note { font-size: 11px; color: #64748b; line-height: 1.4; margin-top: 4px; }
@@ -721,7 +717,6 @@ body.loaded { background: #f4f6f8; }
 /* Inspect dock — channel toggle + distribution + shift readout */
 .ins-inspect { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 4px 10px 6px; }
 .ins-insp-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding-bottom: 3px; border-bottom: 1px solid #eef2f6; margin-bottom: 3px; }
-.ins-axis-note { margin-left: auto; color: #94a3b8; font-size: 10px; white-space: nowrap; }
 .ins-insp-body { flex: 1; display: flex; min-width: 0; min-height: 0; gap: 8px; }
 .ins-dist-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 /* JS→Elm brush bridge: off-screen but still event-capable (not display:none) */

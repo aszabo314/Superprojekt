@@ -66,8 +66,9 @@ module GuiFocus =
                 FocusProjection.label p
             }
 
-        // Unified arm button (§T4): one mode, two surfaces. Armed → clicking the focus
-        // OR the 3D surface sets the (pin, mesh) point (ROI-clamped); stays armed.
+        // Unified arm button (§T4): one mode, two surfaces. Armed → the next click on
+        // the focus OR the 3D surface sets the (pin, mesh) point (ROI-clamped) and
+        // ends the edit; an out-of-ROI click toasts and stays armed.
         let setBtn =
             button {
                 Class "focus-set"

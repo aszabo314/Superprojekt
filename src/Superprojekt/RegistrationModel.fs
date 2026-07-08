@@ -38,6 +38,16 @@ module Correspondence =
         InRoi       = Map.empty
     }
 
+// Provenance of a solve: the exact correspondence data it consumed — per pin the
+// reference anchor and the mesh-local anchor point of every (pin, mesh) pair fed
+// to the solver. A registration is only as valid as these inputs: if any tracked
+// pin/point is deleted or moved afterwards, the solve is stale and is cleared
+// (the solve-validity postlude compares against this snapshot).
+type SolveInputs = {
+    RefMesh : string
+    Pins    : Map<ScanPinId, V3d * Map<string, V3d>>
+}
+
 // λ2/λ1 of a weighted 3D point spread (client-side conditioning pre-check for the
 // readiness line; the authoritative value comes from the server).
 module RegConditioning =

@@ -20,7 +20,7 @@ module WorkflowStep =
     let index = function Overview -> 0 | Correspondence -> 1 | Inspect -> 2
     let title = function
         | Overview -> "Overview"
-        | Correspondence -> "Correspondence"
+        | Correspondence -> "Register"
         | Inspect -> "Inspect"
 
 // ProjPano = 360° perspective look-around fixed at the mesh's panorama centre;
@@ -129,8 +129,6 @@ type Model =
         MeshVisible    : Map<string, bool>
         MeshesLoaded   : HashSet<string>
         CommonCentroid : V3d
-        MenuOpen       : bool
-        SavedMenuOpen  : bool option
 
         DebugLog       : IndexList<string>
 
@@ -155,9 +153,6 @@ type Model =
 
         ActivePickingLayer : string option
 
-        // Spring-loaded pin-isolation peek (hold to momentarily force pin isolation
-        // on in modes where it defaults off — mirrors the reference peek).
-        IsolatePeekHeld   : bool
         // Spring-loaded show-overlays modifier (§T8): hold to greyscale the scene
         // except the pin colours, making pin correspondence across views unmistakable.
         ShowOverlaysHeld  : bool
@@ -167,6 +162,10 @@ type Model =
         // solve; RegView picks which the meshes display. Render-space.
         LoadTransforms        : Map<string, Trafo3d>
         SolvedTransforms      : Map<string, Trafo3d>
+        // The correspondence data the last solve consumed (None = no solve). The
+        // solve-validity postlude clears the registration when any tracked
+        // pin/point is deleted or moved — Before is the source of truth.
+        SolveInputs           : SolveInputs option
         RegView               : RegView
         // Spring-loaded before/after peek: hold to momentarily show the OTHER
         // registration state (purely visual — flips the displayed transform, not
@@ -290,8 +289,6 @@ module Model =
             MeshesLoaded   = HashSet.empty
             MeshVisible    = Map.empty
             CommonCentroid = V3d.Zero
-            MenuOpen       = true
-            SavedMenuOpen  = None
             DebugLog       = IndexList.empty
             Datasets         = []
             ActiveDataset    = None
@@ -307,10 +304,10 @@ module Model =
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             ActivePickingLayer = None
-            IsolatePeekHeld   = false
             ShowOverlaysHeld  = false
             LoadTransforms        = Map.empty
             SolvedTransforms      = Map.empty
+            SolveInputs           = None
             RegView               = RegBefore
             RegPeekHeld           = false
             Registration          = RegistrationState.initial

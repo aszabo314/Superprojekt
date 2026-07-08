@@ -532,7 +532,8 @@ module FocusScene =
                     return hit |> Option.map (fun hh -> dispWorld.Forward.TransformPos hh.point)
                 }
             // Armed for THIS mesh (CorrArm = Some(pin, name))? Then move = live aim
-            // ghost (throttled), click = place (stays armed). Otherwise: drag = pan.
+            // ghost (throttled), click = place (the reducer disarms on a committed
+            // pick). Otherwise: drag = pan.
             let armedHere () =
                 match AVal.force model.CorrArm with
                 | Some (pid, m) when m = name -> Some pid

@@ -94,9 +94,6 @@ module GuiInspector =
         // The conceptual samples: never painted, but they ARE the brush targets.
         "    r.pins.forEach(function(pn){ if(pn.g) for(var q=0;q<pn.g.length;q++) el._dots.push({gid:pn.g[q],v:pn.s[q]}); });"
         "    g.globalAlpha=1; g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace'; g.textAlign='left'; g.fillText(r.name,padL,y0+10); });"
-        "  if(d.reg){ g.globalAlpha=1; g.font='9px SF Mono,Monaco,monospace'; g.textAlign='right'; g.fillStyle='#64748b';"
-        "    var fw=fillP==='a'?'after':'before'; var oMiss=(outP==='b'?!anyB:!anyA);"
-        "    g.fillText('fill = '+fw+' \\u00b7 outline = '+(fillP==='a'?'before':'after')+(oMiss?' (probing\\u2026)':''),W-padR-2,padT-4); g.textAlign='left'; }"
         // Selection band: local drag range, else reconstructed from the model echo
         // (bset) so a remount keeps the band. Labels: exact mm + brushed count.
         "  var dispRange=range;"
@@ -148,60 +145,17 @@ module GuiInspector =
         let corrA     = effPin |> AVal.map (Option.bind ScanPin.correspondence)
         let emit (m : Message) = env.Emit [m]
 
-        let visibleMovingA =
-            AVal.custom (fun t ->
-                let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                let vis = model.MeshVisible.GetValue t
-                let rf = (model.Registration.GetValue t).ReferenceMesh
-                names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true)))
-
-        // k/n counts in-ROI meshes only: n = in-ROI moving meshes, k = those with
-        // a placed marker; out-of-ROI meshes are excluded entirely.
-        let inRoiOf (c : Correspondence option) (m : string) =
-            match c with Some cc -> Map.tryFind m cc.InRoi |> Option.defaultValue true | None -> true
-        let kn =
-            AVal.custom (fun t ->
-                let moving = visibleMovingA.GetValue t
-                let c = corrA.GetValue t
-                let inRoiMoving = moving |> List.filter (inRoiOf c)
-                let k =
-                    match c with
-                    | Some cc -> inRoiMoving |> List.filter (fun m -> Map.containsKey m cc.Anchors) |> List.length
-                    | None -> 0
-                k, List.length inRoiMoving)
-
-        // Overview dock (T3): the focus tiles are the mesh browser now, so the dock is
-        // a compact summary of the focused mesh (colour · number · role), not a second
-        // mesh list.
-        let focusedSummary =
-            AVal.custom (fun t ->
-                match model.Selection.FocusedMesh.GetValue t with
-                | None -> None
-                | Some name ->
-                    let order = orderVal.GetValue t
-                    let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                    let isRef = (model.Registration.GetValue t).ReferenceMesh = Some name
-                    let idx = HashMap.tryFind name order |> Option.defaultValue 0
-                    Some (numberedFriendly order names name, isRef, meshColor idx))
+        // Overview dock: deliberately bare — a single hint line; the focus tiles are
+        // the actual mesh browser.
         let overviewCard =
             div {
                 Class "ins-ovw"
-                div { Class "ins-ovw-empty"; showWhen (focusedSummary |> AVal.map Option.isNone); "Select a mesh tile to focus it." }
-                div {
-                    Class "ins-ovw-card"
-                    showWhen (focusedSummary |> AVal.map Option.isSome)
-                    span {
-                        Class "ins-sw"
-                        focusedSummary |> AVal.map (function Some (_, _, c) -> Some (Style [Css.Background (c4bToRgbCss c)]) | None -> None)
-                    }
-                    span { Class "ins-ovw-name"; focusedSummary |> AVal.map (function Some (n, _, _) -> n | None -> "") }
-                    span { Class "ins-ovw-role"; focusedSummary |> AVal.map (function Some (_, r, _) -> (if r then "★ reference" else "moving") | None -> "") }
-                }
+                div { Class "ins-ovw-empty"; "Overview — browse and focus the meshes in the panel on the right; mark the reference (★) there." }
             }
 
         // The matrix (left rail) is now the per-(pin,mesh) browser (§B); the
-        // Correspondence dock reduces to pin meta: identity chip (glyph · colour · code)
-        // · radius · k/n · Solve. The per-mesh list, ref row, and dual pick buttons are gone.
+        // Register dock reduces to the selected pin: identity chip (glyph · colour ·
+        // code) · radius · the per-mesh correspondence coordinate editor.
         let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 0.5)
         let pinIdentChip =
             div {
@@ -212,6 +166,86 @@ module GuiInspector =
                 }
                 span { Class "ins-pinident-gn"; effPin |> AVal.map (function Some p -> sprintf "%s %s" p.Glyph p.ShortName | None -> "") }
             }
+        // Committed displayed pose (metric world) for a mesh — the frame the anchor
+        // editor reads; PickCorrespondenceAt converts back with the same transform.
+        let dispWorldOf (t : AdaptiveToken) (mesh : string) =
+            let sc = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
+            let cc = model.CommonCentroid.GetValue t
+            let disp =
+                match model.RegView.GetValue t, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
+                | RegAfter, Some s -> s
+                | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+            RigidTransform.renderToWorld sc cc disp
+
+        // The selected pin's correspondence point on a mesh, in metric world at the
+        // committed pose (the reference row reads RefAnchor, movers their anchor).
+        let anchorWorldOf (mesh : string) =
+            AVal.custom (fun t ->
+                match corrA.GetValue t with
+                | None -> None
+                | Some c ->
+                    let isRef = (model.Registration.GetValue t).ReferenceMesh = Some mesh
+                    let own =
+                        if isRef then c.RefAnchor
+                        else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point)
+                    own |> Option.map (fun p -> (dispWorldOf t mesh).Forward.TransformPos p))
+
+        // One row per mesh: number · name · ★ · editable X/Y/Z of the correspondence
+        // point. Edits route through PickCorrespondenceAt — same ROI clamp and
+        // ref/mover handling as a surface pick. No point placed yet → disabled.
+        let anchorRow (mesh : string) =
+            let aw = anchorWorldOf mesh
+            let idxVal = model.MeshOrder |> AMap.tryFind mesh |> AVal.map (Option.defaultValue 0)
+            let isRef = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some mesh)
+            let axisInput (axis : int) (labelText : string) =
+                div {
+                    Class "ins-anchor-axis"
+                    span { Class "ins-anchor-axlabel"; labelText }
+                    input {
+                        Class "ins-anchor-num"
+                        Attribute("type", "number")
+                        Attribute("step", "0.01")
+                        aw |> AVal.map (function
+                            | Some w ->
+                                let v = match axis with 0 -> w.X | 1 -> w.Y | _ -> w.Z
+                                Some (Attribute("value", sprintf "%.3f" v))
+                            | None -> Some (Attribute("value", "")))
+                        // Read-only in the After view: correspondences are edited in
+                        // the Before state only (After just shows the moved points).
+                        (aw, model.RegView) ||> AVal.map2 (fun a rv ->
+                            if a.IsNone || rv = RegAfter then Some (Attribute("disabled", "disabled")) else None)
+                        Dom.OnChange(fun e ->
+                            let ok, v =
+                                System.Double.TryParse(
+                                    e.Value,
+                                    System.Globalization.NumberStyles.Float,
+                                    System.Globalization.CultureInfo.InvariantCulture)
+                            if ok then
+                                match AVal.force aw, AVal.force effId with
+                                | Some w, Some pinId ->
+                                    let w' =
+                                        match axis with
+                                        | 0 -> V3d(v, w.Y, w.Z)
+                                        | 1 -> V3d(w.X, v, w.Z)
+                                        | _ -> V3d(w.X, w.Y, v)
+                                    emit (PickCorrespondenceAt(pinId, mesh, w'))
+                                | _ -> ())
+                    }
+                }
+            div {
+                Class "ins-anchor-row"
+                span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+                span {
+                    Class "ins-anchor-name"
+                    Attribute("title", mesh)
+                    model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) mesh)
+                }
+                span { Class "ins-anchor-ref"; isRef |> AVal.map (fun r -> if r then "★" else "") }
+                axisInput 0 "X"
+                axisInput 1 "Y"
+                axisInput 2 "Z"
+            }
+
         let manager =
             div {
                 Class "ins-mgr"
@@ -220,13 +254,13 @@ module GuiInspector =
                     pinIdentChip
                     inlineLogSlider "r" 0.01 10000.0 (sprintf "%.2f m") radiusVal (fun v ->
                         emit (ScanPinMsg (SetInnerRadius v)))
+                    span {
+                        Class "ins-anchor-note"
+                        showWhen (model.RegView |> AVal.map ((=) RegAfter))
+                        "After pose — read-only; switch to Before to edit"
+                    }
                 }
-                div {
-                    Class "ins-mgr-foot"
-                    // The Solve button moved to the Correspondence rail body (above the
-                    // matrix); this foot keeps the selected pin's k/n coverage badge.
-                    span { Class "ins-kn"; kn |> AVal.map (fun (k, n) -> sprintf "k/n %d/%d" k n) }
-                }
+                div { Class "ins-anchor-rows"; model.MeshNames |> AList.map anchorRow }
             }
 
         // Inspect dock: a Difference|Displacement channel toggle (drives the focus
@@ -440,7 +474,6 @@ module GuiInspector =
                                 span { sprintf "%s %s" glyph sn }
                             })
                     }
-                    span { Class "ins-axis-note"; "signed distance to reference (mm) · 0 = ref median · ░ ±LoD₉₅ · drag X to brush" }
                 }
                 div {
                     Class "ins-insp-body"

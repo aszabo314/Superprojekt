@@ -35,6 +35,7 @@ module Update =
                 PanoCenters      = Map.empty
                 LoadTransforms   = loadTransforms
                 SolvedTransforms = Map.empty
+                SolveInputs      = None
                 RegView          = RegBefore
                 // Default reference = first mesh so reference-peek + registration UI work out of the box.
                 Registration     =
@@ -58,10 +59,6 @@ module Update =
                 // setMeshVisible refreshes the visibility-derived Inspect caches.
                 setMeshVisible (Map.add name v model.MeshVisible)
                     { model with ActivePickingLayer = activePickingLayer }
-        | ToggleMenu ->
-            let sp = model.ScanPins
-            if ScanPinModel.isPlacing sp then model
-            else { model with MenuOpen = not model.MenuOpen }
         | LoadFinished name ->
             let model = { model with MeshesLoaded = HashSet.add name model.MeshesLoaded }
 
@@ -90,36 +87,16 @@ module Update =
             { model with AnchorGhostMode = not model.AnchorGhostMode }
         | SetQuickPinRadius v ->
             { model with QuickPinRadius = max 0.01 v }
-        | SetIsolatePeek held ->
-            if model.IsolatePeekHeld = held then model
-            else { model with IsolatePeekHeld = held }
         | SetShowOverlays held ->
             if model.ShowOverlaysHeld = held then model
             else { model with ShowOverlaysHeld = held }
         | SetRegView v ->
             // Only meaningful once a solve exists (the view disables it otherwise).
-            // Probes + slices + the Inspect scalar maps: a ready (main, other) pair IS
-            // the two poses — swap in place instead of refetching; rings have no
-            // other-pose cache, refetch. In-flight scalar fetches were built against
-            // the pre-swap pose labels and would file under the wrong pose — cancel
-            // them and re-arm the generations (the postludes refetch what's missing).
+            // The pose-baked pair caches swap in place (UpdateHelpers.applyRegView).
+            // Switching the view also cancels an armed correspondence editor —
+            // editing is Before-only, so an editor armed for the other view is moot.
             if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
-            else
-                surfaceDistCts.Cancel()
-                focusDistCts.Cancel()
-                bumpSurfaceDist ()
-                bumpFocusDist ()
-                // Brushed gids index the canonical sample array of the committed
-                // pose — the swap re-indexes it, so drop them.
-                invalidateRings
-                    { model with
-                        RegView = v
-                        BrushedSamples = Set.empty
-                        ScanPins = ScanPinModel.swapProbeViews model.ScanPins
-                        SurfaceDistance = model.SurfaceDistanceOther
-                        SurfaceDistanceOther = model.SurfaceDistance
-                        FocusDist = model.FocusDistOther
-                        FocusDistOther = model.FocusDist }
+            else { applyRegView v model with CorrArm = None; CorrPreview = None }
         | SetRegPeek held ->
             // Purely visual (the displayed transform flips); no probe/ring invalidation.
             if model.RegPeekHeld = held then model else { model with RegPeekHeld = held }
@@ -131,6 +108,7 @@ module Update =
                     { model with
                         Registration = { model.Registration with ReferenceMesh = mesh }
                         SolvedTransforms = Map.empty
+                        SolveInputs = None
                         RegView = RegBefore
                         CorrArm = None; CorrPreview = None })
             match mesh with
@@ -185,6 +163,16 @@ module Update =
                             with ex ->
                                 env.Emit [CoarseFailed(mesh, ex.Message)]
                         } |> ignore
+                    // Record the exact correspondence data this solve consumes —
+                    // the validity postlude clears the registration if any of it
+                    // is later deleted or moved.
+                    let snapshot =
+                        let pins =
+                            (Map.empty, solvable) ||> List.fold (fun acc mesh ->
+                                (acc, pairsFor mesh) ||> Array.fold (fun acc (pinId, ra, mp) ->
+                                    let _, meshPts = acc |> Map.tryFind pinId |> Option.defaultValue (ra, Map.empty)
+                                    Map.add pinId (ra, Map.add mesh mp meshPts) acc))
+                        { RefMesh = refMesh; Pins = pins }
                     let n = List.length solvable
                     let total = List.length visibleMoving
                     let unsolvable = visibleMoving |> List.filter (fun m -> (pairsFor m).Length < 3)
@@ -196,7 +184,7 @@ module Update =
                             let extra = if List.isEmpty rest then "" else sprintf " (+%d more)" (List.length rest)
                             sprintf "Solving %d of %d; %s needs %d more%s"
                                 n total (Primitives.shortName first) need extra
-                    showToast env summary model
+                    showToast env summary { model with SolveInputs = Some snapshot }
         | CoarseSolved(mesh, world) ->
             // lsqPairs returns the absolute world transform mapping the load-pose
             // moving anchors onto the reference; store it as the SolvedTransform.
@@ -217,17 +205,18 @@ module Update =
                 refUpdates |> Array.fold (fun sp (pinId, ra) ->
                     updateCorr pinId (fun c -> { c with RefAnchor = Some ra }) sp)
                     model.ScanPins
-            // Record ROI membership; drop a stale auto marker for any mesh that
-            // resolved out-of-ROI (a manual pick is kept).
+            // Record ROI membership and drop the stale auto marker of every
+            // re-evaluated (pin, mesh) — the seeded fold below re-adds the accepted
+            // ones, so an auto anchor that no longer qualifies (out of the pin
+            // sphere, even if still within measurement reach) cannot linger. Manual
+            // picks are never touched here.
             let sp =
                 inRoi |> Array.fold (fun sp (pinId, mesh, inside) ->
                     updateCorr pinId (fun c ->
                         let anchors =
-                            if inside then c.Anchors
-                            else
-                                match Map.tryFind mesh c.Anchors with
-                                | Some a when a.Source = AnchorAuto -> Map.remove mesh c.Anchors
-                                | _ -> c.Anchors
+                            match Map.tryFind mesh c.Anchors with
+                            | Some a when a.Source = AnchorAuto -> Map.remove mesh c.Anchors
+                            | _ -> c.Anchors
                         { c with InRoi = Map.add mesh inside c.InRoi; Anchors = anchors }) sp)
                     sp
             // Seeded correspondence markers apply immediately (Auto source).
@@ -287,10 +276,18 @@ module Update =
                     { model with
                         SceneBounds = padded
                         MeshBounds = perMesh }
-                // Rest the camera on the first mesh's panorama centre (last load step,
-                // so PanoCenters/centroids are in). One-shot per dataset load.
-                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, ModelTransforms.firstPanoCenterRender m))
-                          CameraMessage (OrbitMessage.SetTargetRadius(true, max 1.0 (padded.Size.Length * 0.6)))]
+                // Rest the camera on the default reference mesh (last load step, so
+                // PanoCenters/centroids are in): its panorama centre, framed to its own
+                // bounds rather than the whole scene. One-shot per dataset load.
+                let center, radius =
+                    match m.Registration.ReferenceMesh |> Option.bind (fun r -> Map.tryFind r perMesh |> Option.map (fun b -> r, b)) with
+                    | Some (r, b) ->
+                        let scale = DatasetScale.forMesh m.DatasetScales r
+                        ModelTransforms.panoCenterRender m r, max 1.0 (b.Size.Length * scale * 0.6)
+                    | None ->
+                        ModelTransforms.firstPanoCenterRender m, max 1.0 (padded.Size.Length * 0.6)
+                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, center))
+                          CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
                 m
         | DatasetsLoaded datasets ->
             { model with Datasets = datasets |> Array.toList }
@@ -305,6 +302,7 @@ module Update =
                     MeshBounds = Map.empty
                     ActivePickingLayer = None
                     SolvedTransforms = Map.empty
+                    SolveInputs = None
                     LoadTransforms = Map.empty
                     RegView = RegBefore
                     LocateBackup = None
@@ -325,12 +323,22 @@ module Update =
             { model with ActivePickingLayer = name }
         | ScanPinMsg (PlaceAnchor _ as msg) ->
             // A freshly placed pin is a registration pin immediately; seed it
-            // against the reference (if any) so its markers appear at once.
+            // against the reference (if any) so its markers appear at once. Pins
+            // and their correspondences exist in the BEFORE state — snap the view
+            // back in case it was toggled to After mid-placement (seeding itself
+            // always evaluates at the Before pose regardless).
+            let model = applyRegView RegBefore model
             let model = ScanPinUpdate.handleMsg env model msg
             match model.Registration.ReferenceMesh, model.Selection.SelectedPin with
             | Some _, Some id -> seedAnchors env model [id]
             | _ -> model
         | ScanPinMsg msg ->
+            // Correspondence/pin edits are Before-only: starting a placement or
+            // resizing a pin snaps the committed view back to Before first.
+            let model =
+                match msg with
+                | EnterAnchorPlacement | SetInnerRadius _ -> applyRegView RegBefore model
+                | _ -> model
             let m = ScanPinUpdate.handleMsg env model msg
             // Inspect isolation swap: focusing a pin turns mesh isolation off (the
             // visibility toggles reset to ON) and pin isolation on; losing the pin
@@ -403,9 +411,20 @@ module Update =
         | PickCorrespondenceAt(pinId, mesh, world) ->
             // Set the (pin, mesh) correspondence point at the picked surface point,
             // stored mesh-local via the displayed transform (so the before/after toggle
-            // moves it). ROI-clamped (§T4 — no point outside the pin). Editing the
-            // reference mesh moves its RefAnchor; any other mesh sets its anchor. The
-            // editor STAYS ARMED (only the aim ghost clears) so picks can be refined.
+            // moves it). BEFORE-ONLY: correspondences are edited in the Before state
+            // exclusively — a pick against the solved pose would store a point whose
+            // Before position is off-surface/outside the pin. The entry points force
+            // Before (arm button, placement); this is the safety net for a view
+            // toggled mid-edit. ROI-clamped (§T4 — no point outside the pin sphere).
+            // Editing the reference mesh moves its RefAnchor; any other mesh sets its
+            // anchor. A committed pick DISARMS the editor (one click = one edit); an
+            // out-of-ROI click keeps it armed so the toast's "try again" needs no re-arm.
+            // The Peek hold counts as After too: the raycast hits the peeked (solved)
+            // geometry, so a commit would store an off-surface Before point.
+            if model.RegView = RegAfter
+               || (model.RegPeekHeld && not (Map.isEmpty model.SolvedTransforms)) then
+                showToast env "Correspondences are edited in the Before state — switch the view" model
+            else
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
                 match ScanPin.correspondence pin with
@@ -423,16 +442,18 @@ module Update =
                                     { corr with
                                         Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
                                         InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
-                        { model with ScanPins = sp; CorrPreview = None }
+                        { model with ScanPins = sp; CorrArm = None; CorrPreview = None }
                 | None -> model
             | None -> model
         | ToggleCorrArm(pinId, mesh) ->
-            // Arm/disarm the unified editor for (pin, mesh). Arming isolates the mesh
-            // (via wheelIsolation reading CorrArm), brings the linked focus onto it,
-            // selects the pin, and cancels pin placement. Re-issuing disarms.
+            // Arm/disarm the unified editor for (pin, mesh). Arming snaps the view to
+            // BEFORE (correspondences are edited in that state only), isolates the
+            // mesh (via wheelIsolation reading CorrArm), brings the linked focus onto
+            // it, selects the pin, and cancels pin placement. Re-issuing disarms.
             if model.CorrArm = Some(pinId, mesh) then
                 { model with CorrArm = None; CorrPreview = None }
             else
+                let model = applyRegView RegBefore model
                 { model with
                     CorrArm = Some(pinId, mesh)
                     CorrPreview = None
@@ -513,6 +534,42 @@ module Update =
                     { model with
                         MeshSolo = b.PrevSolo
                         LocateBackup = None }
+
+    // Registration provenance: a solve is only as valid as the correspondences it
+    // consumed (SolveInputs). If any tracked pin was deleted, or any tracked
+    // refAnchor/anchor point no longer matches (moved by a pick, killed by a pin
+    // resize), the solved poses are stale — clear them and snap back to Before.
+    // Values are compared exactly: untouched anchors are structurally copied
+    // through updates, so only a real edit differs.
+    let private ensureSolveValidity (env : Env<Message>) (model : Model) : Model =
+        if Map.isEmpty model.SolvedTransforms then model
+        else
+            match model.SolveInputs with
+            | None -> model
+            | Some s ->
+                let intact =
+                    model.Registration.ReferenceMesh = Some s.RefMesh
+                    && s.Pins |> Map.forall (fun pinId (ra, meshPts) ->
+                        match HashMap.tryFind pinId model.ScanPins.Pins with
+                        | None -> false
+                        | Some pin ->
+                            match ScanPin.correspondence pin with
+                            | None -> false
+                            | Some c ->
+                                c.RefAnchor = Some ra
+                                && meshPts |> Map.forall (fun mesh pt ->
+                                    match Map.tryFind mesh c.Anchors with
+                                    | Some a -> a.Point = pt
+                                    | None -> false))
+                if intact then model
+                else
+                    showToast env "Registration cleared — its correspondences changed"
+                        (invalidateRings (invalidateProbes
+                            { model with
+                                SolvedTransforms = Map.empty
+                                SolveInputs = None
+                                RegView = RegBefore
+                                BrushedSamples = Set.empty }))
 
     // All-meshes variance: per reference vertex, the std of each visible moving
     // mesh's signed distance (target = reference, ref = moving). Debounced via the
@@ -648,6 +705,7 @@ module Update =
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
+        |> ensureSolveValidity env
         |> ScanPinUpdate.ensureProbe env
         |> ScanPinUpdate.ensureSlices env
         |> ScanPinUpdate.ensureRings env

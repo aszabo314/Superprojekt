@@ -395,8 +395,8 @@ module View =
                     match AVal.force model.CorrArm with
                     | Some (pinId, mesh) ->
                         // Commit the picked surface point as this mesh's anchor (the
-                        // reducer stores it mesh-local and STAYS armed). GPU pick on the
-                        // isolated solid first, else a single-mesh raycast.
+                        // reducer stores it mesh-local and disarms the editor). GPU pick
+                        // on the isolated solid first, else a single-mesh raycast.
                         async {
                             let! resolved =
                                 match frontmost with
@@ -519,8 +519,10 @@ module View =
                 | " " ->
                     transact (fun () -> spaceHeld.Value <- true)
                 | "i" | "I" ->
-                    // Hold-I = momentary pin-isolation (where it defaults off).
-                    env.Emit [SetIsolatePeek true]
+                    // Hold-I = registration peek (same gate as the top-bar button:
+                    // only once a solve exists).
+                    if not (Map.isEmpty (AVal.force model.SolvedTransforms)) then
+                        env.Emit [SetRegPeek true]
                 | "o" | "O" ->
                     // Hold-O = show-overlays (white-out except pins).
                     env.Emit [SetShowOverlays true]
@@ -532,16 +534,13 @@ module View =
                 match e.Key with
                 | " "     -> transact (fun () -> spaceHeld.Value <- false)
                 | "Alt"   -> transact (fun () -> altHeld.Value <- false)
-                | "i" | "I" -> env.Emit [SetIsolatePeek false]
+                | "i" | "I" -> env.Emit [SetRegPeek false]
                 | "o" | "O" -> env.Emit [SetShowOverlays false]
                 | _ -> ()
             )
 
             GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
-            div {
-                Primitives.showWhen model.MenuOpen
-                GuiRail.rail env model (viewportSize :> aval<V2i>)
-            }
+            GuiRail.rail env model (viewportSize :> aval<V2i>)
             GuiFocus.panel env model
             GuiOverlays.toast model
             GuiOverlays.pinFlagLabels model (viewportSize :> aval<V2i>)

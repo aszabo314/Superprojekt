@@ -9,7 +9,6 @@ type Message =
     | PanoCentersLoaded  of (string * V3d)[]
     | LoadFinished       of string
     | SetVisible         of string * bool
-    | ToggleMenu
     | ToggleGhostSilhouette
     | SetGhostOpacity of float
     | SetShadingStrength of float
@@ -18,8 +17,6 @@ type Message =
     | SetIsolineBands of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
-    // Spring-loaded hold-to-isolate modifier (forces pin isolation while held).
-    | SetIsolatePeek of bool
     // Spring-loaded show-overlays modifier (greyscale-except-pins while held).
     | SetShowOverlays of bool
     | SetReferenceMesh of string option

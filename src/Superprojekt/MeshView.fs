@@ -232,14 +232,14 @@ module MeshView =
         // ghost and only the existing pins + the live hover blob read solid — a
         // "flashlight" revealing where the new pin lands (auto-restored, no model
         // mutation).
-        // Pin isolation = the persistent per-mode default (AnchorGhostMode) OR the
-        // spring-loaded hold modifier (IsolatePeekHeld), forced on while placing.
+        // Pin isolation = the persistent per-mode default (AnchorGhostMode),
+        // forced on while placing.
         let anchorGhost =
-            (model.AnchorGhostMode, model.ScanPins.Placement, model.IsolatePeekHeld)
-            |||> AVal.map3 (fun on pl held ->
+            (model.AnchorGhostMode, model.ScanPins.Placement)
+            ||> AVal.map2 (fun on pl ->
                 match pl with
                 | AnchorPlacement -> 1
-                | _ -> if on || held then 1 else 0)
+                | _ -> if on then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             // Isolation: wheelIsolation (Alt-wheel / hover peek / armed editor) wins,

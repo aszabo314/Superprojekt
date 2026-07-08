@@ -88,13 +88,27 @@ module ScanPinUpdate =
                     Placement = PlacementIdle }
             | _ -> sp
 
-        // Applies to the selected pin (its detail panel).
+        // Applies to the selected pin (its detail panel). Shrinking the sphere
+        // kills every correspondence point that falls outside it — evaluated at
+        // the BEFORE pose (the source-of-truth state for correspondences); the
+        // solve-validity postlude then clears a registration that consumed a
+        // killed point.
         | SetInnerRadius r ->
             match model.Selection.SelectedPin with
             | Some id -> sp |> updatePin id (fun pin ->
                 let r' = max 0.01 r
-                { pin with InnerRadius = r'; Probe = ProbeNone; ProbeOther = ProbeNone
-                           Slice = SliceNone; SliceOther = SliceNone; ContactRings = RingsNone })
+                let corr =
+                    ScanPin.correspondence pin |> Option.map (fun c ->
+                        let refAnchor =
+                            c.RefAnchor |> Option.filter (fun ra -> (ra - pin.Centre).Length <= r')
+                        let anchors =
+                            c.Anchors |> Map.filter (fun mesh a ->
+                                let w = (ModelTransforms.displayedWorldAt RegBefore model mesh).Forward.TransformPos a.Point
+                                (w - pin.Centre).Length <= r')
+                        { c with RefAnchor = refAnchor; Anchors = anchors })
+                ScanPin.withCorrespondence corr
+                    { pin with InnerRadius = r'; Probe = ProbeNone; ProbeOther = ProbeNone
+                               Slice = SliceNone; SliceOther = SliceNone; ContactRings = RingsNone })
             | None -> sp
 
         | DeletePin id ->
@@ -143,15 +157,6 @@ module ScanPinUpdate =
     let handleMsg (env : Env<Message>) (model : Model) (msg : ScanPinMessage) =
         let sp = model.ScanPins
         let sp' = update model msg sp
-        let wasPlacing = ScanPinModel.isPlacing sp
-        let isPlacing = ScanPinModel.isPlacing sp'
-        let model =
-            if not wasPlacing && isPlacing then
-                { model with SavedMenuOpen = Some model.MenuOpen; MenuOpen = true }
-            elif wasPlacing && not isPlacing then
-                let restored = model.SavedMenuOpen |> Option.defaultValue model.MenuOpen
-                { model with MenuOpen = restored; SavedMenuOpen = None }
-            else model
         // The pin just added by PlaceAnchor (exactly one new key), if any.
         let placedId =
             match msg with

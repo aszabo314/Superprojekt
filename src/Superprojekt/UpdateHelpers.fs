@@ -78,6 +78,29 @@ module UpdateHelpers =
     let invalidateRings (model : Model) =
         { model with ScanPins = ScanPinModel.invalidateRings model.ScanPins }
 
+    // Switch the committed Before/After view: swap every pose-baked pair cache in
+    // place (probes, slices, the Inspect scalar maps), cancel in-flight scalar
+    // fetches (a result landing after the swap would file under the wrong pose),
+    // drop the pose-indexed brush gids, refetch rings. No-op without a solve or
+    // when already on that view. Shared by SetRegView and the guards that force
+    // the Before view (correspondence editing is Before-only).
+    let applyRegView (v : RegView) (model : Model) =
+        if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
+        else
+            surfaceDistCts.Cancel()
+            focusDistCts.Cancel()
+            bumpSurfaceDist ()
+            bumpFocusDist ()
+            invalidateRings
+                { model with
+                    RegView = v
+                    BrushedSamples = Set.empty
+                    ScanPins = ScanPinModel.swapProbeViews model.ScanPins
+                    SurfaceDistance = model.SurfaceDistanceOther
+                    SurfaceDistanceOther = model.SurfaceDistance
+                    FocusDist = model.FocusDistOther
+                    FocusDistOther = model.FocusDist }
+
     // Replace the visibility map, invalidating the visibility-derived Inspect data:
     // the variance aggregate is defined over the visible moving meshes (refetch), a
     // newly shown mesh may still lack its difference field (bump lets ensureFocusDist
@@ -139,18 +162,16 @@ module UpdateHelpers =
             | Some _ -> Some id
             | None -> None)
 
-    // Pin ROI reach: the probe cylinder's bounding-sphere radius (radius
-    // InnerRadius ⊥ axis, length fixedProbeLength along it). A mesh whose closest
-    // point to the pin centre is within this covers the ROI; beyond it it does not.
-    let roiReach (innerRadius : float) =
-        sqrt (innerRadius * innerRadius + (ScanPin.fixedProbeLength * 0.5) ** 2.0)
-
     // ROI-clamped auto-seed. refAnchor = pin centre (host = reference) or its
     // closest-point projection onto the reference; per moving mesh the closest
     // point to refAnchor. Anchors are stored mesh-local (own-frame closest point),
-    // so the before/after toggle moves them with the mesh. Membership = the
-    // candidate mapped to displayed world within roiReach of the pin centre;
-    // out-of-ROI meshes are not seeded. Manually-picked markers are kept.
+    // so the before/after toggle moves them with the mesh. All geometry is
+    // evaluated at the BEFORE (load) pose regardless of the current view —
+    // correspondences exist in the Before state only, so a mesh that a solve
+    // moved into a pin's area must NOT gain a marker. Two zones: an anchor is
+    // accepted within the pin sphere (InnerRadius); InRoi membership (can the
+    // probe measure here) uses the wider ScanPin.roiReach. Manually-picked
+    // markers are kept.
     let private seedAnchorsCore (env : Env<Message>) (model : Model) (pinIds : ScanPinId list) : unit =
         match model.Registration.ReferenceMesh with
         | None -> ()
@@ -163,7 +184,7 @@ module UpdateHelpers =
             else
                 let meshes = model.MeshNames |> IndexList.toList
                 let trafos =
-                    meshes |> List.map (fun m -> m, ModelTransforms.displayedWorld model m) |> Map.ofList
+                    meshes |> List.map (fun m -> m, ModelTransforms.displayedWorldAt RegBefore model m) |> Map.ofList
                 let refT = Map.tryFind refMesh trafos |> Option.defaultValue Trafo3d.Identity
                 let jobs =
                     pins |> List.map (fun pin ->
@@ -177,7 +198,7 @@ module UpdateHelpers =
                         let! perPin =
                             jobs
                             |> List.map (fun (pinId, centre, innerR, host, keep) -> async {
-                                let reach = roiReach innerR
+                                let reach = ScanPin.roiReach innerR
                                 // refAnchor stored in the reference own frame (= world,
                                 // since the reference always sits at its LoadTransform).
                                 let! refAnchor =
@@ -190,6 +211,11 @@ module UpdateHelpers =
                                             return res |> Option.map (fun r -> r.point)
                                         with _ -> return None
                                     }
+                                // The refAnchor is a correspondence point too — a
+                                // projection landing outside the pin sphere is rejected.
+                                let refAnchor =
+                                    refAnchor |> Option.filter (fun raOwn ->
+                                        (refT.Forward.TransformPos raOwn - centre).Length <= innerR)
                                 match refAnchor with
                                 | None -> return (pinId, None, [||], [||])
                                 | Some raOwn ->
@@ -204,12 +230,12 @@ module UpdateHelpers =
                                                 let t = Map.tryFind mesh trafos |> Option.defaultValue Trafo3d.Identity
                                                 let cOwn = t.Backward.TransformPos raWorld
                                                 let! res = Query.closestPoint ApiConfig.apiBase.Value mesh 0 cOwn
-                                                // (own-frame point, displayed-world point)
+                                                // (own-frame point, Before-pose world point)
                                                 return mesh, (res |> Option.map (fun r -> r.point, t.Forward.TransformPos r.point))
                                             with _ -> return mesh, None
                                         })
                                         |> Async.Parallel
-                                    // In-ROI ⇔ the candidate (displayed world) is within reach of the pin centre.
+                                    // In-ROI ⇔ the candidate (Before world) is within measurement reach.
                                     let inRoi =
                                         resolved |> Array.map (fun (mesh, cand) ->
                                             let inside =
@@ -217,10 +243,11 @@ module UpdateHelpers =
                                                 | Some (_, w) -> (w - centre).Length <= reach
                                                 | None -> false
                                             pinId, mesh, inside)
+                                    // An anchor must lie within the pin sphere itself.
                                     let seeded =
                                         resolved |> Array.choose (fun (mesh, cand) ->
                                             match cand with
-                                            | Some (own, w) when (w - centre).Length <= reach -> Some (pinId, mesh, own)
+                                            | Some (own, w) when (w - centre).Length <= innerR -> Some (pinId, mesh, own)
                                             | _ -> None)
                                     return (pinId, Some raWorld, seeded, inRoi)
                             })

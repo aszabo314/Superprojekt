@@ -1,5 +1,5 @@
-//1b20b849-4780-dfb2-e718-04df5cb5eadd
-//976c1049-8fd5-0fbc-d612-2ffb24521e4f
+//7a194dff-3156-dcb6-fced-7c0b081dd561
+//0ff7a7af-7a02-c7a5-1b85-2e704e18169a
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -38,8 +38,6 @@ type AdaptiveModel(value : Model) =
     let _MeshVisible_ = FSharp.Data.Adaptive.cval(value.MeshVisible)
     let _MeshesLoaded_ = FSharp.Data.Adaptive.cset(value.MeshesLoaded)
     let _CommonCentroid_ = FSharp.Data.Adaptive.cval(value.CommonCentroid)
-    let _MenuOpen_ = FSharp.Data.Adaptive.cval(value.MenuOpen)
-    let _SavedMenuOpen_ = FSharp.Data.Adaptive.cval(value.SavedMenuOpen)
     let _DebugLog_ = FSharp.Data.Adaptive.clist(value.DebugLog)
     let _Datasets_ = FSharp.Data.Adaptive.cval(value.Datasets)
     let _ActiveDataset_ = FSharp.Data.Adaptive.cval(value.ActiveDataset)
@@ -55,10 +53,10 @@ type AdaptiveModel(value : Model) =
     let _SceneBounds_ = FSharp.Data.Adaptive.cval(value.SceneBounds)
     let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
     let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
-    let _IsolatePeekHeld_ = FSharp.Data.Adaptive.cval(value.IsolatePeekHeld)
     let _ShowOverlaysHeld_ = FSharp.Data.Adaptive.cval(value.ShowOverlaysHeld)
     let _LoadTransforms_ = FSharp.Data.Adaptive.cval(value.LoadTransforms)
     let _SolvedTransforms_ = FSharp.Data.Adaptive.cval(value.SolvedTransforms)
+    let _SolveInputs_ = FSharp.Data.Adaptive.cval(value.SolveInputs)
     let _RegView_ = FSharp.Data.Adaptive.cval(value.RegView)
     let _RegPeekHeld_ = FSharp.Data.Adaptive.cval(value.RegPeekHeld)
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
@@ -97,8 +95,6 @@ type AdaptiveModel(value : Model) =
             _MeshVisible_.Value <- value.MeshVisible
             _MeshesLoaded_.Value <- value.MeshesLoaded
             _CommonCentroid_.Value <- value.CommonCentroid
-            _MenuOpen_.Value <- value.MenuOpen
-            _SavedMenuOpen_.Value <- value.SavedMenuOpen
             _DebugLog_.Value <- value.DebugLog
             _Datasets_.Value <- value.Datasets
             _ActiveDataset_.Value <- value.ActiveDataset
@@ -114,10 +110,10 @@ type AdaptiveModel(value : Model) =
             _SceneBounds_.Value <- value.SceneBounds
             _MeshBounds_.Value <- value.MeshBounds
             _ActivePickingLayer_.Value <- value.ActivePickingLayer
-            _IsolatePeekHeld_.Value <- value.IsolatePeekHeld
             _ShowOverlaysHeld_.Value <- value.ShowOverlaysHeld
             _LoadTransforms_.Value <- value.LoadTransforms
             _SolvedTransforms_.Value <- value.SolvedTransforms
+            _SolveInputs_.Value <- value.SolveInputs
             _RegView_.Value <- value.RegView
             _RegPeekHeld_.Value <- value.RegPeekHeld
             _Registration_.Value <- value.Registration
@@ -149,8 +145,6 @@ type AdaptiveModel(value : Model) =
     member __.MeshVisible = _MeshVisible_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.bool>>
     member __.MeshesLoaded = _MeshesLoaded_ :> FSharp.Data.Adaptive.aset<Microsoft.FSharp.Core.string>
     member __.CommonCentroid = _CommonCentroid_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V3d>
-    member __.MenuOpen = _MenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.SavedMenuOpen = _SavedMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.bool>>
     member __.DebugLog = _DebugLog_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
     member __.Datasets = _Datasets_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
     member __.ActiveDataset = _ActiveDataset_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
@@ -166,10 +160,10 @@ type AdaptiveModel(value : Model) =
     member __.SceneBounds = _SceneBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>
     member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
-    member __.IsolatePeekHeld = _IsolatePeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ShowOverlaysHeld = _ShowOverlaysHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.LoadTransforms = _LoadTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.SolvedTransforms = _SolvedTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
+    member __.SolveInputs = _SolveInputs_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<SolveInputs>>
     member __.RegView = _RegView_ :> FSharp.Data.Adaptive.aval<RegView>
     member __.RegPeekHeld = _RegPeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>

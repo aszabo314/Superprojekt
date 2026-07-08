@@ -65,11 +65,6 @@ module ScanPinModel =
         Placement   = PlacementIdle
     }
 
-    let isPlacing (sp : ScanPinModel) =
-        match sp.Placement with
-        | PlacementIdle -> false
-        | _ -> true
-
     // Unchanged pins are returned as-is so the adaptive map diff sees no change.
     // Slices share every probe trigger (poses / reference / pin geometry), so
     // they invalidate together.
@@ -113,6 +108,14 @@ module ScanPinModel =
 
 module ScanPin =
     let fixedProbeLength   = 20.0
+
+    // MEASUREMENT reach: the probe cylinder's bounding-sphere radius (radius
+    // InnerRadius ⊥ axis, length fixedProbeLength along it). This is the InRoi
+    // membership rule — "the mesh has surface the probe can measure here". It is
+    // NOT the correspondence rule: anchors live within the pin sphere itself
+    // (InnerRadius), enforced at seed, pick and resize alike.
+    let roiReach (innerRadius : float) =
+        sqrt (innerRadius * innerRadius + (fixedProbeLength * 0.5) ** 2.0)
 
     // Fixed frame of the vertical cross-section cache: the cut plane contains
     // world X (chart u) and world Z (chart v); parallel planes offset along

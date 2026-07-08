@@ -14,37 +14,16 @@ module GuiTopBar =
         let solved = model.SolvedTransforms |> AVal.map (Map.isEmpty >> not)
         div {
             Class "top-bar"
-            button {
-                Class "tb-burger"
-                Attribute("title", "Toggle left panel")
-                Dom.OnClick(fun _ -> env.Emit [ToggleMenu])
-                div { Class "burger-line" }
-                div { Class "burger-line" }
-                div { Class "burger-line" }
-            }
-
-            // Spring-loaded hold-to-isolate (hotkey I): momentarily force pin isolation
-            // on in modes where it defaults off (Overview / Inspect).
-            button {
-                Class "tb-btn"
-                classWhen "tb-btn-active" model.IsolatePeekHeld
-                Attribute("title", "Isolate pins: hold to reveal only the pin regions (hotkey: I)")
-                Dom.OnPointerDown((fun _ -> env.Emit [SetIsolatePeek true]), pointerCapture = true)
-                Dom.OnPointerUp((fun _ -> env.Emit [SetIsolatePeek false]), pointerCapture = true)
-                Dom.OnMouseLeave(fun _ -> env.Emit [SetIsolatePeek false])
-                "◎ Isolate"
-            }
-
-            // Spring-loaded show-overlays (hotkey O): white-out the meshes so only the
+            // Spring-loaded overview (hotkey O): white-out the meshes so only the
             // pins carry colour (thick coloured flags + 2D name tags at their tips).
             button {
                 Class "tb-btn"
                 classWhen "tb-btn-active" model.ShowOverlaysHeld
-                Attribute("title", "Show overlays: hold to white-out the meshes — only the pins stay coloured, with name tags (hotkey: O)")
+                Attribute("title", "Overview: hold to white-out the meshes — only the pins stay coloured, with name tags (hotkey: O)")
                 Dom.OnPointerDown((fun _ -> env.Emit [SetShowOverlays true]), pointerCapture = true)
                 Dom.OnPointerUp((fun _ -> env.Emit [SetShowOverlays false]), pointerCapture = true)
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetShowOverlays false])
-                "🎨 Overlays"
+                "🗺 Overview"
             }
 
             div {
@@ -64,7 +43,7 @@ module GuiTopBar =
                 button {
                     Class "tb-regview-btn tb-regview-peek"
                     classWhen "btn-active" model.RegPeekHeld
-                    Attribute("title", "Peek: hold to momentarily show the other registration state")
+                    Attribute("title", "Peek: hold to momentarily show the other registration state (hotkey: I)")
                     Dom.OnPointerDown((fun _ -> if AVal.force solved then env.Emit [SetRegPeek true]), pointerCapture = true)
                     Dom.OnPointerUp((fun _ -> env.Emit [SetRegPeek false]), pointerCapture = true)
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetRegPeek false])

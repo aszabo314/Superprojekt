@@ -33,36 +33,32 @@ module GuiRail =
         let curStep   = model.WorkflowStep
         ignore viewportSize
 
-        let stepStatus (step : WorkflowStep) : aval<Pill * string> =
+        // Status pill on the Register header only — Overview/Inspect titles stay bare.
+        let corrStatus : aval<Pill * string> =
             AVal.custom (fun t ->
                 let hasRef = (model.Registration.GetValue t).ReferenceMesh |> Option.isSome
                 let solved = not (Map.isEmpty (model.SolvedTransforms.GetValue t))
-                match step with
-                | Overview ->
-                    if hasRef then PillReady, "reference set"
-                    else PillBlock, "pick a reference ★"
-                | Correspondence ->
-                    if not hasRef then PillBlock, "needs a reference"
-                    elif solved then PillReady, "aligned"
-                    else PillInfo, "place ≥3 correspondences, then solve"
-                | Inspect ->
-                    if hasRef then PillInfo, "error layers"
-                    else PillBlock, "needs a reference")
+                if not hasRef then PillBlock, "needs a reference"
+                elif solved then PillReady, "aligned"
+                else PillInfo, "place ≥3 correspondences, then solve")
 
         let modeHeader (step : WorkflowStep) =
             let active = curStep |> AVal.map ((=) step)
-            let status = stepStatus step
+            let children =
+                [ span { Class "rail-step-no"; string (WorkflowStep.index step + 1) }
+                  span { Class "rail-step-title"; WorkflowStep.title step } ]
+                @ (if step = Correspondence then
+                       [ span {
+                             corrStatus |> AVal.map (fun (p, _) -> Some (Class (pillClass p)))
+                             corrStatus |> AVal.map (fun (p, _) ->
+                                 match p with PillReady -> "✔" | PillWarn -> "⚠" | PillBlock -> "✖" | PillInfo -> "•")
+                         } ]
+                   else [])
             button {
                 Class "rail-step"
                 classWhen "rail-step-active" active
                 Dom.OnClick(fun _ -> env.Emit [SetWorkflowStep step])
-                span { Class "rail-step-no"; string (WorkflowStep.index step + 1) }
-                span { Class "rail-step-title"; WorkflowStep.title step }
-                span {
-                    status |> AVal.map (fun (p, _) -> Some (Class (pillClass p)))
-                    status |> AVal.map (fun (p, _) ->
-                        match p with PillReady -> "✔" | PillWarn -> "⚠" | PillBlock -> "✖" | PillInfo -> "•")
-                }
+                AList.ofList children
             }
 
         let modeBody (step : WorkflowStep) (body : DomNode) =
@@ -176,7 +172,7 @@ module GuiRail =
         let matrixHead () =
             div {
                 Class "mx-head"
-                div { Class "mx-corner"; "pin \\ mesh" }
+                div { Class "mx-corner" }
                 model.MeshNames |> AList.map (fun name ->
                     // Columns show only mesh colour + number (T3); per-mesh controls
                     // and the ★ reference live on the focus tile strip. Clicking a column
@@ -307,7 +303,22 @@ module GuiRail =
         // The global reconstruction-readiness hint (moved here from the top bar) sits
         // next to the Solve button, which is greyed until a mesh is solvable (≥3 in-ROI
         // markers with a reference). The per-mesh/per-pin hints stay in the matrix.
-        let readiness = ReadinessView.input model |> AVal.map Readiness.compute
+        // The Ready diagnostic gets the display numbers of the solvable meshes
+        // appended ("Ready to align 1,3") — a view concern (numbering = MeshOrder),
+        // so it patches the engine text here rather than inside Readiness.compute.
+        let readiness =
+            (ReadinessView.input model, model.MeshOrder.Content) ||> AVal.map2 (fun input order ->
+                Readiness.compute input
+                |> List.map (fun d ->
+                    if d.Severity = Ready then
+                        let nums =
+                            Readiness.pairCounts input
+                            |> List.choose (fun (m, n) ->
+                                if n >= 3 then Some ((HashMap.tryFind m order |> Option.defaultValue 0) + 1) else None)
+                            |> List.sort
+                        if List.isEmpty nums then d
+                        else { d with Text = sprintf "%s %s" d.Text (nums |> List.map string |> String.concat ",") }
+                    else d))
         let canSolve  = readiness |> AVal.map (List.exists (fun d -> d.Severity = Ready))
         let sevClass  = function Blocker -> "block" | Warning -> "warn" | Ready -> "ready" | Info -> "info"
         let sevIcon   = function Blocker -> "✖" | Warning -> "⚠" | Ready -> "✔" | Info -> "•"
@@ -335,7 +346,6 @@ module GuiRail =
                 }
                 div {
                     Class "rail-pins-head"
-                    span { Class "rail-section-title"; "Pins" }
                     button {
                         Class "rail-btn rail-pin-add"
                         classWhen "rail-btn-active" placing
@@ -343,7 +353,7 @@ module GuiRail =
                         Dom.OnClick(fun _ ->
                             if AVal.force placing then env.Emit [ScanPinMsg CancelPlacement]
                             else env.Emit [ScanPinMsg EnterAnchorPlacement])
-                        placing |> AVal.map (fun p -> if p then "○ placing… (Esc)" else "○ Place pin")
+                        placing |> AVal.map (fun p -> if p then "○ placing… (Esc)" else "○ New pin")
                     }
                 }
                 div { Class "rail-matrix-wrap"; matrixView () }

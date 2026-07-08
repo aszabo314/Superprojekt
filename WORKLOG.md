@@ -42,6 +42,97 @@
   changes; awaiting a browser pass (Before/After toggle repaints difference +
   variance, Peek flips paint with geometry in 3D and the focus views, no
   flash-of-stale colour right after a solve).
+- GUI cleanup batch (below) — client typecheck green, tests green; awaiting a
+  browser pass (hotkey I peeks, Overview hold, JOB loads by default, camera
+  rests on the reference, anchor XYZ inputs commit + ROI-toast, edit-point
+  disarms after a pick, legend titles + zero-label offset, rail chrome).
+- Before-only correspondences + solve provenance (below) — client typecheck
+  green, tests green; awaiting a browser pass (place a pin in After view →
+  markers appear only for Before-state overlap; edit/resize a solved pin →
+  "Registration cleared" toast + snap to Before; ✎/placement/radius snap the
+  view to Before; XYZ inputs read-only in After).
+
+## Before-only correspondences + solve provenance (2026-07-08)
+Triple-checked the pin zone-of-influence logic around correspondence points and
+fixed four holes. New invariant set: the Before state is the single source of
+truth — anchors are detected/placed/edited there only; After exclusively
+displays the moved points; a solve is only as valid as the points it consumed.
+
+- **Seeding evaluated at the displayed pose** (the bug behind "a mesh moved
+  into a pin's area and gained a marker after registration"): placing a pin
+  while viewing After seeded anchors against the *solved* poses.
+  `seedAnchorsCore` now maps every mesh with `displayedWorldAt RegBefore` —
+  detection is pose-independent, always the Before truth.
+- **Two zones separated** (they were conflated): `ScanPin.roiReach`
+  (≈ sqrt(r² + (probeLen/2)²), ~10 m — the probe cylinder's bounding sphere)
+  stays the *measurement* membership rule (`InRoi`, matrix cell emptiness),
+  but a **correspondence anchor must lie within the pin sphere itself**
+  (`InnerRadius`) — enforced at seed accept (previously roiReach — an auto
+  anchor could legally sit metres outside the pin), at pick (was already
+  clamped), and at resize. The seeded refAnchor projection is range-checked
+  too. `AnchorsSeeded` now drops every re-evaluated auto marker before
+  re-adding the accepted ones, so a marker that no longer qualifies cannot
+  linger.
+- **Editing is Before-only**: `ToggleCorrArm` (the ✎ button), pin placement
+  and the radius slider snap the committed view back to Before
+  (`UpdateHelpers.applyRegView` — the extracted `SetRegView` body, so the
+  pose-pair caches swap correctly on every path). `SetRegView` disarms a live
+  editor; `PickCorrespondenceAt` rejects any pick while After is displayed —
+  including a held Peek (the new I hotkey made hold-peek-and-click easy; the
+  raycast hits the peeked solved geometry, so a commit would store an
+  off-surface Before point); the dock XYZ inputs disable in After with a
+  "read-only" note.
+- **Solve provenance** (`Model.SolveInputs`, type in RegistrationModel.fs):
+  `SolveCoarse` snapshots refMesh + every (pin, mesh) anchor point fed to the
+  solver. The `ensureSolveValidity` postlude (first in the update chain)
+  compares the snapshot against the live pins after every message — any
+  tracked pin deleted or point moved (pick edit, XYZ edit, resize kill, pin
+  delete) clears the registration wholesale (SolvedTransforms + snapshot,
+  snap to Before, probes/rings invalidated, toast). Untracked pins (placed
+  after the solve) don't invalidate.
+- **Resize kill**: `SetInnerRadius` now drops the pin's RefAnchor and any
+  anchor whose Before-pose world position falls outside the new radius — the
+  validity postlude then clears a registration that consumed one.
+- Docs: CLAUDE.md state-rules bullet ("Correspondences are Before-only").
+
+## GUI cleanup batch (2026-07-08)
+Sixteen small UI/UX changes in one pass:
+
+- **Top bar**: the ◎ Isolate spring-hold is gone entirely (button, hotkey,
+  `IsolatePeekHeld`/`SetIsolatePeek`, and the isolation OR-term in
+  `MeshView.anchorGhost`); the gear popover's persistent "Isolate pins" toggle
+  (AnchorGhostMode) survives. The **I hotkey** now drives the registration
+  Peek (same solved-only gate as the button). 🎨 Overlays is renamed
+  **🗺 Overview** (hold semantics unchanged, hotkey O). The burger button is
+  gone — the workflow rail is always visible; `MenuOpen`/`SavedMenuOpen`/
+  `ToggleMenu` and `ScanPinModel.isPlacing` were pruned with it.
+- **Rail**: the mode headers show a status pill only on the (renamed)
+  **Register** section (`WorkflowStep.title Correspondence = "Register"`);
+  the pin×mesh matrix corner lost its "pin \ mesh" micro-label; the pins head
+  lost its "Pins" title and its button reads **○ New pin**, left-aligned. The
+  "Ready to align" diagnostic now appends the display numbers of the solvable
+  meshes ("Ready to align 1,3") — patched in GuiRail from
+  `Readiness.pairCounts` + MeshOrder, keeping the pure engine (and its tests)
+  untouched.
+- **Dock**: Overview mode = one hint line (the old focused-mesh card was
+  redundant with the tiles). Register mode = pin chip + radius slider + a new
+  per-mesh **correspondence coordinate editor** — X/Y/Z number inputs in
+  metric world at the committed pose; edits route through
+  `PickCorrespondenceAt` (same ROI clamp/toast + ref-vs-mover handling as a
+  surface pick), disabled until that mesh has a point. Inspect mode lost the
+  axis-note line and the in-canvas "fill = … · outline = …" caption.
+- **Legend (Inspect 3D)**: ensemble title is now **Variance σ**; the
+  difference title names the compared meshes ("Difference 2 vs 1 (M3C2)");
+  the zero tick's label renders one line lower (y 28 → 37) so it can no
+  longer collide with an edge label on an asymmetric range.
+- **Defaults**: `data/default.txt` = **JOB**; the on-load camera now rests on
+  the default reference mesh (its pano centre, framed to its own bounds ×0.6)
+  instead of the whole padded scene — whole-scene framing remains the
+  fallback when the reference has no bbox yet.
+- **Edit point**: a committed pick now **disarms** the editor (one click =
+  one edit) in both surfaces (3D tap + focus click, both route through
+  `PickCorrespondenceAt`); an out-of-ROI click keeps it armed so the "Pick
+  inside the pin ROI" toast doesn't force a re-arm.
 
 ## Inspect false-colour maps are per-pose (Before/After + Peek) (2026-07-08)
 The Inspect scalar fields (per-mesh difference, ensemble variance) were fetched

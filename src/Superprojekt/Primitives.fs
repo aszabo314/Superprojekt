@@ -56,23 +56,24 @@ module Primitives =
 
     let c4bToHex (c : C4b) = sprintf "#%02x%02x%02x" c.R c.G c.B
 
-    // Linear-diverging difference colourmap (§C — Kovesi CET-D style): blue (neg) →
-    // neutral → red (pos). A near-zero perceptual boost (|t|^0.6) keeps small
-    // deviations visible (no central flat-spot). Within ±lod → neutral (the LoD
-    // gate); outside, ramp from the gate edge out to `range`. The SAME constants +
-    // shape are mirrored in the FShade difference painters (FocusShaders / MeshShaders).
+    // Linear-diverging difference colourmap (§C — Coolwarm, Colorcet CET-D01 as
+    // shipped by Maple): blue (neg) → near-white → red (pos). A near-zero perceptual
+    // boost (|t|^0.6) keeps small deviations visible (no central flat-spot). Within
+    // ±lod → neutral (the LoD gate); outside, ramp from the gate edge out to `range`.
+    // The SAME constants + shape are mirrored in the FShade difference painters
+    // (FocusShaders / MeshShaders).
     module Diff =
-        // RdYlBu-style diverging map: zero = light yellow (visible against the white
-        // page — a grey/white centre vanished there), each sign runs through a vivid
-        // mid hue to a dark end. `neutral` is reserved for NO SIGNAL (within the LoD
-        // gate / no data), so grey now always means "nothing detectable", never "0".
+        // Coolwarm anchors sampled from CET-D01 at 0 / ¼ / ½ / ¾ / 1: zero = the
+        // ramp's near-white centre, each sign runs through its mid hue to a saturated
+        // end. `neutral` is reserved for NO SIGNAL (within the LoD gate / no data),
+        // so grey always means "nothing detectable", never "0".
         // Mirrored in MeshShaders (enc 1) + FocusShaders (mode 1) — keep in sync.
         let neutral = V3d(0.62, 0.63, 0.66)
-        let zero    = V3d(1.0, 0.906, 0.541)
-        let private posMid = V3d(0.957, 0.427, 0.263)
-        let private posEnd = V3d(0.647, 0.0, 0.149)
-        let private negMid = V3d(0.455, 0.678, 0.820)
-        let private negEnd = V3d(0.192, 0.212, 0.584)
+        let zero    = V3d(0.930, 0.907, 0.917)
+        let private posMid = V3d(0.906, 0.549, 0.464)
+        let private posEnd = V3d(0.752, 0.008, 0.022)
+        let private negMid = V3d(0.627, 0.612, 0.908)
+        let private negEnd = V3d(0.128, 0.316, 0.858)
         let private ramp (v : float) (m : float) =
             let mid, e = if v >= 0.0 then posMid, posEnd else negMid, negEnd
             if m < 0.5 then zero + (mid - zero) * (m * 2.0)
@@ -87,7 +88,7 @@ module Primitives =
             let c = colorV3 lod range v
             let b x = byte (clamp 0.0 255.0 (x * 255.0))
             C4b(b c.X, b c.Y, b c.Z)
-        // Asymmetric signed range [lo ≤ 0, hi ≥ 0]: the zero yellow stays welded to 0,
+        // Asymmetric signed range [lo ≤ 0, hi ≥ 0]: the zero centre stays welded to 0,
         // each side normalized by its own end (same t^0.6 near-zero boost). Values
         // outside clamp to the end colours.
         let colorSignedV3 (lo : float) (hi : float) (v : float) =

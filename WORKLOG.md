@@ -8,6 +8,16 @@
 5. Fix stale state / code smells along the way.
 
 ## In progress
+- Diverging map swapped to Coolwarm (Colorcet CET-D01, per Maple's ColorTools;
+  user-confirmed over matplotlib's variant) in Primitives.Diff + both shader
+  mirrors — build green, but BOTH mesh shaders changed: needs the in-browser
+  compile check plus a visual pass (near-zero read against the white page,
+  zero-vs-neutral-grey distinguishability in matrix cells/legend, isolines on
+  the new ramp). ShaderCache entries stale again → runtime compile fallback;
+  rerun ./precompileShaders.sh at leisure.
+- Shift readout in both Inspect channels (was Displacement-only) — build green;
+  awaiting a browser glance (panel present in Difference, chart width settles
+  via ResizeObserver, empty-state note when no solved mesh is focused).
 - Z-overlap gating for M3C2 implemented + live-verified — awaiting the user's
   visual inspection (the running dev server on :8002 has the old code; restart
   it to see the change).

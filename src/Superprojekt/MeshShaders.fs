@@ -151,9 +151,9 @@ module MeshShader =
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
             // Difference map (soloed moving mesh, Inspect): signed distance on the
-            // RdYlBu-style diverging map (§C) — zero = light yellow (welded to 0),
-            // + through orange to dark red, − through steel blue to dark blue, each
-            // sign normalized by its own end, near-zero t^0.6 boost. Mirrors
+            // Coolwarm diverging map (§C, CET-D01) — zero = near-white centre
+            // (welded to 0), + through salmon to red, − through lavender to blue,
+            // each sign normalized by its own end, near-zero t^0.6 boost. Mirrors
             // Primitives.Diff and the focus difference tile. On top: constant-value
             // isolines every DiffIsoStep metres (derivative-antialiased darkening),
             // suppressed beyond the range where the colour clamps.
@@ -164,9 +164,9 @@ module MeshShader =
                     let hiN = max 1e-6f uniform.DistLoNeg
                     let t = if d >= 0.0f then d / hiP else -d / hiN
                     let m = pow (min 1.0f t) 0.6f
-                    let zeroC = V3f(1.0f, 0.906f, 0.541f)
-                    let midC = if d >= 0.0f then V3f(0.957f, 0.427f, 0.263f) else V3f(0.455f, 0.678f, 0.820f)
-                    let endC = if d >= 0.0f then V3f(0.647f, 0.0f, 0.149f) else V3f(0.192f, 0.212f, 0.584f)
+                    let zeroC = V3f(0.930f, 0.907f, 0.917f)
+                    let midC = if d >= 0.0f then V3f(0.906f, 0.549f, 0.464f) else V3f(0.627f, 0.612f, 0.908f)
+                    let endC = if d >= 0.0f then V3f(0.752f, 0.008f, 0.022f) else V3f(0.128f, 0.316f, 0.858f)
                     baseRgb <-
                         if m < 0.5f then zeroC + (midC - zeroC) * (m * 2.0f)
                         else midC + (endC - midC) * ((m - 0.5f) * 2.0f)

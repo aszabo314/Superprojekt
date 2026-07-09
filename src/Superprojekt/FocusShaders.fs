@@ -64,9 +64,9 @@ module FocusShaders =
                 let t = min 1.0f (max 0.0f (abs v.s / max 1e-6f uniform.FocusHi))
                 return V4f(0.933f + (0.114f - 0.933f) * t, 0.949f + (0.306f - 0.949f) * t, 0.965f + (0.847f - 0.965f) * t, 1.0f)
             else
-                // RdYlBu-style diverging difference map (§C): zero = light yellow
-                // (welded to 0; grey means "no signal", not "0"), + through orange to
-                // dark red, − through steel blue to dark blue, each sign normalized by
+                // Coolwarm diverging difference map (§C, CET-D01): zero = near-white
+                // centre (welded to 0; grey means "no signal", not "0"), + through
+                // salmon to red, − through lavender to blue, each sign normalized by
                 // its own end (FocusHi / FocusLoNeg) with the near-zero t^0.6 boost.
                 // ±LoD gate kept: within FocusLod → neutral grey. Constant-value
                 // isolines every FocusIsoStep metres (derivative-antialiased darkening,
@@ -79,9 +79,9 @@ module FocusShaders =
                     let denom = max 1e-6f (hi - uniform.FocusLod)
                     let t = min 1.0f (max 0.0f ((a - uniform.FocusLod) / denom))
                     let m = pow t 0.6f
-                    let zeroC = V3f(1.0f, 0.906f, 0.541f)
-                    let midC = if v.s >= 0.0f then V3f(0.957f, 0.427f, 0.263f) else V3f(0.455f, 0.678f, 0.820f)
-                    let endC = if v.s >= 0.0f then V3f(0.647f, 0.0f, 0.149f) else V3f(0.192f, 0.212f, 0.584f)
+                    let zeroC = V3f(0.930f, 0.907f, 0.917f)
+                    let midC = if v.s >= 0.0f then V3f(0.906f, 0.549f, 0.464f) else V3f(0.627f, 0.612f, 0.908f)
+                    let endC = if v.s >= 0.0f then V3f(0.752f, 0.008f, 0.022f) else V3f(0.128f, 0.316f, 0.858f)
                     let mutable rgb =
                         if m < 0.5f then zeroC + (midC - zeroC) * (m * 2.0f)
                         else midC + (endC - midC) * ((m - 0.5f) * 2.0f)

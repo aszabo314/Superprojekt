@@ -27,7 +27,7 @@ module GuiInspector =
     // ONLY way to brush samples. data-brushed echoes the model back (a model-side
     // clear also drops the local band); with no local drag the band is reconstructed
     // from the echoed gids. Self-contained OnBoot (observes data-dist + data-brushed
-    // + its own size — the shift panel toggling with the channel resizes the chart);
+    // + its own size — dock drags and window resizes change the chart width);
     // the bridge is resolved lazily EACH emit (a boot capture would freeze null).
     let private brushChartJs = [
         "(function(){"
@@ -126,7 +126,7 @@ module GuiInspector =
         "new MutationObserver(function(muts){"
         "  if(!dragging&&range){ for(var q=0;q<muts.length;q++){ if(muts[q].attributeName==='data-brushed'&&!(el.getAttribute('data-brushed')||'').length){ range=null; break; } } }"
         "  render(); }).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed']});"
-        // The chart width changes when the shift panel toggles with the channel.
+        // The chart width follows dock drags and window resizes.
         "if(window.ResizeObserver){ new ResizeObserver(function(){ render(); }).observe(el); }"
         "})();" ]
 
@@ -265,11 +265,10 @@ module GuiInspector =
 
         // Inspect dock: a Difference|Displacement channel toggle (drives the focus
         // tiles), the pin distribution panel (Task 4), and the shift readout
-        // (Task 5, displacement only). Containers are fixed; only content swaps.
+        // (Task 5). Containers are fixed; only content swaps.
         let channelA = model.InspectChannel
-        let isDisplacement = channelA |> AVal.map ((=) ChDisplacement)
 
-        // Shift readout (displacement): the focused mesh's centroid displacement
+        // Shift readout: the focused mesh's centroid displacement
         // load→solved, split vertical (datum) / horizontal (lateral) + rotation
         // angle, derived client-side from its SolvedTransform.
         let shiftData =
@@ -293,9 +292,8 @@ module GuiInspector =
                         let ang = acos (max -1.0 (min 1.0 ((trace - 1.0) / 2.0))) * 180.0 / System.Math.PI
                         let names = model.MeshNames.Content.GetValue t |> IndexList.toList
                         Some (numberedFriendly (orderVal.GetValue t) names m, total, vertical, horizontal, heading, ang))
-        let hasShift = shiftData |> AVal.map Option.isSome
-        let shiftBody = (isDisplacement, hasShift) ||> AVal.map2 (&&)
-        let shiftEmpty = (isDisplacement, hasShift) ||> AVal.map2 (fun d h -> d && not h)
+        let shiftBody = shiftData |> AVal.map Option.isSome
+        let shiftEmpty = shiftBody |> AVal.map not
         let shiftFmt f = shiftData |> AVal.map (function Some x -> f x | None -> "—")
         let shiftRow (k : string) (v : aval<string>) =
             div { Class "ins-shift-row"; span { Class "ins-shift-k"; k }; span { Class "ins-shift-v"; v } }
@@ -498,11 +496,8 @@ module GuiInspector =
                                 emit (SetBrushedSamples ids))
                         }
                     }
-                    // Displacement-only side panel; hidden in Difference so the chart
-                    // takes the full width (the chart re-renders via ResizeObserver).
                     div {
                         Class "ins-shift"
-                        showWhen isDisplacement
                         div { Class "ins-stub-note"; showWhen shiftEmpty; "Focus a solved mesh to read its shift." }
                         div {
                             Class "ins-shift-body"; showWhen shiftBody

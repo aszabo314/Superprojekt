@@ -671,7 +671,7 @@ module FocusScene =
                         model.Registration |> AVal.map (fun r ->
                             match r.ReferenceMesh with Some rf -> rf <> name | None -> false)
                     let node = MeshView.buildReferenceOutlineNode model viewT projT (V4f(0.831f, 0.631f, 0.024f, 1.0f)) show
-                    OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) node
+                    OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) OutlineView.maskAllOn node
             // One standard pipeline for both projections — the camera (viewT/projT)
             // carries the whole difference.
             let surface =
@@ -783,6 +783,15 @@ module FocusScene =
                 Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name])
                 "◐"
             }
+        let outlineOn = model.OutlineVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
+        let outlineBtn =
+            button {
+                Class "mb"
+                Primitives.classWhen "mb-on" outlineOn
+                Attribute("title", "Outline — show this mesh's silhouette in the 3D view")
+                Dom.OnClick(fun _ -> env.Emit [SetOutlineVisible(name, not (AVal.force outlineOn))])
+                "◌"
+            }
         div {
             Class "focus-tile"
             Primitives.classWhen "fm-active" active
@@ -811,6 +820,7 @@ module FocusScene =
                 refBtn
                 visBtn
                 soloBtn
+                outlineBtn
             }
         }
 

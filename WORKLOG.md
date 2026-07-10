@@ -20,7 +20,44 @@ between them (Spec A report → wait for approval → Spec B).
 - B6 Tooltip bug.
 
 ## In progress
-- Spec B implemented (B1–B6), all builds green after each task, Supertests
+- Per-mesh FOOTPRINT contours (user report: "only a combined outline of all
+  meshes"): root cause is architectural — the combined G-buffer is depth-
+  tested, so edges only fire at depth breaks; co-located meshes yield one
+  union outline and hidden boundaries aren't in the buffer at all. Fix = a
+  second additive coverage pass (channel per mesh, 2×Rgba8 MRT, no depth,
+  cap 8 meshes) + `OutlineCoverageEdge` composite painting each channel's
+  covered↔uncovered transition in that mesh's colour, gated by the same
+  OutlineMask flags. Build green, Supertests 29/29. Browser pass owed: two
+  NEW shaders (`OutlineCoverage`, `OutlineCoverageEdge`) compile in-browser;
+  each mesh shows its own closed contour in the pair view; additive blend +
+  depth-less FBO work on the Aardworx WebGL backend; per-mesh contour also
+  respects the ◌ toggle. ShaderCache stale → ./precompileShaders.sh.
+- Per-mesh outline toggles (follow-up to B4/B5, user-requested): client build
+  green, Supertests 29/29; BOTH outline shaders changed (G-buffer mesh id +
+  fragment-depth bias, edge-pass mask) → in-browser compile check + visual
+  pass owed (◌ tile toggle both modalities, Inspect pair view: context =
+  silhouette only / no isolines, no speckle on the inspected pair where
+  epochs are co-located — the 5e-5 depth push may need tuning). ShaderCache
+  stale → ./precompileShaders.sh at leisure.
+
+## Done (outline toggles)
+- G-buffer (`OutlineGBuffer`): target0.y = MeshId ((index+1)/255, 8-bit exact
+  in Rgba8), fragment depth = fc.Z + OutlineDepthBias (silhouette-only
+  context meshes get 5e-5 so the co-located inspected pair wins depth ties —
+  no per-pixel id/colour alternation).
+- Edge pass (`OutlineEdge`): `OutlineMask : Arr<N<32>, V4f>` (Blobs-style),
+  slot = centre-pixel id; .X = 1 → silhouette+isolines, 0.5 → silhouette
+  only, 0 → nothing.
+- Policy (`MeshView.outlineFlagAt`/`outlineBodyShownAt`/`outlineMask`):
+  Inspect + MeshSolo ⇒ everything except {solo, reference} = 0.5 (the
+  feature: pair view context keeps only its contour — ghosts already gone
+  per B5). Toggle modalities resolve from body visibility: `OutlineVisible`
+  off + body visible ⇒ flag 0, mesh stays in the G-buffer (occludes); off +
+  no body ⇒ Sg.Active false, mesh leaves the buffer (stops occluding).
+- Model `OutlineVisible : Map<string,bool>` (sparse false entries, reset on
+  dataset load) + `SetOutlineVisible`; ◌ toggle on the focus tile strip.
+- `OutlineView.buildFromNode` takes the mask (`maskAllOn` for the focus
+  reference overlay; reference node binds dummy MeshId/bias).
   29/29, integration 13/13 on :8004. Final report sent. Awaiting the user's
   browser pass — BOTH mesh shaders changed (MeshShaders: incidence geometric
   normal + shape discard + InspectPlain base; FocusShaders: shape discard) →

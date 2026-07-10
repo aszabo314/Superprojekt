@@ -28,6 +28,7 @@ module Update =
             { model with
                 MeshNames        = names
                 MeshVisible      = visible
+                OutlineVisible   = Map.empty
                 CommonCentroid   = common
                 MeshOrder        = indices
                 MeshesLoaded     = HashSet.empty
@@ -239,6 +240,10 @@ module Update =
             { model with MeshHeatmap = mh }
         | SetShapeThreshold v ->
             { model with ShapeThreshold = clamp 0.0 1.0 v }
+        | SetOutlineVisible(name, v) ->
+            // Sparse: only OFF entries are stored (default lookup = on).
+            let ov = if v then Map.remove name model.OutlineVisible else Map.add name false model.OutlineVisible
+            { model with OutlineVisible = ov }
         | VarianceComputed(mesh, arr) ->
             // Keep only if still in Inspect and this is the reference mesh.
             if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then

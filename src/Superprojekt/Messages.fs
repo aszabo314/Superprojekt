@@ -38,6 +38,8 @@ type Message =
     | SetMeshHeatmap of mesh:string * HeatmapMode
     // Shp cutoff — triangles below the quality threshold render transparent.
     | SetShapeThreshold of float
+    // Per-mesh outline toggle (image-space outline pass).
+    | SetOutlineVisible of mesh:string * bool
     // Difference sub-mode (M3C2 ↔ Δz) for the Inspect focus tiles.
     | ToggleExtrinsicZDiff
     | VarianceComputed of mesh:string * float32[]

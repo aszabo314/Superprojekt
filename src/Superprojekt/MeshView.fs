@@ -500,8 +500,50 @@ module MeshView =
             surface
         ) |> AList.toASet
 
-    // Outline G-buffer: every visible mesh rendered solid with OutlineGBuffer.shade,
-    // consumed by OutlineView's offscreen pass.
+    // Per-mesh outline state for the image-space outline pass. Flag semantics
+    // (the edge composite's OutlineMask): 1 = silhouette + isolines · 0.5 =
+    // silhouette only (Inspect pair view: everything except the isolated mesh and
+    // the reference keeps just its contour) · 0 = no lines. The two toggle
+    // modalities resolve automatically: outline OFF while the mesh still shows a
+    // body ⇒ flag 0 (masked at composite, the mesh keeps occluding other
+    // outlines); outline OFF while nothing of the body renders ⇒ the mesh leaves
+    // the G-buffer entirely (outlineInBuffer false — it stops occluding too).
+    let private outlineFlagAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
+        let on = Map.tryFind name (model.OutlineVisible.GetValue t) |> Option.defaultValue true
+        if not on then 0.0f
+        else
+            let silhouetteOnly =
+                model.WorkflowStep.GetValue t = Inspect
+                && (match model.MeshSolo.GetValue t with
+                    | Some s -> name <> s && (model.Registration.GetValue t).ReferenceMesh <> Some name
+                    | None -> false)
+            if silhouetteOnly then 0.5f else 1.0f
+
+    // Does anything of the mesh's BODY reach the screen (solid or ghost)? The
+    // modality discriminator for a toggled-off outline.
+    let private outlineBodyShownAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
+        let vis = Map.tryFind name (model.MeshVisible.GetValue t) |> Option.defaultValue true
+        if model.WorkflowStep.GetValue t = Inspect then
+            // Inspect has no ghost floor (§B5): solid contributors only.
+            match model.MeshSolo.GetValue t with
+            | Some s -> name = s
+            | None ->
+                let hasHeat = (Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff) <> HeatOff
+                vis && (hasHeat || (model.Registration.GetValue t).ReferenceMesh = Some name)
+        else vis || model.GhostSilhouette.GetValue t
+
+    // The composite's per-mesh line gate, indexed like MeshId ((index+1)/255).
+    let outlineMask (model : AdaptiveModel) : aval<V4f[]> =
+        AVal.custom (fun t ->
+            let names = model.MeshNames.Content.GetValue t |> IndexList.toList
+            let arr = Array.create 32 (V4f(1.0f, 0.0f, 0.0f, 0.0f))
+            names |> List.iteri (fun i name ->
+                if i < 32 then arr.[i] <- V4f(outlineFlagAt model t name, 0.0f, 0.0f, 0.0f))
+            arr)
+
+    // Outline G-buffer: every mesh rendered solid with OutlineGBuffer.shade,
+    // consumed by OutlineView's offscreen pass. A mesh leaves the buffer only
+    // when its outline is toggled off AND its body shows nothing.
     let buildOutlineNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
         let meshIndices =
             model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
@@ -539,23 +581,37 @@ module MeshView =
                 let loaded = loadMeshAsync (fun () -> ()) name
                 let scale = scaleFor model name
                 let meshT = displayedMeshT model name
-                // Render every loaded mesh into the outline G-buffer regardless of
-                // visibility, so disabled / isolated-away meshes still get crisp
-                // silhouette outlines + world-Z isolines on top of their ghost fill.
-                let renderEnabled =
-                    loaded.fvc |> AVal.map (fun c -> c > 3)
+                // Every loaded mesh renders into the G-buffer (visibility gates the
+                // main pass only) — EXCEPT a mesh whose outline is toggled off while
+                // nothing of its body shows: that one leaves the buffer so it stops
+                // occluding the remaining outlines.
+                let active =
+                    AVal.custom (fun t ->
+                        loaded.fvc.GetValue t > 3
+                        && ((Map.tryFind name (model.OutlineVisible.GetValue t) |> Option.defaultValue true)
+                            || outlineBodyShownAt model t name))
                 let meshColor =
                     meshIndices |> AVal.map (fun m ->
                         let i = Map.tryFind name m |> Option.defaultValue 0
                         V4f palette.[i % palette.Length])
+                let meshId =
+                    meshIndices |> AVal.map (fun m ->
+                        float32 ((Map.tryFind name m |> Option.defaultValue 0) + 1) / 255.0f)
+                // Silhouette-only context meshes get a small depth push so the
+                // co-located inspected pair wins the G-buffer depth contest.
+                let depthBias =
+                    AVal.custom (fun t ->
+                        if outlineFlagAt model t name = 0.5f then 5.0e-5f else 0.0f)
                 sg {
-                    Sg.Active renderEnabled
+                    Sg.Active active
                     Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
                     Sg.Shader {
                         DefaultSurfaces.trafo
                         OutlineGBuffer.shade
                     }
                     Sg.Uniform("MeshColor", meshColor)
+                    Sg.Uniform("MeshId", meshId)
+                    Sg.Uniform("OutlineDepthBias", depthBias)
                     Sg.Uniform("ContourSpacing", contourSpacing)
                     Sg.VertexAttributes(
                         HashMap.ofList [
@@ -572,6 +628,51 @@ module MeshView =
             Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
             nodes
         }
+
+    // Per-mesh screen-space coverage for the footprint-contour pass (§outline
+    // per-mesh): every mesh accumulates additively into its own channel at its
+    // displayed pose — no depth buffer, no occlusion — so the coverage composite
+    // can outline each mesh separately even where meshes overlap or are hidden.
+    // Channels cap at 8 (2×Rgba8 MRT); meshes beyond keep only the combined
+    // union outline.
+    let buildCoverageNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+        let meshIndices =
+            model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
+                names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
+        let nodes =
+            model.MeshNames |> AList.map (fun name ->
+                let loaded = loadMeshAsync (fun () -> ()) name
+                let scale = scaleFor model name
+                let meshT = displayedMeshT model name
+                let channel = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
+                let active =
+                    (loaded.fvc, channel) ||> AVal.map2 (fun c i -> c > 3 && i < 8)
+                sg {
+                    Sg.Active active
+                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                    Sg.Shader {
+                        DefaultSurfaces.trafo
+                        OutlineCoverage.shade
+                    }
+                    Sg.Uniform("CoverageChannel", channel)
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
+                        ])
+                    Sg.Index(BufferView(loaded.idx, typeof<int>))
+                    Sg.Render loaded.fvc
+                }) |> AList.toASet
+        sg {
+            Sg.View view
+            Sg.Proj proj
+            Sg.DepthTest (AVal.constant DepthTest.None)
+            Sg.BlendMode (AVal.constant BlendMode.Add)
+            nodes
+        }
+
+    // Palette colours for the footprint composite, indexed like the coverage channels.
+    let coverageColors : V4f[] =
+        Array.init 8 (fun i -> V4f Primitives.meshPaletteV4d.[i % Primitives.meshPaletteV4d.Length])
 
     // Silhouette-only outline G-buffer for whichever mesh is the current reference
     // (ContourSpacing 0 ⇒ no isolines, just the depth-break silhouette), in a fixed
@@ -597,6 +698,8 @@ module MeshView =
                         OutlineGBuffer.shade
                     }
                     Sg.Uniform("MeshColor", AVal.constant color)
+                    Sg.Uniform("MeshId", AVal.constant (1.0f / 255.0f))
+                    Sg.Uniform("OutlineDepthBias", AVal.constant 0.0f)
                     Sg.Uniform("ContourSpacing", AVal.constant 0.0f)
                     Sg.VertexAttributes(
                         HashMap.ofList [

@@ -149,6 +149,33 @@ module MeshView =
         (pinsV, refV) ||> AVal.map2 (fun pins rf ->
             ScanPin.inspectRange rf (pins |> HashMap.toSeq |> Seq.map snd))
 
+    // Shared saturation end (world metres) of the Range heatmap: the farthest
+    // own-bbox corner from each mesh's own sensor, maxed over ALL meshes — ONE
+    // scale so range colours are comparable across meshes (§B3). Feeds the 3D
+    // RangeMax uniform, the focus mode-5 normalization and the Range legend.
+    // 0 until bounds load (consumers fall back per mesh).
+    let rangeMaxWorld (model : AdaptiveModel) : aval<float> =
+        AVal.custom (fun t ->
+            let bounds = model.MeshBounds.GetValue t
+            let panos = model.PanoCenters.GetValue t
+            let cents = model.DatasetCentroids.GetValue t
+            let names = model.MeshNames.Content.GetValue t |> IndexList.toList
+            let mutable mx = 0.0
+            for name in names do
+                match Map.tryFind name bounds with
+                | Some (b : Box3d) when not b.IsInvalid ->
+                    let sensor =
+                        match Map.tryFind name panos with
+                        | Some w -> w
+                        | None -> Map.tryFind name cents |> Option.defaultValue b.Center
+                    let dx = max (abs (b.Min.X - sensor.X)) (abs (b.Max.X - sensor.X))
+                    let dy = max (abs (b.Min.Y - sensor.Y)) (abs (b.Max.Y - sensor.Y))
+                    let dz = max (abs (b.Min.Z - sensor.Z)) (abs (b.Max.Z - sensor.Z))
+                    let r = sqrt (dx * dx + dy * dy + dz * dz)
+                    if r > mx then mx <- r
+                | _ -> ()
+            mx)
+
     // Saturation end (m) of the displacement map: the largest |load→solved| over
     // every solved mesh. The displacement of a rigid pose change is an affine
     // function of position, so its maximum over a mesh is attained at a bbox
@@ -225,6 +252,7 @@ module MeshView =
         let blobCount, blobs = pinBlobUniforms placementPreview model
         let inspectRangeA = inspectRange model
         let dispRangeA = displacementRange model
+        let rangeWorldA = rangeMaxWorld model
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
@@ -278,32 +306,29 @@ module MeshView =
                                     vis && not inspectGhost)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
+            // Outline-only representation (§B4): the mesh BODY stands down entirely —
+            // a zero ghost floor discards every non-emphasized fragment — while the
+            // offscreen outline pre-pass (OutlineView; it renders ALL loaded meshes
+            // independently of the main pass) keeps compositing this mesh's
+            // silhouette + isolines. The lowest-fidelity representation; a mesh in
+            // this state is exactly "outline, no fill". Policy (§B5): Inspect drops
+            // every ghost fill — whatever is not emphasized there is outline-only,
+            // so the active false-colour map is the only filled surface.
+            let outlineOnly = model.WorkflowStep |> AVal.map ((=) Inspect)
             // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
             // absolute world → mesh frame → render); no entry ⇒ the mesh origin.
             // Drives the incidence + range heatmaps from the real sensor, not the
-            // interactive camera. RangeMax normalises range by the farthest mesh-bbox
-            // corner from that same sensor (so an off-surface origin doesn't skew it).
+            // interactive camera. RangeMax = the GLOBAL all-mesh saturation end
+            // (§B3, rangeMaxWorld) so range colours compare across meshes; local
+            // fallback while bounds are pending.
             let fullTrafo = meshTrafo model.CommonCentroid loaded scale meshT
             let sensorOrigin =
                 (fullTrafo, model.PanoCenters, loaded.centroid) |||> AVal.map3 (fun t panos c ->
                     let local = match Map.tryFind name panos with Some w -> w - c | None -> V3d.Zero
                     V3f (t.Forward.TransformPos local))
             let rangeMax =
-                AVal.custom (fun t ->
-                    let s = scale.GetValue t
-                    let panoW =
-                        match Map.tryFind name (model.PanoCenters.GetValue t) with
-                        | Some w -> w
-                        | None -> loaded.centroid.GetValue t
-                    let r =
-                        match Map.tryFind name (model.MeshBounds.GetValue t) with
-                        | Some (b : Box3d) when not b.IsInvalid ->
-                            let dx = max (abs (b.Min.X - panoW.X)) (abs (b.Max.X - panoW.X))
-                            let dy = max (abs (b.Min.Y - panoW.Y)) (abs (b.Max.Y - panoW.Y))
-                            let dz = max (abs (b.Min.Z - panoW.Z)) (abs (b.Max.Z - panoW.Z))
-                            sqrt (dx*dx + dy*dy + dz*dz)
-                        | _ -> loaded.localMaxR.GetValue t
-                    float32 (max 1e-6 (r * s)))
+                (rangeWorldA, scale, loaded.localMaxR) |||> AVal.map3 (fun g s lr ->
+                    float32 (max 1e-6 ((if g > 0.0 then g else lr) * s)))
             // Inactive meshes still render (as ghost); gate only on load state.
             let renderEnabled =
                 loaded.fvc |> AVal.map (fun c -> c > 3)
@@ -417,13 +442,15 @@ module MeshView =
                     // off, peek/isolation hide the others rather than dim them.
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
-                            let floorOn = model.GhostSilhouette.GetValue t
-                            match wheelIsolation.GetValue t with
-                            | Some iso when iso <> name -> (if floorOn then 0.15f else 0.0f)
-                            | _ ->
-                                if floorOn
-                                then float32 (model.GhostOpacity.GetValue t)
-                                else 0.0f))
+                            if outlineOnly.GetValue t then 0.0f
+                            else
+                                let floorOn = model.GhostSilhouette.GetValue t
+                                match wheelIsolation.GetValue t with
+                                | Some iso when iso <> name -> (if floorOn then 0.15f else 0.0f)
+                                | _ ->
+                                    if floorOn
+                                    then float32 (model.GhostOpacity.GetValue t)
+                                    else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
                     Sg.Uniform("MeshColor",       meshColor)
                     Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)
@@ -451,9 +478,13 @@ module MeshView =
                                  | HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
+                    Sg.Uniform("ShapeThreshold",       model.ShapeThreshold |> AVal.map float32)
                     // Show-overlays modifier (§T8): white-out the mesh while held; the
                     // pin geometry (separate) keeps its colour.
                     Sg.Uniform("Whiteout", model.ShowOverlaysHeld |> AVal.map (fun on -> if on then 1.0f else 0.0f))
+                    // Inspect de-clutter (§B5): the false-colour map is the base — no
+                    // photo texture competes in Inspect.
+                    Sg.Uniform("InspectPlain", model.WorkflowStep |> AVal.map (fun s -> if s = Inspect then 1.0f else 0.0f))
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
@@ -477,16 +508,32 @@ module MeshView =
                 names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
         let palette = Primitives.meshPaletteV4d
         // World-Z isoline spacing (render-space Z step), shared across meshes so
-        // the band parity lines up. Sized for IsolineBands bands over the scene
-        // elevation range (SceneBounds is world-metric, render = metric × datasetScale).
-        // The G-buffer encodes band parity from this; the edge pass draws the lines.
+        // the band parity lines up. Camera-adaptive (§B2): the spacing follows the
+        // orbit distance (~24 contours across the view) SNAPPED to a nice 1/2/5
+        // world-metre step — zooming out thins the lines in discrete ticks, orbiting
+        // (constant radius) never changes them. The gear's IsolineBands sets the
+        // densest allowed spacing (reached when zoomed close); the far end is capped
+        // at ≥4 contours over the scene's Z range. The G-buffer encodes band parity
+        // from this; the edge pass draws the lines.
         let contourSpacing =
             let datasetScaleA =
                 (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-            AVal.map3 (fun (b : Box3d) s bands ->
+            AVal.custom (fun t ->
+                let b = model.SceneBounds.GetValue t
+                let s = datasetScaleA.GetValue t
+                let bands = model.IsolineBands.GetValue t
                 let zext = if b.IsInvalid then 0.0 else b.Size.Z
-                float32 (max 1e-6 (zext / max 1.0 bands) * s))
-                model.SceneBounds datasetScaleA model.IsolineBands
+                let minSpacing = max 1e-6 (zext / max 1.0 bands)
+                let rWorld = model.Camera.radius.GetValue t / max 1e-9 s
+                let raw = max minSpacing (rWorld / 24.0)
+                let nice =
+                    let mag = 10.0 ** floor (log10 raw)
+                    let n = raw / mag
+                    (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
+                let spacing =
+                    if zext <= 0.0 then raw
+                    else clamp minSpacing (max minSpacing (zext / 4.0)) nice
+                float32 (spacing * s))
         let nodes =
             model.MeshNames |> AList.map (fun name ->
                 let loaded = loadMeshAsync (fun () -> ()) name

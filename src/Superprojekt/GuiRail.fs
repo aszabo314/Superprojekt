@@ -112,8 +112,21 @@ module GuiRail =
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                 AList.ofList ([ swatch; num; nameSpan; modeBar ])
             }
+        // Shp quality cutoff (§B3): triangles below it render transparent (3D +
+        // focus). Only offered while some mesh shows the Shp heatmap.
+        let anyShapeOn =
+            model.MeshHeatmap |> AVal.map (Map.exists (fun _ h -> h = HeatShape))
         let overviewBody =
-            div { Class "rail-mesh-list"; model.MeshNames |> AList.map meshRow }
+            div {
+                Class "rail-mesh-list"
+                model.MeshNames |> AList.map meshRow
+                div {
+                    Class "rail-shape-cut"
+                    showWhen anyShapeOn
+                    inlineSlider "Shape ≥" 0.0 1.0 0.01 (sprintf "%.2f") model.ShapeThreshold (fun v ->
+                        env.Emit [SetShapeThreshold v])
+                }
+            }
 
         // ── Pin × mesh matrix (§B) — the navigation backbone in Correspondence +
         // Inspect. Rows = pins (glyph · name · pin-colour swatch · ≤5 per-mesh cells);

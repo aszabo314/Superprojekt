@@ -1,5 +1,5 @@
-//aac03552-4405-9381-fe2f-7d19bd8f3ab6
-//b9b0e8c1-d5bc-cbc8-0f4c-51be0ab0fe05
+//4053b7c3-1775-4969-1e59-b5c5d9f120ae
+//e3042a30-6ab8-68b3-a14e-623ab8c13aa2
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -59,6 +59,7 @@ type AdaptiveModel(value : Model) =
     let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
     let _MeshHeatmap_ = FSharp.Data.Adaptive.cval(value.MeshHeatmap)
+    let _ShapeThreshold_ = FSharp.Data.Adaptive.cval(value.ShapeThreshold)
     let _ExtrinsicZDiff_ = FSharp.Data.Adaptive.cval(value.ExtrinsicZDiff)
     let _SurfaceDistance_ = FSharp.Data.Adaptive.cval(value.SurfaceDistance)
     let _SurfaceDistanceOther_ = FSharp.Data.Adaptive.cval(value.SurfaceDistanceOther)
@@ -116,6 +117,7 @@ type AdaptiveModel(value : Model) =
             _Registration_.Value <- value.Registration
             _Toast_.Value <- value.Toast
             _MeshHeatmap_.Value <- value.MeshHeatmap
+            _ShapeThreshold_.Value <- value.ShapeThreshold
             _ExtrinsicZDiff_.Value <- value.ExtrinsicZDiff
             _SurfaceDistance_.Value <- value.SurfaceDistance
             _SurfaceDistanceOther_.Value <- value.SurfaceDistanceOther
@@ -166,6 +168,7 @@ type AdaptiveModel(value : Model) =
     member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MeshHeatmap = _MeshHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, HeatmapMode>>
+    member __.ShapeThreshold = _ShapeThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ExtrinsicZDiff = _ExtrinsicZDiff_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SurfaceDistance = _SurfaceDistance_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.SurfaceDistanceOther = _SurfaceDistanceOther_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>

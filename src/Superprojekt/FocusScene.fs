@@ -240,6 +240,7 @@ module FocusScene =
     // |load→solved| computed here, sequential). Texture/no-data → a zero buffer of the
     // right length (the shader ignores it).
     let private focusOverlay (model : AdaptiveModel) (name : string) (loaded : LoadedMesh) (scale : aval<float>) =
+        let rangeWorldA = MeshView.rangeMaxWorld model
         // Inspect comparison overlay (1 = difference, 2 = displacement) takes
         // precedence; otherwise the per-mesh intrinsic heatmap (4/5/6) mirrors the 3D
         // view. HeatOff / no comparison ⇒ 0 (texture).
@@ -296,6 +297,8 @@ module FocusScene =
                 // Intrinsic per-mesh heatmaps: per-vertex scalar pre-normalized to [0,1]
                 // in the mesh's own (pose-independent) frame. Sensor = the pano centre in
                 // mesh-local coords (no entry ⇒ the mesh origin), matching MeshView.
+                // Incidence clamps at 0 (no abs — away-facing = never scanned = worst,
+                // §B3); range normalizes by the GLOBAL all-mesh end (rangeMaxWorld).
                 | 4 | 5 | 6 as m ->
                     loaded.pos.GetValue t |> ignore
                     match loaded.mesh.Value with
@@ -311,13 +314,18 @@ module FocusScene =
                                 let nrm = md.normals
                                 Array.init pos.Length (fun i ->
                                     let toS = (sensor - pos.[i]).Normalized
-                                    abs (Vec.dot (nrm.[i].Normalized) toS))
+                                    max 0.0f (Vec.dot (nrm.[i].Normalized) toS))
                             | 5 ->
-                                let mutable mx = 1e-6f
-                                for p in pos do
-                                    let d = (p - sensor).Length
-                                    if d > mx then mx <- d
-                                pos |> Array.map (fun p -> (p - sensor).Length / mx)
+                                let g = float32 (rangeWorldA.GetValue t)
+                                let mx =
+                                    if g > 1e-6f then g
+                                    else
+                                        let mutable m0 = 1e-6f
+                                        for p in pos do
+                                            let d = (p - sensor).Length
+                                            if d > m0 then m0 <- d
+                                        m0
+                                pos |> Array.map (fun p -> min 1.0f ((p - sensor).Length / mx))
                             | _ -> MeshView.shapeQuality pos md.indices
                         ArrayBuffer arr :> IBuffer
                     | None -> zero ()
@@ -433,9 +441,6 @@ module FocusScene =
         // screen-fixed glyph sizing are Top-projection maths, so it stays Top-only.
         let pinsAval   = model.ScanPins.Pins |> AMap.toAVal
         let dispRenderT = MeshView.displayedMeshT model name
-        let meshCol =
-            model.MeshOrder |> AMap.tryFind name
-            |> AVal.map (Option.defaultValue 0 >> Primitives.meshColor >> Primitives.c4bToV3d)
         let overlaySegs =
             AVal.custom (fun t ->
                 if isPano || model.WorkflowStep.GetValue t <> Correspondence then [||]
@@ -447,7 +452,6 @@ module FocusScene =
                     let ext = fitExtent.GetValue t
                     let z = zoomEff.GetValue t
                     let gr = 0.05 * ext / max 1e-3 z   // screen-fixed glyph half-size
-                    let baseCol = meshCol.GetValue t
                     let isRef = (model.Registration.GetValue t).ReferenceMesh = Some name
                     let dw = RigidTransform.renderToWorld s cc (dispRenderT.GetValue t)
                     let out = ResizeArray<V3d * V3d * V4d * float>()
@@ -462,27 +466,31 @@ module FocusScene =
                         match ScanPin.correspondence p with
                         | Some c ->
                             // The reference's marker is its RefAnchor (own-frame like
-                            // Anchors), drawn with the same glyph as any other mesh.
+                            // Anchors), drawn with the same glyph as any other mesh —
+                            // in the PIN's colour (§B1: crosshair, circle and markers agree).
                             let anchorOwn =
                                 if isRef then c.RefAnchor
                                 else Map.tryFind name c.Anchors |> Option.map (fun a -> a.Point)
                             match anchorOwn with
                             | Some own ->
                                 let aR = ScanPin.renderCentre cc s (dw.Forward.TransformPos own)
-                                let gcol = V4d(baseCol, if isSel then 1.0 else 0.95)
+                                let gcol = V4d(pinCol, if isSel then 1.0 else 0.95)
                                 let gw = if isSel then 2.5 else 1.8
                                 addCrossXY out aR gr gcol gw
                                 addRingXY out aR (gr * 0.6) gcol gw 24
                             | None -> ()
                         | None -> ()
-                    // Live aim ghost (preview in both views, §T4): a cyan cross+ring at
-                    // the hovered pick point while armed for THIS mesh.
+                    // Live aim ghost (preview in both views, §T4): a cross+ring at the
+                    // hovered pick point while armed for THIS mesh, in the armed pin's colour.
                     match model.CorrArm.GetValue t with
-                    | Some (_, m) when m = name ->
+                    | Some (pid, m) when m = name ->
                         match model.CorrPreview.GetValue t with
                         | Some w ->
                             let pr = ScanPin.renderCentre cc s w
-                            let col = V4d(0.0, 0.78, 0.84, 1.0)
+                            let col =
+                                match HashMap.tryFind pid pins with
+                                | Some p -> V4d(Primitives.c4bToV3d p.PinColor, 1.0)
+                                | None -> V4d(0.0, 0.78, 0.84, 1.0)
                             addCrossXY out pr gr col 2.2
                             addRingXY out pr (gr * 0.6) col 2.2 24
                         | None -> ()
@@ -676,6 +684,7 @@ module FocusScene =
                     Sg.Uniform("FocusLoNeg", loNegA)
                     Sg.Uniform("FocusLod",  AVal.constant 0.0f)
                     Sg.Uniform("FocusIsoStep", isoA)
+                    Sg.Uniform("FocusShapeThreshold", model.ShapeThreshold |> AVal.map float32)
                     Sg.NoEvents
                     Sg.VertexAttributes(vattrs loaded scalarBuf)
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
@@ -726,6 +735,7 @@ module FocusScene =
                     Sg.Uniform("FocusLoNeg", loNegA)
                     Sg.Uniform("FocusLod",  AVal.constant 0.0f)
                     Sg.Uniform("FocusIsoStep", isoA)
+                    Sg.Uniform("FocusShapeThreshold", model.ShapeThreshold |> AVal.map float32)
                     Sg.NoEvents
                     Sg.VertexAttributes(vattrs loaded scalarBuf)
                     Sg.Index(BufferView(loaded.idx, typeof<int>))

@@ -153,6 +153,7 @@ body.loaded { background: #f4f6f8; }
 .rail-pill-info  { background: #e2e8f0; color: #475569; }
 .rail-body { padding: 8px 10px; border-bottom: 1px solid #e6eaf0; background: #fff; }
 .rail-mesh-list { display: flex; flex-direction: column; gap: 2px; }
+.rail-shape-cut { padding: 4px 2px 0 2px; border-top: 1px solid #eef2f6; margin-top: 4px; }
 .rail-mesh-row {
     display: flex; align-items: center; gap: 4px; padding: 2px 0;
 }

@@ -6,10 +6,15 @@ open Aardvark.Dom
 
 module Primitives =
 
+    // Mesh identity — the cool/earth family (teal · ochre · slate · cyan · brown …).
+    // Identity hues deliberately avoid everything the scalar gradients own (§B1):
+    // red/blue (diverging + variance + displacement + range), green/yellow
+    // (incidence/shape), pale grey (no-data) and gold (reference). Pins own the
+    // complementary vivid warm/purple family. Identity rides on thin marks only.
     let meshPalette =
-        [| C4b(228uy,26uy,28uy);  C4b(55uy,126uy,184uy); C4b(77uy,175uy,74uy)
-           C4b(152uy,78uy,163uy); C4b(255uy,127uy,0uy);  C4b(255uy,255uy,51uy)
-           C4b(166uy,86uy,40uy);  C4b(247uy,129uy,191uy);C4b(153uy,153uy,153uy) |]
+        [| C4b( 15uy,118uy,110uy); C4b(180uy, 83uy,  9uy); C4b( 71uy, 85uy,105uy)
+           C4b( 14uy,116uy,144uy); C4b(113uy, 63uy, 18uy); C4b( 19uy, 78uy, 74uy)
+           C4b( 51uy, 65uy, 85uy); C4b(146uy, 64uy, 14uy); C4b( 21uy, 94uy,117uy) |]
 
     let c4bToV3d (c : C4b) = V3d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0)
     let c4bToRgbCss (c : C4b) = sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B)
@@ -19,16 +24,16 @@ module Primitives =
 
     let meshColor (idx : int) = meshPalette.[((idx % meshPalette.Length) + meshPalette.Length) % meshPalette.Length]
 
-    // Pin palette — a separate qualitative set (ColorBrewer Dark2 + extensions),
-    // visually distinct from the mesh palette (§C). Index-paired with the glyph set
-    // so colour + shape redundantly code the same pin identity (preattentive,
-    // greyscale- and colour-blind-robust).
+    // Pin identity — the vivid warm/purple family (orange · fuchsia · violet ·
+    // pink …), disjoint from both the scalar-gradient hues and the cool/earth mesh
+    // family (§B1). Index-paired with the glyph set so colour + shape redundantly
+    // code the same pin identity — the glyphs carry the load within the family.
     module PinPalette =
         let colors =
-            [| C4b( 27uy,158uy,119uy); C4b(217uy, 95uy,  2uy); C4b(117uy,112uy,179uy)
-               C4b(231uy, 41uy,138uy); C4b(102uy,166uy, 30uy); C4b(217uy,164uy,  6uy)
-               C4b(166uy,118uy, 29uy); C4b(  8uy,145uy,178uy); C4b(124uy, 58uy,237uy)
-               C4b(190uy, 24uy, 93uy) |]
+            [| C4b(234uy, 88uy, 12uy); C4b(192uy, 38uy,211uy); C4b(124uy, 58uy,237uy)
+               C4b(219uy, 39uy,119uy); C4b(134uy, 25uy,143uy); C4b(162uy, 28uy,175uy)
+               C4b(190uy, 24uy, 93uy); C4b(109uy, 40uy,217uy); C4b(194uy, 65uy, 12uy)
+               C4b(147uy, 51uy,234uy) |]
         // Distinct Unicode silhouettes; index-paired with `colors`.
         let glyphs = [| "●"; "■"; "▲"; "◆"; "★"; "✚"; "▼"; "⬢"; "⬟"; "✦" |]
         let count = colors.Length

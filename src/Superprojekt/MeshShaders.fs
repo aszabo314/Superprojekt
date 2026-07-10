@@ -51,10 +51,12 @@ module MeshShader =
         member x.DistLoNeg        : float32 = x?DistLoNeg
         // Value step (m) of the difference isolines (enc 1 only); 0 disables.
         member x.DiffIsoStep      : float32 = x?DiffIsoStep
-        // 0 = off, 1 = incidence, 2 = range.
+        // 0 = off, 1 = incidence, 2 = range, 3 = shape.
         member x.HeatmapMode      : int     = x?HeatmapMode
         member x.SensorOrigin     : V3f     = x?SensorOrigin
         member x.RangeMax         : float32 = x?RangeMax
+        // Shp cutoff: fragments below this quality are discarded (transparent).
+        member x.ShapeThreshold   : float32 = x?ShapeThreshold
         // Render-space Z step between global-Z-locked elevation isolines; 0 disables.
         // Read by the outline G-buffer pass (band parity → edge-detect), not by the
         // forward mesh shader itself.
@@ -62,6 +64,10 @@ module MeshShader =
         // Show-overlays modifier (§T8): 1 → paint the mesh plain white (shading kept).
         // Pins are separate geometry (unaffected), so only they carry colour.
         member x.Whiteout         : float32 = x?Whiteout
+        // Inspect de-clutter (§B5): 1 → the base surface is a plain near-white
+        // (no photo texture / palette / slope), so the false-colour painters above
+        // it are the only filled signal. Shading still applies.
+        member x.InspectPlain     : float32 = x?InspectPlain
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -147,6 +153,7 @@ module MeshShader =
             let aboveGhost = alpha > ghost + 1e-4f
             let mutable baseRgb =
                 if not aboveGhost then uniform.MeshColor.XYZ
+                elif uniform.InspectPlain > 0.5f then V3f(0.957f, 0.969f, 0.980f)
                 elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
@@ -200,9 +207,18 @@ module MeshShader =
                     baseRgb <- V3f(0.93f, 0.94f, 0.98f) * (1.0f - tt) + V3f(0.118f, 0.227f, 0.541f) * tt
             // Incidence heatmap: incidence angle to the scan sensor (the mesh's
             // panorama centre, fed via SensorOrigin), grazing = red, head-on = green.
+            // Uses the GEOMETRIC (per-triangle, from screen-space derivatives) normal,
+            // sign-oriented by the stored vertex normal — smoothed vertex normals let
+            // grazing sliver/bridging triangles read head-on. No abs: a surface facing
+            // AWAY from the sensor cannot have been scanned, so it reads worst, not best.
             if uniform.HeatmapMode = 1 && aboveGhost then
                 let toSensor = (uniform.SensorOrigin - wp) |> Vec.normalize
-                let incid = abs (Vec.dot n toSensor)
+                let gx = V3f(ddx wp.X, ddx wp.Y, ddx wp.Z)
+                let gy = V3f(ddy wp.X, ddy wp.Y, ddy wp.Z)
+                let g0 = Vec.cross gx gy
+                let nG = if g0.Length > 1e-12f then g0 |> Vec.normalize else n
+                let nGo = if Vec.dot nG n < 0.0f then -nG else nG
+                let incid = max 0.0f (Vec.dot nGo toSensor)
                 let lo  = V3f(0.84f, 0.19f, 0.15f)
                 let mid = V3f(0.99f, 0.85f, 0.30f)
                 let hi  = V3f(0.18f, 0.55f, 0.34f)
@@ -219,7 +235,9 @@ module MeshShader =
                 baseRgb <- nearC * (1.0f - tr) + farC * tr
             // Shape heatmap: per-vertex triangle quality (4√3·A/Σl², 1 =
             // equilateral, →0 = thin/degenerate). Red = poor, green = good.
+            // Below the cutoff the fragment is discarded (transparent filter).
             if uniform.HeatmapMode = 3 && aboveGhost then
+                if v.shq < uniform.ShapeThreshold then discard()
                 // Raise the green threshold: quality ≥ 0.75 reads fully green, so a
                 // larger share of a well-formed mesh shows as good.
                 let ts = clamp 0.0f 1.0f (v.shq / 0.75f)

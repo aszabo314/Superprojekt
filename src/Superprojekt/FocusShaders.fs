@@ -23,6 +23,8 @@ module FocusShaders =
         member x.FocusLod   : float32 = uniform?FocusLod
         // Value step (m) of the difference isolines (mode 1 only); 0 disables.
         member x.FocusIsoStep : float32 = uniform?FocusIsoStep
+        // Shp cutoff (mode 6): fragments below this quality are discarded.
+        member x.FocusShapeThreshold : float32 = uniform?FocusShapeThreshold
 
     type ColorVertex =
         {
@@ -53,8 +55,10 @@ module FocusShaders =
                 let nearC = V3f(0.13f, 0.40f, 0.85f)
                 let farC  = V3f(0.86f, 0.20f, 0.15f)
                 return V4f(nearC * (1.0f - tr) + farC * tr, 1.0f)
-            // Shape: poor red → good green (quality ≥ 0.75 reads fully green).
+            // Shape: poor red → good green (quality ≥ 0.75 reads fully green);
+            // below the cutoff the fragment is discarded (transparent filter).
             elif uniform.FocusMode = 6 then
+                if v.s < uniform.FocusShapeThreshold then discard()
                 let ts = clamp 0.0f 1.0f (v.s / 0.75f)
                 let loC = V3f(0.86f, 0.20f, 0.15f)
                 let hiC = V3f(0.18f, 0.55f, 0.34f)

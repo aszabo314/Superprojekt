@@ -347,13 +347,14 @@ module ScanPinScene =
 
         // Correspondence constellation lines: per pin, a small wire-sphere + cross
         // glyph at every mesh's marker — the reference's RefAnchor drawn exactly like
-        // a moving-mesh marker (same glyph, its mesh colour) — plus a thin line from
-        // each moving glyph to the reference point. Fixed render size (independent of
-        // pin radius). Selection / hover brighten; out-of-ROI meshes omitted.
-        // Rendered on top (depth bias) so the markers read against surfaces.
-        // Project to (correspondence, dataset colours) only — depending on the whole
+        // a moving-mesh marker — plus a thin line from each moving glyph to the
+        // reference point. All markers carry the PIN's colour (§B1: crosshair,
+        // circle and markers agree; which mesh a marker sits on is the hover-linked
+        // matrix cell's job). Fixed render size. Selection / hover brighten;
+        // out-of-ROI meshes omitted. Rendered on top (depth bias).
+        // Project to (correspondence, pin colour) only — depending on the whole
         // pin map would rebuild the constellation buffer on any pin field change.
-        let pinCorr = model.ScanPins.Pins |> AMap.map (fun _ p -> ScanPin.correspondence p, p.DatasetColors) |> AMap.toAVal
+        let pinCorr = model.ScanPins.Pins |> AMap.map (fun _ p -> ScanPin.correspondence p, p.PinColor) |> AMap.toAVal
         let constLines =
             let segs =
                 AVal.custom (fun t ->
@@ -372,7 +373,7 @@ module ScanPinScene =
                         names |> List.filter (fun n ->
                             Some n <> rf && MeshVisibility.shown solo vis n)
                     let out = ResizeArray<V3d * V3d * V4d * float>()
-                    for (id, (corr, datasetColors)) in HashMap.toSeq pins do
+                    for (id, (corr, pinColor)) in HashMap.toSeq pins do
                         match corr with
                         | Some c ->
                             match c.RefAnchor with
@@ -380,13 +381,10 @@ module ScanPinScene =
                                 let isSel = sel = Some id
                                 let pinHover = hov = Some (HoverPin id)
                                 let emph = isSel || pinHover
+                                let baseCol = Primitives.c4bToV3d pinColor
                                 let raR = ScanPin.renderCentre cc scale ra
                                 (match rf with
                                  | Some rn when MeshVisibility.shown solo vis rn ->
-                                    let baseCol =
-                                        match Map.tryFind rn datasetColors with
-                                        | Some c4 -> Primitives.c4bToV3d c4
-                                        | None -> V3d(0.102, 0.337, 0.859)
                                     let refHover = hov = Some (HoverPoint (id, rn))
                                     let col =
                                         if refHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
@@ -409,10 +407,6 @@ module ScanPinScene =
                                         | _ -> None
                                     match marker with
                                     | Some w ->
-                                        let baseCol =
-                                            match Map.tryFind mesh datasetColors with
-                                            | Some cc4 -> Primitives.c4bToV3d cc4
-                                            | None -> V3d(0.102, 0.337, 0.859)
                                         let rowHover = hov = Some (HoverPoint (id, mesh))
                                         let col =
                                             if rowHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
@@ -565,9 +559,10 @@ module ScanPinScene =
                     }
                 | None -> sg { Sg.NoEvents })
 
-        // Live correspondence-pick preview: a cyan wire sphere + cross at the hovered
-        // surface point while set-correspondence mode aims it (metric world → render).
-        // On top so it reads against the surface. Fixed render size.
+        // Live correspondence-pick preview: a wire sphere + cross at the hovered
+        // surface point while set-correspondence mode aims it (metric world → render),
+        // in the ARMED PIN's colour (§B1 — the picked-point crosshair matches the pin
+        // circle and its markers). On top so it reads against the surface.
         let corrPreview =
             let active =
                 (notFullscreen, model.CorrPreview) ||> AVal.map2 (fun nf c -> nf && Option.isSome c)
@@ -578,7 +573,13 @@ module ScanPinScene =
                         let cc = model.CommonCentroid.GetValue t
                         let s = datasetScale.GetValue t
                         let wR = ScanPin.renderCentre cc s w
-                        let col = V4d(0.0, 0.78, 0.84, 0.95)
+                        let col =
+                            match model.CorrArm.GetValue t with
+                            | Some (pid, _) ->
+                                match HashMap.tryFind pid (pinsVal.GetValue t) with
+                                | Some p -> V4d(Primitives.c4bToV3d p.PinColor, 0.95)
+                                | None -> V4d(0.0, 0.78, 0.84, 0.95)
+                            | None -> V4d(0.0, 0.78, 0.84, 0.95)
                         let out = ResizeArray<V3d * V3d * V4d * float>()
                         addWireSphere out wR 0.06 col 1.8 20
                         addCross out wR 0.075 col 1.8

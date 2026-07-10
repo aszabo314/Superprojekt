@@ -546,7 +546,7 @@ module View =
             GuiFocus.panel env model
             GuiOverlays.toast model
             GuiOverlays.pinFlagLabels model (viewportSize :> aval<V2i>)
-            GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>)
+            GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>) (altHeld :> aval<bool>)
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model

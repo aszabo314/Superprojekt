@@ -7,13 +7,17 @@ open Aardvark.Dom
 
 module GuiOverlays =
 
-    let meshWheelLabel (model : AdaptiveModel) (cursorScreen : aval<V2d option>) =
+    // Cursor label of the Alt-wheel layer cycling. Gated on Alt actually HELD:
+    // ActivePickingLayer persists after the cycle (it keeps steering pick
+    // priority), so an always-on label would trail a stale mesh name around the
+    // cursor over meshes it doesn't describe (§B6).
+    let meshWheelLabel (model : AdaptiveModel) (cursorScreen : aval<V2d option>) (altHeld : aval<bool>) =
         let meshOrderMap = model.MeshOrder.Content
         div {
             Class "mesh-wheel-label"
-            (model.ActivePickingLayer, cursorScreen) ||> AVal.map2 (fun layer cOpt ->
+            (model.ActivePickingLayer, cursorScreen, altHeld) |||> AVal.map3 (fun layer cOpt alt ->
                 match layer, cOpt with
-                | Some _, Some pos ->
+                | Some _, Some pos when alt ->
                     Some (Style [
                         Left (sprintf "%.0fpx" (pos.X + 14.0))
                         Top  (sprintf "%.0fpx" (pos.Y - 10.0))
@@ -337,13 +341,26 @@ module GuiOverlays =
         let fmt (span : float) (v : float) =
             if span < 0.095 then sprintf "%.0f mm" (v * 1000.0)
             elif span < 0.95 then sprintf "%.0f cm" (v * 100.0)
-            else sprintf "%.2f m" v
+            elif span < 10.0 then sprintf "%.2f m" v
+            else sprintf "%.0f m" v
+        let heatRangeMaxA = MeshView.rangeMaxWorld model
+        // Outside Inspect the legend serves the Range heatmap (§B3): shown while any
+        // visible mesh has Dst active, on the ONE all-mesh scale.
+        let anyRangeOn =
+            (model.MeshHeatmap, model.MeshVisible) ||> AVal.map2 (fun hm vis ->
+                hm |> Map.exists (fun m h -> h = HeatRange && (Map.tryFind m vis |> Option.defaultValue true)))
         let legendJson =
             AVal.custom (fun t ->
                 let (lo, hi) = rangeA.GetValue t
                 let soloName = model.MeshSolo.GetValue t
                 let title, vLo, vHi, colorAt =
-                    if not (Set.isEmpty (model.BrushedSamples.GetValue t)) then
+                    if model.WorkflowStep.GetValue t <> Inspect then
+                        let m = max 1e-6 (heatRangeMaxA.GetValue t)
+                        "Range", 0.0, m,
+                        (fun (v : float) ->
+                            let tt = clamp 0.0 1.0 (v / m)
+                            V3d(0.13, 0.40, 0.85) * (1.0 - tt) + V3d(0.86, 0.20, 0.15) * tt)
+                    elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then
                         // Brushing = sole focus: the maps stand down, the dots paint
                         // on the shared signed range.
                         "Brushed samples", lo, hi, Primitives.Diff.colorSignedV3 lo hi
@@ -406,7 +423,8 @@ module GuiOverlays =
                     title (fmt span vLo) (fmt span vHi) stops ticks)
         div {
             Class "color-legend"
-            Primitives.showWhen (model.WorkflowStep |> AVal.map ((=) Inspect))
+            Primitives.showWhen
+                ((model.WorkflowStep, anyRangeOn) ||> AVal.map2 (fun s r -> s = Inspect || r))
             legendJson |> AVal.map (fun json -> Some (Attribute("data-legend", json)))
             Primitives.observedRender "data-legend" "{}" [
                 "  if(!d.stops) return;"

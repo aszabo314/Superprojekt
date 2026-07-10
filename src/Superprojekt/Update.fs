@@ -237,6 +237,8 @@ module Update =
             // Store HeatOff as removal so the map stays sparse (default lookup = off).
             let mh = if m = HeatOff then Map.remove mesh model.MeshHeatmap else Map.add mesh m model.MeshHeatmap
             { model with MeshHeatmap = mh }
+        | SetShapeThreshold v ->
+            { model with ShapeThreshold = clamp 0.0 1.0 v }
         | VarianceComputed(mesh, arr) ->
             // Keep only if still in Inspect and this is the reference mesh.
             if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then

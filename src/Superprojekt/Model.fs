@@ -191,6 +191,9 @@ type Model =
         // shape), set from the Overview mesh list. Absent ⇒ HeatOff (textured).
         // Respected in the 3D view and the 2D focus tiles/single alike.
         MeshHeatmap           : Map<string, HeatmapMode>
+        // Shape-quality cutoff: fragments below it render transparent in the Shp
+        // heatmap (3D + focus). 0 = show everything.
+        ShapeThreshold        : float
 
         // Difference sub-mode for the Inspect focus tiles: false = signed M3C2,
         // true = vertical Δz.
@@ -330,6 +333,7 @@ module Model =
             FocusDist             = Map.empty
             FocusDistOther        = Map.empty
             MeshHeatmap           = Map.empty
+            ShapeThreshold        = 0.0
             ScanPins              = ScanPinModel.initial
             Selection             = Selection.initial
             RenderingMode       = Textured

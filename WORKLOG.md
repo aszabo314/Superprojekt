@@ -20,13 +20,51 @@ between them (Spec A report → wait for approval → Spec B).
 - B6 Tooltip bug.
 
 ## In progress
-- CHECKPOINT reached (Spec A done): client typecheck green (0 errors), full
-  server build (incl. wasm native) green, Supertests 29/29, integration 13/13
-  against a fresh server on :8004, shell + API serve. Checkpoint report sent —
-  WAITING for user approval before Spec B. In-browser passes still owed to the
-  user (headless WebGL is broken in this environment): selection round-trip in
-  all three modes, focus derived framing feel, one-diagram chart, brush = sole
-  focus, legend follow. No shader changes in Spec A → no ShaderCache impact.
+- Spec B implemented (B1–B6), all builds green after each task, Supertests
+  29/29, integration 13/13 on :8004. Final report sent. Awaiting the user's
+  browser pass — BOTH mesh shaders changed (MeshShaders: incidence geometric
+  normal + shape discard + InspectPlain base; FocusShaders: shape discard) →
+  needs the in-browser compile check; ShaderCache entries stale → runtime
+  compile fallback, rerun ./precompileShaders.sh at leisure. Eyeball list:
+  new palettes everywhere (swatches, rings, chart layers, constellation now
+  PIN-coloured, aim ghost pin-coloured), isoline density steps while zooming,
+  Dst legend + one range scale across meshes, Shp slider transparency, Inc
+  red on artifact triangles, Inspect = plain base + outline-only context,
+  Alt-wheel label only while Alt held.
+
+## Done (Spec B implementation notes)
+- B1 palettes: meshes = cool/earth 9 (teal/ochre/slate/cyan/brown…), pins =
+  vivid warm/purple 10 (orange/fuchsia/violet/pink…, glyph-paired) — both
+  clear of the gradient hues (red/blue/green/yellow), no-data grey, gold ★.
+  Constellation markers, focus anchor cross+ring and the aim ghost (2D + 3D)
+  now use the PIN colour (mesh identity there was the old crosshair/circle
+  disagreement); slice-profile lines/dots stay mesh-coloured deliberately.
+- B2 ContourSpacing camera-adaptive: ~24 contours per view from orbit radius,
+  snapped to nice 1/2/5 world-metre steps; gear IsolineBands = densest cap,
+  ≥4 contours at the far end. Difference isolines rely on their existing
+  in-shader density fade (no camera term needed).
+- B3 Dst: one all-mesh scale (MeshView.rangeMaxWorld) in 3D + focus, legend
+  shows outside Inspect while any Dst is on. Shp: ShapeThreshold model field
+  (+ SetShapeThreshold, adaptify) → discard below cutoff in both shaders,
+  slider in the Overview rail (visible only while a Shp heatmap is on).
+  Inc bug: was abs(dot(vertex-normal, toSensor)) — away-facing surfaces and
+  smoothed sliver normals read head-on/good; now geometric (screen-derivative)
+  face normal, sign-oriented by the stored normal, clamped at 0. Focus CPU
+  variant drops abs → clamp 0 (per-vertex; can't do derivatives there).
+- B4 outline-only: the outline pass already was an independent offscreen
+  pre-pass over ALL loaded meshes (OutlineView G-buffer → composite); added
+  the per-mesh body-suppression lever (outlineOnly ⇒ ghost floor 0 ⇒ every
+  non-emphasized fragment discards, outline survives).
+- B5 Inspect de-clutter: outlineOnly = (WorkflowStep = Inspect) — all ghost
+  fills gone, context meshes outline-only; new InspectPlain shader base =
+  plain near-white under the false-colour painters (no photo texture /
+  palette / slope in Inspect; shading kept).
+- B6 tooltip bug: meshWheelLabel showed the persistent ActivePickingLayer
+  name at the cursor forever after one Alt-wheel (the layer is never cleared
+  — it steers pick priority); now gated on Alt actually held. All other
+  tooltips are static per-element titles (audited).
+- Docs: CLAUDE.md (palette families, Inspect de-clutter in the ghosting
+  contract, adaptive isolines, intrinsic rules), README Inspect bullet.
 
 ## Done (Spec A implementation notes)
 - A1 `Selection = { Active : ActiveSelection; Hovered }`,

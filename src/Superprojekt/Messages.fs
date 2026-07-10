@@ -36,6 +36,8 @@ type Message =
     | ClearToast
     // Per-mesh intrinsic error visualization (Overview mesh list). HeatOff = textured.
     | SetMeshHeatmap of mesh:string * HeatmapMode
+    // Shp cutoff — triangles below the quality threshold render transparent.
+    | SetShapeThreshold of float
     // Difference sub-mode (M3C2 ↔ Δz) for the Inspect focus tiles.
     | ToggleExtrinsicZDiff
     | VarianceComputed of mesh:string * float32[]

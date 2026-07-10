@@ -329,7 +329,7 @@ module Update =
             // always evaluates at the Before pose regardless).
             let model = applyRegView RegBefore model
             let model = ScanPinUpdate.handleMsg env model msg
-            match model.Registration.ReferenceMesh, model.Selection.SelectedPin with
+            match model.Registration.ReferenceMesh, Selection.pin model.Selection.Active with
             | Some _, Some id -> seedAnchors env model [id]
             | _ -> model
         | ScanPinMsg msg ->
@@ -340,20 +340,17 @@ module Update =
                 | EnterAnchorPlacement | SetInnerRadius _ -> applyRegView RegBefore model
                 | _ -> model
             let m = ScanPinUpdate.handleMsg env model msg
-            // Inspect isolation swap: focusing a pin turns mesh isolation off (the
-            // visibility toggles reset to ON) and pin isolation on; losing the pin
-            // (deselect / delete) returns pin isolation to the Inspect default (off).
+            // Inspect: losing the selected pin with its deletion returns pin
+            // isolation to the Inspect default (off).
             let m =
                 if m.WorkflowStep <> Inspect then m
                 else
                     match msg with
-                    | SelectPin (Some _) -> { exitSolo m with AnchorGhostMode = true }
-                    | SelectPin None -> { m with AnchorGhostMode = false }
-                    | DeletePin _ when m.Selection.SelectedPin.IsNone -> { m with AnchorGhostMode = false }
+                    | DeletePin _ when (Selection.pin m.Selection.Active).IsNone -> { m with AnchorGhostMode = false }
                     | _ -> m
-            // Starting placement / switching / deleting a pin cancels the armed editor.
+            // Starting placement / deleting a pin cancels the armed editor.
             match msg with
-            | EnterAnchorPlacement | SelectPin _ | DeletePin _ ->
+            | EnterAnchorPlacement | DeletePin _ ->
                 { m with CorrArm = None; CorrPreview = None }
             | _ -> m
         | SetHovered h ->
@@ -382,32 +379,60 @@ module Update =
             { model with InspectChannel = ch }
         | SetFocusProjection p ->
             { model with FocusProjection = p }
-        | SetFocusedMesh None ->
-            { model with Selection = { model.Selection with FocusedMesh = None }
-                         CorrArm = None; CorrPreview = None }
-        | SetFocusedMesh (Some m) ->
-            // Promote to the large single (links rail + dock + focus enlargement).
-            // Switching target cancels any in-progress set-correspondence (focus + 3D).
-            // Selection never moves a camera — double-click (ZoomToMesh) does.
-            let changed = model.Selection.FocusedMesh <> Some m
-            let model =
-                if changed then
-                    { model with Selection = { model.Selection with FocusedMesh = Some m }
+        | SetSelection selRaw ->
+            // Dangling-pin guard: a stale click can outlive its pin.
+            let sel =
+                match selRaw with
+                | SelPin p when not (HashMap.containsKey p model.ScanPins.Pins) -> SelNone
+                | SelCell (p, _) when not (HashMap.containsKey p model.ScanPins.Pins) -> SelNone
+                | s -> s
+            if model.Selection.Active = sel then model
+            else
+                // Switching the selection cancels any in-progress correspondence edit.
+                let model =
+                    { model with Selection = { model.Selection with Active = sel }
                                  CorrArm = None; CorrPreview = None }
-                else model
-            // A focused mesh must be visible — the single and the focus-head buttons
-            // resolve against the raw toggles, so focusing a hidden mesh re-enables it.
-            let model =
-                if Map.tryFind m model.MeshVisible |> Option.defaultValue true then model
-                else setMeshVisible (Map.add m true model.MeshVisible) model
-            // Inspect focus policy (§C): focusing a moving mesh isolates it with the
-            // reference (it paints its own difference/displacement field) and swaps
-            // pin isolation off; focusing the reference returns to the ensemble view.
-            if model.WorkflowStep = Inspect then
-                if model.Registration.ReferenceMesh <> Some m then
-                    { enterSolo m model with AnchorGhostMode = false }
-                else exitSolo model
-            else model
+                // A selected mesh must be visible — the focus single resolves against
+                // the raw toggles, so selecting a hidden mesh re-enables it.
+                let ensureVisible m model =
+                    if Map.tryFind m model.MeshVisible |> Option.defaultValue true then model
+                    else setMeshVisible (Map.add m true model.MeshVisible) model
+                match sel with
+                | SelNone ->
+                    if model.WorkflowStep = Inspect then { exitSolo model with AnchorGhostMode = false }
+                    else model
+                | SelMesh m ->
+                    let model = ensureVisible m model
+                    // Inspect focus policy (§C): a moving mesh isolates with the
+                    // reference (it paints its own difference/displacement field) and
+                    // swaps pin isolation off; the reference returns to the ensemble.
+                    if model.WorkflowStep = Inspect then
+                        if model.Registration.ReferenceMesh <> Some m then
+                            { enterSolo m model with AnchorGhostMode = false }
+                        else exitSolo model
+                    else model
+                | SelPin _ ->
+                    // Inspect: pin focus swaps mesh isolation off, pin isolation on.
+                    if model.WorkflowStep = Inspect then { exitSolo model with AnchorGhostMode = true }
+                    else model
+                | SelCell (_, mesh) ->
+                    // The locate: solo the mesh (backup-captured for a single
+                    // BackOutLocate), force Top so the focus framing maths is valid;
+                    // an Inspect locate also lights the pin ROI. No camera — the 3D
+                    // zoom stays the cell's double-click.
+                    let backup =
+                        match model.LocateBackup with
+                        | Some _ -> model.LocateBackup
+                        | None ->
+                            Some { PrevSolo = model.MeshSolo; PrevVisible = model.MeshVisible
+                                   PrevCenter = model.Camera.center; PrevRadius = model.Camera.radius
+                                   PrevPhi = model.Camera.phi; PrevTheta = model.Camera.theta }
+                    let model = ensureVisible mesh model
+                    enterSolo mesh
+                        { model with
+                            LocateBackup = backup
+                            FocusProjection = ProjTop
+                            AnchorGhostMode = (model.WorkflowStep = Inspect) || model.AnchorGhostMode }
         | PickCorrespondenceAt(pinId, mesh, world) ->
             // Set the (pin, mesh) correspondence point at the picked surface point,
             // stored mesh-local via the displayed transform (so the before/after toggle
@@ -458,7 +483,7 @@ module Update =
                     CorrArm = Some(pinId, mesh)
                     CorrPreview = None
                     ScanPins = { model.ScanPins with Placement = PlacementIdle }
-                    Selection = { model.Selection with SelectedPin = Some pinId; FocusedMesh = Some mesh } }
+                    Selection = { model.Selection with Active = SelCell(pinId, mesh) } }
         | CorrPreviewComputed p ->
             if model.CorrArm.IsSome then { model with CorrPreview = p } else model
         | SetBrushedSamples ids ->
@@ -485,46 +510,8 @@ module Update =
              | Some p -> env.Emit [FlyToPoint(p.Centre, max 0.5 (p.InnerRadius * 4.0))]
              | None -> ())
             model
-        // Locate a correspondence (atomic "frame"): solo the mesh, focus it, force Top
-        // so the focus pan/zoom maths is valid. No camera motion — that is the cell's
-        // double-click (FlyToPoint + FocusScene.zoomOnWorldRadius). A back-out
-        // snapshot is captured on the first locate of a session.
-        | FrameCorrespondence(pinId, mesh) ->
-            match HashMap.tryFind pinId model.ScanPins.Pins with
-            | Some pin ->
-                // The reference's marker is its RefAnchor — locate works on it like on
-                // any moving-mesh marker (both are own-frame points).
-                let anchorOwn =
-                    ScanPin.correspondence pin |> Option.bind (fun c ->
-                        if model.Registration.ReferenceMesh = Some mesh then c.RefAnchor
-                        else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point))
-                match anchorOwn with
-                | Some _ ->
-                    let backup =
-                        match model.LocateBackup with
-                        | Some _ -> model.LocateBackup
-                        | None ->
-                            Some { PrevSolo = model.MeshSolo; PrevVisible = model.MeshVisible
-                                   PrevCenter = model.Camera.center; PrevRadius = model.Camera.radius
-                                   PrevPhi = model.Camera.phi; PrevTheta = model.Camera.theta }
-                    // The located mesh must resolve in the focus single (raw toggles) —
-                    // re-enable it if hidden; the backup above restores the prior map.
-                    let model =
-                        if Map.tryFind mesh model.MeshVisible |> Option.defaultValue true then model
-                        else setMeshVisible (Map.add mesh true model.MeshVisible) model
-                    enterSolo mesh
-                        { model with
-                            Selection = { model.Selection with FocusedMesh = Some mesh; SelectedPin = Some pinId }
-                            LocateBackup = backup
-                            FocusProjection = ProjTop
-                            // An Inspect locate also lights the pin ROI (pin isolation
-                            // on, like a pin click); Correspondence keeps its default.
-                            AnchorGhostMode = (model.WorkflowStep = Inspect) || model.AnchorGhostMode
-                            CorrArm = None; CorrPreview = None }
-                | None -> showToast env "No marker on that mesh to locate" model
-            | None -> model
         // Single back-out: restore the camera + solo/visibility captured at the first
-        // locate and clear the backup (the focus pan/zoom is reset from the view).
+        // cell locate and clear the backup.
         | BackOutLocate ->
             match model.LocateBackup with
             | None -> model

@@ -79,17 +79,15 @@ module GuiRail =
             let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
             let colorVal = idxVal |> AVal.map meshColor
             let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverMesh m) -> m = name | _ -> false)
-            let focused = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
+            let focused = model.Selection.Active |> AVal.map (fun s -> Selection.mesh s = Some name)
             let hm = model.MeshHeatmap |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue HeatOff)
             let swatch = span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
             let num    = span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
             let nameSpan =
                 span {
                     Class "rail-mesh-name"
-                    Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
-                    Dom.OnDoubleClick(fun _ ->
-                        env.Emit [SetFocusedMesh (Some name); ZoomToMesh name]
-                        FocusScene.resetCam (Some name))
+                    Dom.OnClick(fun _ -> env.Emit [SetSelection (SelMesh name)])
+                    Dom.OnDoubleClick(fun _ -> env.Emit [SetSelection (SelMesh name); ZoomToMesh name])
                     model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
                 }
             let modeBar =
@@ -133,42 +131,31 @@ module GuiRail =
                     if isRef then c.RefAnchor
                     else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point))
             pin, anchorOwn
-        // Cell SINGLE click = selection/visibility only (no camera): locate when a
-        // marker exists, else select + focus. Clicking the cell of the ACTIVE locate
-        // toggles it off: BackOutLocate restores the pre-locate camera / solo /
-        // visibility and the selection clears. ClickGate-deferred because of that
-        // toggle — a double-click must not toggle twice on the way to its zoom.
+        // Cell SINGLE click = cell selection (the locate: solo + focus framing, no
+        // main camera). Clicking the cell of the ACTIVE locate toggles it off:
+        // BackOutLocate restores the pre-locate camera / solo / visibility and the
+        // selection clears. ClickGate-deferred because of that toggle — a
+        // double-click must not toggle twice on the way to its zoom.
         let selectCell (id : ScanPinId) (mesh : string) =
             let isLocated =
                 (AVal.force model.LocateBackup).IsSome
-                && AVal.force model.Selection.SelectedPin = Some id
-                && AVal.force model.Selection.FocusedMesh = Some mesh
-            if isLocated then
-                env.Emit [BackOutLocate; SetFocusedMesh None; ScanPinMsg (SelectPin None)]
-                FocusScene.resetCam (Some mesh)
-            else
-                match cellAnchorOwn id mesh with
-                | _, Some _ -> env.Emit [FrameCorrespondence(id, mesh)]
-                | _, None -> env.Emit [ScanPinMsg (SelectPin (Some id)); SetFocusedMesh (Some mesh)]
-        // Cell DOUBLE click = zoom both viewports onto the correspondence. Ends in
-        // "located + zoomed" regardless of what the leading clicks toggled:
-        // FrameCorrespondence is (re-)issued (idempotent when already located; also
-        // forces ProjTop, which the 2D zoom maths needs).
+                && AVal.force model.Selection.Active = SelCell(id, mesh)
+            if isLocated then env.Emit [BackOutLocate; SetSelection SelNone]
+            else env.Emit [SetSelection (SelCell(id, mesh))]
+        // Cell DOUBLE click = cell selection + the MAIN-3D zoom onto the
+        // correspondence (the focus hard-zoom follows the selection by itself).
+        // Ends in "located + zoomed" regardless of what the leading clicks toggled.
         let zoomCell (id : ScanPinId) (mesh : string) =
+            env.Emit [SetSelection (SelCell(id, mesh))]
             match cellAnchorOwn id mesh with
             | pin, Some own ->
-                env.Emit [FrameCorrespondence(id, mesh)]
                 let cc = AVal.force model.CommonCentroid
                 let s  = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
                 let world = (RigidTransform.renderToWorld s cc (AVal.force (MeshView.displayedMeshT model mesh))).Forward.TransformPos own
                 let r = pin |> Option.map (fun p -> p.InnerRadius) |> Option.defaultValue 0.5
-                let tight = max 0.5 (r * 4.0)
-                env.Emit [FlyToPoint(world, tight)]
-                FocusScene.zoomOnWorldRadius model mesh world tight
+                env.Emit [FlyToPoint(world, max 0.5 (r * 4.0))]
             | _, None ->
-                // No marker to zoom onto: select + frame the mesh instead.
-                env.Emit [ScanPinMsg (SelectPin (Some id)); SetFocusedMesh (Some mesh); ZoomToMesh mesh]
-                FocusScene.resetCam (Some mesh)
+                env.Emit [ZoomToMesh mesh]
         let matrixHead () =
             div {
                 Class "mx-head"
@@ -179,17 +166,15 @@ module GuiRail =
                     // focuses the mesh (identical to clicking its focus tile); the column
                     // highlights when that mesh is focused (the reverse link).
                     let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-                    let colFocused = model.Selection.FocusedMesh |> AVal.map ((=) (Some name))
+                    let colFocused = model.Selection.Active |> AVal.map (fun s -> Selection.mesh s = Some name)
                     let colRef = refMesh |> AVal.map ((=) (Some name))
                     div {
                         Class "mx-colhead"
                         classWhen "mx-col-sel" colFocused
                         classWhen "mx-col-ref" colRef
                         Attribute("title", name)
-                        Dom.OnClick(fun _ -> env.Emit [SetFocusedMesh (Some name)])
-                        Dom.OnDoubleClick(fun _ ->
-                            env.Emit [SetFocusedMesh (Some name); ZoomToMesh name]
-                            FocusScene.resetCam (Some name))
+                        Dom.OnClick(fun _ -> env.Emit [SetSelection (SelMesh name)])
+                        Dom.OnDoubleClick(fun _ -> env.Emit [SetSelection (SelMesh name); ZoomToMesh name])
                         Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                         Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                         span { Class "mx-colsw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (hex (meshColor i))])) }
@@ -197,7 +182,7 @@ module GuiRail =
                     })
             }
         let matrixRow (id : ScanPinId) (glyph : string) (shortNm : string) (pinColor : C4b) =
-            let selected = model.Selection.SelectedPin |> AVal.map ((=) (Some id))
+            let selected = model.Selection.Active |> AVal.map (fun s -> Selection.pin s = Some id)
             let pinHover = model.Selection.Hovered |> AVal.map (function Some (HoverPin i) -> i = id | _ -> false)
             // Per-(pin,mesh) difference data, derived from the pin's probe (medians
             // re-centred so 0 = reference median) + ROI membership. Recomputes when
@@ -237,11 +222,13 @@ module GuiRail =
                 let active =
                     (selected, model.Selection.Hovered) ||> AVal.map2 (fun sel hov ->
                         (sel && (match hov with Some (HoverPoint(i,m)) -> i = id && m = mesh | _ -> false)))
+                let cellSel = model.Selection.Active |> AVal.map ((=) (SelCell(id, mesh)))
                 let cellRef = refMesh |> AVal.map ((=) (Some mesh))
                 div {
                     Class "mx-cell"
                     info |> AVal.map (function CellVal c -> Some (Style [Css.Background (hex c)]) | _ -> None)
                     info |> AVal.map (function CellEmpty -> Some (Class "mx-cell-empty") | CellPending -> Some (Class "mx-cell-pending") | CellVal _ -> None)
+                    classWhen "mx-cell-sel" cellSel
                     classWhen "mx-cell-active" active
                     classWhen "mx-cell-ref" cellRef
                     Attribute("title", mesh)
@@ -257,14 +244,10 @@ module GuiRail =
                 div {
                     Class "mx-rowhead"
                     // Pin linking: click = select (the reducer applies the Inspect
-                    // isolation swap); double-click = zoom — 3D tight to the pin,
-                    // focus panel keeps its mesh and zooms onto the pin too.
-                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (SelectPin (Some id))])
-                    Dom.OnDoubleClick(fun _ ->
-                        env.Emit [ScanPinMsg (SelectPin (Some id)); ZoomToPin id]
-                        match HashMap.tryFind id (AVal.force pinsVal) with
-                        | Some p -> FocusScene.zoomOnPin model p.Centre p.InnerRadius
-                        | None -> ())
+                    // isolation swap, the focus frames the pin by itself);
+                    // double-click adds the MAIN-3D zoom.
+                    Dom.OnClick(fun _ -> env.Emit [SetSelection (SelPin id)])
+                    Dom.OnDoubleClick(fun _ -> env.Emit [SetSelection (SelPin id); ZoomToPin id])
                     Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPin id))])
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                     span { Class "mx-glyph"; Style [Css.Background (hex pinColor)]; glyph }

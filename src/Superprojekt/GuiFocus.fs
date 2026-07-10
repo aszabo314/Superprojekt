@@ -15,9 +15,10 @@ module GuiFocus =
 
         // The selected pin's identity (§A) — shown as a colour chip + glyph + name in
         // the focus head (the focus label), mirroring the matrix row + 3D flag.
+        let selectedPinId = model.Selection.Active |> AVal.map Selection.pin
         let selectedPin =
             let pinsA = model.ScanPins.Pins |> AMap.toAVal
-            (model.Selection.SelectedPin, pinsA) ||> AVal.map2 (fun sel pins ->
+            (selectedPinId, pinsA) ||> AVal.map2 (fun sel pins ->
                 sel |> Option.bind (fun id -> HashMap.tryFind id pins))
         let pinChip =
             div {
@@ -40,21 +41,21 @@ module GuiFocus =
                 let vis = model.MeshVisible.GetValue t
                 names |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true))
         let focusMesh =
-            (model.Selection.FocusedMesh, visibleMeshes) ||> AVal.map2 (fun fm vis ->
-                match fm with
+            (model.Selection.Active, visibleMeshes) ||> AVal.map2 (fun sel vis ->
+                match Selection.mesh sel with
                 | Some m when List.contains m vis -> Some m
                 | _ -> List.tryHead vis)
 
-        // The unified correspondence editor is offered with a selected pin + a focused
-        // mesh (the reference is editable like any other, §T4).
+        // The unified correspondence editor is offered with a selected pin + a
+        // resolved single mesh (the reference is editable like any other, §T4).
         let setAvailable =
             AVal.custom (fun t ->
                 corrStep.GetValue t
-                && (model.Selection.SelectedPin.GetValue t).IsSome
+                && (Selection.pin (model.Selection.Active.GetValue t)).IsSome
                 && (focusMesh.GetValue t).IsSome)
         let armedHere =
             AVal.custom (fun t ->
-                match model.CorrArm.GetValue t, model.Selection.SelectedPin.GetValue t, focusMesh.GetValue t with
+                match model.CorrArm.GetValue t, Selection.pin (model.Selection.Active.GetValue t), focusMesh.GetValue t with
                 | Some (ap, am), Some sp, Some fm -> ap = sp && am = fm
                 | _ -> false)
 
@@ -76,7 +77,7 @@ module GuiFocus =
                 Primitives.classWhen "btn-active" armedHere
                 Attribute("title", "Edit correspondence: arm, then click the focus or the 3D surface to set the point")
                 Dom.OnClick(fun _ ->
-                    match AVal.force model.Selection.SelectedPin, AVal.force focusMesh with
+                    match Selection.pin (AVal.force model.Selection.Active), AVal.force focusMesh with
                     | Some pin, Some mesh -> env.Emit [ToggleCorrArm(pin, mesh)]
                     | _ -> ())
                 armedHere |> AVal.map (fun on -> if on then "✎ editing…" else "✎ edit point")

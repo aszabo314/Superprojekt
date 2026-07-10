@@ -184,7 +184,7 @@ module SceneGraph =
         let col = V4d(0.031, 0.569, 0.698, 0.7)   // cyan #0891b2
         let segs =
             AVal.custom (fun t ->
-                match model.Selection.FocusedMesh.GetValue t with
+                match Selection.mesh (model.Selection.Active.GetValue t) with
                 | None -> [||]
                 | Some name ->
                     match Map.tryFind name (model.MeshBounds.GetValue t) with

@@ -324,15 +324,16 @@ module GuiOverlays =
             div { Class "sb-label"; barLabel }
         }
 
-    // Colormap legend (Inspect only, bottom centre): the active false-colour map's
-    // gradient with nice-step ticks and the exact range ends. The three Inspect maps
-    // all read on the unified pin-derived scale (§C): the ensemble variance σ
-    // [0, max(|lo|,hi)], the soloed mesh's signed difference [lo, hi], and the
-    // displacement magnitude [0, global max |load→solved|].
+    // Colormap legend (Inspect only, bottom centre): the ACTIVE false-colour map's
+    // gradient with nice-step ticks and the exact range ends — it follows the
+    // selection (§A5: ensemble/pin → variance σ, mesh/cell → that pair's
+    // difference or the displacement channel) and a live brush (§A4: the brushed
+    // dots' shared signed range). All maps read on the unified pin-derived scale (§C).
     let colorLegend (model : AdaptiveModel) =
         let rangeA = MeshView.inspectRange model
         let dispA = MeshView.displacementRange model
         let orderContent = model.MeshOrder.Content
+        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         let fmt (span : float) (v : float) =
             if span < 0.095 then sprintf "%.0f mm" (v * 1000.0)
             elif span < 0.95 then sprintf "%.0f cm" (v * 100.0)
@@ -342,7 +343,11 @@ module GuiOverlays =
                 let (lo, hi) = rangeA.GetValue t
                 let soloName = model.MeshSolo.GetValue t
                 let title, vLo, vHi, colorAt =
-                    if soloName.IsNone then
+                    if not (Set.isEmpty (model.BrushedSamples.GetValue t)) then
+                        // Brushing = sole focus: the maps stand down, the dots paint
+                        // on the shared signed range.
+                        "Brushed samples", lo, hi, Primitives.Diff.colorSignedV3 lo hi
+                    elif soloName.IsNone then
                         let m = max 1e-6 (max (abs lo) hi)
                         "Variance σ", 0.0, m,
                         (fun (v : float) ->
@@ -358,15 +363,23 @@ module GuiOverlays =
                                 V3d(0.93, 0.94, 0.98) * (1.0 - tt) + V3d(0.118, 0.227, 0.541) * tt)
                         | ChDifference ->
                             // Title names the compared meshes by display number
-                            // (soloed moving mesh vs the reference).
+                            // (isolated moving mesh vs the reference); a cell
+                            // selection appends its pin identity (§A5: "that pair").
                             let order = orderContent.GetValue t
                             let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
                             let pair =
                                 match soloName, (model.Registration.GetValue t).ReferenceMesh with
                                 | Some s, Some r -> sprintf " %d vs %d" (numOf s) (numOf r)
                                 | _ -> ""
+                            let pinSuffix =
+                                match model.Selection.Active.GetValue t with
+                                | SelCell (p, _) ->
+                                    match HashMap.tryFind p (pinsVal.GetValue t) with
+                                    | Some pin -> sprintf " · %s %s" pin.Glyph pin.ShortName
+                                    | None -> ""
+                                | _ -> ""
                             let sub = if model.ExtrinsicZDiff.GetValue t then "Δz" else "M3C2"
-                            sprintf "Difference%s (%s)" pair sub, lo, hi, Primitives.Diff.colorSignedV3 lo hi
+                            sprintf "Difference%s (%s)%s" pair sub pinSuffix, lo, hi, Primitives.Diff.colorSignedV3 lo hi
                 let span = vHi - vLo
                 let hexAt (v : float) =
                     let c = colorAt v

@@ -53,7 +53,11 @@ type Message =
     | SetActivePickingLayer of string option
     // hover = peek, click = select/promote.
     | SetHovered of HoverTarget option
-    | SetFocusedMesh of string option
+    // THE selection: mesh / pin / cell (pin, mesh). Every entry path (matrix,
+    // roster, tiles, 3D) emits this; a cell selection is the locate (solo +
+    // backup). The focus panel frames the selection; the main 3D camera still
+    // moves only on double-click (ZoomTo*/FlyToPoint).
+    | SetSelection of ActiveSelection
     | SetWorkflowStep of WorkflowStep
     | SetInspectChannel of InspectChannel
     | SetFocusProjection of FocusProjection
@@ -70,14 +74,11 @@ type Message =
     // Fly the orbit camera tight to a metric-world point: animate centre + radius
     // directly (radius = the orbit distance, not derived from a subtend).
     | FlyToPoint of world:V3d * radius:float
-    // Explicit camera framing (the double-click grammar) — selection messages never
-    // move a camera; these own the 3D radius conventions.
+    // Explicit MAIN-3D camera framing (the double-click grammar) — selection only
+    // frames the focus panel; these own the 3D radius conventions.
     | ZoomToMesh of string
     | ZoomToPin of ScanPinId
-    // Locate a correspondence: atomic solo + focus (+ pin isolation in Inspect),
-    // capturing a back-out snapshot. BackOutLocate restores it. No camera — the
-    // zoom is the double-click handler's job.
-    | FrameCorrespondence of ScanPinId * mesh:string
+    // Restore the camera + solo/visibility captured at the first cell locate.
     | BackOutLocate
 
 and ScanPinMessage =
@@ -86,7 +87,6 @@ and ScanPinMessage =
     | PlaceAnchor of worldCentre:V3d
     | SetInnerRadius of float
     | DeletePin of ScanPinId
-    | SelectPin of ScanPinId option
     | ProbeComputed of ScanPinId * ProbeResult
     | ProbeFailed of ScanPinId * string
     | ProbeOtherComputed of ScanPinId * ProbeResult

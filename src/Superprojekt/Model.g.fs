@@ -1,5 +1,5 @@
-//7a194dff-3156-dcb6-fced-7c0b081dd561
-//0ff7a7af-7a02-c7a5-1b85-2e704e18169a
+//aac03552-4405-9381-fe2f-7d19bd8f3ab6
+//b9b0e8c1-d5bc-cbc8-0f4c-51be0ab0fe05
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -12,8 +12,7 @@ open Adaptify
 open Superprojekt
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveSelection(value : Selection) =
-    let _SelectedPin_ = FSharp.Data.Adaptive.cval(value.SelectedPin)
-    let _FocusedMesh_ = FSharp.Data.Adaptive.cval(value.FocusedMesh)
+    let _Active_ = FSharp.Data.Adaptive.cval(value.Active)
     let _Hovered_ = FSharp.Data.Adaptive.cval(value.Hovered)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
@@ -23,12 +22,10 @@ type AdaptiveSelection(value : Selection) =
         if Microsoft.FSharp.Core.Operators.not((FSharp.Data.Adaptive.ShallowEqualityComparer<Selection>.ShallowEquals(value, __value))) then
             __value <- value
             __adaptive.MarkOutdated()
-            _SelectedPin_.Value <- value.SelectedPin
-            _FocusedMesh_.Value <- value.FocusedMesh
+            _Active_.Value <- value.Active
             _Hovered_.Value <- value.Hovered
     member __.Current = __adaptive
-    member __.SelectedPin = _SelectedPin_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
-    member __.FocusedMesh = _FocusedMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.Active = _Active_ :> FSharp.Data.Adaptive.aval<ActiveSelection>
     member __.Hovered = _Hovered_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<HoverTarget>>
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveModel(value : Model) =

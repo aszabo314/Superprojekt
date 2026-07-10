@@ -87,15 +87,27 @@ type HoverTarget =
     | HoverMesh  of string
     | HoverPoint of ScanPinId * string
 
+// THE one active selection: a mesh (matrix column), a pin (matrix row), or a
+// cell = (pin, mesh) (their intersection). The matrix is the canonical driver;
+// roster rows, focus tiles, 3D pin markers and 3D surface clicks set the same
+// state. Every view follows it — there is no other selection state.
+type ActiveSelection =
+    | SelNone
+    | SelMesh of string
+    | SelPin  of ScanPinId
+    | SelCell of ScanPinId * string
+
 [<ModelType>]
 type Selection = {
-    SelectedPin   : ScanPinId option
-    FocusedMesh   : string option
-    Hovered       : HoverTarget option
+    Active  : ActiveSelection
+    Hovered : HoverTarget option
 }
 
 module Selection =
-    let initial = { SelectedPin = None; FocusedMesh = None; Hovered = None }
+    let initial = { Active = SelNone; Hovered = None }
+    // The pin / mesh a selection implies — the projections every follower reads.
+    let pin  = function SelPin p | SelCell (p, _) -> Some p | _ -> None
+    let mesh = function SelMesh m | SelCell (_, m) -> Some m | _ -> None
 
 // Mesh isolation (solo) is a pure overlay over the per-mesh visibility toggles —
 // it never mutates MeshVisible. While isolated, ONLY the isolated mesh is shown

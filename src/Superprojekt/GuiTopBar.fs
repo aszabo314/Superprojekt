@@ -71,7 +71,7 @@ module GuiTopBar =
                     span {
                         Class "tb-coord-l"
                         let centsNames = (model.DatasetCentroids, model.MeshNames.Content) ||> AVal.map2 (fun c n -> c, IndexList.toList n)
-                        (hoverCoord, model.Selection.FocusedMesh, centsNames)
+                        (hoverCoord, model.Selection.Active |> AVal.map Selection.mesh, centsNames)
                         |||> AVal.map3 (fun hc fm (cents, names) ->
                             match hc, fm with
                             | Some p, Some name ->

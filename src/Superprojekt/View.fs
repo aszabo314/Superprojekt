@@ -429,14 +429,16 @@ module View =
                             | _, Some renderPos ->
                                 let worldPos = worldFromRender model renderPos
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
-                                // Clicking a mesh in 3D focuses it (read/write parity
+                                // Clicking a mesh in 3D selects it (read/write parity
                                 // §B); the reducer applies the Inspect auto-solo (§C).
-                                // Select only — no camera; double-tap recenters.
+                                // Select only — no main camera; double-tap recenters.
                                 let! named = raycastNearestNamed ()
                                 match named with
-                                | Some (mesh, _) -> env.Emit [SetFocusedMesh (Some mesh)]
+                                | Some (mesh, _) -> env.Emit [SetSelection (SelMesh mesh)]
                                 | None -> ()
-                            | _, None -> ()
+                            | _, None ->
+                                // A background miss clears the selection.
+                                env.Emit [SetSelection SelNone]
                         } |> Async.Start
                         true
                 )

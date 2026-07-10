@@ -136,7 +136,7 @@ module GuiInspector =
         [| "→"; "↗"; "↑"; "↖"; "←"; "↙"; "↓"; "↘" |].[int (System.Math.Round(d / 45.0)) % 8]
 
     let dock (env : Env<Message>) (model : AdaptiveModel) =
-        let selected  = model.Selection.SelectedPin
+        let selected  = model.Selection.Active |> AVal.map Selection.pin
         let pinsVal   = model.ScanPins.Pins |> AMap.toAVal
         let effId     = selected
         let effPin    = (effId, pinsVal) ||> AVal.map2 (fun id pins -> id |> Option.bind (fun i -> HashMap.tryFind i pins))
@@ -273,7 +273,7 @@ module GuiInspector =
         // angle, derived client-side from its SolvedTransform.
         let shiftData =
             AVal.custom (fun t ->
-                match model.Selection.FocusedMesh.GetValue t with
+                match Selection.mesh (model.Selection.Active.GetValue t) with
                 | None -> None
                 | Some m ->
                     match Map.tryFind m (model.SolvedTransforms.GetValue t) with
@@ -298,14 +298,15 @@ module GuiInspector =
         let shiftRow (k : string) (v : aval<string>) =
             div { Class "ins-shift-row"; span { Class "ins-shift-k"; k }; span { Class "ins-shift-v"; v } }
 
-        // Distribution (§T6): per moving mesh lane, a stacked violin of EVERY pin's
-        // ROI samples (§A) on the shared signed-distance axis with the ±LoD₉₅ band.
-        // Hovering a pin (anywhere — legend, matrix row, 3D) highlights its layer.
+        // Distribution (§T6 / §A3): ONE diagram, populated by the active selection —
+        // mesh → its samples stacked by pin; pin → that pin stacked by mesh (mesh
+        // colours); cell → the single (pin, mesh) distribution; nothing (or the
+        // reference) → the ensemble aggregate stacked by pin over all moving meshes.
         // Histogram counts (48 bins over the shared range) are computed HERE from the
         // FULL probe sample sets — both Before/After halves once a solve exists
         // (Probe = committed pose, ProbeOther = the opposite) — while the brushable
         // conceptual samples stay the SAME canonical array as the 3D side (gid =
-        // array index, committed pose only): parallel "g"/"s" arrays per pin group.
+        // array index, committed pose only), restricted to what the diagram shows.
         let canonA = ScanPinScene.brushSamples model
         let distData =
             AVal.custom (fun t ->
@@ -318,12 +319,13 @@ module GuiInspector =
                 let vis = model.MeshVisible.GetValue t
                 let names = model.MeshNames.Content.GetValue t |> IndexList.toList
                 let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
-                let hov = match model.Selection.Hovered.GetValue t with Some (HoverPin id) -> Some id | _ -> None
+                let hov = model.Selection.Hovered.GetValue t
+                let sel = model.Selection.Active.GetValue t
                 let regView = model.RegView.GetValue t
                 let solved = not (Map.isEmpty (model.SolvedTransforms.GetValue t))
                 let peek = model.RegPeekHeld.GetValue t
-                // Canonical stack order (CreatedAt, guid) — same as the legend and
-                // brushSamples, so the violin layers stack identically everywhere.
+                // Canonical stack order (CreatedAt, guid) — same as brushSamples, so
+                // pin layers stack identically everywhere.
                 let readyPins =
                     pins |> HashMap.toList
                     |> List.choose (fun (id, p) -> match p.Probe with ProbeReady r -> Some (id, p, r) | _ -> None)
@@ -336,8 +338,8 @@ module GuiInspector =
                     // (the flip is purely visual — same contract as the 3D peek).
                     let actView = if peek then (match regView with RegBefore -> RegAfter | RegAfter -> RegBefore) else regView
                     let act = match actView with RegBefore -> "b" | RegAfter -> "a"
-                    // Fixed halves: bottom = Before, top = After. Probe is the
-                    // committed pose, ProbeOther the opposite — map accordingly.
+                    // Fixed halves: b = Before, a = After. Probe is the committed
+                    // pose, ProbeOther the opposite — map accordingly.
                     let halves =
                         readyPins |> List.map (fun (id, p, r) ->
                             let other = match p.ProbeOther with ProbeReady o when solved -> Some o | _ -> None
@@ -357,7 +359,7 @@ module GuiInspector =
                             | _ -> let x = ResizeArray<int * float>() in md.[id] <- x; x
                         lst.Add(gid, valMm))
                     // Shared x-range: 1–99% quantiles over the FULL sample sets of
-                    // BOTH halves, so before/after stay comparable.
+                    // BOTH halves and ALL selections, so diagrams stay comparable.
                     let lo, hi =
                         let acc = ResizeArray<float>()
                         let add (ro : ProbeResult option) =
@@ -394,44 +396,93 @@ module GuiInspector =
                     let refStdOf (r : ProbeResult) =
                         r.Distributions |> Array.tryFind (fun d -> d.MeshName = r.ReferenceMesh)
                         |> Option.map (fun d -> d.Std) |> Option.defaultValue 0.0
-                    let rowJson mesh =
-                        let md = match byMesh.TryGetValue mesh with true, x -> Some x | _ -> None
-                        let groups =
-                            halves |> List.choose (fun (id, p, r, bR, aR) ->
-                                let brush =
-                                    md |> Option.bind (fun m ->
-                                        match m.TryGetValue id with
-                                        | true, lst when lst.Count > 0 -> Some lst
-                                        | _ -> None)
-                                let hb = histFor mesh bR
-                                let ha = histFor mesh aR
-                                if brush.IsNone && hb.IsNone && ha.IsNone then None
-                                else
-                                    let committed = r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh)
-                                    let lod =
-                                        committed |> Option.map (fun d ->
-                                            let rs = refStdOf r
-                                            1.96 * sqrt (rs * rs + d.Std * d.Std) * 1000.0)
-                                    let med = committed |> Option.map (fun d -> g (d.Median * 1000.0)) |> Option.defaultValue "null"
-                                    let hl = match hov with Some h -> (if h = id then 1 else 0) | None -> 1
-                                    let gids  = brush |> Option.map (fun lst -> lst |> Seq.map (fun (gid, _) -> string gid) |> String.concat ",") |> Option.defaultValue ""
-                                    let svals = brush |> Option.map (fun lst -> lst |> Seq.map (fun (_, v) -> g v) |> String.concat ",") |> Option.defaultValue ""
-                                    let hist (h : int[] option) = h |> Option.map (fun c -> c |> Array.map string |> String.concat ",") |> Option.defaultValue ""
-                                    Some (lod, sprintf "{\"color\":\"%s\",\"name\":\"%s %s\",\"hl\":%d,\"med\":%s,\"g\":[%s],\"s\":[%s],\"hb\":[%s],\"ha\":[%s]}"
-                                                    (c4bToHex p.PinColor) p.Glyph p.ShortName hl med gids svals (hist hb) (hist ha)))
-                        if List.isEmpty groups then None
+                    let addHist a b =
+                        match a, b with
+                        | Some (x : int[]), Some y -> Some (Array.map2 (+) x y)
+                        | Some x, None | None, Some x -> Some x
+                        | None, None -> None
+                    // One stacked layer aggregated over (pin × mesh) parts: summed
+                    // per-pose histograms, pooled brush gids, mean LoD; a median tick
+                    // only when the layer is a single (pin, mesh) cell.
+                    let layer (color : C4b) (lname : string) (hl : int)
+                              (parts : ((ScanPinId * ScanPin * ProbeResult * ProbeResult option * ProbeResult option) * string) list) =
+                        let mutable hb = None
+                        let mutable ha = None
+                        let lods = ResizeArray<float>()
+                        let meds = ResizeArray<float>()
+                        let gids = ResizeArray<string>()
+                        let svals = ResizeArray<string>()
+                        for ((id, _, r, bR, aR), mesh) in parts do
+                            hb <- addHist hb (histFor mesh bR)
+                            ha <- addHist ha (histFor mesh aR)
+                            (match byMesh.TryGetValue mesh with
+                             | true, md ->
+                                 match md.TryGetValue id with
+                                 | true, lst -> for (gid, v) in lst do gids.Add(string gid); svals.Add(g v)
+                                 | _ -> ()
+                             | _ -> ())
+                            match r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh && d.Count > 0) with
+                            | Some d ->
+                                let rs = refStdOf r
+                                lods.Add(1.96 * sqrt (rs * rs + d.Std * d.Std) * 1000.0)
+                                meds.Add(d.Median * 1000.0)
+                            | None -> ()
+                        if hb.IsNone && ha.IsNone && gids.Count = 0 then None
+                        else
+                            let med = if meds.Count = 1 then g meds.[0] else "null"
+                            let hist (h : int[] option) = h |> Option.map (fun c -> c |> Array.map string |> String.concat ",") |> Option.defaultValue ""
+                            let lod = if lods.Count = 0 then None else Some (Seq.average lods)
+                            Some (lod, sprintf "{\"color\":\"%s\",\"name\":\"%s\",\"hl\":%d,\"med\":%s,\"g\":[%s],\"s\":[%s],\"hb\":[%s],\"ha\":[%s]}"
+                                        (c4bToHex color) lname hl med
+                                        (String.concat "," gids) (String.concat "," svals) (hist hb) (hist ha))
+                    let hlPin id =
+                        match hov with
+                        | Some (HoverPin i) | Some (HoverPoint (i, _)) -> if i = id then 1 else 0
+                        | _ -> 1
+                    let hlMesh m =
+                        match hov with
+                        | Some (HoverMesh hm) | Some (HoverPoint (_, hm)) -> if hm = m then 1 else 0
+                        | _ -> 1
+                    let friendly = numberedFriendly order names
+                    let pinLabel (p : ScanPin) = sprintf "%s %s" p.Glyph p.ShortName
+                    let selMeshOpt = Selection.mesh sel |> Option.filter (fun m -> List.contains m moving)
+                    let selPinHalf =
+                        Selection.pin sel |> Option.bind (fun pid ->
+                            halves |> List.tryFind (fun (id, _, _, _, _) -> id = pid))
+                    let rowName, layers =
+                        match sel, selPinHalf, selMeshOpt with
+                        | SelCell _, Some ((id, p, _, _, _) as h), Some m ->
+                            sprintf "%s · %s" (pinLabel p) (friendly m),
+                            [ layer p.PinColor (pinLabel p) (hlPin id) [h, m] ]
+                        | (SelPin _ | SelCell _), Some ((_, p, _, _, _) as h), _ ->
+                            // pin across meshes (a reference-column cell lands here too)
+                            pinLabel p,
+                            moving |> List.map (fun m ->
+                                let mi = HashMap.tryFind m order |> Option.defaultValue 0
+                                layer (meshColor mi) (friendly m) (hlMesh m) [h, m])
+                        | _, _, Some m ->
+                            friendly m,
+                            halves |> List.map (fun ((id, p, _, _, _) as h) ->
+                                layer p.PinColor (pinLabel p) (hlPin id) [h, m])
+                        | _ ->
+                            "all meshes",
+                            halves |> List.map (fun ((id, p, _, _, _) as h) ->
+                                layer p.PinColor (pinLabel p) (hlPin id) (moving |> List.map (fun m -> h, m)))
+                    let groups = layers |> List.choose id
+                    let rows =
+                        if List.isEmpty groups then ""
                         else
                             let lods = groups |> List.choose fst
                             let avgLod = if List.isEmpty lods then 0.0 else List.average lods
-                            Some (sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}" (numberedFriendly order names mesh) (g avgLod) (groups |> List.map snd |> String.concat ","))
-                    let rows = moving |> List.choose rowJson |> String.concat ","
+                            sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}"
+                                rowName (g avgLod) (groups |> List.map snd |> String.concat ",")
                     sprintf "{\"reg\":%s,\"act\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"rows\":[%s]}"
                         (if solved then "1" else "0") act (g lo) (g hi) bins rows)
         // Comma-joined brushed gids → the canvas highlight (data-brushed).
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
 
-        // One compact head row: channel toggles + Δ sub-mode + pin legend chips +
-        // axis note — everything that used to burn chart height, on one line.
+        // One compact head row: the metric toggles only (channel + Δ sub-mode) —
+        // they configure the view; selection is the matrix's job (§A3).
         let inspectDock =
             div {
                 Class "ins-inspect"
@@ -451,26 +502,6 @@ module GuiInspector =
                             "M3C2", (model.ExtrinsicZDiff |> AVal.map not),  (fun () -> if AVal.force model.ExtrinsicZDiff then emit ToggleExtrinsicZDiff)
                             "Δz",   (model.ExtrinsicZDiff :> aval<bool>),    (fun () -> if not (AVal.force model.ExtrinsicZDiff) then emit ToggleExtrinsicZDiff)
                         ]
-                    }
-                    // Pin legend — hovering a chip brushes that pin (highlights its
-                    // layer in the chart AND its surface cells in 3D). The chart
-                    // canvas is display-only, so this is the chart→3D brush handle.
-                    div {
-                        Class "ins-dist-legend"
-                        model.ScanPins.Pins
-                        |> AMap.map (fun _ p -> p.Glyph, p.ShortName, p.PinColor, p.CreatedAt)
-                        |> AMap.toASet
-                        |> ASet.sortBy (fun (ScanPinId.ScanPinId gg, (_, _, _, c)) -> c, gg)
-                        |> AList.map (fun (id, (glyph, sn, col, _)) ->
-                            let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverPin i) -> i = id | _ -> false)
-                            div {
-                                Class "ins-dist-leg"
-                                classWhen "ins-dist-leg-on" hovered
-                                Dom.OnPointerMove(fun _ -> emit (SetHovered (Some (HoverPin id))))
-                                Dom.OnMouseLeave(fun _ -> emit (SetHovered None))
-                                span { Class "ins-dist-leg-sw"; Style [Css.Background (c4bToRgbCss col)] }
-                                span { sprintf "%s %s" glyph sn }
-                            })
                     }
                 }
                 div {

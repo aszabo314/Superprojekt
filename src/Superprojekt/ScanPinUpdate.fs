@@ -94,7 +94,7 @@ module ScanPinUpdate =
         // solve-validity postlude then clears a registration that consumed a
         // killed point.
         | SetInnerRadius r ->
-            match model.Selection.SelectedPin with
+            match Selection.pin model.Selection.Active with
             | Some id -> sp |> updatePin id (fun pin ->
                 let r' = max 0.01 r
                 let corr =
@@ -113,9 +113,6 @@ module ScanPinUpdate =
 
         | DeletePin id ->
             { sp with Pins = HashMap.remove id sp.Pins }
-
-        // Pin selection lives in Model.Selection (handled in handleMsg).
-        | SelectPin _ -> sp
 
         // Stale guard: results only land while still ProbeRunning; any intervening invalidation wins.
         | ProbeComputed(id, result) ->
@@ -164,19 +161,16 @@ module ScanPinUpdate =
                 sp'.Pins |> HashMap.toSeq |> Seq.map fst
                 |> Seq.tryFind (fun id -> not (HashMap.containsKey id sp.Pins))
             | _ -> None
-        // SelectPin sets the shared selection, a freshly placed pin becomes
-        // selected, and a dangling selection (deleted pin) is dropped.
+        // A freshly placed pin becomes the selection; a dangling selection
+        // (deleted pin) falls back to its mesh (cell) or clears (pin).
         let selection =
             let sel0 =
-                match msg with
-                | SelectPin id -> { model.Selection with SelectedPin = id }
-                | PlaceAnchor _ ->
-                    match placedId with
-                    | Some id -> { model.Selection with SelectedPin = Some id }
-                    | None -> model.Selection
-                | _ -> model.Selection
-            match sel0.SelectedPin with
-            | Some id when not (HashMap.containsKey id sp'.Pins) -> { sel0 with SelectedPin = None }
+                match placedId with
+                | Some id -> { model.Selection with Active = SelPin id }
+                | None -> model.Selection
+            match Selection.pin sel0.Active with
+            | Some id when not (HashMap.containsKey id sp'.Pins) ->
+                { sel0 with Active = match sel0.Active with SelCell (_, m) -> SelMesh m | _ -> SelNone }
             | _ -> sel0
         match placedId |> Option.bind (fun id -> HashMap.tryFind id sp'.Pins) with
         | Some pin ->

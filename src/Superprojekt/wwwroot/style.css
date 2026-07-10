@@ -216,6 +216,8 @@ body.loaded { background: #f4f6f8; }
     background: #e8edf3; border: 1px solid transparent;
 }
 .mx-cell:hover { border-color: #0891b2; }
+/* the ACTIVE cell selection (SelCell) */
+.mx-cell-sel { border-color: #0f172a; box-shadow: 0 0 0 1px #0f172a; }
 .mx-cell-active { border-color: #0891b2; box-shadow: 0 0 0 1px #0891b2; }
 /* cells of the reference column: gold side-rails so the whole column reads gold */
 .mx-cell-ref { border-left-color: #d4a106; border-right-color: #d4a106; }
@@ -725,11 +727,6 @@ body.loaded { background: #f4f6f8; }
 .ins-dist { flex: 1; min-width: 0; position: relative; }
 .ins-dist-cv { display: block; }
 .ins-dist .ins-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 14px; }
-/* pin legend = the chart→3D brush handle */
-.ins-dist-legend { display: flex; flex-wrap: wrap; gap: 2px 8px; padding: 0 4px; font-size: 11px; }
-.ins-dist-leg { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; opacity: 0.62; border-radius: 3px; padding: 0 3px; }
-.ins-dist-leg-on { opacity: 1; background: #eef2ff; font-weight: 700; }
-.ins-dist-leg-sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
 .ins-shift { flex: 0 0 188px; border-left: 1px solid #eef2f6; padding-left: 10px; display: flex; flex-direction: column; gap: 6px; }
 .ins-shift-body { display: flex; flex-direction: column; gap: 4px; }
 .ins-shift-head { font-weight: 700; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

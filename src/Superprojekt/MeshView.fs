@@ -256,19 +256,26 @@ module MeshView =
                                 MeshVisibility.shown solo (model.MeshVisible.GetValue t) name
                             | None ->
                                 let vis = Map.tryFind name (model.MeshVisible.GetValue t) |> Option.defaultValue true
-                                // Inspect central 3D (§C), no solo: the reference carries
-                                // the variance aggregate solid, moving meshes drop to the
-                                // ghost floor. A mesh carrying its own intrinsic heatmap
-                                // stays solid so that error layer reads in the aggregate.
-                                let hasHeatmap =
-                                    (Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff) <> HeatOff
-                                let inspectGhost =
-                                    model.WorkflowStep.GetValue t = Inspect
-                                    && not hasHeatmap
-                                    && (match (model.Registration.GetValue t).ReferenceMesh with
-                                        | Some r -> r <> name
-                                        | None -> false)
-                                vis && not inspectGhost)
+                                // Selection emphasis (§A2) outside Inspect: the selected
+                                // mesh reads solid, the rest drop to the ghost floor
+                                // (Inspect routes mesh selection through the solo overlay).
+                                match Selection.mesh (model.Selection.Active.GetValue t) with
+                                | Some m when model.WorkflowStep.GetValue t <> Inspect ->
+                                    vis && m = name
+                                | _ ->
+                                    // Inspect central 3D (§C), no solo: the reference carries
+                                    // the variance aggregate solid, moving meshes drop to the
+                                    // ghost floor. A mesh carrying its own intrinsic heatmap
+                                    // stays solid so that error layer reads in the aggregate.
+                                    let hasHeatmap =
+                                        (Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff) <> HeatOff
+                                    let inspectGhost =
+                                        model.WorkflowStep.GetValue t = Inspect
+                                        && not hasHeatmap
+                                        && (match (model.Registration.GetValue t).ReferenceMesh with
+                                            | Some r -> r <> name
+                                            | None -> false)
+                                    vis && not inspectGhost)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
             // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
@@ -318,6 +325,9 @@ module MeshView =
             let inspectField : aval<int * float32[] option> =
                 AVal.custom (fun t ->
                     if model.WorkflowStep.GetValue t <> Inspect then (0, None)
+                    // Brushing = sole focus (§A4): while samples are brushed every
+                    // false-colour error map stands down — only the dots carry value.
+                    elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then (0, None)
                     else
                         let rf = (model.Registration.GetValue t).ReferenceMesh
                         if Some name = rf then

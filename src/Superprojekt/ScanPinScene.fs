@@ -105,6 +105,53 @@ module ScanPinScene =
                     | _ -> ()
             out.ToArray())
 
+    // Brushed-dot geometry (§A4): a small solid icosphere per brushed sample,
+    // coloured by value on the SHARED inspect range (the legend's scale while a
+    // brush is active). meshFilter restricts to one mesh — the focus views pass
+    // their own mesh; the main 3D passes None. Positions come from the same
+    // canonical gid array the chart labels with.
+    let brushedDotGeometry (model : AdaptiveModel) (meshFilter : string option) =
+        let canonA = brushSamples model
+        let spherePos, sphereIdx = PinGeometry.buildIcosphere 1
+        let rangeA = MeshView.inspectRange model
+        let datasetScale =
+            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
+        AVal.custom (fun t ->
+            let brushed = model.BrushedSamples.GetValue t
+            if Set.isEmpty brushed then [||], [||], [||]
+            else
+                let canon = canonA.GetValue t
+                let (lo, hi) = rangeA.GetValue t
+                let cc = model.CommonCentroid.GetValue t
+                let scale = datasetScale.GetValue t
+                let dots =
+                    brushed |> Seq.choose (fun gid ->
+                        if gid >= 0 && gid < canon.Length then
+                            let (_, mesh, pos, vMm) = canon.[gid]
+                            if meshFilter |> Option.forall ((=) mesh) then
+                                Some (ScanPin.renderCentre cc scale pos,
+                                      Primitives.Diff.colorSignedV3 lo hi (vMm / 1000.0))
+                            else None
+                        else None)
+                    |> Array.ofSeq
+                let r = 0.03
+                let nv = spherePos.Length
+                let posOut = Array.zeroCreate<V3f> (dots.Length * nv)
+                let colOut = Array.zeroCreate<V4f> (dots.Length * nv)
+                let idxOut = Array.zeroCreate<int> (dots.Length * sphereIdx.Length)
+                for di in 0 .. dots.Length - 1 do
+                    let (c, col) = dots.[di]
+                    let cf = V3f c
+                    let colF = V4f(float32 col.X, float32 col.Y, float32 col.Z, 1.0f)
+                    let vb = di * nv
+                    for vi in 0 .. nv - 1 do
+                        posOut.[vb + vi] <- cf + spherePos.[vi] * float32 r
+                        colOut.[vb + vi] <- colF
+                    let ib = di * sphereIdx.Length
+                    for ii in 0 .. sphereIdx.Length - 1 do
+                        idxOut.[ib + ii] <- vb + sphereIdx.[ii]
+                posOut, colOut, idxOut)
+
     let build
             (env : Env<Message>)
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
@@ -145,7 +192,7 @@ module ScanPinScene =
                 Sg.NoEvents
                 Lines.render segs
             }
-        let selectedId = model.Selection.SelectedPin
+        let selectedId = model.Selection.Active |> AVal.map Selection.pin
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         let placementActive =
@@ -197,15 +244,15 @@ module ScanPinScene =
                         | true -> true
                         | false ->
                             ClickGate.single "pin-dot" (fun () ->
-                                if AVal.force selectedId = Some id then env.Emit [ScanPinMsg (SelectPin None)]
-                                else env.Emit [ScanPinMsg (SelectPin (Some id))])
+                                if AVal.force selectedId = Some id then env.Emit [SetSelection SelNone]
+                                else env.Emit [SetSelection (SelPin id)])
                             false)
                     Sg.OnDoubleTap(fun _ ->
                         match AVal.force placementActive with
                         | true -> true
                         | false ->
                             ClickGate.double "pin-dot" (fun () ->
-                                env.Emit [ScanPinMsg (SelectPin (Some id)); ZoomToPin id])
+                                env.Emit [SetSelection (SelPin id); ZoomToPin id])
                             false)
                     Sg.VertexAttributes(
                         HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
@@ -539,62 +586,13 @@ module ScanPinScene =
                     | None -> [||])
             linesNodeTop active segs
 
-        // Brushed individual samples (§T6): small solid dots at the brushed samples'
-        // surface positions, looked up by gid in the SAME canonical array the chart
-        // labels with — so a chart range-brush lands on the exact 3D surface cells.
-        // Driven by Model.BrushedSamples (chart drag ONLY — no hover reveal). Dot
-        // colour = the sample's value on the diverging error gradient, normalized to
-        // its own pin's error range — so the dots read as a mini heatmap.
+        // Brushed individual samples (§T6/§A4): small solid dots at the brushed
+        // samples' surface positions, looked up by gid in the SAME canonical array
+        // the chart labels with — so a chart range-brush lands on the exact 3D
+        // surface cells. Driven by Model.BrushedSamples (chart drag ONLY — no hover
+        // reveal). While a brush is active the surface maps stand down and these
+        // dots are the only value carriers (shared inspect range = the legend).
         let brushedDots =
-            let canonA = brushSamples model
-            let spherePos, sphereIdx = PinGeometry.buildIcosphere 1
-            let refA = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
-            let geo =
-                AVal.custom (fun t ->
-                    let brushed = model.BrushedSamples.GetValue t
-                    if Set.isEmpty brushed then [||], [||], [||]
-                    else
-                        let canon = canonA.GetValue t
-                        let pins = pinsVal.GetValue t
-                        let rf = refA.GetValue t
-                        let cc = model.CommonCentroid.GetValue t
-                        let scale = datasetScale.GetValue t
-                        let ranges = System.Collections.Generic.Dictionary<ScanPinId, (float * float) option>()
-                        let rangeOf pid =
-                            match ranges.TryGetValue pid with
-                            | true, r -> r
-                            | _ ->
-                                let r = HashMap.tryFind pid pins |> Option.bind (ScanPin.pinErrorRange rf)
-                                ranges.[pid] <- r
-                                r
-                        let dots =
-                            brushed |> Seq.choose (fun gid ->
-                                if gid >= 0 && gid < canon.Length then
-                                    let (pid, _mesh, pos, vMm) = canon.[gid]
-                                    let col =
-                                        match rangeOf pid with
-                                        | Some (lo, hi) -> Primitives.Diff.colorSignedV3 lo hi (vMm / 1000.0)
-                                        | None -> Primitives.Diff.neutral
-                                    Some (ScanPin.renderCentre cc scale pos, col)
-                                else None)
-                            |> Array.ofSeq
-                        let r = 0.03
-                        let nv = spherePos.Length
-                        let posOut = Array.zeroCreate<V3f> (dots.Length * nv)
-                        let colOut = Array.zeroCreate<V4f> (dots.Length * nv)
-                        let idxOut = Array.zeroCreate<int> (dots.Length * sphereIdx.Length)
-                        for di in 0 .. dots.Length - 1 do
-                            let (c, col) = dots.[di]
-                            let cf = V3f c
-                            let colF = V4f(float32 col.X, float32 col.Y, float32 col.Z, 1.0f)
-                            let vb = di * nv
-                            for vi in 0 .. nv - 1 do
-                                posOut.[vb + vi] <- cf + spherePos.[vi] * float32 r
-                                colOut.[vb + vi] <- colF
-                            let ib = di * sphereIdx.Length
-                            for ii in 0 .. sphereIdx.Length - 1 do
-                                idxOut.[ib + ii] <- vb + sphereIdx.[ii]
-                        posOut, colOut, idxOut)
             sg {
                 Sg.Active notFullscreen
                 Sg.View view
@@ -602,7 +600,7 @@ module ScanPinScene =
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.NoEvents
-                Dots.render geo
+                Dots.render (brushedDotGeometry model None)
             }
 
         ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; pinSliceLines; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [brushedDots]])

@@ -194,12 +194,6 @@ type Model =
         // Shape-quality cutoff: fragments below it render transparent in the Shp
         // heatmap (3D + focus). 0 = show everything.
         ShapeThreshold        : float
-        // Per-mesh outline visibility for the image-space outline pass (absent =
-        // ON, stored sparsely as false entries). Off while the body is visible ⇒
-        // the lines are masked at composite (the mesh keeps occluding other
-        // outlines); off while nothing of the body renders ⇒ the mesh leaves the
-        // outline G-buffer entirely (stops occluding too).
-        OutlineVisible        : Map<string, bool>
 
         // Difference sub-mode for the Inspect focus tiles: false = signed M3C2,
         // true = vertical Δz.
@@ -340,7 +334,6 @@ module Model =
             FocusDistOther        = Map.empty
             MeshHeatmap           = Map.empty
             ShapeThreshold        = 0.0
-            OutlineVisible        = Map.empty
             ScanPins              = ScanPinModel.initial
             Selection             = Selection.initial
             RenderingMode       = Textured

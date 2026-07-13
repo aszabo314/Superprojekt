@@ -191,16 +191,19 @@ body.loaded { background: #f4f6f8; }
     cursor: pointer; padding: 1px 0; border-radius: 3px; gap: 1px;
 }
 .mx-colhead:hover { background: #ecfeff; }
-.mx-col-sel { background: #eaf1ff; box-shadow: inset 0 2px 0 #1a56db; }
-/* Reference mesh column: gold ring on the header + gold rails on its cells
-   (mirrors the reference tile's gold ring in the focus panel). */
-.mx-col-ref { background: #fffbeb; box-shadow: inset 0 0 0 2px #d4a106; }
+/* Reference mesh column: the WHOLE column reads gold — filled header + gold
+   side-rails down every cell (mirrors the reference tile's gold ring). */
+.mx-col-ref { background: #fde68a; box-shadow: inset 0 0 0 2px #b45309; }
+/* Selected mesh column (SelMesh / SelCell): filled header + blue side-rails
+   down every cell — the selection outranks the reference gold. */
+.mx-col-sel { background: #c7d8fe; box-shadow: inset 0 0 0 2px #1a56db; }
 .mx-colsw { width: 14px; height: 6px; border-radius: 2px; display: inline-block; }
 .mx-colnum { font-weight: 700; color: #334155; font-size: 10px; }
 .mx-rows { display: flex; flex-direction: column; gap: 2px; }
 .mx-row { display: flex; align-items: stretch; gap: 2px; border-radius: 3px; }
 .mx-row-hover { background: #f1f5f9; }
-.mx-row-sel { background: #eaf1ff; box-shadow: inset 2px 0 0 #1a56db; }
+/* selected pin row (SelPin / SelCell): filled head + full blue ring */
+.mx-row-sel { background: #c7d8fe; box-shadow: inset 0 0 0 2px #1a56db; }
 .mx-rowhead {
     width: 104px; flex: 0 0 104px; display: flex; align-items: center; gap: 4px;
     cursor: pointer; padding: 1px 3px; overflow: hidden;
@@ -217,11 +220,13 @@ body.loaded { background: #f4f6f8; }
     background: #e8edf3; border: 1px solid transparent;
 }
 .mx-cell:hover { border-color: #0891b2; }
-/* the ACTIVE cell selection (SelCell) */
-.mx-cell-sel { border-color: #0f172a; box-shadow: 0 0 0 1px #0f172a; }
-.mx-cell-active { border-color: #0891b2; box-shadow: 0 0 0 1px #0891b2; }
 /* cells of the reference column: gold side-rails so the whole column reads gold */
-.mx-cell-ref { border-left-color: #d4a106; border-right-color: #d4a106; }
+.mx-cell-ref { box-shadow: inset 2px 0 0 #d4a106, inset -2px 0 0 #d4a106; }
+/* cells of the selected mesh's column: blue side-rails (outrank the gold) */
+.mx-cell-colsel { box-shadow: inset 2px 0 0 #1a56db, inset -2px 0 0 #1a56db; }
+.mx-cell-active { border-color: #0891b2; box-shadow: 0 0 0 1px #0891b2; }
+/* the ACTIVE cell selection (SelCell) — outranks every context highlight */
+.mx-cell-sel { border-color: #0f172a; box-shadow: 0 0 0 2px #0f172a; }
 /* out-of-ROI: a faint hairline hatch, not blank */
 .mx-cell-empty {
     background: repeating-linear-gradient(45deg, #f4f6f8, #f4f6f8 3px, #e2e8f0 3px, #e2e8f0 4px) !important;
@@ -312,8 +317,6 @@ body.loaded { background: #f4f6f8; }
 .focus-tile.ft-hidden { opacity: 0.45; }
 .focus-tile .focus-rc { width: 100%; height: 72px; }
 .focus-tile-view { display: flex; flex-direction: column; gap: 2px; cursor: pointer; }
-.focus-tile-ctrls { display: flex; align-items: center; gap: 2px; justify-content: center; }
-.focus-tile-ctrls .mb { font-size: 11px; padding: 0 3px; }
 .ft-refstar { color: #d4a106; font-size: 10px; }
 .fm-label {
     display: flex; align-items: center; gap: 4px;
@@ -675,10 +678,6 @@ body.loaded { background: #f4f6f8; }
     opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
 }
 .ins-mode.ins-mode-on { opacity: 1; pointer-events: auto; }
-.pin-inspector .ins-empty {
-    flex: 1; display: flex; align-items: center; justify-content: center;
-    color: #cbd5e1; font-size: 40px; user-select: none;
-}
 .ins-mgr-wrap { flex: 1; display: flex; min-width: 0; }
 
 /* correspondence manager */
@@ -686,10 +685,6 @@ body.loaded { background: #f4f6f8; }
 
 /* ── Phase-1 three-mode rail / dock additions ──────────────────────── */
 .rail-row-hover { background: #ecfeff; box-shadow: inset 2px 0 0 #0891b2; }
-
-/* Overview dock — a single hint line (the tiles are the mesh browser, T3) */
-.ins-ovw { flex: 1; display: flex; align-items: center; min-width: 0; padding: 6px 12px; font-size: 12px; }
-.ins-ovw-empty { color: #94a3b8; }
 
 /* Register dock — manager head (identity chip + radius) */
 .ins-mgr-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #eef2f6; margin-bottom: 4px; }

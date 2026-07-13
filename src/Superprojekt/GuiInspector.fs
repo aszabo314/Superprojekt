@@ -145,14 +145,6 @@ module GuiInspector =
         let corrA     = effPin |> AVal.map (Option.bind ScanPin.correspondence)
         let emit (m : Message) = env.Emit [m]
 
-        // Overview dock: deliberately bare — a single hint line; the focus tiles are
-        // the actual mesh browser.
-        let overviewCard =
-            div {
-                Class "ins-ovw"
-                div { Class "ins-ovw-empty"; "Overview — browse and focus the meshes in the panel on the right; mark the reference (★) there." }
-            }
-
         // The matrix (left rail) is now the per-(pin,mesh) browser (§B); the
         // Register dock reduces to the selected pin: identity chip (glyph · colour ·
         // code) · radius · the per-mesh correspondence coordinate editor.
@@ -572,11 +564,12 @@ module GuiInspector =
             resizeHandle
             div {
                 Class "ins-modes"
-                div { Class "ins-mode"; modeOn ((=) Overview); overviewCard }
+                // Overview dock: deliberately empty — the rail roster and the focus
+                // tiles are the browsers.
+                div { Class "ins-mode"; modeOn ((=) Overview) }
                 div {
                     Class "ins-mode"
                     modeOn ((=) Correspondence)
-                    div { Class "ins-empty"; showWhenNot hasPin; span { "◌ select a pin" } }
                     div { Class "ins-mgr-wrap"; showWhen hasPin; manager }
                 }
                 div { Class "ins-mode"; modeOn ((=) Inspect); inspectDock }

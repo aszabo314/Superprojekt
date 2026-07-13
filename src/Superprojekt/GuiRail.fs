@@ -70,16 +70,17 @@ module GuiRail =
 
         // Overview rail roster (§B): one row per mesh. click name = focus,
         // double-click = zoom, hover = peek.
-        // The trailing controls are the per-mesh intrinsic error-visualization switches
-        // (Textured / Distance / Shape / Incidence) — respected in both the 3D and the
-        // 2D focus views. The old ★ ref / vis / ◐ isolate controls were duplicates of the
-        // focus tile strip (T3) and were removed from here.
+        // The trailing controls: ★ = the ONE reference picker (the focus tiles only
+        // display it), then the per-mesh intrinsic error-visualization switches
+        // (Textured / Distance / Shape / Incidence) — respected in both the 3D and
+        // the 2D focus views.
         let meshRow (name : string) =
             let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
             let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
             let colorVal = idxVal |> AVal.map meshColor
             let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverMesh m) -> m = name | _ -> false)
             let focused = model.Selection.Active |> AVal.map (fun s -> Selection.mesh s = Some name)
+            let isRef  = refMesh |> AVal.map ((=) (Some name))
             let hm = model.MeshHeatmap |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue HeatOff)
             let swatch = span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
             let num    = span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
@@ -89,6 +90,16 @@ module GuiRail =
                     Dom.OnClick(fun _ -> env.Emit [SetSelection (SelMesh name)])
                     Dom.OnDoubleClick(fun _ -> env.Emit [SetSelection (SelMesh name); ZoomToMesh name])
                     model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
+                }
+            let refBtn =
+                button {
+                    Class "mb mb-ref"
+                    classWhen "mb-on" isRef
+                    Attribute("title", "Reference mesh — all error is relative to it")
+                    Dom.OnClick(fun _ ->
+                        let cur = AVal.force isRef
+                        env.Emit [SetReferenceMesh (if cur then None else Some name)])
+                    isRef |> AVal.map (fun r -> if r then "★" else "☆")
                 }
             let modeBar =
                 div {
@@ -110,7 +121,7 @@ module GuiRail =
                 // hover = peek-isolate this mesh via the shared Selection.
                 Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
-                AList.ofList ([ swatch; num; nameSpan; modeBar ])
+                AList.ofList ([ swatch; num; nameSpan; refBtn; modeBar ])
             }
         // Shp quality cutoff (§B3): triangles below it render transparent (3D +
         // focus). Only offered while some mesh shows the Shp heatmap.
@@ -133,17 +144,6 @@ module GuiRail =
         // each cell = the (pin, mesh) ROI-median signed distance to the reference,
         // painted on the linear-diverging difference map (§C), before/after aware
         // (the probe refetches on RegView), out-of-ROI → a faint emptiness glyph.
-        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-        // The reference's marker is its RefAnchor — a ref-column cell behaves like
-        // any other cell.
-        let cellAnchorOwn (id : ScanPinId) (mesh : string) =
-            let pin = HashMap.tryFind id (AVal.force pinsVal)
-            let isRef = (AVal.force model.Registration).ReferenceMesh = Some mesh
-            let anchorOwn =
-                pin |> Option.bind ScanPin.correspondence |> Option.bind (fun c ->
-                    if isRef then c.RefAnchor
-                    else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point))
-            pin, anchorOwn
         // Cell SINGLE click = cell selection (the locate: solo + focus framing, no
         // main camera). Clicking the cell of the ACTIVE locate toggles it off:
         // BackOutLocate restores the pre-locate camera / solo / visibility and the
@@ -159,16 +159,7 @@ module GuiRail =
         // correspondence (the focus hard-zoom follows the selection by itself).
         // Ends in "located + zoomed" regardless of what the leading clicks toggled.
         let zoomCell (id : ScanPinId) (mesh : string) =
-            env.Emit [SetSelection (SelCell(id, mesh))]
-            match cellAnchorOwn id mesh with
-            | pin, Some own ->
-                let cc = AVal.force model.CommonCentroid
-                let s  = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
-                let world = (RigidTransform.renderToWorld s cc (AVal.force (MeshView.displayedMeshT model mesh))).Forward.TransformPos own
-                let r = pin |> Option.map (fun p -> p.InnerRadius) |> Option.defaultValue 0.5
-                env.Emit [FlyToPoint(world, max 0.5 (r * 4.0))]
-            | _, None ->
-                env.Emit [ZoomToMesh mesh]
+            env.Emit (SetSelection (SelCell(id, mesh)) :: FocusScene.cellZoom model id mesh)
         let matrixHead () =
             div {
                 Class "mx-head"
@@ -237,10 +228,14 @@ module GuiRail =
                         (sel && (match hov with Some (HoverPoint(i,m)) -> i = id && m = mesh | _ -> false)))
                 let cellSel = model.Selection.Active |> AVal.map ((=) (SelCell(id, mesh)))
                 let cellRef = refMesh |> AVal.map ((=) (Some mesh))
+                // Column context: every cell of the selected mesh's column lights up
+                // (SelMesh and SelCell both project a mesh).
+                let colSel = model.Selection.Active |> AVal.map (fun s -> Selection.mesh s = Some mesh)
                 div {
                     Class "mx-cell"
                     info |> AVal.map (function CellVal c -> Some (Style [Css.Background (hex c)]) | _ -> None)
                     info |> AVal.map (function CellEmpty -> Some (Class "mx-cell-empty") | CellPending -> Some (Class "mx-cell-pending") | CellVal _ -> None)
+                    classWhen "mx-cell-colsel" colSel
                     classWhen "mx-cell-sel" cellSel
                     classWhen "mx-cell-active" active
                     classWhen "mx-cell-ref" cellRef

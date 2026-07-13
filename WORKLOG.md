@@ -1,4 +1,72 @@
-# Worklog — ScanPin v10: selection unification + cleanup
+# Worklog
+
+## WP (2026-07-13): focus panel + selection polish (9-item batch)
+
+All nine items done; client + server builds green, Supertests 29/29. No server
+changes (client-only) → integration suite not rerun.
+
+1. Pin focus hard-zoom: `FocusScene.selBaseFrame` — SelPin extent now
+   `max 0.05 (InnerRadius × 1.05)` (influence circle fills the view); SelCell
+   keeps the ×4 marker hard-zoom (3D FlyToPoint convention).
+   FOLLOW-UP (user: "sometimes clicking another control zooms back out"):
+   three causes found + fixed. (a) SelCell base was ×4 + a 0.5 m floor — any
+   pin→cell transition (matrix cell, ✎ arm via ToggleCorrArm, tile click
+   while pin selected) zoomed out 4×; pin and cell now share the ONE close-up
+   extent, only the centre differs. (b) per-target user offsets were restored
+   on re-selection — a stale zoomed-out adjustment came back; pin/cell
+   targets now mint a FRESH offset pair on every selection change (`camPair`,
+   with a structural-equality guard so spurious re-evals don't wipe a live
+   adjustment; catches reducer-driven changes too since they all invalidate
+   `Selection.Active`); only mesh-fit + pano offsets stay persistent in
+   `camStates`. (c) zoom clamps capped at 200 — a small pin on a large mesh
+   needs ext/tgt in the hundreds, and the wheel's matching cap would snap a
+   deeper close-up OUT on the first wheel event; both caps raised to 2000.
+2. Tiles = pure view: ref/visibility/isolate/outline buttons + the
+   `focus-tile-ctrls` strip removed. ★ reference picker moved to the Overview
+   rail mesh list (GuiRail.meshRow, between name and mode bar). Orphans
+   pruned: `OutlineVisible` model field (adaptify rerun), `SetOutlineVisible`,
+   `SetVisible`, `ToggleMeshSolo` messages + reducer cases; MeshView outline
+   flag/Sg.Active simplified (a mesh never leaves the G-buffer now);
+   `outlineBodyShownAt` deleted; CSS pruned. NOTE: per-mesh visibility and
+   manual isolation now have NO direct UI (messages removed) — isolation
+   remains selection-driven (Inspect policies, cell locate), un-hide via
+   selection `ensureVisible`.
+3. Tile click follows the selection: none/mesh → SelMesh(tile); pin/cell →
+   SelCell(pin, tileMesh); re-click of the current target = the double-click
+   zoom (ZoomToMesh / fly-to-marker). Shared `FocusScene.cellZoom` also backs
+   the matrix cell double-click (GuiRail duplication removed). Tile
+   OnDoubleClick handler dropped — two clicks naturally select-then-zoom; no
+   ClickGate needed (re-click zooms, never toggles).
+4. Matrix contrast: new `.mx-cell-colsel` (blue side-rails down the selected
+   mesh's column; emitted per cell off `Selection.mesh`), `.mx-col-sel` /
+   `.mx-row-sel` upgraded to filled bg + full 2px accent ring, `.mx-cell-sel`
+   ring 1px→2px; reference column now reads over its full height (filled gold
+   header `#fde68a` + `#b45309` ring, gold side-rails on every `.mx-cell-ref`
+   via inset shadows instead of border tints). CSS order = ref < colsel <
+   active < sel (same specificity — order is load-bearing).
+5. Tiles render pin influence circles (top-down rings, pin colour, selection
+   = weight/alpha) via a passOne DepthTest.None overlay; `ViewportSize` now
+   bound in the tile render control (Lines shader needs it).
+6. 360° single: pin circles were absent — now drawn as the approximate sphere
+   silhouette (ring facing the eye: basis ⟂ eye→centre). Circles now render
+   in BOTH projections and ALL steps (single + tiles, consistent); the anchor
+   marker glyphs + aim ghost stay Correspondence+Top (glyph size is ortho
+   maths). `addRingXY` generalised to `addRing3D` with explicit basis.
+7. Top bar "🗺 Overview" → "🗺 Plan" (+tooltip).
+8. Overview dock hint line removed (`ins-ovw*` CSS pruned; the Overview dock
+   mode is now empty).
+9. Register dock "◌ select a pin" empty-state removed (`.pin-inspector
+   .ins-empty` CSS pruned).
+
+Browser pass owed (user): pin hard-zoom framing; tile click matrix
+(none/mesh/pin/cell × re-click); circles in tiles + 360°; matrix highlights
+(selected column/row/cell, gold reference column, combined states); ★ picker
+in the roster; Plan button. No shader changes this WP — ShaderCache still
+stale only from the previous WP.
+
+---
+
+# Previous WP — ScanPin v10: selection unification + cleanup
 
 Spec: `ScanPin_v10_selection_and_cleanup_spec.md`. Two specs, hard checkpoint
 between them (Spec A report → wait for approval → Spec B).

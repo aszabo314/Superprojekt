@@ -20,7 +20,9 @@ module FocusScene =
     // fit-relative units; the 360° view reuses the same pair as (azimuth/π,
     // elevation/(π/2)) + magnification, under its own key — the two states are not
     // interconvertible, so they never share. Kept PER MESH so switching
-    // small-multiples restores each view's own state. Survives rebuilds.
+    // small-multiples restores each view's own state. Survives rebuilds. Holds only
+    // the PERSISTENT keys (mesh fit + pano) — pin/cell offsets are transient
+    // (minted fresh per selection change in `camPair`, never stored here).
     let private camStates = System.Collections.Generic.Dictionary<string, cval<V2d> * cval<float>>()
     let private camFor (key : string) =
         match camStates.TryGetValue key with
@@ -95,11 +97,11 @@ module FocusScene =
         centreWorld, centreRender, extent
 
     // Selection-derived base framing (§A2) of a mesh's Top canvas: the focus camera
-    // FOLLOWS the selection. pin → the pin region (its centre, ROI ×4); cell → that
-    // mesh's correspondence marker at the committed pose (hard-zoom, same radius
-    // convention as the 3D FlyToPoint), falling back to the pin centre while no
-    // marker exists; mesh / nothing → the whole-mesh fit. Returned as the
-    // (pan, zoom) BASE the per-selection user offsets compose onto.
+    // FOLLOWS the selection. pin AND cell share ONE close-up scale — the pin's
+    // influence circle fills the view — only the centre differs (pin → pin centre,
+    // cell → that mesh's correspondence marker at the committed pose, falling back
+    // to the pin centre while no marker exists); mesh / nothing → the whole-mesh
+    // fit. Returned as the (pan, zoom) BASE the user offsets compose onto.
     let private selBaseFrame (model : AdaptiveModel) (name : string)
                              (scale : aval<float>) (panoEye : aval<V3d>) (fitExtent : aval<float>) =
         let pinsAval = model.ScanPins.Pins |> AMap.toAVal
@@ -128,7 +130,7 @@ module FocusScene =
                                     dw.Forward.TransformPos own
                                 | None -> pin.Centre
                             | _ -> pin.Centre
-                        centre, max 0.5 (pin.InnerRadius * 4.0))
+                        centre, max 0.05 (pin.InnerRadius * 1.05))
             match target with
             | None -> V2d.Zero, 1.0
             | Some (w, he) ->
@@ -138,7 +140,9 @@ module FocusScene =
                 let fc = panoEye.GetValue t
                 let ext = max 1e-4 (fitExtent.GetValue t)
                 let tgt = max 1e-4 (ScanPin.renderLength s he)
-                V2d((rp.X - fc.X) / ext, (rp.Y - fc.Y) / ext), clamp 1.0 200.0 (ext / tgt))
+                // Cap 2000, not 200: a small pin on a large mesh needs ext/tgt in the
+                // hundreds — a lower cap silently strands the close-up too far out.
+                V2d((rp.X - fc.X) / ext, (rp.Y - fc.Y) / ext), clamp 1.0 2000.0 (ext / tgt))
 
     // Brushed sample dots on THIS mesh (§A4) — always-on-top; empty when no brush.
     let private brushedDotsNode (model : AdaptiveModel) (name : string) =
@@ -148,6 +152,25 @@ module FocusScene =
             Sg.NoEvents
             Dots.render (ScanPinScene.brushedDotGeometry model (Some name))
         }
+
+    // MAIN-3D zoom onto a (pin, mesh) correspondence: fly to the marker at its
+    // displayed pose (whole-mesh fallback while none exists). Shared by the matrix
+    // cell double-click and the re-click of an already-selected focus tile.
+    let cellZoom (model : AdaptiveModel) (id : ScanPinId) (mesh : string) : list<Message> =
+        let pin = HashMap.tryFind id (AVal.force (model.ScanPins.Pins |> AMap.toAVal))
+        let isRef = (AVal.force model.Registration).ReferenceMesh = Some mesh
+        let anchorOwn =
+            pin |> Option.bind ScanPin.correspondence |> Option.bind (fun c ->
+                if isRef then c.RefAnchor
+                else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point))
+        match anchorOwn with
+        | Some own ->
+            let cc = AVal.force model.CommonCentroid
+            let s  = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
+            let world = (RigidTransform.renderToWorld s cc (AVal.force (MeshView.displayedMeshT model mesh))).Forward.TransformPos own
+            let r = pin |> Option.map (fun p -> p.InnerRadius) |> Option.defaultValue 0.5
+            [FlyToPoint(world, max 0.5 (r * 4.0))]
+        | None -> [ZoomToMesh mesh]
 
     // 360° view state, reusing the per-mesh (pan, zoom) pair: pan.X = azimuth/π,
     // pan.Y = elevation/(π/2) (clamped short of the poles so the Z-up lookAt never
@@ -216,13 +239,15 @@ module FocusScene =
             "FocusScalar",                                  BufferView(scalarBuf, typeof<float32>)
         ]
 
-    // Top-view overlay primitives (render space; XY plane, since Top looks down −Z).
-    let private addRingXY (out : ResizeArray<V3d * V3d * V4d * float>)
-                          (c : V3d) (r : float) (col : V4d) (w : float) (segs : int) =
+    // Overlay primitives (render space). Rings take an explicit in-plane basis; the
+    // Top view draws in XY (it looks down −Z), the 360° view faces the eye.
+    let private addRing3D (out : ResizeArray<V3d * V3d * V4d * float>)
+                          (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (w : float) (segs : int) =
         for i in 0 .. segs - 1 do
             let a0 = float i       / float segs * Constant.PiTimesTwo
             let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
-            out.Add(c + V3d(cos a0, sin a0, 0.0) * r, c + V3d(cos a1, sin a1, 0.0) * r, col, w)
+            out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, w)
+    let private addRingXY out c r col w segs = addRing3D out c V3d.IOO V3d.OIO r col w segs
     let private addCrossXY (out : ResizeArray<V3d * V3d * V4d * float>)
                            (c : V3d) (r : float) (col : V4d) (w : float) =
         out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, w)
@@ -360,20 +385,27 @@ module FocusScene =
         // panoEye = the 360° camera position AND the Top-view camera centre (the
         // mesh's panorama centre in render space); fitExtent frames the mesh around it.
         let _, panoEye, fitExtent = framing model name loaded renderT scale
-        // User pan/zoom OFFSETS, keyed per (mesh, projection, selection target): a
-        // fresh selection starts at its derived base framing (offset zero), and
-        // re-selecting the same target restores the user's adjustments. The 360°
-        // view keeps its single per-mesh key (no selection framing there).
+        // User pan/zoom OFFSETS. Mesh/none (per-mesh fit) and the 360° view persist
+        // per mesh; a pin/cell target instead mints a FRESH pair on every selection
+        // change, so a focused pin/point ALWAYS opens at its derived close-up —
+        // adjustable while it stays selected, forgotten once the selection moves on
+        // (never restore a stale zoomed-out state). `lastPair` guards against
+        // spurious re-evaluations with an unchanged selection (structural compare),
+        // which must NOT reset a live adjustment.
+        let mutable lastPair : (ActiveSelection * (cval<V2d> * cval<float>)) option = None
         let camPair =
             if isPano then AVal.constant (camFor (panoKey name))
             else
                 model.Selection.Active |> AVal.map (fun s ->
-                    let k =
-                        match s with
-                        | SelPin p -> let (ScanPinId.ScanPinId g) = p in "|p" + g.ToString "N"
-                        | SelCell (p, _) -> let (ScanPinId.ScanPinId g) = p in "|c" + g.ToString "N"
-                        | SelMesh _ | SelNone -> ""
-                    camFor (name + k))
+                    match s with
+                    | SelMesh _ | SelNone -> camFor name
+                    | SelPin _ | SelCell _ ->
+                        match lastPair with
+                        | Some (ps, pair) when ps = s -> pair
+                        | _ ->
+                            let pair = (cval V2d.Zero, cval 1.0)
+                            lastPair <- Some (s, pair)
+                            pair)
         let panUser  = camPair |> AVal.bind (fun (p, _) -> p :> aval<V2d>)
         let zoomUser = camPair |> AVal.bind (fun (_, z) -> z :> aval<float>)
         // Effective camera = selection base ⊕ user offset (the pano base is inert).
@@ -435,34 +467,44 @@ module FocusScene =
                         i <- i + stride
                     out.ToArray()
                 | _ -> [||])
-        // Correspondence-mode overlay (Top only): each pin's bounding-sphere circle
-        // (true InnerRadius footprint) + a screen-fixed always-on-top glyph at THIS
-        // mesh's anchor for each pin. The ring layout (flat XY circles) and the
-        // screen-fixed glyph sizing are Top-projection maths, so it stays Top-only.
+        // Overlay: every pin's influence circle (true InnerRadius footprint, the pin's
+        // own colour, selection = weight/alpha) in BOTH projections — the 360° view
+        // approximates the sphere's silhouette with a circle facing the eye.
+        // Correspondence Top adds a screen-fixed always-on-top glyph at THIS mesh's
+        // anchor per pin + the live aim ghost; the glyph sizing is Top-projection
+        // maths, so markers stay Top-only.
         let pinsAval   = model.ScanPins.Pins |> AMap.toAVal
         let dispRenderT = MeshView.displayedMeshT model name
         let overlaySegs =
             AVal.custom (fun t ->
-                if isPano || model.WorkflowStep.GetValue t <> Correspondence then [||]
-                else
-                    let pins = pinsAval.GetValue t
-                    let cc = model.CommonCentroid.GetValue t
-                    let s = scale.GetValue t
-                    let sel = Selection.pin (model.Selection.Active.GetValue t)
+                let pins = pinsAval.GetValue t
+                let cc = model.CommonCentroid.GetValue t
+                let s = scale.GetValue t
+                let sel = Selection.pin (model.Selection.Active.GetValue t)
+                let eye = panoEye.GetValue t
+                let out = ResizeArray<V3d * V3d * V4d * float>()
+                for (id, p) in HashMap.toSeq pins do
+                    let isSel = sel = Some id
+                    let cR = ScanPin.renderCentre cc s p.Centre
+                    let rR = ScanPin.renderLength s p.InnerRadius
+                    let ringCol = V4d(Primitives.c4bToV3d p.PinColor, if isSel then 0.95 else 0.6)
+                    let rw = if isSel then 2.2 else 1.3
+                    if isPano then
+                        let d = cR - eye
+                        if d.Length > 1e-9 then
+                            let n = d.Normalized
+                            let u = (Vec.cross n (if abs n.Z > 0.9 then V3d.IOO else V3d.OOI)).Normalized
+                            addRing3D out cR u (Vec.cross n u) rR ringCol rw 48
+                    else addRingXY out cR rR ringCol rw 48
+                if not isPano && model.WorkflowStep.GetValue t = Correspondence then
                     let ext = fitExtent.GetValue t
                     let z = zoomEff.GetValue t
                     let gr = 0.05 * ext / max 1e-3 z   // screen-fixed glyph half-size
                     let isRef = (model.Registration.GetValue t).ReferenceMesh = Some name
                     let dw = RigidTransform.renderToWorld s cc (dispRenderT.GetValue t)
-                    let out = ResizeArray<V3d * V3d * V4d * float>()
                     for (id, p) in HashMap.toSeq pins do
                         let isSel = sel = Some id
-                        let cR = ScanPin.renderCentre cc s p.Centre
-                        let rR = ScanPin.renderLength s p.InnerRadius
-                        // ROI circle in the pin's own colour (selection = weight/alpha).
                         let pinCol = Primitives.c4bToV3d p.PinColor
-                        let ringCol = V4d(pinCol, if isSel then 0.95 else 0.6)
-                        addRingXY out cR rR ringCol (if isSel then 2.2 else 1.3) 48
                         match ScanPin.correspondence p with
                         | Some c ->
                             // The reference's marker is its RefAnchor (own-frame like
@@ -495,7 +537,7 @@ module FocusScene =
                             addRingXY out pr (gr * 0.6) col 2.2 24
                         | None -> ()
                     | _ -> ()
-                    out.ToArray())
+                out.ToArray())
         // passOne + DepthTest.None: the surface writes depth in the default pass, so a
         // same-pass overlay was occluded (it rendered under the mesh); a later pass with
         // no depth test draws it always-on-top (same trick as the main-view cross).
@@ -650,8 +692,10 @@ module FocusScene =
                 else
                     // The clamp + anchor maths run on the EFFECTIVE zoom; only the
                     // user factor is stored (pan offsets add linearly regardless).
+                    // Cap matches the selection base's 2000 — a lower cap here would
+                    // snap a deep pin close-up OUT on the first wheel event.
                     let zEff = AVal.force zoomEff
-                    let zEff' = clamp 0.05 200.0 (zEff * (1.1 ** (-e.DeltaY / 120.0)))
+                    let zEff' = clamp 0.05 2000.0 (zEff * (1.1 ** (-e.DeltaY / 120.0)))
                     transact (fun () ->
                         zc.Value <- zc.Value * (zEff' / max 1e-9 zEff)
                         pc.Value <- pc.Value + V2d(clipX * aspect * (1.0/zEff - 1.0/zEff'), clipY * (1.0/zEff - 1.0/zEff'))))
@@ -704,22 +748,40 @@ module FocusScene =
             }
         }
 
-    // One thumbnail tile per mesh — the mesh browser (§B/T3). The render area selects
-    // (focus) and peek-isolates on hover (mirrors the Overview rail roster); a control
-    // strip carries the per-mesh controls that live ONCE here: ★ reference toggle,
-    // visibility, ◐ isolate. All meshes are tiled (hidden → dimmed) so a hidden mesh
-    // can be re-enabled. Reference tile = a prominent ★ indicator (T10).
+    // One thumbnail tile per mesh — the mesh browser (§B/T3): purely the small view
+    // (+ identity label); the per-mesh controls live elsewhere (★ reference picker =
+    // Overview roster). Click follows the selection: nothing/mesh selected → select
+    // THIS mesh; pin/cell selected → select the (pin, THIS mesh) cell (= the matrix
+    // cell click); re-clicking the current target = the matrix double-click zoom
+    // (main 3D). All meshes are tiled (hidden → dimmed). Reference tile = a
+    // prominent ★ indicator (T10).
     let private focusTile (env : Env<Message>) (model : AdaptiveModel) (name : string) : DomNode =
         let loaded = MeshView.loadMeshAsync (fun () -> ()) name
         let renderT, scale = renderTrafoOf model name loaded
         // Centre the thumbnail on the same panorama centre as the single.
         let _, fitCenter, fitExtent = framing model name loaded renderT scale
         let modeA, scalarBuf, hiA, loNegA, isoA = focusOverlay model name loaded scale
+        // Pin influence circles — the same top-down footprint rings as the single.
+        let pinsAval = model.ScanPins.Pins |> AMap.toAVal
+        let ringSegs =
+            AVal.custom (fun t ->
+                let pins = pinsAval.GetValue t
+                let cc = model.CommonCentroid.GetValue t
+                let s = scale.GetValue t
+                let sel = Selection.pin (model.Selection.Active.GetValue t)
+                let out = ResizeArray<V3d * V3d * V4d * float>()
+                for (id, p) in HashMap.toSeq pins do
+                    let isSel = sel = Some id
+                    addRingXY out (ScanPin.renderCentre cc s p.Centre) (ScanPin.renderLength s p.InnerRadius)
+                              (V4d(Primitives.c4bToV3d p.PinColor, (if isSel then 0.95 else 0.6)))
+                              (if isSel then 2.2 else 1.3) 48
+                out.ToArray())
         let rc =
             renderControl {
                 RenderControl.Samples 1
                 Class "focus-rc"
                 let! size = RenderControl.ViewportSize
+                Sg.Uniform("ViewportSize", size)
                 // Tiles frame the selection too (§A2): a pin/cell zooms every tile
                 // onto that region on ITS OWN mesh — a small-multiples comparison.
                 let baseFrame = selBaseFrame model name scale fitCenter fitExtent
@@ -741,6 +803,13 @@ module FocusScene =
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
                     Sg.Render loaded.fvc
                 }
+                sg {
+                    Sg.Pass RenderPass.passOne
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render ringSegs
+                }
                 brushedDotsNode model name
             }
         let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
@@ -748,62 +817,20 @@ module FocusScene =
         let active = model.Selection.Active |> AVal.map (fun s -> Selection.mesh s = Some name)
         let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
         let isRef  = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some name)
-        let isSolo = model.MeshSolo |> AVal.map ((=) (Some name))
-        let anySolo = model.MeshSolo |> AVal.map Option.isSome
-        let refBtn =
-            button {
-                Class "mb mb-ref"
-                Primitives.classWhen "mb-on" isRef
-                Attribute("title", "Reference mesh — all error is relative to it")
-                Dom.OnClick(fun _ ->
-                    let cur = AVal.force isRef
-                    env.Emit [SetReferenceMesh (if cur then None else Some name)])
-                isRef |> AVal.map (fun r -> if r then "★" else "☆")
-            }
-        // The visibility toggle is frozen while a mesh is isolated (isolation
-        // overrides it; ending isolation resets every toggle to ON).
-        let visBtn =
-            button {
-                Class "mb"
-                Primitives.classWhen "mb-on" isVis
-                anySolo |> AVal.map (fun s ->
-                    if s then Some (Attribute("disabled", "disabled")) else None)
-                anySolo |> AVal.map (fun s ->
-                    Some (Attribute("title", if s then "Visibility is locked while a mesh is isolated" else "Visible")))
-                Dom.OnClick(fun _ ->
-                    if not (AVal.force anySolo) then
-                        env.Emit [SetVisible(name, not (AVal.force isVis))])
-                isVis |> AVal.map (fun v -> if v then "●" else "○")
-            }
-        let soloBtn =
-            button {
-                Class "mb"
-                Primitives.classWhen "mb-on" isSolo
-                Attribute("title", "Isolate this mesh (hide the others); click again to restore")
-                Dom.OnClick(fun _ -> env.Emit [ToggleMeshSolo name])
-                "◐"
-            }
-        let outlineOn = model.OutlineVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
-        let outlineBtn =
-            button {
-                Class "mb"
-                Primitives.classWhen "mb-on" outlineOn
-                Attribute("title", "Outline — show this mesh's silhouette in the 3D view")
-                Dom.OnClick(fun _ -> env.Emit [SetOutlineVisible(name, not (AVal.force outlineOn))])
-                "◌"
-            }
         div {
             Class "focus-tile"
             Primitives.classWhen "fm-active" active
             Primitives.classWhen "ft-ref" isRef
             Primitives.classWhenNot "ft-hidden" isVis
-            // Render area = the selector (click → focus). Controls are a sibling strip
-            // so clicking them never also focuses.
             div {
                 Class "focus-tile-view"
-                Attribute("title", "click → select · double-click → zoom · hover → isolate this mesh")
-                Dom.OnClick(fun _ -> env.Emit [SetSelection (SelMesh name)])
-                Dom.OnDoubleClick(fun _ -> env.Emit [SetSelection (SelMesh name); ZoomToMesh name])
+                Attribute("title", "click → select · click again → zoom · hover → peek")
+                Dom.OnClick(fun _ ->
+                    match AVal.force model.Selection.Active with
+                    | SelMesh m when m = name -> env.Emit [ZoomToMesh name]
+                    | SelNone | SelMesh _ -> env.Emit [SetSelection (SelMesh name)]
+                    | SelCell (p, m) when m = name -> env.Emit (SetSelection (SelCell(p, name)) :: cellZoom model p name)
+                    | SelPin p | SelCell (p, _) -> env.Emit [SetSelection (SelCell(p, name))])
                 // hover = peek-isolate this mesh in the 3D view (mirrors the rail roster).
                 Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
@@ -814,13 +841,6 @@ module FocusScene =
                     span { Class "ft-refstar"; Primitives.showWhen isRef; "★" }
                     model.MeshNames.Content |> AVal.map (fun ns -> Primitives.friendlyName (IndexList.toList ns) name)
                 }
-            }
-            div {
-                Class "focus-tile-ctrls"
-                refBtn
-                visBtn
-                soloBtn
-                outlineBtn
             }
         }
 
@@ -850,6 +870,6 @@ module FocusScene =
         |> AList.map (fun (n, proj) -> focusSingle env model n proj)
 
     // One tile per mesh — the mesh browser (T3). ALL meshes are listed (hidden ones
-    // dimmed) so a hidden mesh can be re-enabled from its tile.
+    // dimmed); selecting a hidden mesh re-enables it (the reducer's ensureVisible).
     let multiples (env : Env<Message>) (model : AdaptiveModel) =
         model.MeshNames |> AList.map (focusTile env model)

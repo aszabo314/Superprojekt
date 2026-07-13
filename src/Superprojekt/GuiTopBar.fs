@@ -19,11 +19,11 @@ module GuiTopBar =
             button {
                 Class "tb-btn"
                 classWhen "tb-btn-active" model.ShowOverlaysHeld
-                Attribute("title", "Overview: hold to white-out the meshes — only the pins stay coloured, with name tags (hotkey: O)")
+                Attribute("title", "Plan: hold to white-out the meshes — only the pins stay coloured, with name tags (hotkey: O)")
                 Dom.OnPointerDown((fun _ -> env.Emit [SetShowOverlays true]), pointerCapture = true)
                 Dom.OnPointerUp((fun _ -> env.Emit [SetShowOverlays false]), pointerCapture = true)
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetShowOverlays false])
-                "🗺 Overview"
+                "🗺 Plan"
             }
 
             div {

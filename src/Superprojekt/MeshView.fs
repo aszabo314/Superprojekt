@@ -503,34 +503,14 @@ module MeshView =
     // Per-mesh outline state for the image-space outline pass. Flag semantics
     // (the edge composite's OutlineMask): 1 = silhouette + isolines · 0.5 =
     // silhouette only (Inspect pair view: everything except the isolated mesh and
-    // the reference keeps just its contour) · 0 = no lines. The two toggle
-    // modalities resolve automatically: outline OFF while the mesh still shows a
-    // body ⇒ flag 0 (masked at composite, the mesh keeps occluding other
-    // outlines); outline OFF while nothing of the body renders ⇒ the mesh leaves
-    // the G-buffer entirely (outlineInBuffer false — it stops occluding too).
+    // the reference keeps just its contour).
     let private outlineFlagAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
-        let on = Map.tryFind name (model.OutlineVisible.GetValue t) |> Option.defaultValue true
-        if not on then 0.0f
-        else
-            let silhouetteOnly =
-                model.WorkflowStep.GetValue t = Inspect
-                && (match model.MeshSolo.GetValue t with
-                    | Some s -> name <> s && (model.Registration.GetValue t).ReferenceMesh <> Some name
-                    | None -> false)
-            if silhouetteOnly then 0.5f else 1.0f
-
-    // Does anything of the mesh's BODY reach the screen (solid or ghost)? The
-    // modality discriminator for a toggled-off outline.
-    let private outlineBodyShownAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
-        let vis = Map.tryFind name (model.MeshVisible.GetValue t) |> Option.defaultValue true
-        if model.WorkflowStep.GetValue t = Inspect then
-            // Inspect has no ghost floor (§B5): solid contributors only.
-            match model.MeshSolo.GetValue t with
-            | Some s -> name = s
-            | None ->
-                let hasHeat = (Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff) <> HeatOff
-                vis && (hasHeat || (model.Registration.GetValue t).ReferenceMesh = Some name)
-        else vis || model.GhostSilhouette.GetValue t
+        let silhouetteOnly =
+            model.WorkflowStep.GetValue t = Inspect
+            && (match model.MeshSolo.GetValue t with
+                | Some s -> name <> s && (model.Registration.GetValue t).ReferenceMesh <> Some name
+                | None -> false)
+        if silhouetteOnly then 0.5f else 1.0f
 
     // The composite's per-mesh line gate, indexed like MeshId ((index+1)/255).
     let outlineMask (model : AdaptiveModel) : aval<V4f[]> =
@@ -542,8 +522,7 @@ module MeshView =
             arr)
 
     // Outline G-buffer: every mesh rendered solid with OutlineGBuffer.shade,
-    // consumed by OutlineView's offscreen pass. A mesh leaves the buffer only
-    // when its outline is toggled off AND its body shows nothing.
+    // consumed by OutlineView's offscreen pass.
     let buildOutlineNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
         let meshIndices =
             model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
@@ -582,14 +561,8 @@ module MeshView =
                 let scale = scaleFor model name
                 let meshT = displayedMeshT model name
                 // Every loaded mesh renders into the G-buffer (visibility gates the
-                // main pass only) — EXCEPT a mesh whose outline is toggled off while
-                // nothing of its body shows: that one leaves the buffer so it stops
-                // occluding the remaining outlines.
-                let active =
-                    AVal.custom (fun t ->
-                        loaded.fvc.GetValue t > 3
-                        && ((Map.tryFind name (model.OutlineVisible.GetValue t) |> Option.defaultValue true)
-                            || outlineBodyShownAt model t name))
+                // main pass only).
+                let active = loaded.fvc |> AVal.map (fun c -> c > 3)
                 let meshColor =
                     meshIndices |> AVal.map (fun m ->
                         let i = Map.tryFind name m |> Option.defaultValue 0

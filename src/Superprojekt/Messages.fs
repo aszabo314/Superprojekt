@@ -8,7 +8,6 @@ type Message =
     | CentroidsLoaded    of (string * V3d)[]
     | PanoCentersLoaded  of (string * V3d)[]
     | LoadFinished       of string
-    | SetVisible         of string * bool
     | ToggleGhostSilhouette
     | SetGhostOpacity of float
     | SetShadingStrength of float
@@ -38,8 +37,6 @@ type Message =
     | SetMeshHeatmap of mesh:string * HeatmapMode
     // Shp cutoff — triangles below the quality threshold render transparent.
     | SetShapeThreshold of float
-    // Per-mesh outline toggle (image-space outline pass).
-    | SetOutlineVisible of mesh:string * bool
     // Difference sub-mode (M3C2 ↔ Δz) for the Inspect focus tiles.
     | ToggleExtrinsicZDiff
     | VarianceComputed of mesh:string * float32[]
@@ -52,7 +49,6 @@ type Message =
     | SetActiveDataset   of string
     | ScanPinMsg              of ScanPinMessage
     | SetRenderingMode of RenderingMode
-    | ToggleMeshSolo of string
     | ToggleGearPopover
     | SetActivePickingLayer of string option
     // hover = peek, click = select/promote.

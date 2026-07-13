@@ -28,7 +28,6 @@ module Update =
             { model with
                 MeshNames        = names
                 MeshVisible      = visible
-                OutlineVisible   = Map.empty
                 CommonCentroid   = common
                 MeshOrder        = indices
                 MeshesLoaded     = HashSet.empty
@@ -47,19 +46,6 @@ module Update =
                     if dataset <> "" then Map.add dataset common perMesh else perMesh }
         | PanoCentersLoaded pcs ->
             { model with PanoCenters = Map.ofArray pcs }
-        | SetVisible(name, v) ->
-            // Visibility toggles are frozen while a mesh is isolated (the tile
-            // buttons are disabled too; this is the reducer-side guard).
-            if model.MeshSolo.IsSome then model
-            else
-                let activePickingLayer =
-                    if not v && model.ActivePickingLayer = Some name then None
-                    else model.ActivePickingLayer
-                // Probes sample every mesh regardless of visibility (like contact rings),
-                // so a visibility toggle keeps the matrix cells stable — no re-probe.
-                // setMeshVisible refreshes the visibility-derived Inspect caches.
-                setMeshVisible (Map.add name v model.MeshVisible)
-                    { model with ActivePickingLayer = activePickingLayer }
         | LoadFinished name ->
             let model = { model with MeshesLoaded = HashSet.add name model.MeshesLoaded }
 
@@ -240,10 +226,6 @@ module Update =
             { model with MeshHeatmap = mh }
         | SetShapeThreshold v ->
             { model with ShapeThreshold = clamp 0.0 1.0 v }
-        | SetOutlineVisible(name, v) ->
-            // Sparse: only OFF entries are stored (default lookup = on).
-            let ov = if v then Map.remove name model.OutlineVisible else Map.add name false model.OutlineVisible
-            { model with OutlineVisible = ov }
         | VarianceComputed(mesh, arr) ->
             // Keep only if still in Inspect and this is the reference mesh.
             if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
@@ -317,13 +299,6 @@ module Update =
                     Toast = None }
         | SetRenderingMode m ->
             { model with RenderingMode = m }
-        | ToggleMeshSolo name ->
-            // Isolation is an overlay (MeshVisibility.shown); probes cover every mesh
-            // so the matrix cells stay stable. Re-clicking the active ◐ deactivates
-            // and resets every visibility toggle to ON; clicking another ◐ retargets.
-            match model.MeshSolo with
-            | Some s when s = name -> exitSolo model
-            | _ -> enterSolo name model
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
         | SetActivePickingLayer name ->

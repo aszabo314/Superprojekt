@@ -399,9 +399,10 @@ module Update =
                     else model
                 | SelCell (_, mesh) ->
                     // The locate: solo the mesh (backup-captured for a single
-                    // BackOutLocate), force Top so the focus framing maths is valid;
-                    // an Inspect locate also lights the pin ROI. No camera — the 3D
-                    // zoom stays the cell's double-click.
+                    // BackOutLocate); an Inspect locate also lights the pin ROI. The
+                    // user's Top/360° choice is respected — the focus framing follows
+                    // the selection in both projections. No camera — the 3D zoom
+                    // stays the cell's double-click.
                     let backup =
                         match model.LocateBackup with
                         | Some _ -> model.LocateBackup
@@ -413,7 +414,6 @@ module Update =
                     enterSolo mesh
                         { model with
                             LocateBackup = backup
-                            FocusProjection = ProjTop
                             AnchorGhostMode = (model.WorkflowStep = Inspect) || model.AnchorGhostMode }
         | PickCorrespondenceAt(pinId, mesh, world) ->
             // Set the (pin, mesh) correspondence point at the picked surface point,

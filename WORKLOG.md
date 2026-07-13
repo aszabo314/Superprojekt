@@ -1,5 +1,40 @@
 # Worklog
 
+## WP (2026-07-13b): 360° zoom parity
+
+The selection close-up now behaves identically in both focus projections;
+the toggle switches the whole panel and keeps the focused item in view.
+Client build green, Supertests 29/29 (client-only).
+
+- Pano zoom convention flipped to VERTICAL fov (`panoFov`/`panoHalfTans`;
+  `panoCam` derives the horizontal Frustum argument per aspect) so zoom
+  references the view height exactly like Top's vertical half-extent — one
+  close-up definition for both projections. Fov floor 4° → 0.05° (a far/small
+  pin needs a telescope fov); pano wheel cap 200 → 2000 to match.
+- `selBaseFrame` gained an `isPanoA` aval: pano base = look from the fixed
+  panorama eye AT the target (azimuth/elevation), zoom = 45°/θ where θ =
+  atan(pinRadius·1.05 / distance) → vertical half-fov = the pin's angular
+  radius (influence circle fills the height, same as Top).
+- Single: `camPair` unified — pano mesh/none keeps its persistent per-mesh
+  `panoKey` state; pin/cell targets mint fresh offsets per selection change
+  in both projections. Drag ("grab the world") and wheel anchor maths now run
+  on the EFFECTIVE zoom (base ⊕ user) — they previously read the raw user
+  cval, which was only correct while the pano base was inert.
+- Tiles follow the Top/360° toggle (adaptive view/proj switch inside the one
+  render control, `isPanoA` = ProjPano minus the Inspect-displacement
+  collapse, mirroring the single); tile pin rings switch to the eye-facing
+  silhouette in pano.
+- The SelCell reducer no longer forces `FocusProjection = ProjTop` — the
+  forcing existed because the focus framing maths was Top-only; a locate now
+  respects the user's projection (CLAUDE.md rule added: never force a
+  projection at a click site). Note: the anchor marker glyphs + aim ghost
+  remain Top-only (screen-fixed glyph sizing is ortho maths) — in 360° a
+  located cell shows the circle, not the cross glyph.
+- Browser pass owed: pano close-up on pin/cell select (single + tiles), wheel
+  anchor stability in pano at deep zoom, Top↔360° round-trip keeping the item
+  framed, tiles switching projection, displacement channel still collapsing
+  to Top everywhere.
+
 ## WP (2026-07-13): focus panel + selection polish (9-item batch)
 
 All nine items done; client + server builds green, Supertests 29/29. No server

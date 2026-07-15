@@ -70,6 +70,8 @@ module Update =
             { model with OutlineThreshold = max 0.0 v }
         | SetIsolineBands v ->
             { model with IsolineBands = max 1.0 v }
+        | SetIsolineOpacity v ->
+            { model with IsolineOpacity = clamp 0.0 1.0 v }
         | ToggleAnchorGhostMode ->
             { model with AnchorGhostMode = not model.AnchorGhostMode }
         | SetQuickPinRadius v ->

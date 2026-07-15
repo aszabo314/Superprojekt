@@ -351,6 +351,8 @@ module OutlineEdge =
     type UniformScope with
         member x.OutlineTexel : V2f = x?OutlineTexel
         member x.OutlineThreshold : float32 = x?OutlineThreshold
+        // Alpha of the grey elevation isolines (gear slider; silhouettes stay opaque).
+        member x.IsolineOpacity : float32 = x?IsolineOpacity
         // Per-mesh line gate, indexed by the G-buffer mesh id (target0.y):
         // .X = 1 → silhouette + isolines, 0.5 → silhouette only (Inspect pair
         // view context), 0 → no lines (the mesh still occludes in the G-buffer).
@@ -421,7 +423,7 @@ module OutlineEdge =
                     let col = gColor.Sample(v.tc)
                     return V4f(col.X, col.Y, col.Z, 1.0f)
                 elif isoEdge && flag > 0.75f then
-                    return V4f(0.55f, 0.57f, 0.60f, 0.45f)
+                    return V4f(0.55f, 0.57f, 0.60f, uniform.IsolineOpacity)
                 else
                     return V4f(0.0f, 0.0f, 0.0f, 0.0f)
             else

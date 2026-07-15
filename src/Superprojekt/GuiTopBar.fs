@@ -131,6 +131,11 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            inlineSlider "Isoline opacity" 0.0 1.0 0.01 (sprintf "%.2f") model.IsolineOpacity (fun v ->
+                                env.Emit [SetIsolineOpacity v])
+                        }
+                        div {
+                            Class "tb-gear-row"
                             inlineSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v ->
                                 env.Emit [CameraMessage (OrbitMessage.SetSpeed v)])
                         }

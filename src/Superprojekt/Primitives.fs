@@ -59,6 +59,15 @@ module Primitives =
 
     let c4bToHex (c : C4b) = sprintf "#%02x%02x%02x" c.R c.G c.B
 
+    // Luminance greyscale of an identity colour — while a pin is selected, the
+    // OTHER pins' 3D/focus marks drop to this so the selection owns the colour.
+    let c4bToGrey (c : C4b) =
+        let l = byte (clamp 0.0 255.0 (0.299 * float c.R + 0.587 * float c.G + 0.114 * float c.B))
+        C4b(l, l, l)
+    let v3dToGrey (v : V3d) =
+        let l = 0.299 * v.X + 0.587 * v.Y + 0.114 * v.Z
+        V3d(l, l, l)
+
     // Linear-diverging difference colourmap (§C — Coolwarm, Colorcet CET-D01 as
     // shipped by Maple): blue (neg) → near-white → red (pos). A near-zero perceptual
     // boost (|t|^0.6) keeps small deviations visible (no central flat-spot).

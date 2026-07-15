@@ -1,5 +1,5 @@
-//16b85f83-7abb-7dd6-a43d-43c4780283d2
-//84c204a2-dcbc-905e-7d99-939fc094f8da
+//c7a991bc-83f3-f6aa-e837-1be0429c9a75
+//81ee6be4-e604-a73d-a0cf-5766fe1e54fc
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -84,6 +84,7 @@ type AdaptiveModel(value : Model) =
     let _BrushedSamples_ = FSharp.Data.Adaptive.cval(value.BrushedSamples)
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
+    let _IsolineOpacity_ = FSharp.Data.Adaptive.cval(value.IsolineOpacity)
     let _LocateBackup_ = FSharp.Data.Adaptive.cval(value.LocateBackup)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
@@ -148,6 +149,7 @@ type AdaptiveModel(value : Model) =
             _BrushedSamples_.Value <- value.BrushedSamples
             _OutlineThreshold_.Value <- value.OutlineThreshold
             _IsolineBands_.Value <- value.IsolineBands
+            _IsolineOpacity_.Value <- value.IsolineOpacity
             _LocateBackup_.Value <- value.LocateBackup
     member __.Current = __adaptive
     member __.Camera = _Camera_
@@ -205,5 +207,6 @@ type AdaptiveModel(value : Model) =
     member __.BrushedSamples = _BrushedSamples_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Set<Microsoft.FSharp.Core.int>>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.IsolineOpacity = _IsolineOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.LocateBackup = _LocateBackup_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LocateState>>
 

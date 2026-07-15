@@ -98,6 +98,7 @@ module OutlineView =
     let buildFromNode
         (info : Aardvark.Dom.RenderControlInfo)
         (thresholdA : aval<float32>)
+        (isoOpacityA : aval<float32>)
         (mask : aval<V4f[]>)
         (node : ISceneNode) : aset<ISceneNode> =
 
@@ -154,6 +155,7 @@ module OutlineView =
                 Sg.Uniform("GColor", gColor)
                 Sg.Uniform("OutlineTexel", texel)
                 Sg.Uniform("OutlineThreshold", thresholdA)
+                Sg.Uniform("IsolineOpacity", isoOpacityA)
                 Sg.Uniform("OutlineMask", mask)
                 Sg.VertexAttributes(
                     HashMap.ofList [
@@ -175,6 +177,7 @@ module OutlineView =
         let mask = MeshView.outlineMask model
         let combined =
             buildFromNode info (model.OutlineThreshold |> AVal.map float32)
+                (model.IsolineOpacity |> AVal.map float32)
                 mask (MeshView.buildOutlineNode model view proj)
         let footprints = buildCoverage info mask (MeshView.buildCoverageNode model view proj)
         ASet.union combined footprints

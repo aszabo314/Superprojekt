@@ -49,6 +49,34 @@ module ScanPinScene =
             let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
             out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
 
+    // Dashed ring (every other segment drawn) — the uncoloured selection circle.
+    let private addDashedRing (out : ResizeArray<V3d * V3d * V4d * float>)
+                              (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
+        for i in 0 .. segs - 1 do
+            if i % 2 = 0 then
+                let a0 = float i / float segs * Constant.PiTimesTwo
+                let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
+                out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
+
+    // Arrow a→b: thin shaft + a line-triangle tip oriented to face the eye.
+    // Head scales with the shaft but caps at a modest render size.
+    let private addArrow (out : ResizeArray<V3d * V3d * V4d * float>)
+                         (a : V3d) (b : V3d) (eye : V3d) (col : V4d) (width : float) =
+        let d = b - a
+        if d.Length > 1e-9 then
+            let dN = d.Normalized
+            let side =
+                let c = Vec.cross (b - eye) dN
+                if c.Length > 1e-9 then c.Normalized
+                else (Vec.cross dN (if abs dN.Z < 0.9 then V3d.OOI else V3d.IOO)).Normalized
+            let hl = min (d.Length * 0.35) 0.12
+            let hw = hl * 0.45
+            let back = b - dN * hl
+            out.Add(a, back, col, width)
+            out.Add(b, back + side * hw, col, width)
+            out.Add(b, back - side * hw, col, width)
+            out.Add(back + side * hw, back - side * hw, col, width)
+
     // Wire sphere (three axis-aligned great circles) of radius r at c.
     let private addWireSphere (out : ResizeArray<V3d * V3d * V4d * float>)
                               (c : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
@@ -317,6 +345,11 @@ module ScanPinScene =
                         | None -> [||]
                         | Some (centre, radius, axis, colour, rings) ->
                             let sel = isSelected.GetValue t
+                            // While a pin selection is active the OTHER pins go
+                            // greyscale — the selected pin owns the colour channel.
+                            let colour =
+                                if not sel && (selectedId.GetValue t).IsSome
+                                then Primitives.v3dToGrey colour else colour
                             // Pin-row hover lights the rings up thick + bright
                             // (UI→3D linking via the shared Selection record).
                             let hovered = model.Selection.Hovered.GetValue t = Some (HoverPin id)
@@ -387,7 +420,10 @@ module ScanPinScene =
                                 let isSel = sel = Some id
                                 let pinHover = hov = Some (HoverPin id)
                                 let emph = isSel || pinHover
-                                let baseCol = Primitives.c4bToV3d pinColor
+                                // Other pins' markers greyscale while a pin is selected.
+                                let baseCol =
+                                    let c = Primitives.c4bToV3d pinColor
+                                    if not isSel && sel.IsSome then Primitives.v3dToGrey c else c
                                 let raR = ScanPin.renderCentre cc scale ra
                                 (match rf with
                                  | Some rn when MeshVisibility.shown solo vis rn ->
@@ -564,6 +600,12 @@ module ScanPinScene =
                         | None -> Trafo3d.Scale 0.0)
                 match p0 with
                 | Some pin ->
+                    // Greyscale while another pin is selected (colour = a uniform,
+                    // no atlas rebuild).
+                    let labelCol =
+                        selectedId |> AVal.map (function
+                            | Some sid when sid <> id -> Primitives.c4bToGrey pin.PinColor
+                            | _ -> pin.PinColor)
                     sg {
                         Sg.Active labelsActive
                         Sg.View view
@@ -572,14 +614,16 @@ module ScanPinScene =
                         Sg.DepthTest (AVal.constant DepthTest.None)
                         Sg.NoEvents
                         Sg.Trafo trafoVal
-                        Sg.Text(pin.ShortName, color = AVal.constant pin.PinColor, align = TextAlignment.Center)
+                        Sg.Text(pin.ShortName, color = labelCol, align = TextAlignment.Center)
                     }
                 | None -> sg { Sg.NoEvents })
 
-        // Live correspondence-pick preview: a wire sphere + cross at the hovered
-        // surface point while set-correspondence mode aims it (metric world → render),
-        // in the ARMED PIN's colour (§B1 — the picked-point crosshair matches the pin
-        // circle and its markers). On top so it reads against the surface.
+        // Live correspondence-pick preview: a WHITE wire sphere + cross at the
+        // hovered surface point while set-correspondence mode aims it (metric
+        // world → render). White = "not committed yet" — the click turns it into
+        // the pin-coloured marker. A move > 10 cm (world) from the current anchor
+        // adds a white arrow old → new (thin shaft + line-triangle tip, facing the
+        // eye). On top so it reads against the surface.
         let corrPreview =
             let active =
                 (notFullscreen, model.CorrPreview) ||> AVal.map2 (fun nf c -> nf && Option.isSome c)
@@ -590,19 +634,56 @@ module ScanPinScene =
                         let cc = model.CommonCentroid.GetValue t
                         let s = datasetScale.GetValue t
                         let wR = ScanPin.renderCentre cc s w
-                        let col =
-                            match model.CorrArm.GetValue t with
-                            | Some (pid, _) ->
-                                match HashMap.tryFind pid (pinsVal.GetValue t) with
-                                | Some p -> V4d(Primitives.c4bToV3d p.PinColor, 0.95)
-                                | None -> V4d(0.0, 0.78, 0.84, 0.95)
-                            | None -> V4d(0.0, 0.78, 0.84, 0.95)
+                        let white = V4d(1.0, 1.0, 1.0, 0.95)
                         let out = ResizeArray<V3d * V3d * V4d * float>()
-                        addWireSphere out wR 0.06 col 1.8 20
-                        addCross out wR 0.075 col 1.8
+                        addWireSphere out wR 0.06 white 1.8 20
+                        addCross out wR 0.075 white 1.8
+                        (match model.CorrArm.GetValue t with
+                         | Some (pid, mesh) ->
+                            let orig =
+                                match HashMap.tryFind pid (pinsVal.GetValue t) with
+                                | Some p ->
+                                    match p.Correspondence with
+                                    | Some c ->
+                                        if (model.Registration.GetValue t).ReferenceMesh = Some mesh
+                                        then c.RefAnchor
+                                        else
+                                            Map.tryFind mesh c.Anchors
+                                            |> Option.map (fun a -> (dispWorldAt t mesh).Forward.TransformPos a.Point)
+                                    | None -> None
+                                | None -> None
+                            match orig with
+                            | Some ow when Vec.distance ow w > 0.1 ->
+                                let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
+                                addArrow out (ScanPin.renderCentre cc s ow) wR eye white 1.8
+                            | _ -> ()
+                         | None -> ())
                         out.ToArray()
                     | None -> [||])
             linesNodeTop active segs
+
+        // Selection circle: a dashed WHITE ring slightly larger than the selected
+        // pin's influence radius, lifted to the median contact-ring height
+        // (ScanPin.selectionCircleCentre) — the bright, uncoloured "this one"
+        // marker (the other pins go greyscale). On top; main-3D twin of the
+        // focus panel's circle.
+        let selectionCircle =
+            let segs =
+                AVal.custom (fun t ->
+                    match selectedId.GetValue t with
+                    | Some id ->
+                        match HashMap.tryFind id (pinsVal.GetValue t) with
+                        | Some p ->
+                            let cc = model.CommonCentroid.GetValue t
+                            let s = datasetScale.GetValue t
+                            let cR = ScanPin.renderCentre cc s (ScanPin.selectionCircleCentre p)
+                            let rR = ScanPin.renderLength s (p.InnerRadius * 1.12)
+                            let out = ResizeArray<V3d * V3d * V4d * float>()
+                            addDashedRing out cR V3d.IOO V3d.OIO rR (V4d(1.0, 1.0, 1.0, 0.95)) 2.2 72
+                            out.ToArray()
+                        | None -> [||]
+                    | None -> [||])
+            linesNodeTop notFullscreen segs
 
         // Brushed individual samples (§T6/§A4): small solid dots at the brushed
         // samples' surface positions, looked up by gid in the SAME canonical array
@@ -621,4 +702,4 @@ module ScanPinScene =
                 Dots.render (brushedDotGeometry model None)
             }
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinFlags; pinSliceLines; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [brushedDots]])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinFlags; pinSliceLines; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [selectionCircle]; ASet.ofList [brushedDots]])

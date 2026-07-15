@@ -182,6 +182,19 @@ module ScanPin =
         | ProbeReady r -> r.Normal
         | _ -> V3d.OOI
 
+    // Selection-circle anchor: the pin centre lifted to the median Z of the
+    // contact-ring vertices (the outline the user actually sees on the terrain);
+    // falls back to the centre until rings land. World space (metric).
+    let selectionCircleCentre (p : ScanPin) =
+        match p.ContactRings with
+        | RingsReady m ->
+            let zs = [| for KeyValue (_, rings) in m do for ring in rings do for v in ring -> v.Z |]
+            if zs.Length = 0 then p.Centre
+            else
+                Array.sortInPlace zs
+                V3d(p.Centre.X, p.Centre.Y, zs.[zs.Length / 2])
+        | _ -> p.Centre
+
     // Screen-constant flag sizing: the pole height is a fixed fraction of the
     // eye→pin distance (render space), clamped in METRIC WORLD to [0.1, 20] m;
     // the gear's flag-scale multiplier scales the fraction AND both bounds.

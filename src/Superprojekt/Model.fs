@@ -256,10 +256,11 @@ type Model =
         BrushedSamples      : Set<int>
 
         // Outline edge-detect threshold (depth Laplacian) + isoline band count over
-        // the scene Z range. Tunable from the gear menu; see OutlineEdge /
-        // buildOutlineNode. Image-space outlines + isolines are always on.
+        // the scene Z range + isoline alpha. Tunable from the gear menu; see
+        // OutlineEdge / buildOutlineNode. Image-space outlines + isolines are always on.
         OutlineThreshold    : float
         IsolineBands        : float
+        IsolineOpacity      : float
 
         // Active "frame correspondence" (locate) backup; Some while a locate is in
         // effect so re-clicking the located matrix cell restores the prior camera +
@@ -367,5 +368,6 @@ module Model =
             BrushedSamples      = Set.empty
             OutlineThreshold    = 0.004
             IsolineBands        = 700.0
+            IsolineOpacity      = 0.45
             LocateBackup        = None
         }

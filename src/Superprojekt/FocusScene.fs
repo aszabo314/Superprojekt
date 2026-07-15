@@ -278,6 +278,31 @@ module FocusScene =
                            (c : V3d) (r : float) (col : V4d) (w : float) =
         out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, w)
         out.Add(c - V3d.OIO * r, c + V3d.OIO * r, col, w)
+    // Dashed ring (every other segment drawn) — the uncoloured selection circle.
+    let private addDashedRing3D (out : ResizeArray<V3d * V3d * V4d * float>)
+                                (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (w : float) (segs : int) =
+        for i in 0 .. segs - 1 do
+            if i % 2 = 0 then
+                let a0 = float i       / float segs * Constant.PiTimesTwo
+                let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
+                out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, w)
+    let private addDashedRingXY out c r col w segs = addDashedRing3D out c V3d.IOO V3d.OIO r col w segs
+    // Top-view arrow a→b in the XY plane: thin shaft + line-triangle tip.
+    let private addArrowXY (out : ResizeArray<V3d * V3d * V4d * float>)
+                           (a : V3d) (b : V3d) (headLen : float) (col : V4d) (w : float) =
+        let d = b - a
+        if d.Length > 1e-9 then
+            let dN = d.Normalized
+            let side =
+                let c = Vec.cross V3d.OOI dN
+                if c.Length > 1e-9 then c.Normalized else V3d.IOO
+            let hl = min (d.Length * 0.4) headLen
+            let hw = hl * 0.45
+            let back = b - dN * hl
+            out.Add(a, back, col, w)
+            out.Add(b, back + side * hw, col, w)
+            out.Add(b, back - side * hw, col, w)
+            out.Add(back + side * hw, back - side * hw, col, w)
 
     // load/solved forward maps (mesh-local → render) at token t, sharing the base
     // render trafo (centroid-relative → common-relative → dataset scale → pose).
@@ -510,7 +535,11 @@ module FocusScene =
                     let isSel = sel = Some id
                     let cR = ScanPin.renderCentre cc s p.Centre
                     let rR = ScanPin.renderLength s p.InnerRadius
-                    let ringCol = V4d(Primitives.c4bToV3d p.PinColor, if isSel then 0.95 else 0.6)
+                    // Other pins greyscale while a pin selection is active.
+                    let baseCol =
+                        let c = Primitives.c4bToV3d p.PinColor
+                        if not isSel && sel.IsSome then Primitives.v3dToGrey c else c
+                    let ringCol = V4d(baseCol, if isSel then 0.95 else 0.6)
                     let rw = if isSel then 2.2 else 1.3
                     if isPano then
                         let d = cR - eye
@@ -519,6 +548,21 @@ module FocusScene =
                             let u = (Vec.cross n (if abs n.Z > 0.9 then V3d.IOO else V3d.OOI)).Normalized
                             addRing3D out cR u (Vec.cross n u) rR ringCol rw 48
                     else addRingXY out cR rR ringCol rw 48
+                // Selection circle (dashed white, radius × 1.12 at the median
+                // contact-ring height) — same marker as the main 3D + tiles.
+                (match sel |> Option.bind (fun id -> HashMap.tryFind id pins) with
+                 | Some p ->
+                    let cR = ScanPin.renderCentre cc s (ScanPin.selectionCircleCentre p)
+                    let rR = ScanPin.renderLength s (p.InnerRadius * 1.12)
+                    let white = V4d(1.0, 1.0, 1.0, 0.95)
+                    if isPano then
+                        let d = cR - eye
+                        if d.Length > 1e-9 then
+                            let n = d.Normalized
+                            let u = (Vec.cross n (if abs n.Z > 0.9 then V3d.IOO else V3d.OOI)).Normalized
+                            addDashedRing3D out cR u (Vec.cross n u) rR white 2.2 72
+                    else addDashedRingXY out cR rR white 2.2 72
+                 | None -> ())
                 if not isPano && model.WorkflowStep.GetValue t = Correspondence then
                     let ext = fitExtent.GetValue t
                     let z = zoomEff.GetValue t
@@ -527,7 +571,9 @@ module FocusScene =
                     let dw = RigidTransform.renderToWorld s cc (dispRenderT.GetValue t)
                     for (id, p) in HashMap.toSeq pins do
                         let isSel = sel = Some id
-                        let pinCol = Primitives.c4bToV3d p.PinColor
+                        let pinCol =
+                            let c = Primitives.c4bToV3d p.PinColor
+                            if not isSel && sel.IsSome then Primitives.v3dToGrey c else c
                         match ScanPin.correspondence p with
                         | Some c ->
                             // The reference's marker is its RefAnchor (own-frame like
@@ -545,19 +591,30 @@ module FocusScene =
                                 addRingXY out aR (gr * 0.6) gcol gw 24
                             | None -> ()
                         | None -> ()
-                    // Live aim ghost (preview in both views, §T4): a cross+ring at the
-                    // hovered pick point while armed for THIS mesh, in the armed pin's colour.
+                    // Live aim ghost (§T4): a WHITE cross+ring at the hovered pick
+                    // point while armed for THIS mesh — white = "not committed yet";
+                    // the click turns it into the pin-coloured marker. A move > 10 cm
+                    // (world) from the current anchor adds a white arrow old → new.
                     match model.CorrArm.GetValue t with
                     | Some (pid, m) when m = name ->
                         match model.CorrPreview.GetValue t with
                         | Some w ->
                             let pr = ScanPin.renderCentre cc s w
-                            let col =
-                                match HashMap.tryFind pid pins with
-                                | Some p -> V4d(Primitives.c4bToV3d p.PinColor, 1.0)
-                                | None -> V4d(0.0, 0.78, 0.84, 1.0)
-                            addCrossXY out pr gr col 2.2
-                            addRingXY out pr (gr * 0.6) col 2.2 24
+                            let white = V4d(1.0, 1.0, 1.0, 1.0)
+                            addCrossXY out pr gr white 2.2
+                            addRingXY out pr (gr * 0.6) white 2.2 24
+                            let orig =
+                                HashMap.tryFind pid pins
+                                |> Option.bind ScanPin.correspondence
+                                |> Option.bind (fun c ->
+                                    if isRef then c.RefAnchor
+                                    else
+                                        Map.tryFind name c.Anchors
+                                        |> Option.map (fun a -> dw.Forward.TransformPos a.Point))
+                            match orig with
+                            | Some ow when Vec.distance ow w > 0.1 ->
+                                addArrowXY out (ScanPin.renderCentre cc s ow) pr (gr * 0.9) white 2.0
+                            | _ -> ()
                         | None -> ()
                     | _ -> ()
                 out.ToArray())
@@ -742,7 +799,7 @@ module FocusScene =
                         model.Registration |> AVal.map (fun r ->
                             match r.ReferenceMesh with Some rf -> rf <> name | None -> false)
                     let node = MeshView.buildReferenceOutlineNode model viewT projT (V4f(0.831f, 0.631f, 0.024f, 1.0f)) show
-                    OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) OutlineView.maskAllOn node
+                    OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) (model.IsolineOpacity |> AVal.map float32) OutlineView.maskAllOn node
             // One standard pipeline for both projections — the camera (viewT/projT)
             // carries the whole difference.
             let surface =
@@ -812,7 +869,11 @@ module FocusScene =
                     let isSel = sel = Some id
                     let cR = ScanPin.renderCentre cc s p.Centre
                     let rR = ScanPin.renderLength s p.InnerRadius
-                    let col = V4d(Primitives.c4bToV3d p.PinColor, (if isSel then 0.95 else 0.6))
+                    // Other pins greyscale while a pin selection is active.
+                    let baseCol =
+                        let c = Primitives.c4bToV3d p.PinColor
+                        if not isSel && sel.IsSome then Primitives.v3dToGrey c else c
+                    let col = V4d(baseCol, (if isSel then 0.95 else 0.6))
                     let rw = if isSel then 2.2 else 1.3
                     if pano then
                         let d = cR - eye
@@ -821,6 +882,20 @@ module FocusScene =
                             let u = (Vec.cross n (if abs n.Z > 0.9 then V3d.IOO else V3d.OOI)).Normalized
                             addRing3D out cR u (Vec.cross n u) rR col rw 48
                     else addRingXY out cR rR col rw 48
+                // Selection circle (dashed white) — the single + main 3D twin.
+                (match sel |> Option.bind (fun id -> HashMap.tryFind id pins) with
+                 | Some p ->
+                    let cR = ScanPin.renderCentre cc s (ScanPin.selectionCircleCentre p)
+                    let rR = ScanPin.renderLength s (p.InnerRadius * 1.12)
+                    let white = V4d(1.0, 1.0, 1.0, 0.95)
+                    if pano then
+                        let d = cR - eye
+                        if d.Length > 1e-9 then
+                            let n = d.Normalized
+                            let u = (Vec.cross n (if abs n.Z > 0.9 then V3d.IOO else V3d.OOI)).Normalized
+                            addDashedRing3D out cR u (Vec.cross n u) rR white 2.2 72
+                    else addDashedRingXY out cR rR white 2.2 72
+                 | None -> ())
                 out.ToArray())
         let rc =
             renderControl {

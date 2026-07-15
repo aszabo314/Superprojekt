@@ -1,5 +1,41 @@
 # Worklog
 
+## WP (2026-07-15b): white pick preview + move arrow · strong pin selection · isoline opacity slider
+
+Type-check green, Supertests 29/29. ONE shader touch (OutlineEdge gains the
+`IsolineOpacity` float32 uniform) — browser compile check owed.
+
+1. **Pick-point feedback.** The armed correspondence hover preview (main-3D
+   wire sphere+cross, focus-Top aim ghost) is now WHITE = "not committed";
+   the click commits it into the pin-coloured marker (no extra state — the
+   committed marker was already pin-coloured). If the hovered point is
+   > 10 cm (metric world) from the current anchor, a white arrow (thin
+   shaft + line-triangle tip) is drawn old → new: main 3D orients the head
+   toward the eye (`addArrow`), focus Top draws it in XY with the
+   screen-fixed glyph size (`addArrowXY`). Original anchor = RefAnchor on
+   the reference, else the mesh anchor at the displayed pose.
+2. **Pin selection emphasis.** While a pin is selected (SelPin or SelCell):
+   every OTHER pin's marks go luminance-greyscale (`Primitives.c4bToGrey`/
+   `v3dToGrey`) — 3D equator+contact rings, flag name label, constellation
+   markers, focus single + tile influence circles; the matrix keeps colour
+   (it dims, §T4). The selected pin gets a dashed white selection circle
+   (72 segs, every other drawn), radius ×1.12, centred at the pin XY lifted
+   to the median Z of its contact-ring vertices (`ScanPin.
+   selectionCircleCentre`; centre Z until rings land) — rendered on top in
+   main 3D, focus single and tiles (Top: XY plane; 360°: eye-facing like
+   the influence circles).
+3. **Isoline opacity slider.** The grey elevation isolines' alpha (was
+   hard-coded 0.45) is now `Model.IsolineOpacity` → `IsolineOpacity`
+   uniform in `OutlineEdge.fragment`; gear row "Isoline opacity" 0–1.
+   Both `buildFromNode` callers wired (main 3D + the focus single's gold
+   reference outline). Silhouettes stay opaque.
+
+User-side browser pass owed: shader compiles in-browser (the new uniform);
+white ghost/arrow in main 3D + focus Top (arrow appears only past 10 cm,
+head readable at both scales); greyscale flip on select/deselect in all
+three views; dashed circle lands on the terrain outline height (also in
+360°); isoline slider fades contours live, 0 = gone, silhouettes unaffected.
+
 ## WP (2026-07-15): focus-head cleanup · glyphless pin identity · screen-constant pin flags
 
 Client-only batch (no server changes). Type-check green, Supertests 29/29.

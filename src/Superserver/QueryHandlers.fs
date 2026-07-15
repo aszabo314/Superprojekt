@@ -2,6 +2,7 @@ module QueryHandlers
 
 open System
 open System.IO
+open System.Threading.Tasks
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
 open Giraffe
@@ -35,10 +36,9 @@ type SliceMeshDto = { Name: string; Transform: float[]; TransformOther: float[] 
 type SliceRequest = {
     Meshes            : SliceMeshDto[]
     // Azimuth source: the slice uDir is fitted on this mesh's ROI surface
-    // (dip direction); absent/unknown → the request's UDir, then +X.
+    // (dip direction); absent/unknown → +X.
     ReferenceName     : string
     Centre            : float[]
-    UDir              : float[]
     Radius            : float
     Offsets           : float[]
     MaxPointsPerPlane : int
@@ -81,38 +81,60 @@ let loadMesh (fullName : string) (index : int) =
     let dataset, name = splitName fullName
     MeshCache.get dataset name index
 
-let rayHandler : HttpHandler =
+// One error shell for every query handler: malformed / degenerate bodies → 400,
+// a missing dataset/mesh → 404, anything unexpected → 500 (was: everything 404).
+let private tryQuery (name : string) (body : HttpContext -> Task<HttpHandler>) : HttpHandler =
     fun next ctx -> task {
+        let log = ctx.GetLogger "Superserver"
         try
-            let! req = ctx.BindJsonAsync<RayRequest>()
-            let lm   = loadMesh req.Name req.Index
-            let c    = lm.parsed.centroid
-            let orig = V3f(toV3d req.Origin - c)
-            let dir  = V3f(toV3d req.Direction)
-            let mutable hit = RayHit()
-            let ok = lm.scene.Intersect(orig, dir, &hit)
-            if ok then
-                let worldHit = V3d(orig + dir * hit.T) + c
-                return! json {| hit = true; t = hit.T; point = fromV3d worldHit; triangleId = int hit.PrimitiveId |} next ctx
-            else
-                return! json {| hit = false |} next ctx
-        with ex -> return! RequestErrors.notFound (text ex.Message) next ctx
+            let! h = body ctx
+            return! h next ctx
+        with
+        | :? Text.Json.JsonException
+        | :? NullReferenceException
+        | :? IndexOutOfRangeException
+        | :? ArgumentException
+        | :? FormatException as ex ->
+            log.LogWarning("{Handler}: bad request ({Message})", name, ex.Message)
+            return! RequestErrors.badRequest (text ex.Message) next ctx
+        | :? FileNotFoundException
+        | :? DirectoryNotFoundException
+        | :? Collections.Generic.KeyNotFoundException as ex ->
+            log.LogWarning("{Handler}: not found ({Message})", name, ex.Message)
+            return! RequestErrors.notFound (text ex.Message) next ctx
+        | ex ->
+            log.LogError(ex, "{Handler} failed", name)
+            return! ServerErrors.internalError (text ex.Message) next ctx
     }
 
+let rayHandler : HttpHandler =
+    tryQuery "ray" (fun ctx -> task {
+        let! req = ctx.BindJsonAsync<RayRequest>()
+        let lm   = loadMesh req.Name req.Index
+        let c    = lm.parsed.centroid
+        let orig = V3f(toV3d req.Origin - c)
+        let dir  = V3f(toV3d req.Direction)
+        let mutable hit = RayHit()
+        let ok = lm.scene.Intersect(orig, dir, &hit)
+        if ok then
+            let worldHit = V3d(orig + dir * hit.T) + c
+            return json {| hit = true; t = hit.T; point = fromV3d worldHit; triangleId = int hit.PrimitiveId |}
+        else
+            return json {| hit = false |}
+    })
+
 let closestHandler : HttpHandler =
-    fun next ctx -> task {
-        try
-            let! req = ctx.BindJsonAsync<ClosestRequest>()
-            let lm   = loadMesh req.Name req.Index
-            let c    = lm.parsed.centroid
-            let res  = lm.scene.GetClosestPoint(V3f(toV3d req.Point - c))
-            if res.IsValid then
-                let worldPt = V3d res.Point + c
-                return! json {| found = true; point = fromV3d worldPt; distanceSquared = res.DistanceSquared; triangleId = int res.PrimID |} next ctx
-            else
-                return! json {| found = false |} next ctx
-        with ex -> return! RequestErrors.notFound (text ex.Message) next ctx
-    }
+    tryQuery "closest" (fun ctx -> task {
+        let! req = ctx.BindJsonAsync<ClosestRequest>()
+        let lm   = loadMesh req.Name req.Index
+        let c    = lm.parsed.centroid
+        let res  = lm.scene.GetClosestPoint(V3f(toV3d req.Point - c))
+        if res.IsValid then
+            let worldPt = V3d res.Point + c
+            return json {| found = true; point = fromV3d worldPt; distanceSquared = res.DistanceSquared; triangleId = int res.PrimID |}
+        else
+            return json {| found = false |}
+    })
 
 let private mat16 (a : float[]) =
     if not (isNull a) && a.Length = 16 then
@@ -129,87 +151,79 @@ let private mat16 (a : float[]) =
 // the shader treats as "no encoding". Without that gate the closest-point
 // distance fabricates error along the fringe of non-overlapping regions.
 let regionDistanceHandler : HttpHandler =
-    fun next ctx -> task {
+    tryQuery "region-distance" (fun ctx -> task {
         let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<RegionDistanceRequest>()
-            let lmT = loadMesh req.TargetName req.TargetIndex
-            let lmR = loadMesh req.RefName req.RefIndex
-            let tT  = mat16 req.TargetTransform
-            let rInv = (mat16 req.RefTransform).Inverse
-            let cT  = lmT.parsed.centroid
-            let cR  = lmR.parsed.centroid
-            let pos = lmT.parsed.positions
-            let refPos = lmR.parsed.positions
-            let refIdx = lmR.parsed.indices
-            let dist = Array.zeroCreate<float32> pos.Length
-            let dnLocal = (rInv.TransformDir (V3d(0.0, 0.0, -1.0))).Normalized
-            let upLocal = (rInv.TransformDir (V3d(0.0, 0.0,  1.0))).Normalized
-            if req.Mode = 1 then
-                // z-diff: vertical world ray onto the reference; signed Δz
-                // (moving above reference → positive). Down then up.
-                System.Threading.Tasks.Parallel.For(0, pos.Length, fun i ->
-                    let vWorld = tT.TransformPos (V3d pos.[i] + cT)
-                    let vRefLocal = rInv.TransformPos vWorld - cR
-                    let mutable hd = RayHit()
-                    if lmR.scene.Intersect(V3f vRefLocal, V3f dnLocal, &hd) then
-                        dist.[i] <- float32 hd.T
-                    else
-                        let mutable hu = RayHit()
-                        if lmR.scene.Intersect(V3f vRefLocal, V3f upLocal, &hu) then
-                            dist.[i] <- float32 (- hu.T)
-                        else dist.[i] <- 1e30f) |> ignore
-            else
-                // M3C2 closest point, but with mode-1 support: the vertical line
-                // through the vertex must pierce the reference, else no response.
-                System.Threading.Tasks.Parallel.For(0, pos.Length, fun i ->
-                    let vWorld = tT.TransformPos (V3d pos.[i] + cT)
-                    let vRefLocal = rInv.TransformPos vWorld - cR
-                    let mutable h = RayHit()
-                    let overlapsZ =
-                        lmR.scene.Intersect(V3f vRefLocal, V3f dnLocal, &h)
-                        || lmR.scene.Intersect(V3f vRefLocal, V3f upLocal, &h)
-                    if not overlapsZ then dist.[i] <- 1e30f
-                    else
-                        let res = lmR.scene.GetClosestPoint(V3f vRefLocal)
-                        if res.IsValid then
-                            let d  = sqrt (float res.DistanceSquared)
-                            let cp = V3d res.Point
-                            let pid = int res.PrimID
-                            if pid * 3 + 2 < refIdx.Length then
-                                let p0 = V3d refPos.[refIdx.[pid*3]]
-                                let p1 = V3d refPos.[refIdx.[pid*3+1]]
-                                let p2 = V3d refPos.[refIdx.[pid*3+2]]
-                                let nrm = Vec.cross (p1 - p0) (p2 - p0)
-                                let nl  = nrm.Length
-                                let s   = if nl > 1e-12 && Vec.dot (vRefLocal - cp) (nrm / nl) < 0.0 then -1.0 else 1.0
-                                dist.[i] <- float32 (s * d)
-                            else dist.[i] <- float32 d
-                        else dist.[i] <- 1e30f) |> ignore
-            log.LogInformation("region-distance {Target} vs {Ref}: {Verts} verts", req.TargetName, req.RefName, pos.Length)
-            return! json {| dist = dist |} next ctx
-        with ex ->
-            log.LogError(ex, "region-distance failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
-    }
+        let! req = ctx.BindJsonAsync<RegionDistanceRequest>()
+        let lmT = loadMesh req.TargetName req.TargetIndex
+        let lmR = loadMesh req.RefName req.RefIndex
+        let tT  = mat16 req.TargetTransform
+        let rInv = (mat16 req.RefTransform).Inverse
+        let cT  = lmT.parsed.centroid
+        let cR  = lmR.parsed.centroid
+        let pos = lmT.parsed.positions
+        let refPos = lmR.parsed.positions
+        let refIdx = lmR.parsed.indices
+        let dist = Array.zeroCreate<float32> pos.Length
+        let dnLocal = (rInv.TransformDir (V3d(0.0, 0.0, -1.0))).Normalized
+        let upLocal = (rInv.TransformDir (V3d(0.0, 0.0,  1.0))).Normalized
+        if req.Mode = 1 then
+            // z-diff: vertical world ray onto the reference; signed Δz
+            // (moving above reference → positive). Down then up.
+            Parallel.For(0, pos.Length, fun i ->
+                let vWorld = tT.TransformPos (V3d pos.[i] + cT)
+                let vRefLocal = rInv.TransformPos vWorld - cR
+                let mutable hd = RayHit()
+                if lmR.scene.Intersect(V3f vRefLocal, V3f dnLocal, &hd) then
+                    dist.[i] <- float32 hd.T
+                else
+                    let mutable hu = RayHit()
+                    if lmR.scene.Intersect(V3f vRefLocal, V3f upLocal, &hu) then
+                        dist.[i] <- float32 (- hu.T)
+                    else dist.[i] <- 1e30f) |> ignore
+        else
+            // M3C2 closest point, but with mode-1 support: the vertical line
+            // through the vertex must pierce the reference, else no response.
+            Parallel.For(0, pos.Length, fun i ->
+                let vWorld = tT.TransformPos (V3d pos.[i] + cT)
+                let vRefLocal = rInv.TransformPos vWorld - cR
+                let mutable h = RayHit()
+                let overlapsZ =
+                    lmR.scene.Intersect(V3f vRefLocal, V3f dnLocal, &h)
+                    || lmR.scene.Intersect(V3f vRefLocal, V3f upLocal, &h)
+                if not overlapsZ then dist.[i] <- 1e30f
+                else
+                    let res = lmR.scene.GetClosestPoint(V3f vRefLocal)
+                    if res.IsValid then
+                        let d  = sqrt (float res.DistanceSquared)
+                        let cp = V3d res.Point
+                        let pid = int res.PrimID
+                        if pid * 3 + 2 < refIdx.Length then
+                            let p0 = V3d refPos.[refIdx.[pid*3]]
+                            let p1 = V3d refPos.[refIdx.[pid*3+1]]
+                            let p2 = V3d refPos.[refIdx.[pid*3+2]]
+                            let nrm = Vec.cross (p1 - p0) (p2 - p0)
+                            let nl  = nrm.Length
+                            let s   = if nl > 1e-12 && Vec.dot (vRefLocal - cp) (nrm / nl) < 0.0 then -1.0 else 1.0
+                            dist.[i] <- float32 (s * d)
+                        else dist.[i] <- float32 d
+                    else dist.[i] <- 1e30f) |> ignore
+        log.LogInformation("region-distance {Target} vs {Ref}: {Verts} verts", req.TargetName, req.RefName, pos.Length)
+        return json {| dist = dist |}
+    })
 
 let contactRingsHandler : HttpHandler =
-    fun next ctx -> task {
+    tryQuery "contact-rings" (fun ctx -> task {
         let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<ContactRingsRequest>()
-            let lm = loadMesh req.Name 0
-            let radius = if req.Radius <= 0.0 then 1.0 else req.Radius
-            let maxPoints = if req.MaxPoints <= 0 then 4096 else req.MaxPoints
-            let rings = MeshAnalysis.contactRings lm (toV3d req.Centre) radius maxPoints
-            let out = rings |> Array.map (Array.map fromV3d)
-            log.LogInformation("contact-rings {Name} r={Radius:F2}: {Rings} rings, {Points} pts",
-                req.Name, radius, rings.Length, (rings |> Array.sumBy Array.length))
-            return! json {| rings = out |} next ctx
-        with ex ->
-            log.LogError(ex, "contact-rings failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
-    }
+        let! req = ctx.BindJsonAsync<ContactRingsRequest>()
+        let lm = loadMesh req.Name 0
+        let radius = if req.Radius <= 0.0 then 1.0 else req.Radius
+        let maxPoints = if req.MaxPoints <= 0 then 4096 else min req.MaxPoints 65536
+        let rings = MeshAnalysis.contactRings lm (toV3d req.Centre) radius maxPoints
+        let out = rings |> Array.map (Array.map fromV3d)
+        log.LogInformation("contact-rings {Name} r={Radius:F2}: {Rings} rings, {Points} pts",
+            req.Name, radius, rings.Length, (rings |> Array.sumBy Array.length))
+        return json {| rings = out |}
+    })
 
 // Vertical cross-sections through a pin: every mesh × every parallel plane ×
 // both registration poses in one request (per-mesh world transforms, probe
@@ -218,137 +232,119 @@ let contactRingsHandler : HttpHandler =
 // (max z-range ≈ dip direction), so every cell of a pin's matrix row shares one
 // world-space line; the response returns it for the client's chart↔world maths.
 let sliceHandler : HttpHandler =
-    fun next ctx -> task {
+    tryQuery "slice" (fun ctx -> task {
         let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<SliceRequest>()
-            let radius  = if req.Radius <= 0.0 then 1.0 else req.Radius
-            let maxPts  = if req.MaxPointsPerPlane <= 0 then 400 else req.MaxPointsPerPlane
-            let offsets = if isNull req.Offsets || req.Offsets.Length = 0 then [| 0.0 |] else req.Offsets
-            let centre  = toV3d req.Centre
-            let meshes  = req.Meshes |> Array.map (fun m ->
-                let other = if isNull m.TransformOther then None else Some (mat16 m.TransformOther)
-                m.Name, loadMesh m.Name 0, mat16 m.Transform, other)
-            let fallbackU =
-                let u = if isNull req.UDir then V3d.Zero else toV3d req.UDir
-                if u.Length > 1e-9 then u.Normalized else V3d.IOO
-            let uDir =
-                meshes
-                |> Array.tryFind (fun (n, _, _, _) -> n = req.ReferenceName)
-                |> Option.bind (fun (_, lm, t, _) -> MeshAnalysis.dipAzimuth lm t centre radius)
-                |> Option.defaultValue fallbackU
-            let normal = Vec.cross V3d.OOI uDir
-            let flatten (planes : V2d[][][]) =
-                planes |> Array.map (Array.map (fun line ->
-                    let flat = Array.zeroCreate<float> (line.Length * 2)
-                    for i in 0 .. line.Length - 1 do
-                        flat.[i * 2]     <- line.[i].X
-                        flat.[i * 2 + 1] <- line.[i].Y
-                    flat))
-            let results =
-                meshes
-                |> Array.Parallel.map (fun (name, lm, trafo, other) ->
-                    let planes = MeshAnalysis.planeSlices lm trafo centre uDir normal radius offsets maxPts
-                    {| name = name
-                       planes = flatten planes
-                       planesOther =
-                        match other with
-                        | Some t -> flatten (MeshAnalysis.planeSlices lm t centre uDir normal radius offsets maxPts)
-                        | None -> (null : float[][][]) |})
-            let pts = results |> Array.sumBy (fun m -> m.planes |> Array.sumBy (Array.sumBy (fun (l : float[]) -> l.Length / 2)))
-            log.LogInformation("slice r={Radius:F2} ×{Planes} planes az=({Ax:F2},{Ay:F2}): {Meshes} meshes, {Points} pts",
-                radius, offsets.Length, uDir.X, uDir.Y, results.Length, pts)
-            return! json {| azimuth = fromV3d uDir; meshes = results |} next ctx
-        with ex ->
-            log.LogError(ex, "slice failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
-    }
+        let! req = ctx.BindJsonAsync<SliceRequest>()
+        let radius  = if req.Radius <= 0.0 then 1.0 else req.Radius
+        let maxPts  = if req.MaxPointsPerPlane <= 0 then 400 else min req.MaxPointsPerPlane 4000
+        let offsets =
+            if isNull req.Offsets || req.Offsets.Length = 0 then [| 0.0 |]
+            elif req.Offsets.Length > 65 then
+                log.LogWarning("slice: {Count} offsets capped to 65", req.Offsets.Length)
+                Array.truncate 65 req.Offsets
+            else req.Offsets
+        let centre  = toV3d req.Centre
+        let meshes  = req.Meshes |> Array.map (fun m ->
+            let other = if isNull m.TransformOther then None else Some (mat16 m.TransformOther)
+            m.Name, loadMesh m.Name 0, mat16 m.Transform, other)
+        let uDir =
+            meshes
+            |> Array.tryFind (fun (n, _, _, _) -> n = req.ReferenceName)
+            |> Option.bind (fun (_, lm, t, _) -> MeshAnalysis.dipAzimuth lm t centre radius)
+            |> Option.defaultValue V3d.IOO
+        let normal = Vec.cross V3d.OOI uDir
+        let flatten (planes : V2d[][][]) =
+            planes |> Array.map (Array.map (fun line ->
+                let flat = Array.zeroCreate<float> (line.Length * 2)
+                for i in 0 .. line.Length - 1 do
+                    flat.[i * 2]     <- line.[i].X
+                    flat.[i * 2 + 1] <- line.[i].Y
+                flat))
+        let results =
+            meshes
+            |> Array.Parallel.map (fun (name, lm, trafo, other) ->
+                let planes = MeshAnalysis.planeSlices lm trafo centre uDir normal radius offsets maxPts
+                {| name = name
+                   planes = flatten planes
+                   planesOther =
+                    match other with
+                    | Some t -> flatten (MeshAnalysis.planeSlices lm t centre uDir normal radius offsets maxPts)
+                    | None -> (null : float[][][]) |})
+        let pts = results |> Array.sumBy (fun m -> m.planes |> Array.sumBy (Array.sumBy (fun (l : float[]) -> l.Length / 2)))
+        log.LogInformation("slice r={Radius:F2} ×{Planes} planes az=({Ax:F2},{Ay:F2}): {Meshes} meshes, {Points} pts",
+            radius, offsets.Length, uDir.X, uDir.Y, results.Length, pts)
+        return json {| azimuth = fromV3d uDir; meshes = results |}
+    })
 
 let probeHandler : HttpHandler =
-    fun next ctx -> task {
+    tryQuery "probe" (fun ctx -> task {
         let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<ProbeRequest>()
-            let meshes =
-                req.Meshes |> Array.map (fun m ->
-                    let trafo =
-                        if m.Transform <> null && m.Transform.Length = 16 then
-                            let t = m.Transform
-                            M44d(t.[0],  t.[1],  t.[2],  t.[3],
-                                 t.[4],  t.[5],  t.[6],  t.[7],
-                                 t.[8],  t.[9],  t.[10], t.[11],
-                                 t.[12], t.[13], t.[14], t.[15])
-                        else M44d.Identity
-                    { MeshProbe.Name = m.Name; MeshProbe.Lm = loadMesh m.Name 0; MeshProbe.Transform = trafo })
-            let args : MeshProbe.ProbeArgs = {
-                Meshes           = meshes
-                ReferenceName    = req.ReferenceName
-                Centre           = toV3d req.Centre
-                Radius           = if req.Radius <= 0.0 then 1.0 else req.Radius
-                Length           = req.Length
-                MaxPointsPerMesh = if req.MaxPointsPerMesh <= 0 then 8192 else req.MaxPointsPerMesh
-            }
-            match MeshProbe.run args with
-            | Result.Error reason ->
-                log.LogInformation("probe ref={Ref}: rejected ({Reason})", req.ReferenceName, reason)
-                return! json {| ok = false; reason = reason |} next ctx
-            | Result.Ok r ->
-                let dists =
-                    r.Distributions |> Array.map (fun d ->
-                        {| name = d.Name; count = d.Count
-                           median = d.Median; std = d.Std
-                           samples = d.Samples; positions = d.Positions |})
-                log.LogInformation("probe ref={Ref} r={Radius:F2} L={Length:F1}: {Meshes} meshes, {Points} pts",
-                    req.ReferenceName, args.Radius, r.Length,
-                    r.Distributions.Length, (r.Distributions |> Array.sumBy (fun d -> d.Count)))
-                return! json {|
-                    ok = true
-                    normal = fromV3d r.Normal
-                    distributions = dists
-                |} next ctx
-        with ex ->
-            log.LogError(ex, "probe failed")
-            return! RequestErrors.notFound (text ex.Message) next ctx
-    }
+        let! req = ctx.BindJsonAsync<ProbeRequest>()
+        let meshes =
+            req.Meshes |> Array.map (fun m ->
+                { MeshProbe.Name = m.Name; MeshProbe.Lm = loadMesh m.Name 0; MeshProbe.Transform = mat16 m.Transform })
+        let args : MeshProbe.ProbeArgs = {
+            Meshes           = meshes
+            ReferenceName    = req.ReferenceName
+            Centre           = toV3d req.Centre
+            Radius           = if req.Radius <= 0.0 then 1.0 else req.Radius
+            Length           = req.Length
+            MaxPointsPerMesh = if req.MaxPointsPerMesh <= 0 then 8192 else min req.MaxPointsPerMesh 65536
+        }
+        match MeshProbe.run args with
+        | Result.Error reason ->
+            log.LogInformation("probe ref={Ref}: rejected ({Reason})", req.ReferenceName, reason)
+            return json {| ok = false; reason = reason |}
+        | Result.Ok r ->
+            let dists =
+                r.Distributions |> Array.map (fun d ->
+                    {| name = d.Name; count = d.Count
+                       median = d.Median; std = d.Std
+                       samples = d.Samples; positions = d.Positions |})
+            log.LogInformation("probe ref={Ref} r={Radius:F2} L={Length:F1}: {Meshes} meshes, {Points} pts",
+                req.ReferenceName, args.Radius, r.Length,
+                r.Distributions.Length, (r.Distributions |> Array.sumBy (fun d -> d.Count)))
+            return json {|
+                ok = true
+                normal = fromV3d r.Normal
+                distributions = dists
+            |}
+    })
 
 // Weighted rigid landmark solve. Points arrive in world space at current poses;
 // the returned transform is a delta mapping them onto the reference.
 let lsqPairsHandler : HttpHandler =
-    fun next ctx -> task {
+    tryQuery "lsq-pairs" (fun ctx -> task {
         let log = ctx.GetLogger "Superserver"
-        try
-            let! req = ctx.BindJsonAsync<LsqPairsRequest>()
-            let pairs =
-                if isNull (box req.Pairs) then [||]
-                else
-                    req.Pairs |> Array.map (fun p ->
-                        toV3d p.MovingPoint, toV3d p.RefPoint, p.Weight)
-            match RegMath.solveRigid pairs with
-            | None ->
-                return! RequestErrors.badRequest
-                            (text (sprintf "lsq-pairs needs at least 3 pairs (got %d)" pairs.Length)) next ctx
-            | Some r ->
-                let m = r.Transform
-                let flat = [|
-                    m.M00; m.M01; m.M02; m.M03
-                    m.M10; m.M11; m.M12; m.M13
-                    m.M20; m.M21; m.M22; m.M23
-                    m.M30; m.M31; m.M32; m.M33
-                |]
-                log.LogInformation("lsq-pairs mov={Mov}: {Pairs} pairs, rms={Rms:F4}, collinear={Coll}",
-                    req.MovingName, pairs.Length,
-                    sqrt ((r.PerPairResiduals |> Array.sumBy (fun x -> x * x)) / float (max 1 r.PerPairResiduals.Length)),
-                    r.CollinearityWarning)
-                return! json {|
-                    transform = flat
-                    perPairResiduals = r.PerPairResiduals
-                    conditioning = {|
-                        eigenvalues = r.Eigenvalues
-                        collinearityWarning = r.CollinearityWarning
-                    |}
-                |} next ctx
-        with ex ->
-            log.LogError(ex, "lsq-pairs failed")
-            return! RequestErrors.badRequest (text ex.Message) next ctx
-    }
+        let! req = ctx.BindJsonAsync<LsqPairsRequest>()
+        let pairs =
+            if isNull (box req.Pairs) then [||]
+            else
+                req.Pairs |> Array.map (fun p ->
+                    toV3d p.MovingPoint, toV3d p.RefPoint, p.Weight)
+        match RegMath.solveRigid pairs with
+        | None ->
+            return RequestErrors.badRequest
+                        (text (sprintf "lsq-pairs needs at least 3 pairs (got %d)" pairs.Length))
+        | Some r ->
+            let m = r.Transform
+            let flat = [|
+                m.M00; m.M01; m.M02; m.M03
+                m.M10; m.M11; m.M12; m.M13
+                m.M20; m.M21; m.M22; m.M23
+                m.M30; m.M31; m.M32; m.M33
+            |]
+            log.LogInformation("lsq-pairs mov={Mov}: {Pairs} pairs, rms={Rms:F4}, collinear={Coll}",
+                req.MovingName, pairs.Length,
+                sqrt ((r.PerPairResiduals |> Array.sumBy (fun x -> x * x)) / float (max 1 r.PerPairResiduals.Length)),
+                r.CollinearityWarning)
+            return json {|
+                transform = flat
+                perPairResiduals = r.PerPairResiduals
+                conditioning = {|
+                    eigenvalues = r.Eigenvalues
+                    collinearityWarning = r.CollinearityWarning
+                |}
+            |}
+    })
 

@@ -55,8 +55,9 @@ type SolveInputs = {
     Pins    : Map<ScanPinId, V3d * Map<string, V3d>>
 }
 
-// λ2/λ1 of a weighted 3D point spread (client-side conditioning pre-check for the
-// readiness line; the authoritative value comes from the server).
+// λ2/λ1 of a weighted 3D point spread — the readiness line's conditioning check.
+// The server computes the same statistic during a solve (consumed by the
+// integration tests); the app itself reads only this client-side value.
 module RegConditioning =
     let private jacobiEigenvalues (m : M33d) =
         let a = [|

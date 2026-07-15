@@ -233,8 +233,6 @@ let run (args : ProbeArgs) : Result<ProbeResult, string> =
                         else
                             let mean = Array.average a
                             sqrt ((a |> Array.sumBy (fun x -> (x - mean) * (x - mean))) / float a.Length)
-                    // Chart samples: subsample the UNSORTED pairs so value ↔ position
-                    // stay aligned (the chart can brush a point back to its surface cell).
                     let pr = pairs.[i]
                     let samples, positions =
                         if pr.Length <= 300 then

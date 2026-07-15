@@ -96,11 +96,13 @@ let getPanoCenters (dataset : string) : Map<string, V3d> =
 
 let parseMesh (dataset : string) (name : string) (index : int) : ParsedMesh =
     let folder = Path.Combine(dataRoot.Value, dataset, name)
-    if not (Directory.Exists folder) then failwithf "not found: %s/%s" dataset name
+    // Typed exceptions: the query error shell maps these to 404 (vs 500).
+    if not (Directory.Exists folder) then
+        raise (DirectoryNotFoundException (sprintf "not found: %s/%s" dataset name))
 
     let files = objFiles folder
     if index < 0 || index >= files.Length then
-        failwithf "mesh index %d out of range (folder has %d)" index files.Length
+        raise (FileNotFoundException (sprintf "mesh index %d out of range (folder has %d)" index files.Length))
 
     let centroid = parseCentroid folder
     let mesh     = ObjParser.Load files.[index]

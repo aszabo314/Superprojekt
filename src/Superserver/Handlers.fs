@@ -6,7 +6,6 @@ open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
 open Giraffe
 open Aardvark.Base
-open Aardvark.Embree
 open QueryHandlers
 
 let datasetsHandler : HttpHandler =
@@ -20,35 +19,36 @@ let defaultDatasetHandler : HttpHandler =
         return! json (MeshLoader.defaultDataset ()) next ctx
     }
 
-let centroidsHandler (dataset : string) : HttpHandler =
+// { meshName: [x,y,z] } marshalling shared by the centroid + pano-centre endpoints.
+let private pointMapHandler (label : string) (dataset : string) (pairs : unit -> (string * V3d) seq) : HttpHandler =
     fun next ctx -> task {
         let log    = ctx.GetLogger "Superserver"
         let result = Collections.Generic.Dictionary<string, float[]>()
-        for name in MeshLoader.meshNames dataset do
-            match MeshLoader.getCentroid dataset name with
-            | Some c -> result.[name] <- [| c.X; c.Y; c.Z |]
-            | None   -> ()
-        log.LogInformation("centroids {Dataset}: {Count} meshes", dataset, result.Count)
+        for (name, c) in pairs () do
+            result.[name] <- [| c.X; c.Y; c.Z |]
+        log.LogInformation("{Label} {Dataset}: {Count} meshes", label, dataset, result.Count)
         return! json result next ctx
     }
 
+let centroidsHandler (dataset : string) : HttpHandler =
+    pointMapHandler "centroids" dataset (fun () ->
+        MeshLoader.meshNames dataset
+        |> Seq.choose (fun n -> MeshLoader.getCentroid dataset n |> Option.map (fun c -> n, c)))
+
 let panoCentersHandler (dataset : string) : HttpHandler =
-    fun next ctx -> task {
-        let log    = ctx.GetLogger "Superserver"
-        let result = Collections.Generic.Dictionary<string, float[]>()
-        for KeyValue(name, c) in MeshLoader.getPanoCenters dataset do
-            result.[name] <- [| c.X; c.Y; c.Z |]
-        log.LogInformation("pano-centers {Dataset}: {Count} meshes", dataset, result.Count)
-        return! json result next ctx
-    }
+    pointMapHandler "pano-centers" dataset (fun () ->
+        MeshLoader.getPanoCenters dataset |> Seq.map (fun (KeyValue(n, c)) -> n, c))
 
 // spacing = mean edge length (m, stride-sampled) — the mesh's sample spacing;
 // the client derives the ONE global slice-cell window from the coarsest mesh.
+// This is the CACHE WARMER: it loads every mesh, in parallel (the Lazy cache
+// makes concurrent loads safe), so cold start pays the slowest mesh, not the sum.
 let bboxesHandler (dataset : string) : HttpHandler =
     fun next ctx -> task {
         let log    = ctx.GetLogger "Superserver"
-        let result = Collections.Generic.Dictionary<string, {| min: float[]; max: float[]; spacing: float |}>()
-        for name in MeshLoader.meshNames dataset do
+        let bag    = Collections.Concurrent.ConcurrentDictionary<string, {| min: float[]; max: float[]; spacing: float |}>()
+        let names  = MeshLoader.meshNames dataset |> Array.ofSeq
+        Threading.Tasks.Parallel.ForEach(names, fun name ->
             let count = MeshLoader.meshCount dataset name
             if count > 0 then
                 let mutable wMin = V3d( infinity,  infinity,  infinity)
@@ -74,7 +74,8 @@ let bboxesHandler (dataset : string) : HttpHandler =
                         t <- t + step
                 if wMin.X <= wMax.X then
                     let spacing = if edgeCnt > 0 then edgeSum / float edgeCnt else 0.0
-                    result.[name] <- {| min = fromV3d wMin; max = fromV3d wMax; spacing = spacing |}
+                    bag.[name] <- {| min = fromV3d wMin; max = fromV3d wMax; spacing = spacing |}) |> ignore
+        let result = Collections.Generic.Dictionary<string, {| min: float[]; max: float[]; spacing: float |}>(bag)
         log.LogInformation("bboxes {Dataset}: {Count} meshes", dataset, result.Count)
         return! json result next ctx
     }

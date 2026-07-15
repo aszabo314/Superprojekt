@@ -1,5 +1,30 @@
 # Worklog
 
+## WP (2026-07-15j): audit cleanup 8/11 — server hardening + dedup
+
+- **tryQuery error shell** replaces the 7 copy-pasted try/with blocks in
+  QueryHandlers. Error codes are now honest: malformed/degenerate bodies →
+  400 (JsonException, null/index/argument/format), missing dataset/mesh →
+  404 (MeshLoader now throws typed Directory/FileNotFoundException instead
+  of failwithf — generic exceptions used to make EVERYTHING a 404),
+  unexpected → 500.
+- **bboxesHandler warms the cache in PARALLEL** (Parallel.ForEach per mesh
+  — safe now that MeshCache is Lazy-guarded): cold start pays the slowest
+  mesh, not the sum of all parse+BVH times.
+- **Density caps**: probe MaxPointsPerMesh ≤ 65536, slice MaxPointsPerPlane
+  ≤ 4000 + Offsets ≤ 65 (logged when truncated), contact-rings MaxPoints
+  ≤ 65536 — the "cap density" rule was only floor-applied before.
+- **Half-dead UDir request field removed** from SliceRequest (the client
+  never sent it, so the documented fallback chain collapsed to +X anyway).
+- **probeHandler's inline 16-float matrix parse** → the shared mat16
+  (8-line duplicate with a drift hazard); centroids/panoCenters handlers
+  → one pointMapHandler; dead `open Aardvark.Embree` (Handlers) dropped.
+- MeshProbe duplicate comment removed; RegConditioning comment fixed (the
+  client never reads the server's conditioning — only integration.mjs does).
+
+Server build green; integration suite 13/13 against a live :8004 server
+(incl. the lsq 400 path); client type-check green; Supertests 29/29.
+
 ## WP (2026-07-15i): audit cleanup 7/11 — GUI consolidation
 
 - **View.fs**: `raycastNearest` was a 40-line verbatim twin of

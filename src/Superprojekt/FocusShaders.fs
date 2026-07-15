@@ -65,8 +65,10 @@ module FocusShaders =
                 return V4f(loC * (1.0f - ts) + hiC * ts, 1.0f)
             elif abs v.s >= 1e20f then return V4f(0.886f, 0.910f, 0.941f, 1.0f)
             elif uniform.FocusMode = 2 then
+                // Displacement ramp — MUST match MeshShader.shade enc 3 and the
+                // dock legend (GuiOverlays): light → dark blue, one ramp everywhere.
                 let t = min 1.0f (max 0.0f (abs v.s / max 1e-6f uniform.FocusHi))
-                return V4f(0.933f + (0.114f - 0.933f) * t, 0.949f + (0.306f - 0.949f) * t, 0.965f + (0.847f - 0.965f) * t, 1.0f)
+                return V4f(0.93f + (0.118f - 0.93f) * t, 0.94f + (0.227f - 0.94f) * t, 0.98f + (0.541f - 0.98f) * t, 1.0f)
             else
                 // Coolwarm diverging difference map (§C, CET-D01): zero = near-white
                 // centre (welded to 0; grey means "no signal", not "0"), + through

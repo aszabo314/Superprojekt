@@ -44,7 +44,7 @@ module GuiTopBar =
                     Class "tb-regview-btn tb-regview-peek"
                     classWhen "btn-active" model.RegPeekHeld
                     Attribute("title", "Peek: hold to momentarily show the other registration state (hotkey: I)")
-                    Dom.OnPointerDown((fun _ -> if AVal.force solved then env.Emit [SetRegPeek true]), pointerCapture = true)
+                    Dom.OnPointerDown((fun _ -> env.Emit [SetRegPeek true]), pointerCapture = true)
                     Dom.OnPointerUp((fun _ -> env.Emit [SetRegPeek false]), pointerCapture = true)
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetRegPeek false])
                     "Peek"

@@ -186,7 +186,13 @@ module FocusScene =
         | Some own ->
             let cc = AVal.force model.CommonCentroid
             let s  = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
-            let world = (RigidTransform.renderToWorld s cc (AVal.force (MeshView.displayedMeshT model mesh))).Forward.TransformPos own
+            // COMMITTED pose, not displayedMeshT: the reg peek is purely visual —
+            // a fly-to during the hold must not target a pose that snaps back.
+            let disp =
+                match AVal.force model.RegView, Map.tryFind mesh (AVal.force model.SolvedTransforms) with
+                | RegAfter, Some tr -> tr
+                | _ -> Map.tryFind mesh (AVal.force model.LoadTransforms) |> Option.defaultValue Trafo3d.Identity
+            let world = (RigidTransform.renderToWorld s cc disp).Forward.TransformPos own
             let r = pin |> Option.map (fun p -> p.InnerRadius) |> Option.defaultValue 0.5
             [FlyToPoint(world, max 0.5 (r * 4.0))]
         | None -> [ZoomToMesh mesh]

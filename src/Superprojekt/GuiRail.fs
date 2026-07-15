@@ -240,9 +240,15 @@ module GuiRail =
                     Class "mb mb-ref"
                     classWhen "mb-on" isRef
                     Attribute("title", "Reference mesh — all error is relative to it")
+                    // Toggling single ⇒ ClickGate (a reference change wipes any solve;
+                    // a double-click must not toggle twice). Double = idempotent set.
                     Dom.OnClick(fun _ ->
-                        let cur = AVal.force isRef
-                        env.Emit [SetReferenceMesh (if cur then None else Some name)])
+                        ClickGate.single ("ref-" + name) (fun () ->
+                            let cur = AVal.force isRef
+                            env.Emit [SetReferenceMesh (if cur then None else Some name)]))
+                    Dom.OnDoubleClick(fun _ ->
+                        ClickGate.double ("ref-" + name) (fun () ->
+                            env.Emit [SetReferenceMesh (Some name)]))
                     isRef |> AVal.map (fun r -> if r then "★" else "☆")
                 }
             let modeBar =
@@ -355,8 +361,8 @@ module GuiRail =
                             if f then Some (Style [Css.Background (Primitives.c4bToRgbaCss (meshColor i) 0.4)]) else None)
                         classWhen "mx-col-ref" colRef
                         Attribute("title", name)
-                        Dom.OnClick(fun _ -> env.Emit [SetSelection (SelMesh name)])
-                        Dom.OnDoubleClick(fun _ -> env.Emit [SetSelection (SelMesh name); ZoomToMesh name])
+                        Dom.OnClick(fun _ -> ClickGate.now "mx-cell" (fun () -> env.Emit [SetSelection (SelMesh name)]))
+                        Dom.OnDoubleClick(fun _ -> ClickGate.now "mx-cell" (fun () -> env.Emit [SetSelection (SelMesh name); ZoomToMesh name]))
                         Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                         Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                         span { Class "mx-colsw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (hex (meshColor i))])) }
@@ -460,8 +466,8 @@ module GuiRail =
                     // Pin linking: click = select (the reducer applies the Inspect
                     // isolation swap, the focus frames the pin by itself);
                     // double-click adds the MAIN-3D zoom.
-                    Dom.OnClick(fun _ -> env.Emit [SetSelection (SelPin id)])
-                    Dom.OnDoubleClick(fun _ -> env.Emit [SetSelection (SelPin id); ZoomToPin id])
+                    Dom.OnClick(fun _ -> ClickGate.now "mx-cell" (fun () -> env.Emit [SetSelection (SelPin id)]))
+                    Dom.OnDoubleClick(fun _ -> ClickGate.now "mx-cell" (fun () -> env.Emit [SetSelection (SelPin id); ZoomToPin id]))
                     Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPin id))])
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                     span { Class "mx-pinname"; Style [Css.Background (hex pinColor)]; shortNm }

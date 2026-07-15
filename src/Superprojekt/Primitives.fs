@@ -333,6 +333,13 @@ module ClickGate =
         | _ -> ()
         action ()
 
+    // Immediate action that also supersedes any pending deferred single on `key`
+    // — for IDEMPOTENT controls sharing a click neighbourhood with gated toggles
+    // (matrix row/column heads vs the gated cells): without this, a quick
+    // cell-then-head sequence lets the cell's deferred single fire last and
+    // override the head's selection.
+    let now = double
+
 // Readiness-engine adapter: builds the engine input from individual model leaves
 // (adaptive-performance rule — never depend on the whole record).
 module ReadinessView =

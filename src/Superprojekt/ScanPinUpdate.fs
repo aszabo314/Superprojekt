@@ -298,6 +298,11 @@ module ScanPinUpdate =
                     let offsets = ScanPin.sliceOffsets k spacingFrac window
                     // ≥ the pin sphere, so the 3D/label overlays keep spanning the pin.
                     let radius = max pin.InnerRadius (ScanPin.sliceClipRadius window offsets)
+                    // One request serves both poses, but only the invalidated side is
+                    // marked/landed — a ready main slice is never stomped when only
+                    // SliceOther is missing.
+                    let needMain  = match pin.Slice with SliceNone -> true | _ -> false
+                    let needOther = solved && (match pin.SliceOther with SliceNone -> true | _ -> false)
                     task {
                         try
                             do! System.Threading.Tasks.Task.Delay(250, token)
@@ -312,18 +317,19 @@ module ScanPinUpdate =
                                     Meshes  = res |> Array.choose (fun (n, planes, other) ->
                                                 sel planes other |> Option.map (fun pl -> { MeshName = n; Planes = pl }))
                                 }
-                                env.Emit [ScanPinMsg (SliceComputed(id, mk (fun planes _ -> Some planes)))]
-                                if solved then
+                                if needMain then
+                                    env.Emit [ScanPinMsg (SliceComputed(id, mk (fun planes _ -> Some planes)))]
+                                if needOther then
                                     env.Emit [ScanPinMsg (SliceOtherComputed(id, mk (fun _ other -> other)))]
                         with
                         | :? System.OperationCanceledException -> ()
                         | ex ->
                             if not token.IsCancellationRequested then
-                                env.Emit [ScanPinMsg (SliceFailed(id, ex.Message))]
-                                if solved then env.Emit [ScanPinMsg (SliceOtherFailed(id, ex.Message))]
+                                if needMain then env.Emit [ScanPinMsg (SliceFailed(id, ex.Message))]
+                                if needOther then env.Emit [ScanPinMsg (SliceOtherFailed(id, ex.Message))]
                     } |> ignore
-                    let pin = { pin with Slice = SliceRunning }
-                    let pin = if solved then { pin with SliceOther = SliceRunning } else pin
+                    let pin = if needMain then { pin with Slice = SliceRunning } else pin
+                    let pin = if needOther then { pin with SliceOther = SliceRunning } else pin
                     pins <- HashMap.add id pin pins
                 { model with ScanPins = { sp with Pins = pins } }
 

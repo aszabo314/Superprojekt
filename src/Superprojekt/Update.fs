@@ -40,7 +40,8 @@ module Update =
                     { model.Registration with
                         ReferenceMesh = if centroids.Length > 0 then Some (fst centroids.[0]) else None }
                 DatasetCentroids =
-                    let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) model.DatasetCentroids
+                    // Fresh map — entries never accumulate across dataset switches.
+                    let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) Map.empty
                     if dataset <> "" then Map.add dataset common perMesh else perMesh }
         | PanoCentersLoaded pcs ->
             { model with PanoCenters = Map.ofArray pcs }
@@ -59,13 +60,15 @@ module Update =
         | ToggleGhostSilhouette ->
             { model with GhostSilhouette = not model.GhostSilhouette }
         | SetGhostOpacity v ->
-            { model with GhostOpacity = v }
+            { model with GhostOpacity = clamp 0.0 1.0 v }
         | SetShadingStrength v ->
-            { model with ShadingStrength = v }
+            { model with ShadingStrength = clamp 0.0 1.0 v }
         | SetSlopeThresholdDeg v ->
-            { model with SlopeThresholdDeg = v }
+            { model with SlopeThresholdDeg = clamp 1.0 89.0 v }
         | SetOutlineThreshold v ->
-            { model with OutlineThreshold = max 0.0 v }
+            // Floor = the Rgba8 G-buffer quantization step (~0.004); below it the
+            // staircase risers of a smooth slope read as false outline bands.
+            { model with OutlineThreshold = clamp 0.0001 0.01 v }
         | SetIsolineBands v ->
             { model with IsolineBands = max 1.0 v }
         | SetIsolineOpacity v ->
@@ -98,7 +101,11 @@ module Update =
             else { applyRegView v model with CorrArm = None; CorrPreview = None }
         | SetRegPeek held ->
             // Purely visual (the displayed transform flips); no probe/ring invalidation.
-            if model.RegPeekHeld = held then model else { model with RegPeekHeld = held }
+            // Solved-gate lives HERE so every entry path (button, hotkey I) behaves alike.
+            if model.RegPeekHeld = held || (held && Map.isEmpty model.SolvedTransforms) then model
+            else { model with RegPeekHeld = held }
+        | SetReferenceMesh mesh when model.Registration.ReferenceMesh = mesh ->
+            model    // idempotent: re-setting the same reference must not wipe a solve
         | SetReferenceMesh mesh ->
             // Reference change invalidates any solve (it was relative to the old reference):
             // drop SolvedTransforms, snap to Before, invalidate probes/rings, re-seed enabled pins.
@@ -253,21 +260,22 @@ module Update =
             { model with MeshHeatmap = mh }
         | SetShapeThreshold v ->
             { model with ShapeThreshold = clamp 0.0 1.0 v }
-        | VarianceComputed(mesh, arr) ->
-            // Keep only if still in Inspect and this is the reference mesh.
-            if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
+        | VarianceComputed(gen, mesh, arr) ->
+            // Keep only if not invalidated since issue, still in Inspect, and this
+            // is the reference mesh.
+            if gen = surfaceDistGen && model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
             else model
-        | VarianceOtherComputed(mesh, arr) ->
-            if model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
+        | VarianceOtherComputed(gen, mesh, arr) ->
+            if gen = surfaceDistGen && model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
                 { model with SurfaceDistanceOther = Map.add mesh arr model.SurfaceDistanceOther }
             else model
-        | FocusDistComputed(mesh, arr) ->
-            if model.WorkflowStep = Inspect then
+        | FocusDistComputed(gen, mesh, arr) ->
+            if gen = focusDistGen && model.WorkflowStep = Inspect then
                 { model with FocusDist = Map.add mesh arr model.FocusDist }
             else model
-        | FocusDistOtherComputed(mesh, arr) ->
-            if model.WorkflowStep = Inspect then
+        | FocusDistOtherComputed(gen, mesh, arr) ->
+            if gen = focusDistGen && model.WorkflowStep = Inspect then
                 { model with FocusDistOther = Map.add mesh arr model.FocusDistOther }
             else model
         | ToggleExtrinsicZDiff ->
@@ -312,7 +320,11 @@ module Update =
         | SetActiveDataset dataset ->
             if model.ActiveDataset = Some dataset then model
             else
+                // Everything keyed by the old dataset's meshes/pins must go, and the
+                // scalar-map generations bump so old-dataset fetches land dead.
                 bumpSolveGen ()
+                bumpSurfaceDist ()
+                bumpFocusDist ()
                 { model with
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
@@ -327,6 +339,14 @@ module Update =
                     RegView = RegBefore
                     LocateBackup = None
                     BrushedSamples = Set.empty
+                    CorrArm = None
+                    CorrPreview = None
+                    SurfaceDistance = Map.empty
+                    SurfaceDistanceOther = Map.empty
+                    FocusDist = Map.empty
+                    FocusDistOther = Map.empty
+                    MeshHeatmap = Map.empty
+                    Registration = { model.Registration with ReferenceMesh = None }
                     Toast = None }
         | SetRenderingMode m ->
             { model with RenderingMode = m }
@@ -353,10 +373,15 @@ module Update =
                 | EnterAnchorPlacement | SetInnerRadius _ -> applyRegView RegBefore model
                 | _ -> model
             let m = ScanPinUpdate.handleMsg env model msg
-            // Starting placement / deleting a pin cancels the armed editor.
             match msg with
+            // Starting placement / deleting a pin cancels the armed editor.
             | EnterAnchorPlacement | DeletePin _ ->
                 { m with CorrArm = None; CorrPreview = None }
+            // Probe/slice failures are otherwise invisible (the pin just stays
+            // blank until an unrelated invalidation) — surface them.
+            | ProbeFailed(_, e) | ProbeOtherFailed(_, e) | SliceFailed(_, e) | SliceOtherFailed(_, e) ->
+                showToast env "Pin measurement failed — see debug log (⚙)"
+                    { m with DebugLog = m.DebugLog.InsertAt(0, sprintf "pin query failed: %s" e) }
             | _ -> m
         | SetHovered h ->
             if model.Selection.Hovered = h then model
@@ -366,8 +391,8 @@ module Update =
             // its cache + bump the generation. Per-mode default (§C): pin isolation
             // defaults on in Correspondence, off elsewhere (the hold modifier overrides
             // momentarily where it's off). A workflow switch ends any mesh isolation
-            // (exitSolo resets the visibility toggles to ON) and drops the locate
-            // backup + the hover peek, both bound to the previous mode's view.
+            // and drops the locate backup + the hover peek, both bound to the
+            // previous mode's view.
             if model.WorkflowStep = step then model
             else
                 bumpSurfaceDist ()
@@ -387,9 +412,10 @@ module Update =
         | SetSelection selRaw ->
             // Dangling-pin guard: a stale click can outlive its pin.
             let sel =
+                // Same degradation as pin deletion: SelCell → its mesh, SelPin → none.
                 match selRaw with
                 | SelPin p when not (HashMap.containsKey p model.ScanPins.Pins) -> SelNone
-                | SelCell (p, _) when not (HashMap.containsKey p model.ScanPins.Pins) -> SelNone
+                | SelCell (p, m) when not (HashMap.containsKey p model.ScanPins.Pins) -> SelMesh m
                 | s -> s
             if model.Selection.Active = sel then model
             else
@@ -576,6 +602,7 @@ module Update =
                 if (not needMain && not needOther) || List.length moving < 2 then model
                 else
                     surfaceDistReqGen <- surfaceDistGen
+                    let gen = surfaceDistGen
                     let jobsAt view =
                         let refT = (ModelTransforms.displayedWorldAt view model refMesh).Forward
                         moving |> List.map (fun m ->
@@ -612,14 +639,14 @@ module Update =
                             match mainJobs with
                             | Some jobs ->
                                 let! results = jobs |> Async.Parallel |> Async.StartAsTask
-                                if not token.IsCancellationRequested && results.Length >= 2 then
-                                    env.Emit [VarianceComputed(refMesh, aggregate results)]
+                                if not token.IsCancellationRequested then
+                                    env.Emit [VarianceComputed(gen, refMesh, aggregate results)]
                             | None -> ()
                             match otherJobs with
                             | Some jobs ->
                                 let! results = jobs |> Async.Parallel |> Async.StartAsTask
-                                if not token.IsCancellationRequested && results.Length >= 2 then
-                                    env.Emit [VarianceOtherComputed(refMesh, aggregate results)]
+                                if not token.IsCancellationRequested then
+                                    env.Emit [VarianceOtherComputed(gen, refMesh, aggregate results)]
                             | None -> ()
                         with
                         | :? System.OperationCanceledException -> ()
@@ -653,6 +680,7 @@ module Update =
                 if List.isEmpty wanted || focusDistReqGen = focusDistGen then model
                 else
                     focusDistReqGen <- focusDistGen
+                    let gen = focusDistGen
                     let mode = if model.ExtrinsicZDiff then 1 else 0
                     let jobs =
                         wanted |> List.map (fun (m, view, isOther) ->
@@ -674,8 +702,8 @@ module Update =
                             if not token.IsCancellationRequested then
                                 for r in results do
                                     match r with
-                                    | Some (m, d, false) -> env.Emit [FocusDistComputed(m, d)]
-                                    | Some (m, d, true) -> env.Emit [FocusDistOtherComputed(m, d)]
+                                    | Some (m, d, false) -> env.Emit [FocusDistComputed(gen, m, d)]
+                                    | Some (m, d, true) -> env.Emit [FocusDistOtherComputed(gen, m, d)]
                                     | None -> ()
                         with
                         | :? System.OperationCanceledException -> ()

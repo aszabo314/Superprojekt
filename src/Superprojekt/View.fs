@@ -520,10 +520,8 @@ module View =
                 | " " ->
                     transact (fun () -> spaceHeld.Value <- true)
                 | "i" | "I" ->
-                    // Hold-I = registration peek (same gate as the top-bar button:
-                    // only once a solve exists).
-                    if not (Map.isEmpty (AVal.force model.SolvedTransforms)) then
-                        env.Emit [SetRegPeek true]
+                    // Hold-I = registration peek (the reducer gates on a solve existing).
+                    env.Emit [SetRegPeek true]
                 | "o" | "O" ->
                     // Hold-O = show-overlays (white-out except pins).
                     env.Emit [SetShowOverlays true]

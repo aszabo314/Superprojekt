@@ -40,10 +40,11 @@ type Message =
     | SetShapeThreshold of float
     // Difference sub-mode (M3C2 ↔ Δz) for the Inspect focus tiles.
     | ToggleExtrinsicZDiff
-    | VarianceComputed of mesh:string * float32[]
-    | VarianceOtherComputed of mesh:string * float32[]
-    | FocusDistComputed of mesh:string * float32[]
-    | FocusDistOtherComputed of mesh:string * float32[]
+    // gen = the issuing generation (UpdateHelpers) — stale results are dropped.
+    | VarianceComputed of gen:int * mesh:string * float32[]
+    | VarianceOtherComputed of gen:int * mesh:string * float32[]
+    | FocusDistComputed of gen:int * mesh:string * float32[]
+    | FocusDistOtherComputed of gen:int * mesh:string * float32[]
     | SurfaceDistanceFailed of mesh:string * reason:string
     // Per mesh: world bbox + mean sample spacing (m) — one fetch warms both.
     | SceneBoundsLoaded  of (string * Box3d * float)[]

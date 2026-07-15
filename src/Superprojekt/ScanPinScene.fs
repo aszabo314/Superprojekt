@@ -478,13 +478,15 @@ module ScanPinScene =
                     match hOpt with
                     | Some c -> Trafo3d.Scale r * Trafo3d.Translation c
                     | None -> Trafo3d.Scale 0.0)
+            // WHITE: the uncommitted-transient layer (§B1) — the tap commits it
+            // into the pin-coloured geometry, exactly like the correspondence ghost.
             let outlineSegs =
                 (placementHover, previewR) ||> AVal.map2 (fun hOpt r ->
                     match hOpt with
-                    | Some c -> PinGeometry.buildSphereOutline c r (V4d(0.1, 0.34, 0.86, 0.85)) 1.5
+                    | Some c -> PinGeometry.buildSphereOutline c r (V4d(1.0, 1.0, 1.0, 0.9)) 1.5
                     | None -> [||])
             ASet.ofList [
-                sphereShell view proj active trafo (AVal.constant (V4d(0.1, 0.34, 0.86, 0.18)))
+                sphereShell view proj active trafo (AVal.constant (V4d(1.0, 1.0, 1.0, 0.22)))
                 linesNode active outlineSegs
             ]
 
@@ -537,6 +539,7 @@ module ScanPinScene =
                         let scale = datasetScale.GetValue t
                         let peek  = model.RegPeekHeld.GetValue t
                         let solo  = model.MeshSolo.GetValue t
+                        let order = model.MeshOrder.Content.GetValue t
                         let out = ResizeArray<V3d * V3d * V4d * float>()
                         for (_, (centre, slice, sliceOther, colors)) in HashMap.toSeq pins do
                             let chosen =
@@ -552,7 +555,10 @@ module ScanPinScene =
                                         let col =
                                             match Map.tryFind sm.MeshName colors with
                                             | Some c4 -> V4d(Primitives.c4bToV3d c4, 0.95)
-                                            | None -> V4d(0.102, 0.337, 0.859, 0.95)
+                                            // Mesh identity stays in the mesh palette family (§B1).
+                                            | None ->
+                                                let idx = HashMap.tryFind sm.MeshName order |> Option.defaultValue 0
+                                                V4d(Primitives.c4bToV3d (Primitives.meshColor idx), 0.95)
                                         for line in sm.Planes.[ci] do
                                             for i in 0 .. line.Length - 2 do
                                                 let a = ScanPin.sliceToWorld centre s.UDir w line.[i]

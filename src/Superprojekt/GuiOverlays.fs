@@ -13,16 +13,17 @@ module GuiOverlays =
     // cursor over meshes it doesn't describe (§B6).
     let meshWheelLabel (model : AdaptiveModel) (cursorScreen : aval<V2d option>) (altHeld : aval<bool>) =
         let meshOrderMap = model.MeshOrder.Content
+        let visible =
+            (model.ActivePickingLayer, cursorScreen, altHeld) |||> AVal.map3 (fun layer cOpt alt ->
+                layer.IsSome && cOpt.IsSome && alt)
         div {
             Class "mesh-wheel-label"
-            (model.ActivePickingLayer, cursorScreen, altHeld) |||> AVal.map3 (fun layer cOpt alt ->
-                match layer, cOpt with
-                | Some _, Some pos when alt ->
-                    Some (Style [
-                        Left (sprintf "%.0fpx" (pos.X + 14.0))
-                        Top  (sprintf "%.0fpx" (pos.Y - 10.0))
-                    ])
-                | _ -> Some (Style [Display "none"]))
+            Primitives.showWhen visible
+            cursorScreen |> AVal.map (Option.map (fun pos ->
+                Style [
+                    Left (sprintf "%.0fpx" (pos.X + 14.0))
+                    Top  (sprintf "%.0fpx" (pos.Y - 10.0))
+                ]))
             (model.ActivePickingLayer, meshOrderMap) ||> AVal.map2 (fun layer order ->
                 match layer with
                 | Some name -> Primitives.numbered order name
@@ -145,7 +146,8 @@ module GuiOverlays =
                             let colorOf (name : string) =
                                 match Map.tryFind name p.DatasetColors with
                                 | Some c4 -> Primitives.c4bToHex c4
-                                | None -> "#1a56db"
+                                // Mesh identity stays in the mesh palette family (§B1).
+                                | None -> Primitives.c4bToHex (Primitives.meshColor (HashMap.tryFind name order |> Option.defaultValue 0))
                             // Draw order: outermost planes first, the centre slice last.
                             let planeOrder =
                                 Array.init s.Offsets.Length (fun k -> k)

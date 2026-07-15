@@ -1,5 +1,49 @@
 # Worklog
 
+## WP (2026-07-15e): audit cleanup 3/11 — reducer hardening + spec consistency
+
+1. **Clamps.** SetGhostOpacity/SetShadingStrength 0–1, SetSlopeThresholdDeg
+   1–89, SetOutlineThreshold 0.0001–0.01 (floor = the Rgba8 G-buffer
+   quantization step — a typed 0 used to produce false outline bands). The
+   slider text inputs accept any float, so the reducer is the only defence.
+2. **SetRegPeek gate moved into the reducer** (solved-gate); the top-bar
+   button and hotkey-I duplicates dropped — every entry path now identical.
+3. **SetActiveDataset reset completed**: CorrArm/CorrPreview, all four
+   scalar maps, MeshHeatmap, ReferenceMesh (CentroidsLoaded re-defaults it)
+   + surfaceDist/focusDist generation bumps so old-dataset fetches land dead.
+   DatasetCentroids now builds fresh (was accumulating across switches).
+4. **Scalar-map generation guards.** VarianceComputed/FocusDistComputed (+
+   Other) now carry the issuing generation; the handlers drop stale results
+   (a solve landing mid-fetch could previously file a wrong-pose array).
+   Dropped the redundant results.Length ≥ 2 emit checks.
+5. **Probe/slice failures surfaced**: toast + debug-log line (previously
+   constructed-but-never-shown Error states = silently blank pins).
+6. **ensureSlices need-gating**: only the invalidated side of the
+   (Slice, SliceOther) pair is marked Running/landed — a ready main slice
+   is no longer stomped when only SliceOther is missing.
+7. **Displacement ramp sync**: FocusShaders mode 2 now uses the exact
+   MeshShader enc-3 / dock-legend ramp (0.93,0.94,0.98)→(0.118,0.227,0.541)
+   — the focus tiles painted a visibly different blue. SHADER TOUCH —
+   in-browser compile check owed.
+8. **cellZoom targets the COMMITTED pose** (was peek-aware displayedMeshT —
+   a fly-to during the Peek hold aimed at a pose that snaps back).
+9. **ClickGate**: ★ reference button gated (a double-click used to toggle
+   twice = silently wipe the solve); SetReferenceMesh is now idempotent in
+   the reducer (re-set of the same reference never clears). New
+   `ClickGate.now` = immediate + supersedes pending singles — matrix
+   row/column heads use it so a fast cell→head sequence can't be overridden
+   by the cell's deferred single. Dangling SelCell now degrades to SelMesh
+   (same as pin deletion), not SelNone.
+10. **Colour discipline**: pin-placement ghost is WHITE (uncommitted
+    transient, §B1 — was accent blue, colliding with the diverging map's
+    blue); slice-line + label-chart colour fallbacks use the mesh palette
+    by index (were accent blue). Wheel label visibility via showWhen
+    (inline display:none violated the CSS rule).
+
+Type-check green (only the 2 known pre-existing warning families),
+Supertests 29/29. Browser pass owed: FocusShaders ramp change, white
+placement ghost visibility over terrain.
+
 ## WP (2026-07-15d): audit cleanup 2/11 — dead visibility machinery removed
 
 The audit found per-mesh visibility was write-only-true: no message or UI

@@ -475,6 +475,8 @@ module FocusScene =
                     model.WorkflowStep.GetValue t = Inspect
                     && model.InspectChannel.GetValue t = ChDisplacement
                     && Set.isEmpty (model.BrushedSamples.GetValue t)
+                // loaded.mesh is a plain ref — depend on pos so a late mesh load re-fires.
+                loaded.pos.GetValue t |> ignore
                 match loaded.mesh.Value with
                 | Some md when disp && Map.containsKey name (model.SolvedTransforms.GetValue t) ->
                     let pos = md.positions
@@ -745,6 +747,9 @@ module FocusScene =
                             pc.Value <- pc.Value + V2d(-float d.X * k, float d.Y * k))
                 lastPx <- p)
             Dom.OnMouseLeave(fun _ ->
+                // No pointer capture here (deliberate) — a release outside the control
+                // never reaches OnPointerUp, so leaving must end the drag too.
+                dragging <- false
                 if (armedHere ()).IsSome then
                     hoverGen <- hoverGen + 1
                     env.Emit [CorrPreviewComputed None])

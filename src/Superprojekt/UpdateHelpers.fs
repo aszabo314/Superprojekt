@@ -51,6 +51,12 @@ module UpdateHelpers =
     let mutable surfaceDistReqGen = -1
     let bumpSurfaceDist () = surfaceDistGen <- surfaceDistGen + 1
 
+    // Solve fan-out guard: CoarseSolved carries the generation it was issued
+    // under; anything that clears the registration bumps it, so a stale solve
+    // can never land after ensureSolveValidity / a reference or dataset change.
+    let mutable solveGen = 0
+    let bumpSolveGen () = solveGen <- solveGen + 1
+
     // Focus difference channel fetch (region-distance per moving mesh) — same
     // generation-guarded debounce as the variance map.
     let mutable focusDistCts = new System.Threading.CancellationTokenSource()

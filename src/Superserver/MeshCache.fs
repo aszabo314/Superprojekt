@@ -14,7 +14,9 @@ type LoadedMesh =
         bvh      : BbTree
     }
 
-let private cache = ConcurrentDictionary<struct(string * string * int), LoadedMesh>()
+// Lazy so GetOrAdd cannot run the factory twice: a lost race would leak the
+// native Device/Scene (nothing here disposes) and double the multi-second load.
+let private cache = ConcurrentDictionary<struct(string * string * int), Lazy<LoadedMesh>>()
 
 // BbTree build is recursive; non-uniform photogrammetry meshes can overflow a
 // thread-pool thread's 1 MB stack (uncatchable, kills the process). Build on a
@@ -34,7 +36,9 @@ let private buildBbTree (boxes : Box3d[]) : BbTree =
     tree
 
 let get (dataset : string) (name : string) (index : int) : LoadedMesh =
-    cache.GetOrAdd(struct(dataset, name, index), fun _ ->
+    let key = struct(dataset, name, index)
+    let entry =
+        cache.GetOrAdd(key, fun _ -> lazy (
         Log.line "loading mesh %s/%s/%d" dataset name index
         let pm     = MeshLoader.parseMesh dataset name index
         let device = new Device()
@@ -51,7 +55,12 @@ let get (dataset : string) (name : string) (index : int) : LoadedMesh =
                 Box3d(Fun.Min(p0, Fun.Min(p1, p2)), Fun.Max(p0, Fun.Max(p1, p2)))
             )
         let bvh = buildBbTree triBoxes
-        { parsed = pm; device = device; geometry = geom; scene = scene; bvh = bvh })
+        { parsed = pm; device = device; geometry = geom; scene = scene; bvh = bvh }))
+    try entry.Value
+    with _ ->
+        // Lazy caches exceptions; evict so a transient load failure stays retryable.
+        cache.TryRemove key |> ignore
+        reraise ()
 
 let traverseBvh (indices : int[]) (bbt : BbTree) (overlaps : Box3d -> bool) =
     let result = ResizeArray<int>()

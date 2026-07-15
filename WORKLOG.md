@@ -1,5 +1,37 @@
 # Worklog
 
+## WP (2026-07-15c): audit cleanup 1/11 — bug batch
+
+Five-agent codebase audit ran first (full rundown in chat); this WP series
+executes the cleanup. Commit 1 = the verified bugs:
+
+1. **Solve race.** `SolveCoarse` was the only unguarded async fan-out: a
+   stale `CoarseSolved` could land after `ensureSolveValidity` cleared the
+   registration (with `SolveInputs = None` it became uncleanable) or after a
+   dataset switch. Now: `UpdateHelpers.solveGen` (bumped by SolveCoarse,
+   SetReferenceMesh, SetActiveDataset, the validity clear); all per-mesh
+   results land as ONE `CoarseSolved(gen, solved, failed)` batch (also kills
+   the N-invalidation-cycles churn — one cycle per solve now); handler drops
+   stale generations.
+2. **Displacement arrows freeze.** `FocusScene.arrowSegs` read
+   `loaded.mesh.Value` (plain ref, no dependency edge) — entering Inspect +
+   Displacement before the mesh landed froze the arrows at empty forever.
+   Added the `loaded.pos.GetValue t` touch (same pattern as `scalarData`).
+3. **Pick hijack.** The coordinate-cross tick numbers + X/Y/Z tip `Sg.Text`
+   nodes (SceneGraph) lacked `Sg.NoEvents` — clicks on terrain visually
+   behind them landed on the label plane. Added.
+4. **MeshCache race.** `GetOrAdd` factory could run twice on concurrent cold
+   requests (bbox warm-up vs first fetch), leaking the losing Embree
+   Device/Scene undisposed. Now `Lazy<LoadedMesh>` with eviction on failure
+   (Lazy caches exceptions — a transient load error must stay retryable).
+5. **Active dataset invisible.** `.tb-gear-btn.active` CSS rule didn't
+   exist; the gear dataset picker never highlighted. Added.
+6. **Stuck focus drag.** Releasing a focus-single drag outside the panel
+   never cleared `dragging` (no pointer capture there by design) → phantom
+   panning. `OnMouseLeave` now ends the drag.
+
+Type-check green, Supertests 29/29.
+
 ## WP (2026-07-15b): white pick preview + move arrow · strong pin selection · isoline opacity slider
 
 Type-check green, Supertests 29/29. ONE shader touch (OutlineEdge gains the

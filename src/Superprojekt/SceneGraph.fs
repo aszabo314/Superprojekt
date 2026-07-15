@@ -98,6 +98,7 @@ module SceneGraph =
                     let labelPos = dir * dist + perpA * (tickLen * 0.5 + labelSize * 1.2)
                     let trafo = Trafo3d.Scale(labelSize) * textRot * Trafo3d.Translation(labelPos)
                     yield sg {
+                        Sg.NoEvents
                         Sg.Active active; Sg.View view; Sg.Proj proj
                         Sg.Pass RenderPass.passOne
                         Sg.DepthTest (AVal.constant DepthTest.None)
@@ -108,17 +109,20 @@ module SceneGraph =
         let tipOffset = axisLength + labelSize * 1.5
         let tipTrafo (baseT : Trafo3d) = center |> AVal.map (fun o -> baseT * Trafo3d.Translation o)
         let tipNodes =
-            [ sg { Sg.Active active; Sg.View view; Sg.Proj proj
+            [ sg { Sg.NoEvents
+                   Sg.Active active; Sg.View view; Sg.Proj proj
                    Sg.Pass RenderPass.passOne
                    Sg.DepthTest (AVal.constant DepthTest.None)
                    Sg.Trafo (tipTrafo (Trafo3d.Scale(labelSize * 1.5) * textTrafoX * Trafo3d.Translation(V3d.IOO * tipOffset)))
                    Sg.Text("X", color = AVal.constant (darken xColor), align = TextAlignment.Center) }
-              sg { Sg.Active active; Sg.View view; Sg.Proj proj
+              sg { Sg.NoEvents
+                   Sg.Active active; Sg.View view; Sg.Proj proj
                    Sg.Pass RenderPass.passOne
                    Sg.DepthTest (AVal.constant DepthTest.None)
                    Sg.Trafo (tipTrafo (Trafo3d.Scale(labelSize * 1.5) * textTrafoY * Trafo3d.Translation(V3d.OIO * tipOffset)))
                    Sg.Text("Y", color = AVal.constant (darken yColor), align = TextAlignment.Center) }
-              sg { Sg.Active active; Sg.View view; Sg.Proj proj
+              sg { Sg.NoEvents
+                   Sg.Active active; Sg.View view; Sg.Proj proj
                    Sg.Pass RenderPass.passOne
                    Sg.DepthTest (AVal.constant DepthTest.None)
                    Sg.Trafo (tipTrafo (Trafo3d.Scale(labelSize * 1.5) * textTrafoZ * Trafo3d.Translation(V3d.OOI * tipOffset)))

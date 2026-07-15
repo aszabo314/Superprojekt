@@ -104,6 +104,7 @@ module Update =
         | SetReferenceMesh mesh ->
             // Reference change invalidates any solve (it was relative to the old reference):
             // drop SolvedTransforms, snap to Before, invalidate probes/rings, re-seed enabled pins.
+            bumpSolveGen ()
             let model =
                 invalidateProbes (invalidateRings
                     { model with
@@ -152,18 +153,27 @@ module Update =
                 else
                     // Solve every solvable mesh in parallel; unsolvable meshes keep no
                     // SolvedTransform (stay at their load pose) and are flagged in the UI.
-                    for mesh in solvable do
-                        // (refAnchor world, moving anchor at load pose = own-frame point, weight 1).
-                        let queryPairs = pairsFor mesh |> Array.map (fun (_, ra, mp) -> ra, mp, 1.0)
-                        task {
-                            try
-                                let! world =
-                                    Query.lsqPairs ApiConfig.apiBase.Value mesh queryPairs
-                                    |> Async.StartAsTask
-                                env.Emit [CoarseSolved(mesh, world)]
-                            with ex ->
-                                env.Emit [CoarseFailed(mesh, ex.Message)]
-                        } |> ignore
+                    // All results land as one CoarseSolved batch (one invalidation
+                    // cycle), stamped with the generation this solve was issued under.
+                    bumpSolveGen ()
+                    let gen = solveGen
+                    task {
+                        let! results =
+                            solvable
+                            |> List.map (fun mesh -> async {
+                                // (refAnchor world, moving anchor at load pose = own-frame point, weight 1).
+                                let queryPairs = pairsFor mesh |> Array.map (fun (_, ra, mp) -> ra, mp, 1.0)
+                                try
+                                    let! world = Query.lsqPairs ApiConfig.apiBase.Value mesh queryPairs
+                                    return Choice1Of2 (mesh, world)
+                                with ex ->
+                                    return Choice2Of2 (mesh, ex.Message) })
+                            |> Async.Parallel
+                            |> Async.StartAsTask
+                        let solved = results |> Array.choose (function Choice1Of2 r -> Some r | _ -> None)
+                        let failed = results |> Array.choose (function Choice2Of2 r -> Some r | _ -> None)
+                        env.Emit [CoarseSolved(gen, solved, failed)]
+                    } |> ignore
                     // Record the exact correspondence data this solve consumes —
                     // the validity postlude clears the registration if any of it
                     // is later deleted or moved.
@@ -186,20 +196,28 @@ module Update =
                             sprintf "Solving %d of %d; %s needs %d more%s"
                                 n total (Primitives.shortName first) need extra
                     showToast env summary { model with SolveInputs = Some snapshot }
-        | CoarseSolved(mesh, world) ->
-            // lsqPairs returns the absolute world transform mapping the load-pose
-            // moving anchors onto the reference; store it as the SolvedTransform.
-            let scale = DatasetScale.forMesh model.DatasetScales mesh
-            let solvedRender =
-                RigidTransform.worldToRender scale model.CommonCentroid (Trafo3d(world, world.Inverse))
-            invalidateRings (invalidateProbes
-                { model with
-                    SolvedTransforms = Map.add mesh solvedRender model.SolvedTransforms
-                    RegView = RegAfter })
-        | CoarseFailed(mesh, reason) ->
-            showToast env (sprintf "Solve failed (%s)" (Primitives.shortName mesh))
-                { model with
-                    DebugLog = model.DebugLog.InsertAt(0, sprintf "coarse solve failed (%s): %s" mesh reason) }
+        | CoarseSolved(gen, solved, failed) ->
+            let model =
+                (model, failed) ||> Array.fold (fun m (mesh, reason) ->
+                    { m with DebugLog = m.DebugLog.InsertAt(0, sprintf "coarse solve failed (%s): %s" mesh reason) })
+            if gen <> solveGen then model    // registration cleared or re-solved while in flight
+            else
+                let model =
+                    match failed with
+                    | [||] -> model
+                    | _ -> showToast env (sprintf "Solve failed (%s)" (failed |> Array.map (fst >> Primitives.shortName) |> String.concat ", ")) model
+                if Array.isEmpty solved then model
+                else
+                    // lsqPairs returns the absolute world transform mapping the load-pose
+                    // moving anchors onto the reference; store it as the SolvedTransform.
+                    let st =
+                        (model.SolvedTransforms, solved) ||> Array.fold (fun st (mesh, world) ->
+                            let scale = DatasetScale.forMesh model.DatasetScales mesh
+                            Map.add mesh (RigidTransform.worldToRender scale model.CommonCentroid (Trafo3d(world, world.Inverse))) st)
+                    invalidateRings (invalidateProbes
+                        { model with
+                            SolvedTransforms = st
+                            RegView = RegAfter })
 
         | AnchorsSeeded(refUpdates, seeded, inRoi) ->
             let sp =
@@ -299,6 +317,7 @@ module Update =
         | SetActiveDataset dataset ->
             if model.ActiveDataset = Some dataset then model
             else
+                bumpSolveGen ()
                 { model with
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
@@ -540,6 +559,7 @@ module Update =
                                     | None -> false))
                 if intact then model
                 else
+                    bumpSolveGen ()
                     showToast env "Registration cleared — its correspondences changed"
                         (invalidateRings (invalidateProbes
                             { model with

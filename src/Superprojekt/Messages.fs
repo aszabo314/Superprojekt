@@ -25,11 +25,10 @@ type Message =
     | SetRegView of RegView
     // Spring-loaded hold: momentarily show the other registration state (visual only).
     | SetRegPeek of bool
-    // Writes SolvedTransform directly, per visible moving mesh with ≥3 in-ROI
-    // pairs, in parallel.
+    // Writes SolvedTransform directly, per moving mesh with ≥3 in-ROI pairs, in
+    // parallel. Results land as ONE batch, guarded by UpdateHelpers.solveGen.
     | SolveCoarse
-    | CoarseSolved of mesh:string * world:M44d
-    | CoarseFailed of mesh:string * reason:string
+    | CoarseSolved of gen:int * solved:(string * M44d)[] * failed:(string * string)[]
     // inRoi carries per-(pin,mesh) ROI membership; out-of-ROI meshes are not
     // seeded and their stale auto markers are dropped.
     | AnchorsSeeded of refUpdates:(ScanPinId * V3d)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]

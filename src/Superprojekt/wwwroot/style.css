@@ -520,6 +520,7 @@ body.loaded { background: #f4f6f8; }
     border-radius: 2px; padding: 2px 8px; font-size: 11px; cursor: pointer;
 }
 .tb-gear-btn:hover { background: #334155; }
+.tb-gear-btn.active { background: #1a56db; color: #ffffff; border-color: #1a56db; }
 .tb-gear-row .cbb-btn { background: #1e293b; color: #cbd5e1; border-color: #334155; }
 .tb-gear-row .cbb-btn:hover { background: #334155; }
 .tb-gear-row .cbb-btn-active { background: #1a56db !important; color: #ffffff !important; }

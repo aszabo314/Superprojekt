@@ -178,7 +178,7 @@ module SceneGraph =
     // focus reference tile ★), thick + bright so the reference is unmistakable in 3D.
     let private referenceOutline view proj active (model : AdaptiveModel) =
         bboxOutline view proj active model
-            (fun t -> (model.Registration.GetValue t).ReferenceMesh)
+            (fun t -> model.ReferenceMesh.GetValue t)
             (V4d(0.831, 0.631, 0.024, 0.95)) 2.5
 
     // The focused mesh's bbox edges in a cyan accent — the 3D "active" treatment

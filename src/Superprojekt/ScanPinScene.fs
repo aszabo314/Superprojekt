@@ -46,7 +46,7 @@ module ScanPinScene =
         AVal.custom (fun t ->
             let pins = pinsVal.GetValue t
             let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-            let rf = (model.Registration.GetValue t).ReferenceMesh
+            let rf = model.ReferenceMesh.GetValue t
             let moving = names |> List.filter (fun n -> Some n <> rf)
             let ready =
                 pins |> HashMap.toList
@@ -322,7 +322,7 @@ module ScanPinScene =
                     let sel = selectedId.GetValue t
                     let hov = model.Selection.Hovered.GetValue t
                     let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                    let rf = (model.Registration.GetValue t).ReferenceMesh
+                    let rf = model.ReferenceMesh.GetValue t
                     // Shown-set gating (solo overlay), so a locate shows
                     // only the located mesh's markers.
                     let solo = model.MeshSolo.GetValue t
@@ -330,11 +330,9 @@ module ScanPinScene =
                         names |> List.filter (fun n ->
                             Some n <> rf && MeshVisibility.shown solo n)
                     let out = ResizeArray<V3d * V3d * V4d * float>()
-                    for (id, (corr, pinColor)) in HashMap.toSeq pins do
-                        match corr with
-                        | Some c ->
-                            match c.RefAnchor with
-                            | Some ra ->
+                    for (id, (c, pinColor)) in HashMap.toSeq pins do
+                        match c.RefAnchor with
+                        | Some ra ->
                                 let isSel = sel = Some id
                                 let pinHover = hov = Some (HoverPin id)
                                 let emph = isSel || pinHover
@@ -375,8 +373,7 @@ module ScanPinScene =
                                         addCross out wR 0.07 col mw
                                         out.Add(wR, raR, V4d(col.XYZ, (if emph then 0.9 else 0.3)), (if isSel then 1.5 else 1.0))
                                     | None -> ()
-                            | None -> ()
-                        | _ -> ()
+                        | None -> ()
                     out.ToArray())
             ASet.ofList [ linesNodeTop constellationActive segs ]
 
@@ -560,8 +557,8 @@ module ScanPinScene =
                          | Some (pid, mesh) ->
                             let orig =
                                 HashMap.tryFind pid (pinsVal.GetValue t)
-                                |> Option.bind ScanPin.correspondence
-                                |> Option.bind (Correspondence.anchorOwn ((model.Registration.GetValue t).ReferenceMesh = Some mesh) mesh)
+                                |> Option.map ScanPin.correspondence
+                                |> Option.bind (Correspondence.anchorOwn (model.ReferenceMesh.GetValue t = Some mesh) mesh)
                                 |> Option.map (fun own -> (dispWorldAt t mesh).Forward.TransformPos own)
                             match orig with
                             | Some ow when Vec.distance ow w > 0.1 ->

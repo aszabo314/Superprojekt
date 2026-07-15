@@ -141,7 +141,7 @@ module GuiInspector =
         let effPin    = (selected, pinsVal) ||> AVal.map2 (fun id pins -> id |> Option.bind (fun i -> HashMap.tryFind i pins))
         let hasPin    = effPin |> AVal.map Option.isSome
         let orderVal  = model.MeshOrder.Content
-        let corrA     = effPin |> AVal.map (Option.bind ScanPin.correspondence)
+        let corrA     = effPin |> AVal.map (Option.map ScanPin.correspondence)
         let emit (m : Message) = env.Emit [m]
 
         // The matrix (left rail) is now the per-(pin,mesh) browser (§B); the
@@ -162,7 +162,7 @@ module GuiInspector =
                 match corrA.GetValue t with
                 | None -> None
                 | Some c ->
-                    let isRef = (model.Registration.GetValue t).ReferenceMesh = Some mesh
+                    let isRef = model.ReferenceMesh.GetValue t = Some mesh
                     Correspondence.anchorOwn isRef mesh c
                     |> Option.map (fun p -> (MeshView.displayedWorldCommittedAt model t mesh).Forward.TransformPos p))
 
@@ -172,7 +172,7 @@ module GuiInspector =
         let anchorRow (mesh : string) =
             let aw = anchorWorldOf mesh
             let idxVal = model.MeshOrder |> AMap.tryFind mesh |> AVal.map (Option.defaultValue 0)
-            let isRef = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some mesh)
+            let isRef = model.ReferenceMesh |> AVal.map ((=) (Some mesh))
             let axisInput (axis : int) (labelText : string) =
                 div {
                     Class "ins-anchor-axis"
@@ -292,7 +292,7 @@ module GuiInspector =
                     if System.Double.IsNaN v || System.Double.IsInfinity v then "0" else v.ToString("0.###", inv)
                 let order = orderVal.GetValue t
                 let pins = pinsVal.GetValue t
-                let rf = (model.Registration.GetValue t).ReferenceMesh
+                let rf = model.ReferenceMesh.GetValue t
                 let names = model.MeshNames.Content.GetValue t |> IndexList.toList
                 let moving = names |> List.filter (fun n -> Some n <> rf)
                 let sel = model.Selection.Active.GetValue t
@@ -311,7 +311,7 @@ module GuiInspector =
                 else
                     // Emphasized pose: the committed view, flipped while Peek is held
                     // (the flip is purely visual — same contract as the 3D peek).
-                    let actView = if peek then (match regView with RegBefore -> RegAfter | RegAfter -> RegBefore) else regView
+                    let actView = if peek then RegView.other regView else regView
                     let act = match actView with RegBefore -> "b" | RegAfter -> "a"
                     // Fixed halves: b = Before, a = After. Probe is the committed
                     // pose, ProbeOther the opposite — map accordingly.

@@ -1,5 +1,5 @@
-//40fd90d9-8c0a-938c-3b6e-b2bb5c54545f
-//7094fca6-8d2d-3344-dbb9-7c62e3f11da7
+//3947423d-ff70-c641-22da-1cfc1cac3c51
+//54aba213-48e6-a0e4-3602-a86fbb9c6236
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -61,7 +61,7 @@ type AdaptiveModel(value : Model) =
     let _SolveInputs_ = FSharp.Data.Adaptive.cval(value.SolveInputs)
     let _RegView_ = FSharp.Data.Adaptive.cval(value.RegView)
     let _RegPeekHeld_ = FSharp.Data.Adaptive.cval(value.RegPeekHeld)
-    let _Registration_ = FSharp.Data.Adaptive.cval(value.Registration)
+    let _ReferenceMesh_ = FSharp.Data.Adaptive.cval(value.ReferenceMesh)
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
     let _MeshHeatmap_ = FSharp.Data.Adaptive.cval(value.MeshHeatmap)
     let _ShapeThreshold_ = FSharp.Data.Adaptive.cval(value.ShapeThreshold)
@@ -125,7 +125,7 @@ type AdaptiveModel(value : Model) =
             _SolveInputs_.Value <- value.SolveInputs
             _RegView_.Value <- value.RegView
             _RegPeekHeld_.Value <- value.RegPeekHeld
-            _Registration_.Value <- value.Registration
+            _ReferenceMesh_.Value <- value.ReferenceMesh
             _Toast_.Value <- value.Toast
             _MeshHeatmap_.Value <- value.MeshHeatmap
             _ShapeThreshold_.Value <- value.ShapeThreshold
@@ -182,7 +182,7 @@ type AdaptiveModel(value : Model) =
     member __.SolveInputs = _SolveInputs_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<SolveInputs>>
     member __.RegView = _RegView_ :> FSharp.Data.Adaptive.aval<RegView>
     member __.RegPeekHeld = _RegPeekHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.Registration = _Registration_ :> FSharp.Data.Adaptive.aval<RegistrationState>
+    member __.ReferenceMesh = _ReferenceMesh_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MeshHeatmap = _MeshHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, HeatmapMode>>
     member __.ShapeThreshold = _ShapeThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>

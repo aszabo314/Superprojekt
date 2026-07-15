@@ -160,7 +160,7 @@ module MeshView =
         // Probe-only projection (adaptive-perf rule): slice/ring/edit churn on any
         // pin must not re-scan every pin's samples and dirty the uniform chains.
         let probesV = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Probe) |> AMap.toAVal
-        let refV = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
+        let refV = model.ReferenceMesh
         (probesV, refV) ||> AVal.map2 (fun probes rf ->
             ScanPin.inspectRange rf (probes |> HashMap.toSeq |> Seq.map snd))
 
@@ -323,7 +323,7 @@ module MeshView =
                                     let inspectGhost =
                                         model.WorkflowStep.GetValue t = Inspect
                                         && not hasHeatmap
-                                        && (match (model.Registration.GetValue t).ReferenceMesh with
+                                        && (match model.ReferenceMesh.GetValue t with
                                             | Some r -> r <> name
                                             | None -> false)
                                     not inspectGhost)
@@ -377,7 +377,7 @@ module MeshView =
                     // false-colour error map stands down — only the dots carry value.
                     elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then (0, None)
                     else
-                        let rf = (model.Registration.GetValue t).ReferenceMesh
+                        let rf = model.ReferenceMesh.GetValue t
                         if Some name = rf then
                             // While a moving mesh is isolated the reference is plain
                             // context (the isolated mesh paints its field against it);
@@ -531,7 +531,7 @@ module MeshView =
         let silhouetteOnly =
             model.WorkflowStep.GetValue t = Inspect
             && (match model.MeshSolo.GetValue t with
-                | Some s -> name <> s && (model.Registration.GetValue t).ReferenceMesh <> Some name
+                | Some s -> name <> s && model.ReferenceMesh.GetValue t <> Some name
                 | None -> false)
         if silhouetteOnly then 0.5f else 1.0f
 
@@ -668,7 +668,7 @@ module MeshView =
     // Active, gated by `show` (the focus single passes "a reference exists and it isn't
     // the shown mesh"), so a reference change just flips Active — no rebuild.
     let buildReferenceOutlineNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (color : V4f) (show : aval<bool>) : ISceneNode =
-        let refNameA = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
+        let refNameA = model.ReferenceMesh
         let nodes =
             model.MeshNames |> AList.map (fun name ->
                 let loaded, trafo = offscreenMesh model name

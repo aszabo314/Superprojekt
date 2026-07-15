@@ -119,9 +119,8 @@ module FocusScene =
                         let centre =
                             match sel with
                             | SelCell _ ->
-                                let isRef = (model.Registration.GetValue t).ReferenceMesh = Some name
-                                let anchorOwn =
-                                    ScanPin.correspondence pin |> Option.bind (Correspondence.anchorOwn isRef name)
+                                let isRef = model.ReferenceMesh.GetValue t = Some name
+                                let anchorOwn = Correspondence.anchorOwn isRef name (ScanPin.correspondence pin)
                                 match anchorOwn with
                                 | Some own ->
                                     // COMMITTED pose (peek excluded) — the focus camera
@@ -171,9 +170,9 @@ module FocusScene =
     // cell double-click and the re-click of an already-selected focus tile.
     let cellZoom (model : AdaptiveModel) (id : ScanPinId) (mesh : string) : list<Message> =
         let pin = HashMap.tryFind id (AVal.force (model.ScanPins.Pins |> AMap.toAVal))
-        let isRef = (AVal.force model.Registration).ReferenceMesh = Some mesh
+        let isRef = AVal.force model.ReferenceMesh = Some mesh
         let anchorOwn =
-            pin |> Option.bind ScanPin.correspondence |> Option.bind (Correspondence.anchorOwn isRef mesh)
+            pin |> Option.map ScanPin.correspondence |> Option.bind (Correspondence.anchorOwn isRef mesh)
         match anchorOwn with
         | Some own ->
             let cc = AVal.force model.CommonCentroid
@@ -312,7 +311,7 @@ module FocusScene =
                     // samples are brushed — only the brushed dots carry value.
                     elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then 0
                     else
-                        let rf = (model.Registration.GetValue t).ReferenceMesh
+                        let rf = model.ReferenceMesh.GetValue t
                         if Some name = rf then 0
                         else
                             match model.InspectChannel.GetValue t with
@@ -522,7 +521,7 @@ module FocusScene =
                     let ext = fitExtent.GetValue t
                     let z = zoomEff.GetValue t
                     let gr = 0.05 * ext / max 1e-3 z   // screen-fixed glyph half-size
-                    let isRef = (model.Registration.GetValue t).ReferenceMesh = Some name
+                    let isRef = model.ReferenceMesh.GetValue t = Some name
                     let dw = RigidTransform.renderToWorld s cc (dispRenderT.GetValue t)
                     for (id, p) in HashMap.toSeq pins do
                         let isSel = sel = Some id
@@ -530,7 +529,7 @@ module FocusScene =
                         // The reference's marker is its RefAnchor (own-frame like
                         // Anchors), drawn with the same glyph as any other mesh —
                         // in the PIN's colour (§B1: crosshair, circle and markers agree).
-                        match ScanPin.correspondence p |> Option.bind (Correspondence.anchorOwn isRef name) with
+                        match Correspondence.anchorOwn isRef name (ScanPin.correspondence p) with
                         | Some own ->
                             let aR = ScanPin.renderCentre cc s (dw.Forward.TransformPos own)
                             let gcol = V4d(pinCol, if isSel then 1.0 else 0.95)
@@ -552,7 +551,7 @@ module FocusScene =
                             addRingXY out pr (gr * 0.6) white 2.2 24
                             let orig =
                                 HashMap.tryFind pid pins
-                                |> Option.bind ScanPin.correspondence
+                                |> Option.map ScanPin.correspondence
                                 |> Option.bind (Correspondence.anchorOwn isRef name)
                                 |> Option.map (fun own -> dw.Forward.TransformPos own)
                             match orig with
@@ -743,8 +742,7 @@ module FocusScene =
                 if isPano then ASet.empty
                 else
                     let show =
-                        model.Registration |> AVal.map (fun r ->
-                            match r.ReferenceMesh with Some rf -> rf <> name | None -> false)
+                        model.ReferenceMesh |> AVal.map (function Some rf -> rf <> name | None -> false)
                     let node = MeshView.buildReferenceOutlineNode model viewT projT (V4f(0.831f, 0.631f, 0.024f, 1.0f)) show
                     OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) (model.IsolineOpacity |> AVal.map float32) OutlineView.maskAllOn node
             // One standard pipeline for both projections — the camera (viewT/projT)
@@ -855,7 +853,7 @@ module FocusScene =
         let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
         let colorCss = idxVal |> AVal.map (fun i -> Primitives.c4bToRgbCss (Primitives.meshColor i))
         let active = model.Selection.Active |> AVal.map (fun s -> Selection.mesh s = Some name)
-        let isRef  = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some name)
+        let isRef  = model.ReferenceMesh |> AVal.map ((=) (Some name))
         div {
             Class "focus-tile"
             Primitives.classWhen "fm-active" active

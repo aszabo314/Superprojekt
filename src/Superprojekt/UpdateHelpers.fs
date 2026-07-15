@@ -71,13 +71,10 @@ module UpdateHelpers =
         // The variance + focus-difference maps (both poses) share the same
         // triggers — drop to re-fetch lazily.
         if not (Map.isEmpty model.SurfaceDistance && Map.isEmpty model.SurfaceDistanceOther) then bumpSurfaceDist ()
-        if not (Map.isEmpty model.FocusDist && Map.isEmpty model.FocusDistOther) then bumpFocusDist ()
-        { model with
+        { (invalidateFocusDist model) with
             ScanPins = ScanPinModel.invalidateProbes model.ScanPins
             SurfaceDistance = Map.empty
-            SurfaceDistanceOther = Map.empty
-            FocusDist = Map.empty
-            FocusDistOther = Map.empty }
+            SurfaceDistanceOther = Map.empty }
 
     // Rings depend on pin geometry + transforms, NOT visibility (which gates
     // rendering only) — so this is applied on transform changes alone, unlike invalidateProbes.
@@ -134,17 +131,12 @@ module UpdateHelpers =
     let updateCorr (id : ScanPinId) (f : Correspondence -> Correspondence) (sp : ScanPinModel) =
         match HashMap.tryFind id sp.Pins with
         | Some pin ->
-            let cur = ScanPin.correspondence pin |> Option.defaultValue Correspondence.empty
-            { sp with Pins = HashMap.add id (ScanPin.withCorrespondence (Some (f cur)) pin) sp.Pins }
+            { sp with Pins = HashMap.add id (ScanPin.withCorrespondence (f (ScanPin.correspondence pin)) pin) sp.Pins }
         | None -> sp
 
-    // Every pin carries a correspondence, so this is effectively all pins.
-    let correspondenceEnabledIds (model : Model) =
-        model.ScanPins.Pins |> HashMap.toList
-        |> List.choose (fun (id, p) ->
-            match ScanPin.correspondence p with
-            | Some _ -> Some id
-            | None -> None)
+    // Every pin IS a registration correspondence.
+    let allPinIds (model : Model) =
+        model.ScanPins.Pins |> HashMap.toList |> List.map fst
 
     // ROI-clamped auto-seed. refAnchor = pin centre (host = reference) or its
     // closest-point projection onto the reference; per moving mesh the closest
@@ -157,13 +149,11 @@ module UpdateHelpers =
     // probe measure here) uses the wider ScanPin.roiReach. Manually-picked
     // markers are kept.
     let private seedAnchorsCore (env : Env<Message>) (model : Model) (pinIds : ScanPinId list) : unit =
-        match model.Registration.ReferenceMesh with
+        match model.ReferenceMesh with
         | None -> ()
         | Some refMesh ->
             let pins =
-                pinIds
-                |> List.choose (fun id -> HashMap.tryFind id model.ScanPins.Pins)
-                |> List.filter (fun p -> ScanPin.correspondence p |> Option.isSome)
+                pinIds |> List.choose (fun id -> HashMap.tryFind id model.ScanPins.Pins)
             if List.isEmpty pins then ()
             else
                 let meshes = model.MeshNames |> IndexList.toList
@@ -172,10 +162,7 @@ module UpdateHelpers =
                 let refT = Map.tryFind refMesh trafos |> Option.defaultValue Trafo3d.Identity
                 let jobs =
                     pins |> List.map (fun pin ->
-                        let keep =
-                            match ScanPin.correspondence pin with
-                            | Some c -> c.Anchors |> Map.filter (fun _ a -> a.Source <> AnchorAuto)
-                            | None -> Map.empty
+                        let keep = (ScanPin.correspondence pin).Anchors |> Map.filter (fun _ a -> a.Source <> AnchorAuto)
                         pin.Id, pin.Centre, pin.InnerRadius, pin.HostMeshName, keep)
                 task {
                     try

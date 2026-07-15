@@ -173,13 +173,13 @@ module GuiRail =
     let private rgb = Primitives.c4bToRgbCss
 
     let rail (env : Env<Message>) (model : AdaptiveModel) =
-        let refMesh   = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
+        let refMesh   = model.ReferenceMesh
         let curStep   = model.WorkflowStep
 
         // Status pill on the Register header only — Overview/Inspect titles stay bare.
         let corrStatus : aval<Pill * string> =
             AVal.custom (fun t ->
-                let hasRef = (model.Registration.GetValue t).ReferenceMesh |> Option.isSome
+                let hasRef = model.ReferenceMesh.GetValue t |> Option.isSome
                 let solved = not (Map.isEmpty (model.SolvedTransforms.GetValue t))
                 if not hasRef then PillBlock, "needs a reference"
                 elif solved then PillReady, "aligned"
@@ -317,7 +317,7 @@ module GuiRail =
                         let halfW = (win |> Option.defaultValue (p.InnerRadius * 2.0)) * 0.5
                         let _, _, relief = refProfile r.ReferenceMesh s halfW
                         let corr = ScanPin.correspondence p
-                        let inRoiOf m = match corr with Some c -> Map.tryFind m c.InRoi |> Option.defaultValue true | None -> true
+                        let inRoiOf m = Map.tryFind m corr.InRoi |> Option.defaultValue true
                         for d in r.Distributions do
                             if d.MeshName <> r.ReferenceMesh && d.Count > 0 && inRoiOf d.MeshName then
                                 es.Add(relief + abs d.Median)
@@ -391,7 +391,7 @@ module GuiRail =
                                 | _ -> None
                             match chosen with
                             | Some s ->
-                                let inRoi = match corr with Some c -> Map.tryFind mesh c.InRoi |> Option.defaultValue true | None -> true
+                                let inRoi = Map.tryFind mesh corr.InRoi |> Option.defaultValue true
                                 let dist = r.Distributions |> Array.tryFind (fun d -> d.MeshName = mesh)
                                 let count = dist |> Option.map (fun d -> d.Count) |> Option.defaultValue 0
                                 let ci = ScanPin.sliceCentreIndex s

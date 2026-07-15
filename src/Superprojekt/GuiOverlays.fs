@@ -109,7 +109,7 @@ module GuiOverlays =
                 let peek  = model.RegPeekHeld.GetValue t
                 let solo  = model.MeshSolo.GetValue t
                 let order = model.MeshOrder.Content.GetValue t
-                let rf    = (model.Registration.GetValue t).ReferenceMesh
+                let rf    = model.ReferenceMesh.GetValue t
                 let sb = System.Text.StringBuilder()
                 sb.Append '{' |> ignore
                 let mutable firstPin = true
@@ -172,25 +172,23 @@ module GuiOverlays =
                             // Correspondence markers, projected onto the centre slice
                             // (the out-of-plane offset is dropped deliberately).
                             let dots = ResizeArray<string>()
-                            (match p.Correspondence with
-                             | Some c ->
-                                for m in meshes do
-                                    let world =
-                                        if Some m.MeshName = rf then c.RefAnchor
-                                        else
-                                            let inRoi = Map.tryFind m.MeshName c.InRoi |> Option.defaultValue true
-                                            match Map.tryFind m.MeshName c.Anchors with
-                                            | Some a when inRoi ->
-                                                Some ((MeshView.displayedWorldPeekAt model t m.MeshName).Forward.TransformPos a.Point)
-                                            | _ -> None
-                                    match world with
-                                    | Some w ->
-                                        let uv = ScanPin.sliceUV p.Centre s.UDir w
-                                        let dx = min (cw - padX) (max padX (x uv.X))
-                                        let dy = min (ch - padB) (max padT (y uv.Y))
-                                        dots.Add (sprintf "{\"x\":%.1f,\"y\":%.1f,\"c\":\"%s\"}" dx dy (colorOf m.MeshName))
-                                    | None -> ()
-                             | None -> ())
+                            let c = p.Correspondence
+                            for m in meshes do
+                                let world =
+                                    if Some m.MeshName = rf then c.RefAnchor
+                                    else
+                                        let inRoi = Map.tryFind m.MeshName c.InRoi |> Option.defaultValue true
+                                        match Map.tryFind m.MeshName c.Anchors with
+                                        | Some a when inRoi ->
+                                            Some ((MeshView.displayedWorldPeekAt model t m.MeshName).Forward.TransformPos a.Point)
+                                        | _ -> None
+                                match world with
+                                | Some w ->
+                                    let uv = ScanPin.sliceUV p.Centre s.UDir w
+                                    let dx = min (cw - padX) (max padX (x uv.X))
+                                    let dy = min (ch - padB) (max padT (y uv.Y))
+                                    dots.Add (sprintf "{\"x\":%.1f,\"y\":%.1f,\"c\":\"%s\"}" dx dy (colorOf m.MeshName))
+                                | None -> ()
                             let grid = ResizeArray<string>()
                             if lo < 0.0 && hi > 0.0 then
                                 grid.Add (sprintf "{\"x1\":%.1f,\"y1\":%.1f,\"x2\":%.1f,\"y2\":%.1f}" padX (y 0.0) (cw - padX) (y 0.0))
@@ -393,7 +391,7 @@ module GuiOverlays =
                             let order = orderContent.GetValue t
                             let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
                             let pair =
-                                match soloName, (model.Registration.GetValue t).ReferenceMesh with
+                                match soloName, model.ReferenceMesh.GetValue t with
                                 | Some s, Some r -> sprintf " %d vs %d" (numOf s) (numOf r)
                                 | _ -> ""
                             let pinSuffix =

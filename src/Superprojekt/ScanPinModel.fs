@@ -28,7 +28,7 @@ type ScanPin = {
     PinColor             : C4b
     Centre               : V3d
     InnerRadius          : float
-    Correspondence       : Correspondence option
+    Correspondence       : Correspondence
     HostMeshName         : string option
     CreatedAt            : DateTime
     DatasetColors        : Map<string, C4b>
@@ -217,7 +217,7 @@ module ScanPin =
 
     let correspondence (p : ScanPin) = p.Correspondence
 
-    let withCorrespondence (c : Correspondence option) (p : ScanPin) =
+    let withCorrespondence (c : Correspondence) (p : ScanPin) =
         { p with Correspondence = c }
 
     // Signed error range (m, spanning 0) of one probe: min/max over its ready

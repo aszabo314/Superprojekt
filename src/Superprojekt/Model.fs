@@ -64,21 +64,15 @@ module RigidTransform =
         * Trafo3d.Scale(1.0 / scale)
         * Trafo3d.Translation(cc)
 
-type RegistrationState = {
-    ReferenceMesh    : string option
-}
-
-module RegistrationState =
-    let initial = {
-        ReferenceMesh  = None
-    }
-
 // Before shows every mesh at its immutable LoadTransform; After shows solved
 // meshes at their SolvedTransform (reference + unsolved stay at LoadTransform in
 // both). Disabled until any SolvedTransform exists.
 type RegView =
     | RegBefore
     | RegAfter
+
+module RegView =
+    let other = function RegBefore -> RegAfter | RegAfter -> RegBefore
 
 // One shared selection record every region reads/writes; linked highlighting is a
 // consequence of all panels binding here. hover = peek, click = select/promote.
@@ -193,7 +187,8 @@ type Model =
         // registration state (purely visual — flips the displayed transform, not
         // the committed RegView or any query).
         RegPeekHeld           : bool
-        Registration          : RegistrationState
+        // The ★ mesh all error is relative to (None only before the first load).
+        ReferenceMesh         : string option
 
         Toast                 : string option
 
@@ -340,7 +335,7 @@ module Model =
             SolveInputs           = None
             RegView               = RegBefore
             RegPeekHeld           = false
-            Registration          = RegistrationState.initial
+            ReferenceMesh         = None
             Toast                 = None
             ExtrinsicZDiff        = false
             SurfaceDistance       = Map.empty

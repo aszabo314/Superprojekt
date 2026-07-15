@@ -357,28 +357,22 @@ module ReadinessView =
         let meshNamesVal = model.MeshNames |> AList.toAVal
         AVal.custom (fun t ->
             let pins = pinsVal.GetValue t
-            let reg = model.Registration.GetValue t
+            let refMesh = model.ReferenceMesh.GetValue t
             let names = meshNamesVal.GetValue t |> IndexList.toList
             let moving =
-                match reg.ReferenceMesh with
+                match refMesh with
                 | Some r -> names |> List.filter (fun n -> n <> r)
                 | None -> []
             let enabledPins =
                 pins |> HashMap.toList
-                |> List.choose (fun (_, p) ->
-                    match ScanPin.correspondence p with
-                    | Some c ->
-                        let marked =
-                            moving
-                            |> List.filter (fun m -> Map.containsKey m c.Anchors)
-                            |> Set.ofList
-                        Some {
-                            RefAnchor     = c.RefAnchor |> Option.map (fun ra -> ra, 1.0)
-                            Accepted      = marked
-                        }
-                    | _ -> None)
+                |> List.map (fun (_, p) ->
+                    let c = ScanPin.correspondence p
+                    {
+                        RefAnchor = c.RefAnchor |> Option.map (fun ra -> ra, 1.0)
+                        Accepted  = moving |> List.filter (fun m -> Map.containsKey m c.Anchors) |> Set.ofList
+                    })
             {
-                ReferenceMesh = reg.ReferenceMesh
+                ReferenceMesh = refMesh
                 MovingMeshes  = moving
                 EnabledPins   = enabledPins
             })

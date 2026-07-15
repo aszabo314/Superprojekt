@@ -36,9 +36,7 @@ module Update =
                 SolveInputs      = None
                 RegView          = RegBefore
                 // Default reference = first mesh so reference-peek + registration UI work out of the box.
-                Registration     =
-                    { model.Registration with
-                        ReferenceMesh = if centroids.Length > 0 then Some (fst centroids.[0]) else None }
+                ReferenceMesh    = (if centroids.Length > 0 then Some (fst centroids.[0]) else None)
                 DatasetCentroids =
                     // Fresh map — entries never accumulate across dataset switches.
                     let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) Map.empty
@@ -104,7 +102,7 @@ module Update =
             // Solved-gate lives HERE so every entry path (button, hotkey I) behaves alike.
             if model.RegPeekHeld = held || (held && Map.isEmpty model.SolvedTransforms) then model
             else { model with RegPeekHeld = held }
-        | SetReferenceMesh mesh when model.Registration.ReferenceMesh = mesh ->
+        | SetReferenceMesh mesh when model.ReferenceMesh = mesh ->
             model    // idempotent: re-setting the same reference must not wipe a solve
         | SetReferenceMesh mesh ->
             // Reference change invalidates any solve (it was relative to the old reference):
@@ -113,13 +111,13 @@ module Update =
             let model =
                 invalidateProbes (invalidateRings
                     { model with
-                        Registration = { model.Registration with ReferenceMesh = mesh }
+                        ReferenceMesh = mesh
                         SolvedTransforms = Map.empty
                         SolveInputs = None
                         RegView = RegBefore
                         CorrArm = None; CorrPreview = None })
             match mesh with
-            | Some _ -> seedAnchors env model (correspondenceEnabledIds model)
+            | Some _ -> seedAnchors env model (allPinIds model)
             | None -> model
 
         // Weighted rigid solve per visible moving mesh with ≥3 in-ROI pairs, in
@@ -129,8 +127,7 @@ module Update =
         | SolveCoarse ->
             // Any other correspondence action cancels a live 3D pick.
             let model = { model with CorrArm = None; CorrPreview = None }
-            let reg = model.Registration
-            match reg.ReferenceMesh with
+            match model.ReferenceMesh with
             | None -> showToast env "Designate a reference mesh (★) first" model
             | Some refMesh ->
                 let moving =
@@ -138,10 +135,8 @@ module Update =
                 let enabledPins =
                     model.ScanPins.Pins |> HashMap.toList
                     |> List.choose (fun (_, p) ->
-                        match ScanPin.correspondence p with
-                        | Some c when c.RefAnchor.IsSome ->
-                            Some (p.Id, c.RefAnchor.Value, c.Anchors)
-                        | _ -> None)
+                        let c = ScanPin.correspondence p
+                        c.RefAnchor |> Option.map (fun ra -> p.Id, ra, c.Anchors))
                 let pairsFor mesh =
                     enabledPins
                     |> List.choose (fun (pinId, ra, anchors) ->
@@ -263,11 +258,11 @@ module Update =
         | VarianceComputed(gen, mesh, arr) ->
             // Keep only if not invalidated since issue, still in Inspect, and this
             // is the reference mesh.
-            if gen = surfaceDistGen && model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
+            if gen = surfaceDistGen && model.WorkflowStep = Inspect && model.ReferenceMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
             else model
         | VarianceOtherComputed(gen, mesh, arr) ->
-            if gen = surfaceDistGen && model.WorkflowStep = Inspect && model.Registration.ReferenceMesh = Some mesh then
+            if gen = surfaceDistGen && model.WorkflowStep = Inspect && model.ReferenceMesh = Some mesh then
                 { model with SurfaceDistanceOther = Map.add mesh arr model.SurfaceDistanceOther }
             else model
         | FocusDistComputed(gen, mesh, arr) ->
@@ -289,11 +284,7 @@ module Update =
             if bboxes.Length = 0 then model
             else
                 let union =
-                    bboxes |> Array.fold (fun (acc : Box3d) (_, b, _) ->
-                        Box3d(
-                            V3d(min acc.Min.X b.Min.X, min acc.Min.Y b.Min.Y, min acc.Min.Z b.Min.Z),
-                            V3d(max acc.Max.X b.Max.X, max acc.Max.Y b.Max.Y, max acc.Max.Z b.Max.Z)
-                        )) Box3d.Invalid
+                    bboxes |> Array.fold (fun (acc : Box3d) (_, b, _) -> acc.ExtendedBy b) Box3d.Invalid
                 let padded = Box3d(union.Min - V3d.III, union.Max + V3d.III)
                 let perMesh = bboxes |> Array.fold (fun m (n, b, _) -> Map.add n b m) Map.empty
                 let spacing = bboxes |> Array.fold (fun m (n, _, s) -> if s > 0.0 then Map.add n s m else m) Map.empty
@@ -306,7 +297,7 @@ module Update =
                 // PanoCenters/centroids are in): its panorama centre, framed to its own
                 // bounds rather than the whole scene. One-shot per dataset load.
                 let center, radius =
-                    match m.Registration.ReferenceMesh |> Option.bind (fun r -> Map.tryFind r perMesh |> Option.map (fun b -> r, b)) with
+                    match m.ReferenceMesh |> Option.bind (fun r -> Map.tryFind r perMesh |> Option.map (fun b -> r, b)) with
                     | Some (r, b) ->
                         let scale = DatasetScale.forMesh m.DatasetScales r
                         ModelTransforms.panoCenterRender m r, max 1.0 (b.Size.Length * scale * 0.6)
@@ -346,7 +337,7 @@ module Update =
                     FocusDist = Map.empty
                     FocusDistOther = Map.empty
                     MeshHeatmap = Map.empty
-                    Registration = { model.Registration with ReferenceMesh = None }
+                    ReferenceMesh = None
                     Toast = None }
         | SetRenderingMode m ->
             { model with RenderingMode = m }
@@ -362,7 +353,7 @@ module Update =
             // always evaluates at the Before pose regardless).
             let model = applyRegView RegBefore model
             let model = ScanPinUpdate.handleMsg env model msg
-            match model.Registration.ReferenceMesh, Selection.pin model.Selection.Active with
+            match model.ReferenceMesh, Selection.pin model.Selection.Active with
             | Some _, Some id -> seedAnchors env model [id]
             | _ -> model
         | ScanPinMsg msg ->
@@ -436,7 +427,7 @@ module Update =
                     // reference (it paints its own difference/displacement field);
                     // the reference returns to the ensemble.
                     if model.WorkflowStep = Inspect then
-                        if model.Registration.ReferenceMesh <> Some m then enterSolo m model
+                        if model.ReferenceMesh <> Some m then enterSolo m model
                         else exitSolo model
                     else model
                 | SelPin _ ->
@@ -475,23 +466,20 @@ module Update =
             else
             match HashMap.tryFind pinId model.ScanPins.Pins with
             | Some pin ->
-                match ScanPin.correspondence pin with
-                | Some _ ->
-                    if (world - pin.Centre).Length > pin.InnerRadius then
-                        showToast env "Pick inside the pin ROI" { model with CorrPreview = None }
-                    else
-                        let own = (ModelTransforms.displayedWorld model mesh).Backward.TransformPos world
-                        let isRef = model.Registration.ReferenceMesh = Some mesh
-                        let sp =
-                            updateCorr pinId (fun corr ->
-                                if isRef then
-                                    { corr with RefAnchor = Some own; InRoi = Map.add mesh true corr.InRoi }
-                                else
-                                    { corr with
-                                        Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
-                                        InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
-                        { model with ScanPins = sp; CorrArm = None; CorrPreview = None }
-                | None -> model
+                if (world - pin.Centre).Length > pin.InnerRadius then
+                    showToast env "Pick inside the pin ROI" { model with CorrPreview = None }
+                else
+                    let own = (ModelTransforms.displayedWorld model mesh).Backward.TransformPos world
+                    let isRef = model.ReferenceMesh = Some mesh
+                    let sp =
+                        updateCorr pinId (fun corr ->
+                            if isRef then
+                                { corr with RefAnchor = Some own; InRoi = Map.add mesh true corr.InRoi }
+                            else
+                                { corr with
+                                    Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
+                                    InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
+                    { model with ScanPins = sp; CorrArm = None; CorrPreview = None }
             | None -> model
         | ToggleCorrArm(pinId, mesh) ->
             // Arm/disarm the unified editor for (pin, mesh). Arming snaps the view to
@@ -557,19 +545,17 @@ module Update =
             | None -> model
             | Some s ->
                 let intact =
-                    model.Registration.ReferenceMesh = Some s.RefMesh
+                    model.ReferenceMesh = Some s.RefMesh
                     && s.Pins |> Map.forall (fun pinId (ra, meshPts) ->
                         match HashMap.tryFind pinId model.ScanPins.Pins with
                         | None -> false
                         | Some pin ->
-                            match ScanPin.correspondence pin with
-                            | None -> false
-                            | Some c ->
-                                c.RefAnchor = Some ra
-                                && meshPts |> Map.forall (fun mesh pt ->
-                                    match Map.tryFind mesh c.Anchors with
-                                    | Some a -> a.Point = pt
-                                    | None -> false))
+                            let c = ScanPin.correspondence pin
+                            c.RefAnchor = Some ra
+                            && meshPts |> Map.forall (fun mesh pt ->
+                                match Map.tryFind mesh c.Anchors with
+                                | Some a -> a.Point = pt
+                                | None -> false))
                 if intact then model
                 else
                     bumpSolveGen ()
@@ -591,7 +577,7 @@ module Update =
         // while a mesh is isolated.
         if model.WorkflowStep <> Inspect || model.MeshSolo.IsSome then model
         else
-            match model.Registration.ReferenceMesh with
+            match model.ReferenceMesh with
             | Some refMesh when surfaceDistReqGen <> surfaceDistGen ->
                 let needMain = not (Map.containsKey refMesh model.SurfaceDistance)
                 let needOther =
@@ -608,7 +594,7 @@ module Update =
                         moving |> List.map (fun m ->
                             let mT = (ModelTransforms.displayedWorldAt view model m).Forward
                             Query.regionDistance ApiConfig.apiBase.Value refMesh 0 m 0 refT mT 0)
-                    let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
+                    let otherView = RegView.other model.RegView
                     let mainJobs  = if needMain then Some (jobsAt model.RegView) else None
                     let otherJobs = if needOther then Some (jobsAt otherView) else None
                     let aggregate (results : float32[][]) =
@@ -664,14 +650,14 @@ module Update =
     let private ensureFocusDist (env : Env<Message>) (model : Model) : Model =
         if model.WorkflowStep <> Inspect || model.InspectChannel <> ChDifference then model
         else
-            match model.Registration.ReferenceMesh with
+            match model.ReferenceMesh with
             | None -> model
             | Some refMesh ->
                 // Shown moving meshes: under solo only the isolated mesh needs its field.
                 let moving =
                     model.MeshNames |> IndexList.toList
                     |> List.filter (fun n -> n <> refMesh && MeshVisibility.shown model.MeshSolo n)
-                let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
+                let otherView = RegView.other model.RegView
                 let solved = not (Map.isEmpty model.SolvedTransforms)
                 let wanted =
                     [ for m in moving do

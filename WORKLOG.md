@@ -1,5 +1,30 @@
 # Worklog
 
+## WP (2026-07-15k): audit cleanup 9/11 — state-layer consolidation
+
+- **`ScanPin.Correspondence` de-optionalized** (it was never None — every
+  pin is a registration correspondence by construction): the dead `None`
+  arms in PickCorrespondenceAt / ensureSolveValidity / seedAnchorsCore /
+  constellation / GuiOverlays / GuiRail collapsed; `correspondenceEnabledIds`
+  (which its own comment admitted was "effectively all pins") → `allPinIds`;
+  `updateCorr` lost its defaulting; `withCorrespondence` takes the record.
+- **`RegistrationState` flattened**: the one-field record (+ its module)
+  became `Model.ReferenceMesh : string option` — `model.Registration.
+  ReferenceMesh` shapes rewritten at ~40 sites (adaptive reads become plain
+  `model.ReferenceMesh.GetValue t` / direct aval use).
+- **`RegView.other`** names the Before↔After flip (was spelled out 5×);
+  **`restartCts`** names the per-pin cancel-and-replace debounce token
+  discipline (was copied in ensureProbe/ensureSlices/ensureRings);
+  `invalidateProbes` now composes `invalidateFocusDist` instead of
+  re-inlining its body; the SceneBoundsLoaded bbox union uses
+  `Box3d.ExtendedBy`.
+- Deliberately NOT done: the 8 probe/slice result-handler arms stay as
+  explicit 3-liners — a get/set-lens helper would trade 16 lines for
+  indirection against the house "no unnecessary abstractions" rule.
+
+Adaptify re-run (Model/ScanPinModel/CameraModel). Type-check green,
+server build green, Supertests 29/29.
+
 ## WP (2026-07-15j): audit cleanup 8/11 — server hardening + dedup
 
 - **tryQuery error shell** replaces the 7 copy-pasted try/with blocks in

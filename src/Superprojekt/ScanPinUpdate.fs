@@ -23,6 +23,16 @@ module ScanPinUpdate =
     let private sliceCtsMap =
         System.Collections.Generic.Dictionary<ScanPinId, System.Threading.CancellationTokenSource>()
 
+    // Cancel-and-replace a pin's debounce token — the ONE per-pin debounce
+    // discipline (the next invalidation cancels the previous fetch).
+    let private restartCts (map : System.Collections.Generic.Dictionary<ScanPinId, System.Threading.CancellationTokenSource>) (id : ScanPinId) =
+        match map.TryGetValue id with
+        | true, cts -> cts.Cancel()
+        | _ -> ()
+        let cts = new System.Threading.CancellationTokenSource()
+        map.[id] <- cts
+        cts.Token
+
     let private assignColors (meshNames : IndexList<string>) =
         meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
 
@@ -50,7 +60,7 @@ module ScanPinUpdate =
             PinColor             = Primitives.PinPalette.color slot
             Centre               = worldCentre
             InnerRadius          = max 0.01 model.QuickPinRadius
-            Correspondence       = Some Correspondence.empty
+            Correspondence       = Correspondence.empty
             HostMeshName         = model.ActivePickingLayer
             CreatedAt            = System.DateTime.UtcNow
             DatasetColors        = assignColors model.MeshNames
@@ -95,15 +105,14 @@ module ScanPinUpdate =
             match Selection.pin model.Selection.Active with
             | Some id -> sp |> updatePin id (fun pin ->
                 let r' = max 0.01 r
+                let c = ScanPin.correspondence pin
                 let corr =
-                    ScanPin.correspondence pin |> Option.map (fun c ->
-                        let refAnchor =
-                            c.RefAnchor |> Option.filter (fun ra -> (ra - pin.Centre).Length <= r')
-                        let anchors =
+                    { c with
+                        RefAnchor = c.RefAnchor |> Option.filter (fun ra -> (ra - pin.Centre).Length <= r')
+                        Anchors =
                             c.Anchors |> Map.filter (fun mesh a ->
                                 let w = (ModelTransforms.displayedWorldAt RegBefore model mesh).Forward.TransformPos a.Point
-                                (w - pin.Centre).Length <= r')
-                        { c with RefAnchor = refAnchor; Anchors = anchors })
+                                (w - pin.Centre).Length <= r') }
                 ScanPin.withCorrespondence corr
                     { pin with InnerRadius = r'; Probe = ProbeNone; ProbeOther = ProbeNone
                                Slice = SliceNone; SliceOther = SliceNone; ContactRings = RingsNone })
@@ -200,9 +209,9 @@ module ScanPinUpdate =
             match allMeshes with
             | [] -> model
             | _ ->
-                let refMesh0 = model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r allMeshes)
+                let refMesh0 = model.ReferenceMesh |> Option.filter (fun r -> List.contains r allMeshes)
                 let meshes = allMeshes |> List.map (fun n -> n, (ModelTransforms.displayedWorld model n).Forward)
-                let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
+                let otherView = RegView.other model.RegView
                 let meshesOther = allMeshes |> List.map (fun n -> n, (ModelTransforms.displayedWorldAt otherView model n).Forward)
                 let pending =
                     sp.Pins |> HashMap.toList
@@ -213,12 +222,7 @@ module ScanPinUpdate =
                         refMesh0
                         |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h allMeshes))
                         |> Option.defaultValue (List.head allMeshes)
-                    match probeCtsMap.TryGetValue id with
-                    | true, cts -> cts.Cancel()
-                    | _ -> ()
-                    let cts = new System.Threading.CancellationTokenSource()
-                    probeCtsMap.[id] <- cts
-                    let token = cts.Token
+                    let token = restartCts probeCtsMap id
                     let centre = pin.Centre
                     let radius = pin.InnerRadius
                     let length = ScanPin.fixedProbeLength
@@ -268,8 +272,8 @@ module ScanPinUpdate =
             match allMeshes with
             | [] -> model
             | _ ->
-                let refMesh0 = model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r allMeshes)
-                let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
+                let refMesh0 = model.ReferenceMesh |> Option.filter (fun r -> List.contains r allMeshes)
+                let otherView = RegView.other model.RegView
                 let meshes =
                     allMeshes |> List.map (fun n ->
                         n,
@@ -287,12 +291,7 @@ module ScanPinUpdate =
                         refMesh0
                         |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h allMeshes))
                         |> Option.defaultValue (List.head allMeshes)
-                    match sliceCtsMap.TryGetValue id with
-                    | true, cts -> cts.Cancel()
-                    | _ -> ()
-                    let cts = new System.Threading.CancellationTokenSource()
-                    sliceCtsMap.[id] <- cts
-                    let token = cts.Token
+                    let token = restartCts sliceCtsMap id
                     let centre = pin.Centre
                     let window = window0 |> Option.defaultValue (pin.InnerRadius * 2.0)
                     let offsets = ScanPin.sliceOffsets k spacingFrac window
@@ -351,12 +350,7 @@ module ScanPinUpdate =
                     n, ModelTransforms.displayedWorld model n)
             let mutable pins = sp.Pins
             for (pinId, pin) in pending do
-                match ringsCts.TryGetValue pinId with
-                | true, cts -> cts.Cancel()
-                | _ -> ()
-                let cts = new System.Threading.CancellationTokenSource()
-                ringsCts.[pinId] <- cts
-                let token = cts.Token
+                let token = restartCts ringsCts pinId
                 let centre = pin.Centre
                 let radius = pin.InnerRadius
                 task {

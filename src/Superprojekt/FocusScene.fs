@@ -757,7 +757,6 @@ module FocusScene =
                     Sg.Uniform("FocusMode", surfaceMode)
                     Sg.Uniform("FocusHi",   hiA)
                     Sg.Uniform("FocusLoNeg", loNegA)
-                    Sg.Uniform("FocusLod",  AVal.constant 0.0f)
                     Sg.Uniform("FocusIsoStep", isoA)
                     Sg.Uniform("FocusShapeThreshold", model.ShapeThreshold |> AVal.map float32)
                     Sg.NoEvents
@@ -837,7 +836,6 @@ module FocusScene =
                     Sg.Uniform("FocusMode", modeA)
                     Sg.Uniform("FocusHi",   hiA)
                     Sg.Uniform("FocusLoNeg", loNegA)
-                    Sg.Uniform("FocusLod",  AVal.constant 0.0f)
                     Sg.Uniform("FocusIsoStep", isoA)
                     Sg.Uniform("FocusShapeThreshold", model.ShapeThreshold |> AVal.map float32)
                     Sg.NoEvents

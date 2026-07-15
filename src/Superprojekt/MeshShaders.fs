@@ -9,7 +9,7 @@ module RenderPass =
     let passZero = RenderPass.after "zero" RenderPassOrder.Arbitrary passMinusOne
     let passOne = RenderPass.after "one" RenderPassOrder.Arbitrary passZero
 
-// Per-fragment ghosting rules are documented in CLAUDE.md ("Ghosting rules").
+// Per-fragment ghosting rules are documented in CLAUDE.md ("Render pipeline").
 [<ReflectedDefinition>]
 module MeshShader =
 
@@ -108,7 +108,10 @@ module MeshShader =
                 if sd > 0.0f then discard()
             let mutable inAnyBlob = false
             let bc = uniform.BlobCount
-            if bc > 0 then
+            let blobsActive = bc > 0 && uniform.AnchorGhost <> 0
+            // The distance loop only matters while pin isolation consumes it —
+            // skip it entirely in the (common) non-Register modes.
+            if blobsActive then
                 for i in 0 .. MaxBlobs - 1 do
                     if i < bc then
                         let b      = uniform.Blobs.[i]
@@ -118,7 +121,6 @@ module MeshShader =
                         let dz = wp.Z - b.Z
                         let d  = sqrt (dx*dx + dy*dy + dz*dz)
                         if d <= inner then inAnyBlob <- true
-            let blobsActive  = bc > 0 && uniform.AnchorGhost <> 0
             let blobComponent =
                 if blobsActive then
                     if inAnyBlob then 1.0f else 0.0f
@@ -187,7 +189,7 @@ module MeshShader =
                         if m < 0.5f then zeroC + (midC - zeroC) * (m * 2.0f)
                         else midC + (endC - midC) * ((m - 0.5f) * 2.0f)
                     let step = uniform.DiffIsoStep
-                    if step > 1e-9f && t <= 1.0f then
+                    if step > 1e-9f && t < 1.0f then
                         let x = d / step
                         let g = abs (x - floor (x + 0.5f))
                         let aa = max (abs (ddx x) + abs (ddy x)) 1e-6f
@@ -279,7 +281,6 @@ module OutlineGBuffer =
     open MeshShader
 
     type FragIn = {
-        [<Semantic("Normals")>]       n  : V3f
         [<Semantic("WorldPosition")>] wp : V4f
         [<FragCoord>]                 fc : V4f
     }
@@ -343,8 +344,8 @@ module OutlineCoverage =
 // per-pixel palette colour where an edge is found (transparent else). An edge = a
 // window-depth BREAK (silhouette/cliff — a SECOND difference of depth so smooth slopes
 // don't register; see below) OR a world-Z band-parity flip (world-locked isolines),
-// both gated to covered pixels. The old normal-angle term and the coverage-mask (mEdge)
-// term were dropped — the depth break already traces the silhouette in this data.
+// both gated to covered pixels. The depth break alone traces the silhouette in this
+// data — no normal-angle or coverage-mask term is needed.
 [<ReflectedDefinition>]
 module OutlineEdge =
 

@@ -1,5 +1,37 @@
 # Worklog
 
+## WP (2026-07-15h): audit cleanup 6/11 — render pipeline consolidation
+
+- **SceneGraph**: `referenceOutline`/`focusedOutline` were ~90% identical
+  (each with its own copy of the peek-aware pose resolution) → one
+  `bboxOutline` (name-source × colour × width); origin-cross constants
+  (axis length/tick spacing/colours) hoisted — were duplicated between the
+  indicator and its labels.
+- **MeshView**: `meshIndicesA` (name→index map was computed 3×);
+  `offscreenMesh` preamble shared by the three outline passes;
+  `inspectRange` now projects `Probe` only (`AMap.map` — the audit's
+  textbook adaptive-perf leak: any slice/ring landing re-scanned every
+  pin's samples and dirtied the DistScale uniform chains).
+  `ScanPin.pinErrorRange` → `probeErrorRange` (takes ProbeState).
+- **OutlineView**: `renderOffscreen` scaffold (signature/FBO/CompileRender/
+  texel) shared by the G-buffer and coverage passes; fullscreen-quad
+  attrs/index hoisted.
+- **Dead shader surface removed** (SHADER TOUCHES — in-browser check owed):
+  `OutlineGBuffer.FragIn.n` was never read → gone, and with it the Normals
+  bindings of both G-buffer passes (positions-only now, like coverage);
+  the never-armed `FocusLod` gate (both bindings hardcoded 0) → gone, the
+  diverging branch simplified to t = a/hi.
+- **MeshShader**: the 32-iteration blob-distance loop now skips entirely
+  unless pin isolation is active (was: any pin ⇒ loop per fragment in every
+  mode); difference-map isoline suppressor aligned with the focus mirror
+  (`t < 1` — the old `t <= 1` compared a value that could exceed 1 so
+  beyond-range still suppressed, but the mirrors now read identically);
+  stale "Ghosting rules" CLAUDE.md pointer + change-history comment fixed.
+
+Type-check green, Supertests 29/29. Browser pass owed: outlines + isolines
++ footprint contours render as before; focus difference map unchanged;
+Register pin-isolation blobs unchanged.
+
 ## WP (2026-07-15g): audit cleanup 5/11 — scene consolidation
 
 The spec-critical drawing conventions were maintained by parallel hand-edits

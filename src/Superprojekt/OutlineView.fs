@@ -17,9 +17,43 @@ module OutlineView =
         [| V3f(-1.0f, -1.0f, 0.0f); V3f(1.0f, -1.0f, 0.0f)
            V3f( 1.0f,  1.0f, 0.0f); V3f(-1.0f, 1.0f, 0.0f) |]
     let private quadIdx = [| 0; 1; 2; 0; 2; 3 |]
+    let private quadAttrs =
+        HashMap.ofList [
+            string DefaultSemantic.Positions,
+                BufferView(AVal.constant (ArrayBuffer quadPos :> IBuffer), typeof<V3f>)
+        ]
+    let private quadIdxView = BufferView(AVal.constant (ArrayBuffer quadIdx :> IBuffer), typeof<int>)
 
     let private outline1 = Sym.ofString "Outline1"
     let private coverage1 = Sym.ofString "Coverage1"
+
+    // Offscreen scaffold shared by the G-buffer and coverage passes: render `node`
+    // into a fresh two-colour-target FBO (+ optional depth), returning the two
+    // output textures and the texel size for the edge composites.
+    let private renderOffscreen
+        (info : Aardvark.Dom.RenderControlInfo)
+        (target1 : Symbol) (withDepth : bool)
+        (node : ISceneNode) =
+        let runtime = info.Runtime
+        let size = info.ViewportSize
+        let atts =
+            [ yield DefaultSemantic.Colors, TextureFormat.Rgba8
+              yield target1,                TextureFormat.Rgba8
+              if withDepth then yield DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8 ]
+        let signature = runtime.CreateFramebufferSignature atts
+        let fbo =
+            runtime.CreateFramebuffer(signature,
+                atts
+                |> List.map (fun (sem, fmt) -> sem, runtime.CreateTextureAttachment(runtime.CreateTexture2D(size, fmt)))
+                |> Map.ofList)
+        let renderObjects, _ = node.GetObjects(TraversalState.empty runtime)
+        let task = runtime.CompileRender(signature, renderObjects)
+        let clr = if withDepth then clear { color C4f.Black; depth 1.0 } else clear { color C4f.Black }
+        let output = task |> RenderTask.renderToWithClear fbo clr
+        let texel =
+            size |> AVal.map (fun (s : V2i) ->
+                V2f(1.0f / float32 (max 1 s.X), 1.0f / float32 (max 1 s.Y)))
+        output.GetOutputTexture DefaultSemantic.Colors, output.GetOutputTexture target1, texel
 
     // Occlusion-free per-mesh footprint contours (§outline per-mesh): an additive
     // coverage MRT (one channel per mesh, no depth) + a fullscreen composite that
@@ -31,33 +65,7 @@ module OutlineView =
         (mask : aval<V4f[]>)
         (node : ISceneNode) : aset<ISceneNode> =
 
-        let runtime = info.Runtime
-        let size = info.ViewportSize
-
-        let signature =
-            runtime.CreateFramebufferSignature([
-                DefaultSemantic.Colors, TextureFormat.Rgba8
-                coverage1,              TextureFormat.Rgba8
-            ])
-        let att0 = runtime.CreateTextureAttachment(runtime.CreateTexture2D(size, TextureFormat.Rgba8))
-        let att1 = runtime.CreateTextureAttachment(runtime.CreateTexture2D(size, TextureFormat.Rgba8))
-        let fbo =
-            runtime.CreateFramebuffer(signature, Map.ofList [
-                DefaultSemantic.Colors, att0
-                coverage1,              att1
-            ])
-
-        let renderObjects, _ = node.GetObjects(TraversalState.empty runtime)
-        let task = runtime.CompileRender(signature, renderObjects)
-        let clr = clear { color C4f.Black }
-        let output = task |> RenderTask.renderToWithClear fbo clr
-        let cov0 = output.GetOutputTexture DefaultSemantic.Colors
-        let cov1 = output.GetOutputTexture coverage1
-
-        let texel =
-            size |> AVal.map (fun (s : V2i) ->
-                V2f(1.0f / float32 (max 1 s.X), 1.0f / float32 (max 1 s.Y)))
-
+        let cov0, cov1, texel = renderOffscreen info coverage1 false node
         let composite =
             sg {
                 // NoEvents is load-bearing — see the main composite below.
@@ -73,13 +81,8 @@ module OutlineView =
                 Sg.Uniform("OutlineTexel", texel)
                 Sg.Uniform("OutlineMask", mask)
                 Sg.Uniform("CoverageColors", AVal.constant MeshView.coverageColors)
-                Sg.VertexAttributes(
-                    HashMap.ofList [
-                        string DefaultSemantic.Positions,
-                            BufferView(AVal.constant (ArrayBuffer quadPos :> IBuffer), typeof<V3f>)
-                    ]
-                )
-                Sg.Index(BufferView(AVal.constant (ArrayBuffer quadIdx :> IBuffer), typeof<int>))
+                Sg.VertexAttributes quadAttrs
+                Sg.Index quadIdxView
                 Sg.Render (AVal.constant quadIdx.Length)
             }
 
@@ -102,42 +105,7 @@ module OutlineView =
         (mask : aval<V4f[]>)
         (node : ISceneNode) : aset<ISceneNode> =
 
-        let runtime = info.Runtime
-        let size = info.ViewportSize
-
-        let signature =
-            runtime.CreateFramebufferSignature([
-                DefaultSemantic.Colors,       TextureFormat.Rgba8
-                outline1,                     TextureFormat.Rgba8
-                DefaultSemantic.DepthStencil, TextureFormat.Depth24Stencil8
-            ])
-
-        let normalAtt =
-            runtime.CreateTextureAttachment(runtime.CreateTexture2D(size, TextureFormat.Rgba8))
-        let colorAtt =
-            runtime.CreateTextureAttachment(runtime.CreateTexture2D(size, TextureFormat.Rgba8))
-        let depthAtt =
-            runtime.CreateTextureAttachment(runtime.CreateTexture2D(size, TextureFormat.Depth24Stencil8))
-
-        let fbo =
-            runtime.CreateFramebuffer(signature, Map.ofList [
-                DefaultSemantic.Colors,       normalAtt
-                outline1,                     colorAtt
-                DefaultSemantic.DepthStencil, depthAtt
-            ])
-
-        let renderObjects, _ = node.GetObjects(TraversalState.empty runtime)
-
-        let task = runtime.CompileRender(signature, renderObjects)
-        let clr = clear { color C4f.Black; depth 1.0 }
-        let output = task |> RenderTask.renderToWithClear fbo clr
-        let gNormal = output.GetOutputTexture DefaultSemantic.Colors
-        let gColor  = output.GetOutputTexture outline1
-
-        let texel =
-            size |> AVal.map (fun (s : V2i) ->
-                V2f(1.0f / float32 (max 1 s.X), 1.0f / float32 (max 1 s.Y)))
-
+        let gNormal, gColor, texel = renderOffscreen info outline1 true node
         let composite =
             sg {
                 // NoEvents is load-bearing: pickable nodes write (id, gl_FragCoord.z)
@@ -157,13 +125,8 @@ module OutlineView =
                 Sg.Uniform("OutlineThreshold", thresholdA)
                 Sg.Uniform("IsolineOpacity", isoOpacityA)
                 Sg.Uniform("OutlineMask", mask)
-                Sg.VertexAttributes(
-                    HashMap.ofList [
-                        string DefaultSemantic.Positions,
-                            BufferView(AVal.constant (ArrayBuffer quadPos :> IBuffer), typeof<V3f>)
-                    ]
-                )
-                Sg.Index(BufferView(AVal.constant (ArrayBuffer quadIdx :> IBuffer), typeof<int>))
+                Sg.VertexAttributes quadAttrs
+                Sg.Index quadIdxView
                 Sg.Render (AVal.constant quadIdx.Length)
             }
 

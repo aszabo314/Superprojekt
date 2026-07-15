@@ -157,10 +157,12 @@ module MeshView =
     // variance painters, the focus tiles/single, the sample dots' per-pin gradient
     // envelope, and the on-screen legend — so every false-colour map is comparable.
     let inspectRange (model : AdaptiveModel) : aval<float * float> =
-        let pinsV = model.ScanPins.Pins |> AMap.toAVal
+        // Probe-only projection (adaptive-perf rule): slice/ring/edit churn on any
+        // pin must not re-scan every pin's samples and dirty the uniform chains.
+        let probesV = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Probe) |> AMap.toAVal
         let refV = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
-        (pinsV, refV) ||> AVal.map2 (fun pins rf ->
-            ScanPin.inspectRange rf (pins |> HashMap.toSeq |> Seq.map snd))
+        (probesV, refV) ||> AVal.map2 (fun probes rf ->
+            ScanPin.inspectRange rf (probes |> HashMap.toSeq |> Seq.map snd))
 
     // Shared saturation end (world metres) of the Range heatmap: the farthest
     // own-bbox corner from each mesh's own sensor, maxed over ALL meshes — ONE
@@ -251,15 +253,24 @@ module MeshView =
         blobsArr |> AVal.map fst,
         blobsArr |> AVal.map snd
 
+    // name → display index, shared by the main pass and the offscreen outline passes.
+    let private meshIndicesA (model : AdaptiveModel) =
+        model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
+            names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
+
+    // Per-mesh preamble of the offscreen outline passes: the loaded mesh and its
+    // displayed-pose render trafo (positions-only consumers).
+    let private offscreenMesh (model : AdaptiveModel) (name : string) =
+        let loaded = loadMeshAsync (fun () -> ()) name
+        loaded, meshTrafo model.CommonCentroid loaded (scaleFor model name) (displayedMeshT model name)
+
     let buildScene (loadFinished : string -> unit) (clip : aval<int * V4f * V4f>) (placementPreview : aval<V3d option>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
         let renderingModeInt =
             model.RenderingMode |> AVal.map (function
                 | Textured     -> 0
                 | Shaded       -> 1
                 | SlopeColor   -> 2)
-        let meshIndices =
-            model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
-                names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
+        let meshIndices = meshIndicesA model
         let palette = Primitives.meshPaletteV4d
 
         let blobCount, blobs = pinBlobUniforms placementPreview model
@@ -536,9 +547,7 @@ module MeshView =
     // Outline G-buffer: every mesh rendered solid with OutlineGBuffer.shade,
     // consumed by OutlineView's offscreen pass.
     let buildOutlineNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
-        let meshIndices =
-            model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
-                names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
+        let meshIndices = meshIndicesA model
         let palette = Primitives.meshPaletteV4d
         // World-Z isoline spacing (render-space Z step), shared across meshes so
         // the band parity lines up. Camera-adaptive (§B2): the spacing follows the
@@ -569,9 +578,7 @@ module MeshView =
                 float32 (spacing * s))
         let nodes =
             model.MeshNames |> AList.map (fun name ->
-                let loaded = loadMeshAsync (fun () -> ()) name
-                let scale = scaleFor model name
-                let meshT = displayedMeshT model name
+                let loaded, trafo = offscreenMesh model name
                 // Every loaded mesh renders into the G-buffer (visibility gates the
                 // main pass only).
                 let active = loaded.fvc |> AVal.map (fun c -> c > 3)
@@ -589,7 +596,7 @@ module MeshView =
                         if outlineFlagAt model t name = 0.5f then 5.0e-5f else 0.0f)
                 sg {
                     Sg.Active active
-                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                    Sg.Trafo trafo
                     Sg.Shader {
                         DefaultSurfaces.trafo
                         OutlineGBuffer.shade
@@ -601,7 +608,6 @@ module MeshView =
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
-                            string DefaultSemantic.Normals,   BufferView(loaded.nrm, typeof<V3f>)
                         ])
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
                     Sg.Render loaded.fvc
@@ -621,20 +627,16 @@ module MeshView =
     // Channels cap at 8 (2×Rgba8 MRT); meshes beyond keep only the combined
     // union outline.
     let buildCoverageNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
-        let meshIndices =
-            model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
-                names |> Seq.mapi (fun i n -> n, i) |> Map.ofSeq)
+        let meshIndices = meshIndicesA model
         let nodes =
             model.MeshNames |> AList.map (fun name ->
-                let loaded = loadMeshAsync (fun () -> ()) name
-                let scale = scaleFor model name
-                let meshT = displayedMeshT model name
+                let loaded, trafo = offscreenMesh model name
                 let channel = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
                 let active =
                     (loaded.fvc, channel) ||> AVal.map2 (fun c i -> c > 3 && i < 8)
                 sg {
                     Sg.Active active
-                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                    Sg.Trafo trafo
                     Sg.Shader {
                         DefaultSurfaces.trafo
                         OutlineCoverage.shade
@@ -669,15 +671,13 @@ module MeshView =
         let refNameA = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let nodes =
             model.MeshNames |> AList.map (fun name ->
-                let loaded = loadMeshAsync (fun () -> ()) name
-                let scale = scaleFor model name
-                let meshT = displayedMeshT model name
+                let loaded, trafo = offscreenMesh model name
                 let active =
                     (refNameA, show, loaded.fvc) |||> AVal.map3 (fun rf s c ->
                         s && c > 3 && rf = Some name)
                 sg {
                     Sg.Active active
-                    Sg.Trafo (meshTrafo model.CommonCentroid loaded scale meshT)
+                    Sg.Trafo trafo
                     Sg.Shader {
                         DefaultSurfaces.trafo
                         OutlineGBuffer.shade
@@ -689,7 +689,6 @@ module MeshView =
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
-                            string DefaultSemantic.Normals,   BufferView(loaded.nrm, typeof<V3f>)
                         ])
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
                     Sg.Render loaded.fvc

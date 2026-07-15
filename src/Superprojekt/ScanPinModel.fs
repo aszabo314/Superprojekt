@@ -220,10 +220,11 @@ module ScanPin =
     let withCorrespondence (c : Correspondence option) (p : ScanPin) =
         { p with Correspondence = c }
 
-    // Signed error range (m, spanning 0) of one pin: min/max over its ready probe's
-    // ROI samples on the moving meshes. None until the probe lands.
-    let pinErrorRange (refMesh : string option) (p : ScanPin) : (float * float) option =
-        match p.Probe with
+    // Signed error range (m, spanning 0) of one probe: min/max over its ready
+    // ROI samples on the moving meshes. None until the probe lands. Takes the
+    // ProbeState (not the pin) so callers can project per-field (adaptive perf).
+    let probeErrorRange (refMesh : string option) (probe : ProbeState) : (float * float) option =
+        match probe with
         | ProbeReady r ->
             let mutable lo = 0.0
             let mutable hi = 0.0
@@ -240,13 +241,13 @@ module ScanPin =
     // The one Inspect error range: min/max over every pin's ROI samples (the regions
     // inside pins are the only ground truth), hard-capped at ±0.5 m; values outside
     // clamp to the end colours. No pins / no probes → the full ±0.5 m.
-    let inspectRange (refMesh : string option) (pins : seq<ScanPin>) : float * float =
+    let inspectRange (refMesh : string option) (probes : seq<ProbeState>) : float * float =
         let cap = 0.5
         let mutable lo = 0.0
         let mutable hi = 0.0
         let mutable any = false
-        for p in pins do
-            match pinErrorRange refMesh p with
+        for probe in probes do
+            match probeErrorRange refMesh probe with
             | Some (l, h) ->
                 any <- true
                 if l < lo then lo <- l

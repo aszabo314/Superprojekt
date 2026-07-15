@@ -33,17 +33,17 @@ module SceneGraph =
             Sg.Render (AVal.constant boxIdx.Length)
         }
 
+    // Origin-cross geometry constants, shared by the indicator and its labels.
+    let private axisLength = 3.0
+    let private tickSpacing = 0.25
+    let private tickLen = 0.12
+    let private xColor = V4d(0.82, 0.15, 0.10, 1.0)
+    let private yColor = V4d(0.10, 0.72, 0.10, 1.0)
+    let private zColor = V4d(0.15, 0.35, 0.90, 1.0)
+
     // Origin cross + tick segments, anchored at `center` (render space — the first
     // mesh's panorama centre). Always-on-top: DepthTest.None, passOne.
     let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (center : aval<V3d>) =
-        let axisLength = 3.0
-        let tickSpacing = 0.25
-        let tickLen = 0.12
-
-        let xColor = V4d(0.82, 0.15, 0.10, 1.0)
-        let yColor = V4d(0.10, 0.72, 0.10, 1.0)
-        let zColor = V4d(0.15, 0.35, 0.90, 1.0)
-
         let tickSegs (o : V3d) (color : V4d) (dir : V3d) (perpA : V3d) =
             let n = int (axisLength / tickSpacing)
             let half = perpA * (tickLen * 0.5)
@@ -73,15 +73,7 @@ module SceneGraph =
         ]
 
     let private originLabels (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (center : aval<V3d>) =
-        let axisLength = 3.0
-        let tickSpacing = 0.25
-        let tickLen = 0.12
         let labelSize = 0.15
-
-        let xColor = V4d(0.82, 0.15, 0.10, 1.0)
-        let yColor = V4d(0.10, 0.72, 0.10, 1.0)
-        let zColor = V4d(0.15, 0.35, 0.90, 1.0)
-
         let toC4b (c : V4d) = C4b(byte(c.X*255.0), byte(c.Y*255.0), byte(c.Z*255.0))
         let darken (c : V4d) = toC4b (V4d(c.X * 0.55, c.Y * 0.55, c.Z * 0.55, 1.0))
 
@@ -134,13 +126,14 @@ module SceneGraph =
             @ labelNodes yColor V3d.OIO V3d.IOO textTrafoY
             @ labelNodes zColor V3d.OOI V3d.IOO textTrafoZ)
 
-    // Prominent reference-mesh marker (§T10): its bbox edges in gold (matching the
-    // focus reference tile ★), thick + bright so the reference is unmistakable in 3D.
-    let private referenceOutline (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (model : AdaptiveModel) =
-        let col = V4d(0.831, 0.631, 0.024, 0.95)
+    // Bbox edge outline of ONE mesh at its displayed (peek-aware) pose — the gold
+    // reference marker (§T10) and the cyan focused-mesh accent share this builder.
+    let private bboxOutline (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>)
+                            (model : AdaptiveModel)
+                            (nameAt : AdaptiveToken -> string option) (col : V4d) (width : float) =
         let segs =
             AVal.custom (fun t ->
-                match (model.Registration.GetValue t).ReferenceMesh with
+                match nameAt t with
                 | None -> [||]
                 | Some name ->
                     match Map.tryFind name (model.MeshBounds.GetValue t) with
@@ -170,7 +163,7 @@ module SceneGraph =
                                 (0,0,0),(0,0,1); (1,0,0),(1,0,1); (0,1,0),(0,1,1); (1,1,0),(1,1,1)
                             |]
                         edges |> Array.map (fun ((ax, ay, az), (bx, by, bz)) ->
-                            corner ax ay az, corner bx by bz, col, 2.5))
+                            corner ax ay az, corner bx by bz, col, width))
         sg {
             Sg.Active active
             Sg.View view
@@ -181,53 +174,20 @@ module SceneGraph =
             Lines.render segs
         }
 
+    // Prominent reference-mesh marker (§T10): its bbox edges in gold (matching the
+    // focus reference tile ★), thick + bright so the reference is unmistakable in 3D.
+    let private referenceOutline view proj active (model : AdaptiveModel) =
+        bboxOutline view proj active model
+            (fun t -> (model.Registration.GetValue t).ReferenceMesh)
+            (V4d(0.831, 0.631, 0.024, 0.95)) 2.5
+
     // The focused mesh's bbox edges in a cyan accent — the 3D "active" treatment
     // mirroring the rail row + focus tile (read parity §B). Depth-tested + subtle,
-    // distinct from the reference (blue). Hidden when nothing is focused.
-    let private focusedOutline (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (model : AdaptiveModel) =
-        let col = V4d(0.031, 0.569, 0.698, 0.7)   // cyan #0891b2
-        let segs =
-            AVal.custom (fun t ->
-                match Selection.mesh (model.Selection.Active.GetValue t) with
-                | None -> [||]
-                | Some name ->
-                    match Map.tryFind name (model.MeshBounds.GetValue t) with
-                    | None -> [||]
-                    | Some box ->
-                        let cc = model.CommonCentroid.GetValue t
-                        let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
-                        let view =
-                            match model.RegView.GetValue t, model.RegPeekHeld.GetValue t with
-                            | RegBefore, true -> RegAfter
-                            | RegAfter, true -> RegBefore
-                            | v, false -> v
-                        let tr =
-                            match view, Map.tryFind name (model.SolvedTransforms.GetValue t) with
-                            | RegAfter, Some s -> s
-                            | _ -> Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
-                        let corner (ix : int) (iy : int) (iz : int) =
-                            let w =
-                                V3d((if ix = 0 then box.Min.X else box.Max.X),
-                                    (if iy = 0 then box.Min.Y else box.Max.Y),
-                                    (if iz = 0 then box.Min.Z else box.Max.Z))
-                            tr.Forward.TransformPos (ScanPin.renderCentre cc scale w)
-                        let edges =
-                            [|
-                                (0,0,0),(1,0,0); (0,1,0),(1,1,0); (0,0,1),(1,0,1); (0,1,1),(1,1,1)
-                                (0,0,0),(0,1,0); (1,0,0),(1,1,0); (0,0,1),(0,1,1); (1,0,1),(1,1,1)
-                                (0,0,0),(0,0,1); (1,0,0),(1,0,1); (0,1,0),(0,1,1); (1,1,0),(1,1,1)
-                            |]
-                        edges |> Array.map (fun ((ax, ay, az), (bx, by, bz)) ->
-                            corner ax ay az, corner bx by bz, col, 1.5))
-        sg {
-            Sg.Active active
-            Sg.View view
-            Sg.Proj proj
-            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-            Sg.BlendMode (AVal.constant BlendMode.Blend)
-            Sg.NoEvents
-            Lines.render segs
-        }
+    // distinct from the reference gold. Hidden when nothing is focused.
+    let private focusedOutline view proj active (model : AdaptiveModel) =
+        bboxOutline view proj active model
+            (fun t -> Selection.mesh (model.Selection.Active.GetValue t))
+            (V4d(0.031, 0.569, 0.698, 0.7)) 1.5
 
     let build
         (env : Env<Message>)

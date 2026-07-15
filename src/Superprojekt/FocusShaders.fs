@@ -20,7 +20,6 @@ module FocusShaders =
         member x.FocusMode  : int     = uniform?FocusMode
         member x.FocusHi    : float32 = uniform?FocusHi
         member x.FocusLoNeg : float32 = uniform?FocusLoNeg
-        member x.FocusLod   : float32 = uniform?FocusLod
         // Value step (m) of the difference isolines (mode 1 only); 0 disables.
         member x.FocusIsoStep : float32 = uniform?FocusIsoStep
         // Shp cutoff (mode 6): fragments below this quality are discarded.
@@ -74,32 +73,28 @@ module FocusShaders =
                 // centre (welded to 0; grey means "no signal", not "0"), + through
                 // salmon to red, − through lavender to blue, each sign normalized by
                 // its own end (FocusHi / FocusLoNeg) with the near-zero t^0.6 boost.
-                // ±LoD gate kept: within FocusLod → neutral grey. Constant-value
-                // isolines every FocusIsoStep metres (derivative-antialiased darkening,
-                // suppressed where the colour clamps). Mirrors Primitives.Diff +
-                // MeshShader.shade enc 1.
+                // Constant-value isolines every FocusIsoStep metres (derivative-
+                // antialiased darkening, suppressed where the colour clamps).
+                // Mirrors Primitives.Diff + MeshShader.shade enc 1.
                 let a = abs v.s
-                if a < uniform.FocusLod then return V4f(0.62f, 0.63f, 0.66f, 1.0f)
-                else
-                    let hi = if v.s >= 0.0f then max 1e-6f uniform.FocusHi else max 1e-6f uniform.FocusLoNeg
-                    let denom = max 1e-6f (hi - uniform.FocusLod)
-                    let t = min 1.0f (max 0.0f ((a - uniform.FocusLod) / denom))
-                    let m = pow t 0.6f
-                    let zeroC = V3f(0.930f, 0.907f, 0.917f)
-                    let midC = if v.s >= 0.0f then V3f(0.906f, 0.549f, 0.464f) else V3f(0.627f, 0.612f, 0.908f)
-                    let endC = if v.s >= 0.0f then V3f(0.752f, 0.008f, 0.022f) else V3f(0.128f, 0.316f, 0.858f)
-                    let mutable rgb =
-                        if m < 0.5f then zeroC + (midC - zeroC) * (m * 2.0f)
-                        else midC + (endC - midC) * ((m - 0.5f) * 2.0f)
-                    let step = uniform.FocusIsoStep
-                    if step > 1e-9f && t < 1.0f then
-                        let x = v.s / step
-                        let g = abs (x - floor (x + 0.5f))
-                        let aa = max (abs (ddx x) + abs (ddy x)) 1e-6f
-                        // Fade lines out where contours pack denser than ~2 px apart
-                        // (steep fragments) — else they smear into a dark blotch.
-                        let fade = clamp 0.0f 1.0f ((0.5f - aa) * 4.0f)
-                        let line = 0.45f + 0.55f * min 1.0f (g / (aa * 1.3f))
-                        rgb <- rgb * (1.0f - fade * (1.0f - line))
-                    return V4f(rgb, 1.0f)
+                let hi = if v.s >= 0.0f then max 1e-6f uniform.FocusHi else max 1e-6f uniform.FocusLoNeg
+                let t = min 1.0f (max 0.0f (a / hi))
+                let m = pow t 0.6f
+                let zeroC = V3f(0.930f, 0.907f, 0.917f)
+                let midC = if v.s >= 0.0f then V3f(0.906f, 0.549f, 0.464f) else V3f(0.627f, 0.612f, 0.908f)
+                let endC = if v.s >= 0.0f then V3f(0.752f, 0.008f, 0.022f) else V3f(0.128f, 0.316f, 0.858f)
+                let mutable rgb =
+                    if m < 0.5f then zeroC + (midC - zeroC) * (m * 2.0f)
+                    else midC + (endC - midC) * ((m - 0.5f) * 2.0f)
+                let step = uniform.FocusIsoStep
+                if step > 1e-9f && t < 1.0f then
+                    let x = v.s / step
+                    let g = abs (x - floor (x + 0.5f))
+                    let aa = max (abs (ddx x) + abs (ddy x)) 1e-6f
+                    // Fade lines out where contours pack denser than ~2 px apart
+                    // (steep fragments) — else they smear into a dark blotch.
+                    let fade = clamp 0.0f 1.0f ((0.5f - aa) * 4.0f)
+                    let line = 0.45f + 0.55f * min 1.0f (g / (aa * 1.3f))
+                    rgb <- rgb * (1.0f - fade * (1.0f - line))
+                return V4f(rgb, 1.0f)
         }

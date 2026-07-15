@@ -1,12 +1,8 @@
 module Supertests.Program
 
-// Unit tests for the pure registration pieces:
-//   • RegMath.solveRigid — weighted Umeyama (recovery, reflection handling,
-//     weight semantics, collinearity flag, <3-pairs rejection)
-//   • RegConditioning — spread eigenvalues / collinearity ratio
-//   • Readiness.compute — the correspondence readiness engine
-// Plain console runner (exit code = failure count) so no new packages enter
-// the paket lock.
+// Unit tests for the pure registration + slice-geometry pieces (RegMath,
+// RegConditioning, Readiness, MeshAnalysisCore). Plain console runner (exit
+// code = failure count) so no new packages enter the paket lock.
 
 open System
 open Aardvark.Base
@@ -128,6 +124,16 @@ let umeyamaTests () =
     // (e) fewer than 3 pairs is rejected (the HTTP handler maps this to 400).
     check "<3 pairs rejected" ((RegMath.solveRigid [| V3d.Zero, V3d.Zero, 1.0; V3d.IOO, V3d.IOO, 1.0 |]).IsNone)
 
+    // (f) negative weights clamp to 0 — a pair with weight −5 must behave
+    // exactly like weight 0 (it cannot pull the solve).
+    let outlier i = basePts.[i], applyRigid rW tW basePts.[i] + V3d(50.0, -30.0, 20.0), -5.0
+    let negW = Array.init 6 (fun i -> if i = 0 then outlier i else mkPair i 1.0)
+    let zeroWOutlier = Array.init 6 (fun i -> if i = 0 then (let (m, r, _) = outlier i in m, r, 0.0) else mkPair i 1.0)
+    match RegMath.solveRigid negW, RegMath.solveRigid zeroWOutlier with
+    | Some a, Some b ->
+        checkLe "negative weight ≡ weight 0" (maxAbsDiff a.Transform b.Transform) 1e-10
+    | _ -> check "negative weight solvable" false
+
 // ───────────────────────── RegConditioning sanity ─────────────────────────
 
 let conditioningTests () =
@@ -188,11 +194,88 @@ let readinessTests () =
     check "spread anchors → no collinear warning"
         (not (d |> List.exists (fun x -> x.Text.Contains "near-collinear")))
 
+    let d = Readiness.compute { baseInput with MovingMeshes = []; EnabledPins = pinsN 3 }
+    check "no moving meshes → Info" (d |> List.exists (fun x -> x.Severity = Info && x.Text.Contains "No moving meshes"))
+    check "no moving meshes never ready" (ready d |> List.isEmpty)
+
+    let counts =
+        Readiness.pairCounts
+            { baseInput with
+                EnabledPins = [ mkRPin (Some (V3d.Zero, 1.0)) [ "A" ]
+                                mkRPin (Some (V3d.IOO, 1.0)) [ "A"; "B" ] ] }
+    check "pairCounts counts markers per mesh" (counts = [ "A", 2; "B", 1 ])
+
+// ─────────────── MeshAnalysisCore: level-set tracer · decimate · dip ───────
+
+// Triangulated n×n-cell grid in the XY plane: vertex (i, j) at (i, j, 0).
+let private gridMesh (n : int) =
+    let verts = Array.init ((n + 1) * (n + 1)) (fun k -> V3d(float (k % (n + 1)), float (k / (n + 1)), 0.0))
+    let tris = ResizeArray<int>()
+    for j in 0 .. n - 1 do
+        for i in 0 .. n - 1 do
+            let v00 = j * (n + 1) + i
+            let v10 = v00 + 1
+            let v01 = v00 + (n + 1)
+            let v11 = v01 + 1
+            tris.AddRange [ v00; v10; v11 ]
+            tris.AddRange [ v00; v11; v01 ]
+    verts, tris.ToArray()
+
+let sliceCoreTests () =
+    let verts, tris = gridMesh 20
+    let lerpRoot (sd : int -> float) (i0 : int) (i1 : int) =
+        let d0 = sd i0
+        let d1 = sd i1
+        verts.[i0] + (d0 / (d0 - d1)) * (verts.[i1] - verts.[i0])
+
+    // (a) circle field fully inside the grid → ONE closed chain (first point
+    // repeated last) whose points sit on the circle.
+    let c = V3d(10.0, 10.0, 0.0)
+    let r = 5.0
+    let sdC (i : int) = (verts.[i] - c).Length - r
+    let chains = MeshAnalysisCore.traceLevelSet tris sdC (lerpRoot sdC)
+    check "circle field → one chain" (chains.Length = 1)
+    if chains.Length = 1 then
+        let ch = chains.[0]
+        check "circle chain closed (first = last)" (ch.Length >= 8 && ch.[0] = ch.[ch.Length - 1])
+        checkLe "circle chain on the circle"
+            (ch |> Array.map (fun p -> abs ((p - c).Length - r)) |> Array.max) 0.35
+
+    // (b) plane field x − 10.5 → ONE open chain spanning the grid at x = 10.5.
+    let sdP (i : int) = verts.[i].X - 10.5
+    let chainsP = MeshAnalysisCore.traceLevelSet tris sdP (lerpRoot sdP)
+    check "plane field → one open chain"
+        (chainsP.Length = 1 && chainsP.[0].[0] <> chainsP.[0].[chainsP.[0].Length - 1])
+    if chainsP.Length = 1 then
+        let ys = chainsP.[0] |> Array.map (fun p -> p.Y)
+        check "plane chain spans the grid" (Array.min ys <= 0.5 && Array.max ys >= 19.5)
+        checkLe "plane chain at x = 10.5"
+            (chainsP.[0] |> Array.map (fun p -> abs (p.X - 10.5)) |> Array.max) 1e-9
+
+    // (c) decimate: endpoints kept exactly, total capped, no-op under the cap.
+    let long = [| Array.init 500 float; Array.init 300 (fun i -> 1000.0 + float i) |]
+    let dec = MeshAnalysisCore.decimate 100 long
+    check "decimate keeps endpoints"
+        ((long, dec) ||> Array.forall2 (fun o d -> d.[0] = o.[0] && d.[d.Length - 1] = o.[o.Length - 1]))
+    check "decimate caps total" ((dec |> Array.sumBy Array.length) <= 130)
+    check "decimate no-ops under the cap" (MeshAnalysisCore.decimate 1000 long = long)
+
+    // (d) dip fit: z = 2x + y → dip ∝ (2,1) (canonical +X); flat / sparse → None.
+    let slanted = [ for _ in 0 .. 40 -> let v = randV3 4.0 in V3d(v.X, v.Y, 2.0 * v.X + v.Y) ]
+    match MeshAnalysisCore.dipOfPoints slanted with
+    | Some u -> checkLe "dip of z=2x+y ∝ (2,1)" (Vec.distance u (V3d(2.0, 1.0, 0.0).Normalized)) 1e-9
+    | None -> check "dip of z=2x+y solvable" false
+    check "flat patch → no dip"
+        ((MeshAnalysisCore.dipOfPoints [ for _ in 0 .. 40 -> let v = randV3 4.0 in V3d(v.X, v.Y, 0.7) ]).IsNone)
+    check "sparse patch → no dip"
+        ((MeshAnalysisCore.dipOfPoints [ for i in 0 .. 5 -> V3d(float i, 0.0, float i) ]).IsNone)
+
 [<EntryPoint>]
 let main _ =
     umeyamaTests ()
     conditioningTests ()
     readinessTests ()
+    sliceCoreTests ()
     printfn ""
     printfn "%d/%d passed%s" (total - failures) total (if failures = 0 then "" else sprintf " — %d FAILED" failures)
     failures

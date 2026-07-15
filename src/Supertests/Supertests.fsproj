@@ -10,6 +10,7 @@
     <!-- Pure modules under test, compiled directly (no WASM / web hosts). -->
     <Compile Include="..\Superprojekt\RegistrationModel.fs" Link="RegistrationModel.fs" />
     <Compile Include="..\Superserver\RegMath.fs" Link="RegMath.fs" />
+    <Compile Include="..\Superserver\MeshAnalysisCore.fs" Link="MeshAnalysisCore.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
   <Import Project="..\..\.paket\Paket.Restore.targets" />

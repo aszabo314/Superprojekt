@@ -172,6 +172,7 @@ ShaderCache.fs / Program.fs
 ```
 MeshLoader.fs     OBJ parse, centroid file, atlas paths
 MeshCache.fs      Embree scene + BbTree cache (lazy, permanent)
+MeshAnalysisCore.fs  pure level-set tracer + decimate + dip fit (WASM/Embree-free, shared with Supertests)
 MeshAnalysis.fs   sphere contact-ring tracing
 MeshProbe.fs      N-mesh M3C2 probe
 RegMath.fs        weighted Umeyama rigid landmark solve (Jacobi SVD, conditioning)
@@ -203,7 +204,7 @@ All query coordinates are **absolute world space**; the server computes `localPo
 
 ## Tests
 
-`src/Supertests` — console runner (no test packages) compiling `RegistrationModel.fs` + `RegMath.fs` directly: `dotnet run --project src/Supertests`. Integration against a running server: `ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver`, then `node tools/integration.mjs`.
+`src/Supertests` — console runner (no test packages) compiling `RegistrationModel.fs` + `RegMath.fs` + `MeshAnalysisCore.fs` directly: `dotnet run --project src/Supertests`. Integration against a running server (covers lsq-pairs, probe, slice, region-distance): `ASPNETCORE_URLS=http://localhost:8002 dotnet run --project src/Superserver`, then `node tools/integration.mjs`.
 
 ## Aardvark.Dom gotchas
 

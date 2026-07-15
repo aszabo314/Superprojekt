@@ -1,11 +1,13 @@
-// Integration flow for the ensemble-registration endpoints (spec §10.3).
+// Integration flow for the registration + inspection endpoints.
 // Needs a running Superserver (default http://localhost:8002) with the
 // Hessigheim dataset. Run: node tools/integration.mjs [baseUrl]
 //
 // Flow: seed correspondence points via /query/closest, perturb one mesh by a
 // known rigid T, build pairs, /query/lsq-pairs must recover ≈ T⁻¹; run
 // /query/probe with the pre- and post-correction transforms and assert the
-// moving mesh's median |distance| shrinks.
+// moving mesh's median |distance| shrinks. Then exercise /query/slice
+// (azimuth fit, dual-pose pairing, disc clip) and /query/region-distance
+// (per-vertex array, exact Δz lift response, the no-Z-overlap sentinel).
 
 const base = (process.argv[2] || "http://localhost:8002") + "/api";
 
@@ -162,6 +164,66 @@ const run = async () => {
         `baseline ${mBase.toFixed(3)} → perturbed ${mPre.toFixed(3)} m`);
   check("correction shrinks the median error", errPost < errPre && errPost < 0.05,
         `${errPre.toFixed(3)} → ${errPost.toFixed(3)} m`);
+
+  // 5 · slice: fitted azimuth + dual-pose pairing + disc clip.
+  const sliceR = 15, sliceOffsets = [-3, 0, 3];
+  const slice = await postJson("/query/slice", {
+    meshes: [
+      { name: refMesh, transform: identity, transformOther: null },
+      { name: movMesh, transform: identity, transformOther: T },
+    ],
+    referenceName: refMesh, centre: probeAt, radius: sliceR,
+    offsets: sliceOffsets, maxPointsPerPlane: 200,
+  });
+  const az = slice.azimuth;
+  check("slice azimuth is a horizontal unit",
+        Math.abs(Math.hypot(az[0], az[1]) - 1) < 1e-6 && Math.abs(az[2]) < 1e-9,
+        `(${az[0].toFixed(2)}, ${az[1].toFixed(2)})`);
+  check("slice azimuth canonical (+X, tie +Y)",
+        az[0] > 0 || (Math.abs(az[0]) < 1e-9 && az[1] >= 0));
+  const refSl = slice.meshes.find((m) => m.name === refMesh);
+  const movSl = slice.meshes.find((m) => m.name === movMesh);
+  check("slice returns one plane set per offset",
+        !!refSl && !!movSl && refSl.planes.length === 3 && movSl.planes.length === 3);
+  check("slice pairs planesOther only where transformOther was sent",
+        refSl.planesOther == null && Array.isArray(movSl.planesOther) && movSl.planesOther.length === 3);
+  const inDisc = (sl) => sl.planes.every((plane, k) =>
+    plane.every((flat) => {
+      const r2 = sliceR * sliceR - sliceOffsets[k] * sliceOffsets[k];
+      for (let i = 0; i + 1 < flat.length; i += 2)
+        if (flat[i] * flat[i] + flat[i + 1] * flat[i + 1] > r2 + 1e-6) return false;
+      return true;
+    }));
+  check("slice polylines clipped to the disc", inDisc(refSl) && inDisc(movSl));
+  const slicePts = refSl.planes.flat().reduce((a, l) => a + l.length / 2, 0);
+  check("slice reference profiles non-empty", slicePts > 10, `${slicePts} pts`);
+
+  // 6 · region-distance: per-vertex array, exact Δz lift response, sentinel.
+  const rdReq = (targetTransform, mode) => ({
+    targetName: movMesh, targetIndex: 0, refName: refMesh, refIndex: 0,
+    targetTransform, refTransform: identity, mode,
+  });
+  const rd0 = await postJson("/query/region-distance", rdReq(identity, 0));
+  const responders = rd0.dist.filter((v) => Math.abs(v) < 1e20);
+  check("region-distance per-vertex array with responders",
+        Array.isArray(rd0.dist) && rd0.dist.length > 100 && responders.length > 0,
+        `${responders.length}/${rd0.dist.length} respond`);
+  // Lifting the target +5 m adds exactly +5 to every still-supported Δz.
+  const lift = [1,0,0,0, 0,1,0,0, 0,0,1,5, 0,0,0,1];
+  const rz = await postJson("/query/region-distance", rdReq(identity, 1));
+  const rzUp = await postJson("/query/region-distance", rdReq(lift, 1));
+  const deltas = [];
+  for (let i = 0; i < rz.dist.length; i++)
+    if (Math.abs(rz.dist[i]) < 1e20 && Math.abs(rzUp.dist[i]) < 1e20)
+      deltas.push(rzUp.dist[i] - rz.dist[i]);
+  deltas.sort((a, b) => a - b);
+  const medDelta = deltas[Math.floor(deltas.length / 2)];
+  check("Δz mode: +5 m lift ⇒ +5 m response", deltas.length > 0 && Math.abs(medDelta - 5) < 1e-4,
+        `median Δ=${medDelta && medDelta.toFixed(4)} over ${deltas.length}`);
+  // A target moved 100 km away shares no vertical support → all sentinels.
+  const far = [1,0,0,1e5, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+  const rdFar = await postJson("/query/region-distance", rdReq(far, 0));
+  check("no Z-overlap ⇒ sentinel everywhere", rdFar.dist.every((v) => Math.abs(v) >= 1e20));
 
   console.log("");
   console.log(`${total - failures}/${total} passed${failures ? ` — ${failures} FAILED` : ""}`);

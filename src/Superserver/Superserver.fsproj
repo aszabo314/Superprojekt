@@ -8,6 +8,7 @@
     <None Include="paket.references" />
     <Compile Include="MeshLoader.fs" />
     <Compile Include="MeshCache.fs" />
+    <Compile Include="MeshAnalysisCore.fs" />
     <Compile Include="MeshAnalysis.fs" />
     <Compile Include="MeshProbe.fs" />
     <Compile Include="RegMath.fs" />

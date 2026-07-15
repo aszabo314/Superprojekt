@@ -1,5 +1,30 @@
 # Worklog
 
+## WP (2026-07-15m): audit cleanup 11/11 — test coverage for the blind spots
+
+The audit's test gap: the geometry core of the v11 slice cells shipped with
+zero automated verification.
+
+- **`MeshAnalysisCore.fs` (new)**: `traceLevelSet`, `decimate` and the dip
+  LSQ fit (`dipFromMoments`/`dipOfPoints`) extracted from MeshAnalysis —
+  pure, Embree-free, compiled into Supertests like RegMath. MeshAnalysis
+  keeps the Embree-facing wrappers (candidate sets, world posing).
+- **Supertests 29 → 45**: level-set tracer (closed circle chain with the
+  first point repeated, open plane chain spanning the grid, points on the
+  analytic level set), decimate (endpoints exact, total capped, no-op under
+  the cap), dip fit (z = 2x + y ⇒ dip ∝ (2,1) to 1e-9; flat and sparse
+  patches → None), RegMath negative-weight clamp (≡ weight 0), Readiness
+  "No moving meshes" Info branch + direct pairCounts.
+- **integration.mjs 13 → 22**: /query/slice (azimuth is a canonical
+  horizontal unit, one plane set per offset, planesOther exactly where
+  transformOther was sent, every polyline inside the per-offset disc,
+  non-empty reference profiles) and /query/region-distance (per-vertex
+  array with responders, Δz mode responds to a +5 m lift with EXACTLY +5 m
+  at the shared support, a 100 km-displaced target → sentinel everywhere).
+- CLAUDE.md compile order + tests section updated.
+
+Supertests 45/45; integration 22/22 against a live :8004 server.
+
 ## WP (2026-07-15l): audit cleanup 10/11 — comment sweep + doc drift
 
 The audit's five noise patterns, swept (mandated constraint notes untouched):

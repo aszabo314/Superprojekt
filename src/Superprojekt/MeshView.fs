@@ -68,7 +68,9 @@ module MeshView =
             } |> ignore
             m
 
-    let private meshTrafo
+    // Public: FocusScene builds its render trafos through this too, so the
+    // composition-order pitfall below has exactly one home.
+    let meshTrafo
         (commonCentroid : aval<V3d>) (loaded : LoadedMesh)
         (meshScale : aval<float>) (meshTransform : aval<Trafo3d>) =
         let base_ =
@@ -114,6 +116,17 @@ module MeshView =
             | v, false -> v
         let disp =
             match view, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
+            | RegAfter, Some s -> s
+            | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+        RigidTransform.renderToWorld scale cc disp
+
+    // Committed-pose sibling (peek EXCLUDED) — for consumers the spec pins to the
+    // committed view (the focus camera; fly-to targets): the peek is purely visual.
+    let displayedWorldCommittedAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (mesh : string) =
+        let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
+        let cc = model.CommonCentroid.GetValue t
+        let disp =
+            match model.RegView.GetValue t, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
             | RegAfter, Some s -> s
             | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
         RigidTransform.renderToWorld scale cc disp

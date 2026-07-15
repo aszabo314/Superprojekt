@@ -6,6 +6,7 @@ open Aardvark.Application
 open Aardworx.WebAssembly
 open FSharp.Data.Adaptive
 open Aardvark.Dom
+open Superprojekt.LineGlyphs
 
 // WebGL focus panel. Each mesh is rendered full-res and textured in render space at
 // its displayed pose (same frame as the main view). Top = strictly orthographic;
@@ -57,14 +58,10 @@ module FocusScene =
                  0.0,      0.0,      0.0,                 1.0)
         Trafo3d(m, m.Inverse)
 
-    // local mesh → render space (the main view's meshTrafo): centroid-relative →
-    // common-relative → dataset scale → displayed (before/after) pose.
+    // local mesh → render space, via the ONE composition-order-safe builder.
     let private renderTrafoOf (model : AdaptiveModel) (name : string) (loaded : LoadedMesh) =
         let scale = model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
-        let baseT =
-            (loaded.centroid, model.CommonCentroid, scale)
-            |||> AVal.map3 (fun c common s -> Trafo3d.Translation(c - common) * Trafo3d.Scale s)
-        (baseT, MeshView.displayedMeshT model name) ||> AVal.map2 (fun b t -> b * t), scale
+        MeshView.meshTrafo model.CommonCentroid loaded scale (MeshView.displayedMeshT model name), scale
 
     // Framing for both the single and the tiles: the panorama centre and the
     // half-extent that frames the mesh around it.
@@ -122,17 +119,14 @@ module FocusScene =
                         let centre =
                             match sel with
                             | SelCell _ ->
+                                let isRef = (model.Registration.GetValue t).ReferenceMesh = Some name
                                 let anchorOwn =
-                                    ScanPin.correspondence pin |> Option.bind (fun c ->
-                                        if (model.Registration.GetValue t).ReferenceMesh = Some name then c.RefAnchor
-                                        else Map.tryFind name c.Anchors |> Option.map (fun a -> a.Point))
+                                    ScanPin.correspondence pin |> Option.bind (Correspondence.anchorOwn isRef name)
                                 match anchorOwn with
                                 | Some own ->
-                                    let disp =
-                                        match model.RegView.GetValue t, Map.tryFind name (model.SolvedTransforms.GetValue t) with
-                                        | RegAfter, Some s -> s
-                                        | _ -> Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
-                                    let dw = RigidTransform.renderToWorld (scale.GetValue t) (model.CommonCentroid.GetValue t) disp
+                                    // COMMITTED pose (peek excluded) — the focus camera
+                                    // follows the committed view only.
+                                    let dw = MeshView.displayedWorldCommittedAt model t name
                                     dw.Forward.TransformPos own
                                 | None -> pin.Centre
                             | _ -> pin.Centre
@@ -179,9 +173,7 @@ module FocusScene =
         let pin = HashMap.tryFind id (AVal.force (model.ScanPins.Pins |> AMap.toAVal))
         let isRef = (AVal.force model.Registration).ReferenceMesh = Some mesh
         let anchorOwn =
-            pin |> Option.bind ScanPin.correspondence |> Option.bind (fun c ->
-                if isRef then c.RefAnchor
-                else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point))
+            pin |> Option.bind ScanPin.correspondence |> Option.bind (Correspondence.anchorOwn isRef mesh)
         match anchorOwn with
         | Some own ->
             let cc = AVal.force model.CommonCentroid
@@ -271,51 +263,37 @@ module FocusScene =
             "FocusScalar",                                  BufferView(scalarBuf, typeof<float32>)
         ]
 
-    // Overlay primitives (render space). Rings take an explicit in-plane basis; the
-    // Top view draws in XY (it looks down −Z), the 360° view faces the eye.
-    let private addRing3D (out : ResizeArray<V3d * V3d * V4d * float>)
-                          (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (w : float) (segs : int) =
-        for i in 0 .. segs - 1 do
-            let a0 = float i       / float segs * Constant.PiTimesTwo
-            let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
-            out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, w)
-    let private addRingXY out c r col w segs = addRing3D out c V3d.IOO V3d.OIO r col w segs
-    let private addCrossXY (out : ResizeArray<V3d * V3d * V4d * float>)
-                           (c : V3d) (r : float) (col : V4d) (w : float) =
-        out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, w)
-        out.Add(c - V3d.OIO * r, c + V3d.OIO * r, col, w)
-    // Dashed ring (every other segment drawn) — the uncoloured selection circle.
-    let private addDashedRing3D (out : ResizeArray<V3d * V3d * V4d * float>)
-                                (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (w : float) (segs : int) =
-        for i in 0 .. segs - 1 do
-            if i % 2 = 0 then
-                let a0 = float i       / float segs * Constant.PiTimesTwo
-                let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
-                out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, w)
-    let private addDashedRingXY out c r col w segs = addDashedRing3D out c V3d.IOO V3d.OIO r col w segs
-    // Top-view arrow a→b in the XY plane: thin shaft + line-triangle tip.
-    let private addArrowXY (out : ResizeArray<V3d * V3d * V4d * float>)
-                           (a : V3d) (b : V3d) (headLen : float) (col : V4d) (w : float) =
-        let d = b - a
-        if d.Length > 1e-9 then
-            let dN = d.Normalized
-            let side =
-                let c = Vec.cross V3d.OOI dN
-                if c.Length > 1e-9 then c.Normalized else V3d.IOO
-            let hl = min (d.Length * 0.4) headLen
-            let hw = hl * 0.45
-            let back = b - dN * hl
-            out.Add(a, back, col, w)
-            out.Add(b, back + side * hw, col, w)
-            out.Add(b, back - side * hw, col, w)
-            out.Add(back + side * hw, back - side * hw, col, w)
-
-    // load/solved forward maps (mesh-local → render) at token t, sharing the base
-    // render trafo (centroid-relative → common-relative → dataset scale → pose).
+    // load/solved forward maps (mesh-local → render) at token t. Token-based twin
+    // of MeshView.meshTrafo — keep the `base * pose` composition order (see there).
     let private loadSolvedForwards (model : AdaptiveModel) (name : string) (loaded : LoadedMesh) (sc : float) (t : AdaptiveToken) =
         let baseT = Trafo3d.Translation(loaded.centroid.GetValue t - model.CommonCentroid.GetValue t) * Trafo3d.Scale sc
         let fwd (m : Map<string, Trafo3d>) = (baseT * (Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)).Forward
         fwd (model.LoadTransforms.GetValue t), fwd (model.SolvedTransforms.GetValue t)
+
+    // Pin influence rings + the dashed white selection circle — ONE builder shared
+    // by the single and the tiles so their marks cannot drift (§A2): flat XY in
+    // Top, facing the eye (approximate sphere silhouette) in 360°.
+    let private addPinRingsAndSelectionCircle
+            (out : ResizeArray<V3d * V3d * V4d * float>)
+            (pins : HashMap<ScanPinId, ScanPin>) (sel : ScanPinId option)
+            (cc : V3d) (s : float) (isPano : bool) (eye : V3d) =
+        for (id, p) in HashMap.toSeq pins do
+            let isSel = sel = Some id
+            let cR = ScanPin.renderCentre cc s p.Centre
+            let rR = ScanPin.renderLength s p.InnerRadius
+            let baseCol = Primitives.selectionTint sel isSel (Primitives.c4bToV3d p.PinColor)
+            let col = V4d(baseCol, (if isSel then 0.95 else 0.6))
+            let rw = if isSel then 2.2 else 1.3
+            if isPano then addRingFacing out eye cR rR col rw 48
+            else addRingXY out cR rR col rw 48
+        match sel |> Option.bind (fun id -> HashMap.tryFind id pins) with
+        | Some p ->
+            let cR = ScanPin.renderCentre cc s (ScanPin.selectionCircleCentre p)
+            let rR = ScanPin.renderLength s (ScanPin.selectionCircleRadius p)
+            let white = V4d(1.0, 1.0, 1.0, 0.95)
+            if isPano then addDashedRingFacing out eye cR rR white 2.2 72
+            else addDashedRingXY out cR rR white 2.2 72
+        | None -> ()
 
     // Inspect colour overlay for a mesh: (FocusMode, per-vertex scalar buffer, hi).
     // 0 = texture; 1 = difference (FocusDist, diverging); 2 = displacement (per-vertex
@@ -539,38 +517,7 @@ module FocusScene =
                 let sel = Selection.pin (model.Selection.Active.GetValue t)
                 let eye = panoEye.GetValue t
                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                for (id, p) in HashMap.toSeq pins do
-                    let isSel = sel = Some id
-                    let cR = ScanPin.renderCentre cc s p.Centre
-                    let rR = ScanPin.renderLength s p.InnerRadius
-                    // Other pins greyscale while a pin selection is active.
-                    let baseCol =
-                        let c = Primitives.c4bToV3d p.PinColor
-                        if not isSel && sel.IsSome then Primitives.v3dToGrey c else c
-                    let ringCol = V4d(baseCol, if isSel then 0.95 else 0.6)
-                    let rw = if isSel then 2.2 else 1.3
-                    if isPano then
-                        let d = cR - eye
-                        if d.Length > 1e-9 then
-                            let n = d.Normalized
-                            let u = (Vec.cross n (if abs n.Z > 0.9 then V3d.IOO else V3d.OOI)).Normalized
-                            addRing3D out cR u (Vec.cross n u) rR ringCol rw 48
-                    else addRingXY out cR rR ringCol rw 48
-                // Selection circle (dashed white, radius × 1.12 at the median
-                // contact-ring height) — same marker as the main 3D + tiles.
-                (match sel |> Option.bind (fun id -> HashMap.tryFind id pins) with
-                 | Some p ->
-                    let cR = ScanPin.renderCentre cc s (ScanPin.selectionCircleCentre p)
-                    let rR = ScanPin.renderLength s (p.InnerRadius * 1.12)
-                    let white = V4d(1.0, 1.0, 1.0, 0.95)
-                    if isPano then
-                        let d = cR - eye
-                        if d.Length > 1e-9 then
-                            let n = d.Normalized
-                            let u = (Vec.cross n (if abs n.Z > 0.9 then V3d.IOO else V3d.OOI)).Normalized
-                            addDashedRing3D out cR u (Vec.cross n u) rR white 2.2 72
-                    else addDashedRingXY out cR rR white 2.2 72
-                 | None -> ())
+                addPinRingsAndSelectionCircle out pins sel cc s isPano eye
                 if not isPano && model.WorkflowStep.GetValue t = Correspondence then
                     let ext = fitExtent.GetValue t
                     let z = zoomEff.GetValue t
@@ -579,25 +526,17 @@ module FocusScene =
                     let dw = RigidTransform.renderToWorld s cc (dispRenderT.GetValue t)
                     for (id, p) in HashMap.toSeq pins do
                         let isSel = sel = Some id
-                        let pinCol =
-                            let c = Primitives.c4bToV3d p.PinColor
-                            if not isSel && sel.IsSome then Primitives.v3dToGrey c else c
-                        match ScanPin.correspondence p with
-                        | Some c ->
-                            // The reference's marker is its RefAnchor (own-frame like
-                            // Anchors), drawn with the same glyph as any other mesh —
-                            // in the PIN's colour (§B1: crosshair, circle and markers agree).
-                            let anchorOwn =
-                                if isRef then c.RefAnchor
-                                else Map.tryFind name c.Anchors |> Option.map (fun a -> a.Point)
-                            match anchorOwn with
-                            | Some own ->
-                                let aR = ScanPin.renderCentre cc s (dw.Forward.TransformPos own)
-                                let gcol = V4d(pinCol, if isSel then 1.0 else 0.95)
-                                let gw = if isSel then 2.5 else 1.8
-                                addCrossXY out aR gr gcol gw
-                                addRingXY out aR (gr * 0.6) gcol gw 24
-                            | None -> ()
+                        let pinCol = Primitives.selectionTint sel isSel (Primitives.c4bToV3d p.PinColor)
+                        // The reference's marker is its RefAnchor (own-frame like
+                        // Anchors), drawn with the same glyph as any other mesh —
+                        // in the PIN's colour (§B1: crosshair, circle and markers agree).
+                        match ScanPin.correspondence p |> Option.bind (Correspondence.anchorOwn isRef name) with
+                        | Some own ->
+                            let aR = ScanPin.renderCentre cc s (dw.Forward.TransformPos own)
+                            let gcol = V4d(pinCol, if isSel then 1.0 else 0.95)
+                            let gw = if isSel then 2.5 else 1.8
+                            addCrossXY out aR gr gcol gw
+                            addRingXY out aR (gr * 0.6) gcol gw 24
                         | None -> ()
                     // Live aim ghost (§T4): a WHITE cross+ring at the hovered pick
                     // point while armed for THIS mesh — white = "not committed yet";
@@ -614,11 +553,8 @@ module FocusScene =
                             let orig =
                                 HashMap.tryFind pid pins
                                 |> Option.bind ScanPin.correspondence
-                                |> Option.bind (fun c ->
-                                    if isRef then c.RefAnchor
-                                    else
-                                        Map.tryFind name c.Anchors
-                                        |> Option.map (fun a -> dw.Forward.TransformPos a.Point))
+                                |> Option.bind (Correspondence.anchorOwn isRef name)
+                                |> Option.map (fun own -> dw.Forward.TransformPos own)
                             match orig with
                             | Some ow when Vec.distance ow w > 0.1 ->
                                 addArrowXY out (ScanPin.renderCentre cc s ow) pr (gr * 0.9) white 2.0
@@ -876,37 +812,7 @@ module FocusScene =
                 let pano = isPanoA.GetValue t
                 let eye = fitCenter.GetValue t
                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                for (id, p) in HashMap.toSeq pins do
-                    let isSel = sel = Some id
-                    let cR = ScanPin.renderCentre cc s p.Centre
-                    let rR = ScanPin.renderLength s p.InnerRadius
-                    // Other pins greyscale while a pin selection is active.
-                    let baseCol =
-                        let c = Primitives.c4bToV3d p.PinColor
-                        if not isSel && sel.IsSome then Primitives.v3dToGrey c else c
-                    let col = V4d(baseCol, (if isSel then 0.95 else 0.6))
-                    let rw = if isSel then 2.2 else 1.3
-                    if pano then
-                        let d = cR - eye
-                        if d.Length > 1e-9 then
-                            let n = d.Normalized
-                            let u = (Vec.cross n (if abs n.Z > 0.9 then V3d.IOO else V3d.OOI)).Normalized
-                            addRing3D out cR u (Vec.cross n u) rR col rw 48
-                    else addRingXY out cR rR col rw 48
-                // Selection circle (dashed white) — the single + main 3D twin.
-                (match sel |> Option.bind (fun id -> HashMap.tryFind id pins) with
-                 | Some p ->
-                    let cR = ScanPin.renderCentre cc s (ScanPin.selectionCircleCentre p)
-                    let rR = ScanPin.renderLength s (p.InnerRadius * 1.12)
-                    let white = V4d(1.0, 1.0, 1.0, 0.95)
-                    if pano then
-                        let d = cR - eye
-                        if d.Length > 1e-9 then
-                            let n = d.Normalized
-                            let u = (Vec.cross n (if abs n.Z > 0.9 then V3d.IOO else V3d.OOI)).Normalized
-                            addDashedRing3D out cR u (Vec.cross n u) rR white 2.2 72
-                    else addDashedRingXY out cR rR white 2.2 72
-                 | None -> ())
+                addPinRingsAndSelectionCircle out pins sel cc s pano eye
                 out.ToArray())
         let rc =
             renderControl {

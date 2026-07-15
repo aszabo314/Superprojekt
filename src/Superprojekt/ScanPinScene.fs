@@ -5,6 +5,7 @@ open Aardvark.Rendering
 open Aardworx.WebAssembly
 open FSharp.Data.Adaptive
 open Aardvark.Dom
+open Superprojekt.LineGlyphs
 
 module ScanPinScene =
 
@@ -33,72 +34,6 @@ module ScanPinScene =
             Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
             Sg.Render sphereIdxCnt
         }
-
-    // Orthonormal (u, v) basis ⊥ a (possibly unnormalized/degenerate) normal,
-    // plus the normalized normal itself.
-    let private basisFromNormal (n : V3d) =
-        let nN = if n.Length > 1e-9 then n.Normalized else V3d.OOI
-        let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
-        nN, u, Vec.cross nN u
-
-    // Append a closed ring of `segs` segments (centre c, radius r) in the (u,v) plane.
-    let private addRing (out : ResizeArray<V3d * V3d * V4d * float>)
-                        (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
-        for i in 0 .. segs - 1 do
-            let a0 = float i / float segs * Constant.PiTimesTwo
-            let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
-            out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
-
-    // Dashed ring (every other segment drawn) — the uncoloured selection circle.
-    let private addDashedRing (out : ResizeArray<V3d * V3d * V4d * float>)
-                              (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
-        for i in 0 .. segs - 1 do
-            if i % 2 = 0 then
-                let a0 = float i / float segs * Constant.PiTimesTwo
-                let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
-                out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
-
-    // Arrow a→b: thin shaft + a line-triangle tip oriented to face the eye.
-    // Head scales with the shaft but caps at a modest render size.
-    let private addArrow (out : ResizeArray<V3d * V3d * V4d * float>)
-                         (a : V3d) (b : V3d) (eye : V3d) (col : V4d) (width : float) =
-        let d = b - a
-        if d.Length > 1e-9 then
-            let dN = d.Normalized
-            let side =
-                let c = Vec.cross (b - eye) dN
-                if c.Length > 1e-9 then c.Normalized
-                else (Vec.cross dN (if abs dN.Z < 0.9 then V3d.OOI else V3d.IOO)).Normalized
-            let hl = min (d.Length * 0.35) 0.12
-            let hw = hl * 0.45
-            let back = b - dN * hl
-            out.Add(a, back, col, width)
-            out.Add(b, back + side * hw, col, width)
-            out.Add(b, back - side * hw, col, width)
-            out.Add(back + side * hw, back - side * hw, col, width)
-
-    // Wire sphere (three axis-aligned great circles) of radius r at c.
-    let private addWireSphere (out : ResizeArray<V3d * V3d * V4d * float>)
-                              (c : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
-        addRing out c V3d.IOO V3d.OIO r col width segs
-        addRing out c V3d.IOO V3d.OOI r col width segs
-        addRing out c V3d.OIO V3d.OOI r col width segs
-
-    // Small 3-axis cross (half-length r) marking an exact point at c.
-    let private addCross (out : ResizeArray<V3d * V3d * V4d * float>)
-                         (c : V3d) (r : float) (col : V4d) (width : float) =
-        out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, width)
-        out.Add(c - V3d.OIO * r, c + V3d.OIO * r, col, width)
-        out.Add(c - V3d.OOI * r, c + V3d.OOI * r, col, width)
-
-    // 12 edges of an axis-aligned box (half-extents hx,hy,hz) at c.
-    let private addBoxOutline (out : ResizeArray<V3d * V3d * V4d * float>)
-                              (c : V3d) (hx : float) (hy : float) (hz : float) (col : V4d) (width : float) =
-        let v = [|
-            V3d(-hx, -hy, -hz); V3d( hx, -hy, -hz); V3d( hx, hy, -hz); V3d(-hx, hy, -hz)
-            V3d(-hx, -hy,  hz); V3d( hx, -hy,  hz); V3d( hx, hy,  hz); V3d(-hx, hy,  hz) |]
-        let e = [| 0,1; 1,2; 2,3; 3,0; 4,5; 5,6; 6,7; 7,4; 0,4; 1,5; 2,6; 3,7 |]
-        for (a, b) in e do out.Add(c + v.[a], c + v.[b], col, width)
 
     // Canonical per-sample list for distribution brushing (§T6) — the single source
     // of truth shared by the chart (gid labelling), the 3D brushed markers, and the
@@ -195,30 +130,21 @@ module ScanPinScene =
         // panel's overlay, which is already gated the same way).
         let inCorrespondence = model.WorkflowStep |> AVal.map ((=) Correspondence)
         let constellationActive = (notFullscreen, inCorrespondence) ||> AVal.map2 (&&)
-        // Shared chrome for every line overlay: alpha-blended, occluded by
-        // foreground geometry (the spatial cue), non-interactive.
-        let linesNode (active : aval<bool>) segs =
+        // Shared chrome for every line overlay: alpha-blended, non-interactive.
+        // LessOrEqual = occluded by foreground geometry (the spatial cue);
+        // None = on top (constellation depth bias, selection circle).
+        let linesNodeDT (depth : DepthTest) (active : aval<bool>) segs =
             sg {
                 Sg.Active active
                 Sg.View view
                 Sg.Proj proj
-                Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                Sg.DepthTest (AVal.constant depth)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.NoEvents
                 Lines.render segs
             }
-        // Same, but depth-test off → renders on top of surfaces (constellation
-        // depth bias; ghost-isolation clears occluders when reading it).
-        let linesNodeTop (active : aval<bool>) segs =
-            sg {
-                Sg.Active active
-                Sg.View view
-                Sg.Proj proj
-                Sg.DepthTest (AVal.constant DepthTest.None)
-                Sg.BlendMode (AVal.constant BlendMode.Blend)
-                Sg.NoEvents
-                Lines.render segs
-            }
+        let linesNode = linesNodeDT DepthTest.LessOrEqual
+        let linesNodeTop = linesNodeDT DepthTest.None
         let selectedId = model.Selection.Active |> AVal.map Selection.pin
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
@@ -327,28 +253,23 @@ module ScanPinScene =
         // InnerRadius) + sphere–surface contact rings per visible mesh, in the
         // pin's categorical colour. Normal depth testing on purpose — occlusion
         // is the spatial cue.
-        let contactRingsOn = AVal.constant true
         let pinRings =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let isSelected = selectedId |> AVal.map (fun sel -> sel = Some id)
-                let ringData =
-                    pinVal |> AVal.map (fun po ->
-                        po |> Option.map (fun p ->
-                            let colour = Primitives.c4bToV3d p.PinColor
-                            let rings = match p.ContactRings with RingsReady m -> m | _ -> Map.empty
-                            p.Centre, p.InnerRadius, ScanPin.axis p, colour, rings))
+                // Per-field projections (adaptive-perf rule): a probe/slice cache
+                // landing on this pin must not rebuild the ring geometry.
+                let centreVal = pinVal |> AVal.map (Option.map (fun p -> p.Centre))
+                let radiusVal = pinVal |> AVal.map (Option.map (fun p -> p.InnerRadius))
+                let axisVal   = pinVal |> AVal.map (Option.map ScanPin.axis)
+                let colourVal = pinVal |> AVal.map (Option.map (fun p -> Primitives.c4bToV3d p.PinColor))
+                let ringsVal  = pinVal |> AVal.map (Option.map (fun p -> match p.ContactRings with RingsReady m -> m | _ -> Map.empty))
                 let segs =
                     AVal.custom (fun t ->
-                        match ringData.GetValue t with
-                        | None -> [||]
-                        | Some (centre, radius, axis, colour, rings) ->
+                        match centreVal.GetValue t, radiusVal.GetValue t, axisVal.GetValue t, colourVal.GetValue t, ringsVal.GetValue t with
+                        | Some centre, Some radius, Some axis, Some colour0, Some rings ->
                             let sel = isSelected.GetValue t
-                            // While a pin selection is active the OTHER pins go
-                            // greyscale — the selected pin owns the colour channel.
-                            let colour =
-                                if not sel && (selectedId.GetValue t).IsSome
-                                then Primitives.v3dToGrey colour else colour
+                            let colour = Primitives.selectionTint (selectedId.GetValue t) sel colour0
                             // Pin-row hover lights the rings up thick + bright
                             // (UI→3D linking via the shared Selection record).
                             let hovered = model.Selection.Hovered.GetValue t = Some (HoverPin id)
@@ -372,14 +293,14 @@ module ScanPinScene =
                             let axisCol = V4d(colour, (if sel then 0.5 else 0.35))
                             out.Add(cR, cR + nN * ScanPin.renderLength scale 1.0, axisCol, 1.0)
                             for KeyValue(mesh, meshRings) in rings do
-                                if contactRingsOn.GetValue t
-                                   && MeshVisibility.shown solo mesh then
+                                if MeshVisibility.shown solo mesh then
                                     for ring in meshRings do
                                         if ring.Length >= 2 then
                                             let rp = ring |> Array.map (ScanPin.renderCentre cc scale)
                                             for i in 0 .. rp.Length - 2 do
                                                 out.Add(rp.[i], rp.[i + 1], col, width)
-                            out.ToArray())
+                            out.ToArray()
+                        | _ -> [||])
                 ASet.ofList [ linesNode notFullscreen segs ])
 
         // Correspondence constellation lines: per pin, a small wire-sphere + cross
@@ -392,7 +313,7 @@ module ScanPinScene =
         // Project to (correspondence, pin colour) only — depending on the whole
         // pin map would rebuild the constellation buffer on any pin field change.
         let pinCorr = model.ScanPins.Pins |> AMap.map (fun _ p -> ScanPin.correspondence p, p.PinColor) |> AMap.toAVal
-        let constLines =
+        let constellation =
             let segs =
                 AVal.custom (fun t ->
                     let pins = pinCorr.GetValue t
@@ -417,10 +338,7 @@ module ScanPinScene =
                                 let isSel = sel = Some id
                                 let pinHover = hov = Some (HoverPin id)
                                 let emph = isSel || pinHover
-                                // Other pins' markers greyscale while a pin is selected.
-                                let baseCol =
-                                    let c = Primitives.c4bToV3d pinColor
-                                    if not isSel && sel.IsSome then Primitives.v3dToGrey c else c
+                                let baseCol = Primitives.selectionTint sel isSel (Primitives.c4bToV3d pinColor)
                                 let raR = ScanPin.renderCentre cc scale ra
                                 (match rf with
                                  | Some rn when MeshVisibility.shown solo rn ->
@@ -461,8 +379,6 @@ module ScanPinScene =
                         | _ -> ()
                     out.ToArray())
             ASet.ofList [ linesNodeTop constellationActive segs ]
-
-        let constellation = constLines
 
         let ghostPreview =
             // Preview radius = the radius a click would place (QuickPinRadius,
@@ -643,17 +559,10 @@ module ScanPinScene =
                         (match model.CorrArm.GetValue t with
                          | Some (pid, mesh) ->
                             let orig =
-                                match HashMap.tryFind pid (pinsVal.GetValue t) with
-                                | Some p ->
-                                    match p.Correspondence with
-                                    | Some c ->
-                                        if (model.Registration.GetValue t).ReferenceMesh = Some mesh
-                                        then c.RefAnchor
-                                        else
-                                            Map.tryFind mesh c.Anchors
-                                            |> Option.map (fun a -> (dispWorldAt t mesh).Forward.TransformPos a.Point)
-                                    | None -> None
-                                | None -> None
+                                HashMap.tryFind pid (pinsVal.GetValue t)
+                                |> Option.bind ScanPin.correspondence
+                                |> Option.bind (Correspondence.anchorOwn ((model.Registration.GetValue t).ReferenceMesh = Some mesh) mesh)
+                                |> Option.map (fun own -> (dispWorldAt t mesh).Forward.TransformPos own)
                             match orig with
                             | Some ow when Vec.distance ow w > 0.1 ->
                                 let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
@@ -679,7 +588,7 @@ module ScanPinScene =
                             let cc = model.CommonCentroid.GetValue t
                             let s = datasetScale.GetValue t
                             let cR = ScanPin.renderCentre cc s (ScanPin.selectionCircleCentre p)
-                            let rR = ScanPin.renderLength s (p.InnerRadius * 1.12)
+                            let rR = ScanPin.renderLength s (ScanPin.selectionCircleRadius p)
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             addDashedRing out cR V3d.IOO V3d.OIO rR (V4d(1.0, 1.0, 1.0, 0.95)) 2.2 72
                             out.ToArray()

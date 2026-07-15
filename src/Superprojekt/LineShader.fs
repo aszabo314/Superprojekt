@@ -227,3 +227,113 @@ module Lines =
             Sg.Index(BufferView(idxArr, typeof<int>))
             Sg.Render count
         }
+
+// Shared line-glyph builders for the 3D + focus overlays — segments appended as
+// (a, b, colour, width) for Lines.render. ONE home so the spec-critical
+// conventions (dash phase, ring segment counts, arrowhead shape) cannot fork
+// between the main scene and the focus views.
+module LineGlyphs =
+
+    // Orthonormal (u, v) basis ⊥ a (possibly unnormalized/degenerate) normal,
+    // plus the normalized normal itself.
+    let basisFromNormal (n : V3d) =
+        let nN = if n.Length > 1e-9 then n.Normalized else V3d.OOI
+        let u = (if abs nN.Z < 0.9 then Vec.cross nN V3d.OOI else Vec.cross nN V3d.IOO).Normalized
+        nN, u, Vec.cross nN u
+
+    let addRing (out : ResizeArray<V3d * V3d * V4d * float>)
+                (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
+        for i in 0 .. segs - 1 do
+            let a0 = float i / float segs * Constant.PiTimesTwo
+            let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
+            out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
+
+    let addRingXY out c r col w segs = addRing out c V3d.IOO V3d.OIO r col w segs
+
+    // Ring facing the eye (approximate sphere silhouette) — the 360° focus views.
+    let addRingFacing out (eye : V3d) (c : V3d) r col w segs =
+        if (c - eye).Length > 1e-9 then
+            let _, u, v = basisFromNormal (c - eye)
+            addRing out c u v r col w segs
+
+    // Dashed ring (every other segment drawn) — the uncoloured selection circle.
+    let addDashedRing (out : ResizeArray<V3d * V3d * V4d * float>)
+                      (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
+        for i in 0 .. segs - 1 do
+            if i % 2 = 0 then
+                let a0 = float i / float segs * Constant.PiTimesTwo
+                let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
+                out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
+
+    let addDashedRingXY out c r col w segs = addDashedRing out c V3d.IOO V3d.OIO r col w segs
+
+    let addDashedRingFacing out (eye : V3d) (c : V3d) r col w segs =
+        if (c - eye).Length > 1e-9 then
+            let _, u, v = basisFromNormal (c - eye)
+            addDashedRing out c u v r col w segs
+
+    // Arrow a→b: thin shaft + a line-triangle tip oriented to face the eye.
+    // Head scales with the shaft but caps at a modest render size.
+    let addArrow (out : ResizeArray<V3d * V3d * V4d * float>)
+                 (a : V3d) (b : V3d) (eye : V3d) (col : V4d) (width : float) =
+        let d = b - a
+        if d.Length > 1e-9 then
+            let dN = d.Normalized
+            let side =
+                let c = Vec.cross (b - eye) dN
+                if c.Length > 1e-9 then c.Normalized
+                else (Vec.cross dN (if abs dN.Z < 0.9 then V3d.OOI else V3d.IOO)).Normalized
+            let hl = min (d.Length * 0.35) 0.12
+            let hw = hl * 0.45
+            let back = b - dN * hl
+            out.Add(a, back, col, width)
+            out.Add(b, back + side * hw, col, width)
+            out.Add(b, back - side * hw, col, width)
+            out.Add(back + side * hw, back - side * hw, col, width)
+
+    // Top-view arrow a→b in the XY plane; head cap supplied by the caller
+    // (screen-fixed glyph size).
+    let addArrowXY (out : ResizeArray<V3d * V3d * V4d * float>)
+                   (a : V3d) (b : V3d) (headLen : float) (col : V4d) (w : float) =
+        let d = b - a
+        if d.Length > 1e-9 then
+            let dN = d.Normalized
+            let side =
+                let c = Vec.cross V3d.OOI dN
+                if c.Length > 1e-9 then c.Normalized else V3d.IOO
+            let hl = min (d.Length * 0.4) headLen
+            let hw = hl * 0.45
+            let back = b - dN * hl
+            out.Add(a, back, col, w)
+            out.Add(b, back + side * hw, col, w)
+            out.Add(b, back - side * hw, col, w)
+            out.Add(back + side * hw, back - side * hw, col, w)
+
+    // Wire sphere (three axis-aligned great circles) of radius r at c.
+    let addWireSphere (out : ResizeArray<V3d * V3d * V4d * float>)
+                      (c : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
+        addRing out c V3d.IOO V3d.OIO r col width segs
+        addRing out c V3d.IOO V3d.OOI r col width segs
+        addRing out c V3d.OIO V3d.OOI r col width segs
+
+    // Small 3-axis cross (half-length r) marking an exact point at c.
+    let addCross (out : ResizeArray<V3d * V3d * V4d * float>)
+                 (c : V3d) (r : float) (col : V4d) (width : float) =
+        out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, width)
+        out.Add(c - V3d.OIO * r, c + V3d.OIO * r, col, width)
+        out.Add(c - V3d.OOI * r, c + V3d.OOI * r, col, width)
+
+    // XY-only cross — the focus Top glyph.
+    let addCrossXY (out : ResizeArray<V3d * V3d * V4d * float>)
+                   (c : V3d) (r : float) (col : V4d) (w : float) =
+        out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, w)
+        out.Add(c - V3d.OIO * r, c + V3d.OIO * r, col, w)
+
+    // 12 edges of an axis-aligned box (half-extents hx,hy,hz) at c.
+    let addBoxOutline (out : ResizeArray<V3d * V3d * V4d * float>)
+                      (c : V3d) (hx : float) (hy : float) (hz : float) (col : V4d) (width : float) =
+        let v = [|
+            V3d(-hx, -hy, -hz); V3d( hx, -hy, -hz); V3d( hx, hy, -hz); V3d(-hx, hy, -hz)
+            V3d(-hx, -hy,  hz); V3d( hx, -hy,  hz); V3d( hx, hy,  hz); V3d(-hx, hy,  hz) |]
+        let e = [| 0,1; 1,2; 2,3; 3,0; 4,5; 5,6; 6,7; 7,4; 0,4; 1,5; 2,6; 3,7 |]
+        for (a, b) in e do out.Add(c + v.[a], c + v.[b], col, width)

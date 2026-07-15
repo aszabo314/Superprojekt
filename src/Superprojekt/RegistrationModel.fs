@@ -38,6 +38,13 @@ module Correspondence =
         InRoi       = Map.empty
     }
 
+    // The (pin, mesh) anchor in the mesh's OWN frame: the reference mesh's marker
+    // is the RefAnchor, any other mesh's its Anchors entry. Callers map to world
+    // via the mesh's displayed pose (a no-op for the reference at load pose).
+    let anchorOwn (isRef : bool) (mesh : string) (c : Correspondence) =
+        if isRef then c.RefAnchor
+        else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point)
+
 // Provenance of a solve: the exact correspondence data it consumed — per pin the
 // reference anchor and the mesh-local anchor point of every (pin, mesh) pair fed
 // to the solver. A registration is only as valid as these inputs: if any tracked

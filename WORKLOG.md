@@ -1,5 +1,36 @@
 # Worklog
 
+## WP (2026-07-15g): audit cleanup 5/11 — scene consolidation
+
+The spec-critical drawing conventions were maintained by parallel hand-edits
+in 2–5 places; now each has ONE home:
+
+- **`LineGlyphs` module (LineShader.fs)**: ring/dashed-ring/eye-facing
+  variants, both arrows (3D eye-facing head · XY caller-capped head), wire
+  sphere, 3-axis + XY cross, box outline, `basisFromNormal`. ScanPinScene's
+  and FocusScene's duplicate private builders deleted (the two dashed-ring
+  copies were line-identical; the arrows had already drifted subtly — that
+  divergence is now explicit as two named functions).
+- **`addPinRingsAndSelectionCircle` (FocusScene)**: the single's and the
+  tiles' near-verbatim twin ring+circle blocks (30 lines each) collapsed
+  into one builder — single/tile visual parity is now structural.
+- **Spec constants named**: `ScanPin.selectionCircleRadius` (×1.12, was a
+  literal in 3 files); `Primitives.selectionTint` (the greyscale-when-
+  other-pin-selected rule, was spelled out 5×); `Correspondence.anchorOwn`
+  (RefAnchor-vs-Anchors own-frame rule, was spelled out 5× — cellZoom,
+  selBaseFrame, focus markers, aim-ghost orig, 3D corrPreview orig).
+- **`MeshView.meshTrafo` public** — FocusScene.renderTrafoOf now goes
+  through it (the `base * pose` composition-order pitfall has one home);
+  new `MeshView.displayedWorldCommittedAt` token helper (peek-excluded),
+  used by selBaseFrame (was the 4th inline copy of the displayed-pose rule).
+- **ScanPinScene**: linesNode/linesNodeTop merged (one DepthTest param);
+  vestigial `contactRingsOn = AVal.constant true` + `constellation =
+  constLines` alias deleted; `pinRings` now projects per-field avals
+  (Centre/InnerRadius/axis/colour/rings) per the adaptive-perf rule — a
+  probe/slice landing no longer rebuilds every pin's ring geometry.
+
+Behaviour-identical by construction. Type-check green, Supertests 29/29.
+
 ## WP (2026-07-15f): audit cleanup 4/11 — OrbitController fork pruned (−271 lines)
 
 The fork carried ~30% dead library inheritance. Removed: 9 never-emitted

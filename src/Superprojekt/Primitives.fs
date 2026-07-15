@@ -68,6 +68,11 @@ module Primitives =
         let l = 0.299 * v.X + 0.587 * v.Y + 0.114 * v.Z
         V3d(l, l, l)
 
+    // Greyscale-while-another-pin-is-selected (§B1): the selected pin owns the
+    // colour channel; every other pin's 3D/focus mark drops to luminance grey.
+    let selectionTint (sel : 'a option) (isSel : bool) (c : V3d) =
+        if not isSel && sel.IsSome then v3dToGrey c else c
+
     // Linear-diverging difference colourmap (§C — Coolwarm, Colorcet CET-D01 as
     // shipped by Maple): blue (neg) → near-white → red (pos). A near-zero perceptual
     // boost (|t|^0.6) keeps small deviations visible (no central flat-spot).

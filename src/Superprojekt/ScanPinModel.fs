@@ -195,6 +195,10 @@ module ScanPin =
                 V3d(p.Centre.X, p.Centre.Y, zs.[zs.Length / 2])
         | _ -> p.Centre
 
+    // The dashed white selection circle sits just outside the influence ring —
+    // the ONE spec constant shared by main 3D + focus single + tiles.
+    let selectionCircleRadius (p : ScanPin) = p.InnerRadius * 1.12
+
     // Screen-constant flag sizing: the pole height is a fixed fraction of the
     // eye→pin distance (render space), clamped in METRIC WORLD to [0.1, 20] m;
     // the gear's flag-scale multiplier scales the fraction AND both bounds.

@@ -167,6 +167,57 @@ let contactRings (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : 
     |> Array.map (Array.map (fun p -> p + centroid))
     |> decimate maxPoints
 
+// Slice-cell azimuth (ScanPin v11 §A): the horizontal direction of maximum
+// z-range of the surface within the pin ROI ≈ the dip direction of the LSQ
+// height fit z = ax + by + c over the ROI vertices (world frame, posed by
+// `transform`). Sign-canonicalised (+X, tie +Y) so repeated requests for the
+// same pin agree. None when the patch is flat, degenerate or too sparse — the
+// caller falls back to +X.
+let dipAzimuth (lm : LoadedMesh) (transform : M44d) (centre : V3d) (radius : float) : V3d option =
+    let positions = lm.parsed.positions
+    let centroid  = lm.parsed.centroid
+    let inv = transform.Inverse
+    let cLocal = inv.TransformPos centre - centroid
+    let triBuf = trianglesInSphere lm (V3f cLocal) (float32 radius)
+    let seen = System.Collections.Generic.HashSet<int>()
+    let r2 = radius * radius
+    let mutable n = 0.0
+    let mutable sx = 0.0
+    let mutable sy = 0.0
+    let mutable sz = 0.0
+    let mutable sxx = 0.0
+    let mutable syy = 0.0
+    let mutable sxy = 0.0
+    let mutable sxz = 0.0
+    let mutable syz = 0.0
+    for i in triBuf do
+        if seen.Add i then
+            let w = transform.TransformPos (V3d positions.[i] + centroid)
+            let q = w - centre
+            if q.LengthSquared <= r2 then
+                n   <- n + 1.0
+                sx  <- sx + q.X;  sy  <- sy + q.Y;  sz  <- sz + q.Z
+                sxx <- sxx + q.X * q.X
+                syy <- syy + q.Y * q.Y
+                sxy <- sxy + q.X * q.Y
+                sxz <- sxz + q.X * q.Z
+                syz <- syz + q.Y * q.Z
+    if n < 8.0 then None
+    else
+        let det3 (m00, m01, m02) (m10, m11, m12) (m20, m21, m22) =
+            m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20) + m02 * (m10 * m21 - m11 * m20)
+        let d = det3 (sxx, sxy, sx) (sxy, syy, sy) (sx, sy, n)
+        if abs d <= 1e-10 * max 1.0 (sxx * syy * n) then None
+        else
+            let a = det3 (sxz, sxy, sx) (syz, syy, sy) (sz, sy, n) / d
+            let b = det3 (sxx, sxz, sx) (sxy, syz, sy) (sx, sz, n) / d
+            let g = V2d(a, b)
+            if g.Length < 1e-4 then None
+            else
+                let u = g.Normalized
+                let u = if u.X < 0.0 || (abs u.X < 1e-9 && u.Y < 0.0) then -u else u
+                Some (V3d(u.X, u.Y, 0.0))
+
 // Vertical cross-sections for the pin overlay charts: the mesh (posed by
 // `transform`, mesh-own-world → scene world, probe convention) intersected with
 // parallel planes through `centre` (normal `normal`, in-plane horizontal

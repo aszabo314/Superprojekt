@@ -70,24 +70,28 @@ module GuiOverlays =
                     let cc    = model.CommonCentroid.GetValue t
                     let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
                     let vp    = viewportSize.GetValue t
-                    let viewT = model.Camera.view.GetValue t |> CameraView.viewTrafo
+                    let cam   = model.Camera.view.GetValue t
+                    let viewT = CameraView.viewTrafo cam
+                    let fs    = model.FlagScale.GetValue t
                     let projT =
                         Frustum.perspective 90.0 1.0 5000.0 (float vp.X / float (max 1 vp.Y))
                         |> Frustum.projTrafo
                     let vpFwd = (viewT * projT).Forward
                     let items =
                         HashMap.toList pins |> List.choose (fun (id, p) ->
-                            let h = vpFwd * V4d(ScanPin.flagTopRender cc scale p, 1.0)
+                            let cR = ScanPin.renderCentre cc scale p.Centre
+                            let fh = ScanPin.flagHeightRender scale fs (Vec.length (cam.Location - cR))
+                            let h = vpFwd * V4d(ScanPin.flagTopRender cc scale fh p, 1.0)
                             if h.W <= 1e-6 then None
                             else
                                 let ndc = h.XYZ / h.W
                                 if abs ndc.X > 1.1 || abs ndc.Y > 1.1 then None
                                 else
-                                    Some (sprintf "{\"id\":\"%s\",\"x\":%.1f,\"y\":%.1f,\"n\":\"%s %s\",\"c\":\"%s\"}"
+                                    Some (sprintf "{\"id\":\"%s\",\"x\":%.1f,\"y\":%.1f,\"n\":\"%s\",\"c\":\"%s\"}"
                                             (idStr id)
                                             ((ndc.X * 0.5 + 0.5) * float vp.X)
                                             ((0.5 - ndc.Y * 0.5) * float vp.Y)
-                                            p.Glyph p.ShortName (Primitives.c4bToHex p.PinColor)))
+                                            p.ShortName (Primitives.c4bToHex p.PinColor)))
                     "[" + String.concat "," items + "]")
         // Chart geometry (CSS px). The x axis spans the slice window (±Extent about
         // the pin centre); the y axis auto-fits the v-range of BOTH pose caches so
@@ -177,7 +181,7 @@ module GuiOverlays =
                                             | _ -> None
                                     match world with
                                     | Some w ->
-                                        let uv = ScanPin.sliceUV p.Centre w
+                                        let uv = ScanPin.sliceUV p.Centre s.UDir w
                                         let dx = min (cw - padX) (max padX (x uv.X))
                                         let dy = min (ch - padB) (max padT (y uv.Y))
                                         dots.Add (sprintf "{\"x\":%.1f,\"y\":%.1f,\"c\":\"%s\"}" dx dy (colorOf m.MeshName))
@@ -392,7 +396,7 @@ module GuiOverlays =
                                 match model.Selection.Active.GetValue t with
                                 | SelCell (p, _) ->
                                     match HashMap.tryFind p (pinsVal.GetValue t) with
-                                    | Some pin -> sprintf " · %s %s" pin.Glyph pin.ShortName
+                                    | Some pin -> sprintf " · %s" pin.ShortName
                                     | None -> ""
                                 | _ -> ""
                             let sub = if model.ExtrinsicZDiff.GetValue t then "Δz" else "M3C2"

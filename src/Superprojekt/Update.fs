@@ -74,6 +74,18 @@ module Update =
             { model with AnchorGhostMode = not model.AnchorGhostMode }
         | SetQuickPinRadius v ->
             { model with QuickPinRadius = max 0.01 v }
+        | SetFlagScale v ->
+            { model with FlagScale = clamp 0.1 10.0 v }
+        // Slice-cell tunables (§A): geometry knobs invalidate the slice caches
+        // (the ensureSlices postlude refetches); the percentile is view-only.
+        | SetSliceNSamples v ->
+            { model with SliceNSamples = max 1.0 v; ScanPins = ScanPinModel.invalidateSlices model.ScanPins }
+        | SetSliceContextCount v ->
+            { model with SliceContextCount = clamp 0.0 4.0 (round v); ScanPins = ScanPinModel.invalidateSlices model.ScanPins }
+        | SetSliceContextSpacing v ->
+            { model with SliceContextSpacing = clamp 0.02 0.5 v; ScanPins = ScanPinModel.invalidateSlices model.ScanPins }
+        | SetSliceVertPercentile v ->
+            { model with SliceVertPercentile = clamp 0.5 1.0 v }
         | SetShowOverlays held ->
             if model.ShowOverlaysHeld = held then model
             else { model with ShowOverlaysHeld = held }
@@ -254,17 +266,19 @@ module Update =
             if bboxes.Length = 0 then model
             else
                 let union =
-                    bboxes |> Array.fold (fun (acc : Box3d) (_, b) ->
+                    bboxes |> Array.fold (fun (acc : Box3d) (_, b, _) ->
                         Box3d(
                             V3d(min acc.Min.X b.Min.X, min acc.Min.Y b.Min.Y, min acc.Min.Z b.Min.Z),
                             V3d(max acc.Max.X b.Max.X, max acc.Max.Y b.Max.Y, max acc.Max.Z b.Max.Z)
                         )) Box3d.Invalid
                 let padded = Box3d(union.Min - V3d.III, union.Max + V3d.III)
-                let perMesh = bboxes |> Array.fold (fun m (n, b) -> Map.add n b m) Map.empty
+                let perMesh = bboxes |> Array.fold (fun m (n, b, _) -> Map.add n b m) Map.empty
+                let spacing = bboxes |> Array.fold (fun m (n, _, s) -> if s > 0.0 then Map.add n s m else m) Map.empty
                 let m =
                     { model with
                         SceneBounds = padded
-                        MeshBounds = perMesh }
+                        MeshBounds = perMesh
+                        MeshSpacing = spacing }
                 // Rest the camera on the default reference mesh (last load step, so
                 // PanoCenters/centroids are in): its panorama centre, framed to its own
                 // bounds rather than the whole scene. One-shot per dataset load.
@@ -289,6 +303,7 @@ module Update =
                     Selection = Selection.initial
                     MeshSolo = None
                     MeshBounds = Map.empty
+                    MeshSpacing = Map.empty
                     ActivePickingLayer = None
                     SolvedTransforms = Map.empty
                     SolveInputs = None
@@ -322,14 +337,6 @@ module Update =
                 | EnterAnchorPlacement | SetInnerRadius _ -> applyRegView RegBefore model
                 | _ -> model
             let m = ScanPinUpdate.handleMsg env model msg
-            // Inspect: losing the selected pin with its deletion returns pin
-            // isolation to the Inspect default (off).
-            let m =
-                if m.WorkflowStep <> Inspect then m
-                else
-                    match msg with
-                    | DeletePin _ when (Selection.pin m.Selection.Active).IsNone -> { m with AnchorGhostMode = false }
-                    | _ -> m
             // Starting placement / deleting a pin cancels the armed editor.
             match msg with
             | EnterAnchorPlacement | DeletePin _ ->
@@ -379,30 +386,32 @@ module Update =
                 let ensureVisible m model =
                     if Map.tryFind m model.MeshVisible |> Option.defaultValue true then model
                     else setMeshVisible (Map.add m true model.MeshVisible) model
+                // Pin isolation (AnchorGhostMode) is Register-exclusive: the mode
+                // default (SetWorkflowStep — on in Correspondence, off elsewhere) is
+                // its only automatic driver; selection never mutates it, so in
+                // Inspect the meshes always stay fully shown.
                 match sel with
                 | SelNone ->
-                    if model.WorkflowStep = Inspect then { exitSolo model with AnchorGhostMode = false }
+                    if model.WorkflowStep = Inspect then exitSolo model
                     else model
                 | SelMesh m ->
                     let model = ensureVisible m model
                     // Inspect focus policy (§C): a moving mesh isolates with the
-                    // reference (it paints its own difference/displacement field) and
-                    // swaps pin isolation off; the reference returns to the ensemble.
+                    // reference (it paints its own difference/displacement field);
+                    // the reference returns to the ensemble.
                     if model.WorkflowStep = Inspect then
-                        if model.Registration.ReferenceMesh <> Some m then
-                            { enterSolo m model with AnchorGhostMode = false }
+                        if model.Registration.ReferenceMesh <> Some m then enterSolo m model
                         else exitSolo model
                     else model
                 | SelPin _ ->
-                    // Inspect: pin focus swaps mesh isolation off, pin isolation on.
-                    if model.WorkflowStep = Inspect then { exitSolo model with AnchorGhostMode = true }
+                    // Pin focus clears mesh isolation; the meshes show fully.
+                    if model.WorkflowStep = Inspect then exitSolo model
                     else model
                 | SelCell (_, mesh) ->
                     // The locate: solo the mesh (backup-captured for a single
-                    // BackOutLocate); an Inspect locate also lights the pin ROI. The
-                    // user's Top/360° choice is respected — the focus framing follows
-                    // the selection in both projections. No camera — the 3D zoom
-                    // stays the cell's double-click.
+                    // BackOutLocate). The user's Top/360° choice is respected — the
+                    // focus framing follows the selection in both projections. No
+                    // camera — the 3D zoom stays the cell's double-click.
                     let backup =
                         match model.LocateBackup with
                         | Some _ -> model.LocateBackup
@@ -411,10 +420,7 @@ module Update =
                                    PrevCenter = model.Camera.center; PrevRadius = model.Camera.radius
                                    PrevPhi = model.Camera.phi; PrevTheta = model.Camera.theta }
                     let model = ensureVisible mesh model
-                    enterSolo mesh
-                        { model with
-                            LocateBackup = backup
-                            AnchorGhostMode = (model.WorkflowStep = Inspect) || model.AnchorGhostMode }
+                    enterSolo mesh { model with LocateBackup = backup }
         | PickCorrespondenceAt(pinId, mesh, world) ->
             // Set the (pin, mesh) correspondence point at the picked surface point,
             // stored mesh-local via the displayed transform (so the before/after toggle

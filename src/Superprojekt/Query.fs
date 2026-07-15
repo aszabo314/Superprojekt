@@ -138,39 +138,50 @@ module Query =
         }
 
     // Vertical cross-sections through a pin: mesh∩plane polylines for every mesh ×
-    // parallel offset in one request, in the slice's 2D chart frame ((u, v) metres
-    // about the pin centre). Transforms are world-space rigid M44 (Forward), probe
-    // convention.
+    // parallel offset × both registration poses in one request, in the slice's 2D
+    // chart frame ((u, v) metres about the pin centre). The section azimuth is
+    // fitted server-side on referenceName (dip direction) and returned. Transforms
+    // are world-space rigid M44 (Forward), probe convention; a mesh with a second
+    // (opposite-pose) transform gets paired opposite-pose polylines back.
     let slice
             (serverUrl : string)
-            (meshes : (string * M44d) list)
-            (centre : V3d) (uDir : V3d) (normal : V3d)
+            (meshes : (string * M44d * M44d option) list)
+            (referenceName : string)
+            (centre : V3d)
             (radius : float) (offsets : float[]) (maxPointsPerPlane : int)
-            : Async<(string * V2d[][][])[]> =
+            : Async<V3d * (string * V2d[][][] * V2d[][][] option)[]> =
         async {
             let meshesJson =
                 meshes
-                |> List.map (fun (n, t) -> sprintf """{"name":"%s","transform":[%s]}""" n (m44json t))
+                |> List.map (fun (n, t, tOther) ->
+                    match tOther with
+                    | Some o -> sprintf """{"name":"%s","transform":[%s],"transformOther":[%s]}""" n (m44json t) (m44json o)
+                    | None   -> sprintf """{"name":"%s","transform":[%s]}""" n (m44json t))
                 |> String.concat ","
             let offsetsJson = offsets |> Array.map (sprintf "%.17g") |> String.concat ","
             let json =
-                sprintf """{"meshes":[%s],"centre":%s,"uDir":%s,"normal":%s,"radius":%.17g,"offsets":[%s],"maxPointsPerPlane":%d}"""
-                    meshesJson (v3 centre) (v3 uDir) (v3 normal) radius offsetsJson maxPointsPerPlane
+                sprintf """{"meshes":[%s],"referenceName":"%s","centre":%s,"radius":%.17g,"offsets":[%s],"maxPointsPerPlane":%d}"""
+                    meshesJson referenceName (v3 centre) radius offsetsJson maxPointsPerPlane
             let! r = post serverUrl "/query/slice" json
-            return
+            let parsePlanes (pe : JsonElement) =
+                pe.EnumerateArray()
+                |> Seq.map (fun pl ->
+                    pl.EnumerateArray()
+                    |> Seq.map (fun line ->
+                        let flat = line.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                        Array.init (flat.Length / 2) (fun i -> V2d(flat.[i * 2], flat.[i * 2 + 1])))
+                    |> Seq.toArray)
+                |> Seq.toArray
+            let perMesh =
                 r.GetProperty("meshes").EnumerateArray()
                 |> Seq.map (fun m ->
-                    let planes =
-                        m.GetProperty("planes").EnumerateArray()
-                        |> Seq.map (fun pl ->
-                            pl.EnumerateArray()
-                            |> Seq.map (fun line ->
-                                let flat = line.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                                Array.init (flat.Length / 2) (fun i -> V2d(flat.[i * 2], flat.[i * 2 + 1])))
-                            |> Seq.toArray)
-                        |> Seq.toArray
-                    m.GetProperty("name").GetString(), planes)
+                    let other =
+                        match m.TryGetProperty "planesOther" with
+                        | true, oe when oe.ValueKind <> JsonValueKind.Null -> Some (parsePlanes oe)
+                        | _ -> None
+                    m.GetProperty("name").GetString(), parsePlanes (m.GetProperty "planes"), other)
                 |> Seq.toArray
+            return readV3 (r.GetProperty "azimuth"), perMesh
         }
 
     // Per-vertex signed distance of a target mesh to the reference, in the

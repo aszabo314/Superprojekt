@@ -42,15 +42,19 @@ let panoCentersHandler (dataset : string) : HttpHandler =
         return! json result next ctx
     }
 
+// spacing = mean edge length (m, stride-sampled) — the mesh's sample spacing;
+// the client derives the ONE global slice-cell window from the coarsest mesh.
 let bboxesHandler (dataset : string) : HttpHandler =
     fun next ctx -> task {
         let log    = ctx.GetLogger "Superserver"
-        let result = Collections.Generic.Dictionary<string, {| min: float[]; max: float[] |}>()
+        let result = Collections.Generic.Dictionary<string, {| min: float[]; max: float[]; spacing: float |}>()
         for name in MeshLoader.meshNames dataset do
             let count = MeshLoader.meshCount dataset name
             if count > 0 then
                 let mutable wMin = V3d( infinity,  infinity,  infinity)
                 let mutable wMax = V3d(-infinity, -infinity, -infinity)
+                let mutable edgeSum = 0.0
+                let mutable edgeCnt = 0
                 for i in 0 .. count - 1 do
                     let pm = (MeshCache.get dataset name i).parsed
                     if not pm.bbox.IsInvalid then
@@ -58,8 +62,19 @@ let bboxesHandler (dataset : string) : HttpHandler =
                         let bMax = pm.centroid + pm.bbox.Max
                         wMin <- V3d(min wMin.X bMin.X, min wMin.Y bMin.Y, min wMin.Z bMin.Z)
                         wMax <- V3d(max wMax.X bMax.X, max wMax.Y bMax.Y, max wMax.Z bMax.Z)
+                    let tri = pm.indices.Length / 3
+                    let step = max 1 (tri / 30000)
+                    let mutable t = 0
+                    while t < tri do
+                        let p0 = V3d pm.positions.[pm.indices.[t * 3]]
+                        let p1 = V3d pm.positions.[pm.indices.[t * 3 + 1]]
+                        let p2 = V3d pm.positions.[pm.indices.[t * 3 + 2]]
+                        edgeSum <- edgeSum + (p1 - p0).Length + (p2 - p1).Length + (p0 - p2).Length
+                        edgeCnt <- edgeCnt + 3
+                        t <- t + step
                 if wMin.X <= wMax.X then
-                    result.[name] <- {| min = fromV3d wMin; max = fromV3d wMax |}
+                    let spacing = if edgeCnt > 0 then edgeSum / float edgeCnt else 0.0
+                    result.[name] <- {| min = fromV3d wMin; max = fromV3d wMax; spacing = spacing |}
         log.LogInformation("bboxes {Dataset}: {Count} meshes", dataset, result.Count)
         return! json result next ctx
     }

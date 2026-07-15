@@ -31,8 +31,7 @@ module ScanPinUpdate =
 
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
         let existing = model.ScanPins.Pins |> HashMap.toList |> List.map snd
-        // Least-used palette slot (round-robin), ties → lowest index. Glyph + colour
-        // share the slot (paired redundant coding).
+        // Least-used palette slot (round-robin), ties → lowest index.
         let slot =
             [ 0 .. Primitives.PinPalette.count - 1 ]
             |> List.map (fun i -> i, existing |> List.filter (fun p -> p.PinColor = Primitives.PinPalette.color i) |> List.length)
@@ -47,7 +46,6 @@ module ScanPinUpdate =
         let shortName = Primitives.PinIdentity.shortName taken (g.GetHashCode())
         {
             Id                   = id
-            Glyph                = Primitives.PinPalette.glyph slot
             ShortName            = shortName
             PinColor             = Primitives.PinPalette.color slot
             Centre               = worldCentre
@@ -251,11 +249,12 @@ module ScanPinUpdate =
                 { model with ScanPins = { sp with Pins = pins } }
 
     // Lazy cross-section trigger, postlude after every reducer step, mirroring
-    // ensureProbe: every pin with an invalidated Slice (and SliceOther once a
-    // solve exists) gets one debounced server query per pose. The slices feed
-    // only the show-overlays hold, but are precomputed here so the hold itself
-    // never fetches. All meshes regardless of visibility — visibility gates
-    // rendering only.
+    // ensureProbe: every pin with an invalidated Slice gets ONE debounced server
+    // query returning BOTH poses (SliceOther rides along once a solve exists) and
+    // the pin's section azimuth (fitted server-side on the reference — the same
+    // reference rule as the probe). The slices feed the matrix slice cells + the
+    // show-overlays hold, precomputed here so neither ever fetches. All meshes
+    // regardless of visibility — visibility gates rendering only.
     let ensureSlices (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
         let solved = not (Map.isEmpty model.SolvedTransforms)
@@ -269,14 +268,25 @@ module ScanPinUpdate =
             match allMeshes with
             | [] -> model
             | _ ->
-                let meshes = allMeshes |> List.map (fun n -> n, (ModelTransforms.displayedWorld model n).Forward)
+                let refMesh0 = model.Registration.ReferenceMesh |> Option.filter (fun r -> List.contains r allMeshes)
                 let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
-                let meshesOther = allMeshes |> List.map (fun n -> n, (ModelTransforms.displayedWorldAt otherView model n).Forward)
+                let meshes =
+                    allMeshes |> List.map (fun n ->
+                        n,
+                        (ModelTransforms.displayedWorld model n).Forward,
+                        (if solved then Some (ModelTransforms.displayedWorldAt otherView model n).Forward else None))
+                let window0 = ScanPin.sliceWindow model.SliceNSamples model.MeshSpacing
+                let k = int model.SliceContextCount
+                let spacingFrac = model.SliceContextSpacing
                 let pending =
                     sp.Pins |> HashMap.toList
                     |> List.filter (fun (_, p) -> pendingPin p)
                 let mutable pins = sp.Pins
                 for (id, pin) in pending do
+                    let refMesh =
+                        refMesh0
+                        |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h allMeshes))
+                        |> Option.defaultValue (List.head allMeshes)
                     match sliceCtsMap.TryGetValue id with
                     | true, cts -> cts.Cancel()
                     | _ -> ()
@@ -284,35 +294,36 @@ module ScanPinUpdate =
                     sliceCtsMap.[id] <- cts
                     let token = cts.Token
                     let centre = pin.Centre
-                    let radius = pin.InnerRadius
-                    let offsets = ScanPin.sliceOffsets radius
-                    let needMain  = match pin.Slice with SliceNone -> true | _ -> false
-                    let needOther = solved && (match pin.SliceOther with SliceNone -> true | _ -> false)
-                    let fire ms ok fail =
-                        task {
-                            try
-                                do! System.Threading.Tasks.Task.Delay(250, token)
-                                let! res =
-                                    Query.slice ApiConfig.apiBase.Value ms centre
-                                        ScanPin.sliceUDir ScanPin.sliceNormal radius offsets 140
-                                    |> Async.StartAsTask
-                                if not token.IsCancellationRequested then
-                                    let s = {
-                                        Extent  = radius
-                                        Offsets = offsets
-                                        Meshes  = res |> Array.map (fun (n, planes) -> { MeshName = n; Planes = planes })
-                                    }
-                                    env.Emit [ScanPinMsg (ok s)]
-                            with
-                            | :? System.OperationCanceledException -> ()
-                            | ex ->
-                                if not token.IsCancellationRequested then
-                                    env.Emit [ScanPinMsg (fail ex.Message)]
-                        } |> ignore
-                    if needMain then fire meshes (fun s -> SliceComputed(id, s)) (fun e -> SliceFailed(id, e))
-                    if needOther then fire meshesOther (fun s -> SliceOtherComputed(id, s)) (fun e -> SliceOtherFailed(id, e))
-                    let pin = if needMain then { pin with Slice = SliceRunning } else pin
-                    let pin = if needOther then { pin with SliceOther = SliceRunning } else pin
+                    let window = window0 |> Option.defaultValue (pin.InnerRadius * 2.0)
+                    let offsets = ScanPin.sliceOffsets k spacingFrac window
+                    // ≥ the pin sphere, so the 3D/label overlays keep spanning the pin.
+                    let radius = max pin.InnerRadius (ScanPin.sliceClipRadius window offsets)
+                    task {
+                        try
+                            do! System.Threading.Tasks.Task.Delay(250, token)
+                            let! (azimuth, res) =
+                                Query.slice ApiConfig.apiBase.Value meshes refMesh centre radius offsets 140
+                                |> Async.StartAsTask
+                            if not token.IsCancellationRequested then
+                                let mk (sel : V2d[][][] -> V2d[][][] option -> V2d[][][] option) = {
+                                    Extent  = radius
+                                    UDir    = azimuth
+                                    Offsets = offsets
+                                    Meshes  = res |> Array.choose (fun (n, planes, other) ->
+                                                sel planes other |> Option.map (fun pl -> { MeshName = n; Planes = pl }))
+                                }
+                                env.Emit [ScanPinMsg (SliceComputed(id, mk (fun planes _ -> Some planes)))]
+                                if solved then
+                                    env.Emit [ScanPinMsg (SliceOtherComputed(id, mk (fun _ other -> other)))]
+                        with
+                        | :? System.OperationCanceledException -> ()
+                        | ex ->
+                            if not token.IsCancellationRequested then
+                                env.Emit [ScanPinMsg (SliceFailed(id, ex.Message))]
+                                if solved then env.Emit [ScanPinMsg (SliceOtherFailed(id, ex.Message))]
+                    } |> ignore
+                    let pin = { pin with Slice = SliceRunning }
+                    let pin = if solved then { pin with SliceOther = SliceRunning } else pin
                     pins <- HashMap.add id pin pins
                 { model with ScanPins = { sp with Pins = pins } }
 

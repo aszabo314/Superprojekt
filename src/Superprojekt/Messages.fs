@@ -16,6 +16,7 @@ type Message =
     | SetIsolineBands of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
+    | SetFlagScale of float
     // Spring-loaded show-overlays modifier (greyscale-except-pins while held).
     | SetShowOverlays of bool
     | SetReferenceMesh of string option
@@ -44,7 +45,14 @@ type Message =
     | FocusDistComputed of mesh:string * float32[]
     | FocusDistOtherComputed of mesh:string * float32[]
     | SurfaceDistanceFailed of mesh:string * reason:string
-    | SceneBoundsLoaded  of (string * Box3d)[]
+    // Per mesh: world bbox + mean sample spacing (m) — one fetch warms both.
+    | SceneBoundsLoaded  of (string * Box3d * float)[]
+    // Slice-cell tunables (§A, gear): window multiplier / context count / context
+    // spacing invalidate the slice caches; the vertical percentile is view-only.
+    | SetSliceNSamples of float
+    | SetSliceContextCount of float
+    | SetSliceContextSpacing of float
+    | SetSliceVertPercentile of float
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
     | ScanPinMsg              of ScanPinMessage

@@ -169,6 +169,33 @@ module GuiTopBar =
                         }
                         div {
                             Class "tb-gear-row"
+                            inlineSlider "Pin flag scale" 0.2 5.0 0.1 (sprintf "%.1f×") model.FlagScale (fun v ->
+                                env.Emit [SetFlagScale v])
+                        }
+                        // Slice-cell tunables (§A): one global window / context /
+                        // vertical scale for every matrix slice diagram.
+                        div {
+                            Class "tb-gear-row"
+                            inlineSlider "Slice window (× spacing)" 2.0 12.0 0.5 (sprintf "%.1f") model.SliceNSamples (fun v ->
+                                env.Emit [SetSliceNSamples v])
+                        }
+                        div {
+                            Class "tb-gear-row"
+                            inlineSlider "Slice context (each side)" 0.0 4.0 1.0 (sprintf "%.0f") model.SliceContextCount (fun v ->
+                                env.Emit [SetSliceContextCount v])
+                        }
+                        div {
+                            Class "tb-gear-row"
+                            inlineSlider "Slice context spacing (× window)" 0.02 0.5 0.01 (sprintf "%.2f") model.SliceContextSpacing (fun v ->
+                                env.Emit [SetSliceContextSpacing v])
+                        }
+                        div {
+                            Class "tb-gear-row"
+                            inlineSlider "Slice vertical percentile" 0.5 1.0 0.01 (sprintf "%.2f") model.SliceVertPercentile (fun v ->
+                                env.Emit [SetSliceVertPercentile v])
+                        }
+                        div {
+                            Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Dataset" }
                             span {
                                 Class "tb-gear-val"

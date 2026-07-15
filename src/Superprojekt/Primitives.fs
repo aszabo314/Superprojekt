@@ -18,6 +18,7 @@ module Primitives =
 
     let c4bToV3d (c : C4b) = V3d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0)
     let c4bToRgbCss (c : C4b) = sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B)
+    let c4bToRgbaCss (c : C4b) (a : float) = sprintf "rgba(%d,%d,%d,%.2f)" (int c.R) (int c.G) (int c.B) a
 
     let meshPaletteV4d =
         meshPalette |> Array.map (fun c -> V4d(c4bToV3d c, 1.0))
@@ -26,19 +27,16 @@ module Primitives =
 
     // Pin identity — the vivid warm/purple family (orange · fuchsia · violet ·
     // pink …), disjoint from both the scalar-gradient hues and the cool/earth mesh
-    // family (§B1). Index-paired with the glyph set so colour + shape redundantly
-    // code the same pin identity — the glyphs carry the load within the family.
+    // family (§B1). Identity = colour + the 2-char ShortName, shown as a
+    // colour-filled element with the name inside.
     module PinPalette =
         let colors =
             [| C4b(234uy, 88uy, 12uy); C4b(192uy, 38uy,211uy); C4b(124uy, 58uy,237uy)
                C4b(219uy, 39uy,119uy); C4b(134uy, 25uy,143uy); C4b(162uy, 28uy,175uy)
                C4b(190uy, 24uy, 93uy); C4b(109uy, 40uy,217uy); C4b(194uy, 65uy, 12uy)
                C4b(147uy, 51uy,234uy) |]
-        // Distinct Unicode silhouettes; index-paired with `colors`.
-        let glyphs = [| "●"; "■"; "▲"; "◆"; "★"; "✚"; "▼"; "⬢"; "⬟"; "✦" |]
         let count = colors.Length
         let color (i : int) = colors.[((i % count) + count) % count]
-        let glyph (i : int) = glyphs.[((i % glyphs.Length) + glyphs.Length) % glyphs.Length]
 
     // Pronounceable 2-char pin code = consonant + vowel, collision-checked against
     // names already taken (other pins' short names + the mesh numbers). Seeded by the
@@ -63,15 +61,15 @@ module Primitives =
 
     // Linear-diverging difference colourmap (§C — Coolwarm, Colorcet CET-D01 as
     // shipped by Maple): blue (neg) → near-white → red (pos). A near-zero perceptual
-    // boost (|t|^0.6) keeps small deviations visible (no central flat-spot). Within
-    // ±lod → neutral (the LoD gate); outside, ramp from the gate edge out to `range`.
+    // boost (|t|^0.6) keeps small deviations visible (no central flat-spot).
     // The SAME constants + shape are mirrored in the FShade difference painters
     // (FocusShaders / MeshShaders).
     module Diff =
         // Coolwarm anchors sampled from CET-D01 at 0 / ¼ / ½ / ¾ / 1: zero = the
         // ramp's near-white centre, each sign runs through its mid hue to a saturated
-        // end. `neutral` is reserved for NO SIGNAL (within the LoD gate / no data),
-        // so grey always means "nothing detectable", never "0".
+        // end. `neutral` is reserved for NO SIGNAL (within the LoD gate / no data —
+        // the shader painters' gate colour), so grey always means "nothing
+        // detectable", never "0".
         // Mirrored in MeshShaders (enc 1) + FocusShaders (mode 1) — keep in sync.
         let neutral = V3d(0.62, 0.63, 0.66)
         let zero    = V3d(0.930, 0.907, 0.917)
@@ -83,16 +81,6 @@ module Primitives =
             let mid, e = if v >= 0.0 then posMid, posEnd else negMid, negEnd
             if m < 0.5 then zero + (mid - zero) * (m * 2.0)
             else mid + (e - mid) * ((m - 0.5) * 2.0)
-        let colorV3 (lod : float) (range : float) (v : float) =
-            let a = abs v
-            if a <= lod then neutral
-            else
-                let t = clamp 0.0 1.0 ((a - lod) / max 1.0e-6 (range - lod))
-                ramp v (t ** 0.6)
-        let color (lod : float) (range : float) (v : float) =
-            let c = colorV3 lod range v
-            let b x = byte (clamp 0.0 255.0 (x * 255.0))
-            C4b(b c.X, b c.Y, b c.Z)
         // Asymmetric signed range [lo ≤ 0, hi ≥ 0]: the zero centre stays welded to 0,
         // each side normalized by its own end (same t^0.6 near-zero boost). Values
         // outside clamp to the end colours.

@@ -1,5 +1,5 @@
-//4053b7c3-1775-4969-1e59-b5c5d9f120ae
-//e3042a30-6ab8-68b3-a14e-623ab8c13aa2
+//16b85f83-7abb-7dd6-a43d-43c4780283d2
+//84c204a2-dcbc-905e-7d99-939fc094f8da
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -47,8 +47,14 @@ type AdaptiveModel(value : Model) =
     let _SlopeThresholdDeg_ = FSharp.Data.Adaptive.cval(value.SlopeThresholdDeg)
     let _AnchorGhostMode_ = FSharp.Data.Adaptive.cval(value.AnchorGhostMode)
     let _QuickPinRadius_ = FSharp.Data.Adaptive.cval(value.QuickPinRadius)
+    let _FlagScale_ = FSharp.Data.Adaptive.cval(value.FlagScale)
     let _SceneBounds_ = FSharp.Data.Adaptive.cval(value.SceneBounds)
     let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
+    let _MeshSpacing_ = FSharp.Data.Adaptive.cval(value.MeshSpacing)
+    let _SliceNSamples_ = FSharp.Data.Adaptive.cval(value.SliceNSamples)
+    let _SliceContextCount_ = FSharp.Data.Adaptive.cval(value.SliceContextCount)
+    let _SliceContextSpacing_ = FSharp.Data.Adaptive.cval(value.SliceContextSpacing)
+    let _SliceVertPercentile_ = FSharp.Data.Adaptive.cval(value.SliceVertPercentile)
     let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
     let _ShowOverlaysHeld_ = FSharp.Data.Adaptive.cval(value.ShowOverlaysHeld)
     let _LoadTransforms_ = FSharp.Data.Adaptive.cval(value.LoadTransforms)
@@ -105,8 +111,14 @@ type AdaptiveModel(value : Model) =
             _SlopeThresholdDeg_.Value <- value.SlopeThresholdDeg
             _AnchorGhostMode_.Value <- value.AnchorGhostMode
             _QuickPinRadius_.Value <- value.QuickPinRadius
+            _FlagScale_.Value <- value.FlagScale
             _SceneBounds_.Value <- value.SceneBounds
             _MeshBounds_.Value <- value.MeshBounds
+            _MeshSpacing_.Value <- value.MeshSpacing
+            _SliceNSamples_.Value <- value.SliceNSamples
+            _SliceContextCount_.Value <- value.SliceContextCount
+            _SliceContextSpacing_.Value <- value.SliceContextSpacing
+            _SliceVertPercentile_.Value <- value.SliceVertPercentile
             _ActivePickingLayer_.Value <- value.ActivePickingLayer
             _ShowOverlaysHeld_.Value <- value.ShowOverlaysHeld
             _LoadTransforms_.Value <- value.LoadTransforms
@@ -156,8 +168,14 @@ type AdaptiveModel(value : Model) =
     member __.SlopeThresholdDeg = _SlopeThresholdDeg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.AnchorGhostMode = _AnchorGhostMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.QuickPinRadius = _QuickPinRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.FlagScale = _FlagScale_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.SceneBounds = _SceneBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>
+    member __.MeshSpacing = _MeshSpacing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
+    member __.SliceNSamples = _SliceNSamples_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.SliceContextCount = _SliceContextCount_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.SliceContextSpacing = _SliceContextSpacing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.SliceVertPercentile = _SliceVertPercentile_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.ShowOverlaysHeld = _ShowOverlaysHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.LoadTransforms = _LoadTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>

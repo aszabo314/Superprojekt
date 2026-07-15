@@ -29,11 +29,11 @@ type ProbeState =
     | ProbeError of string
 
 // Vertical cross-section cache of one pin at one registration pose (feeds the
-// show-overlays hold: label profile chart + 3D centre-slice lines). Per mesh,
-// per parallel plane, mesh∩plane polylines in the slice's 2D chart frame —
-// u along the fixed horizontal slice direction, v along world Z, metres
-// relative to the pin centre, clipped to the probe sphere. Precomputed
-// server-side so the overlay toggle stays instant.
+// matrix slice cells + the show-overlays hold: label profile chart + 3D
+// centre-slice lines). Per mesh, per parallel plane, mesh∩plane polylines in
+// the slice's 2D chart frame — u along the pin's section azimuth (PinSlice.UDir),
+// v along world Z, metres relative to the pin centre, disc-clipped. Precomputed
+// server-side so neither consumer ever fetches.
 type SliceMesh = {
     MeshName : string
     // Planes.[k] = the polylines of PinSlice.Offsets.[k].
@@ -41,8 +41,12 @@ type SliceMesh = {
 }
 
 type PinSlice = {
-    // Probe-sphere radius (m) the slices were clipped to (pin InnerRadius at fetch).
+    // Clip-sphere radius (m) the slices were disc-clipped to at fetch.
     Extent  : float
+    // The pin's section azimuth (world horizontal unit, chart u): fitted
+    // server-side on the reference surface (dip direction) — ONE line per pin,
+    // shared by every cell of its matrix row (§A).
+    UDir    : V3d
     // Signed plane offsets (m) along the slice normal; 0 = the centre slice.
     Offsets : float[]
     Meshes  : SliceMesh[]

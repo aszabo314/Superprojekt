@@ -20,10 +20,10 @@ type ContactRingState =
 // conversion happens at pipeline boundaries.
 type ScanPin = {
     Id                   : ScanPinId
-    // Immutable identity triple (§A), assigned at creation: a preattentive Glyph +
-    // a distinct PinColor (paired, from the pin palette) + a random 2-char ShortName.
-    // The pin's identity everywhere: matrix row, 3D flag label, focus label, samples.
-    Glyph                : string
+    // Immutable identity pair (§A), assigned at creation: a distinct PinColor
+    // (from the pin palette) + a random 2-char ShortName, everywhere shown as a
+    // colour-filled element with the name inside: matrix row, 3D flag label,
+    // focus label, samples.
     ShortName            : string
     PinColor             : C4b
     Centre               : V3d
@@ -98,6 +98,15 @@ module ScanPinModel =
                              Slice = slice; SliceOther = sliceOther })
         { sp with Pins = pins }
 
+    // Slice-only invalidation (window/context tunables): the probes stay valid.
+    let invalidateSlices (sp : ScanPinModel) =
+        let pins =
+            sp.Pins |> HashMap.map (fun _ p ->
+                match p.Slice, p.SliceOther with
+                | SliceNone, SliceNone -> p
+                | _ -> { p with Slice = SliceNone; SliceOther = SliceNone })
+        { sp with Pins = pins }
+
     let invalidateRings (sp : ScanPinModel) =
         let pins =
             sp.Pins |> HashMap.map (fun _ p ->
@@ -117,25 +126,39 @@ module ScanPin =
     let roiReach (innerRadius : float) =
         sqrt (innerRadius * innerRadius + (fixedProbeLength * 0.5) ** 2.0)
 
-    // Fixed frame of the vertical cross-section cache: the cut plane contains
-    // world X (chart u) and world Z (chart v); parallel planes offset along
-    // world Y, three each side at radius/4 (disc-clipped, so the outermost still
-    // spans ~⅔ of the pin). A fixed direction keeps the slices comparable across
-    // pins and poses.
-    let sliceUDir   = V3d.IOO
-    let sliceNormal = V3d.OIO
-    let sliceOffsets (radius : float) =
-        [| -3 .. 3 |] |> Array.map (fun i -> float i * radius * 0.25)
+    // Frame of the vertical cross-section cache (§A): the cut plane contains the
+    // pin's section azimuth (chart u — a world-horizontal unit fitted server-side
+    // on the reference's dip direction, PinSlice.UDir; ONE line per pin, shared by
+    // every cell of its matrix row) and world Z (chart v); parallel context planes
+    // offset along the horizontal normal.
+    let sliceNormalOf (uDir : V3d) = Vec.cross V3d.OOI uDir
+
+    // ONE global horizontal window (m) for every slice cell: N × the coarsest
+    // loaded mesh's sample spacing, so even the coarsest mesh shows shape.
+    // None until spacings arrive (callers fall back to the pin diameter).
+    let sliceWindow (nSamples : float) (spacings : Map<string, float>) : float option =
+        let coarsest = spacings |> Map.fold (fun acc _ s -> max acc s) 0.0
+        if coarsest <= 0.0 then None else Some (nSamples * coarsest)
+
+    // Context-plane offsets: k each side, spaced a fraction of the window.
+    let sliceOffsets (k : int) (spacingFrac : float) (window : float) =
+        [| -k .. k |] |> Array.map (fun i -> float i * spacingFrac * window)
+
+    // Disc-clip radius that still covers the full window on every offset plane.
+    let sliceClipRadius (window : float) (offsets : float[]) =
+        let halfW = window * 0.5
+        let wMax = offsets |> Array.fold (fun a w -> max a (abs w)) 0.0
+        sqrt (halfW * halfW + wMax * wMax) * 1.0001
 
     // Chart frame (u, v) at plane offset w → metric world.
-    let sliceToWorld (centre : V3d) (w : float) (q : V2d) =
-        centre + sliceUDir * q.X + sliceNormal * w + V3d.OOI * q.Y
+    let sliceToWorld (centre : V3d) (uDir : V3d) (w : float) (q : V2d) =
+        centre + uDir * q.X + sliceNormalOf uDir * w + V3d.OOI * q.Y
 
-    // Metric world → chart frame of the CENTRE slice (the Y component drops —
-    // i.e. the point is projected onto the centre plane).
-    let sliceUV (centre : V3d) (p : V3d) =
+    // Metric world → chart frame of the CENTRE slice (the out-of-plane component
+    // drops — i.e. the point is projected onto the centre plane).
+    let sliceUV (centre : V3d) (uDir : V3d) (p : V3d) =
         let q = p - centre
-        V2d(Vec.dot q sliceUDir, q.Z)
+        V2d(Vec.dot q uDir, q.Z)
 
     // Index of the centre plane (offset closest to 0).
     let sliceCentreIndex (s : PinSlice) =
@@ -159,25 +182,21 @@ module ScanPin =
         | ProbeReady r -> r.Normal
         | _ -> V3d.OOI
 
-    // Far-view flag pole: height grows with the pin's error magnitude
-    // (max |median offset| across moving meshes; 0 until the probe lands).
-    let flagMagnitude (p : ScanPin) =
-        match p.Probe with
-        | ProbeReady r ->
-            let moving =
-                r.Distributions
-                |> Array.filter (fun d -> d.MeshName <> r.ReferenceMesh && d.Count > 0)
-            if moving.Length = 0 then 0.0
-            else moving |> Array.map (fun d -> abs d.Median) |> Array.max
-        | _ -> 0.0
+    // Screen-constant flag sizing: the pole height is a fixed fraction of the
+    // eye→pin distance (render space), clamped in METRIC WORLD to [0.1, 20] m;
+    // the gear's flag-scale multiplier scales the fraction AND both bounds.
+    // Every flag element (pole, top ring, name, base cross) derives from this
+    // one height, so the whole flag resizes together.
+    let flagHeightRender (datasetScale : float) (flagScale : float) (eyeDistRender : float) =
+        let hWorld = 0.10 * flagScale * eyeDistRender / datasetScale
+        renderLength datasetScale (min (20.0 * flagScale) (max (0.1 * flagScale) hWorld))
 
     // Render-space tip of the flag pole (base = pin centre, along the pin axis) —
     // shared by the 3D pole geometry and the show-overlays 2D name tags.
-    let flagTopRender (commonCentroid : V3d) (datasetScale : float) (p : ScanPin) =
+    let flagTopRender (commonCentroid : V3d) (datasetScale : float) (flagHeight : float) (p : ScanPin) =
         let a = axis p
         let aN = if a.Length > 1e-9 then a.Normalized else V3d.OOI
-        let h = renderLength datasetScale (p.InnerRadius * 1.5 + flagMagnitude p * 3.0)
-        renderCentre commonCentroid datasetScale p.Centre + aN * h
+        renderCentre commonCentroid datasetScale p.Centre + aN * flagHeight
 
     let correspondence (p : ScanPin) = p.Correspondence
 

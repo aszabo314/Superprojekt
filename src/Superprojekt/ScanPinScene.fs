@@ -263,7 +263,9 @@ module ScanPinScene =
 
         // Visible pin-centre marker: a small, faint neutral wire-box jack on top (so
         // the invisible pick proxy can't occlude it); slightly darker when selected
-        // or hovered. Fixed render size — independent of pin radius.
+        // or hovered. The flag's base cross: sized by the screen-constant flag
+        // height (view-dependent by design — recomputes per camera move; a handful
+        // of pins keeps it cheap), but NEVER rotated (axis-aligned, unlike the name).
         // Project to centres only — depending on the whole pin map would rebuild the
         // marker buffer on any pin field change (probe/ring result, rename, …).
         let pinCentres = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre) |> AMap.toAVal
@@ -275,6 +277,8 @@ module ScanPinScene =
                     let scale = datasetScale.GetValue t
                     let sel = selectedId.GetValue t
                     let hov = model.Selection.Hovered.GetValue t
+                    let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
+                    let fs = model.FlagScale.GetValue t
                     let out = ResizeArray<V3d * V3d * V4d * float>()
                     for (id, centre) in HashMap.toSeq centres do
                         let isSel = sel = Some id
@@ -284,9 +288,11 @@ module ScanPinScene =
                             else V4d(0.45, 0.48, 0.53, 0.4)
                         let w = if isSel || hovered then 1.6 else 1.0
                         let cR = ScanPin.renderCentre cc scale centre
-                        addBoxOutline out cR 0.035 0.007 0.007 col w
-                        addBoxOutline out cR 0.007 0.035 0.007 col w
-                        addBoxOutline out cR 0.007 0.007 0.035 col w
+                        let h = ScanPin.flagHeightRender scale fs (Vec.length (eye - cR))
+                        let l, thin = h * 0.10, h * 0.02
+                        addBoxOutline out cR l thin thin col w
+                        addBoxOutline out cR thin l thin col w
+                        addBoxOutline out cR thin thin l col w
                     out.ToArray())
             linesNodeTop notFullscreen segs
 
@@ -449,11 +455,12 @@ module ScanPinScene =
                 linesNode active outlineSegs
             ]
 
-        // Pin pole (far view): a neutral flag along the probe axis per committed pin;
-        // pole height grows with magnitude (ScanPin.flagMagnitude). While the
-        // show-overlays hold is down it takes the pin colour and gets much thicker,
-        // matching the white-out-except-pins read.
-        let pinGlyphs =
+        // Pin flag pole (far view): a neutral pole + top ring along the probe axis
+        // per committed pin, screen-constant size (ScanPin.flagHeightRender: fixed
+        // screen fraction, world-clamped, gear-scaled — hence the view dependency).
+        // While the show-overlays hold is down it takes the pin colour and gets
+        // much thicker, matching the white-out-except-pins read.
+        let pinFlags =
             let neutral = V4d(0.52, 0.55, 0.60, 0.75)
             let segs =
                 AVal.custom (fun t ->
@@ -461,16 +468,18 @@ module ScanPinScene =
                     let cc    = model.CommonCentroid.GetValue t
                     let scale = datasetScale.GetValue t
                     let overlays = model.ShowOverlaysHeld.GetValue t
+                    let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
+                    let fs = model.FlagScale.GetValue t
                     let out   = ResizeArray<V3d * V3d * V4d * float>()
                     for (_, p) in HashMap.toSeq pins do
                         let col = if overlays then V4d(Primitives.c4bToV3d p.PinColor, 1.0) else neutral
                         let w   = if overlays then 7.0 else 2.5
                         let _, u, v = basisFromNormal (ScanPin.axis p)
                         let c   = ScanPin.renderCentre cc scale p.Centre
-                        let top = ScanPin.flagTopRender cc scale p
-                        let hr  = ScanPin.renderLength scale (p.InnerRadius * 0.5)
+                        let h   = ScanPin.flagHeightRender scale fs (Vec.length (eye - c))
+                        let top = ScanPin.flagTopRender cc scale h p
                         out.Add(c, top, col, w)
-                        addRing out top u v hr col w 24
+                        addRing out top u v (h * 0.16) col w 24
                     out.ToArray())
             ASet.ofList [ linesNode notFullscreen segs ]
 
@@ -514,36 +523,45 @@ module ScanPinScene =
                                             | None -> V4d(0.102, 0.337, 0.859, 0.95)
                                         for line in sm.Planes.[ci] do
                                             for i in 0 .. line.Length - 2 do
-                                                let a = ScanPin.sliceToWorld centre w line.[i]
-                                                let b = ScanPin.sliceToWorld centre w line.[i + 1]
+                                                let a = ScanPin.sliceToWorld centre s.UDir w line.[i]
+                                                let b = ScanPin.sliceToWorld centre s.UDir w line.[i + 1]
                                                 out.Add(ScanPin.renderCentre cc scale a,
                                                         ScanPin.renderCentre cc scale b, col, 2.0)
                             | None -> ()
                         out.ToArray())
             ASet.ofList [ linesNodeTop slicesActive segs ]
 
-        // Pin identity flag (§A): the pin's ShortName as a text label floating above
-        // the pin centre, in the pin's PinColor. Always-on-top (passOne, DepthTest.None)
-        // so it reads against the terrain. Identity is immutable → snapshot once per id
-        // (no atlas rebuild on probe/ring updates); only the position is adaptive.
+        // Pin identity flag name (§A): the pin's ShortName floating above the flag
+        // top, in the pin's PinColor. Sized by the screen-constant flag height and
+        // billboarded about Z so the text always faces the camera — the flag's only
+        // rotating element (the base cross stays axis-aligned). Always-on-top
+        // (passOne, DepthTest.None) so it reads against the terrain. Identity is
+        // immutable → snapshot once per id (no atlas rebuild on probe/ring updates);
+        // only the trafo is adaptive (uniform update, no rebuild).
         // Hidden while the show-overlays hold is down — the 2D flag-tip name tags
         // (GuiOverlays.pinFlagLabels) take over there.
-        let pinCentreRadius = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre, p.InnerRadius) |> AMap.toAVal
+        let pinFlagFrame = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre, ScanPin.axis p) |> AMap.toAVal
         let labelsActive =
             (notFullscreen, model.ShowOverlaysHeld) ||> AVal.map2 (fun nf ov -> nf && not ov)
         let pinLabels =
             pinIdSet |> ASet.map (fun id ->
                 let p0 = HashMap.tryFind id (AVal.force pinsVal)
-                let labelSize = 0.2
-                let topVal =
+                let trafoVal =
                     AVal.custom (fun t ->
                         let cc = model.CommonCentroid.GetValue t
                         let scale = datasetScale.GetValue t
-                        match HashMap.tryFind id (pinCentreRadius.GetValue t) with
-                        | Some (centre, radius) ->
+                        match HashMap.tryFind id (pinFlagFrame.GetValue t) with
+                        | Some (centre, axis) ->
+                            let aN = if axis.Length > 1e-9 then axis.Normalized else V3d.OOI
                             let cR = ScanPin.renderCentre cc scale centre
-                            cR + V3d.OOI * (ScanPin.renderLength scale (radius * 1.5) + 0.55)
-                        | None -> V3d(0.0, 0.0, -1.0e6))
+                            let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
+                            let h = ScanPin.flagHeightRender scale (model.FlagScale.GetValue t) (Vec.length (eye - cR))
+                            let pos = cR + aN * (h * 1.25)
+                            let d = eye - pos
+                            let yaw = if d.X * d.X + d.Y * d.Y < 1e-12 then 0.0 else atan2 d.X (-d.Y)
+                            Trafo3d.Scale (h * 0.30) * Trafo3d.RotationX Constant.PiHalf
+                            * Trafo3d.RotationZ yaw * Trafo3d.Translation pos
+                        | None -> Trafo3d.Scale 0.0)
                 match p0 with
                 | Some pin ->
                     sg {
@@ -553,8 +571,7 @@ module ScanPinScene =
                         Sg.Pass RenderPass.passOne
                         Sg.DepthTest (AVal.constant DepthTest.None)
                         Sg.NoEvents
-                        Sg.Trafo (topVal |> AVal.map (fun top ->
-                            Trafo3d.Scale labelSize * Trafo3d.RotationX(Constant.PiHalf) * Trafo3d.Translation top))
+                        Sg.Trafo trafoVal
                         Sg.Text(pin.ShortName, color = AVal.constant pin.PinColor, align = TextAlignment.Center)
                     }
                 | None -> sg { Sg.NoEvents })
@@ -604,4 +621,4 @@ module ScanPinScene =
                 Dots.render (brushedDotGeometry model None)
             }
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinGlyphs; pinSliceLines; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [brushedDots]])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinFlags; pinSliceLines; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [brushedDots]])

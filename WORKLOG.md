@@ -1,5 +1,137 @@
 # Worklog
 
+## WP (2026-07-15): focus-head cleanup · glyphless pin identity · screen-constant pin flags
+
+Client-only batch (no server changes). Type-check green, Supertests 29/29.
+
+1. **"Focus" head label removed** (GuiFocus) — redundant to the matrix focus
+   visualization. `.focus-head` gained `min-height: 29px` so the strip no
+   longer collapses when every control is hidden (Overview, no pin) —
+   containers never move.
+2. **Pin glyphs removed.** Identity = PinColor + random 2-char ShortName,
+   shown everywhere as ONE colour-filled element with the name inside:
+   matrix row head (`.mx-pinname` replaces `.mx-glyph`+`.mx-name`), focus
+   pin chip (swatch span dropped, chip itself takes the colour), dock
+   identity chip (`.ins-pinident`, `-sw`/`-gn` rules pruned), flag-tip pill
+   text, wheel-label / legend suffixes, dock chart layer names, delete
+   confirm. Dead code pruned: `ScanPin.Glyph` field, `PinPalette.glyphs`/
+   `glyph`, the matrixRow glyph param + row projection slot. Adaptify re-run.
+3. **Pin flags are screen-constant** (pole + top ring + name + base cross —
+   the wire-box jack). One driver: `ScanPin.flagHeightRender` = 0.10 × eye
+   distance (render), clamped in METRIC WORLD to [0.1 m, 20 m], everything
+   × the new gear slider `FlagScale` (0.2–5×, `SetFlagScale`, clamp 0.1–10).
+   All elements derive from that height (ring 0.16 H, cross arms 0.10 H,
+   name 0.30 H at 1.25 H); `flagMagnitude` (pole height ∝ error) removed.
+   The name billboards about Z toward the eye (yaw = atan2(dx, −dy) on the
+   RotationX(π/2) text frame); the base cross deliberately does NOT rotate.
+   The flag segs/trafos now read `view` per frame — sanctioned exception
+   noted in CLAUDE.md (adaptive-perf section). The 2D flag-tip pills
+   (GuiOverlays) track the same height via `Camera.view.Location`.
+
+User-side browser pass owed: chip styling in all three hosts (matrix head at
+64px rowhead, focus head, dock), flag legibility near/far (clamps at 10 cm /
+20 m), name billboarding while orbiting, base cross static, gear slider
+scaling flag + bounds together, flag-tip pills still landing on the pole tips
+during the show-overlays hold.
+
+## WP (2026-07-14): ScanPin v11 — the slice cell (spec: ScanPin_v11_slice_cell_spec.md)
+
+Matrix cells are now cross-section slice diagrams (reference ±LoD₉₅ band vs
+the mesh's black profile along the pin's dip line); the residual colour fill
+is gone; matrix highlighting reworked (gold reference column, selection cross
+by dimming). Client type-check + server build green, Supertests 29/29; new
+slice endpoint smoke-tested on :8004 (azimuth unit+horizontal, both poses in
+one response, empty meshes → empty cells, legacy request shape still served).
+
+Spec↔convention reconciliations (documented deviations, all in spirit):
+
+- **LoD₉₅ rides the probe, not the slice response.** The per-pin probe (one
+  request, both poses, already cached with identical invalidation triggers)
+  carries refStd/meshStd; the cell derives `1.96·√(refStd²+std²)` — the exact
+  statistic the old residual fill used. Recomputing it in the slice handler
+  would duplicate MeshProbe's sampling for no new information. "One request
+  per pin" holds: profiles+azimuth in the (one) slice request, LoD in the
+  (one) probe request.
+- **Both poses in one response** via per-mesh `transformOther` (sent only
+  once solved — before a solve there is no second pose and RegView is locked
+  anyway); the existing Slice/SliceOther pairing + SetRegView swap machinery
+  is unchanged, `ensureSlices` just fills both caches from one fetch.
+- **Azimuth is server-side** (`MeshAnalysis.dipAzimuth`): LSQ height fit
+  z=ax+by+c over the reference's ROI vertices, dip = gradient direction,
+  sign-canonicalised (+X, tie +Y); flat/degenerate → +X fallback. Reference
+  rule = the probe's (global ref → host mesh → first mesh). Pose-independent
+  because the reference never moves.
+- **Window from real data**: bboxes payload gains `spacing` (mean edge
+  length, stride-sampled) per mesh; window = SliceNSamples × coarsest
+  spacing (`ScanPin.sliceWindow`), pin-diameter fallback until spacings land.
+- **Show-overlays consumers follow the new frame** (data change, components
+  untouched): the label profile charts + 3D centre-slice lines now cut along
+  the per-pin azimuth instead of fixed world-X, and context planes follow the
+  window-fraction offsets (2 each side default, was 3 at r/4). The slice clip
+  radius stays ≥ the pin sphere so those overlays keep spanning the pin.
+
+Implementation notes:
+
+- T1 server: `SliceMeshDto{Transform,TransformOther}` + `ReferenceName` on the
+  request; response `{azimuth, meshes:[{name, planes, planesOther|null}]}`.
+  Legacy requests (old fields, no reference) still answered (uDir fallback).
+- T2 client: `PinSlice.UDir`; `ScanPin.sliceNormalOf/sliceWindow/sliceOffsets/
+  sliceClipRadius/sliceToWorld/sliceUV` (uDir-parameterised; the old
+  `sliceUDir`/`sliceNormal` constants removed); `ScanPinModel.invalidateSlices`
+  (slice-only, for geometry tunables); Model gains MeshSpacing +
+  SliceNSamples/SliceContextCount/SliceContextSpacing/SliceVertPercentile
+  (gear rows; the percentile is view-only, the rest refetch). `ensureSlices`
+  fires ONE request per pin; on failure both Slice and SliceOther fail
+  together so nothing is stranded in Running.
+- T2 component: `SliceDiagram` (GuiRail.fs) — data-slice JSON attribute + one
+  observedRender SVG boot per cell (cells stay stable divs that only
+  re-attribute; identical payloads short-circuit in JS). Band from the ref
+  centre polylines ±LoD, context = off-centre planes at 0.16 opacity, main =
+  black 1.4px over a white 3px halo, ring at chart (0,0) (= the pin centre) in
+  pin colour + dark dot, off-frame arrows at the worst exceedance.
+- T3 cells: payload built in an AVal.custom over (rowData projection, peek,
+  window, vertical extent); peek selects SliceOther with committed fallback.
+  Empty rule: out-of-ROI ∨ zero probe count ∨ no ≥2-pt centre polyline →
+  hatch glyph + ring-only payload. The reference column renders its own
+  profile inside its own band (the built-in "perfect cell" key). Vertical
+  extent: percentile of (ref relief in window + |pair median|) over ready
+  (pin, moving) cells, committed pose only, so peek/After moves lines without
+  rescaling frames. Cell geometry 34×26 px fixed (landscape), rowhead
+  104→64 px so 5 columns fit the 256 px rail.
+- T4 highlighting: reference = colour channel (gold header + gold side-rails,
+  bottom-closed on the last row); selection = opacity+accent channel
+  (mx-cell-dim 0.4 outside the selected row/column, headers inline-filled
+  with pin/mesh accent at 0.4 alpha + neutral inset, selected cell uses an
+  accent OUTLINE so it coexists with the ref column's inset rails). Old blue
+  tints (.mx-col-sel/.mx-row-sel/.mx-cell-colsel) removed.
+- T5 prune: `Primitives.Diff.color`/`colorV3` removed (the matrix was their
+  last consumer; `colorSignedV3`/`isoStep`/anchor constants stay — the shader
+  painters still mirror them). CLAUDE.md (slice bullet, new matrix-cell rule,
+  API list), README matrix bullet updated.
+- Out of scope honoured: no LOO/influence/quality borders/direction ticks/
+  magic lens/split cells/hover-enlarge; Overview pin-flag chart component
+  untouched (its data follows the new azimuth — see reconciliations).
+- Browser pass owed (no shader changes): cells render + compare across a row;
+  before→after drops lines into bands; peek flips cell geometry; tunables
+  re-slice live; empty/pending cells; gold column + dim cross + accent
+  headers/outline (incl. selected-cell-in-ref-column reading as both); the
+  show-overlays profile charts/3D slice lines along the new azimuth.
+
+FOLLOW-UP (user, 2026-07-14): two adjustments after the browser pass.
+
+- Empty cells read as EMPTY: the pin-colour ring dropped from out-of-ROI
+  cells — bare hatch background only (`SliceDiagram.ringOnly` removed,
+  `CellEmpty` carries no payload).
+- Pin isolation (AnchorGhostMode / blob mask) is now Register-EXCLUSIVE: the
+  SetWorkflowStep default (on in Correspondence, off elsewhere) is its only
+  automatic driver — SetSelection no longer mutates it anywhere (previously
+  Inspect SelPin forced it on, SelCell forced it on, SelNone/SelMesh forced
+  it off), so in Inspect the meshes always show fully; an Inspect cell locate
+  still solos the mesh, it just no longer lights the pin ROI. The Inspect
+  DeletePin postlude (reset isolation to off) was orphaned by this and
+  removed. Manual gear "Isolate pins" toggle + the placement flashlight are
+  untouched.
+
 ## WP (2026-07-13b): 360° zoom parity
 
 The selection close-up now behaves identically in both focus projections;

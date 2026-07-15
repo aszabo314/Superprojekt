@@ -146,17 +146,14 @@ module GuiInspector =
         let emit (m : Message) = env.Emit [m]
 
         // The matrix (left rail) is now the per-(pin,mesh) browser (§B); the
-        // Register dock reduces to the selected pin: identity chip (glyph · colour ·
-        // code) · radius · the per-mesh correspondence coordinate editor.
+        // Register dock reduces to the selected pin: identity chip (pin-colour
+        // fill, name inside) · radius · the per-mesh correspondence coordinate editor.
         let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 0.5)
         let pinIdentChip =
             div {
                 Class "ins-pinident"
-                span {
-                    Class "ins-pinident-sw"
-                    effPin |> AVal.map (function Some p -> Some (Style [Css.Background (c4bToRgbCss p.PinColor)]) | None -> None)
-                }
-                span { Class "ins-pinident-gn"; effPin |> AVal.map (function Some p -> sprintf "%s %s" p.Glyph p.ShortName | None -> "") }
+                effPin |> AVal.map (function Some p -> Some (Style [Css.Background (c4bToRgbCss p.PinColor)]) | None -> None)
+                effPin |> AVal.map (function Some p -> p.ShortName | None -> "")
             }
         // Committed displayed pose (metric world) for a mesh — the frame the anchor
         // editor reads; PickCorrespondenceAt converts back with the same transform.
@@ -436,7 +433,7 @@ module GuiInspector =
                         | Some (HoverMesh hm) | Some (HoverPoint (_, hm)) -> if hm = m then 1 else 0
                         | _ -> 1
                     let friendly = numberedFriendly order names
-                    let pinLabel (p : ScanPin) = sprintf "%s %s" p.Glyph p.ShortName
+                    let pinLabel (p : ScanPin) = p.ShortName
                     let selMeshOpt = Selection.mesh sel |> Option.filter (fun m -> List.contains m moving)
                     let selPinHalf =
                         Selection.pin sel |> Option.bind (fun pid ->

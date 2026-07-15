@@ -159,9 +159,23 @@ type Model =
         SlopeThresholdDeg    : float
         AnchorGhostMode      : bool
         QuickPinRadius       : float
+        // Gear multiplier on the screen-constant 3D pin-flag size AND its
+        // world-metre clamp bounds (ScanPin.flagHeightRender).
+        FlagScale            : float
 
         SceneBounds    : Box3d
         MeshBounds     : Map<string, Box3d>
+        // Per-mesh mean sample spacing (m, from the bboxes payload); the slice
+        // cells derive the ONE global window from the coarsest loaded mesh.
+        MeshSpacing    : Map<string, float>
+
+        // Slice-cell tunables (§A, gear menu): window = N × coarsest spacing; k
+        // context planes each side, spaced a fraction of the window; the global
+        // vertical extent is a robust percentile over all (pin, mesh) cells.
+        SliceNSamples       : float
+        SliceContextCount   : float
+        SliceContextSpacing : float
+        SliceVertPercentile : float
 
         ActivePickingLayer : string option
 
@@ -316,8 +330,14 @@ module Model =
             SlopeThresholdDeg   = 15.0
             AnchorGhostMode     = true
             QuickPinRadius      = 0.5
+            FlagScale           = 1.0
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
+            MeshSpacing    = Map.empty
+            SliceNSamples       = 5.0
+            SliceContextCount   = 2.0
+            SliceContextSpacing = 0.15
+            SliceVertPercentile = 0.95
             ActivePickingLayer = None
             ShowOverlaysHeld  = false
             LoadTransforms        = Map.empty

@@ -26,12 +26,19 @@ type ContactRingsRequest = { Name: string; Centre: float[]; Radius: float; MaxPo
 [<CLIMutable>]
 type ProbeMeshDto = { Name: string; Transform: float[] }
 
+// TransformOther = the same mesh at the opposite registration pose; when present
+// the response carries planesOther so one request serves the before/after pair.
+[<CLIMutable>]
+type SliceMeshDto = { Name: string; Transform: float[]; TransformOther: float[] }
+
 [<CLIMutable>]
 type SliceRequest = {
-    Meshes            : ProbeMeshDto[]
+    Meshes            : SliceMeshDto[]
+    // Azimuth source: the slice uDir is fitted on this mesh's ROI surface
+    // (dip direction); absent/unknown → the request's UDir, then +X.
+    ReferenceName     : string
     Centre            : float[]
     UDir              : float[]
-    Normal            : float[]
     Radius            : float
     Offsets           : float[]
     MaxPointsPerPlane : int
@@ -204,9 +211,12 @@ let contactRingsHandler : HttpHandler =
             return! RequestErrors.notFound (text ex.Message) next ctx
     }
 
-// Vertical cross-sections through a pin: every mesh × every parallel plane in
-// one request (per-mesh world transforms, probe convention), 2D chart-frame
-// polylines back — see MeshAnalysis.planeSlices.
+// Vertical cross-sections through a pin: every mesh × every parallel plane ×
+// both registration poses in one request (per-mesh world transforms, probe
+// convention), 2D chart-frame polylines back — see MeshAnalysis.planeSlices.
+// The section azimuth is computed HERE, once per pin, from the reference mesh
+// (max z-range ≈ dip direction), so every cell of a pin's matrix row shares one
+// world-space line; the response returns it for the client's chart↔world maths.
 let sliceHandler : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"
@@ -216,25 +226,39 @@ let sliceHandler : HttpHandler =
             let maxPts  = if req.MaxPointsPerPlane <= 0 then 400 else req.MaxPointsPerPlane
             let offsets = if isNull req.Offsets || req.Offsets.Length = 0 then [| 0.0 |] else req.Offsets
             let centre  = toV3d req.Centre
-            let uDir    = toV3d req.UDir
-            let normal  = toV3d req.Normal
-            let meshes  = req.Meshes |> Array.map (fun m -> m.Name, loadMesh m.Name 0, mat16 m.Transform)
+            let meshes  = req.Meshes |> Array.map (fun m ->
+                let other = if isNull m.TransformOther then None else Some (mat16 m.TransformOther)
+                m.Name, loadMesh m.Name 0, mat16 m.Transform, other)
+            let fallbackU =
+                let u = if isNull req.UDir then V3d.Zero else toV3d req.UDir
+                if u.Length > 1e-9 then u.Normalized else V3d.IOO
+            let uDir =
+                meshes
+                |> Array.tryFind (fun (n, _, _, _) -> n = req.ReferenceName)
+                |> Option.bind (fun (_, lm, t, _) -> MeshAnalysis.dipAzimuth lm t centre radius)
+                |> Option.defaultValue fallbackU
+            let normal = Vec.cross V3d.OOI uDir
+            let flatten (planes : V2d[][][]) =
+                planes |> Array.map (Array.map (fun line ->
+                    let flat = Array.zeroCreate<float> (line.Length * 2)
+                    for i in 0 .. line.Length - 1 do
+                        flat.[i * 2]     <- line.[i].X
+                        flat.[i * 2 + 1] <- line.[i].Y
+                    flat))
             let results =
                 meshes
-                |> Array.Parallel.map (fun (name, lm, trafo) ->
+                |> Array.Parallel.map (fun (name, lm, trafo, other) ->
                     let planes = MeshAnalysis.planeSlices lm trafo centre uDir normal radius offsets maxPts
                     {| name = name
-                       planes =
-                        planes |> Array.map (Array.map (fun line ->
-                            let flat = Array.zeroCreate<float> (line.Length * 2)
-                            for i in 0 .. line.Length - 1 do
-                                flat.[i * 2]     <- line.[i].X
-                                flat.[i * 2 + 1] <- line.[i].Y
-                            flat)) |})
+                       planes = flatten planes
+                       planesOther =
+                        match other with
+                        | Some t -> flatten (MeshAnalysis.planeSlices lm t centre uDir normal radius offsets maxPts)
+                        | None -> (null : float[][][]) |})
             let pts = results |> Array.sumBy (fun m -> m.planes |> Array.sumBy (Array.sumBy (fun (l : float[]) -> l.Length / 2)))
-            log.LogInformation("slice r={Radius:F2} ×{Planes} planes: {Meshes} meshes, {Points} pts",
-                radius, offsets.Length, results.Length, pts)
-            return! json {| meshes = results |} next ctx
+            log.LogInformation("slice r={Radius:F2} ×{Planes} planes az=({Ax:F2},{Ay:F2}): {Meshes} meshes, {Points} pts",
+                radius, offsets.Length, uDir.X, uDir.Y, results.Length, pts)
+            return! json {| azimuth = fromV3d uDir; meshes = results |} next ctx
         with ex ->
             log.LogError(ex, "slice failed")
             return! RequestErrors.notFound (text ex.Message) next ctx

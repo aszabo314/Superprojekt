@@ -13,8 +13,8 @@ module GuiFocus =
     let panel (env : Env<Message>) (model : AdaptiveModel) =
         let corrStep = model.WorkflowStep |> AVal.map ((=) Correspondence)
 
-        // The selected pin's identity (§A) — shown as a colour chip + glyph + name in
-        // the focus head (the focus label), mirroring the matrix row + 3D flag.
+        // The selected pin's identity (§A) — the pin-colour chip with the name
+        // inside, mirroring the matrix row head + 3D flag.
         let selectedPinId = model.Selection.Active |> AVal.map Selection.pin
         let selectedPin =
             let pinsA = model.ScanPins.Pins |> AMap.toAVal
@@ -24,13 +24,10 @@ module GuiFocus =
             div {
                 Class "focus-pinchip"
                 Primitives.showWhen (selectedPin |> AVal.map Option.isSome)
-                span {
-                    Class "focus-pinchip-sw"
-                    selectedPin |> AVal.map (function
-                        | Some p -> Some (Style [Css.Background (Primitives.c4bToRgbCss p.PinColor)])
-                        | None -> None)
-                }
-                selectedPin |> AVal.map (function Some p -> sprintf "%s %s" p.Glyph p.ShortName | None -> "")
+                selectedPin |> AVal.map (function
+                    | Some p -> Some (Style [Css.Background (Primitives.c4bToRgbCss p.PinColor)])
+                    | None -> None)
+                selectedPin |> AVal.map (function Some p -> p.ShortName | None -> "")
             }
 
         // Same resolution rule as FocusScene.single (solo is an overlay, so the raw
@@ -118,7 +115,6 @@ module GuiFocus =
             resizeHandle
             div {
                 Class "focus-head"
-                span { Class "focus-title"; "Focus" }
                 pinChip
                 div { Class "focus-proj"; Primitives.showWhenNot isOverview; projBtn ProjPano; projBtn ProjTop }
                 div {

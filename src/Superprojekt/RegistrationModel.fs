@@ -129,20 +129,20 @@ type Diagnostic = {
 type ReadinessPin = {
     // reference anchor + reliability (the collinearity input)
     RefAnchor     : (V3d * float) option
-    // visible moving meshes with an anchor for this pin
+    // moving meshes with an anchor for this pin
     Accepted      : Set<string>
 }
 
 type ReadinessInput = {
-    ReferenceMesh       : string option
-    VisibleMovingMeshes : string list
-    EnabledPins         : ReadinessPin list
+    ReferenceMesh : string option
+    MovingMeshes  : string list
+    EnabledPins   : ReadinessPin list
 }
 
 module Readiness =
 
     let pairCounts (input : ReadinessInput) =
-        input.VisibleMovingMeshes
+        input.MovingMeshes
         |> List.map (fun mesh ->
             mesh, (input.EnabledPins |> List.sumBy (fun p -> if Set.contains mesh p.Accepted then 1 else 0)))
 
@@ -179,7 +179,7 @@ module Readiness =
         // the only marker-related hard blocker.
         if input.ReferenceMesh.IsSome
            && not (List.isEmpty input.EnabledPins)
-           && not (List.isEmpty input.VisibleMovingMeshes)
+           && not (List.isEmpty input.MovingMeshes)
            && not anySolvable then
             add Blocker "No mesh has ≥3 markers yet"
 
@@ -191,7 +191,7 @@ module Readiness =
                 else sprintf " (%s)" (String.concat ", " affected)
             add Warning (sprintf "Pins near-collinear%s" suffix)
 
-        if input.ReferenceMesh.IsSome && List.isEmpty input.VisibleMovingMeshes then
+        if input.ReferenceMesh.IsSome && List.isEmpty input.MovingMeshes then
             add Info "No moving meshes to solve"
 
         let blocked = diags |> Seq.exists (fun d -> d.Severity = Blocker)

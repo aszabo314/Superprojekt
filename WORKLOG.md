@@ -1,5 +1,30 @@
 # Worklog
 
+## WP (2026-07-15d): audit cleanup 2/11 — dead visibility machinery removed
+
+The audit found per-mesh visibility was write-only-true: no message or UI
+control could hide a mesh (the toggle UI fell out in an earlier cleanup),
+so the whole apparatus was dead. Decision (user): REMOVE, don't restore.
+
+- `Model.MeshVisible` deleted; `MeshVisibility.shown` is now solo-only
+  (`Some s ⇒ name = s`, `None ⇒ true`) and lost its map parameter at all
+  ~12 call sites. `LocateState.PrevVisible` gone.
+- `UpdateHelpers.setMeshVisible`/`allVisible` deleted; `exitSolo` is a
+  plain `MeshSolo = None` (behaviour-identical — the old path no-opped on
+  the always-all-true map). `ensureVisible` in SetSelection gone.
+- `ReadinessInput.VisibleMovingMeshes` → `MovingMeshes` (RegistrationModel
+  + Primitives.Readiness.input + Supertests).
+- Dead GUI remnants: rail `rail-row-dim` classWhenNot (could never fire),
+  focus-tile `ft-hidden`, both CSS rules; GuiFocus/FocusScene.single mesh
+  resolution no longer filters by raw toggles.
+- Side profit: `GuiOverlays.anyRangeOn` now respects solo via `shown`
+  (the Range legend no longer shows for a solo-hidden mesh's heatmap),
+  and the latent VarianceComputed stale-landing race lost its only trigger.
+- CLAUDE.md: visibility rule rewritten (solo-only), setMeshVisible
+  sentence dropped. Adaptify re-run.
+
+Type-check green, Supertests 29/29.
+
 ## WP (2026-07-15c): audit cleanup 1/11 — bug batch
 
 Five-agent codebase audit ran first (full rundown in chat); this WP series

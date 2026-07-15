@@ -104,7 +104,6 @@ module GuiOverlays =
                 let pins  = pinsVal.GetValue t
                 let peek  = model.RegPeekHeld.GetValue t
                 let solo  = model.MeshSolo.GetValue t
-                let vis   = model.MeshVisible.GetValue t
                 let order = model.MeshOrder.Content.GetValue t
                 let rf    = (model.Registration.GetValue t).ReferenceMesh
                 let sb = System.Text.StringBuilder()
@@ -141,7 +140,7 @@ module GuiOverlays =
                                 HashMap.tryFind name order |> Option.defaultValue System.Int32.MaxValue
                             let meshes =
                                 s.Meshes
-                                |> Array.filter (fun m -> MeshVisibility.shown solo vis m.MeshName)
+                                |> Array.filter (fun m -> MeshVisibility.shown solo m.MeshName)
                                 |> Array.sortBy (fun m -> laneOrder m.MeshName)
                             let colorOf (name : string) =
                                 match Map.tryFind name p.DatasetColors with
@@ -349,10 +348,10 @@ module GuiOverlays =
             else sprintf "%.0f m" v
         let heatRangeMaxA = MeshView.rangeMaxWorld model
         // Outside Inspect the legend serves the Range heatmap (§B3): shown while any
-        // visible mesh has Dst active, on the ONE all-mesh scale.
+        // shown mesh has Dst active, on the ONE all-mesh scale.
         let anyRangeOn =
-            (model.MeshHeatmap, model.MeshVisible) ||> AVal.map2 (fun hm vis ->
-                hm |> Map.exists (fun m h -> h = HeatRange && (Map.tryFind m vis |> Option.defaultValue true)))
+            (model.MeshHeatmap, model.MeshSolo) ||> AVal.map2 (fun hm solo ->
+                hm |> Map.exists (fun m h -> h = HeatRange && MeshVisibility.shown solo m))
         let legendJson =
             AVal.custom (fun t ->
                 let (lo, hi) = rangeA.GetValue t

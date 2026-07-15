@@ -146,7 +146,7 @@ let private mkRPin refAnchor (accepted : string list) : ReadinessPin =
 let readinessTests () =
     let baseInput = {
         ReferenceMesh       = Some "ref"
-        VisibleMovingMeshes = [ "A"; "B" ]
+        MovingMeshes = [ "A"; "B" ]
         EnabledPins         = []
     }
     let ready (d : Diagnostic list) = d |> List.filter (fun x -> x.Severity = Severity.Ready)

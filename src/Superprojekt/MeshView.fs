@@ -272,7 +272,7 @@ module MeshView =
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             // Isolation: wheelIsolation (Alt-wheel / hover peek / armed editor) wins,
             // then the solo overlay via MeshVisibility.shown (only the isolated mesh
-            // solid, the rest at the ghost floor), else the per-mesh toggles + the
+            // solid, the rest at the ghost floor), else selection emphasis + the
             // Inspect no-solo ensemble ghosting.
             let isActive =
                 AVal.custom (fun t ->
@@ -281,15 +281,14 @@ module MeshView =
                         | None ->
                             match model.MeshSolo.GetValue t with
                             | Some _ as solo ->
-                                MeshVisibility.shown solo (model.MeshVisible.GetValue t) name
+                                MeshVisibility.shown solo name
                             | None ->
-                                let vis = Map.tryFind name (model.MeshVisible.GetValue t) |> Option.defaultValue true
                                 // Selection emphasis (§A2) outside Inspect: the selected
                                 // mesh reads solid, the rest drop to the ghost floor
                                 // (Inspect routes mesh selection through the solo overlay).
                                 match Selection.mesh (model.Selection.Active.GetValue t) with
                                 | Some m when model.WorkflowStep.GetValue t <> Inspect ->
-                                    vis && m = name
+                                    m = name
                                 | _ ->
                                     // Inspect central 3D (§C), no solo: the reference carries
                                     // the variance aggregate solid, moving meshes drop to the
@@ -303,7 +302,7 @@ module MeshView =
                                         && (match (model.Registration.GetValue t).ReferenceMesh with
                                             | Some r -> r <> name
                                             | None -> false)
-                                    vis && not inspectGhost)
+                                    not inspectGhost)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
             // Outline-only representation (§B4): the mesh BODY stands down entirely —

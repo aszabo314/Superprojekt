@@ -945,13 +945,11 @@ module FocusScene =
         let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
         let colorCss = idxVal |> AVal.map (fun i -> Primitives.c4bToRgbCss (Primitives.meshColor i))
         let active = model.Selection.Active |> AVal.map (fun s -> Selection.mesh s = Some name)
-        let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
         let isRef  = model.Registration |> AVal.map (fun r -> r.ReferenceMesh = Some name)
         div {
             Class "focus-tile"
             Primitives.classWhen "fm-active" active
             Primitives.classWhen "ft-ref" isRef
-            Primitives.classWhenNot "ft-hidden" isVis
             div {
                 Class "focus-tile-view"
                 Attribute("title", "click → select · click again → zoom · hover → peek")
@@ -985,11 +983,9 @@ module FocusScene =
             // meshes loaded → the single stayed blank.
             let chosen =
                 let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                let vis = model.MeshVisible.GetValue t
-                let visible = names |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true)
                 match Selection.mesh (model.Selection.Active.GetValue t) with
-                | Some m when List.contains m visible -> Some m
-                | _ -> List.tryHead visible
+                | Some m when List.contains m names -> Some m
+                | _ -> List.tryHead names
             match chosen with
             | None -> IndexList.empty
             | Some n ->
@@ -999,7 +995,6 @@ module FocusScene =
         |> AList.ofAVal
         |> AList.map (fun (n, proj) -> focusSingle env model n proj)
 
-    // One tile per mesh — the mesh browser (T3). ALL meshes are listed (hidden ones
-    // dimmed); selecting a hidden mesh re-enables it (the reducer's ensureVisible).
+    // One tile per mesh — the mesh browser (T3).
     let multiples (env : Env<Message>) (model : AdaptiveModel) =
         model.MeshNames |> AList.map (focusTile env model)

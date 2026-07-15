@@ -157,7 +157,6 @@ body.loaded { background: #f4f6f8; }
 .rail-mesh-row {
     display: flex; align-items: center; gap: 4px; padding: 2px 0;
 }
-.rail-row-dim { opacity: 0.5; }
 .rail-mesh-row { cursor: pointer; border-radius: 3px; }
 .rail-mesh-sel { background: #eef2ff; box-shadow: inset 2px 0 0 #1a56db; }
 .rail-mesh-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -326,7 +325,6 @@ body.loaded { background: #f4f6f8; }
 .focus-tile.fm-active { border-color: #1a56db; box-shadow: 0 0 0 1px #1a56db inset; }
 /* reference tile: a prominent gold ring (T10) */
 .focus-tile.ft-ref { border-color: #d4a106; box-shadow: 0 0 0 1px #d4a106 inset; }
-.focus-tile.ft-hidden { opacity: 0.45; }
 .focus-tile .focus-rc { width: 100%; height: 72px; }
 .focus-tile-view { display: flex; flex-direction: column; gap: 2px; cursor: pointer; }
 .ft-refstar { color: #d4a106; font-size: 10px; }

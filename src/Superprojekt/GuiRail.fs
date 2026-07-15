@@ -220,7 +220,6 @@ module GuiRail =
         // (Textured / Distance / Shape / Incidence) — respected in both the 3D and
         // the 2D focus views.
         let meshRow (name : string) =
-            let isVis  = model.MeshVisible |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue true)
             let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
             let colorVal = idxVal |> AVal.map meshColor
             let hovered = model.Selection.Hovered |> AVal.map (function Some (HoverMesh m) -> m = name | _ -> false)
@@ -259,7 +258,6 @@ module GuiRail =
                 }
             div {
                 Class "rail-mesh-row"
-                classWhenNot "rail-row-dim" isVis
                 classWhen "rail-row-hover" hovered
                 classWhen "rail-mesh-sel" focused
                 Attribute("title", name)

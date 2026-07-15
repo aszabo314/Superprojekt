@@ -30,18 +30,14 @@ module GuiFocus =
                 selectedPin |> AVal.map (function Some p -> p.ShortName | None -> "")
             }
 
-        // Same resolution rule as FocusScene.single (solo is an overlay, so the raw
-        // toggles decide) — the head buttons always target the mesh the single shows.
-        let visibleMeshes =
-            AVal.custom (fun t ->
-                let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                let vis = model.MeshVisible.GetValue t
-                names |> List.filter (fun n -> Map.tryFind n vis |> Option.defaultValue true))
+        // Same resolution rule as FocusScene.single — the head buttons always target
+        // the mesh the single shows.
         let focusMesh =
-            (model.Selection.Active, visibleMeshes) ||> AVal.map2 (fun sel vis ->
+            (model.Selection.Active, model.MeshNames.Content) ||> AVal.map2 (fun sel ns ->
+                let names = IndexList.toList ns
                 match Selection.mesh sel with
-                | Some m when List.contains m vis -> Some m
-                | _ -> List.tryHead vis)
+                | Some m when List.contains m names -> Some m
+                | _ -> List.tryHead names)
 
         // The unified correspondence editor is offered with a selected pin + a
         // resolved single mesh (the reference is editable like any other, §T4).

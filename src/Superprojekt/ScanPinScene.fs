@@ -111,9 +111,8 @@ module ScanPinScene =
         AVal.custom (fun t ->
             let pins = pinsVal.GetValue t
             let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-            let vis = model.MeshVisible.GetValue t
             let rf = (model.Registration.GetValue t).ReferenceMesh
-            let moving = names |> List.filter (fun n -> Some n <> rf && (Map.tryFind n vis |> Option.defaultValue true))
+            let moving = names |> List.filter (fun n -> Some n <> rf)
             let ready =
                 pins |> HashMap.toList
                 |> List.choose (fun (id, p) -> match p.Probe with ProbeReady r -> Some (id, r) | _ -> None)
@@ -355,10 +354,9 @@ module ScanPinScene =
                             let hovered = model.Selection.Hovered.GetValue t = Some (HoverPin id)
                             let cc = model.CommonCentroid.GetValue t
                             let scale = datasetScale.GetValue t
-                            // Shown-set gating (toggles + solo overlay): rings on a
+                            // Shown-set gating (solo overlay): rings on a
                             // ghosted-away mesh would float without their surface.
                             let solo = model.MeshSolo.GetValue t
-                            let vis = model.MeshVisible.GetValue t
                             let col =
                                 if hovered then V4d(colour * 0.45 + V3d.III * 0.55, 1.0)
                                 else V4d(colour, (if sel then 1.0 else 0.6))
@@ -375,7 +373,7 @@ module ScanPinScene =
                             out.Add(cR, cR + nN * ScanPin.renderLength scale 1.0, axisCol, 1.0)
                             for KeyValue(mesh, meshRings) in rings do
                                 if contactRingsOn.GetValue t
-                                   && MeshVisibility.shown solo vis mesh then
+                                   && MeshVisibility.shown solo mesh then
                                     for ring in meshRings do
                                         if ring.Length >= 2 then
                                             let rp = ring |> Array.map (ScanPin.renderCentre cc scale)
@@ -403,14 +401,13 @@ module ScanPinScene =
                     let sel = selectedId.GetValue t
                     let hov = model.Selection.Hovered.GetValue t
                     let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                    let vis = model.MeshVisible.GetValue t
                     let rf = (model.Registration.GetValue t).ReferenceMesh
-                    // Shown-set gating (toggles + solo overlay), so a locate shows
+                    // Shown-set gating (solo overlay), so a locate shows
                     // only the located mesh's markers.
                     let solo = model.MeshSolo.GetValue t
                     let moving =
                         names |> List.filter (fun n ->
-                            Some n <> rf && MeshVisibility.shown solo vis n)
+                            Some n <> rf && MeshVisibility.shown solo n)
                     let out = ResizeArray<V3d * V3d * V4d * float>()
                     for (id, (corr, pinColor)) in HashMap.toSeq pins do
                         match corr with
@@ -426,7 +423,7 @@ module ScanPinScene =
                                     if not isSel && sel.IsSome then Primitives.v3dToGrey c else c
                                 let raR = ScanPin.renderCentre cc scale ra
                                 (match rf with
-                                 | Some rn when MeshVisibility.shown solo vis rn ->
+                                 | Some rn when MeshVisibility.shown solo rn ->
                                     let refHover = hov = Some (HoverPoint (id, rn))
                                     let col =
                                         if refHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
@@ -540,7 +537,6 @@ module ScanPinScene =
                         let scale = datasetScale.GetValue t
                         let peek  = model.RegPeekHeld.GetValue t
                         let solo  = model.MeshSolo.GetValue t
-                        let vis   = model.MeshVisible.GetValue t
                         let out = ResizeArray<V3d * V3d * V4d * float>()
                         for (_, (centre, slice, sliceOther, colors)) in HashMap.toSeq pins do
                             let chosen =
@@ -552,7 +548,7 @@ module ScanPinScene =
                                 let ci = ScanPin.sliceCentreIndex s
                                 let w = s.Offsets.[ci]
                                 for sm in s.Meshes do
-                                    if MeshVisibility.shown solo vis sm.MeshName && ci < sm.Planes.Length then
+                                    if MeshVisibility.shown solo sm.MeshName && ci < sm.Planes.Length then
                                         let col =
                                             match Map.tryFind sm.MeshName colors with
                                             | Some c4 -> V4d(Primitives.c4bToV3d c4, 0.95)

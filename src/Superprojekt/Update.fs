@@ -17,7 +17,6 @@ module Update =
         | CentroidsLoaded centroids ->
             let common  = if centroids.Length > 0 then centroids |> Array.averageBy snd else V3d.Zero
             let names   = centroids |> Array.map fst |> IndexList.ofArray
-            let visible = centroids |> Array.fold (fun m (n, _) -> Map.add n true m) Map.empty
             let indices = centroids |> Array.mapi (fun i (n,_) -> n,i) |> HashMap.ofArray
             // LoadTransform = the immutable baseline captured at load (identity; meshes load unregistered).
             let loadTransforms = centroids |> Array.fold (fun m (n, _) -> Map.add n Trafo3d.Identity m) Map.empty
@@ -27,7 +26,6 @@ module Update =
                 else ""
             { model with
                 MeshNames        = names
-                MeshVisible      = visible
                 CommonCentroid   = common
                 MeshOrder        = indices
                 MeshesLoaded     = HashSet.empty
@@ -128,11 +126,8 @@ module Update =
             match reg.ReferenceMesh with
             | None -> showToast env "Designate a reference mesh (★) first" model
             | Some refMesh ->
-                let visibleMoving =
-                    model.MeshNames |> IndexList.toList
-                    |> List.filter (fun n ->
-                        n <> refMesh
-                        && Map.tryFind n model.MeshVisible |> Option.defaultValue true)
+                let moving =
+                    model.MeshNames |> IndexList.toList |> List.filter (fun n -> n <> refMesh)
                 let enabledPins =
                     model.ScanPins.Pins |> HashMap.toList
                     |> List.choose (fun (_, p) ->
@@ -147,7 +142,7 @@ module Update =
                         | Some a -> Some (pinId, ra, a.Point)
                         | None -> None)
                     |> Array.ofList
-                let solvable = visibleMoving |> List.filter (fun m -> (pairsFor m).Length >= 3)
+                let solvable = moving |> List.filter (fun m -> (pairsFor m).Length >= 3)
                 if List.isEmpty solvable then
                     showToast env "No mesh has ≥3 correspondence markers yet" model
                 else
@@ -185,8 +180,8 @@ module Update =
                                     Map.add pinId (ra, Map.add mesh mp meshPts) acc))
                         { RefMesh = refMesh; Pins = pins }
                     let n = List.length solvable
-                    let total = List.length visibleMoving
-                    let unsolvable = visibleMoving |> List.filter (fun m -> (pairsFor m).Length < 3)
+                    let total = List.length moving
+                    let unsolvable = moving |> List.filter (fun m -> (pairsFor m).Length < 3)
                     let summary =
                         match unsolvable with
                         | [] -> sprintf "Solving %d of %d meshes…" n total
@@ -402,11 +397,6 @@ module Update =
                 let model =
                     { model with Selection = { model.Selection with Active = sel }
                                  CorrArm = None; CorrPreview = None }
-                // A selected mesh must be visible — the focus single resolves against
-                // the raw toggles, so selecting a hidden mesh re-enables it.
-                let ensureVisible m model =
-                    if Map.tryFind m model.MeshVisible |> Option.defaultValue true then model
-                    else setMeshVisible (Map.add m true model.MeshVisible) model
                 // Pin isolation (AnchorGhostMode) is Register-exclusive: the mode
                 // default (SetWorkflowStep — on in Correspondence, off elsewhere) is
                 // its only automatic driver; selection never mutates it, so in
@@ -416,7 +406,6 @@ module Update =
                     if model.WorkflowStep = Inspect then exitSolo model
                     else model
                 | SelMesh m ->
-                    let model = ensureVisible m model
                     // Inspect focus policy (§C): a moving mesh isolates with the
                     // reference (it paints its own difference/displacement field);
                     // the reference returns to the ensemble.
@@ -437,10 +426,9 @@ module Update =
                         match model.LocateBackup with
                         | Some _ -> model.LocateBackup
                         | None ->
-                            Some { PrevSolo = model.MeshSolo; PrevVisible = model.MeshVisible
+                            Some { PrevSolo = model.MeshSolo
                                    PrevCenter = model.Camera.center; PrevRadius = model.Camera.radius
                                    PrevPhi = model.Camera.phi; PrevTheta = model.Camera.theta }
-                    let model = ensureVisible mesh model
                     enterSolo mesh { model with LocateBackup = backup }
         | PickCorrespondenceAt(pinId, mesh, world) ->
             // Set the (pin, mesh) correspondence point at the picked surface point,
@@ -519,17 +507,16 @@ module Update =
              | Some p -> env.Emit [FlyToPoint(p.Centre, max 0.5 (p.InnerRadius * 4.0))]
              | None -> ())
             model
-        // Single back-out: restore the camera + solo/visibility captured at the first
-        // cell locate and clear the backup.
+        // Single back-out: restore the camera + solo captured at the first cell
+        // locate and clear the backup.
         | BackOutLocate ->
             match model.LocateBackup with
             | None -> model
             | Some b ->
                 env.Emit [CameraMessage (OrbitMessage.SetTarget(false, b.PrevCenter, b.PrevRadius, b.PrevPhi, b.PrevTheta))]
-                setMeshVisible b.PrevVisible
-                    { model with
-                        MeshSolo = b.PrevSolo
-                        LocateBackup = None }
+                { model with
+                    MeshSolo = b.PrevSolo
+                    LocateBackup = None }
 
     // Registration provenance: a solve is only as valid as the correspondences it
     // consumed (SolveInputs). If any tracked pin was deleted, or any tracked
@@ -575,8 +562,7 @@ module Update =
     // values — the committed pose lands first, the opposite pose follows.
     let private ensureVariance (env : Env<Message>) (model : Model) : Model =
         // The variance aggregate only paints in the no-solo ensemble — don't fetch
-        // while a mesh is isolated (exitSolo resets the visibility map, which
-        // invalidates and re-arms this fetch).
+        // while a mesh is isolated.
         if model.WorkflowStep <> Inspect || model.MeshSolo.IsSome then model
         else
             match model.Registration.ReferenceMesh with
@@ -586,8 +572,7 @@ module Update =
                     not (Map.isEmpty model.SolvedTransforms)
                     && not (Map.containsKey refMesh model.SurfaceDistanceOther)
                 let moving =
-                    model.MeshNames |> IndexList.toList
-                    |> List.filter (fun n -> n <> refMesh && (Map.tryFind n model.MeshVisible |> Option.defaultValue true))
+                    model.MeshNames |> IndexList.toList |> List.filter (fun n -> n <> refMesh)
                 if (not needMain && not needOther) || List.length moving < 2 then model
                 else
                     surfaceDistReqGen <- surfaceDistGen
@@ -645,7 +630,7 @@ module Update =
                     model
             | _ -> model
 
-    // Inspect Difference channel: per visible moving mesh, fetch its signed distance
+    // Inspect Difference channel: per shown moving mesh, fetch its signed distance
     // to the reference (the mesh's own served vertex order) for the focus heatmap.
     // Same generation-guarded debounce as ensureVariance, same per-pose pairing:
     // the Other pose is fetched only once a solve exists, in the same batch.
@@ -655,12 +640,10 @@ module Update =
             match model.Registration.ReferenceMesh with
             | None -> model
             | Some refMesh ->
-                // Shown moving meshes (isolation-aware): under solo only the isolated
-                // mesh needs its field — and it needs it even if its raw toggle is off.
+                // Shown moving meshes: under solo only the isolated mesh needs its field.
                 let moving =
                     model.MeshNames |> IndexList.toList
-                    |> List.filter (fun n ->
-                        n <> refMesh && MeshVisibility.shown model.MeshSolo model.MeshVisible n)
+                    |> List.filter (fun n -> n <> refMesh && MeshVisibility.shown model.MeshSolo n)
                 let otherView = match model.RegView with RegBefore -> RegAfter | RegAfter -> RegBefore
                 let solved = not (Map.isEmpty model.SolvedTransforms)
                 let wanted =

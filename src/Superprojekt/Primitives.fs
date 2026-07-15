@@ -346,12 +346,9 @@ module ReadinessView =
             let pins = pinsVal.GetValue t
             let reg = model.Registration.GetValue t
             let names = meshNamesVal.GetValue t |> IndexList.toList
-            let visible = model.MeshVisible.GetValue t
-            let movingVisible =
+            let moving =
                 match reg.ReferenceMesh with
-                | Some r ->
-                    names |> List.filter (fun n ->
-                        n <> r && (Map.tryFind n visible |> Option.defaultValue true))
+                | Some r -> names |> List.filter (fun n -> n <> r)
                 | None -> []
             let enabledPins =
                 pins |> HashMap.toList
@@ -359,7 +356,7 @@ module ReadinessView =
                     match ScanPin.correspondence p with
                     | Some c ->
                         let marked =
-                            movingVisible
+                            moving
                             |> List.filter (fun m -> Map.containsKey m c.Anchors)
                             |> Set.ofList
                         Some {
@@ -368,7 +365,7 @@ module ReadinessView =
                         }
                     | _ -> None)
             {
-                ReferenceMesh       = reg.ReferenceMesh
-                VisibleMovingMeshes = movingVisible
-                EnabledPins         = enabledPins
+                ReferenceMesh = reg.ReferenceMesh
+                MovingMeshes  = moving
+                EnabledPins   = enabledPins
             })

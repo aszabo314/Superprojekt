@@ -109,23 +109,20 @@ module Selection =
     let pin  = function SelPin p | SelCell (p, _) -> Some p | _ -> None
     let mesh = function SelMesh m | SelCell (_, m) -> Some m | _ -> None
 
-// Mesh isolation (solo) is a pure overlay over the per-mesh visibility toggles —
-// it never mutates MeshVisible. While isolated, ONLY the isolated mesh is shown
-// (the reference included would occlude it in Inspect); with no isolation the
-// per-mesh toggles decide. Every shown/clickable consumer (render MeshActive,
-// raycasts, ring gating) goes through this one rule.
+// Mesh isolation (solo): while isolated, ONLY the isolated mesh is shown (the
+// reference included would occlude it in Inspect). Every shown/clickable
+// consumer (render MeshActive, raycasts, ring gating) goes through this one rule.
 module MeshVisibility =
-    let shown (solo : string option) (visible : Map<string, bool>) (name : string) =
+    let shown (solo : string option) (name : string) =
         match solo with
         | Some s -> name = s
-        | None -> Map.tryFind name visible |> Option.defaultValue true
+        | None -> true
 
 // Snapshot captured when a "frame correspondence" (locate) starts, so a single
-// back-out restores the camera + solo/visibility to exactly what they were before.
+// back-out restores the camera + solo to exactly what they were before.
 // Plain record (not a ModelType) → a single aval<LocateState option> in the model.
 type LocateState = {
     PrevSolo    : string option
-    PrevVisible : Map<string, bool>
     PrevCenter  : V3d
     PrevRadius  : float
     PrevPhi     : float
@@ -138,7 +135,6 @@ type Model =
         Camera         : OrbitState
         MeshOrder      : HashMap<string,int>
         MeshNames      : IndexList<string>
-        MeshVisible    : Map<string, bool>
         MeshesLoaded   : HashSet<string>
         CommonCentroid : V3d
 
@@ -230,8 +226,7 @@ type Model =
         Selection             : Selection
 
         RenderingMode       : RenderingMode
-        // Isolated mesh (◐) — an overlay over MeshVisible (see MeshVisibility.shown).
-        // Exiting isolation resets every visibility toggle to ON.
+        // Isolated mesh (◐) — the one shown/clickable rule (MeshVisibility.shown).
         MeshSolo            : string option
         GearPopoverOpen     : bool
         WorkflowStep        : WorkflowStep
@@ -317,7 +312,6 @@ module Model =
             MeshOrder      = HashMap.empty
             MeshNames      = IndexList.empty
             MeshesLoaded   = HashSet.empty
-            MeshVisible    = Map.empty
             CommonCentroid = V3d.Zero
             DebugLog       = IndexList.empty
             Datasets         = []

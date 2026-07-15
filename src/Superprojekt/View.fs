@@ -91,11 +91,10 @@ module View =
         let clipUniforms : aval<int * V4f * V4f> = AVal.constant (0, V4f.Zero, V4f.Zero)
 
         // Shown = clickable: the raycast candidate set mirrors what renders solid or
-        // could be revealed (per-mesh toggles + the solo overlay), evaluated at event time.
+        // could be revealed (the solo overlay), evaluated at event time.
         let shownNow () =
             let solo = AVal.force model.MeshSolo
-            let vis = AVal.force model.MeshVisible
-            fun (name : string) -> MeshVisibility.shown solo vis name
+            fun (name : string) -> MeshVisibility.shown solo name
 
         body {
             OnBoot [

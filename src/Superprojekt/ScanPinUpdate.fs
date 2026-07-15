@@ -174,7 +174,7 @@ module ScanPinUpdate =
         | Some pin ->
             let scale = activeScale model
             let renderCentre = ScanPin.renderCentre model.CommonCentroid scale pin.Centre
-            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderCentre))]
+            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, renderCentre))]
         | None -> ()
         { model with ScanPins = sp'; Selection = selection }
 

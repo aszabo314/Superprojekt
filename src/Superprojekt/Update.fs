@@ -312,8 +312,8 @@ module Update =
                         ModelTransforms.panoCenterRender m r, max 1.0 (b.Size.Length * scale * 0.6)
                     | None ->
                         ModelTransforms.firstPanoCenterRender m, max 1.0 (padded.Size.Length * 0.6)
-                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, center))
-                          CameraMessage (OrbitMessage.SetTargetRadius(true, radius))]
+                env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, center))
+                          CameraMessage (OrbitMessage.SetTargetRadius(radius))]
                 m
         | DatasetsLoaded datasets ->
             { model with Datasets = datasets |> Array.toList }
@@ -518,8 +518,8 @@ module Update =
         | FlyToPoint(world, radius) ->
             let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
             let centreR = ScanPin.renderCentre model.CommonCentroid scale world
-            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, centreR))
-                      CameraMessage (OrbitMessage.SetTargetRadius(true, max 0.2 (radius * scale)))]
+            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, centreR))
+                      CameraMessage (OrbitMessage.SetTargetRadius(max 0.2 (radius * scale)))]
             model
         // 3D framing conventions for the double-click zoom grammar (the 2D focus side
         // lives in the FocusScene.* helpers called at the same click sites).
@@ -539,7 +539,7 @@ module Update =
             match model.LocateBackup with
             | None -> model
             | Some b ->
-                env.Emit [CameraMessage (OrbitMessage.SetTarget(false, b.PrevCenter, b.PrevRadius, b.PrevPhi, b.PrevTheta))]
+                env.Emit [CameraMessage (OrbitMessage.SetTarget(b.PrevCenter, b.PrevRadius, b.PrevPhi, b.PrevTheta))]
                 { model with
                     MeshSolo = b.PrevSolo
                     LocateBackup = None }

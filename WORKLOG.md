@@ -1,5 +1,37 @@
 # Worklog
 
+## WP (2026-07-15f): audit cleanup 4/11 — OrbitController fork pruned (−271 lines)
+
+The fork carried ~30% dead library inheritance. Removed: 9 never-emitted
+message variants (Set/SetPhi/SetTheta/SetRadius/SetCenter/UpdateCenter/
+SetTargetPhi/SetTargetTheta/Nothing) + their update cases; the whole
+shift/pan-animation machinery (shift only ever reset to zero — winPan,
+panAnimation, the SetTargetCenter else-branch and Rendered pan block were
+unreachable); write-only fields (userModifiedAngles/Center/Radius, dragging);
+constants masquerading as state (isOrtho=false, moveSensitivity=0.5,
+zoomSensitivity=1.0, devicePixelRatio=1.0 — inlined); the duplicate private
+clamp; `rec` on a non-recursive update. CameraModel: AnimationKind reduced
+to Exp|Tanh (6 dead kinds), Animation.interpolate monomorphized to V3d
+(SRTP machinery gone), unused animationRunning member deleted.
+
+Two bug fixes rode along:
+- **pick/lockedToScene removed entirely**: `pick` was never installed, so
+  every pan release warn-spammed AND flipped `lockedToScene=false`, which
+  silently switched the wheel from radius-zoom to the (unwanted) dolly
+  path. The wheel now always radius-zooms; `Wheel of shift*delta` →
+  `Wheel of delta` (the shift arg was always false).
+- **Pinch NaN**: two touches on the same pixel divided by zero →
+  NaN targetRadius that clamp passed through → zoom wedged until the next
+  fly-to. Guarded (denom ≤ 1e-6 ⇒ scale 1).
+
+Message signatures simplified (`user` flag fed only dead fields):
+SetTargetCenter(kind, v) / SetTargetRadius r / SetTarget(c, r, phi, theta)
+— 7 call sites updated. Adaptify re-run (CameraModel.g.fs).
+
+Type-check green, Supertests 29/29. Browser pass owed: orbit/pan/wheel/
+pinch/double-tap-recenter feel identical (pan release no longer changes
+wheel behaviour — that's the fix, not a regression).
+
 ## WP (2026-07-15e): audit cleanup 3/11 — reducer hardening + spec consistency
 
 1. **Clamps.** SetGhostOpacity/SetShadingStrength 0–1, SetSlopeThresholdDeg

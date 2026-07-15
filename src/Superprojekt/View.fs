@@ -325,7 +325,7 @@ module View =
                 Dom.OnMouseWheel(fun e ->
                     let delta = V2d(e.DeltaX, e.DeltaY) / 120.0
                     if not e.Alt then
-                        env.Emit [CameraMessage (OrbitMessage.Wheel(false, delta))]
+                        env.Emit [CameraMessage (OrbitMessage.Wheel delta)]
                     else
                         // Option/Alt + wheel = cycle the isolated layer. Prefer
                         // meshes stacked under the cursor; with fewer than two
@@ -382,7 +382,7 @@ module View =
                         let! resolved = resolvePick frontmost
                         match resolved with
                         | Some renderPos ->
-                            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(true, AnimationKind.Tanh, renderPos))]
+                            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, renderPos))]
                         | None -> ()
                     } |> Async.Start
                     false

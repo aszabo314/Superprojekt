@@ -51,9 +51,6 @@ module GuiTopBar =
                 }
             }
 
-            // The reconstruction-readiness hint moved to the Correspondence rail body,
-            // next to the Solve button (GuiRail).
-
             div {
                 Class "tb-right"
                 // Live cursor coordinate. World = metric world under the cursor

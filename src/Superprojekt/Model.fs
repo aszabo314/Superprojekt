@@ -169,7 +169,7 @@ type Model =
 
         ActivePickingLayer : string option
 
-        // Spring-loaded show-overlays modifier (§T8): hold to greyscale the scene
+        // Spring-loaded show-overlays modifier: hold to greyscale the scene
         // except the pin colours, making pin correspondence across views unmistakable.
         ShowOverlaysHeld  : bool
 
@@ -231,7 +231,7 @@ type Model =
         // Pano / Top projection of the WebGL focus single.
         FocusProjection     : FocusProjection
 
-        // Unified armed correspondence editing (§T4): Some (pin, mesh) = the editor
+        // Unified armed correspondence editing: Some (pin, mesh) = the editor
         // is armed for that pair. While armed, the mesh is isolated in the main view,
         // the linked focus is brought onto it, and clicking in EITHER the focus or the
         // 3D view sets the point (ROI-clamped). The mode STAYS armed until the user
@@ -239,7 +239,7 @@ type Model =
         // both views. None = idle.
         CorrArm             : (ScanPinId * string) option
         CorrPreview         : V3d option
-        // Per-sample distribution brushing (§T6): the set of brushed sample global
+        // Per-sample distribution brushing: the set of brushed sample global
         // ids (canonical order from ScanPinScene.brushSamples). Written by the chart
         // canvas (via the hidden-input bridge) and by the 3D spatial hover; read by
         // the chart highlight + the 3D brushed-sample markers.

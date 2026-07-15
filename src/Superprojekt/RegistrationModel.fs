@@ -179,10 +179,6 @@ module Readiness =
         let counts = pairCounts input
         let anySolvable = counts |> List.exists (fun (_, n) -> n >= 3)
 
-        // Per-mesh ("+N marker(s)") and per-pin ("N without a marker") hints were
-        // removed — the pin×mesh matrix now surfaces that detail. Only the GLOBAL
-        // reconstruction readiness remains (it moves to the top bar).
-
         // Zero solvable meshes (pins exist, moving meshes exist, none reaches 3) is
         // the only marker-related hard blocker.
         if input.ReferenceMesh.IsSome

@@ -286,17 +286,10 @@ module GuiRail =
                 }
             }
 
-        // ── Pin × mesh matrix (§B) — the navigation backbone in Correspondence +
-        // Inspect. Rows = pins (pin-colour name chip · ≤5 per-mesh cells);
-        // each cell = the (pin, mesh) cross-section slice diagram (§A): reference
-        // ±LoD₉₅ band vs the mesh's profile along the pin's section line,
-        // before/after aware (SetRegView swaps the pose-baked slice pair, the reg
-        // peek selects the other cache), out-of-ROI → a faint emptiness glyph.
-        // Cell SINGLE click = cell selection (the locate: solo + focus framing, no
-        // main camera). Clicking the cell of the ACTIVE locate toggles it off:
-        // BackOutLocate restores the pre-locate camera / solo / visibility and the
-        // selection clears. ClickGate-deferred because of that toggle — a
-        // double-click must not toggle twice on the way to its zoom.
+        // ── Pin × mesh matrix — rows = pins, cells = (pin, mesh) slice diagrams
+        // (SliceDiagram, §A). Cell SINGLE click = the locate; clicking the ACTIVE
+        // locate's cell backs out (BackOutLocate) — ClickGate-deferred because of
+        // that toggle: a double-click must not toggle twice on the way to its zoom.
         // §A global scales, shared by EVERY slice cell so the diagrams compare:
         // ONE horizontal window (N × coarsest mesh spacing; pin-diameter fallback
         // until spacings land) and ONE vertical half-extent — a robust percentile
@@ -352,7 +345,7 @@ module GuiRail =
                     let colRef = refMesh |> AVal.map ((=) (Some name))
                     div {
                         Class "mx-colhead"
-                        // Selected column: the header fills with the MESH accent (§T4) —
+                        // Selected column: the header fills with the MESH accent —
                         // the cross itself emerges from dimming, not added ink.
                         classWhen "mx-colhead-sel" colFocused
                         (colFocused, idxVal) ||> AVal.map2 (fun f i ->
@@ -427,7 +420,7 @@ module GuiRail =
                         (sel && (match hov with Some (HoverPoint(i,m)) -> i = id && m = mesh | _ -> false)))
                 let cellSel = model.Selection.Active |> AVal.map ((=) (SelCell(id, mesh)))
                 let cellRef = refMesh |> AVal.map ((=) (Some mesh))
-                // Selection cross by DE-emphasis (§T4): with a selection active,
+                // Selection cross by DE-emphasis: with a selection active,
                 // every cell outside the selected row/column dims — the cross
                 // emerges by contrast, adding no strokes over the diagrams.
                 let dimmed =
@@ -457,7 +450,7 @@ module GuiRail =
                 classWhen "mx-row-hover" pinHover
                 div {
                     Class "mx-rowhead"
-                    // Selected row: the header fills with the PIN accent (§T4).
+                    // Selected row: the header fills with the PIN accent.
                     classWhen "mx-rowhead-sel" selected
                     selected |> AVal.map (fun s ->
                         if s then Some (Style [Css.Background (Primitives.c4bToRgbaCss pinColor 0.4)]) else None)
@@ -500,12 +493,11 @@ module GuiRail =
         let placing =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
-        // The global reconstruction-readiness hint (moved here from the top bar) sits
-        // next to the Solve button, which is greyed until a mesh is solvable (≥3 in-ROI
-        // markers with a reference). The per-mesh/per-pin hints stay in the matrix.
-        // The Ready diagnostic gets the display numbers of the solvable meshes
-        // appended ("Ready to align 1,3") — a view concern (numbering = MeshOrder),
-        // so it patches the engine text here rather than inside Readiness.compute.
+        // Reconstruction-readiness hint next to the Solve button (greyed until a
+        // mesh is solvable: ≥3 in-ROI markers with a reference). The Ready
+        // diagnostic gets the display numbers of the solvable meshes appended
+        // ("Ready to align 1,3") — a view concern (numbering = MeshOrder), so it
+        // patches the engine text here rather than inside Readiness.compute.
         let readiness =
             (ReadinessView.input model, model.MeshOrder.Content) ||> AVal.map2 (fun input order ->
                 Readiness.compute input

@@ -40,7 +40,7 @@ module GuiFocus =
                 | _ -> List.tryHead names)
 
         // The unified correspondence editor is offered with a selected pin + a
-        // resolved single mesh (the reference is editable like any other, §T4).
+        // resolved single mesh (the reference is editable like any other).
         let setAvailable =
             AVal.custom (fun t ->
                 corrStep.GetValue t
@@ -60,7 +60,7 @@ module GuiFocus =
                 FocusProjection.label p
             }
 
-        // Unified arm button (§T4): one mode, two surfaces. Armed → the next click on
+        // Unified arm button: one mode, two surfaces. Armed → the next click on
         // the focus OR the 3D surface sets the (pin, mesh) point (ROI-clamped) and
         // ends the edit; an out-of-ROI click toasts and stays armed.
         let setBtn =
@@ -79,7 +79,7 @@ module GuiFocus =
         // Overview drops the large single (T3): the focus panel is the tile mesh
         // browser + control strip only. Other modes keep the single + tile strip.
         let isOverview = model.WorkflowStep |> AVal.map ((=) Overview)
-        // Aspect-locked resize handle (§T10): drag the left edge; the single's height
+        // Aspect-locked resize handle: drag the left edge; the single's height
         // tracks the width (0.72 ratio). Pure JS on a fixed-position panel.
         let resizeHandle =
             div {
@@ -96,8 +96,8 @@ module GuiFocus =
                     "h.addEventListener('pointerup',function(e){ dragging=false; try{h.releasePointerCapture(e.pointerId);}catch(_){} });"
                     "})();" ]
             }
-        // Displacement glyph legend (§T10): moved into the focus pane; explains the
-        // load→solved arrow colour ramp. Only in the Inspect Displacement channel.
+        // Displacement glyph legend: explains the load→solved arrow colour ramp.
+        // Only in the Inspect Displacement channel.
         let dispLegend =
             let show = (model.WorkflowStep, model.InspectChannel) ||> AVal.map2 (fun s c -> s = Inspect && c = ChDisplacement)
             div {

@@ -52,7 +52,7 @@ module GuiOverlays =
         elif m >= 1.0 then sprintf "%g m" m
         else sprintf "%g cm" (m * 100.0)
 
-    // Show-overlays hold (§T8): a 2D name tag per pin floating at its flag-pole tip
+    // Show-overlays hold: a 2D name tag per pin floating at its flag-pole tip
     // (ScanPin.flagTopRender projected to CSS px every frame), extended with the
     // pin's precomputed vertical cross-section as a small profile chart. Two
     // attributes drive one JS renderer: data-labels re-projects the tag positions

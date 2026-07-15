@@ -11,7 +11,7 @@ module GuiInspector =
 
     open Primitives
 
-    // Pin distribution canvas (§T6): per moving-mesh lane, a one-sided STACKED
+    // Pin distribution canvas: per moving-mesh lane, a one-sided STACKED
     // HISTOGRAM of every pin's ROI samples on a shared signed-distance axis —
     // 48 crisp bins growing up from the lane baseline, pin segments stacked in the
     // canonical pin order (CreatedAt, guid — same as the legend and brushSamples).
@@ -271,7 +271,7 @@ module GuiInspector =
         let shiftRow (k : string) (v : aval<string>) =
             div { Class "ins-shift-row"; span { Class "ins-shift-k"; k }; span { Class "ins-shift-v"; v } }
 
-        // Distribution (§T6 / §A3): ONE diagram, populated by the active selection —
+        // Distribution (§A3): ONE diagram, populated by the active selection —
         // mesh → its samples stacked by pin; pin → that pin stacked by mesh (mesh
         // colours); cell → the single (pin, mesh) distribution; nothing (or the
         // reference) → the ensemble aggregate stacked by pin over all moving meshes.
@@ -516,7 +516,7 @@ module GuiInspector =
                             OnBoot brushChartJs
                         }
                         // JS→Elm bridge: the canvas writes brushed gids here + fires an
-                        // input event; this forwards them to the model (§T6).
+                        // input event; this forwards them to the model.
                         input {
                             Class "ins-brush-bridge"
                             Attribute("type", "text")

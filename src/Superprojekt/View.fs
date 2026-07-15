@@ -282,8 +282,8 @@ module View =
                         transact (fun () -> altHeld.Value <- e.Alt)
                 )
 
-                // Clear hoverCoord on leave, else it keeps its last on-canvas
-                // value over an HTML overlay and freezes a stale 3D→chart line.
+                // Clear hoverCoord on leave, else the top-bar readout keeps a
+                // stale last-on-canvas coordinate over the HTML overlays.
                 Dom.OnMouseLeave(fun _ ->
                     if hoverCoord.Value.IsSome then
                         transact (fun () -> hoverCoord.Value <- None)

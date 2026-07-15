@@ -502,7 +502,7 @@ module MeshView =
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
                     Sg.Uniform("ShapeThreshold",       model.ShapeThreshold |> AVal.map float32)
-                    // Show-overlays modifier (§T8): white-out the mesh while held; the
+                    // Show-overlays modifier: white-out the mesh while held; the
                     // pin geometry (separate) keeps its colour.
                     Sg.Uniform("Whiteout", model.ShowOverlaysHeld |> AVal.map (fun on -> if on then 1.0f else 0.0f))
                     // Inspect de-clutter (§B5): the false-colour map is the base — no

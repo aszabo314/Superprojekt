@@ -62,32 +62,23 @@ type Message =
     | SetActivePickingLayer of string option
     // hover = peek, click = select/promote.
     | SetHovered of HoverTarget option
-    // THE selection: mesh / pin / cell (pin, mesh). Every entry path (matrix,
-    // roster, tiles, 3D) emits this; a cell selection is the locate (solo +
-    // backup). The focus panel frames the selection; the main 3D camera still
-    // moves only on double-click (ZoomTo*/FlyToPoint).
+    // THE one selection (see Model.ActiveSelection + the handler).
     | SetSelection of ActiveSelection
     | SetWorkflowStep of WorkflowStep
     | SetInspectChannel of InspectChannel
     | SetFocusProjection of FocusProjection
     | PickCorrespondenceAt of ScanPinId * mesh:string * world:V3d
-    // Arm/disarm the unified correspondence editor for a (pin, mesh): isolates the
-    // mesh, brings the linked focus onto it, and accepts picks from focus OR 3D until
-    // disarmed. Re-issuing for the armed pair disarms.
+    // Arm/disarm the unified correspondence editor for a (pin, mesh).
     | ToggleCorrArm of ScanPinId * mesh:string
-    // Transient hover preview of where a correspondence pick would land (metric
-    // world); drives the aim ghost in both views while armed.
+    // Hover preview of where a correspondence pick would land (metric world).
     | CorrPreviewComputed of V3d option
-    // Per-sample distribution brushing (§T6): replace the brushed-sample id set.
+    // Per-sample distribution brushing: replace the brushed-sample id set.
     | SetBrushedSamples of int list
-    // Fly the orbit camera tight to a metric-world point: animate centre + radius
-    // directly (radius = the orbit distance, not derived from a subtend).
-    | FlyToPoint of world:V3d * radius:float
     // Explicit MAIN-3D camera framing (the double-click grammar) — selection only
     // frames the focus panel; these own the 3D radius conventions.
+    | FlyToPoint of world:V3d * radius:float
     | ZoomToMesh of string
     | ZoomToPin of ScanPinId
-    // Restore the camera + solo/visibility captured at the first cell locate.
     | BackOutLocate
 
 and ScanPinMessage =

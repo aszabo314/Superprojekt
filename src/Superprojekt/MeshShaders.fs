@@ -70,7 +70,7 @@ module MeshShader =
         // depth contest deterministically (no per-pixel ID/colour alternation
         // where epochs differ by only noise).
         member x.OutlineDepthBias : float32 = x?OutlineDepthBias
-        // Show-overlays modifier (§T8): 1 → paint the mesh plain white (shading kept).
+        // Show-overlays modifier: 1 → paint the mesh plain white (shading kept).
         // Pins are separate geometry (unaffected), so only they carry colour.
         member x.Whiteout         : float32 = x?Whiteout
         // Inspect de-clutter (§B5): 1 → the base surface is a plain near-white
@@ -249,8 +249,8 @@ module MeshShader =
             // Below the cutoff the fragment is discarded (transparent filter).
             if uniform.HeatmapMode = 3 && aboveGhost then
                 if v.shq < uniform.ShapeThreshold then discard()
-                // Raise the green threshold: quality ≥ 0.75 reads fully green, so a
-                // larger share of a well-formed mesh shows as good.
+                // Quality ≥ 0.75 reads fully green, so a larger share of a
+                // well-formed mesh shows as good.
                 let ts = clamp 0.0f 1.0f (v.shq / 0.75f)
                 let loC = V3f(0.86f, 0.20f, 0.15f)
                 let hiC = V3f(0.18f, 0.55f, 0.34f)
@@ -258,7 +258,7 @@ module MeshShader =
             // (World-Z isolines are NOT drawn here — they are edge-detected from a
             // band-parity field in the offscreen outline pass, so they get the same
             // crisp 1px look as the silhouette outline. See OutlineGBuffer/OutlineEdge.)
-            // Show-overlays modifier (§T8): collapse the mesh to plain white (last, so
+            // Show-overlays modifier: collapse the mesh to plain white (last, so
             // every false-colour map above is overridden too) — only the
             // separately-rendered pin geometry carries colour while held.
             if uniform.Whiteout > 0.5f then
@@ -418,7 +418,7 @@ module OutlineEdge =
                 let flag = uniform.OutlineMask.[slot].X
                 // Silhouette / cliff (a window-depth break) keeps the crisp per-mesh
                 // palette colour. A pure world-Z band-parity flip (an isoline) renders
-                // in a faint neutral grey at reduced intensity (§T10), so elevation
+                // in a faint neutral grey at reduced intensity, so elevation
                 // contours read as subtle background reference, not bold palette lines.
                 if depthEdge && flag > 0.25f then
                     let col = gColor.Sample(v.tc)

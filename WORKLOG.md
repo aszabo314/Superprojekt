@@ -1,5 +1,33 @@
 # Worklog
 
+## WP (2026-07-15l): audit cleanup 10/11 — comment sweep + doc drift
+
+The audit's five noise patterns, swept (mandated constraint notes untouched):
+
+1. **Stale spec citations to DELETED docs**: every §T4/§T6/§T8/§T10, "spec
+   §2", "spec v3", "V6 §D.1", "Pin-Inspector spec §B" reference removed or
+   replaced with self-contained wording (~30 sites across the GUI files,
+   Model/Messages, style.css). §A/§B/§C references stay — they resolve to
+   the live v11 spec + CLAUDE.md.
+2. **Change-history narration**: "moved here from the top bar" (GuiRail),
+   "moved to the Correspondence rail body" (GuiTopBar — comment-only block
+   gone), "moved into the focus pane" (GuiFocus), "Raise the green
+   threshold" (MeshShaders), removed-hints paragraph (RegistrationModel),
+   the phantom "3D→chart line" consumer (View.fs — rewritten to name the
+   real consumer, the top-bar readout), Phase-1 CSS section header.
+3. **Messages.fs ↔ Model.fs/Update.fs doubled docs**: SetSelection /
+   ToggleCorrArm / CorrPreviewComputed / FlyToPoint / BackOutLocate
+   constructor comments reduced to one-liners (the handlers keep the full
+   story).
+4. **Spec-echo blocks**: the GuiRail matrix header block halved (kept the
+   non-obvious ClickGate rationale + the §A global-scale derivation).
+5. **Server**: MeshProbe's tuple-narrating + duplicated chart-sample
+   comments removed; SceneGraph's duplicated "Always-on-top" note deduped.
+
+CLAUDE.md drift: brushed-dots consumer line fixed (shared range, not the
+removed pinErrorRange); the reg bullet now documents the CoarseSolved
+batch + solveGen guard. Both builds green, Supertests 29/29.
+
 ## WP (2026-07-15k): audit cleanup 9/11 — state-layer consolidation
 
 - **`ScanPin.Correspondence` de-optionalized** (it was never None — every

@@ -160,7 +160,6 @@ let private sampleAlongAxis (mi : ProbeMeshInput) (centre : V3d) (axis : V3d) (r
             areas.[ti] <- a
             areaSum <- areaSum + a
         let spacing2 = if areaSum > 1e-12 then areaSum / float maxPoints else 1.0
-        // (axial distance, world surface position) per density-grid sample inside the cylinder.
         let hits = ResizeArray<float * V3d>()
         let r2 = radius * radius
         for ti in 0 .. triCount - 1 do

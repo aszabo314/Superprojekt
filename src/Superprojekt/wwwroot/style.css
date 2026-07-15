@@ -116,7 +116,7 @@ body.loaded { background: #f4f6f8; }
 }
 .tb-btn-tiny:hover { background: #edf0f4; color: #0f172a; }
 
-/* ── Workflow rail (spec §2) ───────────────────────────────────────────── */
+/* ── Workflow rail (the three-mode rail) ───────────────────────────────────────────── */
 .workflow-rail {
     position: fixed;
     top: 32px; left: 0;
@@ -195,7 +195,7 @@ body.loaded { background: #f4f6f8; }
     cursor: pointer; padding: 1px 0; border-radius: 3px; gap: 1px;
 }
 .mx-colhead:hover { background: #ecfeff; }
-/* Two disjoint highlight channels (§T4): REFERENCE = colour (persistent gold
+/* Two disjoint highlight channels: REFERENCE = colour (persistent gold
    header + gold frame down the whole column); SELECTION = opacity + accent
    (dim everything outside the selected row/column, accent-fill the headers,
    ring the intersecting cell). Black is data ink inside the diagrams — no
@@ -256,7 +256,7 @@ body.loaded { background: #f4f6f8; }
 }
 .ins-insp-sub { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; }
 
-/* ── Focus panel: large single + canvas small multiples (spec v3) ──────── */
+/* ── Focus panel: large single + canvas small multiples ──────── */
 .focus-panel {
     position: fixed;
     top: 32px; right: 0;
@@ -279,7 +279,7 @@ body.loaded { background: #f4f6f8; }
   background-position: center; background-repeat: no-repeat; background-size: 1px 20px;
 }
 .focus-resize:hover::before { background-color: #1a56db; border-color: #1a56db; }
-/* displacement glyph legend (moved into the focus pane, §T10) */
+/* displacement glyph legend */
 .focus-displeg { padding: 3px 8px; font-size: 10px; color: #475569; background: #f8fafc; border-top: 1px solid #eef2f6; }
 /* min-height keeps the strip from collapsing when every control is hidden
    (Overview, no pin) — the containers never move, only content changes */
@@ -548,7 +548,7 @@ body.loaded { background: #f4f6f8; }
 .tb-gear-mesh-name { flex: 0 0 140px; color: #60a5fa; }
 .tb-gear-mesh-coord { color: #cbd5e1; }
 
-/* ── Mesh-wheel active-picking-layer label (V6 §D.1) ──────────────── */
+/* ── Mesh-wheel active-picking-layer label ──────────────── */
 
 .mesh-wheel-label {
     position: fixed;
@@ -662,7 +662,7 @@ body.loaded { background: #f4f6f8; }
     .tb-coord { font-size: 10px; }
 }
 
-/* ── Pin inspector: bottom dock (Pin-Inspector spec §B) ─────────────── */
+/* ── Pin inspector: bottom dock ─────────────── */
 
 .pin-inspector {
     position: fixed;
@@ -697,7 +697,7 @@ body.loaded { background: #f4f6f8; }
 /* correspondence manager */
 .ins-mgr { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 6px 10px; }
 
-/* ── Phase-1 three-mode rail / dock additions ──────────────────────── */
+/* ── Three-mode rail / dock ────────────────────────────────────────── */
 .rail-row-hover { background: #ecfeff; box-shadow: inset 2px 0 0 #0891b2; }
 
 /* Register dock — manager head (identity chip + radius) */

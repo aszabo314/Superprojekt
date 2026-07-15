@@ -537,7 +537,7 @@ module FocusScene =
                             addCrossXY out aR gr gcol gw
                             addRingXY out aR (gr * 0.6) gcol gw 24
                         | None -> ()
-                    // Live aim ghost (§T4): a WHITE cross+ring at the hovered pick
+                    // Live aim ghost: a WHITE cross+ring at the hovered pick
                     // point while armed for THIS mesh — white = "not committed yet";
                     // the click turns it into the pin-coloured marker. A move > 10 cm
                     // (world) from the current anchor adds a white arrow old → new.

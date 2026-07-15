@@ -42,7 +42,7 @@ module SceneGraph =
     let private zColor = V4d(0.15, 0.35, 0.90, 1.0)
 
     // Origin cross + tick segments, anchored at `center` (render space — the first
-    // mesh's panorama centre). Always-on-top: DepthTest.None, passOne.
+    // mesh's panorama centre).
     let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (center : aval<V3d>) =
         let tickSegs (o : V3d) (color : V4d) (dir : V3d) (perpA : V3d) =
             let n = int (axisLength / tickSpacing)
@@ -127,7 +127,7 @@ module SceneGraph =
             @ labelNodes zColor V3d.OOI V3d.IOO textTrafoZ)
 
     // Bbox edge outline of ONE mesh at its displayed (peek-aware) pose — the gold
-    // reference marker (§T10) and the cyan focused-mesh accent share this builder.
+    // reference marker and the cyan focused-mesh accent share this builder.
     let private bboxOutline (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>)
                             (model : AdaptiveModel)
                             (nameAt : AdaptiveToken -> string option) (col : V4d) (width : float) =
@@ -174,7 +174,7 @@ module SceneGraph =
             Lines.render segs
         }
 
-    // Prominent reference-mesh marker (§T10): its bbox edges in gold (matching the
+    // Prominent reference-mesh marker: its bbox edges in gold (matching the
     // focus reference tile ★), thick + bright so the reference is unmistakable in 3D.
     let private referenceOutline view proj active (model : AdaptiveModel) =
         bboxOutline view proj active model

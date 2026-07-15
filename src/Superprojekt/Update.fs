@@ -454,7 +454,7 @@ module Update =
             // exclusively — a pick against the solved pose would store a point whose
             // Before position is off-surface/outside the pin. The entry points force
             // Before (arm button, placement); this is the safety net for a view
-            // toggled mid-edit. ROI-clamped (§T4 — no point outside the pin sphere).
+            // toggled mid-edit. ROI-clamped (no point outside the pin sphere).
             // Editing the reference mesh moves its RefAnchor; any other mesh sets its
             // anchor. A committed pick DISARMS the editor (one click = one edit); an
             // out-of-ROI click keeps it armed so the toast's "try again" needs no re-arm.

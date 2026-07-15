@@ -35,7 +35,7 @@ module ScanPinScene =
             Sg.Render sphereIdxCnt
         }
 
-    // Canonical per-sample list for distribution brushing (§T6) — the single source
+    // Canonical per-sample list for distribution brushing — the single source
     // of truth shared by the chart (gid labelling), the 3D brushed markers, and the
     // 3D→chart spatial query. Order is fixed (moving meshes by MeshNames order × ready
     // pins by (CreatedAt, guid) × sample, strided to ≤ brushMaxPerCell): the array
@@ -593,7 +593,7 @@ module ScanPinScene =
                     | None -> [||])
             linesNodeTop notFullscreen segs
 
-        // Brushed individual samples (§T6/§A4): small solid dots at the brushed
+        // Brushed individual samples (§A4): small solid dots at the brushed
         // samples' surface positions, looked up by gid in the SAME canonical array
         // the chart labels with — so a chart range-brush lands on the exact 3D
         // surface cells. Driven by Model.BrushedSamples (chart drag ONLY — no hover

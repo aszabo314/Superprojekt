@@ -12,7 +12,7 @@ type ProbeDistribution = {
     Std       : float
     Samples   : float[]
     // World-space surface position of each sample (V3d), aligned 1:1 with Samples —
-    // lets the distribution chart brush a sample back to its 3D surface cell (§T6).
+    // lets the distribution chart brush a sample back to its 3D surface cell.
     Positions : V3d[]
 }
 

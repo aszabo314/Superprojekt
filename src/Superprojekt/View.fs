@@ -191,48 +191,9 @@ module View =
                 // Bbox-culls visible+loaded meshes, raycasts the survivors in
                 // parallel, returns the render-space hit nearest the camera — the
                 // first surface the ray crosses wins, mesh and coordinate together.
-                let raycastNearest () : Async<V3d option> =
-                    match cursorScreen.Value with
-                    | None -> async.Return None
-                    | Some cursorPx ->
-                        let cc = AVal.force model.CommonCentroid
-                        let scales = AVal.force model.DatasetScales
-                        let shown = shownNow ()
-                        let bounds = AVal.force model.MeshBounds
-                        let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
-                        let candidates =
-                            bounds |> Map.toSeq
-                            |> Seq.choose (fun (name, world) ->
-                                if shown name then
-                                    let scale = DatasetScale.forMesh scales name
-                                    if (rayBoxT ray (renderBox world cc scale)).IsSome
-                                    then Some (name, scale) else None
-                                else None)
-                            |> Array.ofSeq
-                        if candidates.Length = 0 then async.Return None
-                        else
-                            async {
-                                let! hits =
-                                    candidates
-                                    |> Array.map (fun (name, scale) ->
-                                        async {
-                                            let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model name))
-                                            let serverOrigin = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale ray.Origin)
-                                            let serverDir = (dispWorld.Backward.TransformDir ray.Direction).Normalized
-                                            let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
-                                            return hit |> Option.map (fun h ->
-                                                let rp = ScanPin.renderCentre cc scale (dispWorld.Forward.TransformPos h.point)
-                                                Vec.dot (rp - ray.Origin) ray.Direction, rp)
-                                        })
-                                    |> Async.Parallel
-                                return
-                                    hits |> Array.choose id |> Array.sortBy fst
-                                    |> Array.tryHead |> Option.map snd
-                            }
-
-                // Like raycastNearest, but keeps the mesh NAME of the nearest hit —
-                // used to focus (§B) / solo (§C) the clicked mesh in 3D. Bbox-culls
-                // visible+loaded meshes, raycasts the survivors, takes the nearest.
+                // Nearest hit with the mesh NAME — used to focus (§B) / solo (§C) the
+                // clicked mesh in 3D. Bbox-culls shown+loaded meshes, raycasts the
+                // survivors, takes the nearest.
                 let raycastNearestNamed () : Async<(string * V3d) option> =
                     match cursorScreen.Value with
                     | None -> async.Return None
@@ -271,6 +232,12 @@ module View =
                                     hits |> Array.choose id |> Array.sortBy (fun (d, _, _) -> d)
                                     |> Array.tryHead |> Option.map (fun (_, n, rp) -> n, rp)
                             }
+
+                let raycastNearest () : Async<V3d option> =
+                    async {
+                        let! hit = raycastNearestNamed ()
+                        return hit |> Option.map snd
+                    }
 
                 // Cursor → a SPECIFIC mesh's surface via server raycast (render-space
                 // hit). Used by the 3D correspondence pick, which isolates one mesh and
@@ -539,7 +506,7 @@ module View =
             )
 
             GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
-            GuiRail.rail env model (viewportSize :> aval<V2i>)
+            GuiRail.rail env model
             GuiFocus.panel env model
             GuiOverlays.toast model
             GuiOverlays.pinFlagLabels model (viewportSize :> aval<V2i>)

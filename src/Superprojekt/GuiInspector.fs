@@ -138,8 +138,7 @@ module GuiInspector =
     let dock (env : Env<Message>) (model : AdaptiveModel) =
         let selected  = model.Selection.Active |> AVal.map Selection.pin
         let pinsVal   = model.ScanPins.Pins |> AMap.toAVal
-        let effId     = selected
-        let effPin    = (effId, pinsVal) ||> AVal.map2 (fun id pins -> id |> Option.bind (fun i -> HashMap.tryFind i pins))
+        let effPin    = (selected, pinsVal) ||> AVal.map2 (fun id pins -> id |> Option.bind (fun i -> HashMap.tryFind i pins))
         let hasPin    = effPin |> AVal.map Option.isSome
         let orderVal  = model.MeshOrder.Content
         let corrA     = effPin |> AVal.map (Option.bind ScanPin.correspondence)
@@ -155,29 +154,17 @@ module GuiInspector =
                 effPin |> AVal.map (function Some p -> Some (Style [Css.Background (c4bToRgbCss p.PinColor)]) | None -> None)
                 effPin |> AVal.map (function Some p -> p.ShortName | None -> "")
             }
-        // Committed displayed pose (metric world) for a mesh — the frame the anchor
-        // editor reads; PickCorrespondenceAt converts back with the same transform.
-        let dispWorldOf (t : AdaptiveToken) (mesh : string) =
-            let sc = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
-            let cc = model.CommonCentroid.GetValue t
-            let disp =
-                match model.RegView.GetValue t, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
-                | RegAfter, Some s -> s
-                | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
-            RigidTransform.renderToWorld sc cc disp
-
         // The selected pin's correspondence point on a mesh, in metric world at the
-        // committed pose (the reference row reads RefAnchor, movers their anchor).
+        // committed pose (the reference row reads RefAnchor, movers their anchor);
+        // PickCorrespondenceAt converts back with the same transform.
         let anchorWorldOf (mesh : string) =
             AVal.custom (fun t ->
                 match corrA.GetValue t with
                 | None -> None
                 | Some c ->
                     let isRef = (model.Registration.GetValue t).ReferenceMesh = Some mesh
-                    let own =
-                        if isRef then c.RefAnchor
-                        else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point)
-                    own |> Option.map (fun p -> (dispWorldOf t mesh).Forward.TransformPos p))
+                    Correspondence.anchorOwn isRef mesh c
+                    |> Option.map (fun p -> (MeshView.displayedWorldCommittedAt model t mesh).Forward.TransformPos p))
 
         // One row per mesh: number · name · ★ · editable X/Y/Z of the correspondence
         // point. Edits route through PickCorrespondenceAt — same ROI clamp and
@@ -204,13 +191,10 @@ module GuiInspector =
                         (aw, model.RegView) ||> AVal.map2 (fun a rv ->
                             if a.IsNone || rv = RegAfter then Some (Attribute("disabled", "disabled")) else None)
                         Dom.OnChange(fun e ->
-                            let ok, v =
-                                System.Double.TryParse(
-                                    e.Value,
-                                    System.Globalization.NumberStyles.Float,
-                                    System.Globalization.CultureInfo.InvariantCulture)
-                            if ok then
-                                match AVal.force aw, AVal.force effId with
+                            match parseFloat e.Value with
+                            | None -> ()
+                            | Some v ->
+                                match AVal.force aw, AVal.force selected with
                                 | Some w, Some pinId ->
                                     let w' =
                                         match axis with
@@ -297,7 +281,11 @@ module GuiInspector =
         // conceptual samples stay the SAME canonical array as the 3D side (gid =
         // array index, committed pose only), restricted to what the diagram shows.
         let canonA = ScanPinScene.brushSamples model
-        let distData =
+        // Hover-FREE core: everything expensive (the all-sample quantile sort, the
+        // 48-bin histograms, the JSON assembly) is computed here with `§P<guid>§` /
+        // `§M<mesh>§` sentinels in the hl slots; the cheap hover substitution runs
+        // in distData below — so a hover crossing never re-sorts the samples.
+        let distCore =
             AVal.custom (fun t ->
                 let inv = System.Globalization.CultureInfo.InvariantCulture
                 let g (v : float) =
@@ -307,7 +295,6 @@ module GuiInspector =
                 let rf = (model.Registration.GetValue t).ReferenceMesh
                 let names = model.MeshNames.Content.GetValue t |> IndexList.toList
                 let moving = names |> List.filter (fun n -> Some n <> rf)
-                let hov = model.Selection.Hovered.GetValue t
                 let sel = model.Selection.Active.GetValue t
                 let regView = model.RegView.GetValue t
                 let solved = not (Map.isEmpty (model.SolvedTransforms.GetValue t))
@@ -392,7 +379,7 @@ module GuiInspector =
                     // One stacked layer aggregated over (pin × mesh) parts: summed
                     // per-pose histograms, pooled brush gids, mean LoD; a median tick
                     // only when the layer is a single (pin, mesh) cell.
-                    let layer (color : C4b) (lname : string) (hl : int)
+                    let layer (color : C4b) (lname : string) (hl : string)
                               (parts : ((ScanPinId * ScanPin * ProbeResult * ProbeResult option * ProbeResult option) * string) list) =
                         let mutable hb = None
                         let mutable ha = None
@@ -420,17 +407,12 @@ module GuiInspector =
                             let med = if meds.Count = 1 then g meds.[0] else "null"
                             let hist (h : int[] option) = h |> Option.map (fun c -> c |> Array.map string |> String.concat ",") |> Option.defaultValue ""
                             let lod = if lods.Count = 0 then None else Some (Seq.average lods)
-                            Some (lod, sprintf "{\"color\":\"%s\",\"name\":\"%s\",\"hl\":%d,\"med\":%s,\"g\":[%s],\"s\":[%s],\"hb\":[%s],\"ha\":[%s]}"
+                            Some (lod, sprintf "{\"color\":\"%s\",\"name\":\"%s\",\"hl\":%s,\"med\":%s,\"g\":[%s],\"s\":[%s],\"hb\":[%s],\"ha\":[%s]}"
                                         (c4bToHex color) lname hl med
                                         (String.concat "," gids) (String.concat "," svals) (hist hb) (hist ha))
-                    let hlPin id =
-                        match hov with
-                        | Some (HoverPin i) | Some (HoverPoint (i, _)) -> if i = id then 1 else 0
-                        | _ -> 1
-                    let hlMesh m =
-                        match hov with
-                        | Some (HoverMesh hm) | Some (HoverPoint (_, hm)) -> if hm = m then 1 else 0
-                        | _ -> 1
+                    let hlPin (id : ScanPinId) =
+                        let (ScanPinId.ScanPinId gg) = id in sprintf "§P%s§" (gg.ToString "N")
+                    let hlMesh (m : string) = sprintf "§M%s§" m
                     let friendly = numberedFriendly order names
                     let pinLabel (p : ScanPin) = p.ShortName
                     let selMeshOpt = Selection.mesh sel |> Option.filter (fun m -> List.contains m moving)
@@ -466,6 +448,37 @@ module GuiInspector =
                                 rowName (g avgLod) (groups |> List.map snd |> String.concat ",")
                     sprintf "{\"reg\":%s,\"act\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"rows\":[%s]}"
                         (if solved then "1" else "0") act (g lo) (g hi) bins rows)
+        // Substitute the hl sentinels for the current hover — a plain string scan,
+        // so hovering matrix cells/rows never recomputes the stats above.
+        let distData =
+            (distCore, model.Selection.Hovered) ||> AVal.map2 (fun core hov ->
+                if not (core.Contains '§') then core
+                else
+                    let sb = System.Text.StringBuilder(core.Length)
+                    let mutable i = 0
+                    while i < core.Length do
+                        let c = core.[i]
+                        if c = '§' then
+                            let e = core.IndexOf('§', i + 1)
+                            let tok = core.Substring(i + 1, e - i - 1)
+                            let hl =
+                                if tok.[0] = 'P' then
+                                    match hov with
+                                    | Some (HoverPin (ScanPinId.ScanPinId gg))
+                                    | Some (HoverPoint (ScanPinId.ScanPinId gg, _)) ->
+                                        if gg.ToString "N" = tok.Substring 1 then 1 else 0
+                                    | _ -> 1
+                                else
+                                    match hov with
+                                    | Some (HoverMesh hm) | Some (HoverPoint (_, hm)) ->
+                                        if hm = tok.Substring 1 then 1 else 0
+                                    | _ -> 1
+                            sb.Append hl |> ignore
+                            i <- e + 1
+                        else
+                            sb.Append c |> ignore
+                            i <- i + 1
+                    sb.ToString())
         // Comma-joined brushed gids → the canvas highlight (data-brushed).
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
 

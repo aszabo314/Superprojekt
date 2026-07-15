@@ -175,7 +175,8 @@ module Primitives =
         | Some i -> sprintf "%d  %s" (i + 1) (friendlyName names name)
         | None -> friendlyName names name
 
-    let private parseFloat (s : string) =
+    // Invariant-culture float parse — the shared widgets and the dock XYZ editor.
+    let parseFloat (s : string) =
         match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
         | true, v -> Some v
         | _ -> None

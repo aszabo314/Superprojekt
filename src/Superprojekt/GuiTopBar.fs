@@ -90,6 +90,11 @@ module GuiTopBar =
                         Dom.OnClick(fun _ -> env.Emit [ToggleGearPopover])
                         "⚙"
                     }
+                    let gearSlider label lo hi step fmt v (msg : float -> Message) =
+                        div {
+                            Class "tb-gear-row"
+                            inlineSlider label lo hi step fmt v (fun x -> env.Emit [msg x])
+                        }
                     div {
                         Class "tb-gear-popover"
                         showWhen model.GearPopoverOpen
@@ -119,26 +124,10 @@ module GuiTopBar =
                                 "Slope",    (model.RenderingMode |> AVal.map (fun m -> m = SlopeColor)),(fun () -> env.Emit [SetRenderingMode SlopeColor])
                             ]
                         }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Outline edge threshold" 0.0001 0.01 0.0001 (sprintf "%.4f") model.OutlineThreshold (fun v ->
-                                env.Emit [SetOutlineThreshold v])
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Isolines over Z range" 4.0 2000.0 1.0 (sprintf "%.0f") model.IsolineBands (fun v ->
-                                env.Emit [SetIsolineBands v])
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Isoline opacity" 0.0 1.0 0.01 (sprintf "%.2f") model.IsolineOpacity (fun v ->
-                                env.Emit [SetIsolineOpacity v])
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v ->
-                                env.Emit [CameraMessage (OrbitMessage.SetSpeed v)])
-                        }
+                        gearSlider "Outline edge threshold" 0.0001 0.01 0.0001 (sprintf "%.4f") model.OutlineThreshold SetOutlineThreshold
+                        gearSlider "Isolines over Z range" 4.0 2000.0 1.0 (sprintf "%.0f") model.IsolineBands SetIsolineBands
+                        gearSlider "Isoline opacity" 0.0 1.0 0.01 (sprintf "%.2f") model.IsolineOpacity SetIsolineOpacity
+                        gearSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v -> CameraMessage (OrbitMessage.SetSpeed v))
                         div {
                             Class "tb-gear-row"
                             compactToggle "Ghost silhouette" model.GhostSilhouette (fun () ->
@@ -157,48 +146,20 @@ module GuiTopBar =
                             compactToggle "Isolate pins" isoEffective (fun () ->
                                 if not (AVal.force placing) then env.Emit [ToggleAnchorGhostMode])
                         }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Shading strength" 0.0 1.0 0.01 (sprintf "%.2f") model.ShadingStrength (fun v ->
-                                env.Emit [SetShadingStrength v])
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Slope threshold (°)" 1.0 89.0 1.0 (sprintf "%.0f°") model.SlopeThresholdDeg (fun v ->
-                                env.Emit [SetSlopeThresholdDeg v])
-                        }
+                        gearSlider "Shading strength" 0.0 1.0 0.01 (sprintf "%.2f") model.ShadingStrength SetShadingStrength
+                        gearSlider "Slope threshold (°)" 1.0 89.0 1.0 (sprintf "%.0f°") model.SlopeThresholdDeg SetSlopeThresholdDeg
                         div {
                             Class "tb-gear-row"
                             numberInput "Quick-pin radius (m)" 0.01 50.0 0.005 (sprintf "%.3f") model.QuickPinRadius (fun v ->
                                 env.Emit [SetQuickPinRadius v])
                         }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Pin flag scale" 0.2 5.0 0.1 (sprintf "%.1f×") model.FlagScale (fun v ->
-                                env.Emit [SetFlagScale v])
-                        }
+                        gearSlider "Pin flag scale" 0.2 5.0 0.1 (sprintf "%.1f×") model.FlagScale SetFlagScale
                         // Slice-cell tunables (§A): one global window / context /
                         // vertical scale for every matrix slice diagram.
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Slice window (× spacing)" 2.0 12.0 0.5 (sprintf "%.1f") model.SliceNSamples (fun v ->
-                                env.Emit [SetSliceNSamples v])
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Slice context (each side)" 0.0 4.0 1.0 (sprintf "%.0f") model.SliceContextCount (fun v ->
-                                env.Emit [SetSliceContextCount v])
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Slice context spacing (× window)" 0.02 0.5 0.01 (sprintf "%.2f") model.SliceContextSpacing (fun v ->
-                                env.Emit [SetSliceContextSpacing v])
-                        }
-                        div {
-                            Class "tb-gear-row"
-                            inlineSlider "Slice vertical percentile" 0.5 1.0 0.01 (sprintf "%.2f") model.SliceVertPercentile (fun v ->
-                                env.Emit [SetSliceVertPercentile v])
-                        }
+                        gearSlider "Slice window (× spacing)" 2.0 12.0 0.5 (sprintf "%.1f") model.SliceNSamples SetSliceNSamples
+                        gearSlider "Slice context (each side)" 0.0 4.0 1.0 (sprintf "%.0f") model.SliceContextCount SetSliceContextCount
+                        gearSlider "Slice context spacing (× window)" 0.02 0.5 0.01 (sprintf "%.2f") model.SliceContextSpacing SetSliceContextSpacing
+                        gearSlider "Slice vertical percentile" 0.5 1.0 0.01 (sprintf "%.2f") model.SliceVertPercentile SetSliceVertPercentile
                         div {
                             Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Dataset" }

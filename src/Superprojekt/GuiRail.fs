@@ -135,7 +135,7 @@ module GuiRail =
 
     open Primitives
 
-    type private Pill = PillReady | PillWarn | PillBlock | PillInfo
+    type private Pill = PillReady | PillBlock | PillInfo
 
     // Cell state in the pin×mesh matrix: a slice diagram (§A, a SliceDiagram
     // data-slice payload), a faint out-of-ROI emptiness glyph (no marks — the
@@ -167,16 +167,14 @@ module GuiRail =
 
     let private pillClass = function
         | PillReady -> "rail-pill rail-pill-ready"
-        | PillWarn  -> "rail-pill rail-pill-warn"
         | PillBlock -> "rail-pill rail-pill-block"
         | PillInfo  -> "rail-pill rail-pill-info"
 
-    let private hex = Primitives.c4bToRgbCss
+    let private rgb = Primitives.c4bToRgbCss
 
-    let rail (env : Env<Message>) (model : AdaptiveModel) (viewportSize : aval<V2i>) =
+    let rail (env : Env<Message>) (model : AdaptiveModel) =
         let refMesh   = model.Registration |> AVal.map (fun r -> r.ReferenceMesh)
         let curStep   = model.WorkflowStep
-        ignore viewportSize
 
         // Status pill on the Register header only — Overview/Inspect titles stay bare.
         let corrStatus : aval<Pill * string> =
@@ -196,7 +194,7 @@ module GuiRail =
                        [ span {
                              corrStatus |> AVal.map (fun (p, _) -> Some (Class (pillClass p)))
                              corrStatus |> AVal.map (fun (p, _) ->
-                                 match p with PillReady -> "✔" | PillWarn -> "⚠" | PillBlock -> "✖" | PillInfo -> "•")
+                                 match p with PillReady -> "✔" | PillBlock -> "✖" | PillInfo -> "•")
                          } ]
                    else [])
             button {
@@ -226,7 +224,7 @@ module GuiRail =
             let focused = model.Selection.Active |> AVal.map (fun s -> Selection.mesh s = Some name)
             let isRef  = refMesh |> AVal.map ((=) (Some name))
             let hm = model.MeshHeatmap |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue HeatOff)
-            let swatch = span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (hex c)])) }
+            let swatch = span { Class "mesh-swatch"; colorVal |> AVal.map (fun c -> Some (Style [Css.Background (rgb c)])) }
             let num    = span { Class "mesh-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
             let nameSpan =
                 span {
@@ -365,7 +363,7 @@ module GuiRail =
                         Dom.OnDoubleClick(fun _ -> ClickGate.now "mx-cell" (fun () -> env.Emit [SetSelection (SelMesh name); ZoomToMesh name]))
                         Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                         Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
-                        span { Class "mx-colsw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (hex (meshColor i))])) }
+                        span { Class "mx-colsw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
                         span { Class "mx-colnum"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                     })
             }
@@ -470,7 +468,7 @@ module GuiRail =
                     Dom.OnDoubleClick(fun _ -> ClickGate.now "mx-cell" (fun () -> env.Emit [SetSelection (SelPin id); ZoomToPin id]))
                     Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPin id))])
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
-                    span { Class "mx-pinname"; Style [Css.Background (hex pinColor)]; shortNm }
+                    span { Class "mx-pinname"; Style [Css.Background (rgb pinColor)]; shortNm }
                     button {
                         Class "mb mx-del"
                         Attribute("title", "Delete pin")

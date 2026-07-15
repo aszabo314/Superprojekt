@@ -1,5 +1,40 @@
 # Worklog
 
+## WP (2026-07-15i): audit cleanup 7/11 — GUI consolidation
+
+- **View.fs**: `raycastNearest` was a 40-line verbatim twin of
+  `raycastNearestNamed` (minus the name) → now `raycastNearestNamed |> map
+  snd`. The dead `viewportSize` param dropped from `GuiRail.rail`.
+- **GuiTopBar**: 11 identical `div { Class "tb-gear-row"; inlineSlider … }`
+  wrappers → one `gearSlider` helper; the popover reads as a declarative list.
+- **GuiInspector**: `dispWorldOf` (the 4th hand-rolled displayed-pose copy)
+  → `MeshView.displayedWorldCommittedAt` + `Correspondence.anchorOwn`;
+  `Primitives.parseFloat` exposed (the dock XYZ editor had its own
+  Double.TryParse); pointless `effId` alias removed.
+- **distData hover decoupled** (the audit's dock perf smell): the expensive
+  core (all-sample quantile sort, 48-bin histograms, JSON assembly) is now a
+  hover-free `distCore` emitting `§P<guid>§`/`§M<mesh>§` sentinels in the hl
+  slots; `distData` substitutes them per hover with a plain string scan — a
+  matrix-row hover no longer re-sorts every probe sample of both poses.
+- **GuiOverlays**: `chartsJson` gained the same ShowOverlaysHeld early-out
+  as `labelsJson` (slice/pose churn built full chart JSON while hidden).
+- **GuiRail**: dead `PillWarn` case + its class/icon arms removed (the pill
+  producer never emits it); the lying `hex` alias renamed `rgb`.
+- **style.css**: dead `.rail-pill-warn`, `.mb:disabled{,:hover}` removed;
+  `.rail-btn-active` comma-joined with its identical `.rail-btn-primary`;
+  reference gold unified into `--ref-gold/-dark/-pale` tokens (three
+  slightly different golds had crept in); matrix header selection insets
+  near-black → neutral `#94a3b8` (black stays data ink, §A).
+
+Deliberately NOT done: the focus/dock resize-handle CSS stays as documented
+twins (400 lines apart — locality beats 6 lines); no `selectable` attr
+helper (the four handler quadruples diverged legitimately after the
+ClickGate work); no AMap projection for `vertExtentVal` (an AVal.custom
+over AMap.toAVal re-runs regardless — no real win).
+
+Type-check green, Supertests 29/29. Browser pass owed: gear sliders behave,
+dock chart hover highlight + brush unchanged, gold marks unchanged.
+
 ## WP (2026-07-15h): audit cleanup 6/11 — render pipeline consolidation
 
 - **SceneGraph**: `referenceOutline`/`focusedOutline` were ~90% identical

@@ -102,6 +102,9 @@ module GuiOverlays =
         let padX, padT, padB = 5.0, 4.0, 13.0
         let chartsJson =
             AVal.custom (fun t ->
+                // Hidden overlay ⇒ no work (labelsJson has the same early-out) —
+                // slice/pose churn must not rebuild an invisible chart's JSON.
+                if not (model.ShowOverlaysHeld.GetValue t) then "{}" else
                 let pins  = pinsVal.GetValue t
                 let peek  = model.RegPeekHeld.GetValue t
                 let solo  = model.MeshSolo.GetValue t

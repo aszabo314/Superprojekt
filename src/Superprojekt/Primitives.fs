@@ -25,18 +25,13 @@ module Primitives =
 
     let meshColor (idx : int) = meshPalette.[((idx % meshPalette.Length) + meshPalette.Length) % meshPalette.Length]
 
-    // Pin identity — the vivid warm/purple family (orange · fuchsia · violet ·
-    // pink …), disjoint from both the scalar-gradient hues and the cool/earth mesh
-    // family (§B1). Identity = colour + the 2-char ShortName, shown as a
-    // colour-filled element with the name inside.
-    module PinPalette =
-        let colors =
-            [| C4b(234uy, 88uy, 12uy); C4b(192uy, 38uy,211uy); C4b(124uy, 58uy,237uy)
-               C4b(219uy, 39uy,119uy); C4b(134uy, 25uy,143uy); C4b(162uy, 28uy,175uy)
-               C4b(190uy, 24uy, 93uy); C4b(109uy, 40uy,217uy); C4b(194uy, 65uy, 12uy)
-               C4b(147uy, 51uy,234uy) |]
-        let count = colors.Length
-        let color (i : int) = colors.[((i % count) + count) % count]
+    // Pin identity is NAME-ONLY (v12 §4): no pin colours, no glyphs. Every pin
+    // mark and label uses this ONE near-black dark warm grey — deliberately not
+    // pure #000 (the slice cells' data ink) and warmer than the slate UI text,
+    // so pin marks stay recognisable without owning a hue family.
+    let pinInk    = C4b(41uy, 37uy, 36uy)          // #292524
+    let pinInkV3d = V3d(41.0 / 255.0, 37.0 / 255.0, 36.0 / 255.0)
+    let pinInkCss = "#292524"
 
     // Pronounceable 2-char pin code = consonant + vowel, collision-checked against
     // names already taken (other pins' short names + the mesh numbers). Seeded by the
@@ -58,20 +53,6 @@ module Primitives =
             go 0
 
     let c4bToHex (c : C4b) = sprintf "#%02x%02x%02x" c.R c.G c.B
-
-    // Luminance greyscale of an identity colour — while a pin is selected, the
-    // OTHER pins' 3D/focus marks drop to this so the selection owns the colour.
-    let c4bToGrey (c : C4b) =
-        let l = byte (clamp 0.0 255.0 (0.299 * float c.R + 0.587 * float c.G + 0.114 * float c.B))
-        C4b(l, l, l)
-    let v3dToGrey (v : V3d) =
-        let l = 0.299 * v.X + 0.587 * v.Y + 0.114 * v.Z
-        V3d(l, l, l)
-
-    // Greyscale-while-another-pin-is-selected (§B1): the selected pin owns the
-    // colour channel; every other pin's 3D/focus mark drops to luminance grey.
-    let selectionTint (sel : 'a option) (isSel : bool) (c : V3d) =
-        if not isSel && sel.IsSome then v3dToGrey c else c
 
     // Linear-diverging difference colourmap (§C — Coolwarm, Colorcet CET-D01 as
     // shipped by Maple): blue (neg) → near-white → red (pos). A near-zero perceptual

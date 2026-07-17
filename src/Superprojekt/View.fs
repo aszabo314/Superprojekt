@@ -61,6 +61,10 @@ module View =
         let hoverCoord      = cval<V3d option> None
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
+        // Hard-prohibit state at the placement hover (v12 §2): Some false = < 2
+        // meshes in range (ghost fades, tooltip shows, click refuses); None =
+        // unknown / no hover.
+        let placementValid  = cval<bool option> None
         let cursorScreen    = cval<V2d option> None
         // Throttle/generation guard for the placement-hover ghost raycast (server
         // round-trip per move would flood; stale results must not overwrite).
@@ -142,11 +146,26 @@ module View =
                     env.Emit [CameraMessage OrbitMessage.Rendered]
                 )
 
-                let view = model.Camera.view |> AVal.map CameraView.viewTrafo
+                // Slice mode (v12 §5) replaces the orbit camera with the pin-centred
+                // ortho frame (MeshView.sliceCamera); the offscreen outline pass
+                // shares these avals, so the cut plane's profile is silhouetted by
+                // the standard outline machinery.
+                let sliceCamA = MeshView.sliceCamera model
+                let sliceStretchA = ScanPinScene.sliceStretchFactor model
+                let view =
+                    (model.Camera.view, sliceCamA) ||> AVal.map2 (fun cv sc ->
+                        match sc with
+                        | Some s -> CameraView.lookAt s.Eye s.Target s.Up |> CameraView.viewTrafo
+                        | None -> CameraView.viewTrafo cv)
                 let proj =
-                    size |> AVal.map (fun s ->
-                        Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo
-                    )
+                    (size, sliceCamA, sliceStretchA) |||> AVal.map3 (fun s sc stretch ->
+                        match sc with
+                        | Some sl ->
+                            let aspect = float s.X / float (max 1 s.Y)
+                            // Vertical-only exaggeration (v12 §7): half-height ÷ N.
+                            MeshView.orthoProjTrafo (sl.HalfHeight * aspect) (sl.HalfHeight / stretch) sl.Near sl.Far
+                        | None ->
+                            Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo)
 
                 // With ActivePickingLayer set, prefer that layer's surface over
                 // the frontmost — but only if the cursor ray hits the layer's
@@ -268,6 +287,34 @@ module View =
                         | None -> return! raycastNearest ()
                     }
 
+                // v12 §2 hard-prohibit: a pin may only be placed where ≥ 2 meshes
+                // have surface within the placement radius (the pin sphere).
+                // Closest-point fan-out at each mesh's displayed pose (rigid, so
+                // the returned distance is metric).
+                let countOverlap (world : V3d) : Async<int> =
+                    let names = AVal.force model.MeshNames.Content |> IndexList.toList
+                    let cc = AVal.force model.CommonCentroid
+                    let scales = AVal.force model.DatasetScales
+                    let radius = max 0.01 (AVal.force model.QuickPinRadius)
+                    let r2 = radius * radius
+                    async {
+                        let! hits =
+                            names
+                            |> List.map (fun n -> async {
+                                try
+                                    let scale = DatasetScale.forMesh scales n
+                                    let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model n))
+                                    let own = dispWorld.Backward.TransformPos world
+                                    let! r = Query.closestPoint ApiConfig.apiBase.Value n 0 own
+                                    return
+                                        match r with
+                                        | Some h -> if float h.distanceSquared <= r2 then 1 else 0
+                                        | None -> 0
+                                with _ -> return 0 })
+                            |> Async.Parallel
+                        return Array.sum hits
+                    }
+
                 Sg.View view
                 Sg.Proj proj
 
@@ -292,7 +339,10 @@ module View =
                 Dom.OnMouseWheel(fun e ->
                     let delta = V2d(e.DeltaX, e.DeltaY) / 120.0
                     if not e.Alt then
-                        env.Emit [CameraMessage (OrbitMessage.Wheel delta)]
+                        // Slice mode: zoom is locked — the wheel sweeps the cut
+                        // plane through the pin instead (v12 §5).
+                        if AVal.force model.SliceMode then env.Emit [AdjustSliceCut delta.Y]
+                        else env.Emit [CameraMessage (OrbitMessage.Wheel delta)]
                     else
                         // Option/Alt + wheel = cycle the isolated layer. Prefer
                         // meshes stacked under the cursor; with fewer than two
@@ -389,8 +439,12 @@ module View =
                                 | _ -> resolveLayerPick frontmost
                             match placement, resolved with
                             | AnchorPlacement, Some renderPos ->
+                                // Hard-prohibit (v12 §2): verify overlap at the actual
+                                // click point (authoritative — not the hover cache).
                                 let worldPos = worldFromRender model renderPos
-                                env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
+                                let! n = countOverlap worldPos
+                                if n >= 2 then env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
+                                else env.Emit [ShowToast "No overlapping meshes here — placement needs ≥2 scans in range"]
                             | AnchorPlacement, None -> ()
                             | _, Some renderPos ->
                                 let worldPos = worldFromRender model renderPos
@@ -452,6 +506,16 @@ module View =
                                 let! hit = resolvePick None
                                 if gen = placeHoverGen && placementHover.Value <> hit then
                                     transact (fun () -> placementHover.Value <- hit)
+                                // Overlap validity at the hover (v12 §2): drives the
+                                // ghost fade + the cursor-side prohibit tooltip.
+                                match hit with
+                                | Some renderPos when gen = placeHoverGen ->
+                                    let! n = countOverlap (worldFromRender model renderPos)
+                                    if gen = placeHoverGen && placementValid.Value <> Some (n >= 2) then
+                                        transact (fun () -> placementValid.Value <- Some (n >= 2))
+                                | _ ->
+                                    if gen = placeHoverGen && placementValid.Value.IsSome then
+                                        transact (fun () -> placementValid.Value <- None)
                             } |> Async.Start
                     // Armed correspondence editor (3D side): the target mesh is
                     // isolated solid, so the GPU pick lands on it; over a ghost/
@@ -477,7 +541,7 @@ module View =
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) clipUniforms wheelIsolation model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) (placementValid :> aval<_>) (viewportSize :> aval<V2i>) clipUniforms wheelIsolation model
             }
 
             Dom.OnKeyDown(fun e ->
@@ -493,7 +557,9 @@ module View =
                     // Hold-O = show-overlays (white-out except pins).
                     env.Emit [SetShowOverlays true]
                 | "Escape" ->
-                    env.Emit [ScanPinMsg CancelPlacement]
+                    // Cancels a live placement AND exits slice mode (both no-ops
+                    // when idle) — the "easy exit" of v12 §5.
+                    env.Emit [ScanPinMsg CancelPlacement; SetSliceMode false]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
@@ -511,6 +577,10 @@ module View =
             GuiOverlays.toast model
             GuiOverlays.pinFlagLabels model (viewportSize :> aval<V2i>)
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>) (altHeld :> aval<bool>)
+            GuiOverlays.placementTooltip model (cursorScreen :> aval<_>) (placementValid :> aval<_>)
+            GuiOverlays.sliceOrdinates model (viewportSize :> aval<V2i>)
+            GuiOverlays.sliceAxes model (viewportSize :> aval<V2i>)
+            GuiOverlays.sliceBadges model
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model

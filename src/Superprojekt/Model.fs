@@ -152,6 +152,8 @@ type Model =
         // Gear multiplier on the screen-constant 3D pin-flag size AND its
         // world-metre clamp bounds (ScanPin.flagHeightRender).
         FlagScale            : float
+        // Screen size (CSS px) of the brushed-sample circle+cross glyphs (gear).
+        BrushDotPx           : float
 
         SceneBounds    : Box3d
         MeshBounds     : Map<string, Box3d>
@@ -256,6 +258,16 @@ type Model =
         // effect so re-clicking the located matrix cell restores the prior camera +
         // solo state.
         LocateBackup        : LocateState option
+
+        // Slice mode (v12 §5): the TO-SCALE ortho measurement view around the
+        // selected pin. SliceCut = signed metric offset (m) of the cut plane
+        // from the pin centre toward the camera (the ortho near plane); scroll
+        // sweeps it, the reducer clamps it to the pin's neighbourhood.
+        SliceMode           : bool
+        SliceCut            : float
+        // Vertical-only exaggeration in slice mode (v12 §7): the factor is
+        // derived adaptively (MeshView.sliceStretchFactor); this is the toggle.
+        SliceStretch        : bool
     }
 
 // Displayed = the pose a mesh currently shows: at RegAfter a solved mesh uses its
@@ -321,6 +333,7 @@ module Model =
             AnchorGhostMode     = true
             QuickPinRadius      = 0.5
             FlagScale           = 1.0
+            BrushDotPx          = 15.0
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             MeshSpacing    = Map.empty
@@ -359,4 +372,7 @@ module Model =
             IsolineBands        = 700.0
             IsolineOpacity      = 0.45
             LocateBackup        = None
+            SliceMode           = false
+            SliceCut            = 0.0
+            SliceStretch        = false
         }

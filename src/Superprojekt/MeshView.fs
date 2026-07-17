@@ -219,6 +219,91 @@ module MeshView =
                     | _ -> ()
                 mx)
 
+    // v12 §5 — slice mode: the constrained TO-SCALE measurement camera. Ortho,
+    // centred on the selected pin, DIP-ALIGNED: the screen-vertical direction
+    // (camera up) is the PIN AXIS (the local surface normal at the centre —
+    // ScanPin.axis), so the section plane is aligned with the local dip rather
+    // than the world horizon. Azimuth = the orbit camera's phi SNAPPED to 10°
+    // steps, projected into the plane ⊥ the axis (drag rotates the orbit as
+    // usual — the snap quantizes what is shown, and entry inherits the nearest
+    // step to the perspective view by construction); zoom locked to the pin
+    // (the influence circle fills ~2/3 of the view height). The ORTHO NEAR
+    // PLANE is the cut: SliceCut (metric, reducer-clamped continuous; SNAPPED
+    // here to a nice 1/2/5 increment ≥ 1 cm so the plane clicks in steps while
+    // trackpad deltas still accumulate) pushes it through the pin, and because
+    // the offscreen outline pass shares this view/proj, the profile at the cut
+    // gets the standard silhouette treatment for free. Fwd/Near/FadeDist feed
+    // the mesh shader's behind-the-cut alpha falloff (a few cm — only the
+    // profile band reads solid).
+    type SliceCam = {
+        Eye : V3d; Target : V3d; HalfHeight : float; Near : float; Far : float
+        Fwd : V3d; Up : V3d; FadeDist : float
+    }
+
+    // The cut-plane snap grid (metric): a nice 1/2/5 step ≈ 5 % of the pin
+    // radius, never finer than 1 cm.
+    let sliceCutStep (innerRadius : float) =
+        let raw = max 0.01 (innerRadius * 0.05)
+        let mag = 10.0 ** floor (log10 raw)
+        let n = raw / mag
+        (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
+
+    // Shared ortho projection builder (slice camera; also the ordinate overlay's
+    // screen projection — keep the two identical).
+    let orthoProjTrafo (hw : float) (hh : float) (near : float) (far : float) =
+        let m =
+            M44d(1.0 / hw, 0.0,      0.0,                 0.0,
+                 0.0,      1.0 / hh, 0.0,                 0.0,
+                 0.0,      0.0,      -2.0 / (far - near), -(far + near) / (far - near),
+                 0.0,      0.0,      0.0,                 1.0)
+        Trafo3d(m, m.Inverse)
+
+    let sliceCamera (model : AdaptiveModel) : aval<SliceCam option> =
+        AVal.custom (fun t ->
+            if not (model.SliceMode.GetValue t) then None
+            else
+                match Selection.pin (model.Selection.Active.GetValue t) with
+                | None -> None
+                | Some id ->
+                    match HashMap.tryFind id (model.ScanPins.Pins.Content.GetValue t) with
+                    | None -> None
+                    | Some p ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
+                        let c = ScanPin.renderCentre cc scale p.Centre
+                        let rr = max 1e-6 (ScanPin.renderLength scale p.InnerRadius)
+                        // Dip alignment: up = the pin axis (unit; directions are
+                        // scale-free). The azimuthal eye direction is the world-
+                        // horizontal heading projected into the plane ⊥ the axis.
+                        let up =
+                            let a = ScanPin.axis p
+                            if a.Length > 1e-9 then a.Normalized else V3d.OOI
+                        let az =
+                            let deg = model.Camera.phi.GetValue t * Constant.DegreesPerRadian
+                            System.Math.Round(deg / 10.0) * 10.0 * Constant.RadiansPerDegree
+                        let dirAz =
+                            let d0 = V3d(cos az, sin az, 0.0)
+                            let proj = d0 - up * Vec.dot d0 up
+                            if proj.Length > 1e-6 then proj.Normalized
+                            else (Vec.cross up V3d.IOO).Normalized   // axis ∥ heading: any ⊥ works
+                        let dist = rr * 6.0
+                        // Snap the cut to the increment grid (the model keeps the
+                        // continuous value so trackpad deltas accumulate).
+                        let cutM =
+                            let s = sliceCutStep p.InnerRadius
+                            System.Math.Round(model.SliceCut.GetValue t / s) * s
+                        let cutR = ScanPin.renderLength scale cutM
+                        Some {
+                            Eye        = c + dirAz * dist
+                            Target     = c
+                            HalfHeight = rr * 1.6
+                            Near       = max (rr * 0.01) (dist - cutR)
+                            Far        = dist + rr * 6.0
+                            Fwd        = -dirAz
+                            Up         = up
+                            FadeDist   = ScanPin.renderLength scale (max 0.05 (p.InnerRadius * 0.05))
+                        })
+
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
     // inner radius w), for the mesh shader's pin-isolation filter. The live
     // placement hover is appended as a transient "flashlight" blob.
@@ -274,6 +359,11 @@ module MeshView =
         let palette = Primitives.meshPaletteV4d
 
         let blobCount, blobs = pinBlobUniforms placementPreview model
+        // Slice-mode falloff uniforms (v12 §5): FadeDist 0 disables in the shader.
+        let sliceCamA = sliceCamera model
+        let sliceFwdU  = sliceCamA |> AVal.map (function Some s -> V3f s.Fwd | None -> V3f.OOI)
+        let sliceNearU = sliceCamA |> AVal.map (function Some s -> float32 s.Near | None -> 0.0f)
+        let sliceFadeU = sliceCamA |> AVal.map (function Some s -> float32 s.FadeDist | None -> 0.0f)
         let inspectRangeA = inspectRange model
         let dispRangeA = displacementRange model
         let rangeWorldA = rangeMaxWorld model
@@ -471,7 +561,17 @@ module MeshView =
                                 match wheelIsolation.GetValue t with
                                 | Some iso when iso <> name -> (if floorOn then 0.15f else 0.0f)
                                 | _ ->
-                                    if floorOn
+                                    // Register pin isolation (§7): while the "Isolate pins"
+                                    // mode is on (and no placement flashlight runs), the
+                                    // context floor is 0 — only the pin blobs read. With
+                                    // isolation OFF the branch falls through to the normal
+                                    // floor: full textured meshes, exactly the Overview path.
+                                    let registerIsolation =
+                                        model.WorkflowStep.GetValue t = Correspondence
+                                        && model.AnchorGhostMode.GetValue t
+                                        && model.ScanPins.Placement.GetValue t = PlacementIdle
+                                    if registerIsolation then 0.0f
+                                    elif floorOn
                                     then float32 (model.GhostOpacity.GetValue t)
                                     else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
@@ -486,6 +586,9 @@ module MeshView =
                     Sg.Uniform("ClipPlaneCount",       clipCount)
                     Sg.Uniform("ClipPlane0",           clipPlane0)
                     Sg.Uniform("ClipPlane1",           clipPlane1)
+                    Sg.Uniform("SliceFwd",             sliceFwdU)
+                    Sg.Uniform("SliceFadeNear",        sliceNearU)
+                    Sg.Uniform("SliceFadeDist",        sliceFadeU)
                     Sg.Uniform("DistanceEncoding",     distEncoding)
                     Sg.Uniform("DistScale",            distScale)
                     Sg.Uniform("DistLoNeg",            distLoNeg)
@@ -660,6 +763,49 @@ module MeshView =
     // Palette colours for the footprint composite, indexed like the coverage channels.
     let coverageColors : V4f[] =
         Array.init 8 (fun i -> V4f Primitives.meshPaletteV4d.[i % Primitives.meshPaletteV4d.Length])
+
+    // Placement-suitability coverage (v12 §2): every mesh accumulates its
+    // SHAPE-WEIGHTED footprint into its own channel (SuitabilityCoverage), no
+    // depth — active ONLY while a pin placement is armed, so the offscreen pass
+    // is idle otherwise. Same 8-channel cap as the footprint coverage.
+    let buildSuitabilityNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+        let meshIndices = meshIndicesA model
+        let placing =
+            model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
+        let nodes =
+            model.MeshNames |> AList.map (fun name ->
+                let loaded, trafo = offscreenMesh model name
+                let channel = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
+                let shapeBuf =
+                    loaded.pos |> AVal.map (fun _ ->
+                        match loaded.mesh.Value with
+                        | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
+                        | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
+                let active =
+                    (loaded.fvc, channel, placing) |||> AVal.map3 (fun c i p -> p && c > 3 && i < 8)
+                sg {
+                    Sg.Active active
+                    Sg.Trafo trafo
+                    Sg.Shader {
+                        DefaultSurfaces.trafo
+                        SuitabilityCoverage.shade
+                    }
+                    Sg.Uniform("CoverageChannel", channel)
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
+                            "ShapeQ",                         BufferView(shapeBuf, typeof<float32>)
+                        ])
+                    Sg.Index(BufferView(loaded.idx, typeof<int>))
+                    Sg.Render loaded.fvc
+                }) |> AList.toASet
+        sg {
+            Sg.View view
+            Sg.Proj proj
+            Sg.DepthTest (AVal.constant DepthTest.None)
+            Sg.BlendMode (AVal.constant BlendMode.Add)
+            nodes
+        }
 
     // Silhouette-only outline G-buffer for whichever mesh is the current reference
     // (ContourSpacing 0 ⇒ no isolines, just the depth-break silhouette), in a fixed

@@ -33,20 +33,11 @@ module ScanPinUpdate =
         map.[id] <- cts
         cts.Token
 
-    let private assignColors (meshNames : IndexList<string>) =
-        meshNames |> IndexList.toArray |> Array.mapi (fun i n -> n, Primitives.meshColor i) |> Map.ofArray
-
     let activeScale (model : Model) =
         DatasetScale.active model.ActiveDataset model.DatasetScales
 
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
         let existing = model.ScanPins.Pins |> HashMap.toList |> List.map snd
-        // Least-used palette slot (round-robin), ties → lowest index.
-        let slot =
-            [ 0 .. Primitives.PinPalette.count - 1 ]
-            |> List.map (fun i -> i, existing |> List.filter (fun p -> p.PinColor = Primitives.PinPalette.color i) |> List.length)
-            |> List.minBy (fun (i, c) -> (c, i))
-            |> fst
         // Collision-check the short name against existing pin names + mesh numbers.
         let taken =
             let pinNames = existing |> List.map (fun p -> p.ShortName) |> Set.ofList
@@ -57,13 +48,11 @@ module ScanPinUpdate =
         {
             Id                   = id
             ShortName            = shortName
-            PinColor             = Primitives.PinPalette.color slot
             Centre               = worldCentre
             InnerRadius          = max 0.01 model.QuickPinRadius
             Correspondence       = Correspondence.empty
             HostMeshName         = model.ActivePickingLayer
             CreatedAt            = System.DateTime.UtcNow
-            DatasetColors        = assignColors model.MeshNames
             Probe                = ProbeNone
             ProbeOther           = ProbeNone
             Slice                = SliceNone
@@ -256,9 +245,9 @@ module ScanPinUpdate =
     // ensureProbe: every pin with an invalidated Slice gets ONE debounced server
     // query returning BOTH poses (SliceOther rides along once a solve exists) and
     // the pin's section azimuth (fitted server-side on the reference — the same
-    // reference rule as the probe). The slices feed the matrix slice cells + the
-    // show-overlays hold, precomputed here so neither ever fetches. All meshes
-    // regardless of visibility — visibility gates rendering only.
+    // reference rule as the probe). The slices feed the matrix slice cells,
+    // precomputed here so the cells never fetch. All meshes regardless of
+    // visibility — visibility gates rendering only.
     let ensureSlices (env : Env<Message>) (model : Model) : Model =
         let sp = model.ScanPins
         let solved = not (Map.isEmpty model.SolvedTransforms)

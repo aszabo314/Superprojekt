@@ -196,6 +196,8 @@ module SceneGraph =
         (proj : aval<Trafo3d>)
         (fullscreenActive : aval<bool>)
         (placementHover : aval<V3d option>)
+        (placementValid : aval<bool option>)
+        (viewportCss : aval<V2i>)
         (clipUniforms : aval<int * V4f * V4f>)
         (wheelIsolation : aval<string option>)
         (model : AdaptiveModel) =
@@ -209,8 +211,11 @@ module SceneGraph =
         // Sg.Pass alone. Cross + labels run in passOne (DepthTest.None) on top.
 
         let meshScene  = MeshView.buildScene loadFinished clipUniforms placementHover wheelIsolation model
+        // Placement suitability (v12 §2) draws before the outline composites so
+        // isolines/footprints stay readable on top of the fused overlay.
+        let suitScene  = OutlineView.buildSuitability info model view proj
         let outlineScene = OutlineView.build info model view proj
-        let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
+        let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover placementValid viewportCss model
 
         let notFullscreen = AVal.map not fullscreenActive
         // The cross + axis labels sit at the first mesh's panorama centre (render
@@ -226,8 +231,12 @@ module SceneGraph =
                         | None -> Map.tryFind first (model.DatasetCentroids.GetValue t) |> Option.defaultValue cc
                     ScanPin.renderCentre cc (DatasetScale.forMesh (model.DatasetScales.GetValue t) first) world
                 | [] -> V3d.Zero)
-        let cross         = originIndicator view proj notFullscreen crossCenter
-        let labels        = originLabels    view proj notFullscreen crossCenter
+        // The origin cross + its labels stand down in slice mode (v12 follow-up:
+        // the terrain profiles own that view).
+        let crossActive =
+            (notFullscreen, model.SliceMode) ||> AVal.map2 (fun nf s -> nf && not s)
+        let cross         = originIndicator view proj crossActive crossCenter
+        let labels        = originLabels    view proj crossActive crossCenter
         let refOutline    = referenceOutline view proj notFullscreen model
         let focusOutline  = focusedOutline   view proj notFullscreen model
 
@@ -239,6 +248,7 @@ module SceneGraph =
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Uniform("ViewportSize", info.ViewportSize)
                 meshScene
+                suitScene
                 outlineScene
                 cross
                 pinScene

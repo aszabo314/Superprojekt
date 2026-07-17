@@ -18,6 +18,7 @@ type Message =
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
     | SetFlagScale of float
+    | SetBrushDotPx of float
     // Spring-loaded show-overlays modifier (greyscale-except-pins while held).
     | SetShowOverlays of bool
     | SetReferenceMesh of string option
@@ -33,6 +34,8 @@ type Message =
     // seeded and their stale auto markers are dropped.
     | AnchorsSeeded of refUpdates:(ScanPinId * V3d)[] * seeded:(ScanPinId * string * V3d)[] * inRoi:(ScanPinId * string * bool)[]
     | AnchorSeedFailed of string
+    // Transient feedback from view-side guards (e.g. the placement hard-prohibit).
+    | ShowToast of string
     | ClearToast
     // Per-mesh intrinsic error visualization (Overview mesh list). HeatOff = textured.
     | SetMeshHeatmap of mesh:string * HeatmapMode
@@ -67,6 +70,11 @@ type Message =
     | SetWorkflowStep of WorkflowStep
     | SetInspectChannel of InspectChannel
     | SetFocusProjection of FocusProjection
+    // Slice mode (v12 §5): toggle the pin-centred ortho measurement view;
+    // AdjustSliceCut = wheel notches sweeping the cut plane through the pin.
+    | SetSliceMode of bool
+    | AdjustSliceCut of float
+    | ToggleSliceStretch
     | PickCorrespondenceAt of ScanPinId * mesh:string * world:V3d
     // Arm/disarm the unified correspondence editor for a (pin, mesh).
     | ToggleCorrArm of ScanPinId * mesh:string

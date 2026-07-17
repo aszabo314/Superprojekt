@@ -26,6 +26,30 @@ module GuiTopBar =
                 "🗺 Plan"
             }
 
+            // Slice mode (v12 §5): TO-SCALE ortho cross-section around the
+            // selected pin — drag = azimuth in 10° steps, scroll = sweep the cut,
+            // Esc / re-click = exit. Disabled until a pin is selected.
+            button {
+                Class "tb-btn"
+                classWhen "tb-btn-active" model.SliceMode
+                model.Selection.Active |> AVal.map (fun s ->
+                    if (Selection.pin s).IsSome then None
+                    else Some (Attribute("disabled", "disabled")))
+                Attribute("title", "Slice: orthographic to-scale section view around the selected pin — drag rotates in 10° steps, scroll sweeps the cut plane, Esc exits")
+                Dom.OnClick(fun _ -> env.Emit [SetSliceMode (not (AVal.force model.SliceMode))])
+                "▤ Slice"
+            }
+
+            // Vertical-only exaggeration (v12 §7), offered only inside slice mode.
+            button {
+                Class "tb-btn"
+                classWhen "tb-btn-active" model.SliceStretch
+                showWhen model.SliceMode
+                Attribute("title", "Vertical exaggeration: blow up the vertical scale — the dots of interest gain hoverable ordinates with true values")
+                Dom.OnClick(fun _ -> env.Emit [ToggleSliceStretch])
+                "⇕ Stretch"
+            }
+
             div {
                 Class "tb-regview"
                 classWhenNot "tb-regview-off" solved
@@ -151,6 +175,7 @@ module GuiTopBar =
                                 env.Emit [SetQuickPinRadius v])
                         }
                         gearSlider "Pin flag scale" 0.2 5.0 0.1 (sprintf "%.1f×") model.FlagScale SetFlagScale
+                        gearSlider "Brushed dot size (px)" 6.0 40.0 1.0 (sprintf "%.0f px") model.BrushDotPx SetBrushDotPx
                         // Slice-cell tunables (§A): one global window / context /
                         // vertical scale for every matrix slice diagram.
                         gearSlider "Slice window (× spacing)" 2.0 12.0 0.5 (sprintf "%.1f") model.SliceNSamples SetSliceNSamples

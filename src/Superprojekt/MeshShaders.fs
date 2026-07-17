@@ -38,6 +38,11 @@ module MeshShader =
         member x.ClipPlaneCount : int = x?ClipPlaneCount
         member x.ClipPlane0     : V4f = x?ClipPlane0
         member x.ClipPlane1     : V4f = x?ClipPlane1
+        // Slice mode (v12 §5): camera forward + cut-plane distance (the ortho
+        // near, render units) + falloff width behind it. FadeDist 0 = off.
+        member x.SliceFwd       : V3f     = x?SliceFwd
+        member x.SliceFadeNear  : float32 = x?SliceFadeNear
+        member x.SliceFadeDist  : float32 = x?SliceFadeDist
         // Per-vertex SurfaceDist painter (above-ghost only): 0 = none;
         // 1 = signed difference, diverging blue↔grey↔red (soloed moving mesh, Inspect
         //     Difference); 2 = variance std ≥0, sequential grey→red (reference,
@@ -106,6 +111,16 @@ module MeshShader =
                 let p = uniform.ClipPlane1
                 let sd = p.X * wp.X + p.Y * wp.Y + p.Z * wp.Z + p.W
                 if sd > 0.0f then discard()
+            // Slice-mode falloff (v12 §5): beyond the cut plane (the ortho near)
+            // alpha falls off over SliceFadeDist and then discards — only the
+            // profile band + a few cm stay visible. In front of the cut GL
+            // near-clips the geometry, so no test is needed there.
+            let mutable sliceMul = 1.0f
+            if uniform.SliceFadeDist > 0.0f then
+                let dAlong = Vec.dot (wp - uniform.CameraLocation) uniform.SliceFwd
+                let over = dAlong - uniform.SliceFadeNear
+                if over > uniform.SliceFadeDist then discard()
+                elif over > 0.0f then sliceMul <- 1.0f - over / uniform.SliceFadeDist
             let mutable inAnyBlob = false
             let bc = uniform.BlobCount
             let blobsActive = bc > 0 && uniform.AnchorGhost <> 0
@@ -132,6 +147,7 @@ module MeshShader =
                 alpha <- ghost + (1.0f - ghost) * maskFactor
             else
                 alpha <- ghost
+            alpha <- alpha * sliceMul
             if alpha < 1e-4f then discard()
             // α-gated depth: clamp ghost/outside fragments below opaqueThreshold
             // so only fully-solid surface writes natural depth (below).
@@ -340,6 +356,124 @@ module OutlineCoverage =
             return { c0 = a; c1 = b }
         }
 
+// Placement-suitability coverage pass (v12 §2, placement-armed only): like
+// OutlineCoverage (additive, occlusion-free, one channel per mesh, cap 8) but
+// each fragment writes a SHAPE-WEIGHTED value 0.25·(0.2 + 0.8·quality) — so the
+// composite can read both "covered" (value above a floor even at quality 0) and
+// an approximate per-mesh shape quality at that pixel. Multiple surface layers
+// along the ray add up; the composite clamps, biasing the estimate crisp — an
+// accepted approximation for terrain-like scans.
+[<ReflectedDefinition>]
+module SuitabilityCoverage =
+    type UniformScope with
+        member x.CoverageChannel : int = x?CoverageChannel
+    type Vtx = {
+        [<Position>]           pos : V4f
+        [<Semantic("ShapeQ")>] shq : float32
+    }
+    type FragOut = {
+        [<Color>]                 c0 : V4f
+        [<Semantic("Coverage1")>] c1 : V4f
+    }
+    let shade (v : Vtx) =
+        fragment {
+            let s = 0.25f * (0.2f + 0.8f * (clamp 0.0f 1.0f v.shq))
+            let k = uniform.CoverageChannel
+            let mutable a = V4f(0.0f, 0.0f, 0.0f, 0.0f)
+            let mutable b = V4f(0.0f, 0.0f, 0.0f, 0.0f)
+            if k = 0 then a <- V4f(s, 0.0f, 0.0f, 0.0f)
+            elif k = 1 then a <- V4f(0.0f, s, 0.0f, 0.0f)
+            elif k = 2 then a <- V4f(0.0f, 0.0f, s, 0.0f)
+            elif k = 3 then a <- V4f(0.0f, 0.0f, 0.0f, s)
+            elif k = 4 then b <- V4f(s, 0.0f, 0.0f, 0.0f)
+            elif k = 5 then b <- V4f(0.0f, s, 0.0f, 0.0f)
+            elif k = 6 then b <- V4f(0.0f, 0.0f, s, 0.0f)
+            else b <- V4f(0.0f, 0.0f, 0.0f, s)
+            return { c0 = a; c1 = b }
+        }
+
+// Fused placement-suitability composite (v12 §2): per pixel, count the covered
+// suitability channels. 0 → transparent (no surface); 1 → flat textureless grey
+// (the region visibly loses detail — placement is prohibited there); ≥2 → a
+// screen-space hatch WOVEN from the covered meshes' palette colours, its
+// saturation/crispness modulated by the MIN shape quality across them (crisp +
+// saturated where all are well-formed, muted/muddy where any is poor).
+// Semi-transparent throughout, and the isoline/outline composite draws after it
+// — so isolines and shape indicators stay readable through the overlay.
+[<ReflectedDefinition>]
+module SuitabilityComposite =
+
+    type UniformScope with
+        member x.CoverageColors : Arr<N<8>, V4f> = x?CoverageColors
+
+    let private suit0 =
+        sampler2d {
+            texture uniform?Suit0
+            filter Filter.MinMagPoint
+            addressU WrapMode.Clamp
+            addressV WrapMode.Clamp
+        }
+    let private suit1 =
+        sampler2d {
+            texture uniform?Suit1
+            filter Filter.MinMagPoint
+            addressU WrapMode.Clamp
+            addressV WrapMode.Clamp
+        }
+
+    type Frag = {
+        [<Position>]        pos : V4f
+        [<Semantic("OTc")>] tc  : V2f
+        [<FragCoord>]       fc  : V4f
+    }
+
+    let fragment (v : Frag) =
+        fragment {
+            let cA = suit0.Sample(v.tc)
+            let cB = suit1.Sample(v.tc)
+            let vals = Arr<N<8>, float32>()
+            vals.[0] <- cA.X
+            vals.[1] <- cA.Y
+            vals.[2] <- cA.Z
+            vals.[3] <- cA.W
+            vals.[4] <- cB.X
+            vals.[5] <- cB.Y
+            vals.[6] <- cB.Z
+            vals.[7] <- cB.W
+            let th = 0.04f
+            let mutable n = 0
+            let mutable minShape = 1.0f
+            let mutable avg = V3f(0.0f, 0.0f, 0.0f)
+            for i in 0 .. 7 do
+                if vals.[i] > th then
+                    n <- n + 1
+                    let sh = clamp 0.0f 1.0f ((vals.[i] * 4.0f - 0.2f) / 0.8f)
+                    if sh < minShape then minShape <- sh
+                    avg <- avg + uniform.CoverageColors.[i].XYZ
+            if n = 0 then
+                return V4f(0.0f, 0.0f, 0.0f, 0.0f)
+            elif n = 1 then
+                return V4f(0.62f, 0.63f, 0.66f, 0.78f)
+            else
+                let avgC = avg / float32 n
+                // Diagonal weave: consecutive screen bands cycle through the
+                // covered meshes' colours (no colour cap below the 8-channel MRT).
+                let band = int (floor ((v.fc.X + v.fc.Y) / 6.0f))
+                let sel = ((band % n) + n) % n
+                let mutable cnt = 0
+                let mutable stripeCol = avgC
+                for i in 0 .. 7 do
+                    if vals.[i] > th then
+                        if cnt = sel then stripeCol <- uniform.CoverageColors.[i].XYZ
+                        cnt <- cnt + 1
+                let lum = 0.299f * stripeCol.X + 0.587f * stripeCol.Y + 0.114f * stripeCol.Z
+                let greyC = V3f(lum, lum, lum)
+                let satCol = greyC + (stripeCol - greyC) * (0.25f + 0.75f * minShape)
+                let colr = avgC + (satCol - avgC) * (0.3f + 0.7f * minShape)
+                let alpha = 0.35f + 0.2f * minShape
+                return V4f(colr.X, colr.Y, colr.Z, alpha)
+        }
+
 // Edge-detect fullscreen pass: sample the g-buffer at centre ±1 texel and paint the
 // per-pixel palette colour where an edge is found (transparent else). An edge = a
 // window-depth BREAK (silhouette/cliff — a SECOND difference of depth so smooth slopes
@@ -358,6 +492,11 @@ module OutlineEdge =
         // .X = 1 → silhouette + isolines, 0.5 → silhouette only (Inspect pair
         // view context), 0 → no lines (the mesh still occludes in the G-buffer).
         member x.OutlineMask : Arr<N<32>, V4f> = x?OutlineMask
+        // Slice mode (v12 §5 follow-up): line alpha falls off with the stored
+        // window depth — valid because the slice camera is ORTHO, where window
+        // depth is linear in eye distance and 0 sits exactly at the cut plane.
+        // Value = 1/fade-range in depth01 units; 0 = off (perspective views).
+        member x.OutlineDistFade : float32 = x?OutlineDistFade
 
     let private gNormal =
         sampler2d {
@@ -416,15 +555,27 @@ module OutlineEdge =
                 // Per-mesh gate: the centre pixel's mesh id selects its mask slot.
                 let slot = min 31 (max 0 (int (c.Y * 255.0f + 0.5f) - 1))
                 let flag = uniform.OutlineMask.[slot].X
+                // Slice-mode distance falloff: lines fade with depth behind the
+                // cut (c.W = 0 at the near plane under the slice ortho), and the
+                // opacity is CAPPED at 10 % across the board — the terrain
+                // profiles own the view; lines are background reference only.
+                let capOn = uniform.OutlineDistFade > 0.0f
+                let distMul =
+                    if capOn then max 0.0f (1.0f - c.W * uniform.OutlineDistFade)
+                    else 1.0f
                 // Silhouette / cliff (a window-depth break) keeps the crisp per-mesh
                 // palette colour. A pure world-Z band-parity flip (an isoline) renders
                 // in a faint neutral grey at reduced intensity, so elevation
                 // contours read as subtle background reference, not bold palette lines.
+                // (No local helper — FShade bodies must stay lambda-free.)
                 if depthEdge && flag > 0.25f then
                     let col = gColor.Sample(v.tc)
-                    return V4f(col.X, col.Y, col.Z, 1.0f)
+                    let a = if capOn then min 0.1f distMul else distMul
+                    return V4f(col.X, col.Y, col.Z, a)
                 elif isoEdge && flag > 0.75f then
-                    return V4f(0.55f, 0.57f, 0.60f, uniform.IsolineOpacity)
+                    let a0 = uniform.IsolineOpacity * distMul
+                    let a = if capOn then min 0.1f a0 else a0
+                    return V4f(0.55f, 0.57f, 0.60f, a)
                 else
                     return V4f(0.0f, 0.0f, 0.0f, 0.0f)
             else

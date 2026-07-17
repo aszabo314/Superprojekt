@@ -13,8 +13,8 @@ module GuiFocus =
     let panel (env : Env<Message>) (model : AdaptiveModel) =
         let corrStep = model.WorkflowStep |> AVal.map ((=) Correspondence)
 
-        // The selected pin's identity (§A) — the pin-colour chip with the name
-        // inside, mirroring the matrix row head + 3D flag.
+        // The selected pin's identity — the near-black name label (name-only,
+        // v12 §4), mirroring the matrix row head + 3D flag.
         let selectedPinId = model.Selection.Active |> AVal.map Selection.pin
         let selectedPin =
             let pinsA = model.ScanPins.Pins |> AMap.toAVal
@@ -24,9 +24,6 @@ module GuiFocus =
             div {
                 Class "focus-pinchip"
                 Primitives.showWhen (selectedPin |> AVal.map Option.isSome)
-                selectedPin |> AVal.map (function
-                    | Some p -> Some (Style [Css.Background (Primitives.c4bToRgbCss p.PinColor)])
-                    | None -> None)
                 selectedPin |> AVal.map (function Some p -> p.ShortName | None -> "")
             }
 

@@ -28,7 +28,6 @@ module SliceDiagram =
         RefLines : V2d[][]      // reference centre-plane polylines
         Main     : V2d[][]      // this mesh's centre-plane polylines
         Context  : V2d[][][]    // this mesh's off-centre planes
-        PinColor : C4b
     }
 
     // JSON payload for the boot renderer; (w, h) = the cell's CSS px size.
@@ -84,11 +83,11 @@ module SliceDiagram =
         let arr =
             [ if not (System.Double.IsNaN topX) then sprintf "{\"x\":%.1f,\"t\":1}" (clamp 4.0 (w - 4.0) topX)
               if not (System.Double.IsNaN botX) then sprintf "{\"x\":%.1f,\"t\":0}" (clamp 4.0 (w - 4.0) botX) ]
-        sprintf "{\"w\":%.0f,\"h\":%.0f,\"band\":[%s],\"ctx\":[%s],\"main\":\"%s\",\"ring\":\"%s\",\"rx\":%.1f,\"ry\":%.1f,\"arr\":[%s]}"
+        sprintf "{\"w\":%.0f,\"h\":%.0f,\"band\":[%s],\"ctx\":[%s],\"main\":\"%s\",\"rx\":%.1f,\"ry\":%.1f,\"arr\":[%s]}"
             w h
             (band |> Array.map (sprintf "\"%s\"") |> String.concat ",")
             (ctx |> Array.map (sprintf "\"%s\"") |> String.concat ",")
-            main (c4bToHex c.PinColor)
+            main
             (x 0.0) (clamp 3.0 (h - 3.0) (y 0.0))
             (String.concat "," arr)
 
@@ -114,14 +113,16 @@ module SliceDiagram =
             "  var yt = a.t ? 1.5 : d.h - 1.5, yb = a.t ? 6.5 : d.h - 6.5;"
             "  P('M' + (a.x-3) + ' ' + yb + 'L' + (a.x+3) + ' ' + yb + 'L' + a.x + ' ' + yt + 'Z', null, 0, null, '#0f172a');"
             "});"
-            "if(d.ring){"
+            // Centre-ring in the shared pin ink (near-black warm grey, v12 §4) —
+            // deliberately not the main line's true black.
+            "if(d.rx!=null){"
             "  var ci = document.createElementNS(ns,'circle');"
             "  ci.setAttribute('cx', d.rx); ci.setAttribute('cy', d.ry); ci.setAttribute('r', 3);"
-            "  ci.setAttribute('fill','none'); ci.setAttribute('stroke', d.ring); ci.setAttribute('stroke-width', 1.5);"
+            "  ci.setAttribute('fill','none'); ci.setAttribute('stroke', '#292524'); ci.setAttribute('stroke-width', 1.5);"
             "  svg.appendChild(ci);"
             "  var dt = document.createElementNS(ns,'circle');"
             "  dt.setAttribute('cx', d.rx); dt.setAttribute('cy', d.ry); dt.setAttribute('r', 1.1);"
-            "  dt.setAttribute('fill', '#0f172a');"
+            "  dt.setAttribute('fill', '#292524');"
             "  svg.appendChild(dt);"
             "}"
             "el.appendChild(svg);"
@@ -360,7 +361,7 @@ module GuiRail =
                         span { Class "mx-colnum"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                     })
             }
-        let matrixRow (id : ScanPinId) (shortNm : string) (pinColor : C4b) =
+        let matrixRow (id : ScanPinId) (shortNm : string) =
             let selected = model.Selection.Active |> AVal.map (fun s -> Selection.pin s = Some id)
             let pinHover = model.Selection.Hovered |> AVal.map (function Some (HoverPin i) -> i = id | _ -> false)
             // The slice-cell inputs of this row, projected to just what the cells
@@ -369,7 +370,7 @@ module GuiRail =
             let rowData =
                 model.ScanPins.Pins |> AMap.tryFind id
                 |> AVal.map (Option.map (fun p ->
-                    p.Probe, p.Slice, p.SliceOther, p.Correspondence, p.InnerRadius, p.PinColor))
+                    p.Probe, p.Slice, p.SliceOther, p.Correspondence, p.InnerRadius))
             let cell (mesh : string) =
                 // §A cell payload: reference band ± LoD₉₅ (from the committed probe,
                 // same pair statistic the residual fill used) + this mesh's centre
@@ -377,7 +378,7 @@ module GuiRail =
                 let info =
                     AVal.custom (fun t ->
                         match rowData.GetValue t with
-                        | Some (ProbeReady r, slice, sliceOther, corr, innerRadius, pinCol) ->
+                        | Some (ProbeReady r, slice, sliceOther, corr, innerRadius) ->
                             let chosen =
                                 match (if model.RegPeekHeld.GetValue t then sliceOther else slice), slice with
                                 | SliceReady s, _ | _, SliceReady s -> Some s
@@ -411,8 +412,7 @@ module GuiRail =
                                         Lod      = 1.96 * sqrt (refStd * refStd + std * std)
                                         RefLines = refLines
                                         Main     = mainLines
-                                        Context  = ctx
-                                        PinColor = pinCol })
+                                        Context  = ctx })
                             | None -> CellPending
                         | _ -> CellPending)
                 let active =
@@ -450,10 +450,9 @@ module GuiRail =
                 classWhen "mx-row-hover" pinHover
                 div {
                     Class "mx-rowhead"
-                    // Selected row: the header fills with the PIN accent.
+                    // Selected row: the header fills with a neutral accent (pins
+                    // carry no colour — name-only identity, v12 §4).
                     classWhen "mx-rowhead-sel" selected
-                    selected |> AVal.map (fun s ->
-                        if s then Some (Style [Css.Background (Primitives.c4bToRgbaCss pinColor 0.4)]) else None)
                     // Pin linking: click = select (the reducer applies the Inspect
                     // isolation swap, the focus frames the pin by itself);
                     // double-click adds the MAIN-3D zoom.
@@ -461,7 +460,7 @@ module GuiRail =
                     Dom.OnDoubleClick(fun _ -> ClickGate.now "mx-cell" (fun () -> env.Emit [SetSelection (SelPin id); ZoomToPin id]))
                     Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverPin id))])
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
-                    span { Class "mx-pinname"; Style [Css.Background (rgb pinColor)]; shortNm }
+                    span { Class "mx-pinname"; shortNm }
                     button {
                         Class "mb mx-del"
                         Attribute("title", "Delete pin")
@@ -475,13 +474,13 @@ module GuiRail =
                 model.MeshNames |> AList.map cell
             }
         // Stable-identity row list, sorted by creation order; project to identity
-        // only (name/colour/created) so probe/ring updates don't re-key a row.
+        // only (name/created) so probe/ring updates don't re-key a row.
         let matrixRows () =
             model.ScanPins.Pins
-            |> AMap.map (fun _ p -> p.ShortName, p.PinColor, p.CreatedAt)
+            |> AMap.map (fun _ p -> p.ShortName, p.CreatedAt)
             |> AMap.toASet
-            |> ASet.sortBy (fun (ScanPinId.ScanPinId g, (_, _, created)) -> created, g)
-            |> AList.map (fun (id, (shortNm, pinColor, _)) -> matrixRow id shortNm pinColor)
+            |> ASet.sortBy (fun (ScanPinId.ScanPinId g, (_, created)) -> created, g)
+            |> AList.map (fun (id, (shortNm, _)) -> matrixRow id shortNm)
         // Built fresh per call: the matrix is mounted in BOTH the Correspondence and
         // Inspect bodies (both always in the DOM), so they must be distinct nodes.
         let matrixView () =
@@ -546,6 +545,15 @@ module GuiRail =
                             if AVal.force placing then env.Emit [ScanPinMsg CancelPlacement]
                             else env.Emit [ScanPinMsg EnterAnchorPlacement])
                         placing |> AVal.map (fun p -> if p then "○ placing… (Esc)" else "○ New pin")
+                    }
+                    // "Isolate pins" (§7): a visual checkbox on the ONE pin-isolation
+                    // mode (AnchorGhostMode). On (default in Register) = isolated pin
+                    // patches only; off = full textured meshes, exactly as in Overview.
+                    div {
+                        Class "rail-isolate"
+                        Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes")
+                        compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
+                            env.Emit [ToggleAnchorGhostMode])
                     }
                 }
                 div { Class "rail-matrix-wrap"; matrixView () }

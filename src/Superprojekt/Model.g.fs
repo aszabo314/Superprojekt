@@ -1,5 +1,5 @@
-//3947423d-ff70-c641-22da-1cfc1cac3c51
-//54aba213-48e6-a0e4-3602-a86fbb9c6236
+//4578c212-0d23-844e-ff39-621a09a0c987
+//b1af75d8-a9e9-58f6-860d-3e4bc1e9083d
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -47,6 +47,7 @@ type AdaptiveModel(value : Model) =
     let _AnchorGhostMode_ = FSharp.Data.Adaptive.cval(value.AnchorGhostMode)
     let _QuickPinRadius_ = FSharp.Data.Adaptive.cval(value.QuickPinRadius)
     let _FlagScale_ = FSharp.Data.Adaptive.cval(value.FlagScale)
+    let _BrushDotPx_ = FSharp.Data.Adaptive.cval(value.BrushDotPx)
     let _SceneBounds_ = FSharp.Data.Adaptive.cval(value.SceneBounds)
     let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
     let _MeshSpacing_ = FSharp.Data.Adaptive.cval(value.MeshSpacing)
@@ -85,6 +86,9 @@ type AdaptiveModel(value : Model) =
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
     let _IsolineOpacity_ = FSharp.Data.Adaptive.cval(value.IsolineOpacity)
     let _LocateBackup_ = FSharp.Data.Adaptive.cval(value.LocateBackup)
+    let _SliceMode_ = FSharp.Data.Adaptive.cval(value.SliceMode)
+    let _SliceCut_ = FSharp.Data.Adaptive.cval(value.SliceCut)
+    let _SliceStretch_ = FSharp.Data.Adaptive.cval(value.SliceStretch)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -111,6 +115,7 @@ type AdaptiveModel(value : Model) =
             _AnchorGhostMode_.Value <- value.AnchorGhostMode
             _QuickPinRadius_.Value <- value.QuickPinRadius
             _FlagScale_.Value <- value.FlagScale
+            _BrushDotPx_.Value <- value.BrushDotPx
             _SceneBounds_.Value <- value.SceneBounds
             _MeshBounds_.Value <- value.MeshBounds
             _MeshSpacing_.Value <- value.MeshSpacing
@@ -149,6 +154,9 @@ type AdaptiveModel(value : Model) =
             _IsolineBands_.Value <- value.IsolineBands
             _IsolineOpacity_.Value <- value.IsolineOpacity
             _LocateBackup_.Value <- value.LocateBackup
+            _SliceMode_.Value <- value.SliceMode
+            _SliceCut_.Value <- value.SliceCut
+            _SliceStretch_.Value <- value.SliceStretch
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -168,6 +176,7 @@ type AdaptiveModel(value : Model) =
     member __.AnchorGhostMode = _AnchorGhostMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.QuickPinRadius = _QuickPinRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.FlagScale = _FlagScale_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.BrushDotPx = _BrushDotPx_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.SceneBounds = _SceneBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>
     member __.MeshSpacing = _MeshSpacing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
@@ -206,4 +215,7 @@ type AdaptiveModel(value : Model) =
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineOpacity = _IsolineOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.LocateBackup = _LocateBackup_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LocateState>>
+    member __.SliceMode = _SliceMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.SliceCut = _SliceCut_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.SliceStretch = _SliceStretch_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
 

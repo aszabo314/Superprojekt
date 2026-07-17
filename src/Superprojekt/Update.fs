@@ -77,6 +77,8 @@ module Update =
             { model with QuickPinRadius = max 0.01 v }
         | SetFlagScale v ->
             { model with FlagScale = clamp 0.1 10.0 v }
+        | SetBrushDotPx v ->
+            { model with BrushDotPx = clamp 4.0 60.0 v }
         // Slice-cell tunables (§A): geometry knobs invalidate the slice caches
         // (the ensureSlices postlude refetches); the percentile is view-only.
         | SetSliceNSamples v ->
@@ -246,6 +248,8 @@ module Update =
             showToast env "Correspondence seeding failed — see debug log"
                 { model with
                     DebugLog = model.DebugLog.InsertAt(0, sprintf "correspondence seeding failed: %s" reason) }
+        | ShowToast s ->
+            showToast env s model
         | ClearToast ->
             if model.Toast.IsNone then model else { model with Toast = None }
 
@@ -400,6 +404,27 @@ module Update =
             { model with InspectChannel = ch }
         | SetFocusProjection p ->
             { model with FocusProjection = p }
+        // Slice mode (v12 §5): pin-centred — refuse to enter without a pin. The
+        // cut resets on every enter/exit so the view always opens through the
+        // pin centre.
+        | SetSliceMode on ->
+            if model.SliceMode = on then model
+            elif on then
+                if (Selection.pin model.Selection.Active).IsSome
+                then { model with SliceMode = true; SliceCut = 0.0 }
+                else showToast env "Select a pin first — slice mode is pin-centred" model
+            else { model with SliceMode = false; SliceCut = 0.0 }
+        | AdjustSliceCut d ->
+            if not model.SliceMode then model
+            else
+                match Selection.pin model.Selection.Active |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
+                | Some p ->
+                    let lim = p.InnerRadius * 2.5
+                    let step = max 0.02 (p.InnerRadius * 0.08)
+                    { model with SliceCut = clamp -lim lim (model.SliceCut + d * step) }
+                | None -> model
+        | ToggleSliceStretch ->
+            { model with SliceStretch = not model.SliceStretch }
         | SetSelection selRaw ->
             // Dangling-pin guard: a stale click can outlive its pin.
             let sel =
@@ -697,8 +722,16 @@ module Update =
                     } |> ignore
                     model
 
+    // Slice mode is pin-centred (v12 §5): any path that loses the selected pin
+    // (deletion, deselection, dataset switch) exits it.
+    let private ensureSliceMode (model : Model) : Model =
+        if model.SliceMode && (Selection.pin model.Selection.Active).IsNone then
+            { model with SliceMode = false; SliceCut = 0.0 }
+        else model
+
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
+        |> ensureSliceMode
         |> ensureSolveValidity env
         |> ScanPinUpdate.ensureProbe env
         |> ScanPinUpdate.ensureSlices env

@@ -156,13 +156,13 @@ module FocusScene =
                     // the hundreds — a lower cap silently strands the close-up too far.
                     V2d((rp.X - fc.X) / ext, (rp.Y - fc.Y) / ext), clamp 1.0 2000.0 (ext / tgt))
 
-    // Brushed sample dots on THIS mesh (§A4) — always-on-top; empty when no brush.
+    // Brushed sample glyphs on THIS mesh (§A4) — always-on-top; empty when no brush.
     let private brushedDotsNode (model : AdaptiveModel) (name : string) =
         sg {
             Sg.DepthTest (AVal.constant DepthTest.None)
             Sg.BlendMode (AVal.constant BlendMode.Blend)
             Sg.NoEvents
-            Dots.render (ScanPinScene.brushedDotGeometry model (Some name))
+            Lines.render (ScanPinScene.brushedDotSegmentsFocus model name)
         }
 
     // MAIN-3D zoom onto a (pin, mesh) correspondence: fly to the marker at its
@@ -271,17 +271,21 @@ module FocusScene =
 
     // Pin influence rings + the dashed white selection circle — ONE builder shared
     // by the single and the tiles so their marks cannot drift (§A2): flat XY in
-    // Top, facing the eye (approximate sphere silhouette) in 360°.
+    // Top, facing the eye (approximate sphere silhouette) in 360°. In slice mode
+    // (`slice` = the live SliceCam) the Top views additionally show the ANGLE
+    // INDICATOR at the selected pin: a white arrow through the centre along the
+    // slice view direction + a white segment ⊥ it marking the current cut plane
+    // (white = the transient/selection layer).
     let private addPinRingsAndSelectionCircle
             (out : ResizeArray<V3d * V3d * V4d * float>)
             (pins : HashMap<ScanPinId, ScanPin>) (sel : ScanPinId option)
-            (cc : V3d) (s : float) (isPano : bool) (eye : V3d) =
+            (cc : V3d) (s : float) (isPano : bool) (eye : V3d)
+            (slice : MeshView.SliceCam option) =
         for (id, p) in HashMap.toSeq pins do
             let isSel = sel = Some id
             let cR = ScanPin.renderCentre cc s p.Centre
             let rR = ScanPin.renderLength s p.InnerRadius
-            let baseCol = Primitives.selectionTint sel isSel (Primitives.c4bToV3d p.PinColor)
-            let col = V4d(baseCol, (if isSel then 0.95 else 0.6))
+            let col = V4d(Primitives.pinInkV3d, (if isSel then 0.95 else 0.6))
             let rw = if isSel then 2.2 else 1.3
             if isPano then addRingFacing out eye cR rR col rw 48
             else addRingXY out cR rR col rw 48
@@ -292,6 +296,35 @@ module FocusScene =
             let white = V4d(1.0, 1.0, 1.0, 0.95)
             if isPano then addDashedRingFacing out eye cR rR white 2.2 72
             else addDashedRingXY out cR rR white 2.2 72
+            match slice with
+            | Some sc when not isPano ->
+                // GOLD — the slice-mode accent (matches the slice badges).
+                let gold = V4d(0.706, 0.325, 0.035, 0.95)
+                let pinR = ScanPin.renderCentre cc s p.Centre
+                let prR = ScanPin.renderLength s p.InnerRadius
+                let dXY =
+                    let f = V3d(sc.Fwd.X, sc.Fwd.Y, 0.0)
+                    if f.Length > 1e-9 then f.Normalized else V3d.IOO
+                // View-direction arrow through the pin centre, ~75 % of the
+                // pin circle.
+                let l = prR * 0.75
+                addArrowXY out (pinR - dXY * l) (pinR + dXY * l) (prR * 0.15) gold 2.2
+                // Cut plane trace, DOUBLE line: the plane ∩ the horizontal plane
+                // at the pin's height (exact for tilted dip-aligned sections; XY
+                // fallback when the section plane is horizontal-degenerate).
+                let q = sc.Eye + sc.Fwd * sc.Near
+                let perp =
+                    let pp = Vec.cross sc.Fwd V3d.OOI
+                    if pp.Length > 1e-9 then pp.Normalized else V3d(-dXY.Y, dXY.X, 0.0)
+                let inPlaneUp = Vec.cross perp sc.Fwd
+                let x0 =
+                    if abs inPlaneUp.Z > 1e-6
+                    then q + inPlaneUp * ((pinR.Z - q.Z) / inPlaneUp.Z)
+                    else V3d(q.X, q.Y, pinR.Z)
+                let off = dXY * (prR * 0.045)
+                out.Add(x0 - off - perp * (prR * 0.9), x0 - off + perp * (prR * 0.9), gold, 1.8)
+                out.Add(x0 + off - perp * (prR * 0.9), x0 + off + perp * (prR * 0.9), gold, 1.8)
+            | _ -> ()
         | None -> ()
 
     // Inspect colour overlay for a mesh: (FocusMode, per-vertex scalar buffer, hi).
@@ -508,6 +541,7 @@ module FocusScene =
         // maths, so markers stay Top-only.
         let pinsAval   = model.ScanPins.Pins |> AMap.toAVal
         let dispRenderT = MeshView.displayedMeshT model name
+        let sliceCamA = MeshView.sliceCamera model
         let overlaySegs =
             AVal.custom (fun t ->
                 let pins = pinsAval.GetValue t
@@ -516,7 +550,7 @@ module FocusScene =
                 let sel = Selection.pin (model.Selection.Active.GetValue t)
                 let eye = panoEye.GetValue t
                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                addPinRingsAndSelectionCircle out pins sel cc s isPano eye
+                addPinRingsAndSelectionCircle out pins sel cc s isPano eye (sliceCamA.GetValue t)
                 if not isPano && model.WorkflowStep.GetValue t = Correspondence then
                     let ext = fitExtent.GetValue t
                     let z = zoomEff.GetValue t
@@ -525,10 +559,10 @@ module FocusScene =
                     let dw = RigidTransform.renderToWorld s cc (dispRenderT.GetValue t)
                     for (id, p) in HashMap.toSeq pins do
                         let isSel = sel = Some id
-                        let pinCol = Primitives.selectionTint sel isSel (Primitives.c4bToV3d p.PinColor)
+                        let pinCol = Primitives.pinInkV3d
                         // The reference's marker is its RefAnchor (own-frame like
                         // Anchors), drawn with the same glyph as any other mesh —
-                        // in the PIN's colour (§B1: crosshair, circle and markers agree).
+                        // in the shared pin ink (crosshair, circle and markers agree).
                         match Correspondence.anchorOwn isRef name (ScanPin.correspondence p) with
                         | Some own ->
                             let aR = ScanPin.renderCentre cc s (dw.Forward.TransformPos own)
@@ -744,7 +778,7 @@ module FocusScene =
                     let show =
                         model.ReferenceMesh |> AVal.map (function Some rf -> rf <> name | None -> false)
                     let node = MeshView.buildReferenceOutlineNode model viewT projT (V4f(0.831f, 0.631f, 0.024f, 1.0f)) show
-                    OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) (model.IsolineOpacity |> AVal.map float32) OutlineView.maskAllOn node
+                    OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) (model.IsolineOpacity |> AVal.map float32) (AVal.constant 0.0f) OutlineView.maskAllOn node
             // One standard pipeline for both projections — the camera (viewT/projT)
             // carries the whole difference.
             let surface =
@@ -800,6 +834,7 @@ module FocusScene =
         // Pin influence circles — the same footprint rings as the single: flat XY
         // in Top, facing the eye (approximate sphere silhouette) in 360°.
         let pinsAval = model.ScanPins.Pins |> AMap.toAVal
+        let sliceCamA = MeshView.sliceCamera model
         let ringSegs =
             AVal.custom (fun t ->
                 let pins = pinsAval.GetValue t
@@ -809,7 +844,7 @@ module FocusScene =
                 let pano = isPanoA.GetValue t
                 let eye = fitCenter.GetValue t
                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                addPinRingsAndSelectionCircle out pins sel cc s pano eye
+                addPinRingsAndSelectionCircle out pins sel cc s pano eye (sliceCamA.GetValue t)
                 out.ToArray())
         let rc =
             renderControl {

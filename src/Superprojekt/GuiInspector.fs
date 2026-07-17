@@ -11,25 +11,24 @@ module GuiInspector =
 
     open Primitives
 
-    // Pin distribution canvas: per moving-mesh lane, a one-sided STACKED
-    // HISTOGRAM of every pin's ROI samples on a shared signed-distance axis —
-    // 48 crisp bins growing up from the lane baseline, pin segments stacked in the
-    // canonical pin order (CreatedAt, guid — same as the legend and brushSamples).
-    // Once a solve exists the same lane carries BOTH poses: the emphasized pose
-    // (committed view, flipped by the spring-loaded Peek — visual only) is the
-    // filled stack, the other pose is a plain near-black step OUTLINE of its total
-    // (shape only, no colour/subdivision). One count→height scale across all lanes
-    // and both poses keeps areas comparable.
-    // Brushing is unchanged from the rain chart: an X-RANGE drag over the CONCEPTUAL
-    // samples (el._dots, from the canonical g/s arrays of the COMMITTED pose — no
-    // dots are painted); selected gids go to the sibling hidden input (the JS→Elm
-    // bridge) → the 3D sample dots. A plain click clears. This chart drag is the
-    // ONLY way to brush samples. data-brushed echoes the model back (a model-side
-    // clear also drops the local band); with no local drag the band is reconstructed
-    // from the echoed gids. Self-contained OnBoot (observes data-dist + data-brushed
-    // + its own size — dock drags and window resizes change the chart width);
-    // the bridge is resolved lazily EACH emit (a boot capture would freeze null).
-    let private brushChartJs = [
+    // ONE standard labelled chart (v12 §3), instantiated twice (mesh chart +
+    // pin chart): title, x axis (mm, nice-step ticks + label), y axis (counts),
+    // inset legend, and a STACKED HISTOGRAM of the payload's series over the
+    // shared signed-distance range — 48 crisp bins. Once a solve exists the
+    // chart carries BOTH poses: the emphasized pose (committed view, flipped by
+    // the spring-loaded Peek — visual only) is the filled stack, the other pose
+    // a near-black step OUTLINE of the total (shape only); a pose key names
+    // them. An empty payload renders the FULL furniture with a centred
+    // placeholder (d.ph) — never a blank panel.
+    // Brushing: an X-RANGE drag over the CONCEPTUAL samples (el._dots, from the
+    // series' canonical g/s arrays of the COMMITTED pose — no dots painted);
+    // selected gids go to the shared hidden input (the JS→Elm bridge) → the 3D
+    // sample dots. A plain click clears. data-brushed echoes the model back (a
+    // model-side clear drops the local band); with no local drag the band is
+    // reconstructed from the echoed gids. Self-contained OnBoot (observes
+    // data-dist + data-brushed + its own size); the bridge is resolved lazily
+    // EACH emit (a boot capture would freeze null).
+    let private chartJs = [
         "(function(){"
         "var el=__THIS__;"
         "function findBridge(){ return (el.parentElement&&el.parentElement.querySelector('.ins-brush-bridge'))||document.querySelector('.ins-brush-bridge'); }"
@@ -37,78 +36,106 @@ module GuiInspector =
         "function emit(){ var b=findBridge(); if(!b) return; var ids=[];"
         "  if(range){ for(var i=0;i<el._dots.length;i++){ var dt=el._dots[i]; if(dt.v>=range[0]&&dt.v<=range[1]) ids.push(dt.gid); } }"
         "  b.value=ids.join(','); b.dispatchEvent(new Event('input',{bubbles:true})); }"
-        "function ph(t){ el.innerHTML=''; el._dots=[]; var p=document.createElement('div'); p.className='ins-ph'; p.textContent=t; el.appendChild(p); }"
         "function niceStep(raw){ var mag=Math.pow(10,Math.floor(Math.log(raw)/Math.LN10)); var n=raw/mag; return (n<1.5?1:n<3.5?2:n<7.5?5:10)*mag; }"
         "function render(){"
         "  var raw=el.getAttribute('data-dist')||'{}'; var d; try{d=JSON.parse(raw);}catch(e){return;}"
         "  var braw=el.getAttribute('data-brushed')||''; var bset=new Set(braw.length?braw.split(',').map(Number):[]);"
-        "  if(!d||!d.rows){ ph(d&&d.pending?d.pending:'place pins to see ROI distributions'); return; }"
-        "  if(d.rows.length===0){ ph('no moving meshes probed'); return; }"
+        "  var fraw=el.getAttribute('data-focus')||''; var fset=new Set(fraw.length?fraw.split(',').map(Number):[]);"
         "  el.innerHTML=''; el._dots=[];"
-        "  var W=el.clientWidth||320, H=el.clientHeight||150; var dpr=window.devicePixelRatio||1;"
+        "  var W=el.clientWidth||300, H=el.clientHeight||150; var dpr=window.devicePixelRatio||1;"
         "  var cv=document.createElement('canvas'); cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);"
-        "  cv.style.width=W+'px'; cv.style.height=H+'px'; cv.className='ins-dist-cv';"
+        "  cv.style.width=W+'px'; cv.style.height=H+'px';"
         "  var g=cv.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0);"
         "  g.fillStyle='#ffffff'; g.fillRect(0,0,W,H);"
-        "  var padL=10,padR=12,padT=14,padB=20; var lo=d.lo,hi=d.hi; var span=Math.max(1e-6,hi-lo);"
+        // Furniture — ALWAYS drawn: title, axes frame, x/y ticks, axis label.
+        "  var padL=30,padR=8,padT=20,padB=24;"
+        "  var lo=(d.lo!=null?d.lo:-10), hi=(d.hi!=null?d.hi:10); var span=Math.max(1e-6,hi-lo);"
         "  function X(v){ return padL+(v-lo)/span*(W-padL-padR); }"
         "  el._XV=function(x){ return lo+(x-padL)/Math.max(1,W-padL-padR)*span; };"
         "  el._padL=padL; el._padR=padR;"
-        "  var B=d.bins||48; var bw=span/B;"
-        "  function poseC(pn,ps){ var a=ps==='a'?pn.ha:pn.hb; return (a&&a.length===B)?a:null; }"
-        "  var anyB=false,anyA=false; d.rows.forEach(function(r){ r.pins.forEach(function(pn){ if(poseC(pn,'b'))anyB=true; if(poseC(pn,'a'))anyA=true; }); });"
-        // Emphasized pose = filled stack; the other pose (solved only) = outline.
-        "  var fillP=d.reg?d.act:(anyB?'b':'a'); var outP=d.reg?(fillP==='a'?'b':'a'):null;"
-        "  var n=d.rows.length; var axY=H-padB; var laneH=(axY-padT)/n;"
-        // X-axis ruler: baseline, nice-step ticks with labels, faint gridlines, zero line.
+        "  var axY=H-padB, axT=padT;"
+        "  g.fillStyle='#0f172a'; g.font='700 11px Inter,\\'Segoe UI\\',sans-serif'; g.textAlign='left';"
+        "  g.fillText(d.title||'',4,13);"
+        "  g.strokeStyle='#94a3b8'; g.lineWidth=1;"
+        "  g.beginPath(); g.moveTo(padL,axY+0.5); g.lineTo(W-padR,axY+0.5); g.stroke();"
+        "  g.beginPath(); g.moveTo(padL+0.5,axT); g.lineTo(padL+0.5,axY); g.stroke();"
         "  var step=niceStep(span/5); var dec=step>=1?0:(step>=0.1?1:2);"
-        "  g.strokeStyle='#94a3b8'; g.lineWidth=1; g.beginPath(); g.moveTo(padL,axY+0.5); g.lineTo(W-padR,axY+0.5); g.stroke();"
         "  g.font='9px SF Mono,Monaco,monospace'; g.textAlign='center';"
         "  for(var v=Math.ceil(lo/step)*step; v<=hi+1e-9; v+=step){ var x=X(v);"
-        "    g.strokeStyle='#eef2f6'; g.beginPath(); g.moveTo(x,padT-2); g.lineTo(x,axY); g.stroke();"
+        "    g.strokeStyle='#eef2f6'; g.beginPath(); g.moveTo(x,axT); g.lineTo(x,axY); g.stroke();"
         "    g.strokeStyle='#94a3b8'; g.beginPath(); g.moveTo(x,axY); g.lineTo(x,axY+4); g.stroke();"
         "    g.fillStyle='#64748b'; g.fillText(v.toFixed(dec),x,axY+13); }"
-        "  if(lo<=0&&hi>=0){ g.strokeStyle='#cbd5e1'; g.lineWidth=1.2; g.beginPath(); g.moveTo(X(0),padT-2); g.lineTo(X(0),axY); g.stroke(); g.lineWidth=1; }"
-        "  g.textAlign='left';"
-        // One shared count→height scale across ALL lanes and BOTH poses.
-        "  var maxC=1; d.rows.forEach(function(r){ ['b','a'].forEach(function(ps){ for(var b=0;b<B;b++){ var s=0; r.pins.forEach(function(pn){ var a=poseC(pn,ps); if(a) s+=a[b]; }); if(s>maxC)maxC=s; } }); });"
-        "  d.rows.forEach(function(r,i){ var y0=padT+i*laneH; var yB=y0+laneH-1; var k=Math.max(0.5,laneH-13)/maxC;"
-        "    if(i>0){ g.globalAlpha=1; g.strokeStyle='#eef2f6'; g.beginPath(); g.moveTo(padL,y0+0.5); g.lineTo(W-padR,y0+0.5); g.stroke(); }"
-        "    if(r.lod>0){ g.globalAlpha=1; g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-r.lod),y0+2,Math.max(1,X(r.lod)-X(-r.lod)),laneH-3); }"
-        // Filled stack: crisp per-bin rects, pin segments bottom-up in canonical order.
-        "    var prev=new Array(B).fill(0);"
-        "    r.pins.forEach(function(pn){ var a=poseC(pn,fillP); if(!a) return;"
-        "      g.globalAlpha=pn.hl?0.85:0.25; g.fillStyle=pn.color;"
-        "      for(var b=0;b<B;b++){ var c=a[b]; if(c>0){ var x0=X(lo+b*bw); var wd=Math.max(1,X(lo+(b+1)*bw)-x0);"
-        "        g.fillRect(x0,yB-(prev[b]+c)*k,wd,c*k); } prev[b]+=c; } });"
-        // Other pose: near-black step outline of the TOTAL (shape only, no colour).
-        "    if(outP){ var tot=new Array(B).fill(0); var anyO=false;"
-        "      r.pins.forEach(function(pn){ var a=poseC(pn,outP); if(!a) return; anyO=true; for(var b=0;b<B;b++) tot[b]+=a[b]; });"
-        "      if(anyO){ g.globalAlpha=0.9; g.strokeStyle='#0f172a'; g.lineWidth=1;"
-        "        g.beginPath(); g.moveTo(X(lo),yB);"
-        "        for(var b=0;b<B;b++){ var yT=yB-tot[b]*k; g.lineTo(X(lo+b*bw),yT); g.lineTo(X(lo+(b+1)*bw),yT); }"
-        "        g.lineTo(X(hi),yB); g.stroke(); } }"
-        // Median ticks (committed pose) on the baseline.
-        "    r.pins.forEach(function(pn){ if(pn.med==null) return; g.globalAlpha=pn.hl?0.95:0.35; g.strokeStyle=pn.color; g.lineWidth=pn.hl?2:1;"
-        "      g.beginPath(); g.moveTo(X(pn.med),yB); g.lineTo(X(pn.med),yB-9); g.stroke(); g.lineWidth=1; });"
+        "  if(lo<=0&&hi>=0){ g.strokeStyle='#cbd5e1'; g.lineWidth=1.2; g.beginPath(); g.moveTo(X(0),axT); g.lineTo(X(0),axY); g.stroke(); g.lineWidth=1; }"
+        "  g.fillStyle='#64748b'; g.font='9px Inter,sans-serif'; g.textAlign='right';"
+        "  g.fillText(d.xlabel||'signed error vs reference (mm)',W-padR,H-4);"
+        "  var S=d.series||[];"
+        // Empty state: full furniture + centred placeholder, never a blank panel.
+        "  if(S.length===0){ g.fillStyle='#94a3b8'; g.font='12px Inter,sans-serif'; g.textAlign='center';"
+        "    g.fillText(d.ph||'\\u2014',(padL+W-padR)/2,(axT+axY)/2+4); el.appendChild(cv); return; }"
+        "  var B=d.bins||48; var bw=span/B;"
+        "  function poseC(sn,ps){ var a=ps==='a'?sn.ha:sn.hb; return (a&&a.length===B)?a:null; }"
+        "  var anyB=false,anyA=false; S.forEach(function(sn){ if(poseC(sn,'b'))anyB=true; if(poseC(sn,'a'))anyA=true; });"
+        // Emphasized pose = filled stack; the other pose (solved only) = outline.
+        "  var fillP=d.reg?d.act:(anyB?'b':'a'); var outP=d.reg?(fillP==='a'?'b':'a'):null;"
+        // One count→height scale over BOTH poses; y axis = counts, nice ticks.
+        "  var maxC=1; ['b','a'].forEach(function(ps){ for(var b=0;b<B;b++){ var s=0; S.forEach(function(sn){ var a=poseC(sn,ps); if(a) s+=a[b]; }); if(s>maxC)maxC=s; } });"
+        "  var k=(axY-axT-4)/maxC;"
+        "  var cs=niceStep(Math.max(1,maxC/3)); g.font='9px SF Mono,Monaco,monospace'; g.textAlign='right';"
+        "  for(var c=cs;c<=maxC;c+=cs){ var y=axY-c*k;"
+        "    g.strokeStyle='#eef2f6'; g.beginPath(); g.moveTo(padL,y+0.5); g.lineTo(W-padR,y+0.5); g.stroke();"
+        "    g.fillStyle='#64748b'; g.fillText(String(Math.round(c)),padL-3,y+3); }"
+        "  if(d.lod>0){ g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-d.lod),axT,Math.max(1,X(d.lod)-X(-d.lod)),axY-axT); }"
+        // Filled stack: crisp per-bin rects, series bottom-up in payload order.
+        "  var prev=new Array(B).fill(0);"
+        "  S.forEach(function(sn){ var a=poseC(sn,fillP); if(!a) return;"
+        "    g.globalAlpha=sn.hl?0.9:0.3; g.fillStyle=sn.color;"
+        "    for(var b=0;b<B;b++){ var c=a[b]; if(c>0){ var x0=X(lo+b*bw); var wd=Math.max(1,X(lo+(b+1)*bw)-x0);"
+        "      g.fillRect(x0,axY-(prev[b]+c)*k,wd,c*k); } prev[b]+=c; } });"
+        // Other pose: near-black step outline of the TOTAL (shape only).
+        "  if(outP){ var tot=new Array(B).fill(0); var anyO=false;"
+        "    S.forEach(function(sn){ var a=poseC(sn,outP); if(!a) return; anyO=true; for(var b=0;b<B;b++) tot[b]+=a[b]; });"
+        "    if(anyO){ g.globalAlpha=0.9; g.strokeStyle='#0f172a'; g.lineWidth=1;"
+        "      g.beginPath(); g.moveTo(X(lo),axY);"
+        "      for(var b=0;b<B;b++){ var yT=axY-tot[b]*k; g.lineTo(X(lo+b*bw),yT); g.lineTo(X(lo+(b+1)*bw),yT); }"
+        "      g.lineTo(X(hi),axY); g.stroke(); } }"
+        // Median ticks on the baseline.
+        "  S.forEach(function(sn){ if(sn.med==null) return; g.globalAlpha=sn.hl?0.95:0.35; g.strokeStyle=sn.color; g.lineWidth=sn.hl?2:1;"
+        "    g.beginPath(); g.moveTo(X(sn.med),axY); g.lineTo(X(sn.med),axY-9); g.stroke(); g.lineWidth=1; });"
         // The conceptual samples: never painted, but they ARE the brush targets.
-        "    r.pins.forEach(function(pn){ if(pn.g) for(var q=0;q<pn.g.length;q++) el._dots.push({gid:pn.g[q],v:pn.s[q]}); });"
-        "    g.globalAlpha=1; g.fillStyle='#334155'; g.font='10px SF Mono,Monaco,monospace'; g.textAlign='left'; g.fillText(r.name,padL,y0+10); });"
-        // Selection band: local drag range, else reconstructed from the model echo
-        // (bset) so a remount keeps the band. Labels: exact mm + brushed count.
+        "  S.forEach(function(sn){ if(sn.g) for(var q=0;q<sn.g.length;q++) el._dots.push({gid:sn.g[q],v:sn.s[q]}); });"
+        // Slice-mode dots of interest (v12 §6 bonus): amber markers on the
+        // baseline that follow the cut plane as the slice camera moves.
+        "  if(fset.size){ g.globalAlpha=1; g.fillStyle='#d97706'; g.strokeStyle='#ffffff'; g.lineWidth=1;"
+        "    for(var q3=0;q3<el._dots.length;q3++){ var dd3=el._dots[q3]; if(fset.has(dd3.gid)){"
+        "      g.beginPath(); g.arc(X(dd3.v),axY-5,3,0,6.2832); g.fill(); g.stroke(); } } }"
+        // Inset legend (top-right): series swatch + name, capped; pose key below.
+        "  g.globalAlpha=1; g.font='9px Inter,sans-serif';"
+        "  var rows=[]; S.forEach(function(sn){ rows.push([sn.color,sn.name]); });"
+        "  var maxE=Math.max(2,Math.floor((axY-axT-14)/11));"
+        "  var over=rows.length>maxE; var shown=over?rows.slice(0,maxE-1):rows;"
+        "  var lgh=(shown.length+(over?1:0))*11+(outP?12:0)+4;"
+        "  var lgw=64; var lx=W-padR-lgw-2, ly=axT+2;"
+        "  g.fillStyle='rgba(255,255,255,0.82)'; g.fillRect(lx-3,ly-2,lgw+5,lgh);"
+        "  g.textAlign='left';"
+        "  shown.forEach(function(r,i){ var y=ly+7+i*11;"
+        "    g.fillStyle=r[0]; g.fillRect(lx,y-6,8,8);"
+        "    g.fillStyle='#334155'; g.fillText(r[1],lx+11,y+1); });"
+        "  if(over){ g.fillStyle='#64748b'; g.fillText('+'+(rows.length-shown.length)+' more',lx,ly+7+shown.length*11+1); }"
+        "  if(outP){ g.fillStyle='#64748b'; g.fillText('fill '+(fillP==='b'?'Before':'After')+' \\u00b7 line '+(outP==='b'?'Before':'After'),lx,ly+7+(shown.length+(over?1:0))*11+2); }"
+        // Selection band: local drag range, else reconstructed from the model echo.
         "  var dispRange=range;"
         "  if(!dispRange&&bset.size){ var mn=1/0,mx=-1/0; for(var q1=0;q1<el._dots.length;q1++){ var dd=el._dots[q1]; if(bset.has(dd.gid)){ if(dd.v<mn)mn=dd.v; if(dd.v>mx)mx=dd.v; } } if(mx>=mn) dispRange=[mn,mx]; }"
         "  if(dispRange){ var x0=X(dispRange[0]), x1=X(dispRange[1]);"
-        "    g.fillStyle='rgba(8,145,178,0.10)'; g.fillRect(x0,padT-2,Math.max(1,x1-x0),axY-padT+2);"
-        "    g.strokeStyle='#0891b2'; g.lineWidth=1.2; g.beginPath(); g.moveTo(x0,padT-2); g.lineTo(x0,axY); g.moveTo(x1,padT-2); g.lineTo(x1,axY); g.stroke();"
+        "    g.fillStyle='rgba(8,145,178,0.10)'; g.fillRect(x0,axT,Math.max(1,x1-x0),axY-axT);"
+        "    g.strokeStyle='#0891b2'; g.lineWidth=1.2; g.beginPath(); g.moveTo(x0,axT); g.lineTo(x0,axY); g.moveTo(x1,axT); g.lineTo(x1,axY); g.stroke();"
         "    var cnt=0; for(var q2=0;q2<el._dots.length;q2++){ if(el._dots[q2].v>=dispRange[0]&&el._dots[q2].v<=dispRange[1]) cnt++; }"
         "    g.font='10px SF Mono,Monaco,monospace'; g.lineWidth=3; g.strokeStyle='rgba(255,255,255,0.85)'; g.fillStyle='#0891b2';"
         "    var lab0=dispRange[0].toFixed(1), lab1=dispRange[1].toFixed(1)+' \\u00b7 n='+cnt;"
-        "    g.textAlign='right'; g.strokeText(lab0,x0-3,padT+9); g.fillText(lab0,x0-3,padT+9);"
-        "    g.textAlign='left';  g.strokeText(lab1,x1+3,padT+9); g.fillText(lab1,x1+3,padT+9); g.lineWidth=1; }"
+        "    g.textAlign='right'; g.strokeText(lab0,x0-3,axT+9); g.fillText(lab0,x0-3,axT+9);"
+        "    g.textAlign='left';  g.strokeText(lab1,x1+3,axT+9); g.fillText(lab1,x1+3,axT+9); g.lineWidth=1; }"
         "  el.appendChild(cv);"
         "}"
-        "function cursorV(e){ var r=el.getBoundingClientRect(); var W=el.clientWidth||320;"
+        "function cursorV(e){ var r=el.getBoundingClientRect(); var W=el.clientWidth||300;"
         "  var x=Math.max(el._padL,Math.min(W-el._padR,e.clientX-r.left)); return el._XV(x); }"
         // render() after each move draws the band now; emit() (throttled) drives the
         // model + the 3D markers. A click (zero-width range) clears the brush.
@@ -125,7 +152,7 @@ module GuiInspector =
         // A model-side clear (empty data-brushed while not dragging) drops the local band.
         "new MutationObserver(function(muts){"
         "  if(!dragging&&range){ for(var q=0;q<muts.length;q++){ if(muts[q].attributeName==='data-brushed'&&!(el.getAttribute('data-brushed')||'').length){ range=null; break; } } }"
-        "  render(); }).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed']});"
+        "  render(); }).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed','data-focus']});"
         // The chart width follows dock drags and window resizes.
         "if(window.ResizeObserver){ new ResizeObserver(function(){ render(); }).observe(el); }"
         "})();" ]
@@ -145,13 +172,12 @@ module GuiInspector =
         let emit (m : Message) = env.Emit [m]
 
         // The matrix (left rail) is now the per-(pin,mesh) browser (§B); the
-        // Register dock reduces to the selected pin: identity chip (pin-colour
-        // fill, name inside) · radius · the per-mesh correspondence coordinate editor.
+        // Register dock reduces to the selected pin: identity label (near-black
+        // name, v12 §4) · radius · the per-mesh correspondence coordinate editor.
         let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 0.5)
         let pinIdentChip =
             div {
                 Class "ins-pinident"
-                effPin |> AVal.map (function Some p -> Some (Style [Css.Background (c4bToRgbCss p.PinColor)]) | None -> None)
                 effPin |> AVal.map (function Some p -> p.ShortName | None -> "")
             }
         // The selected pin's correspondence point on a mesh, in metric world at the
@@ -271,21 +297,26 @@ module GuiInspector =
         let shiftRow (k : string) (v : aval<string>) =
             div { Class "ins-shift-row"; span { Class "ins-shift-k"; k }; span { Class "ins-shift-v"; v } }
 
-        // Distribution (§A3): ONE diagram, populated by the active selection —
-        // mesh → its samples stacked by pin; pin → that pin stacked by mesh (mesh
-        // colours); cell → the single (pin, mesh) distribution; nothing (or the
-        // reference) → the ensemble aggregate stacked by pin over all moving meshes.
-        // Histogram counts (48 bins over the shared range) are computed HERE from the
-        // FULL probe sample sets — both Before/After halves once a solve exists
-        // (Probe = committed pose, ProbeOther = the opposite) — while the brushable
-        // conceptual samples stay the SAME canonical array as the 3D side (gid =
-        // array index, committed pose only), restricted to what the diagram shows.
+        // Two fixed charts (v12 §3), side by side, always both present:
+        //   MESH chart = the selected mesh's error across its pins (= the
+        //   selection's matrix COLUMN), series stacked in canonical pin order on
+        //   an achromatic grey ramp (pins carry no identity colour — the legend
+        //   names them);
+        //   PIN chart = the selected pin's error across meshes (= the matrix
+        //   ROW), series in the mesh palette.
+        // A missing selection half renders full furniture with a placeholder.
+        // Histogram counts (48 bins over the ONE shared range) are computed HERE
+        // from the FULL probe sample sets — both Before/After halves once a solve
+        // exists (Probe = committed pose, ProbeOther = the opposite) — while the
+        // brushable conceptual samples stay the SAME canonical array as the 3D
+        // side (gid = array index, committed pose only).
         let canonA = ScanPinScene.brushSamples model
         // Hover-FREE core: everything expensive (the all-sample quantile sort, the
-        // 48-bin histograms, the JSON assembly) is computed here with `§P<guid>§` /
-        // `§M<mesh>§` sentinels in the hl slots; the cheap hover substitution runs
-        // in distData below — so a hover crossing never re-sorts the samples.
-        let distCore =
+        // 48-bin histograms, the JSON assembly) is computed here — for BOTH charts
+        // in one pass — with `§P<guid>§` / `§M<mesh>§` sentinels in the hl slots;
+        // the cheap hover substitution runs per chart below, so a hover crossing
+        // never re-sorts the samples.
+        let chartsCore =
             AVal.custom (fun t ->
                 let inv = System.Globalization.CultureInfo.InvariantCulture
                 let g (v : float) =
@@ -306,8 +337,25 @@ module GuiInspector =
                     |> List.choose (fun (id, p) -> match p.Probe with ProbeReady r -> Some (id, p, r) | _ -> None)
                     |> List.sortBy (fun (id, p, _) -> let (ScanPinId.ScanPinId gg) = id in p.CreatedAt, gg)
                 let canon = canonA.GetValue t
-                if List.isEmpty readyPins then "{\"pending\":\"probing pins…\"}"
-                elif List.isEmpty moving || canon.Length = 0 then "{\"rows\":[]}"
+                let friendly = numberedFriendly order names
+                let selMeshRaw = Selection.mesh sel |> Option.filter (fun m -> List.contains m names)
+                let selPinId = Selection.pin sel
+                let meshTitle =
+                    match selMeshRaw with
+                    | Some m -> sprintf "Mesh %s — across pins" (friendly m)
+                    | None -> "Mesh — across pins"
+                let pinTitle =
+                    match selPinId |> Option.bind (fun id -> HashMap.tryFind id pins) with
+                    | Some p -> sprintf "Pin %s — across meshes" p.ShortName
+                    | None -> "Pin — across meshes"
+                let emptyJson (title : string) (ph : string) (lo : float) (hi : float) =
+                    sprintf "{\"title\":\"%s\",\"ph\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":48,\"series\":[]}"
+                        title ph (g lo) (g hi)
+                if List.isEmpty readyPins || List.isEmpty moving || canon.Length = 0 then
+                    let pending = if List.isEmpty readyPins then "probing pins…" else "no moving meshes"
+                    let ph (has : bool) (pick : string) = if has then pending else pick
+                    (emptyJson meshTitle (ph selMeshRaw.IsSome "select a mesh") -10.0 10.0,
+                     emptyJson pinTitle (ph selPinId.IsSome "select a pin") -10.0 10.0)
                 else
                     // Emphasized pose: the committed view, flipped while Peek is held
                     // (the flip is purely visual — same contract as the 3D peek).
@@ -413,74 +461,85 @@ module GuiInspector =
                     let hlPin (id : ScanPinId) =
                         let (ScanPinId.ScanPinId gg) = id in sprintf "§P%s§" (gg.ToString "N")
                     let hlMesh (m : string) = sprintf "§M%s§" m
-                    let friendly = numberedFriendly order names
                     let pinLabel (p : ScanPin) = p.ShortName
-                    let selMeshOpt = Selection.mesh sel |> Option.filter (fun m -> List.contains m moving)
-                    let selPinHalf =
-                        Selection.pin sel |> Option.bind (fun pid ->
-                            halves |> List.tryFind (fun (id, _, _, _, _) -> id = pid))
-                    let rowName, layers =
-                        match sel, selPinHalf, selMeshOpt with
-                        | SelCell _, Some ((id, p, _, _, _) as h), Some m ->
-                            sprintf "%s · %s" (pinLabel p) (friendly m),
-                            [ layer p.PinColor (pinLabel p) (hlPin id) [h, m] ]
-                        | (SelPin _ | SelCell _), Some ((_, p, _, _, _) as h), _ ->
-                            // pin across meshes (a reference-column cell lands here too)
-                            pinLabel p,
-                            moving |> List.map (fun m ->
-                                let mi = HashMap.tryFind m order |> Option.defaultValue 0
-                                layer (meshColor mi) (friendly m) (hlMesh m) [h, m])
-                        | _, _, Some m ->
-                            friendly m,
-                            halves |> List.map (fun ((id, p, _, _, _) as h) ->
-                                layer p.PinColor (pinLabel p) (hlPin id) [h, m])
-                        | _ ->
-                            "all meshes",
-                            halves |> List.map (fun ((id, p, _, _, _) as h) ->
-                                layer p.PinColor (pinLabel p) (hlPin id) (moving |> List.map (fun m -> h, m)))
-                    let groups = layers |> List.choose id
-                    let rows =
-                        if List.isEmpty groups then ""
+                    // Achromatic ramp for the mesh chart's pin series (light → dark
+                    // by canonical order): distinguishable in the stack + legend
+                    // without reintroducing pin identity colours.
+                    let greyOf (i : int) (n : int) =
+                        let tt = if n <= 1 then 0.5 else float i / float (n - 1)
+                        let v = 190 - int (tt * 140.0)
+                        C4b(byte v, byte v, byte v)
+                    let chartJson (title : string) (ph : string) (layers : (float option * string) option list) =
+                        let groups = layers |> List.choose id
+                        if List.isEmpty groups then emptyJson title ph lo hi
                         else
                             let lods = groups |> List.choose fst
                             let avgLod = if List.isEmpty lods then 0.0 else List.average lods
-                            sprintf "{\"name\":\"%s\",\"lod\":%s,\"pins\":[%s]}"
-                                rowName (g avgLod) (groups |> List.map snd |> String.concat ",")
-                    sprintf "{\"reg\":%s,\"act\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"rows\":[%s]}"
-                        (if solved then "1" else "0") act (g lo) (g hi) bins rows)
+                            sprintf "{\"title\":\"%s\",\"reg\":%s,\"act\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"series\":[%s]}"
+                                title (if solved then "1" else "0") act (g lo) (g hi) bins (g avgLod)
+                                (groups |> List.map snd |> String.concat ",")
+                    let meshJson =
+                        match selMeshRaw with
+                        | None -> emptyJson meshTitle "select a mesh" lo hi
+                        | Some m when Some m = rf -> emptyJson meshTitle "reference mesh — no error vs itself" lo hi
+                        | Some m ->
+                            let n = List.length halves
+                            halves |> List.mapi (fun i ((id, p, _, _, _) as h) ->
+                                layer (greyOf i n) (pinLabel p) (hlPin id) [h, m])
+                            |> chartJson meshTitle "no data"
+                    let pinJson =
+                        match selPinId |> Option.bind (fun pid -> halves |> List.tryFind (fun (id, _, _, _, _) -> id = pid)) with
+                        | None -> emptyJson pinTitle "select a pin" lo hi
+                        | Some ((_, p, _, _, _) as h) ->
+                            moving |> List.map (fun m ->
+                                let mi = HashMap.tryFind m order |> Option.defaultValue 0
+                                layer (meshColor mi) (friendly m) (hlMesh m) [h, m])
+                            |> chartJson (sprintf "Pin %s — across meshes" p.ShortName) "no data"
+                    (meshJson, pinJson))
         // Substitute the hl sentinels for the current hover — a plain string scan,
         // so hovering matrix cells/rows never recomputes the stats above.
-        let distData =
-            (distCore, model.Selection.Hovered) ||> AVal.map2 (fun core hov ->
-                if not (core.Contains '§') then core
-                else
-                    let sb = System.Text.StringBuilder(core.Length)
-                    let mutable i = 0
-                    while i < core.Length do
-                        let c = core.[i]
-                        if c = '§' then
-                            let e = core.IndexOf('§', i + 1)
-                            let tok = core.Substring(i + 1, e - i - 1)
-                            let hl =
-                                if tok.[0] = 'P' then
-                                    match hov with
-                                    | Some (HoverPin (ScanPinId.ScanPinId gg))
-                                    | Some (HoverPoint (ScanPinId.ScanPinId gg, _)) ->
-                                        if gg.ToString "N" = tok.Substring 1 then 1 else 0
-                                    | _ -> 1
-                                else
-                                    match hov with
-                                    | Some (HoverMesh hm) | Some (HoverPoint (_, hm)) ->
-                                        if hm = tok.Substring 1 then 1 else 0
-                                    | _ -> 1
-                            sb.Append hl |> ignore
-                            i <- e + 1
-                        else
-                            sb.Append c |> ignore
-                            i <- i + 1
-                    sb.ToString())
+        let substHl (core : string) (hov : HoverTarget option) =
+            if not (core.Contains '§') then core
+            else
+                let sb = System.Text.StringBuilder(core.Length)
+                let mutable i = 0
+                while i < core.Length do
+                    let c = core.[i]
+                    if c = '§' then
+                        let e = core.IndexOf('§', i + 1)
+                        let tok = core.Substring(i + 1, e - i - 1)
+                        let hl =
+                            if tok.[0] = 'P' then
+                                match hov with
+                                | Some (HoverPin (ScanPinId.ScanPinId gg))
+                                | Some (HoverPoint (ScanPinId.ScanPinId gg, _)) ->
+                                    if gg.ToString "N" = tok.Substring 1 then 1 else 0
+                                | _ -> 1
+                            else
+                                match hov with
+                                | Some (HoverMesh hm) | Some (HoverPoint (_, hm)) ->
+                                    if hm = tok.Substring 1 then 1 else 0
+                                | _ -> 1
+                        sb.Append hl |> ignore
+                        i <- e + 1
+                    else
+                        sb.Append c |> ignore
+                        i <- i + 1
+                sb.ToString()
+        let meshChartData = (chartsCore |> AVal.map fst, model.Selection.Hovered) ||> AVal.map2 substHl
+        let pinChartData  = (chartsCore |> AVal.map snd, model.Selection.Hovered) ||> AVal.map2 substHl
         // Comma-joined brushed gids → the canvas highlight (data-brushed).
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
+        // Slice-mode dots of interest (v12 §6 bonus): their gids cross-highlight
+        // in BOTH charts, following the cut plane as the slice camera moves.
+        let focusData =
+            ScanPinScene.sliceRankedBrush model |> AVal.map (function
+                | Some ranked ->
+                    ranked
+                    |> Array.truncate ScanPinScene.maxDotsOfInterest
+                    |> Array.map (fun (gid, _, _, _) -> string gid)
+                    |> String.concat ","
+                | None -> "")
 
         // One compact head row: the metric toggles only (channel + Δ sub-mode) —
         // they configure the view; selection is the matrix's job (§A3).
@@ -507,16 +566,27 @@ module GuiInspector =
                 }
                 div {
                     Class "ins-insp-body"
+                    // The two fixed charts (v12 §3): mesh = matrix column, pin =
+                    // matrix row — always both mounted, side by side, no reflow.
                     div {
-                        Class "ins-dist-col"
+                        Class "ins-charts"
                         div {
-                            Class "ins-dist"
-                            distData |> AVal.map (fun j -> Some (Attribute("data-dist", j)))
+                            Class "ins-chart"
+                            meshChartData |> AVal.map (fun j -> Some (Attribute("data-dist", j)))
                             brushedData |> AVal.map (fun b -> Some (Attribute("data-brushed", b)))
-                            OnBoot brushChartJs
+                            focusData |> AVal.map (fun f -> Some (Attribute("data-focus", f)))
+                            OnBoot chartJs
                         }
-                        // JS→Elm bridge: the canvas writes brushed gids here + fires an
-                        // input event; this forwards them to the model.
+                        div {
+                            Class "ins-chart"
+                            pinChartData |> AVal.map (fun j -> Some (Attribute("data-dist", j)))
+                            brushedData |> AVal.map (fun b -> Some (Attribute("data-brushed", b)))
+                            focusData |> AVal.map (fun f -> Some (Attribute("data-focus", f)))
+                            OnBoot chartJs
+                        }
+                        // JS→Elm bridge shared by both charts: a chart writes brushed
+                        // gids here + fires an input event; this forwards them to the
+                        // model (SetBrushedSamples replaces the whole set).
                         input {
                             Class "ins-brush-bridge"
                             Attribute("type", "text")

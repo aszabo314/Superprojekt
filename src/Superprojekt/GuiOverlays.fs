@@ -7,6 +7,11 @@ open Aardvark.Dom
 
 module GuiOverlays =
 
+    let private formatMeters (m : float) =
+        if m >= 1000.0 then sprintf "%g km" (m / 1000.0)
+        elif m >= 1.0 then sprintf "%g m" m
+        else sprintf "%g cm" (m * 100.0)
+
     // Cursor label of the Alt-wheel layer cycling. Gated on Alt actually HELD:
     // ActivePickingLayer persists after the cycle (it keeps steering pick
     // priority), so an always-on label would trail a stale mesh name around the
@@ -30,6 +35,182 @@ module GuiOverlays =
                 | None -> "")
         }
 
+    // v12 §2: cursor-side hard-prohibit tooltip — shown while a placement is
+    // armed and the hovered spot has < 2 meshes in range (placement is refused).
+    let placementTooltip (model : AdaptiveModel) (cursorScreen : aval<V2d option>) (placementValid : aval<bool option>) =
+        let placing =
+            model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
+        let visible =
+            (placing, placementValid, cursorScreen) |||> AVal.map3 (fun p v c ->
+                p && v = Some false && c.IsSome)
+        div {
+            Class "placement-tooltip"
+            Primitives.showWhen visible
+            cursorScreen |> AVal.map (Option.map (fun pos ->
+                Style [
+                    Left (sprintf "%.0fpx" (pos.X + 14.0))
+                    Top  (sprintf "%.0fpx" (pos.Y + 18.0))
+                ]))
+            "no overlapping meshes here"
+        }
+
+    // v12 §7: stretch-mode ordinates — per DOT OF INTEREST, a vertical line
+    // from the dot to the reference (its signed sample value), projected through
+    // the SAME slice view/proj the 3D uses (so the exaggeration is inherited),
+    // drawn as HTML strips so they are natively hoverable: the tooltip carries
+    // the TRUE value (mm/cm), never the stretched pixel distance. Ordinates
+    // exist ONLY in stretch mode — true scale has none (§6).
+    let sliceOrdinates (model : AdaptiveModel) (viewportSize : aval<V2i>) =
+        let camA = MeshView.sliceCamera model
+        let stretchA = ScanPinScene.sliceStretchFactor model
+        let rankedA = ScanPinScene.sliceRankedBrush model
+        let datasetScaleA =
+            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
+        let ordsJson =
+            AVal.custom (fun t ->
+                if not (model.SliceStretch.GetValue t) then "[]"
+                else
+                    match camA.GetValue t, rankedA.GetValue t with
+                    | Some s, Some ranked when ranked.Length > 0 ->
+                        let n = stretchA.GetValue t
+                        let vp = viewportSize.GetValue t
+                        let aspect = float vp.X / float (max 1 vp.Y)
+                        let viewT = CameraView.lookAt s.Eye s.Target s.Up |> CameraView.viewTrafo
+                        let projT = MeshView.orthoProjTrafo (s.HalfHeight * aspect) (s.HalfHeight / n) s.Near s.Far
+                        let fwd = (viewT * projT).Forward
+                        let scale = datasetScaleA.GetValue t
+                        let toPx (p : V3d) =
+                            let h = fwd * V4d(p, 1.0)
+                            let ndc = h.XYZ / h.W
+                            V2d((ndc.X * 0.5 + 0.5) * float vp.X, (0.5 - ndc.Y * 0.5) * float vp.Y)
+                        let items =
+                            ranked
+                            |> Array.truncate ScanPinScene.maxDotsOfInterest
+                            |> Array.choose (fun (_, p, vMm, _) ->
+                                // The ordinate drops along the pin axis (= the M3C2
+                                // measurement direction and the screen vertical).
+                                let pRef = p - s.Up * ScanPin.renderLength scale (vMm / 1000.0)
+                                let a = toPx p
+                                let b = toPx pRef
+                                if a.X < -50.0 || a.X > float vp.X + 50.0 then None
+                                else
+                                    let label =
+                                        if abs vMm >= 100.0 then sprintf "%+.1f cm" (vMm / 10.0)
+                                        else sprintf "%+.1f mm" vMm
+                                    Some (sprintf "{\"x\":%.1f,\"y1\":%.1f,\"y2\":%.1f,\"v\":\"%s\"}" a.X a.Y b.Y label))
+                        "[" + String.concat "," items + "]"
+                    | _ -> "[]")
+        div {
+            Class "slice-ords"
+            ordsJson |> AVal.map (fun j -> Some (Attribute("data-ords", j)))
+            Primitives.observedRender "data-ords" "[]" [
+                "  d.forEach(function(o){"
+                "    var top = Math.min(o.y1, o.y2), h = Math.max(6, Math.abs(o.y2 - o.y1));"
+                "    var strip = document.createElement('div'); strip.className='slice-ord';"
+                "    strip.style.left=(o.x-4)+'px'; strip.style.top=top+'px'; strip.style.height=h+'px';"
+                "    var line = document.createElement('div'); line.className='slice-ord-line'; strip.appendChild(line);"
+                "    var tip = document.createElement('div'); tip.className='slice-ord-tip'; tip.textContent=o.v; strip.appendChild(tip);"
+                "    el.appendChild(strip);"
+                "  });"
+            ]
+        }
+
+    // v12 follow-up: slice-mode badges — "ortho slice view" whenever slice mode
+    // is active, plus "vertical axis stretched ×N" while stretch is on. Gold =
+    // the slice-mode accent (shared with the focus angle indicator).
+    let sliceBadges (model : AdaptiveModel) =
+        let stretchA = ScanPinScene.sliceStretchFactor model
+        div {
+            Class "slice-badges"
+            Primitives.showWhen model.SliceMode
+            div { Class "slice-badge"; "ortho slice view" }
+            div {
+                Class "slice-badge"
+                Primitives.showWhen model.SliceStretch
+                stretchA |> AVal.map (fun n ->
+                    if n >= 100.0 then sprintf "vertical axis stretched ×%.0f" n
+                    else sprintf "vertical axis stretched ×%.1f" n)
+            }
+        }
+
+    // v12 follow-up: slice-mode axes — a vertical ruler left of the view and a
+    // horizontal one below it, both measuring METRIC distance from the pin
+    // centre (the projection centre; the vertical ruler ticks in TRUE metres,
+    // so its px spacing widens with the stretch factor). Recomputed from the
+    // live ortho frame, so the rulers stay valid whenever the projection
+    // changes (zoom-locked, but stretch/viewport/pin changes all re-tick).
+    let sliceAxes (model : AdaptiveModel) (viewportSize : aval<V2i>) =
+        let camA = MeshView.sliceCamera model
+        let stretchA = ScanPinScene.sliceStretchFactor model
+        let datasetScaleA =
+            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
+        let nice125 (raw : float) =
+            let raw = max 1e-6 raw
+            let mag = 10.0 ** floor (log10 raw)
+            let n = raw / mag
+            (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
+        let label (m : float) =
+            if abs m < 1e-9 then "0"
+            else (if m < 0.0 then "−" else "") + formatMeters (abs m)
+        let axesJson =
+            AVal.custom (fun t ->
+                match camA.GetValue t with
+                | None -> "null"
+                | Some s ->
+                    let vp = viewportSize.GetValue t
+                    let w, h = float vp.X, float vp.Y
+                    let n = stretchA.GetValue t
+                    let scale = datasetScaleA.GetValue t
+                    // px per metre: vertical fills 2·HalfHeight over vpY (× N when
+                    // stretched); horizontal shares the unstretched scale.
+                    let pxPerMh = h * scale / (2.0 * s.HalfHeight)
+                    let pxPerMv = pxPerMh * n
+                    let cx, cy = w * 0.5, h * 0.5
+                    let ticks (pxPerM : float) (extentPx : float) (centre : float) (flip : bool) =
+                        let halfM = extentPx * 0.5 / max 1e-9 pxPerM
+                        let step = nice125 (halfM / 4.0)
+                        [ for k in int (ceil (-halfM / step)) .. int (floor (halfM / step)) do
+                            let m = float k * step
+                            let p = centre + (if flip then -m else m) * pxPerM
+                            yield sprintf "{\"p\":%.1f,\"l\":\"%s\",\"z\":%d}" p (label m) (if k = 0 then 1 else 0) ]
+                        |> String.concat ","
+                    sprintf "{\"w\":%.0f,\"h\":%.0f,\"ht\":[%s],\"vt\":[%s]}"
+                        w h (ticks pxPerMh w cx false) (ticks pxPerMv h cy true))
+        div {
+            Class "slice-axes"
+            Primitives.showWhen model.SliceMode
+            axesJson |> AVal.map (fun j -> Some (Attribute("data-axes", j)))
+            Primitives.observedRender "data-axes" "null" [
+                "  if(!d) return;"
+                "  var svg = document.createElementNS(ns,'svg');"
+                "  svg.setAttribute('width', d.w); svg.setAttribute('height', d.h);"
+                "  svg.setAttribute('viewBox', '0 0 ' + d.w + ' ' + d.h);"
+                "  var AX='#475569', GRID='rgba(71,85,105,0.10)';"
+                // Vertical ruler right of the rail; horizontal ruler above the
+                // control's bottom edge (= the dock top).
+                "  var vx = 268, hy = d.h - 30;"
+                "  function ln(x1,y1,x2,y2,st,sw){ var l=document.createElementNS(ns,'line');"
+                "    l.setAttribute('x1',x1); l.setAttribute('y1',y1); l.setAttribute('x2',x2); l.setAttribute('y2',y2);"
+                "    l.setAttribute('stroke',st); l.setAttribute('stroke-width',sw); svg.appendChild(l); }"
+                "  function tx(x,y,s,anchor,bold){ var e=document.createElementNS(ns,'text');"
+                "    e.setAttribute('x',x); e.setAttribute('y',y); e.setAttribute('fill',AX);"
+                "    e.setAttribute('font-size','10'); e.setAttribute('font-family','SF Mono, Monaco, monospace');"
+                "    e.setAttribute('text-anchor',anchor); if(bold) e.setAttribute('font-weight','700');"
+                "    e.textContent=s; svg.appendChild(e); }"
+                "  ln(vx, 8, vx, hy, AX, 1.2);"
+                "  ln(vx, hy, d.w - 10, hy, AX, 1.2);"
+                "  (d.ht||[]).forEach(function(tk){ if(tk.p < vx + 14 || tk.p > d.w - 14) return;"
+                "    ln(tk.p, hy, tk.p, hy + (tk.z ? 8 : 5), AX, tk.z ? 1.6 : 1);"
+                "    ln(tk.p, 8, tk.p, hy, GRID, 1);"
+                "    tx(tk.p, hy + 18, tk.l, 'middle', tk.z); });"
+                "  (d.vt||[]).forEach(function(tk){ if(tk.p < 16 || tk.p > hy - 8) return;"
+                "    ln(vx - (tk.z ? 8 : 5), tk.p, vx, tk.p, AX, tk.z ? 1.6 : 1);"
+                "    ln(vx, tk.p, d.w - 10, tk.p, GRID, 1);"
+                "    tx(vx - 10, tk.p + 3, tk.l, 'end', tk.z); });"
+                "  el.appendChild(svg);"
+            ]
+        }
+
     let private niceRoundDistance (d : float) =
         if d <= 0.0 || System.Double.IsNaN d || System.Double.IsInfinity d then 1.0
         else
@@ -47,19 +228,14 @@ module GuiOverlays =
             let v = picked * mag
             steps |> Array.minBy (fun s -> abs (log (s / v)))
 
-    let private formatMeters (m : float) =
-        if m >= 1000.0 then sprintf "%g km" (m / 1000.0)
-        elif m >= 1.0 then sprintf "%g m" m
-        else sprintf "%g cm" (m * 100.0)
 
     // Show-overlays hold: a 2D name tag per pin floating at its flag-pole tip
-    // (ScanPin.flagTopRender projected to CSS px every frame), extended with the
-    // pin's precomputed vertical cross-section as a small profile chart. Two
-    // attributes drive one JS renderer: data-labels re-projects the tag positions
-    // every frame (cheap), data-charts carries the SVG chart content and changes
-    // only when a slice cache / displayed pose / mesh visibility changes — so
-    // orbiting while the hold is down moves the pills without rebuilding chart DOM.
-    // Same 90° horizontal fov as the main projection — only NDC x/y matter here.
+    // (ScanPin.flagTopRender projected to CSS px every frame). One attribute
+    // drives one JS renderer: data-labels re-projects the tag positions every
+    // frame (cheap; pills are stable DOM nodes that only move). Same 90°
+    // horizontal fov as the main projection — only NDC x/y matter here.
+    // (The v11 per-pin profile charts that used to ride on these pills were
+    // removed in v12 §5 — the matrix slice cells + slice mode carry sections.)
     let pinFlagLabels (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         let idStr (id : ScanPinId) = let (ScanPinId.ScanPinId g) = id in g.ToString "N"
@@ -92,179 +268,22 @@ module GuiOverlays =
                                             (idStr id)
                                             ((ndc.X * 0.5 + 0.5) * float vp.X)
                                             ((0.5 - ndc.Y * 0.5) * float vp.Y)
-                                            p.ShortName (Primitives.c4bToHex p.PinColor)))
+                                            p.ShortName Primitives.pinInkCss))
                     "[" + String.concat "," items + "]")
-        // Chart geometry (CSS px). The x axis spans the slice window (±Extent about
-        // the pin centre); the y axis auto-fits the v-range of BOTH pose caches so
-        // the peek flips emphasis without rescaling (vertical exaggeration is the
-        // point — surface separations are far smaller than the window width).
-        let cw, ch = 170.0, 92.0
-        let padX, padT, padB = 5.0, 4.0, 13.0
-        let chartsJson =
-            AVal.custom (fun t ->
-                // Hidden overlay ⇒ no work (labelsJson has the same early-out) —
-                // slice/pose churn must not rebuild an invisible chart's JSON.
-                if not (model.ShowOverlaysHeld.GetValue t) then "{}" else
-                let pins  = pinsVal.GetValue t
-                let peek  = model.RegPeekHeld.GetValue t
-                let solo  = model.MeshSolo.GetValue t
-                let order = model.MeshOrder.Content.GetValue t
-                let rf    = model.ReferenceMesh.GetValue t
-                let sb = System.Text.StringBuilder()
-                sb.Append '{' |> ignore
-                let mutable firstPin = true
-                for (id, p) in HashMap.toList pins do
-                    let chosen, other =
-                        if peek then p.SliceOther, p.Slice else p.Slice, p.SliceOther
-                    match chosen with
-                    | SliceReady s when s.Extent > 1e-9 ->
-                        // One v-range across both poses, all meshes, all planes.
-                        let mutable lo = infinity
-                        let mutable hi = -infinity
-                        let scan (sl : PinSlice) =
-                            for m in sl.Meshes do
-                                for pl in m.Planes do
-                                    for line in pl do
-                                        for q in line do
-                                            if q.Y < lo then lo <- q.Y
-                                            if q.Y > hi then hi <- q.Y
-                        scan s
-                        (match other with SliceReady o -> scan o | _ -> ())
-                        if hi >= lo then
-                            let span0 = hi - lo
-                            let mid = (lo + hi) * 0.5
-                            let span = max span0 0.01
-                            let lo = mid - span * 0.54
-                            let hi = mid + span * 0.54
-                            let e = s.Extent
-                            let x (u : float) = padX + (u + e) / (2.0 * e) * (cw - 2.0 * padX)
-                            let y (v : float) = ch - padB - (v - lo) / (hi - lo) * (ch - padT - padB)
-                            let ci = ScanPin.sliceCentreIndex s
-                            let laneOrder (name : string) =
-                                HashMap.tryFind name order |> Option.defaultValue System.Int32.MaxValue
-                            let meshes =
-                                s.Meshes
-                                |> Array.filter (fun m -> MeshVisibility.shown solo m.MeshName)
-                                |> Array.sortBy (fun m -> laneOrder m.MeshName)
-                            let colorOf (name : string) =
-                                match Map.tryFind name p.DatasetColors with
-                                | Some c4 -> Primitives.c4bToHex c4
-                                // Mesh identity stays in the mesh palette family (§B1).
-                                | None -> Primitives.c4bToHex (Primitives.meshColor (HashMap.tryFind name order |> Option.defaultValue 0))
-                            // Draw order: outermost planes first, the centre slice last.
-                            let planeOrder =
-                                Array.init s.Offsets.Length (fun k -> k)
-                                |> Array.sortByDescending (fun k -> abs s.Offsets.[k])
-                            let paths = ResizeArray<string>()
-                            for k in planeOrder do
-                                let o, sw =
-                                    if k = ci then 1.0, 1.6
-                                    else max 0.08 (0.34 - 0.34 * (abs s.Offsets.[k] / e)), 1.0
-                                for m in meshes do
-                                    if k < m.Planes.Length && m.Planes.[k].Length > 0 then
-                                        let d = System.Text.StringBuilder()
-                                        for line in m.Planes.[k] do
-                                            for i in 0 .. line.Length - 1 do
-                                                d.Append(if i = 0 then "M" else "L") |> ignore
-                                                d.Append(sprintf "%.1f %.1f" (x line.[i].X) (y line.[i].Y)) |> ignore
-                                        paths.Add (sprintf "{\"d\":\"%s\",\"c\":\"%s\",\"o\":%.2f,\"sw\":%.1f}"
-                                                    (d.ToString()) (colorOf m.MeshName) o sw)
-                            // Correspondence markers, projected onto the centre slice
-                            // (the out-of-plane offset is dropped deliberately).
-                            let dots = ResizeArray<string>()
-                            let c = p.Correspondence
-                            for m in meshes do
-                                let world =
-                                    if Some m.MeshName = rf then c.RefAnchor
-                                    else
-                                        let inRoi = Map.tryFind m.MeshName c.InRoi |> Option.defaultValue true
-                                        match Map.tryFind m.MeshName c.Anchors with
-                                        | Some a when inRoi ->
-                                            Some ((MeshView.displayedWorldPeekAt model t m.MeshName).Forward.TransformPos a.Point)
-                                        | _ -> None
-                                match world with
-                                | Some w ->
-                                    let uv = ScanPin.sliceUV p.Centre s.UDir w
-                                    let dx = min (cw - padX) (max padX (x uv.X))
-                                    let dy = min (ch - padB) (max padT (y uv.Y))
-                                    dots.Add (sprintf "{\"x\":%.1f,\"y\":%.1f,\"c\":\"%s\"}" dx dy (colorOf m.MeshName))
-                                | None -> ()
-                            let grid = ResizeArray<string>()
-                            if lo < 0.0 && hi > 0.0 then
-                                grid.Add (sprintf "{\"x1\":%.1f,\"y1\":%.1f,\"x2\":%.1f,\"y2\":%.1f}" padX (y 0.0) (cw - padX) (y 0.0))
-                            grid.Add (sprintf "{\"x1\":%.1f,\"y1\":%.1f,\"x2\":%.1f,\"y2\":%.1f}" (x 0.0) padT (x 0.0) (ch - padB))
-                            if not firstPin then sb.Append ',' |> ignore
-                            firstPin <- false
-                            sb.Append(sprintf "\"%s\":{\"w\":%.0f,\"h\":%.0f,\"paths\":[%s],\"dots\":[%s],\"grid\":[%s],\"dl\":\"⌀ %s\",\"dr\":\"Δ %s\"}"
-                                        (idStr id) cw ch
-                                        (String.concat "," paths)
-                                        (String.concat "," dots)
-                                        (String.concat "," grid)
-                                        (formatMeters (2.0 * e)) (formatMeters span0)) |> ignore
-                    | _ -> ()
-                sb.Append '}' |> ignore
-                sb.ToString())
         div {
             Class "pin-flag-labels"
             Primitives.showWhen model.ShowOverlaysHeld
             labelsJson |> AVal.map (fun json -> Some (Attribute("data-labels", json)))
-            chartsJson |> AVal.map (fun json -> Some (Attribute("data-charts", json)))
             OnBoot [
                 "(function(){"
                 "var el = __THIS__;"
-                "var ns = 'http://www.w3.org/2000/svg';"
-                "var lastL = '', lastC = '';"
-                "var charts = {}, pills = {};"
-                "function buildChart(id){"
-                "  var pill = pills[id]; if(!pill) return;"
-                "  var host = pill.querySelector('.pfl-chart');"
-                "  host.innerHTML = '';"
-                "  var ch = charts[id];"
-                "  if(!ch){ pill.classList.add('pfl-nochart'); return; }"
-                "  pill.classList.remove('pfl-nochart');"
-                "  var svg = document.createElementNS(ns, 'svg');"
-                "  svg.setAttribute('width', ch.w); svg.setAttribute('height', ch.h);"
-                "  svg.setAttribute('viewBox', '0 0 ' + ch.w + ' ' + ch.h);"
-                "  (ch.grid||[]).forEach(function(g){"
-                "    var ln = document.createElementNS(ns, 'line');"
-                "    ln.setAttribute('x1', g.x1); ln.setAttribute('y1', g.y1);"
-                "    ln.setAttribute('x2', g.x2); ln.setAttribute('y2', g.y2);"
-                "    ln.setAttribute('stroke', '#dbe2ea'); ln.setAttribute('stroke-width', '1');"
-                "    svg.appendChild(ln);"
-                "  });"
-                "  (ch.paths||[]).forEach(function(p){"
-                "    var pa = document.createElementNS(ns, 'path');"
-                "    pa.setAttribute('d', p.d); pa.setAttribute('fill', 'none');"
-                "    pa.setAttribute('stroke', p.c); pa.setAttribute('stroke-opacity', p.o);"
-                "    pa.setAttribute('stroke-width', p.sw); pa.setAttribute('stroke-linejoin', 'round');"
-                "    svg.appendChild(pa);"
-                "  });"
-                "  (ch.dots||[]).forEach(function(dt){"
-                "    var ci = document.createElementNS(ns, 'circle');"
-                "    ci.setAttribute('cx', dt.x); ci.setAttribute('cy', dt.y); ci.setAttribute('r', '3');"
-                "    ci.setAttribute('fill', dt.c); ci.setAttribute('stroke', '#ffffff'); ci.setAttribute('stroke-width', '1.2');"
-                "    svg.appendChild(ci);"
-                "  });"
-                "  function lab(x, anchor, s){"
-                "    var tx = document.createElementNS(ns, 'text');"
-                "    tx.setAttribute('x', x); tx.setAttribute('y', ch.h - 3);"
-                "    tx.setAttribute('fill', '#64748b'); tx.setAttribute('font-size', '8');"
-                "    tx.setAttribute('font-family', 'SF Mono, Monaco, monospace');"
-                "    tx.setAttribute('text-anchor', anchor); tx.textContent = s;"
-                "    svg.appendChild(tx);"
-                "  }"
-                "  if(ch.dl) lab(3, 'start', ch.dl);"
-                "  if(ch.dr) lab(ch.w - 3, 'end', ch.dr);"
-                "  host.appendChild(svg);"
-                "}"
+                "var lastL = '';"
+                "var pills = {};"
                 "function render(){"
                 "  var rawL = el.getAttribute('data-labels') || '[]';"
-                "  var rawC = el.getAttribute('data-charts') || '{}';"
-                "  var chartsChanged = rawC !== lastC;"
-                "  if(rawL === lastL && !chartsChanged) return;"
-                "  lastL = rawL; lastC = rawC;"
+                "  if(rawL === lastL) return;"
+                "  lastL = rawL;"
                 "  var items; try { items = JSON.parse(rawL); } catch(e) { return; }"
-                "  if(chartsChanged){ try { charts = JSON.parse(rawC); } catch(e) { charts = {}; } }"
                 "  var seen = {};"
                 "  items.forEach(function(p){"
                 "    seen[p.id] = true;"
@@ -273,13 +292,11 @@ module GuiOverlays =
                 "      pill = document.createElement('div');"
                 "      pill.className = 'pfl';"
                 "      var nm = document.createElement('div'); nm.className = 'pfl-name';"
-                "      var chd = document.createElement('div'); chd.className = 'pfl-chart';"
-                "      pill.appendChild(nm); pill.appendChild(chd);"
+                "      pill.appendChild(nm);"
                 "      el.appendChild(pill);"
                 "      pills[p.id] = pill;"
                 "      pill._n = '';"
-                "      buildChart(p.id);"
-                "    } else if(chartsChanged){ buildChart(p.id); }"
+                "    }"
                 "    if(pill._n !== p.n){"
                 "      pill._n = p.n;"
                 "      pill.querySelector('.pfl-name').textContent = p.n;"
@@ -292,7 +309,7 @@ module GuiOverlays =
                 "  });"
                 "}"
                 "render();"
-                "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-labels','data-charts']});"
+                "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-labels']});"
                 "})();"
             ]
         }
@@ -366,10 +383,6 @@ module GuiOverlays =
                         (fun (v : float) ->
                             let tt = clamp 0.0 1.0 (v / m)
                             V3d(0.13, 0.40, 0.85) * (1.0 - tt) + V3d(0.86, 0.20, 0.15) * tt)
-                    elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then
-                        // Brushing = sole focus: the maps stand down, the dots paint
-                        // on the shared signed range.
-                        "Brushed samples", lo, hi, Primitives.Diff.colorSignedV3 lo hi
                     elif soloName.IsNone then
                         let m = max 1e-6 (max (abs lo) hi)
                         "Variance σ", 0.0, m,
@@ -427,10 +440,14 @@ module GuiOverlays =
                     |> String.concat ","
                 sprintf "{\"title\":\"%s\",\"min\":\"%s\",\"max\":\"%s\",\"stops\":[%s],\"ticks\":[%s]}"
                     title (fmt span vLo) (fmt span vHi) stops ticks)
+        // While a brush is active the maps stand down and the dots are NEUTRAL
+        // (v12 §6) — no colour scale is in play, so the legend hides.
+        let brushedActive = model.BrushedSamples |> AVal.map (Set.isEmpty >> not)
         div {
             Class "color-legend"
             Primitives.showWhen
-                ((model.WorkflowStep, anyRangeOn) ||> AVal.map2 (fun s r -> s = Inspect || r))
+                ((model.WorkflowStep, anyRangeOn, brushedActive) |||> AVal.map3 (fun s r b ->
+                    (s = Inspect && not b) || r))
             legendJson |> AVal.map (fun json -> Some (Attribute("data-legend", json)))
             Primitives.observedRender "data-legend" "{}" [
                 "  if(!d.stops) return;"

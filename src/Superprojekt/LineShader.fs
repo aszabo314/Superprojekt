@@ -12,45 +12,6 @@ module Shader =
     let flatColor (_v : Effects.Vertex) =
         fragment { return uniform.FlatColor }
 
-// Solid vertex-coloured triangle batches (the brushed sample dots): positions are
-// pre-baked in render space, colour rides a per-vertex attribute. float32-only.
-module Dots =
-    open Aardvark.Dom
-    open FSharp.Data.Adaptive
-    open FShade
-
-    type Vertex = {
-        [<Position>] pos : V4f
-        [<Color>]    col : V4f
-    }
-
-    let trafo (v : Vertex) =
-        vertex {
-            let m = uniform.ModelViewProjTrafo
-            return { v with pos = m * v.pos }
-        }
-
-    let fragment (v : Vertex) =
-        fragment { return v.col }
-
-    let render (geo : aval<V3f[] * V4f[] * int[]>) =
-        // Never upload zero-size buffers (mirrors Lines.buildBuffers' max-1 guard).
-        let posArr = geo |> AVal.map (fun (p, _, _) -> ArrayBuffer (if p.Length = 0 then [| V3f.Zero |] else p) :> IBuffer)
-        let colArr = geo |> AVal.map (fun (_, c, _) -> ArrayBuffer (if c.Length = 0 then [| V4f.Zero |] else c) :> IBuffer)
-        let idxArr = geo |> AVal.map (fun (_, _, i) -> ArrayBuffer (if i.Length = 0 then [| 0 |] else i) :> IBuffer)
-        let count  = geo |> AVal.map (fun (_, _, i) -> i.Length)
-        sg {
-            Sg.Shader { trafo; fragment }
-            Sg.NoEvents
-            Sg.VertexAttributes(
-                HashMap.ofList [
-                    string DefaultSemantic.Positions, BufferView(posArr, typeof<V3f>)
-                    string DefaultSemantic.Colors,    BufferView(colArr, typeof<V4f>)
-                ])
-            Sg.Index(BufferView(idxArr, typeof<int>))
-            Sg.Render count
-        }
-
 module Lines =
     open Aardvark.Dom
     open FSharp.Data.Adaptive

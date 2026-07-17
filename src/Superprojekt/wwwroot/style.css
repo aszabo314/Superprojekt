@@ -102,6 +102,8 @@ body.loaded { background: #f4f6f8; }
     color: #0f172a; cursor: pointer; white-space: nowrap;
 }
 .tb-btn:hover { background: #edf0f4; }
+.tb-btn:disabled { opacity: 0.45; cursor: default; }
+.tb-btn:disabled:hover { background: #ffffff; }
 .tb-btn-active {
     background: #1a56db; color: #ffffff; border-color: #1447ba;
     box-shadow: inset 0 1px 2px rgba(0,0,0,0.15);
@@ -183,6 +185,8 @@ body.loaded { background: #f4f6f8; }
 .rail-btn-primary, .rail-btn-active { background: #1a56db; border-color: #1a56db; color: #fff; }
 .rail-btn-primary:hover { background: #1648b8; }
 .rail-pins-head { display: flex; align-items: center; margin-bottom: 6px; }
+/* "Isolate pins" checkbox (§7) — a compactToggle beside the New-pin button */
+.rail-isolate { margin-left: 8px; border-radius: 3px; }
 
 /* ── pin × mesh matrix (§B) — the rail navigation backbone ── */
 .rail-matrix-wrap { overflow-x: auto; }
@@ -208,15 +212,15 @@ body.loaded { background: #f4f6f8; }
 .mx-rows { display: flex; flex-direction: column; gap: 2px; }
 .mx-row { display: flex; align-items: stretch; gap: 2px; border-radius: 3px; }
 .mx-row-hover { background: #f1f5f9; }
-/* selected pin row header: accent-filled inline (pin colour) + a neutral inset */
-.mx-rowhead-sel { box-shadow: inset 0 0 0 1px #94a3b8; }
+/* selected pin row header: neutral accent fill + inset (pins carry no colour) */
+.mx-rowhead-sel { box-shadow: inset 0 0 0 1px #94a3b8; background: #dbe2ea; }
 .mx-rowhead {
     width: 64px; flex: 0 0 64px; display: flex; align-items: center; gap: 4px;
     cursor: pointer; padding: 1px 3px; overflow: hidden; border-radius: 3px;
 }
-/* pin identity: one pin-colour element with the name inside */
+/* pin identity: name-only, near-black text on the neutral header (v12 §4) */
 .mx-pinname {
-    flex: 1; border-radius: 3px; color: #fff; padding: 1px 0;
+    flex: 1; border-radius: 3px; color: #292524; padding: 1px 0;
     display: inline-flex; align-items: center; justify-content: center;
     font-size: 10px; font-weight: 700; letter-spacing: 0.3px; line-height: 1.4;
 }
@@ -249,10 +253,11 @@ body.loaded { background: #f4f6f8; }
 /* probe still running */
 .mx-cell-pending { background: #eef2f6 !important; opacity: 0.55; }
 
-/* dock pin-identity chip (Correspondence): pin-colour fill, name inside */
+/* dock pin-identity label (Correspondence): near-black name, neutral border */
 .ins-pinident {
     display: inline-flex; align-items: center; padding: 1px 8px;
-    border-radius: 4px; color: #fff; font-weight: 700; letter-spacing: 0.3px;
+    border-radius: 4px; color: #292524; font-weight: 700; letter-spacing: 0.3px;
+    border: 1px solid #cbd5e1; background: #f8fafc;
 }
 .ins-insp-sub { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; }
 
@@ -287,11 +292,12 @@ body.loaded { background: #f4f6f8; }
     display: flex; align-items: center; gap: 8px; min-height: 29px;
     padding: 5px 8px; border-bottom: 1px solid #e6eaf0; background: #f8fafc;
 }
-/* selected-pin identity chip: pin-colour fill with the name inside */
+/* selected-pin identity label: near-black name, neutral border (v12 §4) */
 .focus-pinchip {
     display: inline-flex; align-items: center;
-    font-weight: 700; font-size: 13px; letter-spacing: 0.3px; color: #fff;
+    font-weight: 700; font-size: 13px; letter-spacing: 0.3px; color: #292524;
     padding: 1px 8px; border-radius: 10px;
+    border: 1px solid #cbd5e1; background: #f8fafc;
 }
 /* projection selector (drives single + multiples together) */
 .focus-proj { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; }
@@ -565,6 +571,51 @@ body.loaded { background: #f4f6f8; }
     white-space: nowrap;
 }
 
+/* v12 §2: placement hard-prohibit tooltip at the cursor */
+.placement-tooltip {
+    position: fixed;
+    pointer-events: none;
+    font-size: 11px; font-weight: 600;
+    color: #b91c1c;
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid #dc2626;
+    border-radius: 3px;
+    padding: 2px 8px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    z-index: 10000;
+    white-space: nowrap;
+}
+
+/* v12 §7: stretch-mode ordinates (hoverable HTML strips) + exaggeration badge */
+.slice-ords { position: fixed; inset: 0; pointer-events: none; z-index: 90; overflow: hidden; }
+.slice-ord { position: absolute; width: 8px; pointer-events: auto; }
+.slice-ord-line {
+    position: absolute; left: 3.5px; top: 0; bottom: 0; width: 1.5px;
+    background: #0f172a; opacity: 0.75;
+}
+.slice-ord:hover .slice-ord-line { background: #1a56db; opacity: 1; width: 2px; }
+.slice-ord-tip {
+    display: none; position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
+    background: rgba(255,255,255,0.95); border: 1px solid #c5cdd8; border-radius: 3px;
+    padding: 1px 6px; font-size: 11px; font-family: 'SF Mono', 'Monaco', monospace;
+    color: #0f172a; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+.slice-ord:hover .slice-ord-tip { display: block; }
+/* slice-mode badges: gold = the slice accent (matches the focus indicator) */
+.slice-badges {
+    position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
+    display: flex; gap: 8px; z-index: 200; pointer-events: none;
+}
+.slice-badge {
+    background: #b45309; color: #ffffff; font-weight: 700; font-size: 12px;
+    padding: 2px 10px; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+}
+/* slice-mode metric rulers (left + bottom of the 3D area) */
+.slice-axes {
+    position: fixed; top: 0; left: 0; right: 0; bottom: var(--dock-h);
+    pointer-events: none; z-index: 80; overflow: hidden;
+}
+
 /* ── Show-overlays pin name tags (flag-pole tips, hold-O) ─────────── */
 
 .pin-flag-labels {
@@ -580,26 +631,11 @@ body.loaded { background: #f4f6f8; }
     background: rgba(255, 255, 255, 0.94);
     border: 2px solid;
     border-radius: 4px;
-    padding: 1px 8px 4px 8px;
+    padding: 1px 8px;
     font-size: 14px;
     font-weight: 600;
     white-space: nowrap;
     box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-}
-.pin-flag-labels .pfl-chart {
-    line-height: 0;
-    margin-top: 2px;
-}
-.pin-flag-labels .pfl-chart svg {
-    display: block;
-    background: #ffffff;
-    border-radius: 2px;
-}
-.pin-flag-labels .pfl-nochart {
-    padding-bottom: 1px;
-}
-.pin-flag-labels .pfl-nochart .pfl-chart {
-    display: none;
 }
 
 /* ── Scale bar ────────────────────────────────────────────────────── */
@@ -730,13 +766,12 @@ body.loaded { background: #f4f6f8; }
 .ins-inspect { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 4px 10px 6px; }
 .ins-insp-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding-bottom: 3px; border-bottom: 1px solid #eef2f6; margin-bottom: 3px; }
 .ins-insp-body { flex: 1; display: flex; min-width: 0; min-height: 0; gap: 8px; }
-.ins-dist-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* the two fixed charts (v12 §3): equal halves, always mounted, no reflow */
+.ins-charts { flex: 1; min-width: 0; display: flex; gap: 6px; }
+.ins-chart { flex: 1 1 50%; min-width: 0; position: relative; touch-action: none; }
+.ins-chart canvas { display: block; }
 /* JS→Elm brush bridge: off-screen but still event-capable (not display:none) */
 .ins-brush-bridge { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.ins-dist { touch-action: none; }
-.ins-dist { flex: 1; min-width: 0; position: relative; }
-.ins-dist-cv { display: block; }
-.ins-dist .ins-ph { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #cbd5e1; font-size: 14px; }
 .ins-shift { flex: 0 0 188px; border-left: 1px solid #eef2f6; padding-left: 10px; display: flex; flex-direction: column; gap: 6px; }
 .ins-shift-body { display: flex; flex-direction: column; gap: 4px; }
 .ins-shift-head { font-weight: 700; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

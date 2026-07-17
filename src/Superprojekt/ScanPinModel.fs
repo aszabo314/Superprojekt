@@ -20,28 +20,24 @@ type ContactRingState =
 // conversion happens at pipeline boundaries.
 type ScanPin = {
     Id                   : ScanPinId
-    // Immutable identity pair (§A), assigned at creation: a distinct PinColor
-    // (from the pin palette) + a random 2-char ShortName, everywhere shown as a
-    // colour-filled element with the name inside: matrix row, 3D flag label,
-    // focus label, samples.
+    // Immutable identity, assigned at creation: a random 2-char ShortName.
+    // Name-ONLY (v12 §4) — pin marks/labels render in Primitives.pinInk.
     ShortName            : string
-    PinColor             : C4b
     Centre               : V3d
     InnerRadius          : float
     Correspondence       : Correspondence
     HostMeshName         : string option
     CreatedAt            : DateTime
-    DatasetColors        : Map<string, C4b>
     // Probe = the committed displayed pose (every consumer reads this one).
     // ProbeOther = the SAME probe at the opposite Before/After pose — fetched only
     // once a solve exists; feeds the violin chart's inactive half. SetRegView swaps
     // the two when both are ready (no refetch).
     Probe                : ProbeState
     ProbeOther           : ProbeState
-    // Vertical cross-section cache for the show-overlays hold, same pose pairing
-    // as the probes: Slice = committed displayed pose, SliceOther = the opposite
-    // Before/After pose. SetRegView swaps a ready pair; the reg peek merely
-    // selects the other cache (visual only).
+    // Vertical cross-section cache feeding the matrix slice cells, same pose
+    // pairing as the probes: Slice = committed displayed pose, SliceOther = the
+    // opposite Before/After pose. SetRegView swaps a ready pair; the reg peek
+    // merely selects the other cache (visual only).
     Slice                : SliceState
     SliceOther           : SliceState
     ContactRings         : ContactRingState
@@ -149,16 +145,6 @@ module ScanPin =
         let halfW = window * 0.5
         let wMax = offsets |> Array.fold (fun a w -> max a (abs w)) 0.0
         sqrt (halfW * halfW + wMax * wMax) * 1.0001
-
-    // Chart frame (u, v) at plane offset w → metric world.
-    let sliceToWorld (centre : V3d) (uDir : V3d) (w : float) (q : V2d) =
-        centre + uDir * q.X + sliceNormalOf uDir * w + V3d.OOI * q.Y
-
-    // Metric world → chart frame of the CENTRE slice (the out-of-plane component
-    // drops — i.e. the point is projected onto the centre plane).
-    let sliceUV (centre : V3d) (uDir : V3d) (p : V3d) =
-        let q = p - centre
-        V2d(Vec.dot q uDir, q.Z)
 
     // Index of the centre plane (offset closest to 0).
     let sliceCentreIndex (s : PinSlice) =

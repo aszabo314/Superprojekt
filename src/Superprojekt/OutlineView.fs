@@ -102,6 +102,7 @@ module OutlineView =
         (info : Aardvark.Dom.RenderControlInfo)
         (thresholdA : aval<float32>)
         (isoOpacityA : aval<float32>)
+        (distFadeA : aval<float32>)
         (mask : aval<V4f[]>)
         (node : ISceneNode) : aset<ISceneNode> =
 
@@ -124,6 +125,7 @@ module OutlineView =
                 Sg.Uniform("OutlineTexel", texel)
                 Sg.Uniform("OutlineThreshold", thresholdA)
                 Sg.Uniform("IsolineOpacity", isoOpacityA)
+                Sg.Uniform("OutlineDistFade", distFadeA)
                 Sg.Uniform("OutlineMask", mask)
                 Sg.VertexAttributes quadAttrs
                 Sg.Index quadIdxView
@@ -132,15 +134,57 @@ module OutlineView =
 
         ASet.single composite
 
+    // Fused placement-suitability overlay (v12 §2): the shape-weighted coverage
+    // MRT → one fullscreen composite (transparent / flat grey / mesh-colour
+    // hatch, see SuitabilityComposite). Composite active only while a placement
+    // is armed; drawn BEFORE the outline composites in SceneGraph, so isolines
+    // and footprint contours stay readable on top of it.
+    let buildSuitability
+        (info : Aardvark.Dom.RenderControlInfo)
+        (model : AdaptiveModel)
+        (view : aval<Trafo3d>)
+        (proj : aval<Trafo3d>) : aset<ISceneNode> =
+        let suit0, suit1, _ = renderOffscreen info coverage1 false (MeshView.buildSuitabilityNode model view proj)
+        let active =
+            model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
+        let composite =
+            sg {
+                // NoEvents is load-bearing — see the main composite above.
+                Sg.NoEvents
+                Sg.Active active
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.Shader {
+                    OutlineEdge.vertex
+                    SuitabilityComposite.fragment
+                }
+                Sg.Uniform("Suit0", suit0)
+                Sg.Uniform("Suit1", suit1)
+                Sg.Uniform("CoverageColors", AVal.constant MeshView.coverageColors)
+                Sg.VertexAttributes quadAttrs
+                Sg.Index quadIdxView
+                Sg.Render (AVal.constant quadIdx.Length)
+            }
+        ASet.single composite
+
     let build
         (info : Aardvark.Dom.RenderControlInfo)
         (model : AdaptiveModel)
         (view : aval<Trafo3d>)
         (proj : aval<Trafo3d>) : aset<ISceneNode> =
         let mask = MeshView.outlineMask model
+        // Slice-mode line falloff (v12 §5 follow-up): the SAME small window as
+        // the mesh surface fade (SliceCam.FadeDist, a few cm) — outlines and
+        // isolines vanish with the fill. depth01 → distance is linear under the
+        // slice ortho. 0 disables (perspective).
+        let distFade =
+            MeshView.sliceCamera model |> AVal.map (function
+                | Some s -> float32 ((s.Far - s.Near) / max 1e-9 s.FadeDist)
+                | None -> 0.0f)
         let combined =
             buildFromNode info (model.OutlineThreshold |> AVal.map float32)
                 (model.IsolineOpacity |> AVal.map float32)
+                distFade
                 mask (MeshView.buildOutlineNode model view proj)
         let footprints = buildCoverage info mask (MeshView.buildCoverageNode model view proj)
         ASet.union combined footprints

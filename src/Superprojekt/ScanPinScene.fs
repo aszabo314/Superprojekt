@@ -118,7 +118,8 @@ module ScanPinScene =
     // independent of the cut position AND the azimuth (axis offsets are), so N
     // stays rock-solid while the slice plane is scrolled or rotated:
     //   brushed → the selected pin's brushed samples span the view height
-    //     (max |axis-direction offset from the pin centre| → 90 % of half-height);
+    //     (max |axis-direction offset from the pin centre| → 75 % of half-height,
+    //     so the data sits clear of the edges);
     //   no brush → the ~20 on-surface PROBE samples closest to the pin centre
     //     inside the pin sphere stand in for "mesh vertices in the region"
     //     (probe positions are exactly on-mesh points and already client-side —
@@ -181,7 +182,7 @@ module ScanPinScene =
                             | None -> [||]
                     let maxV = if offsets.Length = 0 then 0.0 else Array.max offsets
                     if maxV > 1e-9 then
-                        clamp 1.0 1000.0 (s.HalfHeight * 0.9 / maxV)
+                        clamp 1.0 1000.0 (s.HalfHeight * 0.75 / maxV)
                     else
                         let (lo, hi) = rangeA.GetValue t
                         let span = max 1e-4 (hi - lo)
@@ -269,6 +270,10 @@ module ScanPinScene =
                 let vpY = float (max 1 (viewportCss.GetValue t).Y)
                 let slice = sliceCamA.GetValue t
                 let squish = match slice with Some _ -> max 1.0 (stretchA.GetValue t) | None -> 1.0
+                // Stretch tightens the ortho half-width (×0.8 = horizontal zoom-in);
+                // shrink the horizontal glyph axis by the same factor so the marks
+                // stay circular under the shared projection.
+                let horizK = if squish > 1.0 then MeshView.sliceStretchHorizTighten else 1.0
                 let halfOf : V3d -> float =
                     match slice with
                     // Ortho: 1 px = 2·HalfHeight/vpY render units, dot-independent.
@@ -278,7 +283,7 @@ module ScanPinScene =
                 let out = ResizeArray<V3d * V3d * V4d * float>()
                 for (p, a, interest) in dots do
                     let r = halfOf p
-                    addGlyph out p (right * r) (up * (r / squish)) interest (glyphInk a) 1.5
+                    addGlyph out p (right * (r * horizK)) (up * (r / squish)) interest (glyphInk a) 1.5
                 out.ToArray())
 
     // Focus-view brushed glyphs: the same circle+cross mark, XY-aligned (exact
@@ -308,9 +313,13 @@ module ScanPinScene =
         let notFullscreen = AVal.map not fullscreenActive
         // Correspondence point markers (the constellation) render only in the
         // Correspondence workflow — Overview/Inspect stay clean (matches the focus
-        // panel's overlay, which is already gated the same way).
+        // panel's overlay, which is already gated the same way) — and stand down
+        // in slice mode with the rest of the pin chrome (the terrain profiles
+        // own that view).
         let inCorrespondence = model.WorkflowStep |> AVal.map ((=) Correspondence)
-        let constellationActive = (notFullscreen, inCorrespondence) ||> AVal.map2 (&&)
+        let constellationActive =
+            (notFullscreen, inCorrespondence, model.SliceMode)
+            |||> AVal.map3 (fun nf c s -> nf && c && not s)
         // Shared chrome for every line overlay: alpha-blended, non-interactive.
         // LessOrEqual = occluded by foreground geometry (the spatial cue);
         // None = on top (constellation depth bias, selection circle).
@@ -594,8 +603,6 @@ module ScanPinScene =
         // Pin flag pole (far view): a neutral pole + top ring along the probe axis
         // per committed pin, screen-constant size (ScanPin.flagHeightRender: fixed
         // screen fraction, world-clamped, gear-scaled — hence the view dependency).
-        // While the show-overlays hold is down it takes the pin ink and gets
-        // much thicker, matching the white-out-except-pins read.
         let pinFlags =
             let neutral = V4d(0.52, 0.55, 0.60, 0.75)
             let segs =
@@ -603,13 +610,12 @@ module ScanPinScene =
                     let pins  = pinsVal.GetValue t
                     let cc    = model.CommonCentroid.GetValue t
                     let scale = datasetScale.GetValue t
-                    let overlays = model.ShowOverlaysHeld.GetValue t
                     let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
                     let fs = model.FlagScale.GetValue t
                     let out   = ResizeArray<V3d * V3d * V4d * float>()
                     for (_, p) in HashMap.toSeq pins do
-                        let col = if overlays then V4d(Primitives.pinInkV3d, 1.0) else neutral
-                        let w   = if overlays then 7.0 else 2.5
+                        let col = neutral
+                        let w   = 2.5
                         let _, u, v = basisFromNormal (ScanPin.axis p)
                         let c   = ScanPin.renderCentre cc scale p.Centre
                         let h   = ScanPin.flagHeightRender scale fs (Vec.length (eye - c))
@@ -626,15 +632,10 @@ module ScanPinScene =
         // (passOne, DepthTest.None) so it reads against the terrain. Identity is
         // immutable → snapshot once per id (no atlas rebuild on probe/ring updates);
         // only the trafo is adaptive (uniform update, no rebuild).
-        // Hidden while the show-overlays hold is down — the 2D flag-tip name tags
-        // (GuiOverlays.pinFlagLabels) take over there.
         let pinFlagFrame = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre, ScanPin.axis p) |> AMap.toAVal
         let pinLabels =
             pinIdSet |> ASet.map (fun id ->
-                // Hidden while the overlays hold is down (the 2D tags take over)
-                // and in slice mode (the whole flag stands down there).
-                let labelsActive =
-                    (flagsActive, model.ShowOverlaysHeld) ||> AVal.map2 (fun fa ov -> fa && not ov)
+                let labelsActive = flagsActive
                 let p0 = HashMap.tryFind id (AVal.force pinsVal)
                 let trafoVal =
                     AVal.custom (fun t ->

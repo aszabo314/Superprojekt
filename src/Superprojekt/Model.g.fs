@@ -1,5 +1,5 @@
-//4578c212-0d23-844e-ff39-621a09a0c987
-//b1af75d8-a9e9-58f6-860d-3e4bc1e9083d
+//ffb1fb03-f08b-fd84-d260-132f793bc19c
+//09eb0632-03d0-5e01-51b2-55eb10c5b259
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -56,7 +56,6 @@ type AdaptiveModel(value : Model) =
     let _SliceContextSpacing_ = FSharp.Data.Adaptive.cval(value.SliceContextSpacing)
     let _SliceVertPercentile_ = FSharp.Data.Adaptive.cval(value.SliceVertPercentile)
     let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
-    let _ShowOverlaysHeld_ = FSharp.Data.Adaptive.cval(value.ShowOverlaysHeld)
     let _LoadTransforms_ = FSharp.Data.Adaptive.cval(value.LoadTransforms)
     let _SolvedTransforms_ = FSharp.Data.Adaptive.cval(value.SolvedTransforms)
     let _SolveInputs_ = FSharp.Data.Adaptive.cval(value.SolveInputs)
@@ -77,7 +76,6 @@ type AdaptiveModel(value : Model) =
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let _WorkflowStep_ = FSharp.Data.Adaptive.cval(value.WorkflowStep)
-    let _InspectChannel_ = FSharp.Data.Adaptive.cval(value.InspectChannel)
     let _FocusProjection_ = FSharp.Data.Adaptive.cval(value.FocusProjection)
     let _CorrArm_ = FSharp.Data.Adaptive.cval(value.CorrArm)
     let _CorrPreview_ = FSharp.Data.Adaptive.cval(value.CorrPreview)
@@ -124,7 +122,6 @@ type AdaptiveModel(value : Model) =
             _SliceContextSpacing_.Value <- value.SliceContextSpacing
             _SliceVertPercentile_.Value <- value.SliceVertPercentile
             _ActivePickingLayer_.Value <- value.ActivePickingLayer
-            _ShowOverlaysHeld_.Value <- value.ShowOverlaysHeld
             _LoadTransforms_.Value <- value.LoadTransforms
             _SolvedTransforms_.Value <- value.SolvedTransforms
             _SolveInputs_.Value <- value.SolveInputs
@@ -145,7 +142,6 @@ type AdaptiveModel(value : Model) =
             _MeshSolo_.Value <- value.MeshSolo
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
             _WorkflowStep_.Value <- value.WorkflowStep
-            _InspectChannel_.Value <- value.InspectChannel
             _FocusProjection_.Value <- value.FocusProjection
             _CorrArm_.Value <- value.CorrArm
             _CorrPreview_.Value <- value.CorrPreview
@@ -185,7 +181,6 @@ type AdaptiveModel(value : Model) =
     member __.SliceContextSpacing = _SliceContextSpacing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.SliceVertPercentile = _SliceVertPercentile_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
-    member __.ShowOverlaysHeld = _ShowOverlaysHeld_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.LoadTransforms = _LoadTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.SolvedTransforms = _SolvedTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.SolveInputs = _SolveInputs_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<SolveInputs>>
@@ -206,7 +201,6 @@ type AdaptiveModel(value : Model) =
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.WorkflowStep = _WorkflowStep_ :> FSharp.Data.Adaptive.aval<WorkflowStep>
-    member __.InspectChannel = _InspectChannel_ :> FSharp.Data.Adaptive.aval<InspectChannel>
     member __.FocusProjection = _FocusProjection_ :> FSharp.Data.Adaptive.aval<FocusProjection>
     member __.CorrArm = _CorrArm_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.CorrPreview = _CorrPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>

@@ -76,7 +76,8 @@ module GuiOverlays =
                         let vp = viewportSize.GetValue t
                         let aspect = float vp.X / float (max 1 vp.Y)
                         let viewT = CameraView.lookAt s.Eye s.Target s.Up |> CameraView.viewTrafo
-                        let projT = MeshView.orthoProjTrafo (s.HalfHeight * aspect) (s.HalfHeight / n) s.Near s.Far
+                        let hw, hh = MeshView.sliceOrthoHalfSizes s aspect n
+                        let projT = MeshView.orthoProjTrafo hw hh s.Near s.Far
                         let fwd = (viewT * projT).Forward
                         let scale = datasetScaleA.GetValue t
                         let toPx (p : V3d) =
@@ -117,7 +118,8 @@ module GuiOverlays =
 
     // v12 follow-up: slice-mode badges — "ortho slice view" whenever slice mode
     // is active, plus "vertical axis stretched ×N" while stretch is on. Gold =
-    // the slice-mode accent (shared with the focus angle indicator).
+    // the slice-mode accent (the badges only — the focus angle indicator is
+    // white, transient layer).
     let sliceBadges (model : AdaptiveModel) =
         let stretchA = ScanPinScene.sliceStretchFactor model
         div {
@@ -161,10 +163,11 @@ module GuiOverlays =
                     let w, h = float vp.X, float vp.Y
                     let n = stretchA.GetValue t
                     let scale = datasetScaleA.GetValue t
-                    // px per metre: vertical fills 2·HalfHeight over vpY (× N when
-                    // stretched); horizontal shares the unstretched scale.
-                    let pxPerMh = h * scale / (2.0 * s.HalfHeight)
-                    let pxPerMv = pxPerMh * n
+                    // px per metre straight from the shared ortho half-extents,
+                    // so the rulers track the stretch AND the horizontal tighten.
+                    let hw, hh = MeshView.sliceOrthoHalfSizes s (w / max 1.0 h) n
+                    let pxPerMh = w * scale / (2.0 * hw)
+                    let pxPerMv = h * scale / (2.0 * hh)
                     let cx, cy = w * 0.5, h * 0.5
                     let ticks (pxPerM : float) (extentPx : float) (centre : float) (flip : bool) =
                         let halfM = extentPx * 0.5 / max 1e-9 pxPerM
@@ -229,91 +232,6 @@ module GuiOverlays =
             steps |> Array.minBy (fun s -> abs (log (s / v)))
 
 
-    // Show-overlays hold: a 2D name tag per pin floating at its flag-pole tip
-    // (ScanPin.flagTopRender projected to CSS px every frame). One attribute
-    // drives one JS renderer: data-labels re-projects the tag positions every
-    // frame (cheap; pills are stable DOM nodes that only move). Same 90°
-    // horizontal fov as the main projection — only NDC x/y matter here.
-    // (The v11 per-pin profile charts that used to ride on these pills were
-    // removed in v12 §5 — the matrix slice cells + slice mode carry sections.)
-    let pinFlagLabels (model : AdaptiveModel) (viewportSize : aval<V2i>) =
-        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-        let idStr (id : ScanPinId) = let (ScanPinId.ScanPinId g) = id in g.ToString "N"
-        let labelsJson =
-            AVal.custom (fun t ->
-                if not (model.ShowOverlaysHeld.GetValue t) then "[]"
-                else
-                    let pins  = pinsVal.GetValue t
-                    let cc    = model.CommonCentroid.GetValue t
-                    let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
-                    let vp    = viewportSize.GetValue t
-                    let cam   = model.Camera.view.GetValue t
-                    let viewT = CameraView.viewTrafo cam
-                    let fs    = model.FlagScale.GetValue t
-                    let projT =
-                        Frustum.perspective 90.0 1.0 5000.0 (float vp.X / float (max 1 vp.Y))
-                        |> Frustum.projTrafo
-                    let vpFwd = (viewT * projT).Forward
-                    let items =
-                        HashMap.toList pins |> List.choose (fun (id, p) ->
-                            let cR = ScanPin.renderCentre cc scale p.Centre
-                            let fh = ScanPin.flagHeightRender scale fs (Vec.length (cam.Location - cR))
-                            let h = vpFwd * V4d(ScanPin.flagTopRender cc scale fh p, 1.0)
-                            if h.W <= 1e-6 then None
-                            else
-                                let ndc = h.XYZ / h.W
-                                if abs ndc.X > 1.1 || abs ndc.Y > 1.1 then None
-                                else
-                                    Some (sprintf "{\"id\":\"%s\",\"x\":%.1f,\"y\":%.1f,\"n\":\"%s\",\"c\":\"%s\"}"
-                                            (idStr id)
-                                            ((ndc.X * 0.5 + 0.5) * float vp.X)
-                                            ((0.5 - ndc.Y * 0.5) * float vp.Y)
-                                            p.ShortName Primitives.pinInkCss))
-                    "[" + String.concat "," items + "]")
-        div {
-            Class "pin-flag-labels"
-            Primitives.showWhen model.ShowOverlaysHeld
-            labelsJson |> AVal.map (fun json -> Some (Attribute("data-labels", json)))
-            OnBoot [
-                "(function(){"
-                "var el = __THIS__;"
-                "var lastL = '';"
-                "var pills = {};"
-                "function render(){"
-                "  var rawL = el.getAttribute('data-labels') || '[]';"
-                "  if(rawL === lastL) return;"
-                "  lastL = rawL;"
-                "  var items; try { items = JSON.parse(rawL); } catch(e) { return; }"
-                "  var seen = {};"
-                "  items.forEach(function(p){"
-                "    seen[p.id] = true;"
-                "    var pill = pills[p.id];"
-                "    if(!pill){"
-                "      pill = document.createElement('div');"
-                "      pill.className = 'pfl';"
-                "      var nm = document.createElement('div'); nm.className = 'pfl-name';"
-                "      pill.appendChild(nm);"
-                "      el.appendChild(pill);"
-                "      pills[p.id] = pill;"
-                "      pill._n = '';"
-                "    }"
-                "    if(pill._n !== p.n){"
-                "      pill._n = p.n;"
-                "      pill.querySelector('.pfl-name').textContent = p.n;"
-                "      pill.style.borderColor = p.c; pill.style.color = p.c;"
-                "    }"
-                "    pill.style.left = p.x + 'px'; pill.style.top = p.y + 'px';"
-                "  });"
-                "  Object.keys(pills).forEach(function(id){"
-                "    if(!seen[id]){ el.removeChild(pills[id]); delete pills[id]; }"
-                "  });"
-                "}"
-                "render();"
-                "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-labels']});"
-                "})();"
-            ]
-        }
-
     // Transient feedback for blocked/failed actions (auto-clears).
     let toast (model : AdaptiveModel) =
         div {
@@ -358,7 +276,6 @@ module GuiOverlays =
     // dots' shared signed range). All maps read on the unified pin-derived scale (§C).
     let colorLegend (model : AdaptiveModel) =
         let rangeA = MeshView.inspectRange model
-        let dispA = MeshView.displacementRange model
         let orderContent = model.MeshOrder.Content
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         let fmt (span : float) (v : float) =
@@ -390,32 +307,24 @@ module GuiOverlays =
                             let tt = clamp 0.0 1.0 (v / m)
                             V3d(0.945, 0.961, 0.976) * (1.0 - tt) + V3d(0.725, 0.110, 0.110) * tt)
                     else
-                        match model.InspectChannel.GetValue t with
-                        | ChDisplacement ->
-                            let m = max 1e-6 (dispA.GetValue t)
-                            "Displacement", 0.0, m,
-                            (fun v ->
-                                let tt = clamp 0.0 1.0 (v / m)
-                                V3d(0.93, 0.94, 0.98) * (1.0 - tt) + V3d(0.118, 0.227, 0.541) * tt)
-                        | ChDifference ->
-                            // Title names the compared meshes by display number
-                            // (isolated moving mesh vs the reference); a cell
-                            // selection appends its pin identity (§A5: "that pair").
-                            let order = orderContent.GetValue t
-                            let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
-                            let pair =
-                                match soloName, model.ReferenceMesh.GetValue t with
-                                | Some s, Some r -> sprintf " %d vs %d" (numOf s) (numOf r)
-                                | _ -> ""
-                            let pinSuffix =
-                                match model.Selection.Active.GetValue t with
-                                | SelCell (p, _) ->
-                                    match HashMap.tryFind p (pinsVal.GetValue t) with
-                                    | Some pin -> sprintf " · %s" pin.ShortName
-                                    | None -> ""
-                                | _ -> ""
-                            let sub = if model.ExtrinsicZDiff.GetValue t then "Δz" else "M3C2"
-                            sprintf "Difference%s (%s)%s" pair sub pinSuffix, lo, hi, Primitives.Diff.colorSignedV3 lo hi
+                        // Title names the compared meshes by display number
+                        // (isolated moving mesh vs the reference); a cell
+                        // selection appends its pin identity (§A5: "that pair").
+                        let order = orderContent.GetValue t
+                        let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
+                        let pair =
+                            match soloName, model.ReferenceMesh.GetValue t with
+                            | Some s, Some r -> sprintf " %d vs %d" (numOf s) (numOf r)
+                            | _ -> ""
+                        let pinSuffix =
+                            match model.Selection.Active.GetValue t with
+                            | SelCell (p, _) ->
+                                match HashMap.tryFind p (pinsVal.GetValue t) with
+                                | Some pin -> sprintf " · %s" pin.ShortName
+                                | None -> ""
+                            | _ -> ""
+                        let sub = if model.ExtrinsicZDiff.GetValue t then "Δz" else "M3C2"
+                        sprintf "Difference%s (%s)%s" pair sub pinSuffix, lo, hi, Primitives.Diff.colorSignedV3 lo hi
                 let span = vHi - vLo
                 let hexAt (v : float) =
                     let c = colorAt v

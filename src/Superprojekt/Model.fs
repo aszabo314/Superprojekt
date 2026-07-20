@@ -32,12 +32,6 @@ type FocusProjection =
 module FocusProjection =
     let label = function ProjPano -> "360°" | ProjTop -> "Top"
 
-// Inspect focus-tile channel: Difference = pair signed-distance heatmap, Displacement
-// = load→solved motion glyphs. The central-3D variance map ignores this toggle.
-type InspectChannel =
-    | ChDifference
-    | ChDisplacement
-
 module DatasetScale =
     let forMesh (scales : Map<string, float>) (meshName : string) =
         let i = meshName.IndexOf '/'
@@ -171,10 +165,6 @@ type Model =
 
         ActivePickingLayer : string option
 
-        // Spring-loaded show-overlays modifier: hold to greyscale the scene
-        // except the pin colours, making pin correspondence across views unmistakable.
-        ShowOverlaysHeld  : bool
-
         // LoadTransform is the immutable per-mesh baseline captured at load;
         // SolvedTransform (presence = solved) is written by the correspondence
         // solve; RegView picks which the meshes display. Render-space.
@@ -227,8 +217,6 @@ type Model =
         MeshSolo            : string option
         GearPopoverOpen     : bool
         WorkflowStep        : WorkflowStep
-        // Inspect focus-tile channel (difference vs displacement).
-        InspectChannel      : InspectChannel
 
         // Pano / Top projection of the WebGL focus single.
         FocusProjection     : FocusProjection
@@ -342,7 +330,6 @@ module Model =
             SliceContextSpacing = 0.15
             SliceVertPercentile = 0.95
             ActivePickingLayer = None
-            ShowOverlaysHeld  = false
             LoadTransforms        = Map.empty
             SolvedTransforms      = Map.empty
             SolveInputs           = None
@@ -363,7 +350,6 @@ module Model =
             MeshSolo            = None
             GearPopoverOpen     = false
             WorkflowStep        = Overview
-            InspectChannel      = ChDifference
             FocusProjection     = ProjTop
             CorrArm             = None
             CorrPreview         = None

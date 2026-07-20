@@ -162,8 +162,8 @@ module View =
                         match sc with
                         | Some sl ->
                             let aspect = float s.X / float (max 1 s.Y)
-                            // Vertical-only exaggeration (v12 §7): half-height ÷ N.
-                            MeshView.orthoProjTrafo (sl.HalfHeight * aspect) (sl.HalfHeight / stretch) sl.Near sl.Far
+                            let hw, hh = MeshView.sliceOrthoHalfSizes sl aspect stretch
+                            MeshView.orthoProjTrafo hw hh sl.Near sl.Far
                         | None ->
                             Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo)
 
@@ -553,9 +553,6 @@ module View =
                 | "i" | "I" ->
                     // Hold-I = registration peek (the reducer gates on a solve existing).
                     env.Emit [SetRegPeek true]
-                | "o" | "O" ->
-                    // Hold-O = show-overlays (white-out except pins).
-                    env.Emit [SetShowOverlays true]
                 | "Escape" ->
                     // Cancels a live placement AND exits slice mode (both no-ops
                     // when idle) — the "easy exit" of v12 §5.
@@ -567,7 +564,6 @@ module View =
                 | " "     -> transact (fun () -> spaceHeld.Value <- false)
                 | "Alt"   -> transact (fun () -> altHeld.Value <- false)
                 | "i" | "I" -> env.Emit [SetRegPeek false]
-                | "o" | "O" -> env.Emit [SetShowOverlays false]
                 | _ -> ()
             )
 
@@ -575,7 +571,6 @@ module View =
             GuiRail.rail env model
             GuiFocus.panel env model
             GuiOverlays.toast model
-            GuiOverlays.pinFlagLabels model (viewportSize :> aval<V2i>)
             GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>) (altHeld :> aval<bool>)
             GuiOverlays.placementTooltip model (cursorScreen :> aval<_>) (placementValid :> aval<_>)
             GuiOverlays.sliceOrdinates model (viewportSize :> aval<V2i>)

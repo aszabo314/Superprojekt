@@ -44,13 +44,12 @@ module MeshShader =
         member x.SliceFadeNear  : float32 = x?SliceFadeNear
         member x.SliceFadeDist  : float32 = x?SliceFadeDist
         // Per-vertex SurfaceDist painter (above-ghost only): 0 = none;
-        // 1 = signed difference, diverging blue↔grey↔red (soloed moving mesh, Inspect
-        //     Difference); 2 = variance std ≥0, sequential grey→red (reference,
-        //     Inspect ensemble); 3 = displacement magnitude ≥0, sequential light→blue
-        //     (soloed moving mesh, Inspect Displacement). DistScale saturates the
-        //     positive end, DistLoNeg (enc 1 only) the |negative| end — both come from
-        //     the ONE pin-derived Inspect range (§C, ScanPin.inspectRange), so every
-        //     map shares a scale. SurfaceDist = 1e30 → keep base colour.
+        // 1 = signed difference, diverging blue↔grey↔red (soloed moving mesh);
+        // 2 = variance std ≥0, sequential grey→red (reference, Inspect ensemble).
+        // DistScale saturates the positive end, DistLoNeg (enc 1 only) the
+        // |negative| end — both come from the ONE pin-derived Inspect range (§C,
+        // ScanPin.inspectRange), so every map shares a scale. SurfaceDist = 1e30
+        // → keep base colour.
         member x.DistanceEncoding : int     = x?DistanceEncoding
         member x.DistScale        : float32 = x?DistScale
         member x.DistLoNeg        : float32 = x?DistLoNeg
@@ -75,9 +74,6 @@ module MeshShader =
         // depth contest deterministically (no per-pixel ID/colour alternation
         // where epochs differ by only noise).
         member x.OutlineDepthBias : float32 = x?OutlineDepthBias
-        // Show-overlays modifier: 1 → paint the mesh plain white (shading kept).
-        // Pins are separate geometry (unaffected), so only they carry colour.
-        member x.Whiteout         : float32 = x?Whiteout
         // Inspect de-clutter (§B5): 1 → the base surface is a plain near-white
         // (no photo texture / palette / slope), so the false-colour painters above
         // it are the only filled signal. Shading still applies.
@@ -224,14 +220,6 @@ module MeshShader =
                     let loC = V3f(0.945f, 0.961f, 0.976f)
                     let hiC = V3f(0.725f, 0.110f, 0.110f)
                     baseRgb <- loC * (1.0f - tt) + hiC * tt
-            // Displacement magnitude (soloed moving mesh, Inspect): |load→solved| ≥0,
-            // light → dark blue — matches the focus displacement tile.
-            if uniform.DistanceEncoding = 3 && aboveGhost then
-                let d = v.sd
-                if abs d < 1e20f then
-                    let hi = max 1e-6f uniform.DistScale
-                    let tt = clamp 0.0f 1.0f (d / hi)
-                    baseRgb <- V3f(0.93f, 0.94f, 0.98f) * (1.0f - tt) + V3f(0.118f, 0.227f, 0.541f) * tt
             // Incidence heatmap: incidence angle to the scan sensor (the mesh's
             // panorama centre, fed via SensorOrigin), grazing = red, head-on = green.
             // Uses the GEOMETRIC (per-triangle, from screen-space derivatives) normal,
@@ -274,11 +262,6 @@ module MeshShader =
             // (World-Z isolines are NOT drawn here — they are edge-detected from a
             // band-parity field in the offscreen outline pass, so they get the same
             // crisp 1px look as the silhouette outline. See OutlineGBuffer/OutlineEdge.)
-            // Show-overlays modifier: collapse the mesh to plain white (last, so
-            // every false-colour map above is overridden too) — only the
-            // separately-rendered pin geometry carries colour while held.
-            if uniform.Whiteout > 0.5f then
-                baseRgb <- V3f(1.0f, 1.0f, 1.0f)
             let depth =
                 if alpha >= opaqueThreshold then v.fc.Z
                 else 1.0f

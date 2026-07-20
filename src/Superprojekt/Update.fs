@@ -89,9 +89,6 @@ module Update =
             { model with SliceContextSpacing = clamp 0.02 0.5 v; ScanPins = ScanPinModel.invalidateSlices model.ScanPins }
         | SetSliceVertPercentile v ->
             { model with SliceVertPercentile = clamp 0.5 1.0 v }
-        | SetShowOverlays held ->
-            if model.ShowOverlaysHeld = held then model
-            else { model with ShowOverlaysHeld = held }
         | SetRegView v ->
             // Only meaningful once a solve exists (the view disables it otherwise).
             // The pose-baked pair caches swap in place (UpdateHelpers.applyRegView).
@@ -400,8 +397,6 @@ module Update =
                                  CorrArm = None; CorrPreview = None; BrushedSamples = Set.empty
                                  LocateBackup = None
                                  Selection = { model.Selection with Hovered = None } }
-        | SetInspectChannel ch ->
-            { model with InspectChannel = ch }
         | SetFocusProjection p ->
             { model with FocusProjection = p }
         // Slice mode (v12 §5): pin-centred — refuse to enter without a pin. The
@@ -673,7 +668,7 @@ module Update =
     // Same generation-guarded debounce as ensureVariance, same per-pose pairing:
     // the Other pose is fetched only once a solve exists, in the same batch.
     let private ensureFocusDist (env : Env<Message>) (model : Model) : Model =
-        if model.WorkflowStep <> Inspect || model.InspectChannel <> ChDifference then model
+        if model.WorkflowStep <> Inspect then model
         else
             match model.ReferenceMesh with
             | None -> model

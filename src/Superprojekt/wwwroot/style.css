@@ -284,8 +284,6 @@ body.loaded { background: #f4f6f8; }
   background-position: center; background-repeat: no-repeat; background-size: 1px 20px;
 }
 .focus-resize:hover::before { background-color: #1a56db; border-color: #1a56db; }
-/* displacement glyph legend */
-.focus-displeg { padding: 3px 8px; font-size: 10px; color: #475569; background: #f8fafc; border-top: 1px solid #eef2f6; }
 /* min-height keeps the strip from collapsing when every control is hidden
    (Overview, no pin) — the containers never move, only content changes */
 .focus-head {
@@ -614,28 +612,6 @@ body.loaded { background: #f4f6f8; }
 .slice-axes {
     position: fixed; top: 0; left: 0; right: 0; bottom: var(--dock-h);
     pointer-events: none; z-index: 80; overflow: hidden;
-}
-
-/* ── Show-overlays pin name tags (flag-pole tips, hold-O) ─────────── */
-
-.pin-flag-labels {
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    overflow: hidden;
-    z-index: 100;
-}
-.pin-flag-labels .pfl {
-    position: absolute;
-    transform: translate(-50%, -100%) translateY(-8px);
-    background: rgba(255, 255, 255, 0.94);
-    border: 2px solid;
-    border-radius: 4px;
-    padding: 1px 8px;
-    font-size: 14px;
-    font-weight: 600;
-    white-space: nowrap;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
 }
 
 /* ── Scale bar ────────────────────────────────────────────────────── */

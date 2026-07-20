@@ -10,13 +10,13 @@ open FShade
 module FocusShaders =
 
     type UniformScope with
-        // Focus overlay: 0 = texture (pass through), 1 = diverging signed difference,
-        // 2 = sequential displacement magnitude, 3 = flat white; the per-mesh intrinsic
-        // layers 4 = incidence, 5 = range, 6 = shape carry a pre-normalized [0,1]
-        // FocusScalar and map to the same colours as the 3D mesh-shader heatmaps.
-        // FocusHi saturates the positive end; FocusLoNeg (mode 1 only) the |negative|
-        // end — both from the unified pin-derived Inspect range (§C), matching the 3D
-        // mesh shader so tiles, single and 3D read on one scale.
+        // Focus overlay: 0 = texture (pass through), 1 = diverging signed
+        // difference; the per-mesh intrinsic layers 4 = incidence, 5 = range,
+        // 6 = shape carry a pre-normalized [0,1] FocusScalar and map to the same
+        // colours as the 3D mesh-shader heatmaps. FocusHi saturates the positive
+        // end; FocusLoNeg (mode 1 only) the |negative| end — both from the
+        // unified pin-derived Inspect range (§C), matching the 3D mesh shader so
+        // tiles, single and 3D read on one scale.
         member x.FocusMode  : int     = uniform?FocusMode
         member x.FocusHi    : float32 = uniform?FocusHi
         member x.FocusLoNeg : float32 = uniform?FocusLoNeg
@@ -32,13 +32,11 @@ module FocusShaders =
         }
 
     // Inspect colour overlay (fragment, after diffuseTexture). FocusMode 0 keeps the
-    // atlas colour; 1 = diverging (blue↔neutral↔red about 0); 2 = sequential
-    // (neutral→blue by magnitude); 3 = flat white (displacement surface under the
-    // arrow glyphs). 1e30 sentinel → no-data grey.
+    // atlas colour; 1 = diverging (blue↔neutral↔red about 0). 1e30 sentinel →
+    // no-data grey.
     let focusColor (v : ColorVertex) =
         fragment {
             if uniform.FocusMode = 0 then return v.c
-            elif uniform.FocusMode = 3 then return V4f(0.957f, 0.969f, 0.980f, 1.0f)
             // Intrinsic per-mesh heatmaps (pre-normalized scalar) — same ramps as the
             // 3D mesh shader. Incidence: grazing red → head-on green (via yellow).
             elif uniform.FocusMode = 4 then
@@ -63,11 +61,6 @@ module FocusShaders =
                 let hiC = V3f(0.18f, 0.55f, 0.34f)
                 return V4f(loC * (1.0f - ts) + hiC * ts, 1.0f)
             elif abs v.s >= 1e20f then return V4f(0.886f, 0.910f, 0.941f, 1.0f)
-            elif uniform.FocusMode = 2 then
-                // Displacement ramp — MUST match MeshShader.shade enc 3 and the
-                // dock legend (GuiOverlays): light → dark blue, one ramp everywhere.
-                let t = min 1.0f (max 0.0f (abs v.s / max 1e-6f uniform.FocusHi))
-                return V4f(0.93f + (0.118f - 0.93f) * t, 0.94f + (0.227f - 0.94f) * t, 0.98f + (0.541f - 0.98f) * t, 1.0f)
             else
                 // Coolwarm diverging difference map (§C, CET-D01): zero = near-white
                 // centre (welded to 0; grey means "no signal", not "0"), + through

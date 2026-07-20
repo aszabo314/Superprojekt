@@ -19,8 +19,6 @@ type Message =
     | SetQuickPinRadius of float
     | SetFlagScale of float
     | SetBrushDotPx of float
-    // Spring-loaded show-overlays modifier (greyscale-except-pins while held).
-    | SetShowOverlays of bool
     | SetReferenceMesh of string option
     // Disabled until a solve exists.
     | SetRegView of RegView
@@ -68,7 +66,6 @@ type Message =
     // THE one selection (see Model.ActiveSelection + the handler).
     | SetSelection of ActiveSelection
     | SetWorkflowStep of WorkflowStep
-    | SetInspectChannel of InspectChannel
     | SetFocusProjection of FocusProjection
     // Slice mode (v12 §5): toggle the pin-centred ortho measurement view;
     // AdjustSliceCut = wheel notches sweeping the cut plane through the pin.

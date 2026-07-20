@@ -262,10 +262,8 @@ module GuiInspector =
                 div { Class "ins-anchor-rows"; model.MeshNames |> AList.map anchorRow }
             }
 
-        // Inspect dock: a Difference|Displacement channel toggle (drives the focus
-        // tiles), the pin distribution panel (Task 4), and the shift readout
-        // (Task 5). Containers are fixed; only content swaps.
-        let channelA = model.InspectChannel
+        // Inspect dock: the two detail charts, the Δ sub-mode toggle and the
+        // shift readout. Containers are fixed; only content swaps.
 
         // Shift readout: the focused mesh's centroid displacement
         // load→solved, split vertical (datum) / horizontal (lateral) + rotation
@@ -548,16 +546,11 @@ module GuiInspector =
                 Class "ins-inspect"
                 div {
                     Class "ins-insp-head"
-                    compactButtonBar [
-                        "Difference",   (channelA |> AVal.map ((=) ChDifference)),   (fun () -> emit (SetInspectChannel ChDifference))
-                        "Displacement", (channelA |> AVal.map ((=) ChDisplacement)), (fun () -> emit (SetInspectChannel ChDisplacement))
-                    ]
-                    // Difference sub-mode (M3C2 ↔ Δz) — only meaningful in the
-                    // Difference channel. The single-mesh intrinsic channels
-                    // (incidence / range / shape) live in the Overview mesh list.
+                    // Difference sub-mode (M3C2 ↔ Δz). The single-mesh intrinsic
+                    // channels (incidence / range / shape) live in the Overview
+                    // mesh list.
                     div {
                         Class "ins-insp-sub"
-                        showWhen (channelA |> AVal.map ((=) ChDifference))
                         compactButtonBar [
                             "M3C2", (model.ExtrinsicZDiff |> AVal.map not),  (fun () -> if AVal.force model.ExtrinsicZDiff then emit ToggleExtrinsicZDiff)
                             "Δz",   (model.ExtrinsicZDiff :> aval<bool>),    (fun () -> if not (AVal.force model.ExtrinsicZDiff) then emit ToggleExtrinsicZDiff)

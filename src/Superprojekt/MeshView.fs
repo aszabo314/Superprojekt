@@ -191,34 +191,6 @@ module MeshView =
                 | _ -> ()
             mx)
 
-    // Saturation end (m) of the displacement map: the largest |load→solved| over
-    // every solved mesh. The displacement of a rigid pose change is an affine
-    // function of position, so its maximum over a mesh is attained at a bbox
-    // corner — 8 corners per mesh, exact and cheap. One global value keeps the
-    // displacement colours comparable across meshes (not capped at 0.5 m — a solve
-    // may legitimately move a mesh further).
-    let displacementRange (model : AdaptiveModel) : aval<float> =
-        AVal.custom (fun t ->
-            let solved = model.SolvedTransforms.GetValue t
-            if Map.isEmpty solved then 1.0
-            else
-                let bounds = model.MeshBounds.GetValue t
-                let loads = model.LoadTransforms.GetValue t
-                let cc = model.CommonCentroid.GetValue t
-                let scales = model.DatasetScales.GetValue t
-                let mutable mx = 1e-6
-                for KeyValue(name, sT) in solved do
-                    match Map.tryFind name bounds with
-                    | Some (b : Box3d) when not b.IsInvalid ->
-                        let s = DatasetScale.forMesh scales name
-                        let lT = Map.tryFind name loads |> Option.defaultValue Trafo3d.Identity
-                        for corner in b.ComputeCorners() do
-                            let rc = ScanPin.renderCentre cc s corner
-                            let d = (sT.Forward.TransformPos rc - lT.Forward.TransformPos rc).Length / s
-                            if d > mx then mx <- d
-                    | _ -> ()
-                mx)
-
     // v12 §5 — slice mode: the constrained TO-SCALE measurement camera. Ortho,
     // centred on the selected pin, DIP-ALIGNED: the screen-vertical direction
     // (camera up) is the PIN AXIS (the local surface normal at the centre —
@@ -247,6 +219,17 @@ module MeshView =
         let mag = 10.0 ** floor (log10 raw)
         let n = raw / mag
         (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
+
+    // THE slice ortho half-extents (hw, hh). Stretch divides the half-height
+    // (vertical-only exaggeration) and additionally tightens the half-width
+    // ×0.8 so the frustum hugs the pin region — legal only because stretch has
+    // already given up the 1:1 mapping; true scale keeps the viewport aspect.
+    // Every hw/hh consumer (view proj, ordinates, rulers, dot glyph sizing)
+    // must go through this so they cannot drift.
+    let sliceStretchHorizTighten = 0.8
+    let sliceOrthoHalfSizes (s : SliceCam) (aspect : float) (stretch : float) =
+        let hw = s.HalfHeight * aspect * (if stretch > 1.0 then sliceStretchHorizTighten else 1.0)
+        hw, s.HalfHeight / stretch
 
     // Shared ortho projection builder (slice camera; also the ordinate overlay's
     // screen projection — keep the two identical).
@@ -365,7 +348,6 @@ module MeshView =
         let sliceNearU = sliceCamA |> AVal.map (function Some s -> float32 s.Near | None -> 0.0f)
         let sliceFadeU = sliceCamA |> AVal.map (function Some s -> float32 s.FadeDist | None -> 0.0f)
         let inspectRangeA = inspectRange model
-        let dispRangeA = displacementRange model
         let rangeWorldA = rangeMaxWorld model
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
@@ -451,9 +433,8 @@ module MeshView =
                     V4f palette.[i % palette.Length])
             // What this mesh paints in the MAIN 3D view (Inspect only) — the encoding
             // + the per-vertex scalar array (§C):
-            //   reference, ensemble (no moving-mesh solo) → variance      (enc 2, SurfaceDistance)
-            //   soloed moving mesh + Difference channel    → signed dist   (enc 1, FocusDist)
-            //   soloed moving mesh + Displacement channel  → |load→solved| (enc 3, client-computed)
+            //   reference, ensemble (no moving-mesh solo) → variance    (enc 2, SurfaceDistance)
+            //   soloed moving mesh                        → signed dist (enc 1, FocusDist)
             // Reading WorkflowStep / Registration / MeshSolo first keeps non-Inspect and
             // non-soloed meshes cheap (they fall straight through to (0, None)).
             // The scalar caches are pose-baked pairs (main = committed, Other = the
@@ -481,32 +462,12 @@ module MeshView =
                                 | Some arr -> (2, Some arr)
                                 | None -> (0, None)
                         elif model.MeshSolo.GetValue t = Some name then
-                            match model.InspectChannel.GetValue t with
-                            | ChDifference ->
-                                let fd =
-                                    if model.RegPeekHeld.GetValue t then model.FocusDistOther
-                                    else model.FocusDist
-                                match Map.tryFind name (fd.GetValue t) with
-                                | Some arr -> (1, Some arr)
-                                | None -> (0, None)
-                            | ChDisplacement ->
-                                loaded.pos.GetValue t |> ignore
-                                match loaded.mesh.Value, Map.tryFind name (model.SolvedTransforms.GetValue t) with
-                                | Some md, Some _ ->
-                                    let pos = md.positions
-                                    let sc  = scale.GetValue t
-                                    let c0  = loaded.centroid.GetValue t
-                                    let cc  = model.CommonCentroid.GetValue t
-                                    let baseT = Trafo3d.Translation(c0 - cc) * Trafo3d.Scale sc
-                                    let fwd (m : Map<string, Trafo3d>) =
-                                        (baseT * (Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)).Forward
-                                    let loadF   = fwd (model.LoadTransforms.GetValue t)
-                                    let solvedF = fwd (model.SolvedTransforms.GetValue t)
-                                    let mag = Array.init pos.Length (fun i ->
-                                        let p = V3d pos.[i]
-                                        float32 ((solvedF.TransformPos p - loadF.TransformPos p).Length / sc))
-                                    (3, Some mag)
-                                | _ -> (0, None)
+                            let fd =
+                                if model.RegPeekHeld.GetValue t then model.FocusDistOther
+                                else model.FocusDist
+                            match Map.tryFind name (fd.GetValue t) with
+                            | Some arr -> (1, Some arr)
+                            | None -> (0, None)
                         else (0, None))
             let distArr = inspectField |> AVal.map snd
             let distBuf =
@@ -525,14 +486,12 @@ module MeshView =
                     | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
             let distEncoding = inspectField |> AVal.map fst
             // Map ends from the unified pin-derived range (§C): enc 1 saturates at
-            // (lo, hi); enc 2 (variance σ, same units) at max(|lo|, hi); enc 3 at the
-            // global displacement range.
+            // (lo, hi); enc 2 (variance σ, same units) at max(|lo|, hi).
             let distScale =
-                (distEncoding, inspectRangeA, dispRangeA) |||> AVal.map3 (fun enc (lo, hi) disp ->
+                (distEncoding, inspectRangeA) ||> AVal.map2 (fun enc (lo, hi) ->
                     match enc with
                     | 1 -> float32 hi
                     | 2 -> float32 (max (abs lo) hi)
-                    | 3 -> float32 disp
                     | _ -> 1.0f)
             let distLoNeg = inspectRangeA |> AVal.map (fun (lo, _) -> float32 (abs lo))
             let diffIsoStep =
@@ -605,9 +564,6 @@ module MeshView =
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
                     Sg.Uniform("ShapeThreshold",       model.ShapeThreshold |> AVal.map float32)
-                    // Show-overlays modifier: white-out the mesh while held; the
-                    // pin geometry (separate) keeps its colour.
-                    Sg.Uniform("Whiteout", model.ShowOverlaysHeld |> AVal.map (fun on -> if on then 1.0f else 0.0f))
                     // Inspect de-clutter (§B5): the false-colour map is the base — no
                     // photo texture competes in Inspect.
                     Sg.Uniform("InspectPlain", model.WorkflowStep |> AVal.map (fun s -> if s = Inspect then 1.0f else 0.0f))

@@ -93,15 +93,6 @@ module GuiFocus =
                     "h.addEventListener('pointerup',function(e){ dragging=false; try{h.releasePointerCapture(e.pointerId);}catch(_){} });"
                     "})();" ]
             }
-        // Displacement glyph legend: explains the load→solved arrow colour ramp.
-        // Only in the Inspect Displacement channel.
-        let dispLegend =
-            let show = (model.WorkflowStep, model.InspectChannel) ||> AVal.map2 (fun s c -> s = Inspect && c = ChDisplacement)
-            div {
-                Class "focus-displeg"
-                Primitives.showWhen show
-                "↗ load → solved   ·   light = small shift, dark = large"
-            }
         div {
             Class "focus-panel"
             Primitives.classWhen "fp-overview" isOverview
@@ -116,6 +107,5 @@ module GuiFocus =
                 }
             }
             div { Class "focus-single"; Primitives.showWhenNot isOverview; FocusScene.single env model }
-            dispLegend
             div { Class "focus-multiples"; FocusScene.multiples env model }
         }

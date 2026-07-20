@@ -14,18 +14,6 @@ module GuiTopBar =
         let solved = model.SolvedTransforms |> AVal.map (Map.isEmpty >> not)
         div {
             Class "top-bar"
-            // Spring-loaded overview (hotkey O): white-out the meshes so only the
-            // pins carry colour (thick coloured flags + 2D name tags at their tips).
-            button {
-                Class "tb-btn"
-                classWhen "tb-btn-active" model.ShowOverlaysHeld
-                Attribute("title", "Plan: hold to white-out the meshes — only the pins stay coloured, with name tags (hotkey: O)")
-                Dom.OnPointerDown((fun _ -> env.Emit [SetShowOverlays true]), pointerCapture = true)
-                Dom.OnPointerUp((fun _ -> env.Emit [SetShowOverlays false]), pointerCapture = true)
-                Dom.OnMouseLeave(fun _ -> env.Emit [SetShowOverlays false])
-                "🗺 Plan"
-            }
-
             // Slice mode (v12 §5): TO-SCALE ortho cross-section around the
             // selected pin — drag = azimuth in 10° steps, scroll = sweep the cut,
             // Esc / re-click = exit. Disabled until a pin is selected.

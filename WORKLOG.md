@@ -1,5 +1,51 @@
 # Worklog
 
+## Slice-mode GUI touchups (2026-07-20)
+
+- **Focus angle indicator gold → white** (arrow + cut-plane trace in
+  `addPinRingsAndSelectionCircle`): back on the transient/selection layer with
+  the dashed selection circle; gold stays on the slice badges only.
+- **Cut trace restructured** (follow-up): the double line is gone — SOLID white
+  = the cut plane itself, a fainter thinner white line = the end of the
+  transparency falloff (Near + FadeDist, same `traceAt` horizontal-plane
+  intersection), so the visible profile band reads as the gap between them.
+- **Stretch framing**: vertical fill fraction 0.9 → 0.75 (brushed/probe paths
+  of `sliceStretchFactor` — the data sits clear of the top/bottom edges) and
+  the ortho half-WIDTH tightened ×0.8 while stretched (1:1 is already given up
+  there; true scale untouched). New `MeshView.sliceOrthoHalfSizes` is the ONE
+  hw/hh source — View proj, `sliceOrdinates`, `sliceAxes` rulers all read it,
+  and `brushedDotSegments` shrinks the horizontal glyph axis by the same
+  factor so the marks stay circular.
+- **Correspondence constellation hidden in slice mode**: `constellationActive`
+  now also gates on `not SliceMode` — the wire-sphere/cross markers + ref lines
+  stand down with the flags and origin cross.
+- CLAUDE.md updated (white indicator, tighten + ¾ fill, stand-down list).
+  Client type-check green. Browser pass owed with the rest of v12.
+
+## Removals: plan mode + displacement viz (2026-07-17)
+
+- **Plan mode gone entirely** (the "🗺 Plan" / hold-O white-out overlay):
+  `Model.ShowOverlaysHeld` + `SetShowOverlays` + reducer arm, the top-bar
+  button, the O hotkey handlers, the `Whiteout` shader uniform + branch
+  (MeshShaders/MeshView), the pin-flag overlays-hold styling reads
+  (ScanPinScene), the 2D flag-tip name-tag overlay `GuiOverlays.pinFlagLabels`
+  + its mount + `.pin-flag-labels`/`.pfl` CSS. `ScanPin.flagTopRender` stays
+  (the 3D flag pole still uses it).
+- **Displacement visualization gone entirely** (the load→solved motion viz):
+  the `InspectChannel` type/field/message/handler (the dock keeps only the
+  M3C2|Δz sub-toggle — Difference is now THE Inspect pair channel), the 3D
+  enc-3 shader branch + `MeshView.displacementRange` + the inspectField/
+  distScale displacement paths, the focus mode-2 ramp + mode-3 white surface
+  (FocusShaders), the focus arrow glyphs (`arrowSegs` + node) +
+  `loadSolvedForwards` (orphaned) + the displacement→Top projection collapse
+  (single + tiles) + `dispLegend` + `.focus-displeg` CSS, and the legend's
+  Displacement branch. `ensureFocusDist` drops its channel gate. The numeric
+  SHIFT READOUT (total/vertical/horizontal/rotation numbers in the dock) is
+  a readout, not a viz — kept deliberately; say the word if it should go too.
+- CLAUDE.md swept (colour families, focus camera bullet, shader contracts,
+  dock/brushing bullets, the displacement bullet deleted). Adaptify re-run;
+  build + Supertests green.
+
 ## ScanPin v12 — follow-up round 3 (2026-07-17 feedback)
 
 - **Dots of interest double-circled**: `brushedBase` now carries an isInterest

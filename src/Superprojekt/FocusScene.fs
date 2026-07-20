@@ -262,20 +262,14 @@ module FocusScene =
             "FocusScalar",                                  BufferView(scalarBuf, typeof<float32>)
         ]
 
-    // load/solved forward maps (mesh-local → render) at token t. Token-based twin
-    // of MeshView.meshTrafo — keep the `base * pose` composition order (see there).
-    let private loadSolvedForwards (model : AdaptiveModel) (name : string) (loaded : LoadedMesh) (sc : float) (t : AdaptiveToken) =
-        let baseT = Trafo3d.Translation(loaded.centroid.GetValue t - model.CommonCentroid.GetValue t) * Trafo3d.Scale sc
-        let fwd (m : Map<string, Trafo3d>) = (baseT * (Map.tryFind name m |> Option.defaultValue Trafo3d.Identity)).Forward
-        fwd (model.LoadTransforms.GetValue t), fwd (model.SolvedTransforms.GetValue t)
-
     // Pin influence rings + the dashed white selection circle — ONE builder shared
     // by the single and the tiles so their marks cannot drift (§A2): flat XY in
     // Top, facing the eye (approximate sphere silhouette) in 360°. In slice mode
     // (`slice` = the live SliceCam) the Top views additionally show the ANGLE
     // INDICATOR at the selected pin: a white arrow through the centre along the
-    // slice view direction + a white segment ⊥ it marking the current cut plane
-    // (white = the transient/selection layer).
+    // slice view direction + two segments ⊥ it — solid white at the current cut
+    // plane, faint white at the falloff end (white = the transient/selection
+    // layer).
     let private addPinRingsAndSelectionCircle
             (out : ResizeArray<V3d * V3d * V4d * float>)
             (pins : HashMap<ScanPinId, ScanPin>) (sel : ScanPinId option)
@@ -298,8 +292,7 @@ module FocusScene =
             else addDashedRingXY out cR rR white 2.2 72
             match slice with
             | Some sc when not isPano ->
-                // GOLD — the slice-mode accent (matches the slice badges).
-                let gold = V4d(0.706, 0.325, 0.035, 0.95)
+                // WHITE — the transient/selection layer (gold stays on the badges).
                 let pinR = ScanPin.renderCentre cc s p.Centre
                 let prR = ScanPin.renderLength s p.InnerRadius
                 let dXY =
@@ -308,22 +301,25 @@ module FocusScene =
                 // View-direction arrow through the pin centre, ~75 % of the
                 // pin circle.
                 let l = prR * 0.75
-                addArrowXY out (pinR - dXY * l) (pinR + dXY * l) (prR * 0.15) gold 2.2
-                // Cut plane trace, DOUBLE line: the plane ∩ the horizontal plane
-                // at the pin's height (exact for tilted dip-aligned sections; XY
+                addArrowXY out (pinR - dXY * l) (pinR + dXY * l) (prR * 0.15) white 2.2
+                // Cut plane trace: each plane ∩ the horizontal plane at the
+                // pin's height (exact for tilted dip-aligned sections; XY
                 // fallback when the section plane is horizontal-degenerate).
-                let q = sc.Eye + sc.Fwd * sc.Near
+                // SOLID white = the cut itself; a fainter parallel line marks
+                // the end of the transparency falloff (FadeDist behind the
+                // cut) — the visible profile band is the space between them.
                 let perp =
                     let pp = Vec.cross sc.Fwd V3d.OOI
                     if pp.Length > 1e-9 then pp.Normalized else V3d(-dXY.Y, dXY.X, 0.0)
                 let inPlaneUp = Vec.cross perp sc.Fwd
-                let x0 =
+                let traceAt (q : V3d) =
                     if abs inPlaneUp.Z > 1e-6
                     then q + inPlaneUp * ((pinR.Z - q.Z) / inPlaneUp.Z)
                     else V3d(q.X, q.Y, pinR.Z)
-                let off = dXY * (prR * 0.045)
-                out.Add(x0 - off - perp * (prR * 0.9), x0 - off + perp * (prR * 0.9), gold, 1.8)
-                out.Add(x0 + off - perp * (prR * 0.9), x0 + off + perp * (prR * 0.9), gold, 1.8)
+                let x0 = traceAt (sc.Eye + sc.Fwd * sc.Near)
+                let x1 = traceAt (sc.Eye + sc.Fwd * (sc.Near + sc.FadeDist))
+                out.Add(x0 - perp * (prR * 0.9), x0 + perp * (prR * 0.9), white, 1.8)
+                out.Add(x1 - perp * (prR * 0.9), x1 + perp * (prR * 0.9), V4d(1.0, 1.0, 1.0, 0.45), 1.4)
             | _ -> ()
         | None -> ()
 
@@ -347,15 +343,12 @@ module FocusScene =
                         let rf = model.ReferenceMesh.GetValue t
                         if Some name = rf then 0
                         else
-                            match model.InspectChannel.GetValue t with
-                            | ChDifference ->
-                                // Pose-baked pair — the reg peek selects the Other
-                                // cache so the paint flips with the geometry.
-                                let fd =
-                                    if model.RegPeekHeld.GetValue t then model.FocusDistOther
-                                    else model.FocusDist
-                                if Map.containsKey name (fd.GetValue t) then 1 else 0
-                            | ChDisplacement -> if Map.containsKey name (model.SolvedTransforms.GetValue t) then 2 else 0
+                            // Pose-baked pair — the reg peek selects the Other
+                            // cache so the paint flips with the geometry.
+                            let fd =
+                                if model.RegPeekHeld.GetValue t then model.FocusDistOther
+                                else model.FocusDist
+                            if Map.containsKey name (fd.GetValue t) then 1 else 0
                 if inspectMode <> 0 then inspectMode
                 else
                     match Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff with
@@ -373,18 +366,6 @@ module FocusScene =
                         else model.FocusDist
                     match Map.tryFind name (fd.GetValue t) with
                     | Some arr -> ArrayBuffer arr :> IBuffer
-                    | None -> zero ()
-                | 2 ->
-                    loaded.pos.GetValue t |> ignore
-                    match loaded.mesh.Value with
-                    | Some md ->
-                        let pos = md.positions
-                        let sc = scale.GetValue t
-                        let loadF, solvedF = loadSolvedForwards model name loaded sc t
-                        let mag = Array.init pos.Length (fun i ->
-                            let p = V3d pos.[i]
-                            float32 ((solvedF.TransformPos p - loadF.TransformPos p).Length / sc))
-                        ArrayBuffer mag :> IBuffer
                     | None -> zero ()
                 // Intrinsic per-mesh heatmaps: per-vertex scalar pre-normalized to [0,1]
                 // in the mesh's own (pose-independent) frame. Sensor = the pano centre in
@@ -425,13 +406,9 @@ module FocusScene =
         // Map ends from the unified pin-derived range (§C) — same scale as the 3D
         // painters, so every tile and the single are directly comparable.
         let rangeA = MeshView.inspectRange model
-        let dispA = MeshView.displacementRange model
         let hiA =
-            (modeA, rangeA, dispA) |||> AVal.map3 (fun m (_, hi) disp ->
-                match m with
-                | 1 -> float32 hi
-                | 2 -> float32 disp
-                | _ -> 1.0f)
+            (modeA, rangeA) ||> AVal.map2 (fun m (_, hi) ->
+                if m = 1 then float32 hi else 1.0f)
         let loNegA =
             (modeA, rangeA) ||> AVal.map2 (fun m (lo, _) ->
                 if m = 1 then float32 (abs lo) else 1.0f)
@@ -481,58 +458,7 @@ module FocusScene =
         let curPan ()  = fst (AVal.force camPair)
         let curZoom () = snd (AVal.force camPair)
         let modeA, scalarBuf, hiA, loNegA, isoA = focusOverlay model name loaded scale
-        // Displacement single: white surface (mode 2 → 3) so the arrow glyphs read.
-        let surfaceMode = modeA |> AVal.map (fun m -> if m = 2 then 3 else m)
-        // Load→solved arrow glyphs (render space, exaggerated for visibility; colour =
-        // true magnitude). Empty unless this solved mesh is in the displacement channel.
-        let arrowSegs =
-            AVal.custom (fun t ->
-                let disp =
-                    model.WorkflowStep.GetValue t = Inspect
-                    && model.InspectChannel.GetValue t = ChDisplacement
-                    && Set.isEmpty (model.BrushedSamples.GetValue t)
-                // loaded.mesh is a plain ref — depend on pos so a late mesh load re-fires.
-                loaded.pos.GetValue t |> ignore
-                match loaded.mesh.Value with
-                | Some md when disp && Map.containsKey name (model.SolvedTransforms.GetValue t) ->
-                    let pos = md.positions
-                    let sc = scale.GetValue t
-                    let loadF, solvedF = loadSolvedForwards model name loaded sc t
-                    let n = pos.Length
-                    let stride = max 1 (n / 250)
-                    let mutable maxMag = 1e-9
-                    let mutable i = 0
-                    while i < n do
-                        let p = V3d pos.[i]
-                        let m = (solvedF.TransformPos p - loadF.TransformPos p).Length
-                        if m > maxMag then maxMag <- m
-                        i <- i + stride
-                    let exag = 0.18 * fitExtent.GetValue t / maxMag
-                    let hi = float (hiA.GetValue t)
-                    let out = ResizeArray<V3d * V3d * V4d * float>()
-                    i <- 0
-                    while i < n do
-                        let p = V3d pos.[i]
-                        let b = loadF.TransformPos p
-                        let s = solvedF.TransformPos p
-                        let d = (s - b) * exag
-                        let tip = b + d
-                        // colour by true magnitude (world metres): light → dark blue.
-                        let tc = min 1.0 ((s - b).Length / sc / max 1e-6 hi)
-                        let col = V4d(0.576 + (0.118 - 0.576) * tc, 0.773 + (0.227 - 0.773) * tc, 0.992 + (0.541 - 0.992) * tc, 0.95)
-                        out.Add(b, tip, col, 1.6)
-                        let dl = sqrt (d.X * d.X + d.Y * d.Y)
-                        if dl > 1e-9 then
-                            let nx = d.X / dl
-                            let ny = d.Y / dl
-                            let hl = dl * 0.28
-                            let ca = -0.866
-                            let sa = 0.5
-                            out.Add(tip, V3d(tip.X + hl * (nx * ca - ny * sa), tip.Y + hl * (nx * sa + ny * ca), tip.Z), col, 1.6)
-                            out.Add(tip, V3d(tip.X + hl * (nx * ca + ny * sa), tip.Y + hl * (-nx * sa + ny * ca), tip.Z), col, 1.6)
-                        i <- i + stride
-                    out.ToArray()
-                | _ -> [||])
+        let surfaceMode = modeA
         // Overlay: every pin's influence circle (true InnerRadius footprint, the pin's
         // own colour, selection = weight/alpha) in BOTH projections — the 360° view
         // approximates the sphere's silhouette with a circle facing the eye.
@@ -804,7 +730,6 @@ module FocusScene =
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 surface
                 refOutline
-                Lines.render arrowSegs
                 overlay
                 brushedDotsNode model name
             }
@@ -823,14 +748,9 @@ module FocusScene =
         // Centre the thumbnail on the same panorama centre as the single.
         let _, fitCenter, fitExtent = framing model name loaded renderT scale
         let modeA, scalarBuf, hiA, loNegA, isoA = focusOverlay model name loaded scale
-        // Tiles follow the global Top/360° toggle, including the single's
-        // displacement collapse (its arrow glyphs are Top-frame maths) — the whole
-        // focus panel switches projection together.
-        let isPanoA =
-            AVal.custom (fun t ->
-                model.FocusProjection.GetValue t = ProjPano
-                && not (model.WorkflowStep.GetValue t = Inspect
-                        && model.InspectChannel.GetValue t = ChDisplacement))
+        // Tiles follow the global Top/360° toggle — the whole focus panel
+        // switches projection together.
+        let isPanoA = model.FocusProjection |> AVal.map ((=) ProjPano)
         // Pin influence circles — the same footprint rings as the single: flat XY
         // in Top, facing the eye (approximate sphere silhouette) in 360°.
         let pinsAval = model.ScanPins.Pins |> AMap.toAVal
@@ -932,9 +852,7 @@ module FocusScene =
             match chosen with
             | None -> IndexList.empty
             | Some n ->
-                let proj = model.FocusProjection.GetValue t
-                let disp = model.WorkflowStep.GetValue t = Inspect && model.InspectChannel.GetValue t = ChDisplacement
-                IndexList.single (n, (if disp && proj = ProjPano then ProjTop else proj)))
+                IndexList.single (n, model.FocusProjection.GetValue t))
         |> AList.ofAVal
         |> AList.map (fun (n, proj) -> focusSingle env model n proj)
 

@@ -339,7 +339,8 @@ module ScanPinScene =
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         // Slice mode (v12 follow-up): the flag machinery (pole+ring, base cross,
-        // name label) stands down entirely — the terrain profiles own the view.
+        // name label) AND the pin rings (influence ring, axis line, contact
+        // rings) stand down entirely — the terrain profiles own the view.
         let flagsActive =
             (notFullscreen, model.SliceMode) ||> AVal.map2 (fun nf s -> nf && not s)
         let placementActive =
@@ -494,7 +495,7 @@ module ScanPinScene =
                                                 out.Add(rp.[i], rp.[i + 1], col, width)
                             out.ToArray()
                         | _ -> [||])
-                ASet.ofList [ linesNode notFullscreen segs ])
+                ASet.ofList [ linesNode flagsActive segs ])
 
         // Correspondence constellation lines: per pin, a small wire-sphere + cross
         // glyph at every mesh's marker — the reference's RefAnchor drawn exactly like

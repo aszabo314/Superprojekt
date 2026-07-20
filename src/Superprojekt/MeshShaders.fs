@@ -525,6 +525,18 @@ module OutlineEdge =
             let u  = gNormal.Sample(v.tc + V2f(0.0f,  ts.Y))
             let d  = gNormal.Sample(v.tc + V2f(0.0f, -ts.Y))
             let m0 = gColor.Sample(v.tc).W
+            let capOn = uniform.OutlineDistFade > 0.0f
+            // Slice mode only: the FBO clear leaves background depth at 0 —
+            // under the slice ortho that is the CUT plane's own depth value, so
+            // the profile against empty background would never register as a
+            // break. Substitute far depth (1) for background samples (mesh id
+            // 0); perspective keeps the raw values (background 0 vs surface ~1
+            // already breaks hard there).
+            let dc = if capOn && c.Y < 0.002f then 1.0f else c.W
+            let dl = if capOn && l.Y < 0.002f then 1.0f else l.W
+            let dr = if capOn && r.Y < 0.002f then 1.0f else r.W
+            let du = if capOn && u.Y < 0.002f then 1.0f else u.W
+            let dd = if capOn && d.Y < 0.002f then 1.0f else d.W
             // target0: .w = window depth → silhouette/cliff outline; .x = world-Z
             // band parity → world-locked isolines.
             //   dEdge is the SECOND difference (depth Laplacian) of window depth, not
@@ -537,8 +549,8 @@ module OutlineEdge =
             //   iEdge stays a first difference — parity is a step function, so any
             //   flip is already a real band boundary.
             let dEdge =
-                max (abs (l.W + r.W - 2.0f * c.W))
-                    (abs (u.W + d.W - 2.0f * c.W))
+                max (abs (dl + dr - 2.0f * dc))
+                    (abs (du + dd - 2.0f * dc))
             let iEdge =
                 max (max (abs (c.X - l.X)) (abs (c.X - r.X)))
                     (max (abs (c.X - u.X)) (abs (c.X - d.X)))
@@ -548,23 +560,32 @@ module OutlineEdge =
                 // Per-mesh gate: the centre pixel's mesh id selects its mask slot.
                 let slot = min 31 (max 0 (int (c.Y * 255.0f + 0.5f) - 1))
                 let flag = uniform.OutlineMask.[slot].X
-                // Slice-mode distance falloff: lines fade with depth behind the
-                // cut (c.W = 0 at the near plane under the slice ortho), and the
-                // opacity is CAPPED at 10 % across the board — the terrain
-                // profiles own the view; lines are background reference only.
-                let capOn = uniform.OutlineDistFade > 0.0f
-                let distMul =
-                    if capOn then max 0.0f (1.0f - (c.W + c.Z / 255.0f) * uniform.OutlineDistFade)
-                    else 1.0f
+                // Slice-mode distance falloff: lines fade with the 16-bit depth
+                // behind the cut (0 at the near plane under the slice ortho),
+                // and the opacity is CAPPED at 10 % — the terrain profiles own
+                // the view; lines are background reference only. dT = distance
+                // behind the cut in fade-window units (0 outside slice mode).
+                let dT = (c.W + c.Z / 255.0f) * uniform.OutlineDistFade
+                let distMul = if capOn then max 0.0f (1.0f - dT) else 1.0f
                 // Silhouette / cliff (a window-depth break) keeps the crisp per-mesh
                 // palette colour. A pure world-Z band-parity flip (an isoline) renders
                 // in a faint neutral grey at reduced intensity, so elevation
                 // contours read as subtle background reference, not bold palette lines.
                 // (No local helper — FShade bodies must stay lambda-free.)
                 if depthEdge && flag > 0.25f then
-                    let col = gColor.Sample(v.tc)
-                    let a = if capOn then min 0.1f distMul else distMul
-                    return V4f(col.X, col.Y, col.Z, a)
+                    let colP = gColor.Sample(v.tc)
+                    if capOn then
+                        // THE CUT PROFILE: a depth edge whose centre sits
+                        // essentially AT the cut is the section profile — clean
+                        // data-ink black lifted ABOVE the 10 % cap, gone by half
+                        // the fade window; the colour blends back to the capped
+                        // faded palette silhouette as the edge moves behind.
+                        let prof = max 0.0f (1.0f - dT * 2.0f)
+                        let k = min 1.0f (prof * 3.0f)
+                        let a = max (0.92f * prof) (min 0.1f distMul)
+                        return V4f(colP.X * (1.0f - k), colP.Y * (1.0f - k), colP.Z * (1.0f - k), a)
+                    else
+                        return V4f(colP.X, colP.Y, colP.Z, distMul)
                 elif isoEdge && flag > 0.75f then
                     let a0 = uniform.IsolineOpacity * distMul
                     let a = if capOn then min 0.1f a0 else a0

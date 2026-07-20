@@ -1,5 +1,25 @@
 # Worklog
 
+## Slice mode: pin rings down, cut profile as black line (2026-07-20)
+
+- The "black lines not aligned with the cut" were `pinRings` (influence ring +
+  1 m axis line + per-mesh sphere∩surface CONTACT rings, all pin ink) — the one
+  pin-chrome node the slice stand-down had missed; now gated by `flagsActive`
+  like the flags.
+- CUT PROFILE as data-ink black (OutlineEdge, all under the capOn slice gate):
+  - Root cause the profile was invisible against background: the FBO clear
+    leaves target0.w = 0, which under the slice ortho IS the cut plane's depth
+    — profile-vs-background gave a ~0 Laplacian. Background samples (mesh id
+    0) now substitute far depth (1.0) in the edge detect; perspective is
+    untouched (raw values already break hard there).
+  - An at-cut depth edge (16-bit depth within the first half of the fade
+    window) paints BLACK at up to α 0.92 ABOVE the 10 % cap, blending back to
+    the capped faded palette silhouette as the edge moves behind the cut — so
+    the profile line follows the cut as it sweeps.
+- CLAUDE.md: stand-down list + slice bullet + a new outline-pass bullet for
+  the background-depth substitution contract. Build green; visual pass owed
+  (profile line weight/alpha, no false lines at mesh-vs-mesh boundaries).
+
 ## Slice-mode outline fade fixed (2026-07-20, after the touchups commit)
 
 - Diagnosis: the round-1 `OutlineDistFade` was quantization-broken — the fade

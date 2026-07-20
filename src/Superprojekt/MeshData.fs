@@ -142,3 +142,17 @@ module ApiConfig =
             uri.GetLeftPart(System.UriPartial.Authority) + path + "/api"
         )
 
+    // Optional ?dataset= startup override (ServerActions.init); unknown names
+    // fall back to the server's file-based default.
+    let urlDataset =
+        lazy (
+            let uri = System.Uri(Window.Location.Href)
+            uri.Query.TrimStart('?').Split('&')
+            |> Array.tryPick (fun kv ->
+                let i = kv.IndexOf '='
+                if i > 0 && kv.Substring(0, i) = "dataset" then
+                    Some (System.Uri.UnescapeDataString(kv.Substring(i + 1).Replace('+', ' ')))
+                else None)
+            |> Option.filter (fun s -> s <> "")
+        )
+

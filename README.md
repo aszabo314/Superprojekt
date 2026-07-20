@@ -20,7 +20,7 @@ Start the server (serves both the API and the WASM client at `http://localhost:5
 dotnet run --project src/Superserver
 ```
 
-Open `http://localhost:5000`. The default dataset (read from `src/Superserver/data/default.txt`) auto-loads on first paint.
+Open `http://localhost:5000`. The default dataset (read from `src/Superserver/data/default.txt`) auto-loads on first paint; `?dataset=<name>` in the URL overrides it (unknown names fall back to the file).
 
 ### Datasets
 

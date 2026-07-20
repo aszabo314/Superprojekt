@@ -32,7 +32,10 @@ module ServerActions =
             try
                 let! datasets = MeshData.fetchDatasets ApiConfig.apiBase.Value
                 env.Emit [DatasetsLoaded datasets]
-                let! autoLoad = MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
+                let! autoLoad =
+                    match ApiConfig.urlDataset.Value |> Option.filter (fun d -> datasets |> Array.contains d) with
+                    | Some d -> async { return d }
+                    | None -> MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
                 if not (System.String.IsNullOrEmpty autoLoad) && datasets |> Array.contains autoLoad then
                     env.Emit [SetActiveDataset autoLoad]
                     loadDataset env autoLoad

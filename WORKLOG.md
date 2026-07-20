@@ -1,5 +1,13 @@
 # Worklog
 
+## URL dataset override (2026-07-20)
+
+- `?dataset=<name>` on the app URL picks the startup dataset:
+  `ApiConfig.urlDataset` (MeshData.fs) parses it from `Window.Location.Href`,
+  `ServerActions.init` uses it only when the name is in the fetched dataset
+  list — otherwise the existing `/api/datasets/default` (data/default.txt)
+  path runs unchanged. No server change; README updated.
+
 ## Distinct mesh palette + suitability stripe rework (2026-07-20)
 
 - `Primitives.meshPalette` swapped from the muted cool/earth family to nine

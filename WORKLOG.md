@@ -1,5 +1,22 @@
 # Worklog
 
+## Brushed dots: value-coloured outside slice mode + legend (2026-07-20)
+
+- Main-3D brushed glyphs now carry the difference viz while slice mode is OFF:
+  each circle+cross stroke = its sample's signed value through the shared
+  diverging map/range (`Primitives.Diff.colorSignedV3` over
+  `MeshView.inspectRange`), drawn over a dark under-stroke (3.2 px under a
+  1.6 px colour stroke) so the near-white zero end reads on the plain Inspect
+  surface. `brushedBase` now carries valueMm through to the glyph builders.
+- Slice mode and the focus views keep the neutral dark-grey dots (values live
+  in the charts/ordinates; interest ranking/amber cross-highlight untouched).
+- Colour legend no longer hides on brush: in Inspect it now shows
+  "Difference (M3C2) · brushed" (probe samples are M3C2 regardless of the
+  surface M3C2|Δz sub-mode) on the shared range while a brush is active —
+  hiding only in slice mode + brush, the one state with no colour scale.
+- Build green (type-check); visual pass owed: near-zero dot readability on
+  the plain surface, halo weight, legend title fit.
+
 ## Slice mode: pin rings down, cut profile as black line (2026-07-20)
 
 - The "black lines not aligned with the cut" were `pinRings` (influence ring +

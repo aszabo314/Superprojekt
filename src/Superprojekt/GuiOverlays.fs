@@ -300,6 +300,13 @@ module GuiOverlays =
                         (fun (v : float) ->
                             let tt = clamp 0.0 1.0 (v / m)
                             V3d(0.13, 0.40, 0.85) * (1.0 - tt) + V3d(0.86, 0.20, 0.15) * tt)
+                    elif not (Set.isEmpty (model.BrushedSamples.GetValue t))
+                         && not (model.SliceMode.GetValue t) then
+                        // Live brush (§A4 follow-up): the maps stand down but the
+                        // 3D dots carry the signed sample values on the shared
+                        // diverging scale — the legend describes THEM. Probe
+                        // samples are M3C2 regardless of the surface sub-mode.
+                        "Difference (M3C2) · brushed", lo, hi, Primitives.Diff.colorSignedV3 lo hi
                     elif soloName.IsNone then
                         let m = max 1e-6 (max (abs lo) hi)
                         "Variance σ", 0.0, m,
@@ -349,14 +356,18 @@ module GuiOverlays =
                     |> String.concat ","
                 sprintf "{\"title\":\"%s\",\"min\":\"%s\",\"max\":\"%s\",\"stops\":[%s],\"ticks\":[%s]}"
                     title (fmt span vLo) (fmt span vHi) stops ticks)
-        // While a brush is active the maps stand down and the dots are NEUTRAL
-        // (v12 §6) — no colour scale is in play, so the legend hides.
-        let brushedActive = model.BrushedSamples |> AVal.map (Set.isEmpty >> not)
+        // In Inspect the legend shows the active surface map, or — while a brush
+        // suppresses the maps — the value-coloured brushed dots' scale. The one
+        // scale-less state left is slice mode + brush (neutral dots, values in
+        // the ordinates/charts) — there it hides.
+        let brushedInSlice =
+            (model.BrushedSamples, model.SliceMode) ||> AVal.map2 (fun b s ->
+                not (Set.isEmpty b) && s)
         div {
             Class "color-legend"
             Primitives.showWhen
-                ((model.WorkflowStep, anyRangeOn, brushedActive) |||> AVal.map3 (fun s r b ->
-                    (s = Inspect && not b) || r))
+                ((model.WorkflowStep, anyRangeOn, brushedInSlice) |||> AVal.map3 (fun s r bs ->
+                    (s = Inspect && not bs) || r))
             legendJson |> AVal.map (fun json -> Some (Attribute("data-legend", json)))
             Primitives.observedRender "data-legend" "{}" [
                 "  if(!d.stops) return;"

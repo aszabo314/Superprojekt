@@ -67,9 +67,10 @@ module ScanPinScene =
                     | _ -> ()
             out.ToArray())
 
-    // Brushed-dot geometry (§A4, v12 §6): a small solid icosphere per brushed
-    // sample in ONE neutral dark grey — the dots mark WHERE the samples live;
-    // the values live in the detail charts (no false-colouring). With
+    // Brushed-dot geometry (§A4, v12 §6 + follow-up): circle+cross glyphs per
+    // brushed sample — value-coloured in the main 3D outside slice mode (the
+    // shared diverging map), neutral dark grey in slice mode and the focus
+    // views (there the values live in the charts/ordinates). With
     // sliceAware (the main 3D only) and slice mode on, the dots nearest the
     // cut plane — the DOTS OF INTEREST, capped — render at full strength while
     // the rest fade with their distance behind the cut (front-side dots are
@@ -189,11 +190,11 @@ module ScanPinScene =
                         let viewHm = 2.0 * s.HalfHeight / max 1e-9 scale
                         clamp 2.0 500.0 (viewHm * 0.35 / span))
 
-    // Brushed sample base data: (renderPos, alpha, isInterest) per visible
-    // brushed dot. sliceAware (main 3D only): the dots of interest full-strength
-    // + flagged, the rest fading with cut distance; meshFilter restricts to one
-    // mesh (the focus views — never interest-flagged).
-    let private brushedBase (model : AdaptiveModel) (meshFilter : string option) (sliceAware : bool) : aval<(V3d * float * bool)[]> =
+    // Brushed sample base data: (renderPos, alpha, isInterest, valueMm) per
+    // visible brushed dot. sliceAware (main 3D only): the dots of interest
+    // full-strength + flagged, the rest fading with cut distance; meshFilter
+    // restricts to one mesh (the focus views — never interest-flagged).
+    let private brushedBase (model : AdaptiveModel) (meshFilter : string option) (sliceAware : bool) : aval<(V3d * float * bool * float)[]> =
         let canonA = brushSamples model
         let rankedA = sliceRankedBrush model
         // Bound ONCE here — never build-and-read a transient aval inside the
@@ -213,17 +214,17 @@ module ScanPinScene =
                     // their distance behind the cut.
                     let hh = match sliceCamA.GetValue t with Some sc -> sc.HalfHeight | None -> 1.0
                     ranked
-                    |> Array.mapi (fun i (_, p, _, d) ->
-                        if i < maxDotsOfInterest then p, 1.0, true
-                        else p, 0.45 * max 0.0 (1.0 - d / (hh * 0.6)), false)
-                    |> Array.filter (fun (_, a, _) -> a > 0.04)
+                    |> Array.mapi (fun i (_, p, vMm, d) ->
+                        if i < maxDotsOfInterest then p, 1.0, true, vMm
+                        else p, 0.45 * max 0.0 (1.0 - d / (hh * 0.6)), false, vMm)
+                    |> Array.filter (fun (_, a, _, _) -> a > 0.04)
                 | None ->
                     let canon = canonA.GetValue t
                     brushed |> Seq.choose (fun gid ->
                         if gid >= 0 && gid < canon.Length then
-                            let (_, mesh, pos, _) = canon.[gid]
+                            let (_, mesh, pos, vMm) = canon.[gid]
                             if meshFilter |> Option.forall ((=) mesh) then
-                                Some (ScanPin.renderCentre cc scale pos, 1.0, false)
+                                Some (ScanPin.renderCentre cc scale pos, 1.0, false, vMm)
                             else None
                         else None)
                     |> Array.ofSeq)
@@ -253,11 +254,16 @@ module ScanPinScene =
     // slice sizes from the frustum, perspective per dot from its eye distance;
     // view-dependent by design, like the pin flags), and in stretch mode the
     // vertical glyph axis is divided by N so the exaggeration cancels and the
-    // glyphs keep their original aspect ratio.
+    // glyphs keep their original aspect ratio. Outside slice mode the glyphs
+    // carry the shared difference viz — each dot's stroke = its sample value
+    // through the ONE diverging map/range (§C), over a dark under-stroke so the
+    // near-white zero end stays readable on the plain Inspect surface; slice
+    // mode keeps them neutral (the values live in the ordinates/charts there).
     let brushedDotSegments (model : AdaptiveModel) (viewportCss : aval<V2i>) (view : aval<Trafo3d>) =
         let baseA = brushedBase model None true
         let sliceCamA = MeshView.sliceCamera model
         let stretchA = sliceStretchFactor model
+        let rangeA = MeshView.inspectRange model
         AVal.custom (fun t ->
             let dots = baseA.GetValue t
             if dots.Length = 0 then [||]
@@ -280,10 +286,17 @@ module ScanPinScene =
                     | Some s -> let k = pxHalf * 2.0 * s.HalfHeight / vpY in fun _ -> k
                     // Perspective (90° vertical fov ⇒ tan(fov/2) = 1): per dot.
                     | None -> fun p -> pxHalf * 2.0 * (Vec.distance p eye) / vpY
+                let valueRange = match slice with Some _ -> None | None -> Some (rangeA.GetValue t)
                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                for (p, a, interest) in dots do
+                for (p, a, interest, vMm) in dots do
                     let r = halfOf p
-                    addGlyph out p (right * (r * horizK)) (up * (r / squish)) interest (glyphInk a) 1.5
+                    let rx, uy = right * (r * horizK), up * (r / squish)
+                    match valueRange with
+                    | Some (lo, hi) ->
+                        addGlyph out p rx uy interest (V4d(0.13, 0.15, 0.18, 0.9 * a)) 3.2
+                        addGlyph out p rx uy interest (V4d(Primitives.Diff.colorSignedV3 lo hi (vMm * 0.001), a)) 1.6
+                    | None ->
+                        addGlyph out p rx uy interest (glyphInk a) 1.5
                 out.ToArray())
 
     // Focus-view brushed glyphs: the same circle+cross mark, XY-aligned (exact
@@ -294,7 +307,7 @@ module ScanPinScene =
         baseA |> AVal.map (fun dots ->
             let out = ResizeArray<V3d * V3d * V4d * float>()
             let r = 0.045
-            for (p, a, _) in dots do
+            for (p, a, _, _) in dots do
                 addGlyph out p (V3d.IOO * r) (V3d.OIO * r) false (glyphInk a) 1.5
             out.ToArray())
 

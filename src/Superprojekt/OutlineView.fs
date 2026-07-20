@@ -62,7 +62,7 @@ module OutlineView =
                 V2f(1.0f / float32 (max 1 s.X), 1.0f / float32 (max 1 s.Y)))
         output.GetOutputTexture DefaultSemantic.Colors, output.GetOutputTexture target1, texel
 
-    // Occlusion-free per-mesh footprint contours (§outline per-mesh): an additive
+    // Occlusion-free per-mesh footprint contours: an additive
     // coverage MRT (one channel per mesh, no depth) + a fullscreen composite that
     // outlines every channel's covered↔uncovered transition in that mesh's palette
     // colour — each mesh keeps its complete own contour even where the combined
@@ -145,7 +145,7 @@ module OutlineView =
 
         ASet.single composite
 
-    // Fused placement-suitability overlay (v12 §2): the shape-weighted coverage
+    // Fused placement-suitability overlay: the shape-weighted coverage
     // MRT → one fullscreen composite (transparent / flat grey / mesh-colour
     // hatch, see SuitabilityComposite). Composite active only while a placement
     // is armed; drawn BEFORE the outline composites in SceneGraph, so isolines
@@ -184,7 +184,7 @@ module OutlineView =
         (view : aval<Trafo3d>)
         (proj : aval<Trafo3d>) : aset<ISceneNode> =
         let mask = MeshView.outlineMask model
-        // Slice-mode line falloff (v12 §5 follow-up): the SAME small window as
+        // Slice-mode line falloff: the SAME small window as
         // the mesh surface fade (SliceCam.FadeDist, a few cm) — outlines and
         // isolines vanish with the fill. depth01 → distance is linear under the
         // slice ortho. 0 disables (perspective).

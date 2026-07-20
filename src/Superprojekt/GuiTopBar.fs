@@ -10,13 +10,9 @@ module GuiTopBar =
     open Primitives
 
     let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) =
-        // Global before/after toggle: disabled until any SolvedTransform exists.
         let solved = model.SolvedTransforms |> AVal.map (Map.isEmpty >> not)
         div {
             Class "top-bar"
-            // Slice mode (v12 §5): TO-SCALE ortho cross-section around the
-            // selected pin — drag = azimuth in 10° steps, scroll = sweep the cut,
-            // Esc / re-click = exit. Disabled until a pin is selected.
             button {
                 Class "tb-btn"
                 classWhen "tb-btn-active" model.SliceMode
@@ -28,7 +24,6 @@ module GuiTopBar =
                 "▤ Slice"
             }
 
-            // Vertical-only exaggeration (v12 §7), offered only inside slice mode.
             button {
                 Class "tb-btn"
                 classWhen "tb-btn-active" model.SliceStretch
@@ -51,7 +46,6 @@ module GuiTopBar =
                     }
                 btn "Before" RegBefore
                 btn "After" RegAfter
-                // Spring-loaded peek: hold to momentarily show the OTHER state.
                 button {
                     Class "tb-regview-btn tb-regview-peek"
                     classWhen "btn-active" model.RegPeekHeld
@@ -65,10 +59,9 @@ module GuiTopBar =
 
             div {
                 Class "tb-right"
-                // Live cursor coordinate. World = metric world under the cursor
-                // (XY-plane at mean elevation when off-mesh). When a mesh is focused,
-                // also its point in that mesh's own frame (origin = its camera) =
-                // world − centroid — exact at load pose, the relevant case here.
+                // The focused-mesh coordinate is world − centroid (that mesh's own
+                // frame, origin = its scan camera) — exact at the load pose, the
+                // relevant case here.
                 div {
                     Class "tb-coord"
                     Attribute("title", "Cursor world coordinate (drops to the mean-elevation XY plane when off-mesh). Focused mesh → offset from that mesh's origin.")
@@ -164,7 +157,7 @@ module GuiTopBar =
                         }
                         gearSlider "Pin flag scale" 0.2 5.0 0.1 (sprintf "%.1f×") model.FlagScale SetFlagScale
                         gearSlider "Brushed dot size (px)" 6.0 40.0 1.0 (sprintf "%.0f px") model.BrushDotPx SetBrushDotPx
-                        // Slice-cell tunables (§A): one global window / context /
+                        // Slice-cell tunables: one global window / context /
                         // vertical scale for every matrix slice diagram.
                         gearSlider "Slice window (× spacing)" 2.0 12.0 0.5 (sprintf "%.1f") model.SliceNSamples SetSliceNSamples
                         gearSlider "Slice context (each side)" 0.0 4.0 1.0 (sprintf "%.0f") model.SliceContextCount SetSliceContextCount

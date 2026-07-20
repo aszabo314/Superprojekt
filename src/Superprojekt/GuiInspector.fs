@@ -11,7 +11,7 @@ module GuiInspector =
 
     open Primitives
 
-    // ONE standard labelled chart (v12 §3), instantiated twice (mesh chart +
+    // ONE standard labelled chart, instantiated twice (mesh chart +
     // pin chart): title, x axis (mm, nice-step ticks + label), y axis (counts),
     // inset legend, and a STACKED HISTOGRAM of the payload's series over the
     // shared signed-distance range — 48 crisp bins. Once a solve exists the
@@ -98,13 +98,12 @@ module GuiInspector =
         "      g.beginPath(); g.moveTo(X(lo),axY);"
         "      for(var b=0;b<B;b++){ var yT=axY-tot[b]*k; g.lineTo(X(lo+b*bw),yT); g.lineTo(X(lo+(b+1)*bw),yT); }"
         "      g.lineTo(X(hi),axY); g.stroke(); } }"
-        // Median ticks on the baseline.
         "  S.forEach(function(sn){ if(sn.med==null) return; g.globalAlpha=sn.hl?0.95:0.35; g.strokeStyle=sn.color; g.lineWidth=sn.hl?2:1;"
         "    g.beginPath(); g.moveTo(X(sn.med),axY); g.lineTo(X(sn.med),axY-9); g.stroke(); g.lineWidth=1; });"
         // The conceptual samples: never painted, but they ARE the brush targets.
         "  S.forEach(function(sn){ if(sn.g) for(var q=0;q<sn.g.length;q++) el._dots.push({gid:sn.g[q],v:sn.s[q]}); });"
-        // Slice-mode dots of interest (v12 §6 bonus): amber markers on the
-        // baseline that follow the cut plane as the slice camera moves.
+        // Slice-mode dots of interest: amber baseline markers that follow the
+        // cut plane as the slice camera moves.
         "  if(fset.size){ g.globalAlpha=1; g.fillStyle='#d97706'; g.strokeStyle='#ffffff'; g.lineWidth=1;"
         "    for(var q3=0;q3<el._dots.length;q3++){ var dd3=el._dots[q3]; if(fset.has(dd3.gid)){"
         "      g.beginPath(); g.arc(X(dd3.v),axY-5,3,0,6.2832); g.fill(); g.stroke(); } } }"
@@ -171,9 +170,8 @@ module GuiInspector =
         let corrA     = effPin |> AVal.map (Option.map ScanPin.correspondence)
         let emit (m : Message) = env.Emit [m]
 
-        // The matrix (left rail) is now the per-(pin,mesh) browser (§B); the
-        // Register dock reduces to the selected pin: identity label (near-black
-        // name, v12 §4) · radius · the per-mesh correspondence coordinate editor.
+        // Register dock: the selected pin only — identity label · radius · the
+        // per-mesh correspondence coordinate editor.
         let radiusVal = effPin |> AVal.map (Option.map (fun p -> p.InnerRadius) >> Option.defaultValue 0.5)
         let pinIdentChip =
             div {
@@ -295,7 +293,7 @@ module GuiInspector =
         let shiftRow (k : string) (v : aval<string>) =
             div { Class "ins-shift-row"; span { Class "ins-shift-k"; k }; span { Class "ins-shift-v"; v } }
 
-        // Two fixed charts (v12 §3), side by side, always both present:
+        // Two fixed charts, side by side, always both present:
         //   MESH chart = the selected mesh's error across its pins (= the
         //   selection's matrix COLUMN), series stacked in canonical pin order on
         //   an achromatic grey ramp (pins carry no identity colour — the legend
@@ -526,10 +524,9 @@ module GuiInspector =
                 sb.ToString()
         let meshChartData = (chartsCore |> AVal.map fst, model.Selection.Hovered) ||> AVal.map2 substHl
         let pinChartData  = (chartsCore |> AVal.map snd, model.Selection.Hovered) ||> AVal.map2 substHl
-        // Comma-joined brushed gids → the canvas highlight (data-brushed).
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
-        // Slice-mode dots of interest (v12 §6 bonus): their gids cross-highlight
-        // in BOTH charts, following the cut plane as the slice camera moves.
+        // Slice-mode dots of interest: their gids cross-highlight in BOTH
+        // charts, following the cut plane as the slice camera moves.
         let focusData =
             ScanPinScene.sliceRankedBrush model |> AVal.map (function
                 | Some ranked ->
@@ -540,15 +537,12 @@ module GuiInspector =
                 | None -> "")
 
         // One compact head row: the metric toggles only (channel + Δ sub-mode) —
-        // they configure the view; selection is the matrix's job (§A3).
+        // they configure the view; selection is the matrix's job.
         let inspectDock =
             div {
                 Class "ins-inspect"
                 div {
                     Class "ins-insp-head"
-                    // Difference sub-mode (M3C2 ↔ Δz). The single-mesh intrinsic
-                    // channels (incidence / range / shape) live in the Overview
-                    // mesh list.
                     div {
                         Class "ins-insp-sub"
                         compactButtonBar [
@@ -559,8 +553,8 @@ module GuiInspector =
                 }
                 div {
                     Class "ins-insp-body"
-                    // The two fixed charts (v12 §3): mesh = matrix column, pin =
-                    // matrix row — always both mounted, side by side, no reflow.
+                    // The two fixed charts: mesh = matrix column, pin = matrix
+                    // row — always both mounted, side by side, no reflow.
                     div {
                         Class "ins-charts"
                         div {
@@ -606,10 +600,9 @@ module GuiInspector =
                 }
             }
 
-        // Vertical resize handle on the dock's top edge — same pure-JS pattern as
-        // the focus panel's aspect-locked handle. Writes the --dock-h root var, the
-        // single source the dock, the render control and the bottom-anchored
-        // overlays all read, so everything follows one drag.
+        // Dock top-edge resize handle. Writes the --dock-h root var — the single
+        // source the dock, the render control and the bottom-anchored overlays
+        // all read, so everything follows one drag.
         let resizeHandle =
             div {
                 Class "dock-resize"
@@ -625,9 +618,7 @@ module GuiInspector =
                     "})();" ]
             }
 
-        // Container-invariant cross-fade between the three modes. (The old mode-label
-        // header row is gone — the rail already names the mode; the dock height goes
-        // to content.)
+        // Container-invariant cross-fade between the three modes.
         let stepA = model.WorkflowStep
         let modeOn (pred : WorkflowStep -> bool) =
             classWhen "ins-mode-on" (stepA |> AVal.map pred)

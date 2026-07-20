@@ -15,7 +15,7 @@ module GuiOverlays =
     // Cursor label of the Alt-wheel layer cycling. Gated on Alt actually HELD:
     // ActivePickingLayer persists after the cycle (it keeps steering pick
     // priority), so an always-on label would trail a stale mesh name around the
-    // cursor over meshes it doesn't describe (§B6).
+    // cursor over meshes it doesn't describe.
     let meshWheelLabel (model : AdaptiveModel) (cursorScreen : aval<V2d option>) (altHeld : aval<bool>) =
         let meshOrderMap = model.MeshOrder.Content
         let visible =
@@ -35,8 +35,8 @@ module GuiOverlays =
                 | None -> "")
         }
 
-    // v12 §2: cursor-side hard-prohibit tooltip — shown while a placement is
-    // armed and the hovered spot has < 2 meshes in range (placement is refused).
+    // Cursor-side hard-prohibit tooltip — shown while a placement is armed and
+    // the hovered spot has < 2 meshes in range (placement is refused).
     let placementTooltip (model : AdaptiveModel) (cursorScreen : aval<V2d option>) (placementValid : aval<bool option>) =
         let placing =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
@@ -54,12 +54,12 @@ module GuiOverlays =
             "no overlapping meshes here"
         }
 
-    // v12 §7: stretch-mode ordinates — per DOT OF INTEREST, a vertical line
+    // Stretch-mode ordinates — per DOT OF INTEREST, a vertical line
     // from the dot to the reference (its signed sample value), projected through
     // the SAME slice view/proj the 3D uses (so the exaggeration is inherited),
     // drawn as HTML strips so they are natively hoverable: the tooltip carries
     // the TRUE value (mm/cm), never the stretched pixel distance. Ordinates
-    // exist ONLY in stretch mode — true scale has none (§6).
+    // exist ONLY in stretch mode — true scale has none.
     let sliceOrdinates (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let camA = MeshView.sliceCamera model
         let stretchA = ScanPinScene.sliceStretchFactor model
@@ -116,10 +116,8 @@ module GuiOverlays =
             ]
         }
 
-    // v12 follow-up: slice-mode badges — "ortho slice view" whenever slice mode
-    // is active, plus "vertical axis stretched ×N" while stretch is on. Gold =
-    // the slice-mode accent (the badges only — the focus angle indicator is
-    // white, transient layer).
+    // Slice-mode badges. Gold = the slice-mode accent (the badges only — the
+    // focus angle indicator is white, transient layer).
     let sliceBadges (model : AdaptiveModel) =
         let stretchA = ScanPinScene.sliceStretchFactor model
         div {
@@ -135,7 +133,7 @@ module GuiOverlays =
             }
         }
 
-    // v12 follow-up: slice-mode axes — a vertical ruler left of the view and a
+    // Slice-mode axes — a vertical ruler left of the view and a
     // horizontal one below it, both measuring METRIC distance from the pin
     // centre (the projection centre; the vertical ruler ticks in TRUE metres,
     // so its px spacing widens with the stretch factor). Recomputed from the
@@ -271,9 +269,9 @@ module GuiOverlays =
 
     // Colormap legend (Inspect only, bottom centre): the ACTIVE false-colour map's
     // gradient with nice-step ticks and the exact range ends — it follows the
-    // selection (§A5: ensemble/pin → variance σ, mesh/cell → that pair's
-    // difference or the displacement channel) and a live brush (§A4: the brushed
-    // dots' shared signed range). All maps read on the unified pin-derived scale (§C).
+    // selection (ensemble/pin → variance σ, mesh/cell → that pair's
+    // difference or the displacement channel) and a live brush (the brushed
+    // dots' shared signed range). All maps read on the unified pin-derived scale.
     let colorLegend (model : AdaptiveModel) =
         let rangeA = MeshView.inspectRange model
         let orderContent = model.MeshOrder.Content
@@ -284,7 +282,7 @@ module GuiOverlays =
             elif span < 10.0 then sprintf "%.2f m" v
             else sprintf "%.0f m" v
         let heatRangeMaxA = MeshView.rangeMaxWorld model
-        // Outside Inspect the legend serves the Range heatmap (§B3): shown while any
+        // Outside Inspect the legend serves the Range heatmap: shown while any
         // shown mesh has Dst active, on the ONE all-mesh scale.
         let anyRangeOn =
             (model.MeshHeatmap, model.MeshSolo) ||> AVal.map2 (fun hm solo ->
@@ -302,7 +300,7 @@ module GuiOverlays =
                             V3d(0.13, 0.40, 0.85) * (1.0 - tt) + V3d(0.86, 0.20, 0.15) * tt)
                     elif not (Set.isEmpty (model.BrushedSamples.GetValue t))
                          && not (model.SliceMode.GetValue t) then
-                        // Live brush (§A4 follow-up): the maps stand down but the
+                        // Live brush: the maps stand down but the
                         // 3D dots carry the signed sample values on the shared
                         // diverging scale — the legend describes THEM. Probe
                         // samples are M3C2 regardless of the surface sub-mode.
@@ -316,7 +314,7 @@ module GuiOverlays =
                     else
                         // Title names the compared meshes by display number
                         // (isolated moving mesh vs the reference); a cell
-                        // selection appends its pin identity (§A5: "that pair").
+                        // selection appends its pin identity.
                         let order = orderContent.GetValue t
                         let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
                         let pair =

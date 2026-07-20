@@ -25,7 +25,7 @@ module Primitives =
 
     let meshColor (idx : int) = meshPalette.[((idx % meshPalette.Length) + meshPalette.Length) % meshPalette.Length]
 
-    // Pin identity is NAME-ONLY (v12 §4): no pin colours, no glyphs. Every pin
+    // Pin identity is NAME-ONLY: no pin colours, no glyphs. Every pin
     // mark and label uses this ONE near-black dark warm grey — deliberately not
     // pure #000 (the slice cells' data ink) and warmer than the slate UI text,
     // so pin marks stay recognisable without owning a hue family.
@@ -54,7 +54,7 @@ module Primitives =
 
     let c4bToHex (c : C4b) = sprintf "#%02x%02x%02x" c.R c.G c.B
 
-    // Linear-diverging difference colourmap (§C — Coolwarm, Colorcet CET-D01 as
+    // Linear-diverging difference colourmap (Coolwarm, Colorcet CET-D01 as
     // shipped by Maple): blue (neg) → near-white → red (pos). A near-zero perceptual
     // boost (|t|^0.6) keeps small deviations visible (no central flat-spot).
     // The SAME constants + shape are mirrored in the FShade difference painters
@@ -156,7 +156,6 @@ module Primitives =
         | Some i -> sprintf "%d  %s" (i + 1) (friendlyName names name)
         | None -> friendlyName names name
 
-    // Invariant-culture float parse — the shared widgets and the dock XYZ editor.
     let parseFloat (s : string) =
         match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
         | true, v -> Some v
@@ -168,7 +167,6 @@ module Primitives =
     let showWhenNot (v : aval<bool>) =
         v |> AVal.map (fun on -> if on then Some (Class "hidden") else None)
 
-    // Adds `cls` while the flag holds; the Not form adds it while the flag is clear.
     let classWhen (cls : string) (v : aval<bool>) =
         v |> AVal.map (fun on -> if on then Some (Class cls) else None)
 

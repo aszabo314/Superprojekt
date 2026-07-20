@@ -147,7 +147,6 @@ let dipFromMoments (n : float) (sx : float) (sy : float) (sz : float)
                 let u = if u.X < 0.0 || (abs u.X < 1e-9 && u.Y < 0.0) then -u else u
                 Some (V3d(u.X, u.Y, 0.0))
 
-// Convenience for tests / point-list callers.
 let dipOfPoints (pts : seq<V3d>) : V3d option =
     let mutable n = 0.0
     let mutable sx = 0.0

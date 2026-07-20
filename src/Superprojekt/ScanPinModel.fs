@@ -21,7 +21,7 @@ type ContactRingState =
 type ScanPin = {
     Id                   : ScanPinId
     // Immutable identity, assigned at creation: a random 2-char ShortName.
-    // Name-ONLY (v12 §4) — pin marks/labels render in Primitives.pinInk.
+    // Pins are name-only — marks/labels render in Primitives.pinInk.
     ShortName            : string
     Centre               : V3d
     InnerRadius          : float
@@ -30,7 +30,7 @@ type ScanPin = {
     CreatedAt            : DateTime
     // Probe = the committed displayed pose (every consumer reads this one).
     // ProbeOther = the SAME probe at the opposite Before/After pose — fetched only
-    // once a solve exists; feeds the violin chart's inactive half. SetRegView swaps
+    // once a solve exists; feeds the dock charts' inactive-pose outline. SetRegView swaps
     // the two when both are ready (no refetch).
     Probe                : ProbeState
     ProbeOther           : ProbeState
@@ -122,7 +122,7 @@ module ScanPin =
     let roiReach (innerRadius : float) =
         sqrt (innerRadius * innerRadius + (fixedProbeLength * 0.5) ** 2.0)
 
-    // Frame of the vertical cross-section cache (§A): the cut plane contains the
+    // Frame of the vertical cross-section cache: the cut plane contains the
     // pin's section azimuth (chart u — a world-horizontal unit fitted server-side
     // on the reference's dip direction, PinSlice.UDir; ONE line per pin, shared by
     // every cell of its matrix row) and world Z (chart v); parallel context planes
@@ -146,7 +146,6 @@ module ScanPin =
         let wMax = offsets |> Array.fold (fun a w -> max a (abs w)) 0.0
         sqrt (halfW * halfW + wMax * wMax) * 1.0001
 
-    // Index of the centre plane (offset closest to 0).
     let sliceCentreIndex (s : PinSlice) =
         let mutable best = 0
         for k in 1 .. s.Offsets.Length - 1 do
@@ -182,7 +181,7 @@ module ScanPin =
         | _ -> p.Centre
 
     // The dashed white selection circle sits just outside the influence ring —
-    // the ONE spec constant shared by main 3D + focus single + tiles.
+    // the ONE constant shared by main 3D + focus single + tiles.
     let selectionCircleRadius (p : ScanPin) = p.InnerRadius * 1.12
 
     // Screen-constant flag sizing: the pole height is a fixed fraction of the

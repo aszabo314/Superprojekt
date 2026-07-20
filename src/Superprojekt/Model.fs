@@ -155,7 +155,7 @@ type Model =
         // cells derive the ONE global window from the coarsest loaded mesh.
         MeshSpacing    : Map<string, float>
 
-        // Slice-cell tunables (§A, gear menu): window = N × coarsest spacing; k
+        // Slice-cell tunables (gear menu): window = N × coarsest spacing; k
         // context planes each side, spaced a fraction of the window; the global
         // vertical extent is a robust percentile over all (pin, mesh) cells.
         SliceNSamples       : float
@@ -218,21 +218,19 @@ type Model =
         GearPopoverOpen     : bool
         WorkflowStep        : WorkflowStep
 
-        // Pano / Top projection of the WebGL focus single.
         FocusProjection     : FocusProjection
 
         // Unified armed correspondence editing: Some (pin, mesh) = the editor
-        // is armed for that pair. While armed, the mesh is isolated in the main view,
-        // the linked focus is brought onto it, and clicking in EITHER the focus or the
-        // 3D view sets the point (ROI-clamped). The mode STAYS armed until the user
-        // disarms (one mode, two surfaces). CorrPreview = the live aim ghost shown in
-        // both views. None = idle.
+        // is armed for that pair. While armed, the mesh is isolated in the main view
+        // and clicking in EITHER the focus or the 3D view sets the point
+        // (ROI-clamped; a committed pick disarms). CorrPreview = the live aim ghost
+        // shown in both views. None = idle.
         CorrArm             : (ScanPinId * string) option
         CorrPreview         : V3d option
         // Per-sample distribution brushing: the set of brushed sample global
         // ids (canonical order from ScanPinScene.brushSamples). Written by the chart
-        // canvas (via the hidden-input bridge) and by the 3D spatial hover; read by
-        // the chart highlight + the 3D brushed-sample markers.
+        // canvases via the hidden-input bridge; read by the chart highlight + the
+        // 3D brushed-sample markers.
         BrushedSamples      : Set<int>
 
         // Outline edge-detect threshold (depth Laplacian) + isoline band count over
@@ -247,14 +245,14 @@ type Model =
         // solo state.
         LocateBackup        : LocateState option
 
-        // Slice mode (v12 §5): the TO-SCALE ortho measurement view around the
+        // Slice mode: the TO-SCALE ortho measurement view around the
         // selected pin. SliceCut = signed metric offset (m) of the cut plane
         // from the pin centre toward the camera (the ortho near plane); scroll
         // sweeps it, the reducer clamps it to the pin's neighbourhood.
         SliceMode           : bool
         SliceCut            : float
-        // Vertical-only exaggeration in slice mode (v12 §7): the factor is
-        // derived adaptively (MeshView.sliceStretchFactor); this is the toggle.
+        // Vertical-only exaggeration in slice mode: the factor is derived
+        // adaptively (ScanPinScene.sliceStretchFactor); this is the toggle.
         SliceStretch        : bool
     }
 

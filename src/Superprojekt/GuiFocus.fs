@@ -13,8 +13,8 @@ module GuiFocus =
     let panel (env : Env<Message>) (model : AdaptiveModel) =
         let corrStep = model.WorkflowStep |> AVal.map ((=) Correspondence)
 
-        // The selected pin's identity — the near-black name label (name-only,
-        // v12 §4), mirroring the matrix row head + 3D flag.
+        // The selected pin's identity — the near-black name label (name-only),
+        // mirroring the matrix row head + 3D flag.
         let selectedPinId = model.Selection.Active |> AVal.map Selection.pin
         let selectedPin =
             let pinsA = model.ScanPins.Pins |> AMap.toAVal
@@ -73,8 +73,8 @@ module GuiFocus =
                 armedHere |> AVal.map (fun on -> if on then "✎ editing…" else "✎ edit point")
             }
 
-        // Overview drops the large single (T3): the focus panel is the tile mesh
-        // browser + control strip only. Other modes keep the single + tile strip.
+        // Overview drops the large single: the focus panel is the tile mesh
+        // browser + control strip only.
         let isOverview = model.WorkflowStep |> AVal.map ((=) Overview)
         // Aspect-locked resize handle: drag the left edge; the single's height
         // tracks the width (0.72 ratio). Pure JS on a fixed-position panel.

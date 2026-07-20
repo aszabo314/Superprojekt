@@ -61,7 +61,7 @@ module View =
         let hoverCoord      = cval<V3d option> None
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
-        // Hard-prohibit state at the placement hover (v12 §2): Some false = < 2
+        // Hard-prohibit state at the placement hover: Some false = < 2
         // meshes in range (ghost fades, tooltip shows, click refuses); None =
         // unknown / no hover.
         let placementValid  = cval<bool option> None
@@ -73,9 +73,7 @@ module View =
 
         let fullscreenActive = spaceHeld :> aval<bool>
 
-        // Mesh isolation for the main view (hover = peek): Alt-held layer
-        // isolation (wheel-cycled), else the hovered mesh from the shared
-        // Selection. Ghosts the rest while held.
+        // Mesh isolation for the main view — every other mesh ghosts while set.
         let wheelIsolation =
             AVal.custom (fun t ->
                 // The armed correspondence editor isolates its target mesh (solid; the
@@ -146,7 +144,7 @@ module View =
                     env.Emit [CameraMessage OrbitMessage.Rendered]
                 )
 
-                // Slice mode (v12 §5) replaces the orbit camera with the pin-centred
+                // Slice mode replaces the orbit camera with the pin-centred
                 // ortho frame (MeshView.sliceCamera); the offscreen outline pass
                 // shares these avals, so the cut plane's profile is silhouetted by
                 // the standard outline machinery.
@@ -207,12 +205,9 @@ module View =
 
                 // Cursor → nearest mesh surface via server raycast, ghost-agnostic
                 // (the server just intersects geometry, ignoring the GPU ghost).
-                // Bbox-culls visible+loaded meshes, raycasts the survivors in
-                // parallel, returns the render-space hit nearest the camera — the
-                // first surface the ray crosses wins, mesh and coordinate together.
-                // Nearest hit with the mesh NAME — used to focus (§B) / solo (§C) the
-                // clicked mesh in 3D. Bbox-culls shown+loaded meshes, raycasts the
-                // survivors, takes the nearest.
+                // Bbox-culls shown+loaded meshes, raycasts the survivors in
+                // parallel, returns the mesh name + render-space hit nearest the
+                // camera.
                 let raycastNearestNamed () : Async<(string * V3d) option> =
                     match cursorScreen.Value with
                     | None -> async.Return None
@@ -287,7 +282,7 @@ module View =
                         | None -> return! raycastNearest ()
                     }
 
-                // v12 §2 hard-prohibit: a pin may only be placed where ≥ 2 meshes
+                // Hard-prohibit: a pin may only be placed where ≥ 2 meshes
                 // have surface within the placement radius (the pin sphere).
                 // Closest-point fan-out at each mesh's displayed pose (rigid, so
                 // the returned distance is metric).
@@ -340,7 +335,7 @@ module View =
                     let delta = V2d(e.DeltaX, e.DeltaY) / 120.0
                     if not e.Alt then
                         // Slice mode: zoom is locked — the wheel sweeps the cut
-                        // plane through the pin instead (v12 §5).
+                        // plane through the pin instead.
                         if AVal.force model.SliceMode then env.Emit [AdjustSliceCut delta.Y]
                         else env.Emit [CameraMessage (OrbitMessage.Wheel delta)]
                     else
@@ -439,8 +434,8 @@ module View =
                                 | _ -> resolveLayerPick frontmost
                             match placement, resolved with
                             | AnchorPlacement, Some renderPos ->
-                                // Hard-prohibit (v12 §2): verify overlap at the actual
-                                // click point (authoritative — not the hover cache).
+                                // Hard-prohibit: verify overlap at the actual click
+                                // point (authoritative — not the hover cache).
                                 let worldPos = worldFromRender model renderPos
                                 let! n = countOverlap worldPos
                                 if n >= 2 then env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
@@ -449,15 +444,14 @@ module View =
                             | _, Some renderPos ->
                                 let worldPos = worldFromRender model renderPos
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
-                                // Clicking a mesh in 3D selects it (read/write parity
-                                // §B); the reducer applies the Inspect auto-solo (§C).
-                                // Select only — no main camera; double-tap recenters.
+                                // Clicking a mesh in 3D selects it; the reducer applies
+                                // the Inspect auto-solo. Select only — no main camera;
+                                // double-tap recenters.
                                 let! named = raycastNearestNamed ()
                                 match named with
                                 | Some (mesh, _) -> env.Emit [SetSelection (SelMesh mesh)]
                                 | None -> ()
                             | _, None ->
-                                // A background miss clears the selection.
                                 env.Emit [SetSelection SelNone]
                         } |> Async.Start
                         true
@@ -506,8 +500,8 @@ module View =
                                 let! hit = resolvePick None
                                 if gen = placeHoverGen && placementHover.Value <> hit then
                                     transact (fun () -> placementHover.Value <- hit)
-                                // Overlap validity at the hover (v12 §2): drives the
-                                // ghost fade + the cursor-side prohibit tooltip.
+                                // Overlap validity at the hover: drives the ghost fade
+                                // + the cursor-side prohibit tooltip.
                                 match hit with
                                 | Some renderPos when gen = placeHoverGen ->
                                     let! n = countOverlap (worldFromRender model renderPos)
@@ -554,8 +548,7 @@ module View =
                     // Hold-I = registration peek (the reducer gates on a solve existing).
                     env.Emit [SetRegPeek true]
                 | "Escape" ->
-                    // Cancels a live placement AND exits slice mode (both no-ops
-                    // when idle) — the "easy exit" of v12 §5.
+                    // Both messages are no-ops when idle.
                     env.Emit [ScanPinMsg CancelPlacement; SetSliceMode false]
                 | _ -> ()
             )

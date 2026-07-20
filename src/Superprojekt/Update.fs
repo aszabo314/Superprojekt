@@ -18,7 +18,7 @@ module Update =
             let common  = if centroids.Length > 0 then centroids |> Array.averageBy snd else V3d.Zero
             let names   = centroids |> Array.map fst |> IndexList.ofArray
             let indices = centroids |> Array.mapi (fun i (n,_) -> n,i) |> HashMap.ofArray
-            // LoadTransform = the immutable baseline captured at load (identity; meshes load unregistered).
+            // Identity: meshes load unregistered.
             let loadTransforms = centroids |> Array.fold (fun m (n, _) -> Map.add n Trafo3d.Identity m) Map.empty
             let dataset =
                 if centroids.Length > 0 then
@@ -79,8 +79,8 @@ module Update =
             { model with FlagScale = clamp 0.1 10.0 v }
         | SetBrushDotPx v ->
             { model with BrushDotPx = clamp 4.0 60.0 v }
-        // Slice-cell tunables (§A): geometry knobs invalidate the slice caches
-        // (the ensureSlices postlude refetches); the percentile is view-only.
+        // Geometry knobs invalidate the slice caches (the ensureSlices postlude
+        // refetches); the percentile is view-only.
         | SetSliceNSamples v ->
             { model with SliceNSamples = max 1.0 v; ScanPins = ScanPinModel.invalidateSlices model.ScanPins }
         | SetSliceContextCount v ->
@@ -90,10 +90,8 @@ module Update =
         | SetSliceVertPercentile v ->
             { model with SliceVertPercentile = clamp 0.5 1.0 v }
         | SetRegView v ->
-            // Only meaningful once a solve exists (the view disables it otherwise).
-            // The pose-baked pair caches swap in place (UpdateHelpers.applyRegView).
-            // Switching the view also cancels an armed correspondence editor —
-            // editing is Before-only, so an editor armed for the other view is moot.
+            // Editing is Before-only — switching the view cancels an armed
+            // correspondence editor.
             if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
             else { applyRegView v model with CorrArm = None; CorrPreview = None }
         | SetRegPeek held ->
@@ -104,8 +102,7 @@ module Update =
         | SetReferenceMesh mesh when model.ReferenceMesh = mesh ->
             model    // idempotent: re-setting the same reference must not wipe a solve
         | SetReferenceMesh mesh ->
-            // Reference change invalidates any solve (it was relative to the old reference):
-            // drop SolvedTransforms, snap to Before, invalidate probes/rings, re-seed enabled pins.
+            // Reference change invalidates any solve (it was relative to the old reference).
             bumpSolveGen ()
             let model =
                 invalidateProbes (invalidateRings
@@ -119,10 +116,8 @@ module Update =
             | Some _ -> seedAnchors env model (allPinIds model)
             | None -> model
 
-        // Weighted rigid solve per visible moving mesh with ≥3 in-ROI pairs, in
-        // parallel. Writes SolvedTransform directly. Anchors are mesh-local, so the
-        // pairs are taken at the load pose, giving an absolute solved transform a
-        // re-solve replaces wholesale.
+        // Anchors are mesh-local, so the pairs are taken at the load pose — the
+        // solve yields an absolute transform a re-solve replaces wholesale.
         | SolveCoarse ->
             // Any other correspondence action cancels a live 3D pick.
             let model = { model with CorrArm = None; CorrPreview = None }
@@ -147,10 +142,9 @@ module Update =
                 if List.isEmpty solvable then
                     showToast env "No mesh has ≥3 correspondence markers yet" model
                 else
-                    // Solve every solvable mesh in parallel; unsolvable meshes keep no
-                    // SolvedTransform (stay at their load pose) and are flagged in the UI.
-                    // All results land as one CoarseSolved batch (one invalidation
-                    // cycle), stamped with the generation this solve was issued under.
+                    // Unsolvable meshes keep no SolvedTransform (stay at their load
+                    // pose). Results land as ONE CoarseSolved batch, stamped with
+                    // the generation this solve was issued under.
                     bumpSolveGen ()
                     let gen = solveGen
                     task {
@@ -204,8 +198,8 @@ module Update =
                     | _ -> showToast env (sprintf "Solve failed (%s)" (failed |> Array.map (fst >> Primitives.shortName) |> String.concat ", ")) model
                 if Array.isEmpty solved then model
                 else
-                    // lsqPairs returns the absolute world transform mapping the load-pose
-                    // moving anchors onto the reference; store it as the SolvedTransform.
+                    // lsqPairs returns the absolute world transform mapping the
+                    // load-pose moving anchors onto the reference.
                     let st =
                         (model.SolvedTransforms, solved) ||> Array.fold (fun st (mesh, world) ->
                             let scale = DatasetScale.forMesh model.DatasetScales mesh
@@ -234,7 +228,6 @@ module Update =
                             | _ -> c.Anchors
                         { c with InRoi = Map.add mesh inside c.InRoi; Anchors = anchors }) sp)
                     sp
-            // Seeded correspondence markers apply immediately (Auto source).
             let sp =
                 seeded |> Array.fold (fun sp (pinId, mesh, point) ->
                     updateCorr pinId (fun corr ->
@@ -257,8 +250,6 @@ module Update =
         | SetShapeThreshold v ->
             { model with ShapeThreshold = clamp 0.0 1.0 v }
         | VarianceComputed(gen, mesh, arr) ->
-            // Keep only if not invalidated since issue, still in Inspect, and this
-            // is the reference mesh.
             if gen = surfaceDistGen && model.WorkflowStep = Inspect && model.ReferenceMesh = Some mesh then
                 { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
             else model
@@ -366,7 +357,6 @@ module Update =
                 | _ -> model
             let m = ScanPinUpdate.handleMsg env model msg
             match msg with
-            // Starting placement / deleting a pin cancels the armed editor.
             | EnterAnchorPlacement | DeletePin _ ->
                 { m with CorrArm = None; CorrPreview = None }
             // Probe/slice failures are otherwise invisible (the pin just stays
@@ -380,7 +370,7 @@ module Update =
             else { model with Selection = { model.Selection with Hovered = h } }
         | SetWorkflowStep step ->
             // Entering/leaving Inspect (re)drives the central-3D variance map, so drop
-            // its cache + bump the generation. Per-mode default (§C): pin isolation
+            // its cache + bump the generation. Per-mode default: pin isolation
             // defaults on in Correspondence, off elsewhere (the hold modifier overrides
             // momentarily where it's off). A workflow switch ends any mesh isolation
             // and drops the locate backup + the hover peek, both bound to the
@@ -399,9 +389,8 @@ module Update =
                                  Selection = { model.Selection with Hovered = None } }
         | SetFocusProjection p ->
             { model with FocusProjection = p }
-        // Slice mode (v12 §5): pin-centred — refuse to enter without a pin. The
-        // cut resets on every enter/exit so the view always opens through the
-        // pin centre.
+        // Slice mode is pin-centred — refuse to enter without a pin. The cut
+        // resets on every enter/exit so the view always opens through the pin centre.
         | SetSliceMode on ->
             if model.SliceMode = on then model
             elif on then
@@ -430,7 +419,6 @@ module Update =
                 | s -> s
             if model.Selection.Active = sel then model
             else
-                // Switching the selection cancels any in-progress correspondence edit.
                 let model =
                     { model with Selection = { model.Selection with Active = sel }
                                  CorrArm = None; CorrPreview = None }
@@ -443,7 +431,7 @@ module Update =
                     if model.WorkflowStep = Inspect then exitSolo model
                     else model
                 | SelMesh m ->
-                    // Inspect focus policy (§C): a moving mesh isolates with the
+                    // Inspect focus policy: a moving mesh isolates with the
                     // reference (it paints its own difference/displacement field);
                     // the reference returns to the ensemble.
                     if model.WorkflowStep = Inspect then
@@ -451,14 +439,12 @@ module Update =
                         else exitSolo model
                     else model
                 | SelPin _ ->
-                    // Pin focus clears mesh isolation; the meshes show fully.
                     if model.WorkflowStep = Inspect then exitSolo model
                     else model
                 | SelCell (_, mesh) ->
-                    // The locate: solo the mesh (backup-captured for a single
-                    // BackOutLocate). The user's Top/360° choice is respected — the
-                    // focus framing follows the selection in both projections. No
-                    // camera — the 3D zoom stays the cell's double-click.
+                    // The locate: solo the mesh, backup-captured for a single
+                    // BackOutLocate. Never force a projection here, and no main-3D
+                    // camera move — the zoom stays the cell's double-click.
                     let backup =
                         match model.LocateBackup with
                         | Some _ -> model.LocateBackup
@@ -468,18 +454,14 @@ module Update =
                                    PrevPhi = model.Camera.phi; PrevTheta = model.Camera.theta }
                     enterSolo mesh { model with LocateBackup = backup }
         | PickCorrespondenceAt(pinId, mesh, world) ->
-            // Set the (pin, mesh) correspondence point at the picked surface point,
-            // stored mesh-local via the displayed transform (so the before/after toggle
-            // moves it). BEFORE-ONLY: correspondences are edited in the Before state
-            // exclusively — a pick against the solved pose would store a point whose
-            // Before position is off-surface/outside the pin. The entry points force
-            // Before (arm button, placement); this is the safety net for a view
-            // toggled mid-edit. ROI-clamped (no point outside the pin sphere).
-            // Editing the reference mesh moves its RefAnchor; any other mesh sets its
-            // anchor. A committed pick DISARMS the editor (one click = one edit); an
-            // out-of-ROI click keeps it armed so the toast's "try again" needs no re-arm.
-            // The Peek hold counts as After too: the raycast hits the peeked (solved)
-            // geometry, so a commit would store an off-surface Before point.
+            // The point is stored mesh-local via the displayed transform, so the
+            // before/after toggle moves it. BEFORE-ONLY: a pick against the solved
+            // pose would store a point whose Before position is off-surface/outside
+            // the pin — the entry points force Before; this is the safety net for a
+            // view toggled mid-edit. The Peek hold counts as After too: the raycast
+            // hits the peeked (solved) geometry. A committed pick DISARMS the editor
+            // (one click = one edit); an out-of-ROI click stays armed so the toast's
+            // "try again" needs no re-arm.
             if model.RegView = RegAfter
                || (model.RegPeekHeld && not (Map.isEmpty model.SolvedTransforms)) then
                 showToast env "Correspondences are edited in the Before state — switch the view" model
@@ -502,10 +484,9 @@ module Update =
                     { model with ScanPins = sp; CorrArm = None; CorrPreview = None }
             | None -> model
         | ToggleCorrArm(pinId, mesh) ->
-            // Arm/disarm the unified editor for (pin, mesh). Arming snaps the view to
-            // BEFORE (correspondences are edited in that state only), isolates the
-            // mesh (via wheelIsolation reading CorrArm), brings the linked focus onto
-            // it, selects the pin, and cancels pin placement. Re-issuing disarms.
+            // Arming snaps the view to BEFORE (edits are Before-only); the mesh
+            // isolation while armed is a view-layer effect (wheelIsolation reads
+            // CorrArm).
             if model.CorrArm = Some(pinId, mesh) then
                 { model with CorrArm = None; CorrPreview = None }
             else
@@ -521,8 +502,7 @@ module Update =
             // Cap the brushed set so a wide brush can't flood the 3D marker node.
             let s = ids |> List.truncate 200 |> Set.ofList
             if model.BrushedSamples = s then model else { model with BrushedSamples = s }
-        // Tight fly to a metric-world point: centre on it, set the orbit radius
-        // directly (close-in), keeping orientation. The 3D side of the double-click zooms.
+        // Fly the main 3D to a metric-world point, keeping orientation.
         | FlyToPoint(world, radius) ->
             let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
             let centreR = ScanPin.renderCentre model.CommonCentroid scale world
@@ -541,8 +521,6 @@ module Update =
              | Some p -> env.Emit [FlyToPoint(p.Centre, max 0.5 (p.InnerRadius * 4.0))]
              | None -> ())
             model
-        // Single back-out: restore the camera + solo captured at the first cell
-        // locate and clear the backup.
         | BackOutLocate ->
             match model.LocateBackup with
             | None -> model
@@ -717,7 +695,7 @@ module Update =
                     } |> ignore
                     model
 
-    // Slice mode is pin-centred (v12 §5): any path that loses the selected pin
+    // Slice mode is pin-centred: any path that loses the selected pin
     // (deletion, deselection, dataset switch) exits it.
     let private ensureSliceMode (model : Model) : Model =
         if model.SliceMode && (Selection.pin model.Selection.Active).IsNone then

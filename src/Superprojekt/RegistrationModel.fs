@@ -179,8 +179,6 @@ module Readiness =
         let counts = pairCounts input
         let anySolvable = counts |> List.exists (fun (_, n) -> n >= 3)
 
-        // Zero solvable meshes (pins exist, moving meshes exist, none reaches 3) is
-        // the only marker-related hard blocker.
         if input.ReferenceMesh.IsSome
            && not (List.isEmpty input.EnabledPins)
            && not (List.isEmpty input.MovingMeshes)

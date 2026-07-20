@@ -6,11 +6,11 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Microsoft.JSInterop
 
-// ── The slice cell (ScanPin v11 §A) ─────────────────────────────────────────
+// ── The slice cell ──────────────────────────────────────────────────────────
 // ONE cross-section diagram style for every matrix cell: neutral grey ground,
 // faint context slices of the cell's own mesh, the reference profile thickened
 // by ±LoD₉₅ as a grey band, the mesh's centre profile as a black line with a
-// white halo, and the pin-colour centre ring (identity + "centred on a point").
+// white halo, and the pin-ink centre ring.
 // Every cell shares ONE horizontal window and ONE vertical extent (global
 // scales — a parallel gap reads as datum offset, a wedge as tilt, divergence as
 // change); profiles leaving the frame are clipped by the SVG viewport and
@@ -113,7 +113,7 @@ module SliceDiagram =
             "  var yt = a.t ? 1.5 : d.h - 1.5, yb = a.t ? 6.5 : d.h - 6.5;"
             "  P('M' + (a.x-3) + ' ' + yb + 'L' + (a.x+3) + ' ' + yb + 'L' + a.x + ' ' + yt + 'Z', null, 0, null, '#0f172a');"
             "});"
-            // Centre-ring in the shared pin ink (near-black warm grey, v12 §4) —
+            // Centre-ring in the shared pin ink (near-black warm grey) —
             // deliberately not the main line's true black.
             "if(d.rx!=null){"
             "  var ci = document.createElementNS(ns,'circle');"
@@ -138,7 +138,7 @@ module GuiRail =
 
     type private Pill = PillReady | PillBlock | PillInfo
 
-    // Cell state in the pin×mesh matrix: a slice diagram (§A, a SliceDiagram
+    // Cell state in the pin×mesh matrix: a slice diagram (a SliceDiagram
     // data-slice payload), a faint out-of-ROI emptiness glyph (no marks — the
     // hatch background alone reads as "empty"), or a pending placeholder.
     type private CellInfo = CellPending | CellEmpty | CellVal of string
@@ -148,7 +148,7 @@ module GuiRail =
 
     // Reference centre-plane polylines of one pin's slice + the diagram anchor
     // (reference v at u≈0) + the reference relief (max |v − anchor| within the
-    // window) — the §A vertical frame is symmetric about the anchor.
+    // window) — the vertical frame is symmetric about the anchor.
     let private refProfile (refName : string) (s : PinSlice) (halfW : float) =
         let ci = ScanPin.sliceCentreIndex s
         let lines =
@@ -177,7 +177,6 @@ module GuiRail =
         let refMesh   = model.ReferenceMesh
         let curStep   = model.WorkflowStep
 
-        // Status pill on the Register header only — Overview/Inspect titles stay bare.
         let corrStatus : aval<Pill * string> =
             AVal.custom (fun t ->
                 let hasRef = model.ReferenceMesh.GetValue t |> Option.isSome
@@ -212,7 +211,7 @@ module GuiRail =
                 body
             }
 
-        // Overview rail roster (§B): one row per mesh. click name = focus,
+        // Overview rail roster: one row per mesh. click name = focus,
         // double-click = zoom, hover = peek.
         // The trailing controls: ★ = the ONE reference picker (the focus tiles only
         // display it), then the per-mesh intrinsic error-visualization switches
@@ -271,8 +270,7 @@ module GuiRail =
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
                 AList.ofList ([ swatch; num; nameSpan; refBtn; modeBar ])
             }
-        // Shp quality cutoff (§B3): triangles below it render transparent (3D +
-        // focus). Only offered while some mesh shows the Shp heatmap.
+        // Shp quality cutoff: triangles below it render transparent (3D + focus).
         let anyShapeOn =
             model.MeshHeatmap |> AVal.map (Map.exists (fun _ h -> h = HeatShape))
         let overviewBody =
@@ -288,10 +286,10 @@ module GuiRail =
             }
 
         // ── Pin × mesh matrix — rows = pins, cells = (pin, mesh) slice diagrams
-        // (SliceDiagram, §A). Cell SINGLE click = the locate; clicking the ACTIVE
+        // (SliceDiagram). Cell SINGLE click = the locate; clicking the ACTIVE
         // locate's cell backs out (BackOutLocate) — ClickGate-deferred because of
         // that toggle: a double-click must not toggle twice on the way to its zoom.
-        // §A global scales, shared by EVERY slice cell so the diagrams compare:
+        // Global scales, shared by EVERY slice cell so the diagrams compare:
         // ONE horizontal window (N × coarsest mesh spacing; pin-diameter fallback
         // until spacings land) and ONE vertical half-extent — a robust percentile
         // of (reference relief within the window + |pair median offset|) over all
@@ -337,10 +335,6 @@ module GuiRail =
                 Class "mx-head"
                 div { Class "mx-corner" }
                 model.MeshNames |> AList.map (fun name ->
-                    // Columns show only mesh colour + number (T3); per-mesh controls
-                    // and the ★ reference live on the focus tile strip. Clicking a column
-                    // focuses the mesh (identical to clicking its focus tile); the column
-                    // highlights when that mesh is focused (the reverse link).
                     let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                     let colFocused = model.Selection.Active |> AVal.map (fun s -> Selection.mesh s = Some name)
                     let colRef = refMesh |> AVal.map ((=) (Some name))
@@ -372,8 +366,8 @@ module GuiRail =
                 |> AVal.map (Option.map (fun p ->
                     p.Probe, p.Slice, p.SliceOther, p.Correspondence, p.InnerRadius))
             let cell (mesh : string) =
-                // §A cell payload: reference band ± LoD₉₅ (from the committed probe,
-                // same pair statistic the residual fill used) + this mesh's centre
+                // Cell payload: reference band ± LoD₉₅ (from the committed probe —
+                // the same pair statistic used everywhere) + this mesh's centre
                 // profile and context slices from the peek-selected slice cache.
                 let info =
                     AVal.custom (fun t ->
@@ -451,7 +445,7 @@ module GuiRail =
                 div {
                     Class "mx-rowhead"
                     // Selected row: the header fills with a neutral accent (pins
-                    // carry no colour — name-only identity, v12 §4).
+                    // carry no colour — name-only identity).
                     classWhen "mx-rowhead-sel" selected
                     // Pin linking: click = select (the reducer applies the Inspect
                     // isolation swap, the focus frames the pin by itself);
@@ -464,7 +458,6 @@ module GuiRail =
                     button {
                         Class "mb mx-del"
                         Attribute("title", "Delete pin")
-                        // Native confirmation dialog before the destructive delete.
                         Dom.OnClick(fun _ ->
                             let ok = try JSRuntime.Instance.Invoke<bool>("confirm", sprintf "Delete pin %s? This cannot be undone." shortNm) with _ -> false
                             if ok then env.Emit [ScanPinMsg (DeletePin id)])
@@ -546,7 +539,7 @@ module GuiRail =
                             else env.Emit [ScanPinMsg EnterAnchorPlacement])
                         placing |> AVal.map (fun p -> if p then "○ placing… (Esc)" else "○ New pin")
                     }
-                    // "Isolate pins" (§7): a visual checkbox on the ONE pin-isolation
+                    // "Isolate pins": a visual checkbox on the ONE pin-isolation
                     // mode (AnchorGhostMode). On (default in Register) = isolated pin
                     // patches only; off = full textured meshes, exactly as in Overview.
                     div {
@@ -559,8 +552,7 @@ module GuiRail =
                 div { Class "rail-matrix-wrap"; matrixView () }
             }
 
-        // Inspect rail = the same pin×mesh matrix (identical metric to Correspondence,
-        // §B). The Difference / Intrinsic channel controls moved to the Inspect dock.
+        // Inspect rail = the same pin×mesh matrix (identical metric to Correspondence).
         let inspectBody =
             div {
                 Class "rail-step-controls"

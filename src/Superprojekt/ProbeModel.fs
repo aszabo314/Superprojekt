@@ -11,7 +11,7 @@ type ProbeDistribution = {
     Median    : float
     Std       : float
     Samples   : float[]
-    // World-space surface position of each sample (V3d), aligned 1:1 with Samples —
+    // World-space surface position of each sample, aligned 1:1 with Samples —
     // lets the distribution chart brush a sample back to its 3D surface cell.
     Positions : V3d[]
 }
@@ -45,7 +45,7 @@ type PinSlice = {
     Extent  : float
     // The pin's section azimuth (world horizontal unit, chart u): fitted
     // server-side on the reference surface (dip direction) — ONE line per pin,
-    // shared by every cell of its matrix row (§A).
+    // shared by every cell of its matrix row.
     UDir    : V3d
     // Signed plane offsets (m) along the slice normal; 0 = the centre slice.
     Offsets : float[]

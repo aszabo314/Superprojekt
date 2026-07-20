@@ -12,8 +12,26 @@ See `README.md` for what the app does and how to run it. This file collects the 
 - Light theme, high contrast, print-appropriate.
 - GUI must be readable to a non-expert at first glance.
 - Colour families are disjoint (§B1): the scalar gradients own red/blue (diverging, variance, range) and red→yellow→green (incidence/shape), plus pale grey = no-data and gold = reference. Mesh identity = distinct vivid hues (teal · orange · purple · green · magenta · brown · cyan · pink · olive — `Primitives.meshPalette`), chosen to stay clear of the diverging map's red/blue ends and near-white centre. Pins are NAME-only (v12 §4): no pin colours, no glyphs — every pin mark and label (3D influence/contact rings, constellation markers, flag name, matrix row-head text on the neutral header, slice-cell centre ring, dock/focus name labels) uses the ONE near-black warm grey `Primitives.pinInk` (#292524 — deliberately not the slice main line's #000 nor the slate UI text). Identity rides on thin marks (swatches, outlines, rings, chart layers) — gradients fill areas; never hand new UI a colour from another family. WHITE is reserved for the transient/selection layer: the armed pick's aim ghost/crosshair is white while uncommitted (the click commits it into the pin-ink marker; a move > 10 cm world also draws a white old→new line-arrow, main 3D + focus Top), and a selected pin gets a dashed white selection circle (radius ×1.12, at the median contact-ring height — `ScanPin.selectionCircleCentre`) in main 3D + focus single + tiles (the matrix dims non-selected cells instead).
-- No comments unless the logic is non-obvious.
+- Comments follow **Comment discipline** below.
 - Concise code, no unnecessary abstractions, no premature helpers.
+
+## Comment discipline
+
+One test for every comment: does it say something the reader cannot get from the code under it? If not, it is redundant and **forbidden**.
+
+Never write:
+
+- **Restatements** — a comment that paraphrases the line or block below it (`let lastPick = … // the last pick`). Clear naming does that job; if the name isn't clear, fix the name.
+- **Spec references** ("implements v12 §5") — specs are transient working documents, deleted at review time; a pointer into one is instantly dead.
+- **Absence notes** ("feature X left out per spec") — code never documents what it doesn't contain.
+
+The only reasons a comment exists:
+
+- The code's form or function is genuinely **non-obvious** — a trick, an invariant, a unit, a coordinate frame.
+- The code looks wrong or needlessly complicated because an **external library constraint** forces the shape (Aardvark/FShade/WebGL gotchas) — name the constraint so nobody "simplifies" it back.
+- The code is **performance-shaped** — deliberately structured for the adaptive/render/query hot path — say what the shape buys, or the next edit flattens it.
+
+Form: as short as possible. State the constraint or invariant, nothing else — no flourishes, no context recap, no justification essays.
 
 ## State rules (Elm-style)
 

@@ -46,7 +46,7 @@ let contactRings (lm : LoadedMesh) (centre : V3d) (radius : float) (maxPoints : 
     |> Array.map (Array.map (fun p -> p + centroid))
     |> decimate maxPoints
 
-// Slice-cell azimuth (ScanPin v11 §A): the horizontal direction of maximum
+// Slice-cell azimuth: the horizontal direction of maximum
 // z-range of the surface within the pin ROI ≈ the dip direction of the LSQ
 // height fit z = ax + by + c over the ROI vertices (world frame, posed by
 // `transform`). Sign-canonicalised (+X, tie +Y) so repeated requests for the

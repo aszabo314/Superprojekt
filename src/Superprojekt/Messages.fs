@@ -49,7 +49,7 @@ type Message =
     | SurfaceDistanceFailed of mesh:string * reason:string
     // Per mesh: world bbox + mean sample spacing (m) — one fetch warms both.
     | SceneBoundsLoaded  of (string * Box3d * float)[]
-    // Slice-cell tunables (§A, gear): window multiplier / context count / context
+    // Slice-cell tunables (gear): window multiplier / context count / context
     // spacing invalidate the slice caches; the vertical percentile is view-only.
     | SetSliceNSamples of float
     | SetSliceContextCount of float
@@ -67,7 +67,7 @@ type Message =
     | SetSelection of ActiveSelection
     | SetWorkflowStep of WorkflowStep
     | SetFocusProjection of FocusProjection
-    // Slice mode (v12 §5): toggle the pin-centred ortho measurement view;
+    // Slice mode: toggle the pin-centred ortho measurement view;
     // AdjustSliceCut = wheel notches sweeping the cut plane through the pin.
     | SetSliceMode of bool
     | AdjustSliceCut of float

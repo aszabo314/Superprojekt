@@ -190,8 +190,8 @@ module Lines =
         }
 
 // Shared line-glyph builders for the 3D + focus overlays — segments appended as
-// (a, b, colour, width) for Lines.render. ONE home so the spec-critical
-// conventions (dash phase, ring segment counts, arrowhead shape) cannot fork
+// (a, b, colour, width) for Lines.render. ONE home so the conventions
+// (dash phase, ring segment counts, arrowhead shape) cannot fork
 // between the main scene and the focus views.
 module LineGlyphs =
 
@@ -270,14 +270,12 @@ module LineGlyphs =
             out.Add(b, back - side * hw, col, w)
             out.Add(back + side * hw, back - side * hw, col, w)
 
-    // Wire sphere (three axis-aligned great circles) of radius r at c.
     let addWireSphere (out : ResizeArray<V3d * V3d * V4d * float>)
                       (c : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
         addRing out c V3d.IOO V3d.OIO r col width segs
         addRing out c V3d.IOO V3d.OOI r col width segs
         addRing out c V3d.OIO V3d.OOI r col width segs
 
-    // Small 3-axis cross (half-length r) marking an exact point at c.
     let addCross (out : ResizeArray<V3d * V3d * V4d * float>)
                  (c : V3d) (r : float) (col : V4d) (width : float) =
         out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, width)
@@ -290,7 +288,6 @@ module LineGlyphs =
         out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, w)
         out.Add(c - V3d.OIO * r, c + V3d.OIO * r, col, w)
 
-    // 12 edges of an axis-aligned box (half-extents hx,hy,hz) at c.
     let addBoxOutline (out : ResizeArray<V3d * V3d * V4d * float>)
                       (c : V3d) (hx : float) (hy : float) (hz : float) (col : V4d) (width : float) =
         let v = [|

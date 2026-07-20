@@ -38,7 +38,6 @@ module ScanPinUpdate =
 
     let private makeAnchor (model : Model) (id : ScanPinId) (worldCentre : V3d) =
         let existing = model.ScanPins.Pins |> HashMap.toList |> List.map snd
-        // Collision-check the short name against existing pin names + mesh numbers.
         let taken =
             let pinNames = existing |> List.map (fun p -> p.ShortName) |> Set.ofList
             let meshNums = model.MeshOrder |> HashMap.toList |> List.map (fun (_, i) -> string (i + 1)) |> Set.ofList

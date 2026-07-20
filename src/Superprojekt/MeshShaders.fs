@@ -38,8 +38,8 @@ module MeshShader =
         member x.ClipPlaneCount : int = x?ClipPlaneCount
         member x.ClipPlane0     : V4f = x?ClipPlane0
         member x.ClipPlane1     : V4f = x?ClipPlane1
-        // Slice mode (v12 §5): camera forward + cut-plane distance (the ortho
-        // near, render units) + falloff width behind it. FadeDist 0 = off.
+        // Slice mode: camera forward + cut-plane distance (the ortho near,
+        // render units) + falloff width behind it. FadeDist 0 = off.
         member x.SliceFwd       : V3f     = x?SliceFwd
         member x.SliceFadeNear  : float32 = x?SliceFadeNear
         member x.SliceFadeDist  : float32 = x?SliceFadeDist
@@ -47,8 +47,8 @@ module MeshShader =
         // 1 = signed difference, diverging blue↔grey↔red (soloed moving mesh);
         // 2 = variance std ≥0, sequential grey→red (reference, Inspect ensemble).
         // DistScale saturates the positive end, DistLoNeg (enc 1 only) the
-        // |negative| end — both come from the ONE pin-derived Inspect range (§C,
-        // ScanPin.inspectRange), so every map shares a scale. SurfaceDist = 1e30
+        // |negative| end — both come from the ONE pin-derived Inspect range
+        // (ScanPin.inspectRange), so every map shares a scale. SurfaceDist = 1e30
         // → keep base colour.
         member x.DistanceEncoding : int     = x?DistanceEncoding
         member x.DistScale        : float32 = x?DistScale
@@ -74,7 +74,7 @@ module MeshShader =
         // depth contest deterministically (no per-pixel ID/colour alternation
         // where epochs differ by only noise).
         member x.OutlineDepthBias : float32 = x?OutlineDepthBias
-        // Inspect de-clutter (§B5): 1 → the base surface is a plain near-white
+        // Inspect de-clutter: 1 → the base surface is a plain near-white
         // (no photo texture / palette / slope), so the false-colour painters above
         // it are the only filled signal. Shading still applies.
         member x.InspectPlain     : float32 = x?InspectPlain
@@ -96,8 +96,6 @@ module MeshShader =
     let shade (v : FragIn) =
         fragment {
             let wp = v.wp.XYZ
-            // Sectioning (mesh only; overlays never clipped): the camera-side
-            // half (dot(n,wp)+w > 0) is discarded.
             let cpc = uniform.ClipPlaneCount
             if cpc >= 1 then
                 let p = uniform.ClipPlane0
@@ -107,7 +105,7 @@ module MeshShader =
                 let p = uniform.ClipPlane1
                 let sd = p.X * wp.X + p.Y * wp.Y + p.Z * wp.Z + p.W
                 if sd > 0.0f then discard()
-            // Slice-mode falloff (v12 §5): beyond the cut plane (the ortho near)
+            // Slice-mode falloff: beyond the cut plane (the ortho near)
             // alpha falls off over SliceFadeDist and then discards — only the
             // profile band + a few cm stay visible. In front of the cut GL
             // near-clips the geometry, so no test is needed there.
@@ -181,7 +179,7 @@ module MeshShader =
                 elif uniform.RenderingMode = 2 then slopeCol
                 else v.c.XYZ
             // Difference map (soloed moving mesh, Inspect): signed distance on the
-            // Coolwarm diverging map (§C, CET-D01) — zero = near-white centre
+            // Coolwarm diverging map (CET-D01) — zero = near-white centre
             // (welded to 0), + through salmon to red, − through lavender to blue,
             // each sign normalized by its own end, near-zero t^0.6 boost. Mirrors
             // Primitives.Diff and the focus difference tile. On top: constant-value
@@ -259,9 +257,6 @@ module MeshShader =
                 let loC = V3f(0.86f, 0.20f, 0.15f)
                 let hiC = V3f(0.18f, 0.55f, 0.34f)
                 baseRgb <- loC * (1.0f - ts) + hiC * ts
-            // (World-Z isolines are NOT drawn here — they are edge-detected from a
-            // band-parity field in the offscreen outline pass, so they get the same
-            // crisp 1px look as the silhouette outline. See OutlineGBuffer/OutlineEdge.)
             let depth =
                 if alpha >= opaqueThreshold then v.fc.Z
                 else 1.0f
@@ -347,7 +342,7 @@ module OutlineCoverage =
             return { c0 = a; c1 = b }
         }
 
-// Placement-suitability coverage pass (v12 §2, placement-armed only): like
+// Placement-suitability coverage pass (placement-armed only): like
 // OutlineCoverage (additive, occlusion-free, one channel per mesh, cap 8) but
 // each fragment writes a SHAPE-WEIGHTED value 0.25·(0.2 + 0.8·quality), so
 // "covered" stays above a floor even at quality 0 (the composite currently
@@ -382,7 +377,7 @@ module SuitabilityCoverage =
             return { c0 = a; c1 = b }
         }
 
-// Fused placement-suitability composite (v12 §2): per pixel, count the covered
+// Fused placement-suitability composite: per pixel, count the covered
 // suitability channels. ≤1 → transparent (no overlap ⇒ placement is prohibited;
 // the surface shows through untouched); ≥2 → a screen-space diagonal weave
 // cycling through the covered meshes' palette colours (no colour cap below the
@@ -466,7 +461,7 @@ module OutlineEdge =
         // .X = 1 → silhouette + isolines, 0.5 → silhouette only (Inspect pair
         // view context), 0 → no lines (the mesh still occludes in the G-buffer).
         member x.OutlineMask : Arr<N<32>, V4f> = x?OutlineMask
-        // Slice mode (v12 §5 follow-up): line alpha falls off with the stored
+        // Slice mode: line alpha falls off with the stored
         // window depth — valid because the slice camera is ORTHO, where window
         // depth is linear in eye distance and 0 sits exactly at the cut plane.
         // The multiplier reads the 16-bit hi/lo reconstruction (target0.w/.z) —

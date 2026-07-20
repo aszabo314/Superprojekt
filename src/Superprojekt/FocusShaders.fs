@@ -15,7 +15,7 @@ module FocusShaders =
         // 6 = shape carry a pre-normalized [0,1] FocusScalar and map to the same
         // colours as the 3D mesh-shader heatmaps. FocusHi saturates the positive
         // end; FocusLoNeg (mode 1 only) the |negative| end — both from the
-        // unified pin-derived Inspect range (§C), matching the 3D mesh shader so
+        // unified pin-derived Inspect range, matching the 3D mesh shader so
         // tiles, single and 3D read on one scale.
         member x.FocusMode  : int     = uniform?FocusMode
         member x.FocusHi    : float32 = uniform?FocusHi
@@ -62,7 +62,7 @@ module FocusShaders =
                 return V4f(loC * (1.0f - ts) + hiC * ts, 1.0f)
             elif abs v.s >= 1e20f then return V4f(0.886f, 0.910f, 0.941f, 1.0f)
             else
-                // Coolwarm diverging difference map (§C, CET-D01): zero = near-white
+                // Coolwarm diverging difference map (CET-D01): zero = near-white
                 // centre (welded to 0; grey means "no signal", not "0"), + through
                 // salmon to red, − through lavender to blue, each sign normalized by
                 // its own end (FocusHi / FocusLoNeg) with the near-zero t^0.6 boost.

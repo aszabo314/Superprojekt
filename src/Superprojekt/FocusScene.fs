@@ -40,8 +40,7 @@ module FocusScene =
     // control left the single blank, so the dpr is shared instead.
     let dpr = cval 1.0
     // Drag/hover state shared across focus controls — safe only because one large
-    // `single` exists at a time (the tiles are non-interactive). Would need per-control
-    // state if two singles ever coexisted.
+    // `single` exists at a time (the tiles are non-interactive).
     let mutable private dragging = false
     let mutable private lastPx = V2i.Zero
     // Hover-preview throttle + generation guard (drops out-of-order raycast results).
@@ -66,7 +65,7 @@ module FocusScene =
     // Framing for both the single and the tiles: the panorama centre and the
     // half-extent that frames the mesh around it.
     //  • centreWorld  = stored PanoCenters[mesh] (absolute world) else the centroid
-    //                   (= the mesh origin) — request: no entry ⇒ origin, as before.
+    //                   (= the mesh origin).
     //  • centreRender = that carried through renderT (− centroid → mesh frame → render):
     //                   the 360° camera position AND the Top-view camera centre.
     //  • extent       = farthest mesh-bbox corner from the centre (render units), so a
@@ -94,7 +93,7 @@ module FocusScene =
                 max 1e-4 (r * s * 0.98))
         centreWorld, centreRender, extent
 
-    // Selection-derived base framing (§A2) of a mesh's focus canvas, BOTH
+    // Selection-derived base framing of a mesh's focus canvas, BOTH
     // projections: the focus camera FOLLOWS the selection. pin AND cell share ONE
     // close-up scale — the pin's influence circle fills the view height — only the
     // centre differs (pin → pin centre, cell → that mesh's correspondence marker at
@@ -156,7 +155,7 @@ module FocusScene =
                     // the hundreds — a lower cap silently strands the close-up too far.
                     V2d((rp.X - fc.X) / ext, (rp.Y - fc.Y) / ext), clamp 1.0 2000.0 (ext / tgt))
 
-    // Brushed sample glyphs on THIS mesh (§A4) — always-on-top; empty when no brush.
+    // Brushed sample glyphs on THIS mesh — always-on-top; empty when no brush.
     let private brushedDotsNode (model : AdaptiveModel) (name : string) =
         sg {
             Sg.DepthTest (AVal.constant DepthTest.None)
@@ -263,7 +262,7 @@ module FocusScene =
         ]
 
     // Pin influence rings + the dashed white selection circle — ONE builder shared
-    // by the single and the tiles so their marks cannot drift (§A2): flat XY in
+    // by the single and the tiles so their marks cannot drift: flat XY in
     // Top, facing the eye (approximate sphere silhouette) in 360°. In slice mode
     // (`slice` = the live SliceCam) the Top views additionally show the ANGLE
     // INDICATOR at the selected pin: a white arrow through the centre along the
@@ -298,8 +297,6 @@ module FocusScene =
                 let dXY =
                     let f = V3d(sc.Fwd.X, sc.Fwd.Y, 0.0)
                     if f.Length > 1e-9 then f.Normalized else V3d.IOO
-                // View-direction arrow through the pin centre, ~75 % of the
-                // pin circle.
                 let l = prR * 0.75
                 addArrowXY out (pinR - dXY * l) (pinR + dXY * l) (prR * 0.15) white 2.2
                 // Cut plane trace: each plane ∩ the horizontal plane at the
@@ -324,19 +321,18 @@ module FocusScene =
         | None -> ()
 
     // Inspect colour overlay for a mesh: (FocusMode, per-vertex scalar buffer, hi).
-    // 0 = texture; 1 = difference (FocusDist, diverging); 2 = displacement (per-vertex
-    // |load→solved| computed here, sequential). Texture/no-data → a zero buffer of the
-    // right length (the shader ignores it).
+    // 0 = texture; 1 = difference (FocusDist, diverging). Texture/no-data → a zero
+    // buffer of the right length (the shader ignores it).
     let private focusOverlay (model : AdaptiveModel) (name : string) (loaded : LoadedMesh) (scale : aval<float>) =
         let rangeWorldA = MeshView.rangeMaxWorld model
-        // Inspect comparison overlay (1 = difference, 2 = displacement) takes
-        // precedence; otherwise the per-mesh intrinsic heatmap (4/5/6) mirrors the 3D
-        // view. HeatOff / no comparison ⇒ 0 (texture).
+        // Inspect comparison overlay (1 = difference) takes precedence; otherwise the
+        // per-mesh intrinsic heatmap (4/5/6) mirrors the 3D view. HeatOff / no
+        // comparison ⇒ 0 (texture).
         let modeA =
             AVal.custom (fun t ->
                 let inspectMode =
                     if model.WorkflowStep.GetValue t <> Inspect then 0
-                    // Brushing = sole focus (§A4): the error maps stand down while
+                    // Brushing = sole focus: the error maps stand down while
                     // samples are brushed — only the brushed dots carry value.
                     elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then 0
                     else
@@ -370,8 +366,8 @@ module FocusScene =
                 // Intrinsic per-mesh heatmaps: per-vertex scalar pre-normalized to [0,1]
                 // in the mesh's own (pose-independent) frame. Sensor = the pano centre in
                 // mesh-local coords (no entry ⇒ the mesh origin), matching MeshView.
-                // Incidence clamps at 0 (no abs — away-facing = never scanned = worst,
-                // §B3); range normalizes by the GLOBAL all-mesh end (rangeMaxWorld).
+                // Incidence clamps at 0 (no abs — away-facing = never scanned = worst);
+                // range normalizes by the GLOBAL all-mesh end (rangeMaxWorld).
                 | 4 | 5 | 6 as m ->
                     loaded.pos.GetValue t |> ignore
                     match loaded.mesh.Value with
@@ -403,7 +399,7 @@ module FocusScene =
                         ArrayBuffer arr :> IBuffer
                     | None -> zero ()
                 | _ -> zero ())
-        // Map ends from the unified pin-derived range (§C) — same scale as the 3D
+        // Map ends from the unified pin-derived range — same scale as the 3D
         // painters, so every tile and the single are directly comparable.
         let rangeA = MeshView.inspectRange model
         let hiA =
@@ -459,8 +455,8 @@ module FocusScene =
         let curZoom () = snd (AVal.force camPair)
         let modeA, scalarBuf, hiA, loNegA, isoA = focusOverlay model name loaded scale
         let surfaceMode = modeA
-        // Overlay: every pin's influence circle (true InnerRadius footprint, the pin's
-        // own colour, selection = weight/alpha) in BOTH projections — the 360° view
+        // Overlay: every pin's influence circle (true InnerRadius footprint, pin ink,
+        // selection = weight/alpha) in BOTH projections — the 360° view
         // approximates the sphere's silhouette with a circle facing the eye.
         // Correspondence Top adds a screen-fixed always-on-top glyph at THIS mesh's
         // anchor per pin + the live aim ghost; the glyph sizing is Top-projection
@@ -499,7 +495,7 @@ module FocusScene =
                         | None -> ()
                     // Live aim ghost: a WHITE cross+ring at the hovered pick
                     // point while armed for THIS mesh — white = "not committed yet";
-                    // the click turns it into the pin-coloured marker. A move > 10 cm
+                    // the click turns it into the pin-ink marker. A move > 10 cm
                     // (world) from the current anchor adds a white arrow old → new.
                     match model.CorrArm.GetValue t with
                     | Some (pid, m) when m = name ->
@@ -632,8 +628,7 @@ module FocusScene =
                     if isPano then
                         // Grab-the-world look-around: the surface point under the cursor
                         // stays under it — per-axis atan offsets at the current fov, old
-                        // vs new cursor position. EFFECTIVE zoom (base ⊕ user): the
-                        // 360° base is live now that it frames the selection too.
+                        // vs new cursor position, on the EFFECTIVE zoom (base ⊕ user).
                         let tx, ty = panoHalfTans (AVal.force zoomEff) (w / h)
                         let thX (px : float) = atan ((2.0 * px / w - 1.0) * tx)
                         let thY (py : float) = atan ((1.0 - 2.0 * py / h) * ty)
@@ -735,13 +730,10 @@ module FocusScene =
             }
         }
 
-    // One thumbnail tile per mesh — the mesh browser (§B/T3): purely the small view
-    // (+ identity label); the per-mesh controls live elsewhere (★ reference picker =
-    // Overview roster). Click follows the selection: nothing/mesh selected → select
-    // THIS mesh; pin/cell selected → select the (pin, THIS mesh) cell (= the matrix
-    // cell click); re-clicking the current target = the matrix double-click zoom
-    // (main 3D). All meshes are tiled (hidden → dimmed). Reference tile = a
-    // prominent ★ indicator (T10).
+    // One thumbnail tile per mesh — the mesh browser. Click follows the selection:
+    // nothing/mesh selected → select THIS mesh; pin/cell selected → select the
+    // (pin, THIS mesh) cell (= the matrix cell click); re-clicking the current
+    // target = the matrix double-click zoom (main 3D).
     let private focusTile (env : Env<Message>) (model : AdaptiveModel) (name : string) : DomNode =
         let loaded = MeshView.loadMeshAsync (fun () -> ()) name
         let renderT, scale = renderTrafoOf model name loaded
@@ -751,8 +743,6 @@ module FocusScene =
         // Tiles follow the global Top/360° toggle — the whole focus panel
         // switches projection together.
         let isPanoA = model.FocusProjection |> AVal.map ((=) ProjPano)
-        // Pin influence circles — the same footprint rings as the single: flat XY
-        // in Top, facing the eye (approximate sphere silhouette) in 360°.
         let pinsAval = model.ScanPins.Pins |> AMap.toAVal
         let sliceCamA = MeshView.sliceCamera model
         let ringSegs =
@@ -772,7 +762,7 @@ module FocusScene =
                 Class "focus-rc"
                 let! size = RenderControl.ViewportSize
                 Sg.Uniform("ViewportSize", size)
-                // Tiles frame the selection too (§A2): a pin/cell zooms every tile
+                // Tiles frame the selection too: a pin/cell zooms every tile
                 // onto that region on ITS OWN mesh — a small-multiples comparison,
                 // in whichever projection is active.
                 let baseFrame = selBaseFrame model name scale fitCenter fitExtent isPanoA
@@ -835,9 +825,7 @@ module FocusScene =
             }
         }
 
-    // The large single, keyed by (mesh, effective projection) so a projection toggle
-    // rebuilds. The displacement channel forces ortho (its arrowheads are laid out in
-    // the Top view's XY screen plane), so 360° collapses to Top there.
+    // The large single, keyed by (mesh, projection) so a projection toggle rebuilds.
     let single (env : Env<Message>) (model : AdaptiveModel) =
         AVal.custom (fun t ->
             // Resolve the focused mesh INLINE — building a transient AVal.custom here
@@ -856,6 +844,5 @@ module FocusScene =
         |> AList.ofAVal
         |> AList.map (fun (n, proj) -> focusSingle env model n proj)
 
-    // One tile per mesh — the mesh browser (T3).
     let multiples (env : Env<Message>) (model : AdaptiveModel) =
         model.MeshNames |> AList.map (focusTile env model)

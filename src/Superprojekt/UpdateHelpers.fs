@@ -7,8 +7,6 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Superprojekt
 
-// Dataset bootstrap: loads the dataset list + default dataset on startup;
-// loadDataset fans out centroids + bboxes.
 module ServerActions =
 
     let loadDataset (env : Env<Message>) (dataset : string) =
@@ -87,9 +85,8 @@ module UpdateHelpers =
     // Switch the committed Before/After view: swap every pose-baked pair cache in
     // place (probes, slices, the Inspect scalar maps), cancel in-flight scalar
     // fetches (a result landing after the swap would file under the wrong pose),
-    // drop the pose-indexed brush gids, refetch rings. No-op without a solve or
-    // when already on that view. Shared by SetRegView and the guards that force
-    // the Before view (correspondence editing is Before-only).
+    // drop the pose-indexed brush gids, refetch rings. Shared by SetRegView and
+    // the guards that force the Before view (correspondence editing is Before-only).
     let applyRegView (v : RegView) (model : Model) =
         if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
         else

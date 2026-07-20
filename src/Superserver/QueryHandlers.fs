@@ -82,7 +82,7 @@ let loadMesh (fullName : string) (index : int) =
     MeshCache.get dataset name index
 
 // One error shell for every query handler: malformed / degenerate bodies → 400,
-// a missing dataset/mesh → 404, anything unexpected → 500 (was: everything 404).
+// a missing dataset/mesh → 404, anything unexpected → 500.
 let private tryQuery (name : string) (body : HttpContext -> Task<HttpHandler>) : HttpHandler =
     fun next ctx -> task {
         let log = ctx.GetLogger "Superserver"
@@ -311,8 +311,8 @@ let probeHandler : HttpHandler =
             |}
     })
 
-// Weighted rigid landmark solve. Points arrive in world space at current poses;
-// the returned transform is a delta mapping them onto the reference.
+// Points arrive in world space at current poses; the returned transform is a
+// delta mapping them onto the reference.
 let lsqPairsHandler : HttpHandler =
     tryQuery "lsq-pairs" (fun ctx -> task {
         let log = ctx.GetLogger "Superserver"

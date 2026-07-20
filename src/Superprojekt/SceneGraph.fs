@@ -15,8 +15,7 @@ module SceneGraph =
     let private boxIdx =
         [| 0;1;2; 0;2;3;  5;4;7; 5;7;6;  4;0;3; 4;3;7;  1;5;6; 1;6;2;  0;4;5; 0;5;1;  3;2;6; 3;6;7 |]
 
-    // Coordinate-cross centre block. Always-on-top: DepthTest.None, passOne
-    // after the opaque mesh pass; alpha-blended.
+    // Coordinate-cross centre block.
     let private axisBox (color : V4d) (trafo : aval<Trafo3d>) =
         sg {
             Sg.Pass RenderPass.passOne
@@ -182,8 +181,8 @@ module SceneGraph =
             (V4d(0.831, 0.631, 0.024, 0.95)) 2.5
 
     // The focused mesh's bbox edges in a cyan accent — the 3D "active" treatment
-    // mirroring the rail row + focus tile (read parity §B). Depth-tested + subtle,
-    // distinct from the reference gold. Hidden when nothing is focused.
+    // mirroring the rail row + focus tile. Depth-tested + subtle, distinct from
+    // the reference gold. Hidden when nothing is focused.
     let private focusedOutline view proj active (model : AdaptiveModel) =
         bboxOutline view proj active model
             (fun t -> Selection.mesh (model.Selection.Active.GetValue t))
@@ -211,7 +210,7 @@ module SceneGraph =
         // Sg.Pass alone. Cross + labels run in passOne (DepthTest.None) on top.
 
         let meshScene  = MeshView.buildScene loadFinished clipUniforms placementHover wheelIsolation model
-        // Placement suitability (v12 §2) draws before the outline composites so
+        // Placement suitability draws before the outline composites so
         // isolines/footprints stay readable on top of the fused overlay.
         let suitScene  = OutlineView.buildSuitability info model view proj
         let outlineScene = OutlineView.build info model view proj
@@ -231,8 +230,8 @@ module SceneGraph =
                         | None -> Map.tryFind first (model.DatasetCentroids.GetValue t) |> Option.defaultValue cc
                     ScanPin.renderCentre cc (DatasetScale.forMesh (model.DatasetScales.GetValue t) first) world
                 | [] -> V3d.Zero)
-        // The origin cross + its labels stand down in slice mode (v12 follow-up:
-        // the terrain profiles own that view).
+        // The origin cross + its labels stand down in slice mode (the terrain
+        // profiles own that view).
         let crossActive =
             (notFullscreen, model.SliceMode) ||> AVal.map2 (fun nf s -> nf && not s)
         let cross         = originIndicator view proj crossActive crossCenter

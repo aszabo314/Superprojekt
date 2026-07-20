@@ -15,7 +15,7 @@ module ScanPinScene =
     let private sphereIdxBuf = AVal.constant (ArrayBuffer sphereIdx :> IBuffer)
     let private sphereIdxCnt = AVal.constant sphereIdx.Length
 
-    // Translucent icosphere shell (placement hover preview).
+    // Placement hover preview shell.
     let private sphereShell
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (active : aval<bool>) (trafo : aval<Trafo3d>) (color : aval<V4d>) =
@@ -67,16 +67,10 @@ module ScanPinScene =
                     | _ -> ()
             out.ToArray())
 
-    // Brushed-dot geometry (§A4, v12 §6 + follow-up): circle+cross glyphs per
-    // brushed sample — value-coloured in the main 3D outside slice mode (the
-    // shared diverging map), neutral dark grey in slice mode and the focus
-    // views (there the values live in the charts/ordinates). With
-    // sliceAware (the main 3D only) and slice mode on, the dots nearest the
-    // cut plane — the DOTS OF INTEREST, capped — render at full strength while
-    // the rest fade with their distance behind the cut (front-side dots are
-    // near-clipped like the surfaces, so they are skipped, not wasted on the
-    // cap). meshFilter restricts to one mesh — the focus views pass their own
-    // mesh. Positions come from the same canonical gid array the charts label.
+    // Brushed-dot geometry: circle+cross glyphs per brushed sample —
+    // value-coloured in the main 3D outside slice mode, neutral dark grey in
+    // slice mode and the focus views. Positions come from the same canonical
+    // gid array the charts label.
     let maxDotsOfInterest = 12
 
     // Slice-mode ranking shared by the 3D dots, the stretch-mode ordinates and
@@ -113,7 +107,7 @@ module ScanPinScene =
                     |> Array.sortBy (fun (_, _, _, d) -> d)
                     |> Some)
 
-    // v12 §7 (follow-up) — ADAPTIVE vertical exaggeration factor. The stretch is
+    // ADAPTIVE vertical exaggeration factor. The stretch is
     // PROJECTION-only (ortho half-height ÷ N; screen-vertical = the pin axis),
     // and the extent is PRE-CALCULATED FOR THE REGION — every input below is
     // independent of the cut position AND the azimuth (axis offsets are), so N
@@ -210,8 +204,6 @@ module ScanPinScene =
                 let scale = datasetScale.GetValue t
                 match (if sliceAware then rankedA.GetValue t else None) with
                 | Some ranked ->
-                    // Dots of interest at full strength; the rest fade with
-                    // their distance behind the cut.
                     let hh = match sliceCamA.GetValue t with Some sc -> sc.HalfHeight | None -> 1.0
                     ranked
                     |> Array.mapi (fun i (_, p, vMm, d) ->
@@ -229,7 +221,7 @@ module ScanPinScene =
                         else None)
                     |> Array.ofSeq)
 
-    // One brushed-sample glyph (v12 follow-up): a screen-aligned circle with a
+    // One brushed-sample glyph: a screen-aligned circle with a
     // cross through it, as line segments; the DOTS OF INTEREST get a second,
     // inner circle. right/upv are the HALF-SIZE axis vectors (upv pre-squished
     // in stretch mode so the glyph keeps its aspect).
@@ -256,7 +248,7 @@ module ScanPinScene =
     // vertical glyph axis is divided by N so the exaggeration cancels and the
     // glyphs keep their original aspect ratio. Outside slice mode the glyphs
     // carry the shared difference viz — each dot's stroke = its sample value
-    // through the ONE diverging map/range (§C), over a dark under-stroke so the
+    // through the ONE diverging map/range, over a dark under-stroke so the
     // near-white zero end stays readable on the plain Inspect surface; slice
     // mode keeps them neutral (the values live in the ordinates/charts there).
     let brushedDotSegments (model : AdaptiveModel) (viewportCss : aval<V2i>) (view : aval<Trafo3d>) =
@@ -324,16 +316,14 @@ module ScanPinScene =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
 
         let notFullscreen = AVal.map not fullscreenActive
-        // Correspondence point markers (the constellation) render only in the
-        // Correspondence workflow — Overview/Inspect stay clean (matches the focus
-        // panel's overlay, which is already gated the same way) — and stand down
-        // in slice mode with the rest of the pin chrome (the terrain profiles
-        // own that view).
+        // The constellation renders only in the Correspondence workflow
+        // (matching the focus panel's overlay) and stands down in slice mode
+        // with the rest of the pin chrome.
         let inCorrespondence = model.WorkflowStep |> AVal.map ((=) Correspondence)
         let constellationActive =
             (notFullscreen, inCorrespondence, model.SliceMode)
             |||> AVal.map3 (fun nf c s -> nf && c && not s)
-        // Shared chrome for every line overlay: alpha-blended, non-interactive.
+        // Shared chrome for every line overlay.
         // LessOrEqual = occluded by foreground geometry (the spatial cue);
         // None = on top (constellation depth bias, selection circle).
         let linesNodeDT (depth : DepthTest) (active : aval<bool>) segs =
@@ -351,7 +341,7 @@ module ScanPinScene =
         let selectedId = model.Selection.Active |> AVal.map Selection.pin
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-        // Slice mode (v12 follow-up): the flag machinery (pole+ring, base cross,
+        // Slice mode: the flag machinery (pole+ring, base cross,
         // name label) AND the pin rings (influence ring, axis line, contact
         // rings) stand down entirely — the terrain profiles own the view.
         let flagsActive =
@@ -397,9 +387,7 @@ module ScanPinScene =
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
                     // Tap toggles selection — ClickGate-deferred so a double-tap's two
-                    // taps can't toggle twice; double-tap = select + 3D zoom (the 2D
-                    // focus zoom is out of reach here: FocusScene compiles later — the
-                    // matrix pin row is the fully linked path).
+                    // taps can't toggle twice; double-tap = select + 3D zoom.
                     Sg.OnTap(fun _ ->
                         match AVal.force placementActive with
                         | true -> true
@@ -423,10 +411,10 @@ module ScanPinScene =
             )
 
         // Visible pin-centre marker: a small, faint neutral wire-box jack on top (so
-        // the invisible pick proxy can't occlude it); slightly darker when selected
-        // or hovered. The flag's base cross: sized by the screen-constant flag
-        // height (view-dependent by design — recomputes per camera move; a handful
-        // of pins keeps it cheap), but NEVER rotated (axis-aligned, unlike the name).
+        // the invisible pick proxy can't occlude it). The flag's base cross: sized
+        // by the screen-constant flag height (view-dependent by design — recomputes
+        // per camera move; a handful of pins keeps it cheap), but NEVER rotated
+        // (axis-aligned, unlike the name).
         // Project to centres only — depending on the whole pin map would rebuild the
         // marker buffer on any pin field change (probe/ring result, rename, …).
         let pinCentres = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre) |> AMap.toAVal
@@ -459,8 +447,8 @@ module ScanPinScene =
 
         // Pin influence visuals: a thin equator ring (⊥ probe axis, radius =
         // InnerRadius) + sphere–surface contact rings per visible mesh, in the
-        // shared pin ink (name-only identity, v12 §4). Normal depth testing on
-        // purpose — occlusion is the spatial cue.
+        // shared pin ink. Normal depth testing on purpose — occlusion is the
+        // spatial cue.
         let pinRings =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
@@ -477,8 +465,6 @@ module ScanPinScene =
                         | Some centre, Some radius, Some axis, Some rings ->
                             let sel = isSelected.GetValue t
                             let colour = Primitives.pinInkV3d
-                            // Pin-row hover lights the rings up thick + bright
-                            // (UI→3D linking via the shared Selection record).
                             let hovered = model.Selection.Hovered.GetValue t = Some (HoverPin id)
                             let cc = model.CommonCentroid.GetValue t
                             let scale = datasetScale.GetValue t
@@ -515,7 +501,6 @@ module ScanPinScene =
         // a moving-mesh marker — plus a thin line from each moving glyph to the
         // reference point. All markers carry the shared pin ink (which mesh a marker
         // sits on is the hover-linked matrix cell's job). Fixed render size.
-        // Selection / hover brighten; out-of-ROI meshes omitted. Rendered on top.
         // Project to the correspondence only — depending on the whole pin map
         // would rebuild the constellation buffer on any pin field change.
         let pinCorr = model.ScanPins.Pins |> AMap.map (fun _ p -> ScanPin.correspondence p) |> AMap.toAVal
@@ -597,9 +582,9 @@ module ScanPinScene =
                     match hOpt with
                     | Some c -> Trafo3d.Scale r * Trafo3d.Translation c
                     | None -> Trafo3d.Scale 0.0)
-            // WHITE: the uncommitted-transient layer (§B1) — the tap commits it
+            // WHITE: the uncommitted-transient layer — the tap commits it
             // into the committed pin geometry, exactly like the correspondence
-            // ghost. Hard-prohibit (v12 §2): with < 2 meshes in range at the
+            // ghost. Hard-prohibit: with < 2 meshes in range at the
             // hover the indicator goes very transparent (placement is refused).
             let ghostFade =
                 placementValid |> AVal.map (fun v -> if v = Some false then 0.2 else 1.0)
@@ -639,7 +624,7 @@ module ScanPinScene =
                     out.ToArray())
             ASet.ofList [ linesNode flagsActive segs ]
 
-        // Pin identity flag name (§A): the pin's ShortName floating above the flag
+        // Pin identity flag name: the pin's ShortName floating above the flag
         // top, in the shared pin ink. Sized by the screen-constant flag height and
         // billboarded about Z so the text always faces the camera — the flag's only
         // rotating element (the base cross stays axis-aligned). Always-on-top
@@ -742,13 +727,10 @@ module ScanPinScene =
                     | None -> [||])
             linesNodeTop notFullscreen segs
 
-        // Brushed individual samples (§A4, v12 §6): screen-aligned circle+cross
-        // glyphs at the brushed samples' surface positions, looked up by gid in
-        // the SAME canonical array the charts label with — so a chart
-        // range-brush lands on the exact 3D surface cells. Constant screen size
-        // (gear BrushDotPx), stretch-compensated. Driven by Model.BrushedSamples
-        // (chart drag ONLY — no hover reveal). While a brush is active the
-        // surface maps stand down; slice mode fades all but the dots of interest.
+        // Brushed individual samples: screen-aligned circle+cross glyphs at the
+        // brushed samples' surface positions, looked up by gid in the SAME
+        // canonical array the charts label with — so a chart range-brush lands
+        // on the exact 3D surface cells.
         let brushedDots =
             linesNodeTop notFullscreen (brushedDotSegments model viewportCss view)
 

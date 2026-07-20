@@ -87,7 +87,7 @@ module MeshView =
         model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
 
     // Effective registration view: the committed RegView, flipped while the before/after
-    // PEEK is held (§spring-loaded hold — purely visual).
+    // PEEK is held (purely visual).
     let effectiveRegView (model : AdaptiveModel) =
         (model.RegView, model.RegPeekHeld) ||> AVal.map2 (fun v held ->
             match held, v with
@@ -120,8 +120,8 @@ module MeshView =
             | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
         RigidTransform.renderToWorld scale cc disp
 
-    // Committed-pose sibling (peek EXCLUDED) — for consumers the spec pins to the
-    // committed view (the focus camera; fly-to targets): the peek is purely visual.
+    // Committed-pose sibling (peek EXCLUDED) — for consumers pinned to the committed
+    // view (the focus camera; fly-to targets): the peek is purely visual.
     let displayedWorldCommittedAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (mesh : string) =
         let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
         let cc = model.CommonCentroid.GetValue t
@@ -152,7 +152,7 @@ module MeshView =
             if cnt.[i] > 0 then q.[i] <- q.[i] / float32 cnt.[i]
         q
 
-    // The ONE Inspect error range (§C): signed (lo, hi) in metres from the pin ROI
+    // The ONE Inspect error range: signed (lo, hi) in metres from the pin ROI
     // samples, capped ±0.5 m (ScanPin.inspectRange). Shared by the 3D difference +
     // variance painters, the focus tiles/single, the sample dots' per-pin gradient
     // envelope, and the on-screen legend — so every false-colour map is comparable.
@@ -166,7 +166,7 @@ module MeshView =
 
     // Shared saturation end (world metres) of the Range heatmap: the farthest
     // own-bbox corner from each mesh's own sensor, maxed over ALL meshes — ONE
-    // scale so range colours are comparable across meshes (§B3). Feeds the 3D
+    // scale so range colours are comparable across meshes. Feeds the 3D
     // RangeMax uniform, the focus mode-5 normalization and the Range legend.
     // 0 until bounds load (consumers fall back per mesh).
     let rangeMaxWorld (model : AdaptiveModel) : aval<float> =
@@ -191,22 +191,14 @@ module MeshView =
                 | _ -> ()
             mx)
 
-    // v12 §5 — slice mode: the constrained TO-SCALE measurement camera. Ortho,
-    // centred on the selected pin, DIP-ALIGNED: the screen-vertical direction
-    // (camera up) is the PIN AXIS (the local surface normal at the centre —
-    // ScanPin.axis), so the section plane is aligned with the local dip rather
-    // than the world horizon. Azimuth = the orbit camera's phi SNAPPED to 10°
-    // steps, projected into the plane ⊥ the axis (drag rotates the orbit as
-    // usual — the snap quantizes what is shown, and entry inherits the nearest
-    // step to the perspective view by construction); zoom locked to the pin
-    // (the influence circle fills ~2/3 of the view height). The ORTHO NEAR
-    // PLANE is the cut: SliceCut (metric, reducer-clamped continuous; SNAPPED
-    // here to a nice 1/2/5 increment ≥ 1 cm so the plane clicks in steps while
-    // trackpad deltas still accumulate) pushes it through the pin, and because
-    // the offscreen outline pass shares this view/proj, the profile at the cut
-    // gets the standard silhouette treatment for free. Fwd/Near/FadeDist feed
-    // the mesh shader's behind-the-cut alpha falloff (a few cm — only the
-    // profile band reads solid).
+    // Slice-mode camera: ortho, TO SCALE, centred on the selected pin. Camera
+    // up = the pin axis (ScanPin.axis — dip-aligned, not the world horizon);
+    // azimuth = the orbit phi snapped to 10° steps, projected into the plane
+    // ⊥ the axis; zoom locked to the pin. The ORTHO NEAR PLANE is the cut:
+    // SliceCut stays continuous in the model (trackpad deltas accumulate),
+    // snapped here to the sliceCutStep grid. The offscreen outline pass shares
+    // this view/proj, so the profile at the cut silhouettes for free.
+    // Fwd/Near/FadeDist feed the mesh shader's behind-the-cut alpha falloff.
     type SliceCam = {
         Eye : V3d; Target : V3d; HalfHeight : float; Near : float; Far : float
         Fwd : V3d; Up : V3d; FadeDist : float
@@ -255,9 +247,7 @@ module MeshView =
                         let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
                         let c = ScanPin.renderCentre cc scale p.Centre
                         let rr = max 1e-6 (ScanPin.renderLength scale p.InnerRadius)
-                        // Dip alignment: up = the pin axis (unit; directions are
-                        // scale-free). The azimuthal eye direction is the world-
-                        // horizontal heading projected into the plane ⊥ the axis.
+                        // Directions are scale-free (uniform dataset scale) — no renderLength.
                         let up =
                             let a = ScanPin.axis p
                             if a.Length > 1e-9 then a.Normalized else V3d.OOI
@@ -342,7 +332,7 @@ module MeshView =
         let palette = Primitives.meshPaletteV4d
 
         let blobCount, blobs = pinBlobUniforms placementPreview model
-        // Slice-mode falloff uniforms (v12 §5): FadeDist 0 disables in the shader.
+        // Slice-mode falloff uniforms: FadeDist 0 disables in the shader.
         let sliceCamA = sliceCamera model
         let sliceFwdU  = sliceCamA |> AVal.map (function Some s -> V3f s.Fwd | None -> V3f.OOI)
         let sliceNearU = sliceCamA |> AVal.map (function Some s -> float32 s.Near | None -> 0.0f)
@@ -352,12 +342,9 @@ module MeshView =
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
-        // Force pin isolation on while placing an anchor: the terrain drops to
-        // ghost and only the existing pins + the live hover blob read solid — a
-        // "flashlight" revealing where the new pin lands (auto-restored, no model
-        // mutation).
-        // Pin isolation = the persistent per-mode default (AnchorGhostMode),
-        // forced on while placing.
+        // Pin isolation = the persistent per-mode default (AnchorGhostMode), forced
+        // on while placing an anchor (view-level only, no model mutation): terrain
+        // drops to ghost, only the pins + the live hover blob read solid.
         let anchorGhost =
             (model.AnchorGhostMode, model.ScanPins.Placement)
             ||> AVal.map2 (fun on pl ->
@@ -379,14 +366,14 @@ module MeshView =
                             | Some _ as solo ->
                                 MeshVisibility.shown solo name
                             | None ->
-                                // Selection emphasis (§A2) outside Inspect: the selected
+                                // Selection emphasis outside Inspect: the selected
                                 // mesh reads solid, the rest drop to the ghost floor
                                 // (Inspect routes mesh selection through the solo overlay).
                                 match Selection.mesh (model.Selection.Active.GetValue t) with
                                 | Some m when model.WorkflowStep.GetValue t <> Inspect ->
                                     m = name
                                 | _ ->
-                                    // Inspect central 3D (§C), no solo: the reference carries
+                                    // Inspect central 3D, no solo: the reference carries
                                     // the variance aggregate solid, moving meshes drop to the
                                     // ghost floor. A mesh carrying its own intrinsic heatmap
                                     // stays solid so that error layer reads in the aggregate.
@@ -401,20 +388,17 @@ module MeshView =
                                     not inspectGhost)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
-            // Outline-only representation (§B4): the mesh BODY stands down entirely —
-            // a zero ghost floor discards every non-emphasized fragment — while the
-            // offscreen outline pre-pass (OutlineView; it renders ALL loaded meshes
-            // independently of the main pass) keeps compositing this mesh's
-            // silhouette + isolines. The lowest-fidelity representation; a mesh in
-            // this state is exactly "outline, no fill". Policy (§B5): Inspect drops
-            // every ghost fill — whatever is not emphasized there is outline-only,
+            // Outline-only: a zero ghost floor discards every non-emphasized
+            // fragment, while the offscreen outline pre-pass (OutlineView renders
+            // ALL loaded meshes independently of the main pass) keeps compositing
+            // this mesh's silhouette + isolines. Inspect drops every ghost fill,
             // so the active false-colour map is the only filled surface.
             let outlineOnly = model.WorkflowStep |> AVal.map ((=) Inspect)
             // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
             // absolute world → mesh frame → render); no entry ⇒ the mesh origin.
             // Drives the incidence + range heatmaps from the real sensor, not the
             // interactive camera. RangeMax = the GLOBAL all-mesh saturation end
-            // (§B3, rangeMaxWorld) so range colours compare across meshes; local
+            // (rangeMaxWorld) so range colours compare across meshes; local
             // fallback while bounds are pending.
             let fullTrafo = meshTrafo model.CommonCentroid loaded scale meshT
             let sensorOrigin =
@@ -432,7 +416,7 @@ module MeshView =
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
             // What this mesh paints in the MAIN 3D view (Inspect only) — the encoding
-            // + the per-vertex scalar array (§C):
+            // + the per-vertex scalar array:
             //   reference, ensemble (no moving-mesh solo) → variance    (enc 2, SurfaceDistance)
             //   soloed moving mesh                        → signed dist (enc 1, FocusDist)
             // Reading WorkflowStep / Registration / MeshSolo first keeps non-Inspect and
@@ -444,7 +428,7 @@ module MeshView =
             let inspectField : aval<int * float32[] option> =
                 AVal.custom (fun t ->
                     if model.WorkflowStep.GetValue t <> Inspect then (0, None)
-                    // Brushing = sole focus (§A4): while samples are brushed every
+                    // Brushing = sole focus: while samples are brushed every
                     // false-colour error map stands down — only the dots carry value.
                     elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then (0, None)
                     else
@@ -485,7 +469,7 @@ module MeshView =
                     | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
                     | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
             let distEncoding = inspectField |> AVal.map fst
-            // Map ends from the unified pin-derived range (§C): enc 1 saturates at
+            // Map ends from the unified pin-derived range: enc 1 saturates at
             // (lo, hi); enc 2 (variance σ, same units) at max(|lo|, hi).
             let distScale =
                 (distEncoding, inspectRangeA) ||> AVal.map2 (fun enc (lo, hi) ->
@@ -510,7 +494,7 @@ module MeshView =
                     Sg.Uniform("MeshActive",      isActive)
                     // The ghost FLOOR is the global GhostSilhouette toggle: on → faint
                     // context, off → hidden (α discarded). Solo/peek/isolation all send
-                    // non-emphasized meshes to that same floor (§A.3) — when the floor is
+                    // non-emphasized meshes to that same floor — when the floor is
                     // off, peek/isolation hide the others rather than dim them.
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
@@ -520,7 +504,7 @@ module MeshView =
                                 match wheelIsolation.GetValue t with
                                 | Some iso when iso <> name -> (if floorOn then 0.15f else 0.0f)
                                 | _ ->
-                                    // Register pin isolation (§7): while the "Isolate pins"
+                                    // Register pin isolation: while the "Isolate pins"
                                     // mode is on (and no placement flashlight runs), the
                                     // context floor is 0 — only the pin blobs read. With
                                     // isolation OFF the branch falls through to the normal
@@ -564,7 +548,7 @@ module MeshView =
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
                     Sg.Uniform("ShapeThreshold",       model.ShapeThreshold |> AVal.map float32)
-                    // Inspect de-clutter (§B5): the false-colour map is the base — no
+                    // Inspect de-clutter: the false-colour map is the base — no
                     // photo texture competes in Inspect.
                     Sg.Uniform("InspectPlain", model.WorkflowStep |> AVal.map (fun s -> if s = Inspect then 1.0f else 0.0f))
                     Sg.VertexAttributes(
@@ -609,7 +593,7 @@ module MeshView =
         let meshIndices = meshIndicesA model
         let palette = Primitives.meshPaletteV4d
         // World-Z isoline spacing (render-space Z step), shared across meshes so
-        // the band parity lines up. Camera-adaptive (§B2): the spacing follows the
+        // the band parity lines up. Camera-adaptive: the spacing follows the
         // orbit distance (~24 contours across the view) SNAPPED to a nice 1/2/5
         // world-metre step — zooming out thins the lines in discrete ticks, orbiting
         // (constant radius) never changes them. The gear's IsolineBands sets the
@@ -679,8 +663,8 @@ module MeshView =
             nodes
         }
 
-    // Per-mesh screen-space coverage for the footprint-contour pass (§outline
-    // per-mesh): every mesh accumulates additively into its own channel at its
+    // Per-mesh screen-space coverage for the footprint-contour pass: every mesh
+    // accumulates additively into its own channel at its
     // displayed pose — no depth buffer, no occlusion — so the coverage composite
     // can outline each mesh separately even where meshes overlap or are hidden.
     // Channels cap at 8 (2×Rgba8 MRT); meshes beyond keep only the combined
@@ -720,7 +704,7 @@ module MeshView =
     let coverageColors : V4f[] =
         Array.init 8 (fun i -> V4f Primitives.meshPaletteV4d.[i % Primitives.meshPaletteV4d.Length])
 
-    // Placement-suitability coverage (v12 §2): every mesh accumulates its
+    // Placement-suitability coverage: every mesh accumulates its
     // SHAPE-WEIGHTED footprint into its own channel (SuitabilityCoverage), no
     // depth — active ONLY while a pin placement is armed, so the offscreen pass
     // is idle otherwise. Same 8-channel cap as the footprint coverage.

@@ -1,5 +1,33 @@
 # Worklog
 
+## Distinct mesh palette + suitability stripe rework (2026-07-20)
+
+- `Primitives.meshPalette` swapped from the muted cool/earth family to nine
+  distinct vivid hues (teal · orange · purple · green · magenta · brown ·
+  cyan · pink · olive), staying clear of the diverging map's #2151DB/#C00206
+  ends and near-white centre; gold remains the reference accent. Everything
+  downstream (matrix, charts, coverage/outline colours, weave) picks it up
+  via `meshPaletteV4d`/`meshColor`/`coverageColors` — no other code change.
+- `SuitabilityComposite` (placement overlay): the n=1 flat-grey fill is GONE —
+  ≤1 covered meshes now render nothing (invalid placement area = untouched
+  surface); ≥2 keeps the diagonal weave but with the covered meshes'
+  UNMODIFIED palette colours at fixed α 0.45 (the MIN-shape
+  desaturation/avg-blend muddling is removed). Stripe band doubled: 6 px → 12.
+- The coverage pass still writes shape-weighted values (composite only reads
+  the covered floor now) — noted in its comment.
+- ROOT-CAUSE FIX for colour in empty/n=1 regions: `C4f.Black` = (0,0,0,**1**)
+  and the offscreen clear reaches every colour attachment — so the coverage
+  MRTs' two ALPHA channels (= mesh channels 3 and 7 in the composites) read
+  1.0 on every uncovered pixel: two phantom "covered meshes" everywhere
+  (background counted n=2 → striped; real n=1 counted n=3). Predates the
+  rework — also why the original stripe colours looked wrong, and why meshes
+  with index 3/7 never got footprint contours (channel saturated ⇒ no
+  covered↔uncovered transition). The depth-free coverage branch of
+  `renderOffscreen` now clears to transparent (0,0,0,0); the with-depth
+  G-buffer branch is untouched.
+- Build green (type-check); visual pass owed: hue separability in the matrix
+  swatches, stripe width/α on real overlap, orange-vs-gold reference clash.
+
 ## Brushed dots: value-coloured outside slice mode + legend (2026-07-20)
 
 - Main-3D brushed glyphs now carry the difference viz while slice mode is OFF:

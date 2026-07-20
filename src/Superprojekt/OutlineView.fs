@@ -48,7 +48,14 @@ module OutlineView =
                 |> Map.ofList)
         let renderObjects, _ = node.GetObjects(TraversalState.empty runtime)
         let task = runtime.CompileRender(signature, renderObjects)
-        let clr = if withDepth then clear { color C4f.Black; depth 1.0 } else clear { color C4f.Black }
+        // The clear reaches EVERY colour attachment, and C4f.Black has ALPHA 1 —
+        // the coverage composites read the alpha channels as mesh channels 3/7,
+        // so a black clear plants two phantom "covered" meshes on every
+        // uncovered pixel. The depth-free coverage passes must clear to
+        // transparent zero.
+        let clr =
+            if withDepth then clear { color C4f.Black; depth 1.0 }
+            else clear { color (C4f(0.0f, 0.0f, 0.0f, 0.0f)) }
         let output = task |> RenderTask.renderToWithClear fbo clr
         let texel =
             size |> AVal.map (fun (s : V2i) ->

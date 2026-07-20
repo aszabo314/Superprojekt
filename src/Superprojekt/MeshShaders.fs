@@ -349,11 +349,10 @@ module OutlineCoverage =
 
 // Placement-suitability coverage pass (v12 §2, placement-armed only): like
 // OutlineCoverage (additive, occlusion-free, one channel per mesh, cap 8) but
-// each fragment writes a SHAPE-WEIGHTED value 0.25·(0.2 + 0.8·quality) — so the
-// composite can read both "covered" (value above a floor even at quality 0) and
-// an approximate per-mesh shape quality at that pixel. Multiple surface layers
-// along the ray add up; the composite clamps, biasing the estimate crisp — an
-// accepted approximation for terrain-like scans.
+// each fragment writes a SHAPE-WEIGHTED value 0.25·(0.2 + 0.8·quality), so
+// "covered" stays above a floor even at quality 0 (the composite currently
+// consumes only that floor; the shape weighting is kept for a possible
+// quality read-back). Multiple surface layers along the ray add up.
 [<ReflectedDefinition>]
 module SuitabilityCoverage =
     type UniformScope with
@@ -384,13 +383,11 @@ module SuitabilityCoverage =
         }
 
 // Fused placement-suitability composite (v12 §2): per pixel, count the covered
-// suitability channels. 0 → transparent (no surface); 1 → flat textureless grey
-// (the region visibly loses detail — placement is prohibited there); ≥2 → a
-// screen-space hatch WOVEN from the covered meshes' palette colours, its
-// saturation/crispness modulated by the MIN shape quality across them (crisp +
-// saturated where all are well-formed, muted/muddy where any is poor).
-// Semi-transparent throughout, and the isoline/outline composite draws after it
-// — so isolines and shape indicators stay readable through the overlay.
+// suitability channels. ≤1 → transparent (no overlap ⇒ placement is prohibited;
+// the surface shows through untouched); ≥2 → a screen-space diagonal weave
+// cycling through the covered meshes' palette colours (no colour cap below the
+// 8-channel MRT), semi-transparent so the surface and the isoline/outline
+// composite (drawn after it) stay readable.
 [<ReflectedDefinition>]
 module SuitabilityComposite =
 
@@ -433,36 +430,22 @@ module SuitabilityComposite =
             vals.[7] <- cB.W
             let th = 0.04f
             let mutable n = 0
-            let mutable minShape = 1.0f
-            let mutable avg = V3f(0.0f, 0.0f, 0.0f)
             for i in 0 .. 7 do
-                if vals.[i] > th then
-                    n <- n + 1
-                    let sh = clamp 0.0f 1.0f ((vals.[i] * 4.0f - 0.2f) / 0.8f)
-                    if sh < minShape then minShape <- sh
-                    avg <- avg + uniform.CoverageColors.[i].XYZ
-            if n = 0 then
+                if vals.[i] > th then n <- n + 1
+            if n <= 1 then
                 return V4f(0.0f, 0.0f, 0.0f, 0.0f)
-            elif n = 1 then
-                return V4f(0.62f, 0.63f, 0.66f, 0.78f)
             else
-                let avgC = avg / float32 n
                 // Diagonal weave: consecutive screen bands cycle through the
-                // covered meshes' colours (no colour cap below the 8-channel MRT).
-                let band = int (floor ((v.fc.X + v.fc.Y) / 6.0f))
+                // covered meshes' UNMODIFIED palette colours.
+                let band = int (floor ((v.fc.X + v.fc.Y) / 12.0f))
                 let sel = ((band % n) + n) % n
                 let mutable cnt = 0
-                let mutable stripeCol = avgC
+                let mutable stripeCol = V3f(0.0f, 0.0f, 0.0f)
                 for i in 0 .. 7 do
                     if vals.[i] > th then
                         if cnt = sel then stripeCol <- uniform.CoverageColors.[i].XYZ
                         cnt <- cnt + 1
-                let lum = 0.299f * stripeCol.X + 0.587f * stripeCol.Y + 0.114f * stripeCol.Z
-                let greyC = V3f(lum, lum, lum)
-                let satCol = greyC + (stripeCol - greyC) * (0.25f + 0.75f * minShape)
-                let colr = avgC + (satCol - avgC) * (0.3f + 0.7f * minShape)
-                let alpha = 0.35f + 0.2f * minShape
-                return V4f(colr.X, colr.Y, colr.Z, alpha)
+                return V4f(stripeCol.X, stripeCol.Y, stripeCol.Z, 0.45f)
         }
 
 // Edge-detect fullscreen pass: sample the g-buffer at centre ±1 texel and paint the

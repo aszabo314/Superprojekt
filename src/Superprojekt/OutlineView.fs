@@ -59,9 +59,12 @@ module OutlineView =
     // coverage MRT (one channel per mesh, no depth) + a fullscreen composite that
     // outlines every channel's covered↔uncovered transition in that mesh's palette
     // colour — each mesh keeps its complete own contour even where the combined
-    // (depth-tested) G-buffer sees only the union.
+    // (depth-tested) G-buffer sees only the union. `active` gates the composite
+    // only (slice mode stands the footprints down: the depth-free additive MRT
+    // has nothing to fade with) — pass and shaders stay untouched.
     let private buildCoverage
         (info : Aardvark.Dom.RenderControlInfo)
+        (active : aval<bool>)
         (mask : aval<V4f[]>)
         (node : ISceneNode) : aset<ISceneNode> =
 
@@ -70,6 +73,7 @@ module OutlineView =
             sg {
                 // NoEvents is load-bearing — see the main composite below.
                 Sg.NoEvents
+                Sg.Active active
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Shader {
@@ -186,5 +190,7 @@ module OutlineView =
                 (model.IsolineOpacity |> AVal.map float32)
                 distFade
                 mask (MeshView.buildOutlineNode model view proj)
-        let footprints = buildCoverage info mask (MeshView.buildCoverageNode model view proj)
+        let footprints =
+            buildCoverage info (model.SliceMode |> AVal.map not) mask
+                (MeshView.buildCoverageNode model view proj)
         ASet.union combined footprints

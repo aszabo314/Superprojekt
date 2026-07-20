@@ -294,14 +294,22 @@ module OutlineGBuffer =
             // target0.x = world-Z band parity (0/1) → edge-detected into crisp 1px
             // isolines, world-locked since the band index is a pure function of world Z.
             // target0.y = mesh id ((index+1)/255; 0 = background) → per-mesh line gating.
-            // target0.w = window depth (silhouette/depth edge).
+            // target0.w/.z = window depth packed hi/lo (16-bit fixed point in an
+            // Rgba8 target): the edge detect keeps reading the HI byte alone
+            // (8-bit staircase — the OutlineThreshold calibration), only the
+            // slice-mode distance fade reconstructs the fine value, because its
+            // FadeDist window is ~2 hi-byte LSBs and an 8-bit fade staircases
+            // to on/off.
             let parity =
                 if uniform.ContourSpacing > 1e-12f then
                     let band = floor (v.wp.Z / uniform.ContourSpacing)
                     band - 2.0f * floor (band * 0.5f)
                 else 0.0f
+            let s255 = clamp 0.0f 1.0f v.fc.Z * 255.0f
+            let dHi = floor s255
+            let dLo = s255 - dHi
             return {
-                g0 = V4f(parity, uniform.MeshId, 0.0f, v.fc.Z)
+                g0 = V4f(parity, uniform.MeshId, dLo, dHi / 255.0f)
                 g1 = V4f(col.X, col.Y, col.Z, 1.0f)
                 depth = v.fc.Z + uniform.OutlineDepthBias
             }
@@ -478,6 +486,8 @@ module OutlineEdge =
         // Slice mode (v12 §5 follow-up): line alpha falls off with the stored
         // window depth — valid because the slice camera is ORTHO, where window
         // depth is linear in eye distance and 0 sits exactly at the cut plane.
+        // The multiplier reads the 16-bit hi/lo reconstruction (target0.w/.z) —
+        // the fade window is ~2 hi-byte LSBs, unusable at 8 bits.
         // Value = 1/fade-range in depth01 units; 0 = off (perspective views).
         member x.OutlineDistFade : float32 = x?OutlineDistFade
 
@@ -544,7 +554,7 @@ module OutlineEdge =
                 // profiles own the view; lines are background reference only.
                 let capOn = uniform.OutlineDistFade > 0.0f
                 let distMul =
-                    if capOn then max 0.0f (1.0f - c.W * uniform.OutlineDistFade)
+                    if capOn then max 0.0f (1.0f - (c.W + c.Z / 255.0f) * uniform.OutlineDistFade)
                     else 1.0f
                 // Silhouette / cliff (a window-depth break) keeps the crisp per-mesh
                 // palette colour. A pure world-Z band-parity flip (an isoline) renders

@@ -1,5 +1,25 @@
 # Worklog
 
+## Slice-mode outline fade fixed (2026-07-20, after the touchups commit)
+
+- Diagnosis: the round-1 `OutlineDistFade` was quantization-broken — the fade
+  window (FadeDist ≈ r/20 of a ~6r depth range) spans ~2 LSBs of the Rgba8
+  G-buffer depth, so silhouettes/isolines staircased on/off instead of fading;
+  and the per-mesh FOOTPRINT contours never faded at all (the coverage MRT is
+  depth-free by design — occlusion-free additive accumulation).
+- **16-bit depth packing**: `OutlineGBuffer` packs window depth hi/lo into
+  target0.w/.z (.z was written as constant 0 — free). The edge detect still
+  reads the HI byte alone (identical staircase, OutlineThreshold calibration
+  untouched); only the `OutlineEdge` fade multiplier reconstructs
+  `c.W + c.Z/255` — smooth falloff over the few-cm window, alpha 0 beyond, no
+  G-buffer discard needed (occlusion in the buffer stays correct).
+- **Footprints stand down in slice mode**: new `active` param on
+  `buildCoverage`, `Sg.Active (not SliceMode)` on the composite ONLY — the
+  coverage pass, shaders and non-slice rendering are untouched.
+- CLAUDE.md updated (packed-depth bullet, footprint gate, slice fade note).
+  Build green — shader change, so the owed browser pass now also covers the
+  packed-depth fade (verify no new false bands + footprints returning on exit).
+
 ## Slice-mode GUI touchups (2026-07-20)
 
 - **Focus angle indicator gold → white** (arrow + cut-plane trace in

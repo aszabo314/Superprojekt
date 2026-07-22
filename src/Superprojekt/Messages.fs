@@ -13,6 +13,7 @@ type Message =
     | SetShadingStrength of float
     | SetSlopeThresholdDeg of float
     | SetOutlineThreshold of float
+    | SetOutlineWidth of float
     | SetIsolineBands of float
     | SetIsolineOpacity of float
     | ToggleAnchorGhostMode
@@ -39,14 +40,9 @@ type Message =
     | SetMeshHeatmap of mesh:string * HeatmapMode
     // Shp cutoff — triangles below the quality threshold render transparent.
     | SetShapeThreshold of float
-    // Difference sub-mode (M3C2 ↔ Δz) for the Inspect focus tiles.
-    | ToggleExtrinsicZDiff
     // gen = the issuing generation (UpdateHelpers) — stale results are dropped.
-    | VarianceComputed of gen:int * mesh:string * float32[]
-    | VarianceOtherComputed of gen:int * mesh:string * float32[]
     | FocusDistComputed of gen:int * mesh:string * float32[]
     | FocusDistOtherComputed of gen:int * mesh:string * float32[]
-    | SurfaceDistanceFailed of mesh:string * reason:string
     // Per mesh: world bbox + mean sample spacing (m) — one fetch warms both.
     | SceneBoundsLoaded  of (string * Box3d * float)[]
     // Slice-cell tunables (gear): window multiplier / context count / context
@@ -60,19 +56,17 @@ type Message =
     | ScanPinMsg              of ScanPinMessage
     | SetRenderingMode of RenderingMode
     | ToggleGearPopover
-    | SetActivePickingLayer of string option
     // hover = peek, click = select/promote.
     | SetHovered of HoverTarget option
     // THE one selection (see Model.ActiveSelection + the handler).
     | SetSelection of ActiveSelection
     | SetWorkflowStep of WorkflowStep
-    | SetFocusProjection of FocusProjection
-    // Slice mode: toggle the pin-centred ortho measurement view;
-    // AdjustSliceCut = wheel notches sweeping the cut plane through the pin.
-    | SetSliceMode of bool
-    | AdjustSliceCut of float
-    | ToggleSliceStretch
+    // In-view near-plane slice: cut-plane fraction of the eye→centre distance (0 = off).
+    | SetNearCut of float
     | PickCorrespondenceAt of ScanPinId * mesh:string * world:V3d
+    | ClearCorrFlash
+    // Exact-point error probe (Inspect surface click): (mesh, world, value m).
+    | SetPointProbe of (string * V3d * float) option
     // Arm/disarm the unified correspondence editor for a (pin, mesh).
     | ToggleCorrArm of ScanPinId * mesh:string
     // Hover preview of where a correspondence pick would land (metric world).
@@ -84,6 +78,9 @@ type Message =
     | FlyToPoint of world:V3d * radius:float
     | ZoomToMesh of string
     | ZoomToPin of ScanPinId
+    // Fly the main 3D to a mesh's sensor/scan-camera viewpoint (roster control) —
+    // the same framing the dataset load rests on.
+    | FlyToSensor of string
     | BackOutLocate
 
 and ScanPinMessage =

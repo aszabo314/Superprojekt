@@ -67,6 +67,8 @@ module Update =
             // Floor = the Rgba8 G-buffer quantization step (~0.004); below it the
             // staircase risers of a smooth slope read as false outline bands.
             { model with OutlineThreshold = clamp 0.0001 0.01 v }
+        | SetOutlineWidth v ->
+            { model with OutlineWidthPx = clamp 1.0 8.0 v }
         | SetIsolineBands v ->
             { model with IsolineBands = max 1.0 v }
         | SetIsolineOpacity v ->
@@ -104,6 +106,7 @@ module Update =
         | SetReferenceMesh mesh ->
             // Reference change invalidates any solve (it was relative to the old reference).
             bumpSolveGen ()
+            let hadSolve = not (Map.isEmpty model.SolvedTransforms)
             let model =
                 invalidateProbes (invalidateRings
                     { model with
@@ -112,9 +115,13 @@ module Update =
                         SolveInputs = None
                         RegView = RegBefore
                         CorrArm = None; CorrPreview = None })
-            match mesh with
-            | Some _ -> seedAnchors env model (allPinIds model)
-            | None -> model
+            let model =
+                match mesh with
+                | Some _ -> seedAnchors env model (allPinIds model)
+                | None -> model
+            // Invalidation → Before is the one automatic pose transition; make it explicit.
+            if hadSolve then showToast env "Registration cleared — the reference changed" model
+            else model
 
         // Anchors are mesh-local, so the pairs are taken at the load pose — the
         // solve yields an absolute transform a re-solve replaces wholesale.
@@ -249,14 +256,6 @@ module Update =
             { model with MeshHeatmap = mh }
         | SetShapeThreshold v ->
             { model with ShapeThreshold = clamp 0.0 1.0 v }
-        | VarianceComputed(gen, mesh, arr) ->
-            if gen = surfaceDistGen && model.WorkflowStep = Inspect && model.ReferenceMesh = Some mesh then
-                { model with SurfaceDistance = Map.add mesh arr model.SurfaceDistance }
-            else model
-        | VarianceOtherComputed(gen, mesh, arr) ->
-            if gen = surfaceDistGen && model.WorkflowStep = Inspect && model.ReferenceMesh = Some mesh then
-                { model with SurfaceDistanceOther = Map.add mesh arr model.SurfaceDistanceOther }
-            else model
         | FocusDistComputed(gen, mesh, arr) ->
             if gen = focusDistGen && model.WorkflowStep = Inspect then
                 { model with FocusDist = Map.add mesh arr model.FocusDist }
@@ -265,13 +264,6 @@ module Update =
             if gen = focusDistGen && model.WorkflowStep = Inspect then
                 { model with FocusDistOther = Map.add mesh arr model.FocusDistOther }
             else model
-        | ToggleExtrinsicZDiff ->
-            // The difference values change with the sub-mode (M3C2 ↔ Δz) → refetch.
-            invalidateFocusDist { model with ExtrinsicZDiff = not model.ExtrinsicZDiff }
-        | SurfaceDistanceFailed(_, reason) ->
-            showToast env "Surface-distance query failed — is the server up to date? (restart it)"
-                { model with DebugLog = model.DebugLog.InsertAt(0, sprintf "region-distance failed: %s" reason) }
-
         | SceneBoundsLoaded bboxes ->
             if bboxes.Length = 0 then model
             else
@@ -306,7 +298,6 @@ module Update =
                 // Everything keyed by the old dataset's meshes/pins must go, and the
                 // scalar-map generations bump so old-dataset fetches land dead.
                 bumpSolveGen ()
-                bumpSurfaceDist ()
                 bumpFocusDist ()
                 { model with
                     ActiveDataset = Some dataset
@@ -315,17 +306,15 @@ module Update =
                     MeshSolo = None
                     MeshBounds = Map.empty
                     MeshSpacing = Map.empty
-                    ActivePickingLayer = None
                     SolvedTransforms = Map.empty
                     SolveInputs = None
                     LoadTransforms = Map.empty
                     RegView = RegBefore
                     LocateBackup = None
                     BrushedSamples = Set.empty
+                    PointProbe = None
                     CorrArm = None
                     CorrPreview = None
-                    SurfaceDistance = Map.empty
-                    SurfaceDistanceOther = Map.empty
                     FocusDist = Map.empty
                     FocusDistOther = Map.empty
                     MeshHeatmap = Map.empty
@@ -335,80 +324,60 @@ module Update =
             { model with RenderingMode = m }
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
-        | SetActivePickingLayer name ->
-            { model with ActivePickingLayer = name }
         | ScanPinMsg (PlaceAnchor _ as msg) ->
             // A freshly placed pin is a registration pin immediately; seed it
             // against the reference (if any) so its markers appear at once. Pins
-            // and their correspondences exist in the BEFORE state — snap the view
-            // back in case it was toggled to After mid-placement (seeding itself
-            // always evaluates at the Before pose regardless).
-            let model = applyRegView RegBefore model
-            let model = ScanPinUpdate.handleMsg env model msg
-            match model.ReferenceMesh, Selection.pin model.Selection.Active with
-            | Some _, Some id -> seedAnchors env model [id]
-            | _ -> model
+            // and their correspondences exist in the BEFORE state — refused in
+            // After (never a silent view switch; arming is refused there too, this
+            // is the safety net for a view toggled mid-placement).
+            if model.RegView = RegAfter then
+                showToast env "Correspondences are edited in the Before state — switch the view" model
+            else
+                let model = ScanPinUpdate.handleMsg env model msg
+                match model.ReferenceMesh, Selection.pin model.Selection.Active with
+                | Some _, Some id -> seedAnchors env model [id]
+                | _ -> model
         | ScanPinMsg msg ->
             // Correspondence/pin edits are Before-only: starting a placement or
-            // resizing a pin snaps the committed view back to Before first.
-            let model =
-                match msg with
-                | EnterAnchorPlacement | SetInnerRadius _ -> applyRegView RegBefore model
-                | _ -> model
-            let m = ScanPinUpdate.handleMsg env model msg
+            // resizing a pin in the After view is refused with a prompt to switch —
+            // the displayed pose never changes as a side effect.
             match msg with
-            | EnterAnchorPlacement | DeletePin _ ->
-                { m with CorrArm = None; CorrPreview = None }
-            // Probe/slice failures are otherwise invisible (the pin just stays
-            // blank until an unrelated invalidation) — surface them.
-            | ProbeFailed(_, e) | ProbeOtherFailed(_, e) | SliceFailed(_, e) | SliceOtherFailed(_, e) ->
-                showToast env "Pin measurement failed — see debug log (⚙)"
-                    { m with DebugLog = m.DebugLog.InsertAt(0, sprintf "pin query failed: %s" e) }
-            | _ -> m
+            | (EnterAnchorPlacement | SetInnerRadius _) when model.RegView = RegAfter ->
+                showToast env "Correspondences are edited in the Before state — switch the view" model
+            | _ ->
+                let m = ScanPinUpdate.handleMsg env model msg
+                match msg with
+                | EnterAnchorPlacement | DeletePin _ ->
+                    { m with CorrArm = None; CorrPreview = None }
+                // Probe/slice failures are otherwise invisible (the pin just stays
+                // blank until an unrelated invalidation) — surface them.
+                | ProbeFailed(_, e) | ProbeOtherFailed(_, e) | SliceFailed(_, e) | SliceOtherFailed(_, e) ->
+                    showToast env "Pin measurement failed — see debug log (⚙)"
+                        { m with DebugLog = m.DebugLog.InsertAt(0, sprintf "pin query failed: %s" e) }
+                | _ -> m
         | SetHovered h ->
             if model.Selection.Hovered = h then model
             else { model with Selection = { model.Selection with Hovered = h } }
         | SetWorkflowStep step ->
-            // Entering/leaving Inspect (re)drives the central-3D variance map, so drop
-            // its cache + bump the generation. Per-mode default: pin isolation
+            // Entering/leaving Inspect (re)drives the difference maps, so drop
+            // their cache + bump the generation. Per-mode default: pin isolation
             // defaults on in Correspondence, off elsewhere (the hold modifier overrides
             // momentarily where it's off). A workflow switch ends any mesh isolation
             // and drops the locate backup + the hover peek, both bound to the
             // previous mode's view.
             if model.WorkflowStep = step then model
             else
-                bumpSurfaceDist ()
                 bumpFocusDist ()
                 exitSolo
                     { model with WorkflowStep = step
-                                 SurfaceDistance = Map.empty; SurfaceDistanceOther = Map.empty
                                  FocusDist = Map.empty; FocusDistOther = Map.empty
+                                 PointProbe = None
                                  AnchorGhostMode = (step = Correspondence)
                                  CorrArm = None; CorrPreview = None; BrushedSamples = Set.empty
                                  LocateBackup = None
                                  Selection = { model.Selection with Hovered = None } }
-        | SetFocusProjection p ->
-            { model with FocusProjection = p }
-        // Slice mode is pin-centred — refuse to enter without a pin. The cut
-        // resets on every enter/exit so the view always opens through the pin centre.
-        | SetSliceMode on ->
-            if model.SliceMode = on then model
-            elif on then
-                if (Selection.pin model.Selection.Active).IsSome
-                then { model with SliceMode = true; SliceCut = 0.0 }
-                else showToast env "Select a pin first — slice mode is pin-centred" model
-            else { model with SliceMode = false; SliceCut = 0.0 }
-        | AdjustSliceCut d ->
-            if not model.SliceMode then model
-            else
-                match Selection.pin model.Selection.Active |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
-                | Some p ->
-                    let lim = p.InnerRadius * 2.5
-                    let step = max 0.02 (p.InnerRadius * 0.08)
-                    { model with SliceCut = clamp -lim lim (model.SliceCut + d * step) }
-                | None -> model
-        | ToggleSliceStretch ->
-            { model with SliceStretch = not model.SliceStretch }
+        | SetNearCut v ->
+            { model with NearCutFrac = clamp 0.0 1.25 v }
         | SetSelection selRaw ->
             // Dangling-pin guard: a stale click can outlive its pin.
             let sel =
@@ -430,28 +399,24 @@ module Update =
                 | SelNone ->
                     if model.WorkflowStep = Inspect then exitSolo model
                     else model
-                | SelMesh m ->
-                    // Inspect focus policy: a moving mesh isolates with the
-                    // reference (it paints its own difference/displacement field);
-                    // the reference returns to the ensemble.
-                    if model.WorkflowStep = Inspect then
-                        if model.ReferenceMesh <> Some m then enterSolo m model
-                        else exitSolo model
+                | SelMesh _ ->
+                    // Inspect renders the ensemble as-is: a selected mesh is
+                    // emphasized (accent outline; its difference field is already
+                    // painted) but NEVER isolates — any leftover locate isolation
+                    // ends here.
+                    if model.WorkflowStep = Inspect then exitSolo model
                     else model
                 | SelPin _ ->
                     if model.WorkflowStep = Inspect then exitSolo model
                     else model
                 | SelCell (_, mesh) ->
                     // The locate: solo the mesh, backup-captured for a single
-                    // BackOutLocate. Never force a projection here, and no main-3D
-                    // camera move — the zoom stays the cell's double-click.
+                    // BackOutLocate. No main-3D camera move — the zoom stays the
+                    // cell's double-click.
                     let backup =
                         match model.LocateBackup with
                         | Some _ -> model.LocateBackup
-                        | None ->
-                            Some { PrevSolo = model.MeshSolo
-                                   PrevCenter = model.Camera.center; PrevRadius = model.Camera.radius
-                                   PrevPhi = model.Camera.phi; PrevTheta = model.Camera.theta }
+                        | None -> Some { PrevSolo = model.MeshSolo }
                     enterSolo mesh { model with LocateBackup = backup }
         | PickCorrespondenceAt(pinId, mesh, world) ->
             // The point is stored mesh-local via the displayed transform, so the
@@ -481,16 +446,34 @@ module Update =
                                 { corr with
                                     Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
                                     InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
-                    { model with ScanPins = sp; CorrArm = None; CorrPreview = None }
+                    // Commit confirmation: a brief flash marker at the committed
+                    // point (generation bump restarts the animation per pick).
+                    let gen = match model.CorrFlash with Some (_, g) -> g + 1 | None -> 1
+                    corrFlashCts.Cancel()
+                    corrFlashCts <- new System.Threading.CancellationTokenSource()
+                    let token = corrFlashCts.Token
+                    task {
+                        try
+                            do! System.Threading.Tasks.Task.Delay(700, token)
+                            if not token.IsCancellationRequested then env.Emit [ClearCorrFlash]
+                        with _ -> ()
+                    } |> ignore
+                    { model with ScanPins = sp; CorrArm = None; CorrPreview = None
+                                 CorrFlash = Some (world, gen) }
             | None -> model
+        | ClearCorrFlash ->
+            if model.CorrFlash.IsNone then model else { model with CorrFlash = None }
+        | SetPointProbe p ->
+            if model.PointProbe = p then model else { model with PointProbe = p }
         | ToggleCorrArm(pinId, mesh) ->
-            // Arming snaps the view to BEFORE (edits are Before-only); the mesh
-            // isolation while armed is a view-layer effect (wheelIsolation reads
-            // CorrArm).
+            // Edits are Before-only: arming in the After view is refused with a
+            // prompt (never a silent view switch). The mesh isolation while armed
+            // is a view-layer effect (wheelIsolation reads CorrArm).
             if model.CorrArm = Some(pinId, mesh) then
                 { model with CorrArm = None; CorrPreview = None }
+            elif model.RegView = RegAfter then
+                showToast env "Correspondences are edited in the Before state — switch the view" model
             else
-                let model = applyRegView RegBefore model
                 { model with
                     CorrArm = Some(pinId, mesh)
                     CorrPreview = None
@@ -521,11 +504,24 @@ module Update =
              | Some p -> env.Emit [FlyToPoint(p.Centre, max 0.5 (p.InnerRadius * 4.0))]
              | None -> ())
             model
+        | FlyToSensor mesh ->
+            // The dataset-load framing, per mesh: the sensor (panorama centre,
+            // mesh-origin fallback), framed to the mesh's own bounds.
+            let center = ModelTransforms.panoCenterRender model mesh
+            let radius =
+                match Map.tryFind mesh model.MeshBounds with
+                | Some b when not b.IsInvalid ->
+                    max 1.0 (b.Size.Length * DatasetScale.forMesh model.DatasetScales mesh * 0.6)
+                | _ -> model.Camera.radius
+            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, center))
+                      CameraMessage (OrbitMessage.SetTargetRadius radius)]
+            model
         | BackOutLocate ->
+            // Restores the isolation only — the camera never moves on a
+            // single-click action.
             match model.LocateBackup with
             | None -> model
             | Some b ->
-                env.Emit [CameraMessage (OrbitMessage.SetTarget(b.PrevCenter, b.PrevRadius, b.PrevPhi, b.PrevTheta))]
                 { model with
                     MeshSolo = b.PrevSolo
                     LocateBackup = None }
@@ -565,86 +561,10 @@ module Update =
                                 RegView = RegBefore
                                 BrushedSamples = Set.empty }))
 
-    // All-meshes variance: per reference vertex, the std of each visible moving
-    // mesh's signed distance (target = reference, ref = moving). Debounced via the
-    // surface-distance generation/CTS. Both Before/After poses are cached (Other is
-    // fetched only once a solve exists) so the reg toggle/peek never repaints stale
-    // values — the committed pose lands first, the opposite pose follows.
-    let private ensureVariance (env : Env<Message>) (model : Model) : Model =
-        // The variance aggregate only paints in the no-solo ensemble — don't fetch
-        // while a mesh is isolated.
-        if model.WorkflowStep <> Inspect || model.MeshSolo.IsSome then model
-        else
-            match model.ReferenceMesh with
-            | Some refMesh when surfaceDistReqGen <> surfaceDistGen ->
-                let needMain = not (Map.containsKey refMesh model.SurfaceDistance)
-                let needOther =
-                    not (Map.isEmpty model.SolvedTransforms)
-                    && not (Map.containsKey refMesh model.SurfaceDistanceOther)
-                let moving =
-                    model.MeshNames |> IndexList.toList |> List.filter (fun n -> n <> refMesh)
-                if (not needMain && not needOther) || List.length moving < 2 then model
-                else
-                    surfaceDistReqGen <- surfaceDistGen
-                    let gen = surfaceDistGen
-                    let jobsAt view =
-                        let refT = (ModelTransforms.displayedWorldAt view model refMesh).Forward
-                        moving |> List.map (fun m ->
-                            let mT = (ModelTransforms.displayedWorldAt view model m).Forward
-                            Query.regionDistance ApiConfig.apiBase.Value refMesh 0 m 0 refT mT 0)
-                    let otherView = RegView.other model.RegView
-                    let mainJobs  = if needMain then Some (jobsAt model.RegView) else None
-                    let otherJobs = if needOther then Some (jobsAt otherView) else None
-                    let aggregate (results : float32[][]) =
-                        let n = results.[0].Length
-                        let outv = Array.zeroCreate<float32> n
-                        for i in 0 .. n - 1 do
-                            let mutable sum = 0.0
-                            let mutable sum2 = 0.0
-                            let mutable cnt = 0
-                            for r in results do
-                                if i < r.Length then
-                                    let v = float r.[i]
-                                    if abs v < 1e20 then
-                                        sum  <- sum + v
-                                        sum2 <- sum2 + v * v
-                                        cnt  <- cnt + 1
-                            if cnt >= 2 then
-                                let mean = sum / float cnt
-                                outv.[i] <- float32 (sqrt (max 0.0 (sum2 / float cnt - mean * mean)))
-                            else outv.[i] <- 1e30f
-                        outv
-                    surfaceDistCts.Cancel()
-                    surfaceDistCts <- new System.Threading.CancellationTokenSource()
-                    let token = surfaceDistCts.Token
-                    task {
-                        try
-                            do! System.Threading.Tasks.Task.Delay(150, token)
-                            match mainJobs with
-                            | Some jobs ->
-                                let! results = jobs |> Async.Parallel |> Async.StartAsTask
-                                if not token.IsCancellationRequested then
-                                    env.Emit [VarianceComputed(gen, refMesh, aggregate results)]
-                            | None -> ()
-                            match otherJobs with
-                            | Some jobs ->
-                                let! results = jobs |> Async.Parallel |> Async.StartAsTask
-                                if not token.IsCancellationRequested then
-                                    env.Emit [VarianceOtherComputed(gen, refMesh, aggregate results)]
-                            | None -> ()
-                        with
-                        | :? System.OperationCanceledException -> ()
-                        | ex ->
-                            if not token.IsCancellationRequested then
-                                env.Emit [SurfaceDistanceFailed(refMesh, ex.Message)]
-                    } |> ignore
-                    model
-            | _ -> model
-
     // Inspect Difference channel: per shown moving mesh, fetch its signed distance
-    // to the reference (the mesh's own served vertex order) for the focus heatmap.
-    // Same generation-guarded debounce as ensureVariance, same per-pose pairing:
-    // the Other pose is fetched only once a solve exists, in the same batch.
+    // to the reference (the mesh's own served vertex order) for the 3D + focus
+    // difference maps. Generation-guarded debounce; per-pose pairing: the Other
+    // pose is fetched only once a solve exists, in the same batch.
     let private ensureFocusDist (env : Env<Message>) (model : Model) : Model =
         if model.WorkflowStep <> Inspect then model
         else
@@ -665,7 +585,8 @@ module Update =
                 else
                     focusDistReqGen <- focusDistGen
                     let gen = focusDistGen
-                    let mode = if model.ExtrinsicZDiff then 1 else 0
+                    // M3C2 is the sole difference metric (region-distance mode 0).
+                    let mode = 0
                     let jobs =
                         wanted |> List.map (fun (m, view, isOther) ->
                             let refT = (ModelTransforms.displayedWorldAt view model refMesh).Forward
@@ -695,20 +616,11 @@ module Update =
                     } |> ignore
                     model
 
-    // Slice mode is pin-centred: any path that loses the selected pin
-    // (deletion, deselection, dataset switch) exits it.
-    let private ensureSliceMode (model : Model) : Model =
-        if model.SliceMode && (Selection.pin model.Selection.Active).IsNone then
-            { model with SliceMode = false; SliceCut = 0.0 }
-        else model
-
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
-        |> ensureSliceMode
         |> ensureSolveValidity env
         |> ScanPinUpdate.ensureProbe env
         |> ScanPinUpdate.ensureSlices env
         |> ScanPinUpdate.ensureRings env
-        |> ensureVariance env
         |> ensureFocusDist env
 

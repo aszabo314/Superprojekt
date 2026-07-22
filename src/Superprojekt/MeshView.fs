@@ -18,6 +18,9 @@ type LoadedMesh =
         // Max |local vertex| (metric) = farthest point from the mesh origin
         // (= sensor); normalises the range heatmap false-colour.
         localMaxR : aval<float>
+        // Mean of the (sampled) unit vertex normals — |value| ≤ 1 measures how
+        // strongly they cluster; feeds the project-wide up-normal. Zero until load.
+        meanNormal : aval<V3d>
         mesh : MeshData option ref
     }
 
@@ -42,6 +45,7 @@ module MeshView =
                     tex  = cval<ITexture> (AVal.force DefaultTextures.checkerboard)
                     fvc  = cval 3
                     localMaxR = cval 1.0
+                    meanNormal = cval V3d.Zero
                     mesh = ref None
                 }
             meshes.[name] <- m
@@ -58,6 +62,22 @@ module MeshView =
                         (m.fvc :?> cval<int>).Value     <- mesh.indices.Length
                         let maxR = mesh.positions |> Array.fold (fun mx (p : V3f) -> max mx (float p.Length)) 0.0
                         (m.localMaxR :?> cval<float>).Value <- max 1e-6 maxR
+                        let meanN =
+                            let ns = mesh.normals
+                            if ns.Length = 0 then V3d.Zero
+                            else
+                                let stride = max 1 (ns.Length / 10000)
+                                let mutable acc = V3d.Zero
+                                let mutable cnt = 0
+                                let mutable i = 0
+                                while i < ns.Length do
+                                    let v = V3d ns.[i]
+                                    if v.Length > 1e-6 then
+                                        acc <- acc + v.Normalized
+                                        cnt <- cnt + 1
+                                    i <- i + stride
+                                if cnt = 0 then V3d.Zero else acc / float cnt
+                        (m.meanNormal :?> cval<V3d>).Value <- meanN
                     )
                     let! img = JSImage.load mesh.atlasUrl
                     transact (fun () -> (m.tex :?> cval<ITexture>).Value <- JSTexture(img, true))
@@ -191,91 +211,38 @@ module MeshView =
                 | _ -> ()
             mx)
 
-    // Slice-mode camera: ortho, TO SCALE, centred on the selected pin. Camera
-    // up = the pin axis (ScanPin.axis — dip-aligned, not the world horizon);
-    // azimuth = the orbit phi snapped to 10° steps, projected into the plane
-    // ⊥ the axis; zoom locked to the pin. The ORTHO NEAR PLANE is the cut:
-    // SliceCut stays continuous in the model (trackpad deltas accumulate),
-    // snapped here to the sliceCutStep grid. The offscreen outline pass shares
-    // this view/proj, so the profile at the cut silhouettes for free.
-    // Fwd/Near/FadeDist feed the mesh shader's behind-the-cut alpha falloff.
-    type SliceCam = {
-        Eye : V3d; Target : V3d; HalfHeight : float; Near : float; Far : float
-        Fwd : V3d; Up : V3d; FadeDist : float
-    }
-
-    // The cut-plane snap grid (metric): a nice 1/2/5 step ≈ 5 % of the pin
-    // radius, never finer than 1 cm.
-    let sliceCutStep (innerRadius : float) =
-        let raw = max 0.01 (innerRadius * 0.05)
-        let mag = 10.0 ** floor (log10 raw)
-        let n = raw / mag
-        (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
-
-    // THE slice ortho half-extents (hw, hh). Stretch divides the half-height
-    // (vertical-only exaggeration) and additionally tightens the half-width
-    // ×0.8 so the frustum hugs the pin region — legal only because stretch has
-    // already given up the 1:1 mapping; true scale keeps the viewport aspect.
-    // Every hw/hh consumer (view proj, ordinates, rulers, dot glyph sizing)
-    // must go through this so they cannot drift.
-    let sliceStretchHorizTighten = 0.8
-    let sliceOrthoHalfSizes (s : SliceCam) (aspect : float) (stretch : float) =
-        let hw = s.HalfHeight * aspect * (if stretch > 1.0 then sliceStretchHorizTighten else 1.0)
-        hw, s.HalfHeight / stretch
-
-    // Shared ortho projection builder (slice camera; also the ordinate overlay's
-    // screen projection — keep the two identical).
-    let orthoProjTrafo (hw : float) (hh : float) (near : float) (far : float) =
-        let m =
-            M44d(1.0 / hw, 0.0,      0.0,                 0.0,
-                 0.0,      1.0 / hh, 0.0,                 0.0,
-                 0.0,      0.0,      -2.0 / (far - near), -(far + near) / (far - near),
-                 0.0,      0.0,      0.0,                 1.0)
-        Trafo3d(m, m.Inverse)
-
-    let sliceCamera (model : AdaptiveModel) : aval<SliceCam option> =
+    // ONE average up-normal per project: the mean of every loaded mesh's mean
+    // unit normal. Significant (terrain-like — the normals cluster around one
+    // direction) when the resultant length exceeds 0.5 → Some (normalized),
+    // the global pin/flag orientation; else None and pins keep their per-pin
+    // probe axis.
+    let projectUpNormal (model : AdaptiveModel) : aval<V3d option> =
+        let namesA = model.MeshNames.Content
         AVal.custom (fun t ->
-            if not (model.SliceMode.GetValue t) then None
+            let names = namesA.GetValue t |> IndexList.toList
+            let mutable acc = V3d.Zero
+            let mutable cnt = 0
+            for name in names do
+                let lm = loadMeshAsync (fun () -> ()) name
+                let mn = lm.meanNormal.GetValue t
+                if mn.Length > 1e-6 then
+                    acc <- acc + mn
+                    cnt <- cnt + 1
+            if cnt = 0 then None
             else
-                match Selection.pin (model.Selection.Active.GetValue t) with
-                | None -> None
-                | Some id ->
-                    match HashMap.tryFind id (model.ScanPins.Pins.Content.GetValue t) with
-                    | None -> None
-                    | Some p ->
-                        let cc = model.CommonCentroid.GetValue t
-                        let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
-                        let c = ScanPin.renderCentre cc scale p.Centre
-                        let rr = max 1e-6 (ScanPin.renderLength scale p.InnerRadius)
-                        // Directions are scale-free (uniform dataset scale) — no renderLength.
-                        let up =
-                            let a = ScanPin.axis p
-                            if a.Length > 1e-9 then a.Normalized else V3d.OOI
-                        let az =
-                            let deg = model.Camera.phi.GetValue t * Constant.DegreesPerRadian
-                            System.Math.Round(deg / 10.0) * 10.0 * Constant.RadiansPerDegree
-                        let dirAz =
-                            let d0 = V3d(cos az, sin az, 0.0)
-                            let proj = d0 - up * Vec.dot d0 up
-                            if proj.Length > 1e-6 then proj.Normalized
-                            else (Vec.cross up V3d.IOO).Normalized   // axis ∥ heading: any ⊥ works
-                        let dist = rr * 6.0
-                        // Snap the cut to the increment grid (the model keeps the
-                        // continuous value so trackpad deltas accumulate).
-                        let cutM =
-                            let s = sliceCutStep p.InnerRadius
-                            System.Math.Round(model.SliceCut.GetValue t / s) * s
-                        let cutR = ScanPin.renderLength scale cutM
-                        Some {
-                            Eye        = c + dirAz * dist
-                            Target     = c
-                            HalfHeight = rr * 1.6
-                            Near       = max (rr * 0.01) (dist - cutR)
-                            Far        = dist + rr * 6.0
-                            Fwd        = -dirAz
-                            Up         = up
-                            FadeDist   = ScanPin.renderLength scale (max 0.05 (p.InnerRadius * 0.05))
-                        })
+                let u = acc / float cnt
+                if u.Length > 0.5 then Some u.Normalized else None)
+
+    // In-view near-plane cut (D1): (forward, distance, band) render-space
+    // uniforms from the model fraction × the orbit radius; band ≈ screen-
+    // constant (a fixed fraction of the cut distance). Dist 0 = off.
+    let nearCutUniforms (model : AdaptiveModel) =
+        let cutFwd = model.Camera.view |> AVal.map (fun cv -> V3f cv.Forward)
+        let cutDist =
+            (model.NearCutFrac, model.Camera.radius) ||> AVal.map2 (fun f r ->
+                if f <= 1e-3 then 0.0f else float32 (f * r))
+        let cutBand = cutDist |> AVal.map (fun d -> d * 0.008f)
+        cutFwd, cutDist, cutBand
 
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
     // inner radius w), for the mesh shader's pin-isolation filter. The live
@@ -332,24 +299,21 @@ module MeshView =
         let palette = Primitives.meshPaletteV4d
 
         let blobCount, blobs = pinBlobUniforms placementPreview model
-        // Slice-mode falloff uniforms: FadeDist 0 disables in the shader.
-        let sliceCamA = sliceCamera model
-        let sliceFwdU  = sliceCamA |> AVal.map (function Some s -> V3f s.Fwd | None -> V3f.OOI)
-        let sliceNearU = sliceCamA |> AVal.map (function Some s -> float32 s.Near | None -> 0.0f)
-        let sliceFadeU = sliceCamA |> AVal.map (function Some s -> float32 s.FadeDist | None -> 0.0f)
+        let cutFwdU, cutDistU, cutBandU = nearCutUniforms model
         let inspectRangeA = inspectRange model
         let rangeWorldA = rangeMaxWorld model
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
-        // Pin isolation = the persistent per-mode default (AnchorGhostMode), forced
-        // on while placing an anchor (view-level only, no model mutation): terrain
-        // drops to ghost, only the pins + the live hover blob read solid.
+        // Pin isolation = the persistent per-mode default (AnchorGhostMode),
+        // forced OFF while placing an anchor (view-level only, no model
+        // mutation): the full textured meshes show so the user can aim; the
+        // white ghost sphere + suitability overlay carry the placement feedback.
         let anchorGhost =
             (model.AnchorGhostMode, model.ScanPins.Placement)
             ||> AVal.map2 (fun on pl ->
                 match pl with
-                | AnchorPlacement -> 1
+                | AnchorPlacement -> 0
                 | _ -> if on then 1 else 0)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
@@ -369,23 +333,13 @@ module MeshView =
                                 // Selection emphasis outside Inspect: the selected
                                 // mesh reads solid, the rest drop to the ghost floor
                                 // (Inspect routes mesh selection through the solo overlay).
+                                // Inspect central 3D, no solo: every mesh reads solid —
+                                // moving meshes paint their difference fields, the
+                                // reference stays the plain Inspect base.
                                 match Selection.mesh (model.Selection.Active.GetValue t) with
                                 | Some m when model.WorkflowStep.GetValue t <> Inspect ->
                                     m = name
-                                | _ ->
-                                    // Inspect central 3D, no solo: the reference carries
-                                    // the variance aggregate solid, moving meshes drop to the
-                                    // ghost floor. A mesh carrying its own intrinsic heatmap
-                                    // stays solid so that error layer reads in the aggregate.
-                                    let hasHeatmap =
-                                        (Map.tryFind name (model.MeshHeatmap.GetValue t) |> Option.defaultValue HeatOff) <> HeatOff
-                                    let inspectGhost =
-                                        model.WorkflowStep.GetValue t = Inspect
-                                        && not hasHeatmap
-                                        && (match model.ReferenceMesh.GetValue t with
-                                            | Some r -> r <> name
-                                            | None -> false)
-                                    not inspectGhost)
+                                | _ -> true)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
             // Outline-only: a zero ghost floor discards every non-emphasized
@@ -415,44 +369,30 @@ module MeshView =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
-            // What this mesh paints in the MAIN 3D view (Inspect only) — the encoding
-            // + the per-vertex scalar array:
-            //   reference, ensemble (no moving-mesh solo) → variance    (enc 2, SurfaceDistance)
-            //   soloed moving mesh                        → signed dist (enc 1, FocusDist)
-            // Reading WorkflowStep / Registration / MeshSolo first keeps non-Inspect and
-            // non-soloed meshes cheap (they fall straight through to (0, None)).
-            // The scalar caches are pose-baked pairs (main = committed, Other = the
-            // opposite Before/After pose) — the reg peek selects the Other cache so
-            // the paint flips with the geometry (peek is only reachable once solved;
-            // Other not ready yet ⇒ unpainted while held, never stale values).
+            // What this mesh paints in the MAIN 3D view (Inspect only): every SHOWN
+            // moving mesh carries its signed difference vs the reference (enc 1,
+            // FocusDist); the reference is NEVER error-coloured (plain Inspect base).
+            // Reading WorkflowStep first keeps non-Inspect meshes cheap (straight
+            // through to (0, None)). The scalar caches are pose-baked pairs (main =
+            // committed, Other = the opposite Before/After pose) — the reg peek
+            // selects the Other cache so the paint flips with the geometry (peek is
+            // only reachable once solved; Other not ready yet ⇒ unpainted while
+            // held, never stale values).
             let inspectField : aval<int * float32[] option> =
                 AVal.custom (fun t ->
                     if model.WorkflowStep.GetValue t <> Inspect then (0, None)
                     // Brushing = sole focus: while samples are brushed every
                     // false-colour error map stands down — only the dots carry value.
                     elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then (0, None)
+                    elif model.ReferenceMesh.GetValue t = Some name then (0, None)
+                    elif not (MeshVisibility.shown (model.MeshSolo.GetValue t) name) then (0, None)
                     else
-                        let rf = model.ReferenceMesh.GetValue t
-                        if Some name = rf then
-                            // While a moving mesh is isolated the reference is plain
-                            // context (the isolated mesh paints its field against it);
-                            // the variance aggregate paints only in the no-solo ensemble.
-                            if (model.MeshSolo.GetValue t).IsSome then (0, None)
-                            else
-                                let surf =
-                                    if model.RegPeekHeld.GetValue t then model.SurfaceDistanceOther
-                                    else model.SurfaceDistance
-                                match Map.tryFind name (surf.GetValue t) with
-                                | Some arr -> (2, Some arr)
-                                | None -> (0, None)
-                        elif model.MeshSolo.GetValue t = Some name then
-                            let fd =
-                                if model.RegPeekHeld.GetValue t then model.FocusDistOther
-                                else model.FocusDist
-                            match Map.tryFind name (fd.GetValue t) with
-                            | Some arr -> (1, Some arr)
-                            | None -> (0, None)
-                        else (0, None))
+                        let fd =
+                            if model.RegPeekHeld.GetValue t then model.FocusDistOther
+                            else model.FocusDist
+                        match Map.tryFind name (fd.GetValue t) with
+                        | Some arr -> (1, Some arr)
+                        | None -> (0, None))
             let distArr = inspectField |> AVal.map snd
             let distBuf =
                 (distArr, loaded.pos) ||> AVal.map2 (fun d _pos ->
@@ -469,14 +409,10 @@ module MeshView =
                     | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
                     | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
             let distEncoding = inspectField |> AVal.map fst
-            // Map ends from the unified pin-derived range: enc 1 saturates at
-            // (lo, hi); enc 2 (variance σ, same units) at max(|lo|, hi).
+            // Map ends from the unified pin-derived range: enc 1 saturates at (lo, hi).
             let distScale =
-                (distEncoding, inspectRangeA) ||> AVal.map2 (fun enc (lo, hi) ->
-                    match enc with
-                    | 1 -> float32 hi
-                    | 2 -> float32 (max (abs lo) hi)
-                    | _ -> 1.0f)
+                (distEncoding, inspectRangeA) ||> AVal.map2 (fun enc (_, hi) ->
+                    if enc = 1 then float32 hi else 1.0f)
             let distLoNeg = inspectRangeA |> AVal.map (fun (lo, _) -> float32 (abs lo))
             let diffIsoStep =
                 (distEncoding, inspectRangeA) ||> AVal.map2 (fun enc (lo, hi) ->
@@ -529,9 +465,9 @@ module MeshView =
                     Sg.Uniform("ClipPlaneCount",       clipCount)
                     Sg.Uniform("ClipPlane0",           clipPlane0)
                     Sg.Uniform("ClipPlane1",           clipPlane1)
-                    Sg.Uniform("SliceFwd",             sliceFwdU)
-                    Sg.Uniform("SliceFadeNear",        sliceNearU)
-                    Sg.Uniform("SliceFadeDist",        sliceFadeU)
+                    Sg.Uniform("CutFwd",               cutFwdU)
+                    Sg.Uniform("CutDist",              cutDistU)
+                    Sg.Uniform("CutBand",              cutBandU)
                     Sg.Uniform("DistanceEncoding",     distEncoding)
                     Sg.Uniform("DistScale",            distScale)
                     Sg.Uniform("DistLoNeg",            distLoNeg)
@@ -656,9 +592,15 @@ module MeshView =
                     Sg.Render loaded.fvc
                 }
             ) |> AList.toASet
+        let cutFwdU, cutDistU, cutBandU = nearCutUniforms model
         sg {
             Sg.View view
             Sg.Proj proj
+            // The G-buffer follows the near-plane cut so lines of cut-away
+            // geometry vanish with it.
+            Sg.Uniform("CutFwd",  cutFwdU)
+            Sg.Uniform("CutDist", cutDistU)
+            Sg.Uniform("CutBand", cutBandU)
             Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
             nodes
         }
@@ -782,6 +724,10 @@ module MeshView =
         sg {
             Sg.View view
             Sg.Proj proj
+            // The focus views never cut; the G-buffer shader still needs the uniforms.
+            Sg.Uniform("CutFwd",  AVal.constant V3f.OOI)
+            Sg.Uniform("CutDist", AVal.constant 0.0f)
+            Sg.Uniform("CutBand", AVal.constant 0.0f)
             Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
             nodes
         }

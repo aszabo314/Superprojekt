@@ -57,7 +57,6 @@ module View =
         ServerActions.init env
 
         let spaceHeld       = cval false
-        let altHeld         = cval false
         let hoverCoord      = cval<V3d option> None
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
@@ -81,12 +80,10 @@ module View =
                 match model.CorrArm.GetValue t with
                 | Some (_, mesh) -> Some mesh
                 | None ->
-                    if altHeld.GetValue t then model.ActivePickingLayer.GetValue t
-                    else
-                        match model.Selection.Hovered.GetValue t with
-                        | Some (HoverMesh m) -> Some m
-                        | Some (HoverPoint (_, m)) -> Some m
-                        | _ -> None)
+                    match model.Selection.Hovered.GetValue t with
+                    | Some (HoverMesh m) -> Some m
+                    | Some (HoverPoint (_, m)) -> Some m
+                    | _ -> None)
 
         // Section/cutaway clipping was removed; the mesh shader keeps generic
         // clip-plane support but is fed a constant no-clip.
@@ -144,71 +141,17 @@ module View =
                     env.Emit [CameraMessage OrbitMessage.Rendered]
                 )
 
-                // Slice mode replaces the orbit camera with the pin-centred
-                // ortho frame (MeshView.sliceCamera); the offscreen outline pass
-                // shares these avals, so the cut plane's profile is silhouetted by
-                // the standard outline machinery.
-                let sliceCamA = MeshView.sliceCamera model
-                let sliceStretchA = ScanPinScene.sliceStretchFactor model
-                let view =
-                    (model.Camera.view, sliceCamA) ||> AVal.map2 (fun cv sc ->
-                        match sc with
-                        | Some s -> CameraView.lookAt s.Eye s.Target s.Up |> CameraView.viewTrafo
-                        | None -> CameraView.viewTrafo cv)
+                let view = model.Camera.view |> AVal.map CameraView.viewTrafo
                 let proj =
-                    (size, sliceCamA, sliceStretchA) |||> AVal.map3 (fun s sc stretch ->
-                        match sc with
-                        | Some sl ->
-                            let aspect = float s.X / float (max 1 s.Y)
-                            let hw, hh = MeshView.sliceOrthoHalfSizes sl aspect stretch
-                            MeshView.orthoProjTrafo hw hh sl.Near sl.Far
-                        | None ->
-                            Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo)
-
-                // With ActivePickingLayer set, prefer that layer's surface over
-                // the frontmost — but only if the cursor ray hits the layer's
-                // bbox; else fall back to the GPU frontmost pick. Async because
-                // the layer-specific raycast goes through the server.
-                let resolveLayerPick (frontmost : V3d option) : Async<V3d option> =
-                    let activeLayer = AVal.force model.ActivePickingLayer
-                    match activeLayer, cursorScreen.Value with
-                    | None, _ -> async.Return frontmost
-                    | Some _, None -> async.Return frontmost
-                    | Some layer, Some cursorPx ->
-                        let bounds = AVal.force model.MeshBounds
-                        match Map.tryFind layer bounds with
-                        | None -> async.Return frontmost
-                        | Some worldBox ->
-                            let cc = AVal.force model.CommonCentroid
-                            let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) layer
-                            let vpSize = AVal.force overlaySize
-                            let v = AVal.force view
-                            let p = AVal.force proj
-                            let ray = pickRay cursorPx vpSize v p
-                            match rayBoxT ray (renderBox worldBox cc scale) with
-                            | None -> async.Return frontmost
-                            | Some _ ->
-                                async {
-                                    // Un-apply the layer's displayed (before/after) pose so the
-                                    // server raycast meets its load-pose geometry, then map the hit
-                                    // back through the same pose. Render → metric world → server
-                                    // frame, one step each (same convention as the focus pick).
-                                    let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model layer))
-                                    let originW = ScanPin.worldCentre cc scale ray.Origin
-                                    let serverOrigin = dispWorld.Backward.TransformPos originW
-                                    let serverDir = (dispWorld.Backward.TransformDir ray.Direction).Normalized
-                                    let! hit = Query.rayHit ApiConfig.apiBase.Value layer 0 serverOrigin serverDir
-                                    match hit with
-                                    | Some h -> return Some (ScanPin.renderCentre cc scale (dispWorld.Forward.TransformPos h.point))
-                                    | None -> return frontmost
-                                }
+                    size |> AVal.map (fun s ->
+                        Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo)
 
                 // Cursor → nearest mesh surface via server raycast, ghost-agnostic
                 // (the server just intersects geometry, ignoring the GPU ghost).
                 // Bbox-culls shown+loaded meshes, raycasts the survivors in
                 // parallel, returns the mesh name + render-space hit nearest the
-                // camera.
-                let raycastNearestNamed () : Async<(string * V3d) option> =
+                // camera + the hit triangle (for the exact-point probe).
+                let raycastNearestNamed () : Async<(string * V3d * int) option> =
                     match cursorScreen.Value with
                     | None -> async.Return None
                     | Some cursorPx ->
@@ -239,19 +182,48 @@ module View =
                                             let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
                                             return hit |> Option.map (fun h ->
                                                 let rp = ScanPin.renderCentre cc scale (dispWorld.Forward.TransformPos h.point)
-                                                Vec.dot (rp - ray.Origin) ray.Direction, name, rp)
+                                                Vec.dot (rp - ray.Origin) ray.Direction, name, rp, h.triangleId)
                                         })
                                     |> Async.Parallel
                                 return
-                                    hits |> Array.choose id |> Array.sortBy (fun (d, _, _) -> d)
-                                    |> Array.tryHead |> Option.map (fun (_, n, rp) -> n, rp)
+                                    hits |> Array.choose id |> Array.sortBy (fun (d, _, _, _) -> d)
+                                    |> Array.tryHead |> Option.map (fun (_, n, rp, tri) -> n, rp, tri)
                             }
 
                 let raycastNearest () : Async<V3d option> =
                     async {
                         let! hit = raycastNearestNamed ()
-                        return hit |> Option.map snd
+                        return hit |> Option.map (fun (_, rp, _) -> rp)
                     }
+
+                // Exact-point probe (Inspect): the hit triangle's nearest corner
+                // vertex indexes the mesh's per-vertex difference field — the
+                // stored value AT that surface point, no server round trip.
+                let probeValueAt (mesh : string) (renderPos : V3d) (triId : int) : float option =
+                    match Map.tryFind mesh (AVal.force model.FocusDist) with
+                    | None -> None
+                    | Some arr ->
+                        let lm = MeshView.loadMeshAsync (fun () -> ()) mesh
+                        match lm.mesh.Value with
+                        | Some md when triId >= 0 && triId * 3 + 2 < md.indices.Length ->
+                            let cc = AVal.force model.CommonCentroid
+                            let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
+                            let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model mesh))
+                            let own = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale renderPos)
+                            let local = V3f (own - md.centroid)
+                            let mutable best = -1
+                            let mutable bestD = System.Single.MaxValue
+                            for k in 0 .. 2 do
+                                let vi = md.indices.[triId * 3 + k]
+                                if vi >= 0 && vi < md.positions.Length then
+                                    let d = (md.positions.[vi] - local).LengthSquared
+                                    if d < bestD then
+                                        bestD <- d
+                                        best <- vi
+                            if best >= 0 && best < arr.Length && abs arr.[best] < 1e20f
+                            then Some (float arr.[best])
+                            else None
+                        | _ -> None
 
                 // Cursor → a SPECIFIC mesh's surface via server raycast (render-space
                 // hit). Used by the 3D correspondence pick, which isolates one mesh and
@@ -271,16 +243,13 @@ module View =
                             return hit |> Option.map (fun h -> ScanPin.renderCentre cc scale (dispWorld.Forward.TransformPos h.point))
                         }
 
-                // Solid pixel pick (GPU / active layer) first, then fall through a
-                // ghost to the nearest raycast surface. Used by pin placement and by
+                // Solid GPU pixel pick first, then fall through a ghost to the
+                // nearest raycast surface. Used by pin placement and by
                 // double-tap-to-recenter, so both work on ghosted meshes too.
                 let resolvePick (frontmost : V3d option) : Async<V3d option> =
-                    async {
-                        let! r = resolveLayerPick frontmost
-                        match r with
-                        | Some _ -> return r
-                        | None -> return! raycastNearest ()
-                    }
+                    match frontmost with
+                    | Some _ -> async.Return frontmost
+                    | None -> raycastNearest ()
 
                 // Hard-prohibit: a pin may only be placed where ≥ 2 meshes
                 // have surface within the placement radius (the pin sphere).
@@ -319,9 +288,6 @@ module View =
                     let cursorPx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
                     if cursorScreen.Value <> Some cursorPx then
                         transact (fun () -> cursorScreen.Value <- Some cursorPx)
-                    // self-heal a missed Alt keyup (focus lost while held)
-                    if altHeld.Value <> e.Alt then
-                        transact (fun () -> altHeld.Value <- e.Alt)
                 )
 
                 // Clear hoverCoord on leave, else the top-bar readout keeps a
@@ -333,56 +299,7 @@ module View =
 
                 Dom.OnMouseWheel(fun e ->
                     let delta = V2d(e.DeltaX, e.DeltaY) / 120.0
-                    if not e.Alt then
-                        // Slice mode: zoom is locked — the wheel sweeps the cut
-                        // plane through the pin instead.
-                        if AVal.force model.SliceMode then env.Emit [AdjustSliceCut delta.Y]
-                        else env.Emit [CameraMessage (OrbitMessage.Wheel delta)]
-                    else
-                        // Option/Alt + wheel = cycle the isolated layer. Prefer
-                        // meshes stacked under the cursor; with fewer than two
-                        // there, fall back to all visible meshes in panel order
-                        // (under-cursor-only made the wheel feel dead).
-                        if altHeld.Value <> true then
-                            transact (fun () -> altHeld.Value <- true)
-                        let cursorPx = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
-                        let vpSize = AVal.force overlaySize
-                        let v = AVal.force view
-                        let p = AVal.force proj
-                        let ray = pickRay cursorPx vpSize v p
-                        let bounds = AVal.force model.MeshBounds
-                        let cc = AVal.force model.CommonCentroid
-                        let scales = AVal.force model.DatasetScales
-                        let isVisible = shownNow ()
-                        let hits =
-                            bounds |> Map.toSeq
-                            |> Seq.choose (fun (name, world) ->
-                                if isVisible name then
-                                    let scale = DatasetScale.forMesh scales name
-                                    rayBoxT ray (renderBox world cc scale) |> Option.map (fun t -> t, name)
-                                else None)
-                            |> Seq.sortBy fst
-                            |> Seq.map snd
-                            |> Array.ofSeq
-                        let candidates =
-                            if hits.Length >= 2 then hits
-                            else
-                                AVal.force model.MeshNames.Content |> IndexList.toArray |> Array.filter isVisible
-                        // While a one-shot anchor pick is live the cycle
-                        // retargets it, skipping the reference (anchors never
-                        // land on the reference).
-                        if candidates.Length > 0 then
-                            let cur = AVal.force model.ActivePickingLayer
-                            let n = candidates.Length
-                            let dir = if e.DeltaY > 0.0 then 1 else -1
-                            let next =
-                                match cur with
-                                | None -> candidates.[if dir > 0 then 0 else n - 1]
-                                | Some c ->
-                                    match Array.tryFindIndex ((=) c) candidates with
-                                    | Some i -> candidates.[((i + dir) % n + n) % n]
-                                    | None -> candidates.[if dir > 0 then 0 else n - 1]
-                            env.Emit [SetActivePickingLayer (Some next)]
+                    env.Emit [CameraMessage (OrbitMessage.Wheel delta)]
                 )
 
                 Sg.OnDoubleTap(fun e ->
@@ -431,7 +348,7 @@ module View =
                                 // on the server raycast, which intersects only real
                                 // geometry (the same surface the flashlight previews).
                                 | AnchorPlacement -> resolvePick None
-                                | _ -> resolveLayerPick frontmost
+                                | _ -> async.Return frontmost
                             match placement, resolved with
                             | AnchorPlacement, Some renderPos ->
                                 // Hard-prohibit: verify overlap at the actual click
@@ -442,17 +359,27 @@ module View =
                                 else env.Emit [ShowToast "No overlapping meshes here — placement needs ≥2 scans in range"]
                             | AnchorPlacement, None -> ()
                             | _, Some renderPos ->
+                                // Mesh-surface clicks do NOT select — mesh selection
+                                // and visibility live in the 2D GUI (roster, matrix,
+                                // tiles). The click feeds the coordinate readout and,
+                                // in Inspect, probes the exact point's error value.
                                 let worldPos = worldFromRender model renderPos
                                 transact (fun () -> hoverCoord.Value <- Some worldPos)
-                                // Clicking a mesh in 3D selects it; the reducer applies
-                                // the Inspect auto-solo. Select only — no main camera;
-                                // double-tap recenters.
-                                let! named = raycastNearestNamed ()
-                                match named with
-                                | Some (mesh, _) -> env.Emit [SetSelection (SelMesh mesh)]
-                                | None -> ()
+                                if AVal.force model.WorkflowStep = Inspect then
+                                    let! named = raycastNearestNamed ()
+                                    match named with
+                                    | Some (mesh, rp, tri) ->
+                                        match probeValueAt mesh rp tri with
+                                        | Some v ->
+                                            env.Emit [SetPointProbe (Some (mesh, worldFromRender model rp, v))]
+                                        | None -> env.Emit [SetPointProbe None]
+                                    | None -> ()
                             | _, None ->
-                                env.Emit [SetSelection SelNone]
+                                // Depth 1.0 can also be a ghosted surface — raycast to
+                                // distinguish a genuine background miss (clears the
+                                // selection) from a click on ghosted terrain (nothing).
+                                let! hit = raycastNearest ()
+                                if hit.IsNone then env.Emit [SetSelection SelNone; SetPointProbe None]
                         } |> Async.Start
                         true
                 )
@@ -540,22 +467,24 @@ module View =
 
             Dom.OnKeyDown(fun e ->
                 match e.Key with
-                | "Alt" ->
-                    if not altHeld.Value then transact (fun () -> altHeld.Value <- true)
                 | " " ->
                     transact (fun () -> spaceHeld.Value <- true)
                 | "i" | "I" ->
                     // Hold-I = registration peek (the reducer gates on a solve existing).
                     env.Emit [SetRegPeek true]
                 | "Escape" ->
-                    // Both messages are no-ops when idle.
-                    env.Emit [ScanPinMsg CancelPlacement; SetSliceMode false]
+                    // Global cancel: disarm a placement, clear the brush, the
+                    // point probe and the selection — clearing the selection also
+                    // disarms the edit-point editor (arming forces a cell
+                    // selection, so an armed editor always has one to clear).
+                    // All no-ops when idle.
+                    env.Emit [ScanPinMsg CancelPlacement; SetBrushedSamples []
+                              SetPointProbe None; SetSelection SelNone]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
                 match e.Key with
                 | " "     -> transact (fun () -> spaceHeld.Value <- false)
-                | "Alt"   -> transact (fun () -> altHeld.Value <- false)
                 | "i" | "I" -> env.Emit [SetRegPeek false]
                 | _ -> ()
             )
@@ -564,11 +493,8 @@ module View =
             GuiRail.rail env model
             GuiFocus.panel env model
             GuiOverlays.toast model
-            GuiOverlays.meshWheelLabel model (cursorScreen :> aval<_>) (altHeld :> aval<bool>)
             GuiOverlays.placementTooltip model (cursorScreen :> aval<_>) (placementValid :> aval<_>)
-            GuiOverlays.sliceOrdinates model (viewportSize :> aval<V2i>)
-            GuiOverlays.sliceAxes model (viewportSize :> aval<V2i>)
-            GuiOverlays.sliceBadges model
+            GuiOverlays.corrFlash model (viewportSize :> aval<V2i>)
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model

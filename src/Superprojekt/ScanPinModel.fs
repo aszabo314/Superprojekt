@@ -26,7 +26,6 @@ type ScanPin = {
     Centre               : V3d
     InnerRadius          : float
     Correspondence       : Correspondence
-    HostMeshName         : string option
     CreatedAt            : DateTime
     // Probe = the committed displayed pose (every consumer reads this one).
     // ProbeOther = the SAME probe at the opposite Before/After pose — fetched only
@@ -167,6 +166,14 @@ module ScanPin =
         | ProbeReady r -> r.Normal
         | _ -> V3d.OOI
 
+    // Display axis for pin/flag orientation: the project-wide average up-normal
+    // when the data is terrain-like (significant normal consensus —
+    // MeshView.projectUpNormal), else the per-pin fallback above.
+    let axisWith (globalUp : V3d option) (p : ScanPin) =
+        match globalUp with
+        | Some u -> u
+        | None -> axis p
+
     // Selection-circle anchor: the pin centre lifted to the median Z of the
     // contact-ring vertices (the outline the user actually sees on the terrain);
     // falls back to the centre until rings land. World space (metric).
@@ -193,12 +200,10 @@ module ScanPin =
         let hWorld = 0.10 * flagScale * eyeDistRender / datasetScale
         renderLength datasetScale (min (20.0 * flagScale) (max (0.1 * flagScale) hWorld))
 
-    // Render-space tip of the flag pole (base = pin centre, along the pin axis) —
-    // shared by the 3D pole geometry and the show-overlays 2D name tags.
-    let flagTopRender (commonCentroid : V3d) (datasetScale : float) (flagHeight : float) (p : ScanPin) =
-        let a = axis p
-        let aN = if a.Length > 1e-9 then a.Normalized else V3d.OOI
-        renderCentre commonCentroid datasetScale p.Centre + aN * flagHeight
+    // Render-space tip of the flag pole (base = pin centre, along the given
+    // display axis).
+    let flagTopRender (commonCentroid : V3d) (datasetScale : float) (flagHeight : float) (axisN : V3d) (p : ScanPin) =
+        renderCentre commonCentroid datasetScale p.Centre + axisN * flagHeight
 
     let correspondence (p : ScanPin) = p.Correspondence
 

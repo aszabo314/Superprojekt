@@ -13,34 +13,25 @@ module GuiTopBar =
         let solved = model.SolvedTransforms |> AVal.map (Map.isEmpty >> not)
         div {
             Class "top-bar"
-            button {
-                Class "tb-btn"
-                classWhen "tb-btn-active" model.SliceMode
-                model.Selection.Active |> AVal.map (fun s ->
-                    if (Selection.pin s).IsSome then None
-                    else Some (Attribute("disabled", "disabled")))
-                Attribute("title", "Slice: orthographic to-scale section view around the selected pin — drag rotates in 10° steps, scroll sweeps the cut plane, Esc exits")
-                Dom.OnClick(fun _ -> env.Emit [SetSliceMode (not (AVal.force model.SliceMode))])
-                "▤ Slice"
-            }
-
-            button {
-                Class "tb-btn"
-                classWhen "tb-btn-active" model.SliceStretch
-                showWhen model.SliceMode
-                Attribute("title", "Vertical exaggeration: blow up the vertical scale — the dots of interest gain hoverable ordinates with true values")
-                Dom.OnClick(fun _ -> env.Emit [ToggleSliceStretch])
-                "⇕ Stretch"
+            div {
+                Class "tb-cut"
+                Attribute("title", "Near cut: slice the scene in place — the plane sits at this fraction of the distance to the orbit centre, a thick line marks the intersection; 0 = off")
+                inlineSlider "▤ Cut" 0.0 1.25 0.01
+                    (fun v -> if v <= 0.005 then "off" else sprintf "%.2f" v)
+                    model.NearCutFrac (fun v -> env.Emit [SetNearCut v])
             }
 
             div {
                 Class "tb-regview"
                 classWhenNot "tb-regview-off" solved
                 Attribute("title", "Show meshes before or after registration")
+                // The active highlight always shows the DISPLAYED pose (also while
+                // unsolved, where it reads Before) — the visible indicator that a
+                // registration invalidation fell back to Before.
                 let btn (label : string) (v : RegView) =
                     button {
                         Class "tb-regview-btn"
-                        classWhen "btn-active" ((model.RegView, solved) ||> AVal.map2 (fun cur s -> s && cur = v))
+                        classWhen "btn-active" (model.RegView |> AVal.map (fun cur -> cur = v))
                         Dom.OnClick(fun _ -> if AVal.force solved then env.Emit [SetRegView v])
                         label
                     }
@@ -127,6 +118,7 @@ module GuiTopBar =
                             ]
                         }
                         gearSlider "Outline edge threshold" 0.0001 0.01 0.0001 (sprintf "%.4f") model.OutlineThreshold SetOutlineThreshold
+                        gearSlider "Outline thickness (px)" 1.0 8.0 0.5 (sprintf "%.1f px") model.OutlineWidthPx SetOutlineWidth
                         gearSlider "Isolines over Z range" 4.0 2000.0 1.0 (sprintf "%.0f") model.IsolineBands SetIsolineBands
                         gearSlider "Isoline opacity" 0.0 1.0 0.01 (sprintf "%.2f") model.IsolineOpacity SetIsolineOpacity
                         gearSlider "Camera speed" 0.05 2.0 0.01 (sprintf "%.2f") model.Camera.speed (fun v -> CameraMessage (OrbitMessage.SetSpeed v))

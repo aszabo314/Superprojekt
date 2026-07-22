@@ -9,22 +9,17 @@ open Aardvark.Dom
 open Superprojekt.LineGlyphs
 
 // WebGL focus panel. Each mesh is rendered full-res and textured in render space at
-// its displayed pose (same frame as the main view). Top = strictly orthographic;
-// 360° = a standard perspective camera fixed at the mesh's panorama centre (drag =
-// look around, wheel = fov zoom). A tiny controller (no orbit) drives the single;
-// the tiles are input-less thumbnails following the same Top/360° toggle.
-// Correspondence picking is Dom-driven (cursor →
+// its displayed pose (same frame as the main view), strictly top-down orthographic.
+// A tiny controller (no orbit) drives the single; the tiles are input-less
+// thumbnails. Correspondence picking is Dom-driven (cursor →
 // render ray → server raycast → 3D preview ghost on move, place on click); the
 // `Sg.OnTap` GPU pick did not fire reliably in this 2nd render control.
 module FocusScene =
 
-    // Camera state of the single, per (mesh, projection): Top reads (pan, zoom) in
-    // fit-relative units; the 360° view reuses the same pair as (azimuth/π,
-    // elevation/(π/2)) + magnification, under its own key — the two states are not
-    // interconvertible, so they never share. Kept PER MESH so switching
-    // small-multiples restores each view's own state. Survives rebuilds. Holds only
-    // the PERSISTENT keys (mesh fit + pano) — pin/cell offsets are transient
-    // (minted fresh per selection change in `camPair`, never stored here).
+    // Camera state of the single: (pan, zoom) in fit-relative units, kept PER
+    // MESH so switching small-multiples restores each view's own state. Survives
+    // rebuilds. Holds only the PERSISTENT mesh-fit keys — pin/cell offsets are
+    // transient (minted fresh per selection change in `camPair`, never stored here).
     let private camStates = System.Collections.Generic.Dictionary<string, cval<V2d> * cval<float>>()
     let private camFor (key : string) =
         match camStates.TryGetValue key with
@@ -33,7 +28,6 @@ module FocusScene =
             let v = (cval V2d.Zero, cval 1.0)
             camStates.[key] <- v
             v
-    let private panoKey (name : string) = name + "†pano"
     // Device-pixel-ratio (framebuffer ÷ CSS px). Set by the main view (where
     // RenderControl.ClientSize works); used to turn the focus cursor (CSS px) into
     // framebuffer-relative NDC. Binding ClientSize directly in this secondary
@@ -67,7 +61,7 @@ module FocusScene =
     //  • centreWorld  = stored PanoCenters[mesh] (absolute world) else the centroid
     //                   (= the mesh origin).
     //  • centreRender = that carried through renderT (− centroid → mesh frame → render):
-    //                   the 360° camera position AND the Top-view camera centre.
+    //                   the top-down camera centre.
     //  • extent       = farthest mesh-bbox corner from the centre (render units), so a
     //                   centre off the geometry still frames it; ×0.98 zooms in a touch.
     let private framing (model : AdaptiveModel) (name : string) (loaded : LoadedMesh)
@@ -93,19 +87,15 @@ module FocusScene =
                 max 1e-4 (r * s * 0.98))
         centreWorld, centreRender, extent
 
-    // Selection-derived base framing of a mesh's focus canvas, BOTH
-    // projections: the focus camera FOLLOWS the selection. pin AND cell share ONE
-    // close-up scale — the pin's influence circle fills the view height — only the
-    // centre differs (pin → pin centre, cell → that mesh's correspondence marker at
-    // the committed pose, falling back to the pin centre while no marker exists);
-    // mesh / nothing → the whole-mesh fit (Top) / the untouched look-around (360°).
-    // Top expresses the close-up as (pan in fit units, zoom = ext/target); 360°
-    // expresses the SAME semantics angularly: pan = (azimuth, elevation) of the
-    // eye→target direction, zoom so the vertical half-fov equals the pin's angular
-    // radius. Returned as the (pan, zoom) BASE the user offsets compose onto.
+    // Selection-derived base framing of a mesh's focus canvas: the focus camera
+    // FOLLOWS the selection. pin AND cell share ONE close-up scale — the pin's
+    // influence circle fills the view height — only the centre differs (pin → pin
+    // centre, cell → that mesh's correspondence marker at the committed pose,
+    // falling back to the pin centre while no marker exists); mesh / nothing →
+    // the whole-mesh fit. Expressed as (pan in fit units, zoom = ext/target) —
+    // the (pan, zoom) BASE the user offsets compose onto.
     let private selBaseFrame (model : AdaptiveModel) (name : string)
-                             (scale : aval<float>) (panoEye : aval<V3d>) (fitExtent : aval<float>)
-                             (isPanoA : aval<bool>) =
+                             (scale : aval<float>) (fitCenter : aval<V3d>) (fitExtent : aval<float>) =
         let pinsAval = model.ScanPins.Pins |> AMap.toAVal
         AVal.custom (fun t ->
             let sel = model.Selection.Active.GetValue t
@@ -135,25 +125,12 @@ module FocusScene =
                 let cc = model.CommonCentroid.GetValue t
                 let s = scale.GetValue t
                 let rp = ScanPin.renderCentre cc s w
-                let fc = panoEye.GetValue t
+                let fc = fitCenter.GetValue t
                 let tgt = max 1e-4 (ScanPin.renderLength s he)
-                if isPanoA.GetValue t then
-                    // Look from the fixed eye AT the target; the pin's angular
-                    // radius θ becomes the vertical half-fov (zoom = 45°/θ).
-                    let d = rp - fc
-                    let dist = d.Length
-                    if dist < 1e-6 then V2d.Zero, 1.0
-                    else
-                        let az = atan2 d.Y d.X
-                        let el = asin (clamp (-1.0) 1.0 (d.Z / dist))
-                        let theta = max 1e-6 (atan (tgt / dist))
-                        V2d(az / Constant.Pi, el / Constant.PiHalf),
-                        clamp 0.75 2000.0 (Constant.PiQuarter / theta)
-                else
-                    let ext = max 1e-4 (fitExtent.GetValue t)
-                    // Cap 2000, not 200: a small pin on a large mesh needs ext/tgt in
-                    // the hundreds — a lower cap silently strands the close-up too far.
-                    V2d((rp.X - fc.X) / ext, (rp.Y - fc.Y) / ext), clamp 1.0 2000.0 (ext / tgt))
+                let ext = max 1e-4 (fitExtent.GetValue t)
+                // Cap 2000, not 200: a small pin on a large mesh needs ext/tgt in
+                // the hundreds — a lower cap silently strands the close-up too far.
+                V2d((rp.X - fc.X) / ext, (rp.Y - fc.Y) / ext), clamp 1.0 2000.0 (ext / tgt))
 
     // Brushed sample glyphs on THIS mesh — always-on-top; empty when no brush.
     let private brushedDotsNode (model : AdaptiveModel) (name : string) =
@@ -187,51 +164,6 @@ module FocusScene =
             [FlyToPoint(world, max 0.5 (r * 4.0))]
         | None -> [ZoomToMesh mesh]
 
-    // 360° view state, reusing the per-mesh (pan, zoom) pair: pan.X = azimuth/π,
-    // pan.Y = elevation/(π/2) (clamped short of the poles so the Z-up lookAt never
-    // degenerates), zoom = magnification. Fov is VERTICAL degrees — the horizontal
-    // follows from the aspect — so zoom references the view HEIGHT exactly like the
-    // Top view's vertical half-extent and the selection close-up fills the height
-    // in both projections. The 0.05° floor permits close-ups on far/small pins.
-    let private panoFov (zoom : float) = clamp 0.05 120.0 (90.0 / max 1e-3 zoom)
-    // NDC → view-direction scales: y = tan(fovV/2), x = y * aspect.
-    let private panoHalfTans (zoom : float) (aspect : float) =
-        let ty = tan (panoFov zoom * Constant.RadiansPerDegree * 0.5)
-        ty * aspect, ty
-    let private panoAngles (pan : V2d) =
-        pan.X * Constant.Pi,
-        clamp (-0.495 * Constant.Pi) (0.495 * Constant.Pi) (pan.Y * Constant.PiHalf)
-    let private panoForward (pan : V2d) =
-        let az, el = panoAngles pan
-        V3d(cos el * cos az, cos el * sin az, sin el)
-    // Rotate the 360° view by (Δazimuth, Δelevation) radians; azimuth wraps, elevation
-    // clamps. Call inside a transact.
-    let private panoRotate (pan : cval<V2d>) (dAz : float) (dEl : float) =
-        let v = pan.Value + V2d(dAz / Constant.Pi, dEl / Constant.PiHalf)
-        pan.Value <- V2d(((v.X + 1.0) % 2.0 + 2.0) % 2.0 - 1.0, clamp (-1.0) 1.0 v.Y)
-
-    // Perspective camera fixed at the panorama eye — only the view direction (drag)
-    // and fov (wheel) change; near/far scale with the framing extent.
-    let private panoCam
-            (size : aval<V2i>) (eye : aval<V3d>) (fitExtent : aval<float>)
-            (pan : aval<V2d>) (zoomA : aval<float>) =
-        let view =
-            (eye, pan) ||> AVal.map2 (fun e p ->
-                CameraView.lookAt e (e + panoForward p) V3d.OOI |> CameraView.viewTrafo)
-        let proj =
-            AVal.custom (fun t ->
-                let s = size.GetValue t
-                let ext = max 1e-4 (fitExtent.GetValue t)
-                let aspect = float s.X / float (max 1 s.Y)
-                // Frustum.perspective takes the HORIZONTAL fov (main-view convention);
-                // derive it from the vertical one so the frustum and panoHalfTans agree.
-                let fovH =
-                    2.0 * atan (tan (panoFov (zoomA.GetValue t) * Constant.RadiansPerDegree * 0.5) * aspect)
-                        * Constant.DegreesPerRadian
-                Frustum.perspective fovH (ext * 1e-3) (ext * 4.0) aspect
-                |> Frustum.projTrafo)
-        view, proj
-
     // Top-down ortho view + projection framing the displayed render centroid,
     // radius = localMaxR·scale, offset by (pan, zoom).
     let private orthoCam
@@ -262,62 +194,23 @@ module FocusScene =
         ]
 
     // Pin influence rings + the dashed white selection circle — ONE builder shared
-    // by the single and the tiles so their marks cannot drift: flat XY in
-    // Top, facing the eye (approximate sphere silhouette) in 360°. In slice mode
-    // (`slice` = the live SliceCam) the Top views additionally show the ANGLE
-    // INDICATOR at the selected pin: a white arrow through the centre along the
-    // slice view direction + two segments ⊥ it — solid white at the current cut
-    // plane, faint white at the falloff end (white = the transient/selection
-    // layer).
+    // by the single and the tiles so their marks cannot drift; flat XY (top-down).
     let private addPinRingsAndSelectionCircle
             (out : ResizeArray<V3d * V3d * V4d * float>)
             (pins : HashMap<ScanPinId, ScanPin>) (sel : ScanPinId option)
-            (cc : V3d) (s : float) (isPano : bool) (eye : V3d)
-            (slice : MeshView.SliceCam option) =
+            (cc : V3d) (s : float) =
         for (id, p) in HashMap.toSeq pins do
             let isSel = sel = Some id
             let cR = ScanPin.renderCentre cc s p.Centre
             let rR = ScanPin.renderLength s p.InnerRadius
-            let col = V4d(Primitives.pinInkV3d, (if isSel then 0.95 else 0.6))
+            let a = if isSel then 0.95 else 0.6
             let rw = if isSel then 2.2 else 1.3
-            if isPano then addRingFacing out eye cR rR col rw 48
-            else addRingXY out cR rR col rw 48
+            duplex (fun c w -> addRingXY out cR rR c w 48) a rw
         match sel |> Option.bind (fun id -> HashMap.tryFind id pins) with
         | Some p ->
             let cR = ScanPin.renderCentre cc s (ScanPin.selectionCircleCentre p)
             let rR = ScanPin.renderLength s (ScanPin.selectionCircleRadius p)
-            let white = V4d(1.0, 1.0, 1.0, 0.95)
-            if isPano then addDashedRingFacing out eye cR rR white 2.2 72
-            else addDashedRingXY out cR rR white 2.2 72
-            match slice with
-            | Some sc when not isPano ->
-                // WHITE — the transient/selection layer (gold stays on the badges).
-                let pinR = ScanPin.renderCentre cc s p.Centre
-                let prR = ScanPin.renderLength s p.InnerRadius
-                let dXY =
-                    let f = V3d(sc.Fwd.X, sc.Fwd.Y, 0.0)
-                    if f.Length > 1e-9 then f.Normalized else V3d.IOO
-                let l = prR * 0.75
-                addArrowXY out (pinR - dXY * l) (pinR + dXY * l) (prR * 0.15) white 2.2
-                // Cut plane trace: each plane ∩ the horizontal plane at the
-                // pin's height (exact for tilted dip-aligned sections; XY
-                // fallback when the section plane is horizontal-degenerate).
-                // SOLID white = the cut itself; a fainter parallel line marks
-                // the end of the transparency falloff (FadeDist behind the
-                // cut) — the visible profile band is the space between them.
-                let perp =
-                    let pp = Vec.cross sc.Fwd V3d.OOI
-                    if pp.Length > 1e-9 then pp.Normalized else V3d(-dXY.Y, dXY.X, 0.0)
-                let inPlaneUp = Vec.cross perp sc.Fwd
-                let traceAt (q : V3d) =
-                    if abs inPlaneUp.Z > 1e-6
-                    then q + inPlaneUp * ((pinR.Z - q.Z) / inPlaneUp.Z)
-                    else V3d(q.X, q.Y, pinR.Z)
-                let x0 = traceAt (sc.Eye + sc.Fwd * sc.Near)
-                let x1 = traceAt (sc.Eye + sc.Fwd * (sc.Near + sc.FadeDist))
-                out.Add(x0 - perp * (prR * 0.9), x0 + perp * (prR * 0.9), white, 1.8)
-                out.Add(x1 - perp * (prR * 0.9), x1 + perp * (prR * 0.9), V4d(1.0, 1.0, 1.0, 0.45), 1.4)
-            | _ -> ()
+            addDashedRingXY out cR rR (V4d(1.0, 1.0, 1.0, 0.95)) 2.2 72
         | None -> ()
 
     // Inspect colour overlay for a mesh: (FocusMode, per-vertex scalar buffer, hi).
@@ -413,20 +306,17 @@ module FocusScene =
                 if m = 1 then float32 (Primitives.Diff.isoStep lo hi) else 0.0f)
         modeA, scalarData, hiA, loNegA, isoA
 
-    // Large single: render-space, textured. Top = orthographic pan/zoom; 360° = a
-    // perspective camera fixed at the panorama eye (drag = look around, wheel = fov
-    // zoom). Picking is Dom-driven (the Sg pick didn't fire reliably in this 2nd
+    // Large single: render-space, textured, orthographic top-down pan/zoom.
+    // Picking is Dom-driven (the Sg pick didn't fire reliably in this 2nd
     // control): the cursor is inverted to a render-space ray, raycast on the server,
     // and the hit drives a live 3D preview ghost on move + the placement on click.
-    let private focusSingle (env : Env<Message>) (model : AdaptiveModel) (name : string) (proj : FocusProjection) : DomNode =
+    let private focusSingle (env : Env<Message>) (model : AdaptiveModel) (name : string) : DomNode =
         let loaded = MeshView.loadMeshAsync (fun () -> ()) name
         let renderT, scale = renderTrafoOf model name loaded
-        let isPano = (proj = ProjPano)
-        // panoEye = the 360° camera position AND the Top-view camera centre (the
-        // mesh's panorama centre in render space); fitExtent frames the mesh around it.
-        let _, panoEye, fitExtent = framing model name loaded renderT scale
-        // User pan/zoom OFFSETS. Mesh/none persists per (mesh, projection) — the
-        // Top fit and the 360° look-around each keep their own key; a pin/cell
+        // fitCenter = the mesh's panorama centre in render space (the camera
+        // centre); fitExtent frames the mesh around it.
+        let _, fitCenter, fitExtent = framing model name loaded renderT scale
+        // User pan/zoom OFFSETS. Mesh/none persists per mesh; a pin/cell
         // target instead mints a FRESH pair on every selection change, so a focused
         // pin/point ALWAYS opens at its derived close-up — adjustable while it
         // stays selected, forgotten once the selection moves on (never restore a
@@ -437,7 +327,7 @@ module FocusScene =
         let camPair =
             model.Selection.Active |> AVal.map (fun s ->
                 match s with
-                | SelMesh _ | SelNone -> camFor (if isPano then panoKey name else name)
+                | SelMesh _ | SelNone -> camFor name
                 | SelPin _ | SelCell _ ->
                     match lastPair with
                     | Some (ps, pair) when ps = s -> pair
@@ -447,33 +337,28 @@ module FocusScene =
                         pair)
         let panUser  = camPair |> AVal.bind (fun (p, _) -> p :> aval<V2d>)
         let zoomUser = camPair |> AVal.bind (fun (_, z) -> z :> aval<float>)
-        // Effective camera = selection base ⊕ user offset, in BOTH projections.
-        let baseFrame = selBaseFrame model name scale panoEye fitExtent (AVal.constant isPano)
+        // Effective camera = selection base ⊕ user offset.
+        let baseFrame = selBaseFrame model name scale fitCenter fitExtent
         let panEff  = (baseFrame, panUser)  ||> AVal.map2 (fun (pb, _) p -> pb + p)
         let zoomEff = (baseFrame, zoomUser) ||> AVal.map2 (fun (_, zb) z -> zb * z)
         let curPan ()  = fst (AVal.force camPair)
         let curZoom () = snd (AVal.force camPair)
         let modeA, scalarBuf, hiA, loNegA, isoA = focusOverlay model name loaded scale
         let surfaceMode = modeA
-        // Overlay: every pin's influence circle (true InnerRadius footprint, pin ink,
-        // selection = weight/alpha) in BOTH projections — the 360° view
-        // approximates the sphere's silhouette with a circle facing the eye.
-        // Correspondence Top adds a screen-fixed always-on-top glyph at THIS mesh's
-        // anchor per pin + the live aim ghost; the glyph sizing is Top-projection
-        // maths, so markers stay Top-only.
+        // Overlay: every pin's influence circle (true InnerRadius footprint,
+        // selection = weight/alpha). Correspondence adds a screen-fixed
+        // always-on-top glyph at THIS mesh's anchor per pin + the live aim ghost.
         let pinsAval   = model.ScanPins.Pins |> AMap.toAVal
         let dispRenderT = MeshView.displayedMeshT model name
-        let sliceCamA = MeshView.sliceCamera model
         let overlaySegs =
             AVal.custom (fun t ->
                 let pins = pinsAval.GetValue t
                 let cc = model.CommonCentroid.GetValue t
                 let s = scale.GetValue t
                 let sel = Selection.pin (model.Selection.Active.GetValue t)
-                let eye = panoEye.GetValue t
                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                addPinRingsAndSelectionCircle out pins sel cc s isPano eye (sliceCamA.GetValue t)
-                if not isPano && model.WorkflowStep.GetValue t = Correspondence then
+                addPinRingsAndSelectionCircle out pins sel cc s
+                if model.WorkflowStep.GetValue t = Correspondence then
                     let ext = fitExtent.GetValue t
                     let z = zoomEff.GetValue t
                     let gr = 0.05 * ext / max 1e-3 z   // screen-fixed glyph half-size
@@ -481,17 +366,17 @@ module FocusScene =
                     let dw = RigidTransform.renderToWorld s cc (dispRenderT.GetValue t)
                     for (id, p) in HashMap.toSeq pins do
                         let isSel = sel = Some id
-                        let pinCol = Primitives.pinInkV3d
                         // The reference's marker is its RefAnchor (own-frame like
                         // Anchors), drawn with the same glyph as any other mesh —
-                        // in the shared pin ink (crosshair, circle and markers agree).
+                        // the shared white-core/ink-outline committed mark.
                         match Correspondence.anchorOwn isRef name (ScanPin.correspondence p) with
                         | Some own ->
                             let aR = ScanPin.renderCentre cc s (dw.Forward.TransformPos own)
-                            let gcol = V4d(pinCol, if isSel then 1.0 else 0.95)
+                            let ga = if isSel then 1.0 else 0.95
                             let gw = if isSel then 2.5 else 1.8
-                            addCrossXY out aR gr gcol gw
-                            addRingXY out aR (gr * 0.6) gcol gw 24
+                            duplex (fun c w ->
+                                addCrossXY out aR gr c w
+                                addRingXY out aR (gr * 0.6) c w 24) ga gw
                         | None -> ()
                     // Live aim ghost: a WHITE cross+ring at the hovered pick
                     // point while armed for THIS mesh — white = "not committed yet";
@@ -502,9 +387,11 @@ module FocusScene =
                         match model.CorrPreview.GetValue t with
                         | Some w ->
                             let pr = ScanPin.renderCentre cc s w
+                            // Single-stroke pure white, thinner than the committed
+                            // marks and with no dark outline — the armed/uncommitted look.
                             let white = V4d(1.0, 1.0, 1.0, 1.0)
-                            addCrossXY out pr gr white 2.2
-                            addRingXY out pr (gr * 0.6) white 2.2 24
+                            addCrossXY out pr gr white 1.8
+                            addRingXY out pr (gr * 0.6) white 1.8 24
                             let orig =
                                 HashMap.tryFind pid pins
                                 |> Option.map ScanPin.correspondence
@@ -556,27 +443,16 @@ module FocusScene =
                 let aspect = w / h
                 let clipX = 2.0 * px / w - 1.0
                 let clipY = 1.0 - 2.0 * py / h
-                // fc = the pano centre (the 360° camera position; the ortho frame
-                // centre for Top) — matches the render camera.
-                let fc = AVal.force panoEye
+                // fc = the ortho frame centre — matches the render camera.
+                let fc = AVal.force fitCenter
                 let ext = AVal.force fitExtent
                 let z = AVal.force zoomEff
                 let pan = AVal.force panEff
                 let originR, dirR =
-                    if isPano then
-                        // Perspective unproject: forward + the NDC offsets along the
-                        // camera's right/up, scaled by the half-fov tangents — exactly
-                        // the panoCam frustum.
-                        let fwd = panoForward pan
-                        let right = (Vec.cross fwd V3d.OOI).Normalized
-                        let up = Vec.cross right fwd
-                        let tx, ty = panoHalfTans z aspect
-                        fc, (fwd + right * (clipX * tx) + up * (clipY * ty)).Normalized
-                    else
-                        let halfE = ext / max 1e-3 z
-                        V3d(fc.X + pan.X * ext + clipX * halfE * aspect,
-                            fc.Y + pan.Y * ext + clipY * halfE,
-                            fc.Z + (ext + 1.0) * 5.0), V3d(0.0, 0.0, -1.0)
+                    let halfE = ext / max 1e-3 z
+                    V3d(fc.X + pan.X * ext + clipX * halfE * aspect,
+                        fc.Y + pan.Y * ext + clipY * halfE,
+                        fc.Z + (ext + 1.0) * 5.0), V3d(0.0, 0.0, -1.0)
                 let sc = AVal.force scale
                 let cc = AVal.force model.CommonCentroid
                 let dispWorld = RigidTransform.renderToWorld sc cc (AVal.force (MeshView.displayedMeshT model name))
@@ -622,25 +498,12 @@ module FocusScene =
                             if gen = hoverGen then env.Emit [CorrPreviewComputed wld]
                         } |> Async.Start
                 elif dragging then
-                    let s = AVal.force overlaySize
-                    let w = float (max 1 s.X)
-                    let h = float (max 1 s.Y)
-                    if isPano then
-                        // Grab-the-world look-around: the surface point under the cursor
-                        // stays under it — per-axis atan offsets at the current fov, old
-                        // vs new cursor position, on the EFFECTIVE zoom (base ⊕ user).
-                        let tx, ty = panoHalfTans (AVal.force zoomEff) (w / h)
-                        let thX (px : float) = atan ((2.0 * px / w - 1.0) * tx)
-                        let thY (py : float) = atan ((1.0 - 2.0 * py / h) * ty)
-                        let dAz = thX (float p.X) - thX (float lastPx.X)
-                        let dEl = thY (float lastPx.Y) - thY (float p.Y)
-                        transact (fun () -> panoRotate (curPan ()) dAz dEl)
-                    else
-                        let d = p - lastPx
-                        let k = 2.0 / (h * max 1e-3 (AVal.force zoomEff))
-                        let pc = curPan ()
-                        transact (fun () ->
-                            pc.Value <- pc.Value + V2d(-float d.X * k, float d.Y * k))
+                    let h = float (max 1 (AVal.force overlaySize).Y)
+                    let d = p - lastPx
+                    let k = 2.0 / (h * max 1e-3 (AVal.force zoomEff))
+                    let pc = curPan ()
+                    transact (fun () ->
+                        pc.Value <- pc.Value + V2d(-float d.X * k, float d.Y * k))
                 lastPx <- p)
             Dom.OnMouseLeave(fun _ ->
                 // No pointer capture here (deliberate) — a release outside the control
@@ -649,9 +512,8 @@ module FocusScene =
                 if (armedHere ()).IsSome then
                     hoverGen <- hoverGen + 1
                     env.Emit [CorrPreviewComputed None])
-            // Mouse-anchored zoom: keep the point under the cursor fixed — Top shifts
-            // the pan, 360° rotates so the view direction under the cursor keeps its
-            // screen position across the fov change.
+            // Mouse-anchored zoom: keep the point under the cursor fixed by
+            // shifting the pan across the zoom change.
             Dom.OnMouseWheel(fun e ->
                 let s = AVal.force overlaySize
                 let w = float (max 1 s.X)
@@ -661,47 +523,26 @@ module FocusScene =
                 let clipY = 1.0 - 2.0 * float lastPx.Y / h
                 let zc = curZoom ()
                 let pc = curPan ()
-                if isPano then
-                    // Anchor maths on the EFFECTIVE zoom (base ⊕ user); only the user
-                    // factor is stored — mirrors the Top branch below. Cap matches
-                    // the selection base's 2000.
-                    let zEff = AVal.force zoomEff
-                    let zEff' = clamp 0.05 2000.0 (zEff * (1.1 ** (-e.DeltaY / 120.0)))
-                    let txOld, tyOld = panoHalfTans zEff  aspect
-                    let txNew, tyNew = panoHalfTans zEff' aspect
-                    let dAz = atan (clipX * txNew) - atan (clipX * txOld)
-                    let dEl = atan (clipY * tyOld) - atan (clipY * tyNew)
-                    transact (fun () ->
-                        zc.Value <- zc.Value * (zEff' / max 1e-9 zEff)
-                        panoRotate pc dAz dEl)
-                else
-                    // The clamp + anchor maths run on the EFFECTIVE zoom; only the
-                    // user factor is stored (pan offsets add linearly regardless).
-                    // Cap matches the selection base's 2000 — a lower cap here would
-                    // snap a deep pin close-up OUT on the first wheel event.
-                    let zEff = AVal.force zoomEff
-                    let zEff' = clamp 0.05 2000.0 (zEff * (1.1 ** (-e.DeltaY / 120.0)))
-                    transact (fun () ->
-                        zc.Value <- zc.Value * (zEff' / max 1e-9 zEff)
-                        pc.Value <- pc.Value + V2d(clipX * aspect * (1.0/zEff - 1.0/zEff'), clipY * (1.0/zEff - 1.0/zEff'))))
-            let viewT, projT =
-                if isPano then panoCam size panoEye fitExtent panEff zoomEff
-                else orthoCam size panoEye fitExtent panEff zoomEff
+                // The clamp + anchor maths run on the EFFECTIVE zoom; only the
+                // user factor is stored (pan offsets add linearly regardless).
+                // Cap matches the selection base's 2000 — a lower cap here would
+                // snap a deep pin close-up OUT on the first wheel event.
+                let zEff = AVal.force zoomEff
+                let zEff' = clamp 0.05 2000.0 (zEff * (1.1 ** (-e.DeltaY / 120.0)))
+                transact (fun () ->
+                    zc.Value <- zc.Value * (zEff' / max 1e-9 zEff)
+                    pc.Value <- pc.Value + V2d(clipX * aspect * (1.0/zEff - 1.0/zEff'), clipY * (1.0/zEff - 1.0/zEff'))))
+            let viewT, projT = orthoCam size fitCenter fitExtent panEff zoomEff
             // Reference-mesh silhouette overlaid on the enlarged single when a non-reference
             // (moving) mesh is shown — the image-space outline reused from the 3D view, in
             // gold, drawn on top (Correspondence + Inspect; the single only exists there).
-            // Top only: the outline pass is untried from an inside-the-mesh perspective
-            // camera. Reference is never solved, so the outline is pose-stable while the
+            // Reference is never solved, so the outline is pose-stable while the
             // moving surface shifts under it.
             let refOutline =
-                if isPano then ASet.empty
-                else
-                    let show =
-                        model.ReferenceMesh |> AVal.map (function Some rf -> rf <> name | None -> false)
-                    let node = MeshView.buildReferenceOutlineNode model viewT projT (V4f(0.831f, 0.631f, 0.024f, 1.0f)) show
-                    OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) (model.IsolineOpacity |> AVal.map float32) (AVal.constant 0.0f) OutlineView.maskAllOn node
-            // One standard pipeline for both projections — the camera (viewT/projT)
-            // carries the whole difference.
+                let show =
+                    model.ReferenceMesh |> AVal.map (function Some rf -> rf <> name | None -> false)
+                let node = MeshView.buildReferenceOutlineNode model viewT projT (V4f(0.831f, 0.631f, 0.024f, 1.0f)) show
+                OutlineView.buildFromNode info (model.OutlineThreshold |> AVal.map float32) (model.OutlineWidthPx |> AVal.map float32) (model.IsolineOpacity |> AVal.map float32) OutlineView.maskAllOn node
             let surface =
                 sg {
                     Sg.Trafo renderT
@@ -740,21 +581,15 @@ module FocusScene =
         // Centre the thumbnail on the same panorama centre as the single.
         let _, fitCenter, fitExtent = framing model name loaded renderT scale
         let modeA, scalarBuf, hiA, loNegA, isoA = focusOverlay model name loaded scale
-        // Tiles follow the global Top/360° toggle — the whole focus panel
-        // switches projection together.
-        let isPanoA = model.FocusProjection |> AVal.map ((=) ProjPano)
         let pinsAval = model.ScanPins.Pins |> AMap.toAVal
-        let sliceCamA = MeshView.sliceCamera model
         let ringSegs =
             AVal.custom (fun t ->
                 let pins = pinsAval.GetValue t
                 let cc = model.CommonCentroid.GetValue t
                 let s = scale.GetValue t
                 let sel = Selection.pin (model.Selection.Active.GetValue t)
-                let pano = isPanoA.GetValue t
-                let eye = fitCenter.GetValue t
                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                addPinRingsAndSelectionCircle out pins sel cc s pano eye (sliceCamA.GetValue t)
+                addPinRingsAndSelectionCircle out pins sel cc s
                 out.ToArray())
         let rc =
             renderControl {
@@ -763,15 +598,13 @@ module FocusScene =
                 let! size = RenderControl.ViewportSize
                 Sg.Uniform("ViewportSize", size)
                 // Tiles frame the selection too: a pin/cell zooms every tile
-                // onto that region on ITS OWN mesh — a small-multiples comparison,
-                // in whichever projection is active.
-                let baseFrame = selBaseFrame model name scale fitCenter fitExtent isPanoA
+                // onto that region on ITS OWN mesh — a small-multiples comparison.
+                let baseFrame = selBaseFrame model name scale fitCenter fitExtent
                 let panB  = baseFrame |> AVal.map fst
                 let zoomB = baseFrame |> AVal.map snd
                 let viewO, projO = orthoCam size fitCenter fitExtent panB zoomB
-                let viewP, projP = panoCam  size fitCenter fitExtent panB zoomB
-                Sg.View (isPanoA |> AVal.bind (fun p -> if p then viewP else viewO))
-                Sg.Proj (isPanoA |> AVal.bind (fun p -> if p then projP else projO))
+                Sg.View viewO
+                Sg.Proj projO
                 sg {
                     Sg.Trafo renderT
                     Sg.Shader { DefaultSurfaces.trafo; DefaultSurfaces.diffuseTexture; FocusShaders.focusColor }
@@ -825,7 +658,7 @@ module FocusScene =
             }
         }
 
-    // The large single, keyed by (mesh, projection) so a projection toggle rebuilds.
+    // The large single, keyed by the focused mesh.
     let single (env : Env<Message>) (model : AdaptiveModel) =
         AVal.custom (fun t ->
             // Resolve the focused mesh INLINE — building a transient AVal.custom here
@@ -839,10 +672,9 @@ module FocusScene =
                 | _ -> List.tryHead names
             match chosen with
             | None -> IndexList.empty
-            | Some n ->
-                IndexList.single (n, model.FocusProjection.GetValue t))
+            | Some n -> IndexList.single n)
         |> AList.ofAVal
-        |> AList.map (fun (n, proj) -> focusSingle env model n proj)
+        |> AList.map (focusSingle env model)
 
     let multiples (env : Env<Message>) (model : AdaptiveModel) =
         model.MeshNames |> AList.map (focusTile env model)

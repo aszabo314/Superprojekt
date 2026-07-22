@@ -1,5 +1,30 @@
 # Worklog
 
+## ScanPin v13 — expert-session fixes (2026-07-22)
+
+All 16 spec tasks, in order, build-green each. P0: the reference is never
+error-coloured (variance map removed wholesale; default Inspect paints every
+moving mesh's difference field); Before/After is deterministic (edits in After
+are refused with a prompt, never a silent flip; the reg-view buttons always show
+the displayed pose); legibility (palette slot 7 dark-cyan → sky #0ea5e9, thick
+outlines + gear "Outline thickness" slider via wider edge-detect sampling, pin
+rings/flag names/corr markers as white-core-over-ink duplex — the armed aim
+ghost stays thin pure white); global Esc (deselect + disarm placement/editor +
+clear brush/probe). P1: 3D mesh-click select + Alt+wheel isolate removed (2D-only
+selection; ActivePickingLayer/HostMeshName pruned); 360° focus view removed (Top
+only); standalone slice mode removed, replaced by the in-view near-plane cut
+(top-bar "▤ Cut" slider, shader discard + flat-ink intersection band, outline
+G-buffer follows); M3C2|Δz toggle removed (M3C2 under the hood); roster ◎ flies
+to a mesh's sensor viewpoint; camera moves ONLY on explicit focus/zoom (placement
+recenter + back-out camera restore removed); orbit-centre cue while rotating;
+correspondence commits flash a confirmation ring (CorrFlash + CSS pop); placement
+forces full-mesh visibility; project-wide up-normal orients pins/flags on
+terrain-like data (`MeshView.projectUpNormal`, |mean normal| > 0.5, per-pin
+fallback). P2: Inspect never isolates on mesh selection; exact-point error probe
+(Inspect surface click → triangle-corner lookup in FocusDist → duplex marker +
+amber value line in both charts). Matrix slice-cell diagrams and auto-seeding
+untouched. CLAUDE.md not yet re-synced to v13 (follow-up).
+
 ## URL dataset override (2026-07-20)
 
 - `?dataset=<name>` on the app URL picks the startup dataset:

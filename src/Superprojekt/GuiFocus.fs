@@ -4,10 +4,10 @@ open Aardvark.Base
 open FSharp.Data.Adaptive
 open Aardvark.Dom
 
-// Right focus panel: a large WebGL single (focused mesh, textured, pan/zoom +
-// server-raycast correspondence pick) over a small-multiples strip of textured
-// thumbnails, both from FocusScene. Head = the selected-pin chip, the 360° / Top
-// projection toggle, and ✎ edit point (the armed correspondence editor).
+// Right focus panel: a large WebGL single (focused mesh, textured, top-down
+// pan/zoom + server-raycast correspondence pick) over a small-multiples strip of
+// textured thumbnails, both from FocusScene. Head = the selected-pin chip and
+// ✎ edit point (the armed correspondence editor).
 module GuiFocus =
 
     let panel (env : Env<Message>) (model : AdaptiveModel) =
@@ -48,14 +48,6 @@ module GuiFocus =
                 match model.CorrArm.GetValue t, Selection.pin (model.Selection.Active.GetValue t), focusMesh.GetValue t with
                 | Some (ap, am), Some sp, Some fm -> ap = sp && am = fm
                 | _ -> false)
-
-        let projBtn (p : FocusProjection) =
-            button {
-                Class "focus-proj-btn"
-                Primitives.classWhen "btn-active" (model.FocusProjection |> AVal.map ((=) p))
-                Dom.OnClick(fun _ -> env.Emit [SetFocusProjection p])
-                FocusProjection.label p
-            }
 
         // Unified arm button: one mode, two surfaces. Armed → the next click on
         // the focus OR the 3D surface sets the (pin, mesh) point (ROI-clamped) and
@@ -100,7 +92,6 @@ module GuiFocus =
             div {
                 Class "focus-head"
                 pinChip
-                div { Class "focus-proj"; Primitives.showWhenNot isOverview; projBtn ProjPano; projBtn ProjTop }
                 div {
                     Class "focus-head-right"
                     setBtn

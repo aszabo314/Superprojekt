@@ -71,7 +71,7 @@ module OutlineView =
     // has nothing to fade with) — pass and shaders stay untouched.
     let private buildCoverage
         (info : Aardvark.Dom.RenderControlInfo)
-        (active : aval<bool>)
+        (widthA : aval<float32>)
         (mask : aval<V4f[]>)
         (node : ISceneNode) : aset<ISceneNode> =
 
@@ -80,7 +80,6 @@ module OutlineView =
             sg {
                 // NoEvents is load-bearing — see the main composite below.
                 Sg.NoEvents
-                Sg.Active active
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Shader {
@@ -90,6 +89,7 @@ module OutlineView =
                 Sg.Uniform("Coverage0", cov0)
                 Sg.Uniform("Coverage1", cov1)
                 Sg.Uniform("OutlineTexel", texel)
+                Sg.Uniform("OutlineWidthPx", widthA)
                 Sg.Uniform("OutlineMask", mask)
                 Sg.Uniform("CoverageColors", AVal.constant MeshView.coverageColors)
                 Sg.VertexAttributes quadAttrs
@@ -112,8 +112,8 @@ module OutlineView =
     let buildFromNode
         (info : Aardvark.Dom.RenderControlInfo)
         (thresholdA : aval<float32>)
+        (widthA : aval<float32>)
         (isoOpacityA : aval<float32>)
-        (distFadeA : aval<float32>)
         (mask : aval<V4f[]>)
         (node : ISceneNode) : aset<ISceneNode> =
 
@@ -135,8 +135,8 @@ module OutlineView =
                 Sg.Uniform("GColor", gColor)
                 Sg.Uniform("OutlineTexel", texel)
                 Sg.Uniform("OutlineThreshold", thresholdA)
+                Sg.Uniform("OutlineWidthPx", widthA)
                 Sg.Uniform("IsolineOpacity", isoOpacityA)
-                Sg.Uniform("OutlineDistFade", distFadeA)
                 Sg.Uniform("OutlineMask", mask)
                 Sg.VertexAttributes quadAttrs
                 Sg.Index quadIdxView
@@ -184,20 +184,13 @@ module OutlineView =
         (view : aval<Trafo3d>)
         (proj : aval<Trafo3d>) : aset<ISceneNode> =
         let mask = MeshView.outlineMask model
-        // Slice-mode line falloff: the SAME small window as
-        // the mesh surface fade (SliceCam.FadeDist, a few cm) — outlines and
-        // isolines vanish with the fill. depth01 → distance is linear under the
-        // slice ortho. 0 disables (perspective).
-        let distFade =
-            MeshView.sliceCamera model |> AVal.map (function
-                | Some s -> float32 ((s.Far - s.Near) / max 1e-9 s.FadeDist)
-                | None -> 0.0f)
+        let widthA = model.OutlineWidthPx |> AVal.map float32
         let combined =
             buildFromNode info (model.OutlineThreshold |> AVal.map float32)
+                widthA
                 (model.IsolineOpacity |> AVal.map float32)
-                distFade
                 mask (MeshView.buildOutlineNode model view proj)
         let footprints =
-            buildCoverage info (model.SliceMode |> AVal.map not) mask
+            buildCoverage info widthA mask
                 (MeshView.buildCoverageNode model view proj)
         ASet.union combined footprints

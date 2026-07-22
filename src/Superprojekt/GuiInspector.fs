@@ -40,7 +40,7 @@ module GuiInspector =
         "function render(){"
         "  var raw=el.getAttribute('data-dist')||'{}'; var d; try{d=JSON.parse(raw);}catch(e){return;}"
         "  var braw=el.getAttribute('data-brushed')||''; var bset=new Set(braw.length?braw.split(',').map(Number):[]);"
-        "  var fraw=el.getAttribute('data-focus')||''; var fset=new Set(fraw.length?fraw.split(',').map(Number):[]);"
+        "  var praw=el.getAttribute('data-probe')||''; var pv=praw.length?parseFloat(praw):null;"
         "  el.innerHTML=''; el._dots=[];"
         "  var W=el.clientWidth||300, H=el.clientHeight||150; var dpr=window.devicePixelRatio||1;"
         "  var cv=document.createElement('canvas'); cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);"
@@ -102,11 +102,13 @@ module GuiInspector =
         "    g.beginPath(); g.moveTo(X(sn.med),axY); g.lineTo(X(sn.med),axY-9); g.stroke(); g.lineWidth=1; });"
         // The conceptual samples: never painted, but they ARE the brush targets.
         "  S.forEach(function(sn){ if(sn.g) for(var q=0;q<sn.g.length;q++) el._dots.push({gid:sn.g[q],v:sn.s[q]}); });"
-        // Slice-mode dots of interest: amber baseline markers that follow the
-        // cut plane as the slice camera moves.
-        "  if(fset.size){ g.globalAlpha=1; g.fillStyle='#d97706'; g.strokeStyle='#ffffff'; g.lineWidth=1;"
-        "    for(var q3=0;q3<el._dots.length;q3++){ var dd3=el._dots[q3]; if(fset.has(dd3.gid)){"
-        "      g.beginPath(); g.arc(X(dd3.v),axY-5,3,0,6.2832); g.fill(); g.stroke(); } } }"
+        // Exact-point probe: an amber marker line + labelled value (mm).
+        "  if(pv!=null&&isFinite(pv)){ var ppx=X(Math.max(lo,Math.min(hi,pv)));"
+        "    g.globalAlpha=1; g.strokeStyle='#d97706'; g.lineWidth=1.6;"
+        "    g.beginPath(); g.moveTo(ppx,axT); g.lineTo(ppx,axY); g.stroke();"
+        "    g.font='10px SF Mono,Monaco,monospace'; g.textAlign='left'; g.lineWidth=3;"
+        "    g.strokeStyle='rgba(255,255,255,0.85)'; g.fillStyle='#d97706';"
+        "    var plab=(pv>=0?'+':'')+pv.toFixed(1)+' mm'; g.strokeText(plab,ppx+3,axY-6); g.fillText(plab,ppx+3,axY-6); g.lineWidth=1; }"
         // Inset legend (top-right): series swatch + name, capped; pose key below.
         "  g.globalAlpha=1; g.font='9px Inter,sans-serif';"
         "  var rows=[]; S.forEach(function(sn){ rows.push([sn.color,sn.name]); });"
@@ -151,7 +153,7 @@ module GuiInspector =
         // A model-side clear (empty data-brushed while not dragging) drops the local band.
         "new MutationObserver(function(muts){"
         "  if(!dragging&&range){ for(var q=0;q<muts.length;q++){ if(muts[q].attributeName==='data-brushed'&&!(el.getAttribute('data-brushed')||'').length){ range=null; break; } } }"
-        "  render(); }).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed','data-focus']});"
+        "  render(); }).observe(el,{attributes:true,attributeFilter:['data-dist','data-brushed','data-probe']});"
         // The chart width follows dock drags and window resizes.
         "if(window.ResizeObserver){ new ResizeObserver(function(){ render(); }).observe(el); }"
         "})();" ]
@@ -525,32 +527,16 @@ module GuiInspector =
         let meshChartData = (chartsCore |> AVal.map fst, model.Selection.Hovered) ||> AVal.map2 substHl
         let pinChartData  = (chartsCore |> AVal.map snd, model.Selection.Hovered) ||> AVal.map2 substHl
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
-        // Slice-mode dots of interest: their gids cross-highlight in BOTH
-        // charts, following the cut plane as the slice camera moves.
-        let focusData =
-            ScanPinScene.sliceRankedBrush model |> AVal.map (function
-                | Some ranked ->
-                    ranked
-                    |> Array.truncate ScanPinScene.maxDotsOfInterest
-                    |> Array.map (fun (gid, _, _, _) -> string gid)
-                    |> String.concat ","
+        // Exact-point probe value (mm) — highlighted in both charts.
+        let probeData =
+            model.PointProbe |> AVal.map (function
+                | Some (_, _, v) -> sprintf "%.2f" (v * 1000.0)
                 | None -> "")
 
-        // One compact head row: the metric toggles only (channel + Δ sub-mode) —
-        // they configure the view; selection is the matrix's job.
+        // The charts carry no config UI — selection is the matrix's job.
         let inspectDock =
             div {
                 Class "ins-inspect"
-                div {
-                    Class "ins-insp-head"
-                    div {
-                        Class "ins-insp-sub"
-                        compactButtonBar [
-                            "M3C2", (model.ExtrinsicZDiff |> AVal.map not),  (fun () -> if AVal.force model.ExtrinsicZDiff then emit ToggleExtrinsicZDiff)
-                            "Δz",   (model.ExtrinsicZDiff :> aval<bool>),    (fun () -> if not (AVal.force model.ExtrinsicZDiff) then emit ToggleExtrinsicZDiff)
-                        ]
-                    }
-                }
                 div {
                     Class "ins-insp-body"
                     // The two fixed charts: mesh = matrix column, pin = matrix
@@ -561,14 +547,14 @@ module GuiInspector =
                             Class "ins-chart"
                             meshChartData |> AVal.map (fun j -> Some (Attribute("data-dist", j)))
                             brushedData |> AVal.map (fun b -> Some (Attribute("data-brushed", b)))
-                            focusData |> AVal.map (fun f -> Some (Attribute("data-focus", f)))
+                            probeData |> AVal.map (fun p -> Some (Attribute("data-probe", p)))
                             OnBoot chartJs
                         }
                         div {
                             Class "ins-chart"
                             pinChartData |> AVal.map (fun j -> Some (Attribute("data-dist", j)))
                             brushedData |> AVal.map (fun b -> Some (Attribute("data-brushed", b)))
-                            focusData |> AVal.map (fun f -> Some (Attribute("data-focus", f)))
+                            probeData |> AVal.map (fun p -> Some (Attribute("data-probe", p)))
                             OnBoot chartJs
                         }
                         // JS→Elm bridge shared by both charts: a chart writes brushed

@@ -67,133 +67,10 @@ module ScanPinScene =
                     | _ -> ()
             out.ToArray())
 
-    // Brushed-dot geometry: circle+cross glyphs per brushed sample —
-    // value-coloured in the main 3D outside slice mode, neutral dark grey in
-    // slice mode and the focus views. Positions come from the same canonical
-    // gid array the charts label.
-    let maxDotsOfInterest = 12
-
-    // Slice-mode ranking shared by the 3D dots, the stretch-mode ordinates and
-    // the chart cross-highlight: brushed samples visible in the slice view
-    // (front-of-cut skipped — they're near-clipped anyway), as (gid, renderPos,
-    // valueMm, |distance behind the cut|), sorted nearest-the-cut first; the
-    // first maxDotsOfInterest ARE the dots of interest. None while slice mode
-    // is off.
-    let sliceRankedBrush (model : AdaptiveModel) : aval<(int * V3d * float * float)[] option> =
+    // Brushed sample base data: (renderPos, valueMm) per brushed dot;
+    // meshFilter restricts to one mesh (the focus views).
+    let private brushedBase (model : AdaptiveModel) (meshFilter : string option) : aval<(V3d * float)[]> =
         let canonA = brushSamples model
-        let sliceCamA = MeshView.sliceCamera model
-        let datasetScale =
-            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-        AVal.custom (fun t ->
-            match sliceCamA.GetValue t with
-            | None -> None
-            | Some s ->
-                let brushed = model.BrushedSamples.GetValue t
-                if Set.isEmpty brushed then Some [||]
-                else
-                    let canon = canonA.GetValue t
-                    let cc = model.CommonCentroid.GetValue t
-                    let scale = datasetScale.GetValue t
-                    brushed
-                    |> Seq.choose (fun gid ->
-                        if gid >= 0 && gid < canon.Length then
-                            let (_, _, pos, vMm) = canon.[gid]
-                            let p = ScanPin.renderCentre cc scale pos
-                            let behind = Vec.dot (p - s.Eye) s.Fwd - s.Near
-                            if behind < -0.02 * s.HalfHeight then None
-                            else Some (gid, p, vMm, abs behind)
-                        else None)
-                    |> Array.ofSeq
-                    |> Array.sortBy (fun (_, _, _, d) -> d)
-                    |> Some)
-
-    // ADAPTIVE vertical exaggeration factor. The stretch is
-    // PROJECTION-only (ortho half-height ÷ N; screen-vertical = the pin axis),
-    // and the extent is PRE-CALCULATED FOR THE REGION — every input below is
-    // independent of the cut position AND the azimuth (axis offsets are), so N
-    // stays rock-solid while the slice plane is scrolled or rotated:
-    //   brushed → the selected pin's brushed samples span the view height
-    //     (max |axis-direction offset from the pin centre| → 75 % of half-height,
-    //     so the data sits clear of the edges);
-    //   no brush → the ~20 on-surface PROBE samples closest to the pin centre
-    //     inside the pin sphere stand in for "mesh vertices in the region"
-    //     (probe positions are exactly on-mesh points and already client-side —
-    //     no per-mesh vertex scan);
-    //   no probe → the shared inspect error span sized to ~1/3 of the height.
-    // The data-driven factors stay exact (no nice-step rounding) so the fill is
-    // literal; clamped [1, 1000]. 1.0 while stretch is off.
-    let sliceStretchFactor (model : AdaptiveModel) : aval<float> =
-        let camA = MeshView.sliceCamera model
-        let canonA = brushSamples model
-        let rangeA = MeshView.inspectRange model
-        let pinsC = model.ScanPins.Pins.Content
-        let datasetScale =
-            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-        AVal.custom (fun t ->
-            if not (model.SliceStretch.GetValue t) then 1.0
-            else
-                match camA.GetValue t with
-                | None -> 1.0
-                | Some s ->
-                    let up = s.Up
-                    let c = s.Target
-                    let cc = model.CommonCentroid.GetValue t
-                    let scale = datasetScale.GetValue t
-                    let selPin = Selection.pin (model.Selection.Active.GetValue t)
-                    let offsets =
-                        let brushed = model.BrushedSamples.GetValue t
-                        let fromBrush =
-                            if Set.isEmpty brushed then [||]
-                            else
-                                let canon = canonA.GetValue t
-                                brushed
-                                |> Seq.choose (fun gid ->
-                                    if gid >= 0 && gid < canon.Length then
-                                        let (pid, _, pos, _) = canon.[gid]
-                                        if selPin = Some pid then
-                                            Some (abs (Vec.dot (ScanPin.renderCentre cc scale pos - c) up))
-                                        else None
-                                    else None)
-                                |> Array.ofSeq
-                        if fromBrush.Length > 0 then fromBrush
-                        else
-                            match selPin |> Option.bind (fun id -> HashMap.tryFind id (pinsC.GetValue t)) with
-                            | Some p ->
-                                match p.Probe with
-                                | ProbeReady r ->
-                                    let rr = max 1e-9 (ScanPin.renderLength scale p.InnerRadius)
-                                    let cand = ResizeArray<float * float>()   // |from centre| , |vertical offset|
-                                    for d in r.Distributions do
-                                        for pos in d.Positions do
-                                            let pR = ScanPin.renderCentre cc scale pos
-                                            let dc = (pR - c).Length
-                                            if dc <= rr then
-                                                cand.Add(dc, abs (Vec.dot (pR - c) up))
-                                    cand.ToArray()
-                                    |> Array.sortBy fst
-                                    |> Array.truncate 20
-                                    |> Array.map snd
-                                | _ -> [||]
-                            | None -> [||]
-                    let maxV = if offsets.Length = 0 then 0.0 else Array.max offsets
-                    if maxV > 1e-9 then
-                        clamp 1.0 1000.0 (s.HalfHeight * 0.75 / maxV)
-                    else
-                        let (lo, hi) = rangeA.GetValue t
-                        let span = max 1e-4 (hi - lo)
-                        let viewHm = 2.0 * s.HalfHeight / max 1e-9 scale
-                        clamp 2.0 500.0 (viewHm * 0.35 / span))
-
-    // Brushed sample base data: (renderPos, alpha, isInterest, valueMm) per
-    // visible brushed dot. sliceAware (main 3D only): the dots of interest
-    // full-strength + flagged, the rest fading with cut distance; meshFilter
-    // restricts to one mesh (the focus views — never interest-flagged).
-    let private brushedBase (model : AdaptiveModel) (meshFilter : string option) (sliceAware : bool) : aval<(V3d * float * bool * float)[]> =
-        let canonA = brushSamples model
-        let rankedA = sliceRankedBrush model
-        // Bound ONCE here — never build-and-read a transient aval inside the
-        // compute below (the dependency edge would drop and the dots freeze).
-        let sliceCamA = MeshView.sliceCamera model
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
         AVal.custom (fun t ->
@@ -202,59 +79,40 @@ module ScanPinScene =
             else
                 let cc = model.CommonCentroid.GetValue t
                 let scale = datasetScale.GetValue t
-                match (if sliceAware then rankedA.GetValue t else None) with
-                | Some ranked ->
-                    let hh = match sliceCamA.GetValue t with Some sc -> sc.HalfHeight | None -> 1.0
-                    ranked
-                    |> Array.mapi (fun i (_, p, vMm, d) ->
-                        if i < maxDotsOfInterest then p, 1.0, true, vMm
-                        else p, 0.45 * max 0.0 (1.0 - d / (hh * 0.6)), false, vMm)
-                    |> Array.filter (fun (_, a, _, _) -> a > 0.04)
-                | None ->
-                    let canon = canonA.GetValue t
-                    brushed |> Seq.choose (fun gid ->
-                        if gid >= 0 && gid < canon.Length then
-                            let (_, mesh, pos, vMm) = canon.[gid]
-                            if meshFilter |> Option.forall ((=) mesh) then
-                                Some (ScanPin.renderCentre cc scale pos, 1.0, false, vMm)
-                            else None
-                        else None)
-                    |> Array.ofSeq)
+                let canon = canonA.GetValue t
+                brushed |> Seq.choose (fun gid ->
+                    if gid >= 0 && gid < canon.Length then
+                        let (_, mesh, pos, vMm) = canon.[gid]
+                        if meshFilter |> Option.forall ((=) mesh) then
+                            Some (ScanPin.renderCentre cc scale pos, vMm)
+                        else None
+                    else None)
+                |> Array.ofSeq)
 
-    // One brushed-sample glyph: a screen-aligned circle with a
-    // cross through it, as line segments; the DOTS OF INTEREST get a second,
-    // inner circle. right/upv are the HALF-SIZE axis vectors (upv pre-squished
-    // in stretch mode so the glyph keeps its aspect).
+    // One brushed-sample glyph: a screen-aligned circle with a cross through
+    // it, as line segments; right/upv are the HALF-SIZE axis vectors.
     let private addGlyph (out : ResizeArray<V3d * V3d * V4d * float>)
-                         (c : V3d) (right : V3d) (upv : V3d) (doubleRing : bool) (col : V4d) (w : float) =
+                         (c : V3d) (right : V3d) (upv : V3d) (col : V4d) (w : float) =
         let n = 20
-        let ring (rx : V3d) (uy : V3d) =
-            let mutable prev = c + rx
-            for i in 1 .. n do
-                let a = float i / float n * Constant.PiTimesTwo
-                let p = c + rx * cos a + uy * sin a
-                out.Add(prev, p, col, w)
-                prev <- p
-        ring right upv
-        if doubleRing then ring (right * 0.6) (upv * 0.6)
+        let mutable prev = c + right
+        for i in 1 .. n do
+            let a = float i / float n * Constant.PiTimesTwo
+            let p = c + right * cos a + upv * sin a
+            out.Add(prev, p, col, w)
+            prev <- p
         out.Add(c - right, c + right, col, w)
         out.Add(c - upv, c + upv, col, w)
 
     let private glyphInk (a : float) = V4d(0.22, 0.25, 0.30, a)
 
-    // Main-3D brushed glyphs: CONSTANT SCREEN SIZE (BrushDotPx CSS px — ortho
-    // slice sizes from the frustum, perspective per dot from its eye distance;
-    // view-dependent by design, like the pin flags), and in stretch mode the
-    // vertical glyph axis is divided by N so the exaggeration cancels and the
-    // glyphs keep their original aspect ratio. Outside slice mode the glyphs
-    // carry the shared difference viz — each dot's stroke = its sample value
-    // through the ONE diverging map/range, over a dark under-stroke so the
-    // near-white zero end stays readable on the plain Inspect surface; slice
-    // mode keeps them neutral (the values live in the ordinates/charts there).
+    // Main-3D brushed glyphs: CONSTANT SCREEN SIZE (BrushDotPx CSS px,
+    // perspective per dot from its eye distance; view-dependent by design, like
+    // the pin flags). The glyphs carry the shared difference viz — each dot's
+    // stroke = its sample value through the ONE diverging map/range, over a
+    // dark under-stroke so the near-white zero end stays readable on the plain
+    // Inspect surface.
     let brushedDotSegments (model : AdaptiveModel) (viewportCss : aval<V2i>) (view : aval<Trafo3d>) =
-        let baseA = brushedBase model None true
-        let sliceCamA = MeshView.sliceCamera model
-        let stretchA = sliceStretchFactor model
+        let baseA = brushedBase model None
         let rangeA = MeshView.inspectRange model
         AVal.custom (fun t ->
             let dots = baseA.GetValue t
@@ -266,41 +124,26 @@ module ScanPinScene =
                 let eye = vt.Backward.TransformPos V3d.Zero
                 let pxHalf = model.BrushDotPx.GetValue t * 0.5
                 let vpY = float (max 1 (viewportCss.GetValue t).Y)
-                let slice = sliceCamA.GetValue t
-                let squish = match slice with Some _ -> max 1.0 (stretchA.GetValue t) | None -> 1.0
-                // Stretch tightens the ortho half-width (×0.8 = horizontal zoom-in);
-                // shrink the horizontal glyph axis by the same factor so the marks
-                // stay circular under the shared projection.
-                let horizK = if squish > 1.0 then MeshView.sliceStretchHorizTighten else 1.0
-                let halfOf : V3d -> float =
-                    match slice with
-                    // Ortho: 1 px = 2·HalfHeight/vpY render units, dot-independent.
-                    | Some s -> let k = pxHalf * 2.0 * s.HalfHeight / vpY in fun _ -> k
-                    // Perspective (90° vertical fov ⇒ tan(fov/2) = 1): per dot.
-                    | None -> fun p -> pxHalf * 2.0 * (Vec.distance p eye) / vpY
-                let valueRange = match slice with Some _ -> None | None -> Some (rangeA.GetValue t)
+                let (lo, hi) = rangeA.GetValue t
                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                for (p, a, interest, vMm) in dots do
-                    let r = halfOf p
-                    let rx, uy = right * (r * horizK), up * (r / squish)
-                    match valueRange with
-                    | Some (lo, hi) ->
-                        addGlyph out p rx uy interest (V4d(0.13, 0.15, 0.18, 0.9 * a)) 3.2
-                        addGlyph out p rx uy interest (V4d(Primitives.Diff.colorSignedV3 lo hi (vMm * 0.001), a)) 1.6
-                    | None ->
-                        addGlyph out p rx uy interest (glyphInk a) 1.5
+                for (p, vMm) in dots do
+                    // Perspective (90° vertical fov ⇒ tan(fov/2) = 1): per dot.
+                    let r = pxHalf * 2.0 * (Vec.distance p eye) / vpY
+                    let rx, uy = right * r, up * r
+                    addGlyph out p rx uy (V4d(0.13, 0.15, 0.18, 0.9)) 3.2
+                    addGlyph out p rx uy (V4d(Primitives.Diff.colorSignedV3 lo hi (vMm * 0.001), 1.0)) 1.6
                 out.ToArray())
 
     // Focus-view brushed glyphs: the same circle+cross mark, XY-aligned (exact
-    // in the Top views the dots matter in), at a fixed render size — the focus
-    // cameras keep their own zoom conventions, so no px constancy is attempted.
+    // in the top-down views), at a fixed render size — the focus cameras keep
+    // their own zoom conventions, so no px constancy is attempted.
     let brushedDotSegmentsFocus (model : AdaptiveModel) (name : string) =
-        let baseA = brushedBase model (Some name) false
+        let baseA = brushedBase model (Some name)
         baseA |> AVal.map (fun dots ->
             let out = ResizeArray<V3d * V3d * V4d * float>()
             let r = 0.045
-            for (p, a, _, _) in dots do
-                addGlyph out p (V3d.IOO * r) (V3d.OIO * r) false (glyphInk a) 1.5
+            for (p, _) in dots do
+                addGlyph out p (V3d.IOO * r) (V3d.OIO * r) (glyphInk 1.0) 1.5
             out.ToArray())
 
     let build
@@ -317,12 +160,10 @@ module ScanPinScene =
 
         let notFullscreen = AVal.map not fullscreenActive
         // The constellation renders only in the Correspondence workflow
-        // (matching the focus panel's overlay) and stands down in slice mode
-        // with the rest of the pin chrome.
+        // (matching the focus panel's overlay).
         let inCorrespondence = model.WorkflowStep |> AVal.map ((=) Correspondence)
         let constellationActive =
-            (notFullscreen, inCorrespondence, model.SliceMode)
-            |||> AVal.map3 (fun nf c s -> nf && c && not s)
+            (notFullscreen, inCorrespondence) ||> AVal.map2 (&&)
         // Shared chrome for every line overlay.
         // LessOrEqual = occluded by foreground geometry (the spatial cue);
         // None = on top (constellation depth bias, selection circle).
@@ -341,11 +182,10 @@ module ScanPinScene =
         let selectedId = model.Selection.Active |> AVal.map Selection.pin
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-        // Slice mode: the flag machinery (pole+ring, base cross,
-        // name label) AND the pin rings (influence ring, axis line, contact
-        // rings) stand down entirely — the terrain profiles own the view.
-        let flagsActive =
-            (notFullscreen, model.SliceMode) ||> AVal.map2 (fun nf s -> nf && not s)
+        // Project-wide up-normal (terrain-like data): the shared flag/ring axis;
+        // None → per-pin probe axis (ScanPin.axisWith).
+        let upNormalA = MeshView.projectUpNormal model
+        let flagsActive = notFullscreen
         let placementActive =
             model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
 
@@ -457,41 +297,39 @@ module ScanPinScene =
                 // landing on this pin must not rebuild the ring geometry.
                 let centreVal = pinVal |> AVal.map (Option.map (fun p -> p.Centre))
                 let radiusVal = pinVal |> AVal.map (Option.map (fun p -> p.InnerRadius))
-                let axisVal   = pinVal |> AVal.map (Option.map ScanPin.axis)
+                let axisVal   = (pinVal, upNormalA) ||> AVal.map2 (fun po up -> po |> Option.map (ScanPin.axisWith up))
                 let ringsVal  = pinVal |> AVal.map (Option.map (fun p -> match p.ContactRings with RingsReady m -> m | _ -> Map.empty))
                 let segs =
                     AVal.custom (fun t ->
                         match centreVal.GetValue t, radiusVal.GetValue t, axisVal.GetValue t, ringsVal.GetValue t with
                         | Some centre, Some radius, Some axis, Some rings ->
                             let sel = isSelected.GetValue t
-                            let colour = Primitives.pinInkV3d
                             let hovered = model.Selection.Hovered.GetValue t = Some (HoverPin id)
                             let cc = model.CommonCentroid.GetValue t
                             let scale = datasetScale.GetValue t
                             // Shown-set gating (solo overlay): rings on a
                             // ghosted-away mesh would float without their surface.
                             let solo = model.MeshSolo.GetValue t
-                            let col =
-                                if hovered then V4d(colour * 0.45 + V3d.III * 0.55, 1.0)
-                                else V4d(colour, (if sel then 1.0 else 0.6))
-                            let width = if hovered then 4.0 elif sel then 2.5 else 1.5
+                            let a = if hovered || sel then 1.0 else 0.65
+                            let coreW = if hovered then 3.0 elif sel then 2.2 else 1.4
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             let cR = ScanPin.renderCentre cc scale centre
                             let rR = ScanPin.renderLength scale radius
                             let nN, u, v = basisFromNormal axis
-                            addRing out cR u v rR col width 64
+                            duplex (fun c w -> addRing out cR u v rR c w 64) a coreW
                             // 1 m direction indicator along the pin axis — thin
                             // + semitransparent (orientation, not geometry).
                             // Points up until the probe's PCA normal lands.
-                            let axisCol = V4d(colour, (if sel then 0.5 else 0.35))
+                            let axisCol = V4d(Primitives.pinInkV3d, (if sel then 0.5 else 0.35))
                             out.Add(cR, cR + nN * ScanPin.renderLength scale 1.0, axisCol, 1.0)
-                            for KeyValue(mesh, meshRings) in rings do
-                                if MeshVisibility.shown solo mesh then
-                                    for ring in meshRings do
-                                        if ring.Length >= 2 then
-                                            let rp = ring |> Array.map (ScanPin.renderCentre cc scale)
-                                            for i in 0 .. rp.Length - 2 do
-                                                out.Add(rp.[i], rp.[i + 1], col, width)
+                            duplex (fun c w ->
+                                for KeyValue(mesh, meshRings) in rings do
+                                    if MeshVisibility.shown solo mesh then
+                                        for ring in meshRings do
+                                            if ring.Length >= 2 then
+                                                let rp = ring |> Array.map (ScanPin.renderCentre cc scale)
+                                                for i in 0 .. rp.Length - 2 do
+                                                    out.Add(rp.[i], rp.[i + 1], c, w)) a coreW
                             out.ToArray()
                         | _ -> [||])
                 ASet.ofList [ linesNode flagsActive segs ])
@@ -527,18 +365,15 @@ module ScanPinScene =
                                 let isSel = sel = Some id
                                 let pinHover = hov = Some (HoverPin id)
                                 let emph = isSel || pinHover
-                                let baseCol = Primitives.pinInkV3d
                                 let raR = ScanPin.renderCentre cc scale ra
                                 (match rf with
                                  | Some rn when MeshVisibility.shown solo rn ->
                                     let refHover = hov = Some (HoverPoint (id, rn))
-                                    let col =
-                                        if refHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
-                                        elif emph then V4d(baseCol, 1.0)
-                                        else V4d(baseCol, 0.4)
-                                    let gw = if refHover || isSel then 2.0 else 1.4
-                                    addWireSphere out raR 0.055 col gw 16
-                                    addCross out raR 0.07 col gw
+                                    let a = if refHover || emph then 1.0 else 0.55
+                                    let gw = if refHover || isSel then 2.0 else 1.3
+                                    duplex (fun c w ->
+                                        addWireSphere out raR 0.055 c w 16
+                                        addCross out raR 0.07 c w) a gw
                                  | _ -> ())
                                 for mesh in moving do
                                     // Inline marker resolution: read dispWorldAt with THIS
@@ -554,15 +389,13 @@ module ScanPinScene =
                                     match marker with
                                     | Some w ->
                                         let rowHover = hov = Some (HoverPoint (id, mesh))
-                                        let col =
-                                            if rowHover then V4d(baseCol * 0.4 + V3d.III * 0.6, 1.0)
-                                            elif emph then V4d(baseCol, 1.0)
-                                            else V4d(baseCol, 0.4)
-                                        let mw = if rowHover || isSel then 2.0 else 1.4
+                                        let a = if rowHover || emph then 1.0 else 0.55
+                                        let mw = if rowHover || isSel then 2.0 else 1.3
                                         let wR = ScanPin.renderCentre cc scale w
-                                        addWireSphere out wR 0.055 col mw 16
-                                        addCross out wR 0.07 col mw
-                                        out.Add(wR, raR, V4d(col.XYZ, (if emph then 0.9 else 0.3)), (if isSel then 1.5 else 1.0))
+                                        duplex (fun c w ->
+                                            addWireSphere out wR 0.055 c w 16
+                                            addCross out wR 0.07 c w) a mw
+                                        out.Add(wR, raR, V4d(Primitives.pinInkV3d, (if emph then 0.9 else 0.3)), (if isSel then 1.5 else 1.0))
                                     | None -> ()
                         | None -> ()
                     out.ToArray())
@@ -611,26 +444,30 @@ module ScanPinScene =
                     let scale = datasetScale.GetValue t
                     let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
                     let fs = model.FlagScale.GetValue t
+                    let up = upNormalA.GetValue t
                     let out   = ResizeArray<V3d * V3d * V4d * float>()
                     for (_, p) in HashMap.toSeq pins do
                         let col = neutral
                         let w   = 2.5
-                        let _, u, v = basisFromNormal (ScanPin.axis p)
+                        let aN, u, v = basisFromNormal (ScanPin.axisWith up p)
                         let c   = ScanPin.renderCentre cc scale p.Centre
                         let h   = ScanPin.flagHeightRender scale fs (Vec.length (eye - c))
-                        let top = ScanPin.flagTopRender cc scale h p
+                        let top = ScanPin.flagTopRender cc scale h aN p
                         out.Add(c, top, col, w)
                         addRing out top u v (h * 0.16) col w 24
                     out.ToArray())
             ASet.ofList [ linesNode flagsActive segs ]
 
-        // Pin identity flag name: the pin's ShortName floating above the flag
-        // top, in the shared pin ink. Sized by the screen-constant flag height and
-        // billboarded about Z so the text always faces the camera — the flag's only
-        // rotating element (the base cross stays axis-aligned). Always-on-top
-        // (passOne, DepthTest.None) so it reads against the terrain. Identity is
-        // immutable → snapshot once per id (no atlas rebuild on probe/ring updates);
-        // only the trafo is adaptive (uniform update, no rebuild).
+        // Pin identity flag name: the pin's ShortName floating above the flag top —
+        // a WHITE core over four dark offset copies (poor-man's text outline), so
+        // the name reads on light and dark texture alike. Sized by the
+        // screen-constant flag height and billboarded about Z so the text always
+        // faces the camera — the flag's only rotating element (the base cross
+        // stays axis-aligned). Always-on-top (DepthTest.None); the dark copies sit
+        // in passOne, the white core in passTwo (within-pass order is arbitrary).
+        // Identity is immutable → snapshot once per id (no atlas rebuild on
+        // probe/ring updates); only the trafo is adaptive (uniform update, no
+        // rebuild).
         let pinFlagFrame = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Centre, ScanPin.axis p) |> AMap.toAVal
         let pinLabels =
             pinIdSet |> ASet.map (fun id ->
@@ -641,7 +478,8 @@ module ScanPinScene =
                         let cc = model.CommonCentroid.GetValue t
                         let scale = datasetScale.GetValue t
                         match HashMap.tryFind id (pinFlagFrame.GetValue t) with
-                        | Some (centre, axis) ->
+                        | Some (centre, pinAxis) ->
+                            let axis = match upNormalA.GetValue t with Some u -> u | None -> pinAxis
                             let aN = if axis.Length > 1e-9 then axis.Normalized else V3d.OOI
                             let cR = ScanPin.renderCentre cc scale centre
                             let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
@@ -654,16 +492,26 @@ module ScanPinScene =
                         | None -> Trafo3d.Scale 0.0)
                 match p0 with
                 | Some pin ->
-                    let labelCol = AVal.constant Primitives.pinInk
+                    // Offsets in unscaled text units (pre-scale translation), so
+                    // the halo thickness tracks the label size.
+                    let copy (dx : float) (dy : float) (color : C4b) pass =
+                        sg {
+                            Sg.Pass pass
+                            Sg.DepthTest (AVal.constant DepthTest.None)
+                            Sg.Trafo (trafoVal |> AVal.map (fun tr -> Trafo3d.Translation(V3d(dx, dy, 0.0)) * tr))
+                            Sg.Text(pin.ShortName, color = AVal.constant color, align = TextAlignment.Center)
+                        }
+                    let d = 0.05
                     sg {
                         Sg.Active labelsActive
                         Sg.View view
                         Sg.Proj proj
-                        Sg.Pass RenderPass.passOne
-                        Sg.DepthTest (AVal.constant DepthTest.None)
                         Sg.NoEvents
-                        Sg.Trafo trafoVal
-                        Sg.Text(pin.ShortName, color = labelCol, align = TextAlignment.Center)
+                        copy -d -d Primitives.pinInk RenderPass.passOne
+                        copy  d -d Primitives.pinInk RenderPass.passOne
+                        copy -d  d Primitives.pinInk RenderPass.passOne
+                        copy  d  d Primitives.pinInk RenderPass.passOne
+                        copy 0.0 0.0 C4b.White RenderPass.passTwo
                     }
                 | None -> sg { Sg.NoEvents })
 
@@ -734,4 +582,22 @@ module ScanPinScene =
         let brushedDots =
             linesNodeTop notFullscreen (brushedDotSegments model viewportCss view)
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinFlags; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [selectionCircle]; ASet.ofList [brushedDots]])
+        // Exact-point probe marker: a high-contrast wire-sphere + cross at the
+        // probed surface point (the value reads in the dock charts' amber line).
+        let pointProbeMark =
+            let segs =
+                AVal.custom (fun t ->
+                    match model.PointProbe.GetValue t with
+                    | Some (_, w, _) ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let s = datasetScale.GetValue t
+                        let pR = ScanPin.renderCentre cc s w
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        duplex (fun c wd ->
+                            addWireSphere out pR 0.05 c wd 16
+                            addCross out pR 0.065 c wd) 1.0 2.0
+                        out.ToArray()
+                    | None -> [||])
+            linesNodeTop notFullscreen segs
+
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pinFlags; pinLabels; ghostPreview; constellation; ASet.ofList [corrPreview]; ASet.ofList [selectionCircle]; ASet.ofList [brushedDots]; ASet.ofList [pointProbeMark]])

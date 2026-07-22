@@ -12,29 +12,6 @@ module GuiOverlays =
         elif m >= 1.0 then sprintf "%g m" m
         else sprintf "%g cm" (m * 100.0)
 
-    // Cursor label of the Alt-wheel layer cycling. Gated on Alt actually HELD:
-    // ActivePickingLayer persists after the cycle (it keeps steering pick
-    // priority), so an always-on label would trail a stale mesh name around the
-    // cursor over meshes it doesn't describe.
-    let meshWheelLabel (model : AdaptiveModel) (cursorScreen : aval<V2d option>) (altHeld : aval<bool>) =
-        let meshOrderMap = model.MeshOrder.Content
-        let visible =
-            (model.ActivePickingLayer, cursorScreen, altHeld) |||> AVal.map3 (fun layer cOpt alt ->
-                layer.IsSome && cOpt.IsSome && alt)
-        div {
-            Class "mesh-wheel-label"
-            Primitives.showWhen visible
-            cursorScreen |> AVal.map (Option.map (fun pos ->
-                Style [
-                    Left (sprintf "%.0fpx" (pos.X + 14.0))
-                    Top  (sprintf "%.0fpx" (pos.Y - 10.0))
-                ]))
-            (model.ActivePickingLayer, meshOrderMap) ||> AVal.map2 (fun layer order ->
-                match layer with
-                | Some name -> Primitives.numbered order name
-                | None -> "")
-        }
-
     // Cursor-side hard-prohibit tooltip — shown while a placement is armed and
     // the hovered spot has < 2 meshes in range (placement is refused).
     let placementTooltip (model : AdaptiveModel) (cursorScreen : aval<V2d option>) (placementValid : aval<bool option>) =
@@ -54,164 +31,6 @@ module GuiOverlays =
             "no overlapping meshes here"
         }
 
-    // Stretch-mode ordinates — per DOT OF INTEREST, a vertical line
-    // from the dot to the reference (its signed sample value), projected through
-    // the SAME slice view/proj the 3D uses (so the exaggeration is inherited),
-    // drawn as HTML strips so they are natively hoverable: the tooltip carries
-    // the TRUE value (mm/cm), never the stretched pixel distance. Ordinates
-    // exist ONLY in stretch mode — true scale has none.
-    let sliceOrdinates (model : AdaptiveModel) (viewportSize : aval<V2i>) =
-        let camA = MeshView.sliceCamera model
-        let stretchA = ScanPinScene.sliceStretchFactor model
-        let rankedA = ScanPinScene.sliceRankedBrush model
-        let datasetScaleA =
-            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-        let ordsJson =
-            AVal.custom (fun t ->
-                if not (model.SliceStretch.GetValue t) then "[]"
-                else
-                    match camA.GetValue t, rankedA.GetValue t with
-                    | Some s, Some ranked when ranked.Length > 0 ->
-                        let n = stretchA.GetValue t
-                        let vp = viewportSize.GetValue t
-                        let aspect = float vp.X / float (max 1 vp.Y)
-                        let viewT = CameraView.lookAt s.Eye s.Target s.Up |> CameraView.viewTrafo
-                        let hw, hh = MeshView.sliceOrthoHalfSizes s aspect n
-                        let projT = MeshView.orthoProjTrafo hw hh s.Near s.Far
-                        let fwd = (viewT * projT).Forward
-                        let scale = datasetScaleA.GetValue t
-                        let toPx (p : V3d) =
-                            let h = fwd * V4d(p, 1.0)
-                            let ndc = h.XYZ / h.W
-                            V2d((ndc.X * 0.5 + 0.5) * float vp.X, (0.5 - ndc.Y * 0.5) * float vp.Y)
-                        let items =
-                            ranked
-                            |> Array.truncate ScanPinScene.maxDotsOfInterest
-                            |> Array.choose (fun (_, p, vMm, _) ->
-                                // The ordinate drops along the pin axis (= the M3C2
-                                // measurement direction and the screen vertical).
-                                let pRef = p - s.Up * ScanPin.renderLength scale (vMm / 1000.0)
-                                let a = toPx p
-                                let b = toPx pRef
-                                if a.X < -50.0 || a.X > float vp.X + 50.0 then None
-                                else
-                                    let label =
-                                        if abs vMm >= 100.0 then sprintf "%+.1f cm" (vMm / 10.0)
-                                        else sprintf "%+.1f mm" vMm
-                                    Some (sprintf "{\"x\":%.1f,\"y1\":%.1f,\"y2\":%.1f,\"v\":\"%s\"}" a.X a.Y b.Y label))
-                        "[" + String.concat "," items + "]"
-                    | _ -> "[]")
-        div {
-            Class "slice-ords"
-            ordsJson |> AVal.map (fun j -> Some (Attribute("data-ords", j)))
-            Primitives.observedRender "data-ords" "[]" [
-                "  d.forEach(function(o){"
-                "    var top = Math.min(o.y1, o.y2), h = Math.max(6, Math.abs(o.y2 - o.y1));"
-                "    var strip = document.createElement('div'); strip.className='slice-ord';"
-                "    strip.style.left=(o.x-4)+'px'; strip.style.top=top+'px'; strip.style.height=h+'px';"
-                "    var line = document.createElement('div'); line.className='slice-ord-line'; strip.appendChild(line);"
-                "    var tip = document.createElement('div'); tip.className='slice-ord-tip'; tip.textContent=o.v; strip.appendChild(tip);"
-                "    el.appendChild(strip);"
-                "  });"
-            ]
-        }
-
-    // Slice-mode badges. Gold = the slice-mode accent (the badges only — the
-    // focus angle indicator is white, transient layer).
-    let sliceBadges (model : AdaptiveModel) =
-        let stretchA = ScanPinScene.sliceStretchFactor model
-        div {
-            Class "slice-badges"
-            Primitives.showWhen model.SliceMode
-            div { Class "slice-badge"; "ortho slice view" }
-            div {
-                Class "slice-badge"
-                Primitives.showWhen model.SliceStretch
-                stretchA |> AVal.map (fun n ->
-                    if n >= 100.0 then sprintf "vertical axis stretched ×%.0f" n
-                    else sprintf "vertical axis stretched ×%.1f" n)
-            }
-        }
-
-    // Slice-mode axes — a vertical ruler left of the view and a
-    // horizontal one below it, both measuring METRIC distance from the pin
-    // centre (the projection centre; the vertical ruler ticks in TRUE metres,
-    // so its px spacing widens with the stretch factor). Recomputed from the
-    // live ortho frame, so the rulers stay valid whenever the projection
-    // changes (zoom-locked, but stretch/viewport/pin changes all re-tick).
-    let sliceAxes (model : AdaptiveModel) (viewportSize : aval<V2i>) =
-        let camA = MeshView.sliceCamera model
-        let stretchA = ScanPinScene.sliceStretchFactor model
-        let datasetScaleA =
-            (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
-        let nice125 (raw : float) =
-            let raw = max 1e-6 raw
-            let mag = 10.0 ** floor (log10 raw)
-            let n = raw / mag
-            (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
-        let label (m : float) =
-            if abs m < 1e-9 then "0"
-            else (if m < 0.0 then "−" else "") + formatMeters (abs m)
-        let axesJson =
-            AVal.custom (fun t ->
-                match camA.GetValue t with
-                | None -> "null"
-                | Some s ->
-                    let vp = viewportSize.GetValue t
-                    let w, h = float vp.X, float vp.Y
-                    let n = stretchA.GetValue t
-                    let scale = datasetScaleA.GetValue t
-                    // px per metre straight from the shared ortho half-extents,
-                    // so the rulers track the stretch AND the horizontal tighten.
-                    let hw, hh = MeshView.sliceOrthoHalfSizes s (w / max 1.0 h) n
-                    let pxPerMh = w * scale / (2.0 * hw)
-                    let pxPerMv = h * scale / (2.0 * hh)
-                    let cx, cy = w * 0.5, h * 0.5
-                    let ticks (pxPerM : float) (extentPx : float) (centre : float) (flip : bool) =
-                        let halfM = extentPx * 0.5 / max 1e-9 pxPerM
-                        let step = nice125 (halfM / 4.0)
-                        [ for k in int (ceil (-halfM / step)) .. int (floor (halfM / step)) do
-                            let m = float k * step
-                            let p = centre + (if flip then -m else m) * pxPerM
-                            yield sprintf "{\"p\":%.1f,\"l\":\"%s\",\"z\":%d}" p (label m) (if k = 0 then 1 else 0) ]
-                        |> String.concat ","
-                    sprintf "{\"w\":%.0f,\"h\":%.0f,\"ht\":[%s],\"vt\":[%s]}"
-                        w h (ticks pxPerMh w cx false) (ticks pxPerMv h cy true))
-        div {
-            Class "slice-axes"
-            Primitives.showWhen model.SliceMode
-            axesJson |> AVal.map (fun j -> Some (Attribute("data-axes", j)))
-            Primitives.observedRender "data-axes" "null" [
-                "  if(!d) return;"
-                "  var svg = document.createElementNS(ns,'svg');"
-                "  svg.setAttribute('width', d.w); svg.setAttribute('height', d.h);"
-                "  svg.setAttribute('viewBox', '0 0 ' + d.w + ' ' + d.h);"
-                "  var AX='#475569', GRID='rgba(71,85,105,0.10)';"
-                // Vertical ruler right of the rail; horizontal ruler above the
-                // control's bottom edge (= the dock top).
-                "  var vx = 268, hy = d.h - 30;"
-                "  function ln(x1,y1,x2,y2,st,sw){ var l=document.createElementNS(ns,'line');"
-                "    l.setAttribute('x1',x1); l.setAttribute('y1',y1); l.setAttribute('x2',x2); l.setAttribute('y2',y2);"
-                "    l.setAttribute('stroke',st); l.setAttribute('stroke-width',sw); svg.appendChild(l); }"
-                "  function tx(x,y,s,anchor,bold){ var e=document.createElementNS(ns,'text');"
-                "    e.setAttribute('x',x); e.setAttribute('y',y); e.setAttribute('fill',AX);"
-                "    e.setAttribute('font-size','10'); e.setAttribute('font-family','SF Mono, Monaco, monospace');"
-                "    e.setAttribute('text-anchor',anchor); if(bold) e.setAttribute('font-weight','700');"
-                "    e.textContent=s; svg.appendChild(e); }"
-                "  ln(vx, 8, vx, hy, AX, 1.2);"
-                "  ln(vx, hy, d.w - 10, hy, AX, 1.2);"
-                "  (d.ht||[]).forEach(function(tk){ if(tk.p < vx + 14 || tk.p > d.w - 14) return;"
-                "    ln(tk.p, hy, tk.p, hy + (tk.z ? 8 : 5), AX, tk.z ? 1.6 : 1);"
-                "    ln(tk.p, 8, tk.p, hy, GRID, 1);"
-                "    tx(tk.p, hy + 18, tk.l, 'middle', tk.z); });"
-                "  (d.vt||[]).forEach(function(tk){ if(tk.p < 16 || tk.p > hy - 8) return;"
-                "    ln(vx - (tk.z ? 8 : 5), tk.p, vx, tk.p, AX, tk.z ? 1.6 : 1);"
-                "    ln(vx, tk.p, d.w - 10, tk.p, GRID, 1);"
-                "    tx(vx - 10, tk.p + 3, tk.l, 'end', tk.z); });"
-                "  el.appendChild(svg);"
-            ]
-        }
-
     let private niceRoundDistance (d : float) =
         if d <= 0.0 || System.Double.IsNaN d || System.Double.IsInfinity d then 1.0
         else
@@ -229,6 +48,40 @@ module GuiOverlays =
             let v = picked * mag
             steps |> Array.minBy (fun s -> abs (log (s / v)))
 
+
+    // Confirmation flash of a committed correspondence pick: a short expanding-
+    // ring CSS animation at the commit point, projected into the main 3D view
+    // (same 90° frustum as View.fs). The generation in the payload restarts the
+    // animation on back-to-back picks; ClearCorrFlash empties the layer.
+    let corrFlash (model : AdaptiveModel) (viewportSize : aval<V2i>) =
+        let flashJson =
+            AVal.custom (fun t ->
+                match model.CorrFlash.GetValue t with
+                | None -> "null"
+                | Some (w, gen) ->
+                    let vp = viewportSize.GetValue t
+                    let cc = model.CommonCentroid.GetValue t
+                    let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
+                    let p = ScanPin.renderCentre cc scale w
+                    let viewT = CameraView.viewTrafo (model.Camera.view.GetValue t)
+                    let aspect = float vp.X / float (max 1 vp.Y)
+                    let projT = Frustum.perspective 90.0 1.0 5000.0 aspect |> Frustum.projTrafo
+                    let h = (viewT * projT).Forward * V4d(p, 1.0)
+                    if h.W <= 1e-9 then "null"
+                    else
+                        let ndc = h.XYZ / h.W
+                        sprintf "{\"x\":%.1f,\"y\":%.1f,\"g\":%d}"
+                            ((ndc.X * 0.5 + 0.5) * float vp.X) ((0.5 - ndc.Y * 0.5) * float vp.Y) gen)
+        div {
+            Class "corr-flash-layer"
+            flashJson |> AVal.map (fun j -> Some (Attribute("data-flash", j)))
+            Primitives.observedRender "data-flash" "null" [
+                "  if(!d) return;"
+                "  var ring = document.createElement('div'); ring.className='corr-flash';"
+                "  ring.style.left=d.x+'px'; ring.style.top=d.y+'px';"
+                "  el.appendChild(ring);"
+            ]
+        }
 
     // Transient feedback for blocked/failed actions (auto-clears).
     let toast (model : AdaptiveModel) =
@@ -268,10 +121,10 @@ module GuiOverlays =
         }
 
     // Colormap legend (Inspect only, bottom centre): the ACTIVE false-colour map's
-    // gradient with nice-step ticks and the exact range ends — it follows the
-    // selection (ensemble/pin → variance σ, mesh/cell → that pair's
-    // difference or the displacement channel) and a live brush (the brushed
-    // dots' shared signed range). All maps read on the unified pin-derived scale.
+    // gradient with nice-step ticks and the exact range ends — the difference map
+    // vs the reference (ensemble or the isolated pair) and a live brush (the
+    // brushed dots' shared signed range). All maps read on the unified pin-derived
+    // scale.
     let colorLegend (model : AdaptiveModel) =
         let rangeA = MeshView.inspectRange model
         let orderContent = model.MeshOrder.Content
@@ -298,28 +151,22 @@ module GuiOverlays =
                         (fun (v : float) ->
                             let tt = clamp 0.0 1.0 (v / m)
                             V3d(0.13, 0.40, 0.85) * (1.0 - tt) + V3d(0.86, 0.20, 0.15) * tt)
-                    elif not (Set.isEmpty (model.BrushedSamples.GetValue t))
-                         && not (model.SliceMode.GetValue t) then
-                        // Live brush: the maps stand down but the
-                        // 3D dots carry the signed sample values on the shared
-                        // diverging scale — the legend describes THEM. Probe
-                        // samples are M3C2 regardless of the surface sub-mode.
-                        "Difference (M3C2) · brushed", lo, hi, Primitives.Diff.colorSignedV3 lo hi
-                    elif soloName.IsNone then
-                        let m = max 1e-6 (max (abs lo) hi)
-                        "Variance σ", 0.0, m,
-                        (fun (v : float) ->
-                            let tt = clamp 0.0 1.0 (v / m)
-                            V3d(0.945, 0.961, 0.976) * (1.0 - tt) + V3d(0.725, 0.110, 0.110) * tt)
+                    elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then
+                        // Live brush: the maps stand down but the 3D dots carry the
+                        // signed sample values on the shared diverging scale — the
+                        // legend describes THEM.
+                        "Difference · brushed", lo, hi, Primitives.Diff.colorSignedV3 lo hi
                     else
-                        // Title names the compared meshes by display number
-                        // (isolated moving mesh vs the reference); a cell
+                        // Title names the compared meshes by display number: the
+                        // isolated moving mesh vs the reference, or — in the
+                        // ensemble — every moving mesh vs the reference; a cell
                         // selection appends its pin identity.
                         let order = orderContent.GetValue t
                         let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
                         let pair =
                             match soloName, model.ReferenceMesh.GetValue t with
                             | Some s, Some r -> sprintf " %d vs %d" (numOf s) (numOf r)
+                            | None, Some r -> sprintf " vs %d" (numOf r)
                             | _ -> ""
                         let pinSuffix =
                             match model.Selection.Active.GetValue t with
@@ -328,8 +175,7 @@ module GuiOverlays =
                                 | Some pin -> sprintf " · %s" pin.ShortName
                                 | None -> ""
                             | _ -> ""
-                        let sub = if model.ExtrinsicZDiff.GetValue t then "Δz" else "M3C2"
-                        sprintf "Difference%s (%s)%s" pair sub pinSuffix, lo, hi, Primitives.Diff.colorSignedV3 lo hi
+                        sprintf "Difference%s%s" pair pinSuffix, lo, hi, Primitives.Diff.colorSignedV3 lo hi
                 let span = vHi - vLo
                 let hexAt (v : float) =
                     let c = colorAt v
@@ -355,17 +201,12 @@ module GuiOverlays =
                 sprintf "{\"title\":\"%s\",\"min\":\"%s\",\"max\":\"%s\",\"stops\":[%s],\"ticks\":[%s]}"
                     title (fmt span vLo) (fmt span vHi) stops ticks)
         // In Inspect the legend shows the active surface map, or — while a brush
-        // suppresses the maps — the value-coloured brushed dots' scale. The one
-        // scale-less state left is slice mode + brush (neutral dots, values in
-        // the ordinates/charts) — there it hides.
-        let brushedInSlice =
-            (model.BrushedSamples, model.SliceMode) ||> AVal.map2 (fun b s ->
-                not (Set.isEmpty b) && s)
+        // suppresses the maps — the value-coloured brushed dots' scale.
         div {
             Class "color-legend"
             Primitives.showWhen
-                ((model.WorkflowStep, anyRangeOn, brushedInSlice) |||> AVal.map3 (fun s r bs ->
-                    (s = Inspect && not bs) || r))
+                ((model.WorkflowStep, anyRangeOn) ||> AVal.map2 (fun s r ->
+                    s = Inspect || r))
             legendJson |> AVal.map (fun json -> Some (Attribute("data-legend", json)))
             Primitives.observedRender "data-legend" "{}" [
                 "  if(!d.stops) return;"

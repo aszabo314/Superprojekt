@@ -195,6 +195,18 @@ module Lines =
 // between the main scene and the focus views.
 module LineGlyphs =
 
+    // High-contrast committed-mark convention: a WHITE core over a dark pin-ink
+    // under-stroke, readable on light and dark texture alike. `draw` renders one
+    // stroke as (colour, width); the dark pass must complete before the white
+    // one so segment joints never stamp over the core (same-depth LessOrEqual —
+    // the later primitive wins). The armed/uncommitted aim ghost deliberately
+    // stays single-stroke pure white (thinner, no under-stroke) so committed vs
+    // armed remain separable.
+    let duplex (draw : V4d -> float -> unit) (alpha : float) (coreWidth : float) =
+        // #292524 = Primitives.pinInk (defined later in compile order).
+        draw (V4d(41.0 / 255.0, 37.0 / 255.0, 36.0 / 255.0, alpha)) (coreWidth + 2.4)
+        draw (V4d(1.0, 1.0, 1.0, alpha)) coreWidth
+
     // Orthonormal (u, v) basis ⊥ a (possibly unnormalized/degenerate) normal,
     // plus the normalized normal itself.
     let basisFromNormal (n : V3d) =
@@ -211,12 +223,6 @@ module LineGlyphs =
 
     let addRingXY out c r col w segs = addRing out c V3d.IOO V3d.OIO r col w segs
 
-    // Ring facing the eye (approximate sphere silhouette) — the 360° focus views.
-    let addRingFacing out (eye : V3d) (c : V3d) r col w segs =
-        if (c - eye).Length > 1e-9 then
-            let _, u, v = basisFromNormal (c - eye)
-            addRing out c u v r col w segs
-
     // Dashed ring (every other segment drawn) — the uncoloured selection circle.
     let addDashedRing (out : ResizeArray<V3d * V3d * V4d * float>)
                       (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
@@ -227,11 +233,6 @@ module LineGlyphs =
                 out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
 
     let addDashedRingXY out c r col w segs = addDashedRing out c V3d.IOO V3d.OIO r col w segs
-
-    let addDashedRingFacing out (eye : V3d) (c : V3d) r col w segs =
-        if (c - eye).Length > 1e-9 then
-            let _, u, v = basisFromNormal (c - eye)
-            addDashedRing out c u v r col w segs
 
     // Arrow a→b: thin shaft + a line-triangle tip oriented to face the eye.
     // Head scales with the shaft but caps at a modest render size.

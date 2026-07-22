@@ -249,6 +249,13 @@ module GuiRail =
                             env.Emit [SetReferenceMesh (Some name)]))
                     isRef |> AVal.map (fun r -> if r then "★" else "☆")
                 }
+            let sensorBtn =
+                button {
+                    Class "mb mb-cam"
+                    Attribute("title", "Fly the 3D camera to this mesh's sensor viewpoint")
+                    Dom.OnClick(fun _ -> env.Emit [FlyToSensor name])
+                    "◎"
+                }
             let modeBar =
                 div {
                     Class "rail-mesh-modes"
@@ -268,7 +275,7 @@ module GuiRail =
                 // hover = peek-isolate this mesh via the shared Selection.
                 Dom.OnPointerMove(fun _ -> env.Emit [SetHovered (Some (HoverMesh name))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetHovered None])
-                AList.ofList ([ swatch; num; nameSpan; refBtn; modeBar ])
+                AList.ofList ([ swatch; num; nameSpan; sensorBtn; refBtn; modeBar ])
             }
         // Shp quality cutoff: triangles below it render transparent (3D + focus).
         let anyShapeOn =
@@ -542,11 +549,15 @@ module GuiRail =
                     // "Isolate pins": a visual checkbox on the ONE pin-isolation
                     // mode (AnchorGhostMode). On (default in Register) = isolated pin
                     // patches only; off = full textured meshes, exactly as in Overview.
+                    // Suspended (and inert) while a placement is armed — placing
+                    // always shows the full meshes (mirrors the gear toggle).
                     div {
                         Class "rail-isolate"
                         Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes")
-                        compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
-                            env.Emit [ToggleAnchorGhostMode])
+                        let isoEffective =
+                            (model.AnchorGhostMode, placing) ||> AVal.map2 (fun on p -> on && not p)
+                        compactToggle "Isolate pins" isoEffective (fun () ->
+                            if not (AVal.force placing) then env.Emit [ToggleAnchorGhostMode])
                     }
                 }
                 div { Class "rail-matrix-wrap"; matrixView () }

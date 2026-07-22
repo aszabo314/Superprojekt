@@ -230,14 +230,46 @@ module SceneGraph =
                         | None -> Map.tryFind first (model.DatasetCentroids.GetValue t) |> Option.defaultValue cc
                     ScanPin.renderCentre cc (DatasetScale.forMesh (model.DatasetScales.GetValue t) first) world
                 | [] -> V3d.Zero)
-        // The origin cross + its labels stand down in slice mode (the terrain
-        // profiles own that view).
-        let crossActive =
-            (notFullscreen, model.SliceMode) ||> AVal.map2 (fun nf s -> nf && not s)
+        let crossActive   = notFullscreen
         let cross         = originIndicator view proj crossActive crossCenter
         let labels        = originLabels    view proj crossActive crossCenter
         let refOutline    = referenceOutline view proj notFullscreen model
         let focusOutline  = focusedOutline   view proj notFullscreen model
+
+        // Orbit-centre cue: a small ring+cross at the rotation centre, shown
+        // only while a rotate drag is actively turning the camera (a rotate
+        // button/touch is held AND the easing target leads the pose) — a plain
+        // click or an idle hold shows nothing. Screen-constant: eye distance =
+        // the orbit radius, so size ∝ radius reads constant.
+        let orbitCue =
+            let active =
+                AVal.custom (fun t ->
+                    let drags = model.Camera.dragStarts.GetValue t
+                    let rotating =
+                        drags |> MapExt.toSeq
+                        |> Seq.exists (fun (_, (_, b)) -> b = model.Camera.rotateButton || b = Button.None)
+                    rotating
+                    && (abs (model.Camera.targetPhi.GetValue t - model.Camera.phi.GetValue t) > 1e-4
+                        || abs (model.Camera.targetTheta.GetValue t - model.Camera.theta.GetValue t) > 1e-4))
+            let segs =
+                AVal.custom (fun t ->
+                    let c = model.Camera.center.GetValue t
+                    let s = model.Camera.radius.GetValue t * 0.02
+                    let out = ResizeArray<V3d * V3d * V4d * float>()
+                    LineGlyphs.duplex (fun col w ->
+                        LineGlyphs.addRingXY out c s col w 32
+                        out.Add(c - V3d.IOO * (s * 1.5), c + V3d.IOO * (s * 1.5), col, w)
+                        out.Add(c - V3d.OIO * (s * 1.5), c + V3d.OIO * (s * 1.5), col, w)
+                        out.Add(c - V3d.OOI * (s * 1.5), c + V3d.OOI * (s * 1.5), col, w)) 0.9 1.6
+                    out.ToArray())
+            sg {
+                Sg.Active ((notFullscreen, active) ||> AVal.map2 (&&))
+                Sg.Pass RenderPass.passOne
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                Lines.render segs
+            }
 
         let viewportUni =
             sg {
@@ -253,6 +285,7 @@ module SceneGraph =
                 pinScene
                 refOutline
                 focusOutline
+                orbitCue
                 labels
             }
 

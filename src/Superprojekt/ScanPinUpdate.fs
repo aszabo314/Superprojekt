@@ -50,7 +50,6 @@ module ScanPinUpdate =
             Centre               = worldCentre
             InnerRadius          = max 0.01 model.QuickPinRadius
             Correspondence       = Correspondence.empty
-            HostMeshName         = model.ActivePickingLayer
             CreatedAt            = System.DateTime.UtcNow
             Probe                = ProbeNone
             ProbeOther           = ProbeNone
@@ -167,12 +166,8 @@ module ScanPinUpdate =
             | Some id when not (HashMap.containsKey id sp'.Pins) ->
                 { sel0 with Active = match sel0.Active with SelCell (_, m) -> SelMesh m | _ -> SelNone }
             | _ -> sel0
-        match placedId |> Option.bind (fun id -> HashMap.tryFind id sp'.Pins) with
-        | Some pin ->
-            let scale = activeScale model
-            let renderCentre = ScanPin.renderCentre model.CommonCentroid scale pin.Centre
-            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, renderCentre))]
-        | None -> ()
+        // Deliberately NO camera motion on placement — the main camera moves
+        // only on explicit focus/zoom actions.
         { model with ScanPins = sp'; Selection = selection }
 
     // Lazy probe trigger, postlude after every reducer step: EVERY pin with an
@@ -206,10 +201,7 @@ module ScanPinUpdate =
                     |> List.filter (fun (_, p) -> pendingPin p)
                 let mutable pins = sp.Pins
                 for (id, pin) in pending do
-                    let refMesh =
-                        refMesh0
-                        |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h allMeshes))
-                        |> Option.defaultValue (List.head allMeshes)
+                    let refMesh = refMesh0 |> Option.defaultValue (List.head allMeshes)
                     let token = restartCts probeCtsMap id
                     let centre = pin.Centre
                     let radius = pin.InnerRadius
@@ -275,10 +267,7 @@ module ScanPinUpdate =
                     |> List.filter (fun (_, p) -> pendingPin p)
                 let mutable pins = sp.Pins
                 for (id, pin) in pending do
-                    let refMesh =
-                        refMesh0
-                        |> Option.orElse (pin.HostMeshName |> Option.filter (fun h -> List.contains h allMeshes))
-                        |> Option.defaultValue (List.head allMeshes)
+                    let refMesh = refMesh0 |> Option.defaultValue (List.head allMeshes)
                     let token = restartCts sliceCtsMap id
                     let centre = pin.Centre
                     let window = window0 |> Option.defaultValue (pin.InnerRadius * 2.0)

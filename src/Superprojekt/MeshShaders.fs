@@ -8,6 +8,9 @@ module RenderPass =
     let passMinusOne = RenderPass.main
     let passZero = RenderPass.after "zero" RenderPassOrder.Arbitrary passMinusOne
     let passOne = RenderPass.after "one" RenderPassOrder.Arbitrary passZero
+    // Deterministic on-top-of-passOne layer: the white text core over its
+    // passOne dark outline copies (ordering within one pass is arbitrary).
+    let passTwo = RenderPass.after "two" RenderPassOrder.Arbitrary passOne
 
 // Per-fragment ghosting rules are documented in CLAUDE.md ("Render pipeline").
 [<ReflectedDefinition>]
@@ -38,18 +41,18 @@ module MeshShader =
         member x.ClipPlaneCount : int = x?ClipPlaneCount
         member x.ClipPlane0     : V4f = x?ClipPlane0
         member x.ClipPlane1     : V4f = x?ClipPlane1
-        // Slice mode: camera forward + cut-plane distance (the ortho near,
-        // render units) + falloff width behind it. FadeDist 0 = off.
-        member x.SliceFwd       : V3f     = x?SliceFwd
-        member x.SliceFadeNear  : float32 = x?SliceFadeNear
-        member x.SliceFadeDist  : float32 = x?SliceFadeDist
+        // In-view near-plane cut: fragments nearer the camera than CutDist
+        // (render units along CutFwd from CameraLocation) discard, and the
+        // CutBand-wide sliver just behind the plane paints as the flat data-ink
+        // intersection line. CutDist 0 = off.
+        member x.CutFwd  : V3f     = x?CutFwd
+        member x.CutDist : float32 = x?CutDist
+        member x.CutBand : float32 = x?CutBand
         // Per-vertex SurfaceDist painter (above-ghost only): 0 = none;
-        // 1 = signed difference, diverging blue↔grey↔red (soloed moving mesh);
-        // 2 = variance std ≥0, sequential grey→red (reference, Inspect ensemble).
-        // DistScale saturates the positive end, DistLoNeg (enc 1 only) the
-        // |negative| end — both come from the ONE pin-derived Inspect range
-        // (ScanPin.inspectRange), so every map shares a scale. SurfaceDist = 1e30
-        // → keep base colour.
+        // 1 = signed difference, diverging blue↔grey↔red (moving meshes, Inspect).
+        // DistScale saturates the positive end, DistLoNeg the |negative| end —
+        // both come from the ONE pin-derived Inspect range (ScanPin.inspectRange),
+        // so every map shares a scale. SurfaceDist = 1e30 → keep base colour.
         member x.DistanceEncoding : int     = x?DistanceEncoding
         member x.DistScale        : float32 = x?DistScale
         member x.DistLoNeg        : float32 = x?DistLoNeg
@@ -105,16 +108,15 @@ module MeshShader =
                 let p = uniform.ClipPlane1
                 let sd = p.X * wp.X + p.Y * wp.Y + p.Z * wp.Z + p.W
                 if sd > 0.0f then discard()
-            // Slice-mode falloff: beyond the cut plane (the ortho near)
-            // alpha falls off over SliceFadeDist and then discards — only the
-            // profile band + a few cm stay visible. In front of the cut GL
-            // near-clips the geometry, so no test is needed there.
-            let mutable sliceMul = 1.0f
-            if uniform.SliceFadeDist > 0.0f then
-                let dAlong = Vec.dot (wp - uniform.CameraLocation) uniform.SliceFwd
-                let over = dAlong - uniform.SliceFadeNear
-                if over > uniform.SliceFadeDist then discard()
-                elif over > 0.0f then sliceMul <- 1.0f - over / uniform.SliceFadeDist
+            // Near-plane cut: everything between the camera and the cut plane
+            // discards (picks fall through); the thin band just behind the plane
+            // is flagged and painted as the intersection line below, AFTER the
+            // false-colour painters so the line always wins.
+            let mutable cutLine = false
+            if uniform.CutDist > 0.0f then
+                let dAlong = Vec.dot (wp - uniform.CameraLocation) uniform.CutFwd
+                if dAlong < uniform.CutDist then discard()
+                elif dAlong < uniform.CutDist + uniform.CutBand then cutLine <- true
             let mutable inAnyBlob = false
             let bc = uniform.BlobCount
             let blobsActive = bc > 0 && uniform.AnchorGhost <> 0
@@ -141,7 +143,6 @@ module MeshShader =
                 alpha <- ghost + (1.0f - ghost) * maskFactor
             else
                 alpha <- ghost
-            alpha <- alpha * sliceMul
             if alpha < 1e-4f then discard()
             // α-gated depth: clamp ghost/outside fragments below opaqueThreshold
             // so only fully-solid surface writes natural depth (below).
@@ -208,16 +209,6 @@ module MeshShader =
                         let fade = clamp 0.0f 1.0f ((0.5f - aa) * 4.0f)
                         let line = 0.45f + 0.55f * min 1.0f (g / (aa * 1.3f))
                         baseRgb <- baseRgb * (1.0f - fade * (1.0f - line))
-            // Variance map: per-reference-vertex disagreement std (≥0) from light
-            // grey to strong red, normalised by DistScale.
-            if uniform.DistanceEncoding = 2 && aboveGhost then
-                let d = v.sd
-                if abs d < 1e20f then
-                    let scale = max 1e-6f uniform.DistScale
-                    let tt = clamp 0.0f 1.0f (d / scale)
-                    let loC = V3f(0.945f, 0.961f, 0.976f)
-                    let hiC = V3f(0.725f, 0.110f, 0.110f)
-                    baseRgb <- loC * (1.0f - tt) + hiC * tt
             // Incidence heatmap: incidence angle to the scan sensor (the mesh's
             // panorama centre, fed via SensorOrigin), grazing = red, head-on = green.
             // Uses the GEOMETRIC (per-triangle, from screen-space derivatives) normal,
@@ -257,11 +248,18 @@ module MeshShader =
                 let loC = V3f(0.86f, 0.20f, 0.15f)
                 let hiC = V3f(0.18f, 0.55f, 0.34f)
                 baseRgb <- loC * (1.0f - ts) + hiC * ts
+            // THE INTERSECTION LINE: the at-cut band renders as flat, fully
+            // opaque data ink over every painter (opaque ⇒ natural depth below,
+            // so the line is pickable surface like any solid fragment).
+            let mutable outRgb = baseRgb * shade
+            if cutLine then
+                outRgb <- V3f(0.06f, 0.07f, 0.08f)
+                alpha <- 1.0f
             let depth =
                 if alpha >= opaqueThreshold then v.fc.Z
                 else 1.0f
             return {
-                color = V4f(baseRgb * shade, alpha)
+                color = V4f(outRgb, alpha)
                 depth = depth
             }
         }
@@ -285,16 +283,19 @@ module OutlineGBuffer =
     }
     let shade (v : FragIn) =
         fragment {
+            // The near-plane cut discards here too, so silhouettes/isolines of
+            // cut-away geometry vanish with it (and the cut boundary silhouettes
+            // for free via the resulting depth break).
+            if uniform.CutDist > 0.0f then
+                let dAlong = Vec.dot (v.wp.XYZ - uniform.CameraLocation) uniform.CutFwd
+                if dAlong < uniform.CutDist then discard()
             let col = uniform.MeshColor
             // target0.x = world-Z band parity (0/1) → edge-detected into crisp 1px
             // isolines, world-locked since the band index is a pure function of world Z.
             // target0.y = mesh id ((index+1)/255; 0 = background) → per-mesh line gating.
             // target0.w/.z = window depth packed hi/lo (16-bit fixed point in an
-            // Rgba8 target): the edge detect keeps reading the HI byte alone
-            // (8-bit staircase — the OutlineThreshold calibration), only the
-            // slice-mode distance fade reconstructs the fine value, because its
-            // FadeDist window is ~2 hi-byte LSBs and an 8-bit fade staircases
-            // to on/off.
+            // Rgba8 target): the edge detect reads the HI byte alone (8-bit
+            // staircase — the OutlineThreshold calibration).
             let parity =
                 if uniform.ContourSpacing > 1e-12f then
                     let band = floor (v.wp.Z / uniform.ContourSpacing)
@@ -455,19 +456,17 @@ module OutlineEdge =
     type UniformScope with
         member x.OutlineTexel : V2f = x?OutlineTexel
         member x.OutlineThreshold : float32 = x?OutlineThreshold
+        // Silhouette line thickness (px): the depth-break samples sit at ±this
+        // many texels, dilating the line without extra taps. The Laplacian's
+        // smooth-slope immunity survives any spacing (window depth is linear
+        // across planar primitives); isolines keep their crisp ±1 texel samples.
+        member x.OutlineWidthPx : float32 = x?OutlineWidthPx
         // Alpha of the grey elevation isolines (gear slider; silhouettes stay opaque).
         member x.IsolineOpacity : float32 = x?IsolineOpacity
         // Per-mesh line gate, indexed by the G-buffer mesh id (target0.y):
         // .X = 1 → silhouette + isolines, 0.5 → silhouette only (Inspect pair
         // view context), 0 → no lines (the mesh still occludes in the G-buffer).
         member x.OutlineMask : Arr<N<32>, V4f> = x?OutlineMask
-        // Slice mode: line alpha falls off with the stored
-        // window depth — valid because the slice camera is ORTHO, where window
-        // depth is linear in eye distance and 0 sits exactly at the cut plane.
-        // The multiplier reads the 16-bit hi/lo reconstruction (target0.w/.z) —
-        // the fade window is ~2 hi-byte LSBs, unusable at 8 bits.
-        // Value = 1/fade-range in depth01 units; 0 = off (perspective views).
-        member x.OutlineDistFade : float32 = x?OutlineDistFade
 
     let private gNormal =
         sampler2d {
@@ -502,19 +501,20 @@ module OutlineEdge =
             let r  = gNormal.Sample(v.tc + V2f( ts.X, 0.0f))
             let u  = gNormal.Sample(v.tc + V2f(0.0f,  ts.Y))
             let d  = gNormal.Sample(v.tc + V2f(0.0f, -ts.Y))
+            // Depth-break samples at ±OutlineWidthPx texels: every pixel within
+            // that window of a genuine break lights up, so the silhouette line is
+            // ~OutlineWidthPx wide (the background half is gated off by m0).
+            let wpx = max 1.0f uniform.OutlineWidthPx
+            let lw = gNormal.Sample(v.tc + V2f(-ts.X * wpx, 0.0f))
+            let rw = gNormal.Sample(v.tc + V2f( ts.X * wpx, 0.0f))
+            let uw = gNormal.Sample(v.tc + V2f(0.0f,  ts.Y * wpx))
+            let dw = gNormal.Sample(v.tc + V2f(0.0f, -ts.Y * wpx))
             let m0 = gColor.Sample(v.tc).W
-            let capOn = uniform.OutlineDistFade > 0.0f
-            // Slice mode only: the FBO clear leaves background depth at 0 —
-            // under the slice ortho that is the CUT plane's own depth value, so
-            // the profile against empty background would never register as a
-            // break. Substitute far depth (1) for background samples (mesh id
-            // 0); perspective keeps the raw values (background 0 vs surface ~1
-            // already breaks hard there).
-            let dc = if capOn && c.Y < 0.002f then 1.0f else c.W
-            let dl = if capOn && l.Y < 0.002f then 1.0f else l.W
-            let dr = if capOn && r.Y < 0.002f then 1.0f else r.W
-            let du = if capOn && u.Y < 0.002f then 1.0f else u.W
-            let dd = if capOn && d.Y < 0.002f then 1.0f else d.W
+            let dc = c.W
+            let dl = lw.W
+            let dr = rw.W
+            let du = uw.W
+            let dd = dw.W
             // target0: .w = window depth → silhouette/cliff outline; .x = world-Z
             // band parity → world-locked isolines.
             //   dEdge is the SECOND difference (depth Laplacian) of window depth, not
@@ -538,13 +538,6 @@ module OutlineEdge =
                 // Per-mesh gate: the centre pixel's mesh id selects its mask slot.
                 let slot = min 31 (max 0 (int (c.Y * 255.0f + 0.5f) - 1))
                 let flag = uniform.OutlineMask.[slot].X
-                // Slice-mode distance falloff: lines fade with the 16-bit depth
-                // behind the cut (0 at the near plane under the slice ortho),
-                // and the opacity is CAPPED at 10 % — the terrain profiles own
-                // the view; lines are background reference only. dT = distance
-                // behind the cut in fade-window units (0 outside slice mode).
-                let dT = (c.W + c.Z / 255.0f) * uniform.OutlineDistFade
-                let distMul = if capOn then max 0.0f (1.0f - dT) else 1.0f
                 // Silhouette / cliff (a window-depth break) keeps the crisp per-mesh
                 // palette colour. A pure world-Z band-parity flip (an isoline) renders
                 // in a faint neutral grey at reduced intensity, so elevation
@@ -552,22 +545,9 @@ module OutlineEdge =
                 // (No local helper — FShade bodies must stay lambda-free.)
                 if depthEdge && flag > 0.25f then
                     let colP = gColor.Sample(v.tc)
-                    if capOn then
-                        // THE CUT PROFILE: a depth edge whose centre sits
-                        // essentially AT the cut is the section profile — clean
-                        // data-ink black lifted ABOVE the 10 % cap, gone by half
-                        // the fade window; the colour blends back to the capped
-                        // faded palette silhouette as the edge moves behind.
-                        let prof = max 0.0f (1.0f - dT * 2.0f)
-                        let k = min 1.0f (prof * 3.0f)
-                        let a = max (0.92f * prof) (min 0.1f distMul)
-                        return V4f(colP.X * (1.0f - k), colP.Y * (1.0f - k), colP.Z * (1.0f - k), a)
-                    else
-                        return V4f(colP.X, colP.Y, colP.Z, distMul)
+                    return V4f(colP.X, colP.Y, colP.Z, 1.0f)
                 elif isoEdge && flag > 0.75f then
-                    let a0 = uniform.IsolineOpacity * distMul
-                    let a = if capOn then min 0.1f a0 else a0
-                    return V4f(0.55f, 0.57f, 0.60f, a)
+                    return V4f(0.55f, 0.57f, 0.60f, uniform.IsolineOpacity)
                 else
                     return V4f(0.0f, 0.0f, 0.0f, 0.0f)
             else
@@ -584,6 +564,7 @@ module OutlineCoverageEdge =
 
     type UniformScope with
         member x.OutlineTexel : V2f = x?OutlineTexel
+        member x.OutlineWidthPx : float32 = x?OutlineWidthPx
         member x.OutlineMask : Arr<N<32>, V4f> = x?OutlineMask
         member x.CoverageColors : Arr<N<8>, V4f> = x?CoverageColors
 
@@ -604,7 +585,9 @@ module OutlineCoverageEdge =
 
     let fragment (v : OutlineEdge.Vtx) =
         fragment {
-            let ts = uniform.OutlineTexel
+            // Same px dilation as the silhouettes: the covered↔uncovered test at
+            // ±width texels makes the footprint contour OutlineWidthPx wide.
+            let ts = uniform.OutlineTexel * max 1.0f uniform.OutlineWidthPx
             let th = 0.12f
             let cA = cov0.Sample(v.tc)
             let lA = cov0.Sample(v.tc + V2f(-ts.X, 0.0f))

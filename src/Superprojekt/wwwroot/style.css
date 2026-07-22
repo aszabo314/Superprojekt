@@ -290,21 +290,13 @@ body.loaded { background: #f4f6f8; }
     display: flex; align-items: center; gap: 8px; min-height: 29px;
     padding: 5px 8px; border-bottom: 1px solid #e6eaf0; background: #f8fafc;
 }
-/* selected-pin identity label: near-black name, neutral border (v12 §4) */
+/* selected-pin identity label: near-black name, neutral border */
 .focus-pinchip {
     display: inline-flex; align-items: center;
     font-weight: 700; font-size: 13px; letter-spacing: 0.3px; color: #292524;
     padding: 1px 8px; border-radius: 10px;
     border: 1px solid #cbd5e1; background: #f8fafc;
 }
-/* projection selector (drives single + multiples together) */
-.focus-proj { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 4px; overflow: hidden; }
-.focus-proj-btn {
-    padding: 3px 8px; border: none; border-right: 1px solid #cbd5e1;
-    background: #f1f5f9; color: #0f172a; cursor: pointer; font-size: 11px;
-}
-.focus-proj-btn:last-child { border-right: none; }
-.focus-proj-btn.btn-active { background: #1a56db; color: #fff; }
 /* right-aligned button group in the focus head */
 .focus-head-right { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
 /* set-correspondence toggle */
@@ -552,24 +544,7 @@ body.loaded { background: #f4f6f8; }
 .tb-gear-mesh-name { flex: 0 0 140px; color: #60a5fa; }
 .tb-gear-mesh-coord { color: #cbd5e1; }
 
-/* ── Mesh-wheel active-picking-layer label ──────────────── */
-
-.mesh-wheel-label {
-    position: fixed;
-    pointer-events: none;
-    font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 11px;
-    color: #0f172a;
-    background: rgba(255, 255, 255, 0.92);
-    border: 1px solid #c5cdd8;
-    border-radius: 2px;
-    padding: 1px 5px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.10);
-    z-index: 10000;
-    white-space: nowrap;
-}
-
-/* v12 §2: placement hard-prohibit tooltip at the cursor */
+/* placement hard-prohibit tooltip at the cursor */
 .placement-tooltip {
     position: fixed;
     pointer-events: none;
@@ -584,35 +559,24 @@ body.loaded { background: #f4f6f8; }
     white-space: nowrap;
 }
 
-/* v12 §7: stretch-mode ordinates (hoverable HTML strips) + exaggeration badge */
-.slice-ords { position: fixed; inset: 0; pointer-events: none; z-index: 90; overflow: hidden; }
-.slice-ord { position: absolute; width: 8px; pointer-events: auto; }
-.slice-ord-line {
-    position: absolute; left: 3.5px; top: 0; bottom: 0; width: 1.5px;
-    background: #0f172a; opacity: 0.75;
+/* correspondence-commit confirmation flash */
+.corr-flash-layer { position: fixed; inset: 0; pointer-events: none; z-index: 220; overflow: hidden; }
+.corr-flash {
+    position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px;
+    border: 3px solid #292524; border-radius: 50%;
+    box-shadow: 0 0 0 2px rgba(255,255,255,0.9) inset;
+    animation: corr-flash-pop 0.6s ease-out forwards;
 }
-.slice-ord:hover .slice-ord-line { background: #1a56db; opacity: 1; width: 2px; }
-.slice-ord-tip {
-    display: none; position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
-    background: rgba(255,255,255,0.95); border: 1px solid #c5cdd8; border-radius: 3px;
-    padding: 1px 6px; font-size: 11px; font-family: 'SF Mono', 'Monaco', monospace;
-    color: #0f172a; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+@keyframes corr-flash-pop {
+    0%   { transform: scale(0.4); opacity: 1; }
+    70%  { transform: scale(2.4); opacity: 0.7; }
+    100% { transform: scale(3.0); opacity: 0; }
 }
-.slice-ord:hover .slice-ord-tip { display: block; }
-/* slice-mode badges: gold = the slice accent (matches the focus indicator) */
-.slice-badges {
-    position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
-    display: flex; gap: 8px; z-index: 200; pointer-events: none;
-}
-.slice-badge {
-    background: #b45309; color: #ffffff; font-weight: 700; font-size: 12px;
-    padding: 2px 10px; border-radius: 4px; box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-}
-/* slice-mode metric rulers (left + bottom of the 3D area) */
-.slice-axes {
-    position: fixed; top: 0; left: 0; right: 0; bottom: var(--dock-h);
-    pointer-events: none; z-index: 80; overflow: hidden;
-}
+
+/* near-cut slider in the top bar */
+.tb-cut { display: inline-flex; align-items: center; margin-right: 10px; }
+.tb-cut .is-range { width: 100px; }
+.tb-cut .is-value { width: 34px; }
 
 /* ── Scale bar ────────────────────────────────────────────────────── */
 

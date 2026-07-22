@@ -45,12 +45,10 @@ module UpdateHelpers =
     let mutable toastCts : System.Threading.CancellationTokenSource =
         new System.Threading.CancellationTokenSource()
 
-    // Surface-distance fetch: generation bumps on every invalidation; the postlude
-    // issues at most one debounced fetch per generation (no spam in flight).
-    let mutable surfaceDistCts = new System.Threading.CancellationTokenSource()
-    let mutable surfaceDistGen = 0
-    let mutable surfaceDistReqGen = -1
-    let bumpSurfaceDist () = surfaceDistGen <- surfaceDistGen + 1
+    // Correspondence-commit confirmation flash (same restartable-timer pattern
+    // as the toast).
+    let mutable corrFlashCts : System.Threading.CancellationTokenSource =
+        new System.Threading.CancellationTokenSource()
 
     // Solve fan-out guard: CoarseSolved carries the generation it was issued
     // under; anything that clears the registration bumps it, so a stale solve
@@ -66,16 +64,14 @@ module UpdateHelpers =
     let bumpFocusDist () = focusDistGen <- focusDistGen + 1
     let invalidateFocusDist (model : Model) =
         if not (Map.isEmpty model.FocusDist && Map.isEmpty model.FocusDistOther) then bumpFocusDist ()
-        { model with FocusDist = Map.empty; FocusDistOther = Map.empty }
+        // The exact-point probe reads the dropped field — it goes with it.
+        { model with FocusDist = Map.empty; FocusDistOther = Map.empty; PointProbe = None }
 
     let invalidateProbes (model : Model) =
-        // The variance + focus-difference maps (both poses) share the same
-        // triggers — drop to re-fetch lazily.
-        if not (Map.isEmpty model.SurfaceDistance && Map.isEmpty model.SurfaceDistanceOther) then bumpSurfaceDist ()
+        // The focus-difference maps (both poses) share the probe triggers —
+        // drop to re-fetch lazily.
         { (invalidateFocusDist model) with
-            ScanPins = ScanPinModel.invalidateProbes model.ScanPins
-            SurfaceDistance = Map.empty
-            SurfaceDistanceOther = Map.empty }
+            ScanPins = ScanPinModel.invalidateProbes model.ScanPins }
 
     // Rings depend on pin geometry + transforms, NOT visibility (which gates
     // rendering only) — so this is applied on transform changes alone, unlike invalidateProbes.
@@ -85,22 +81,18 @@ module UpdateHelpers =
     // Switch the committed Before/After view: swap every pose-baked pair cache in
     // place (probes, slices, the Inspect scalar maps), cancel in-flight scalar
     // fetches (a result landing after the swap would file under the wrong pose),
-    // drop the pose-indexed brush gids, refetch rings. Shared by SetRegView and
-    // the guards that force the Before view (correspondence editing is Before-only).
+    // drop the pose-indexed brush gids, refetch rings.
     let applyRegView (v : RegView) (model : Model) =
         if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
         else
-            surfaceDistCts.Cancel()
             focusDistCts.Cancel()
-            bumpSurfaceDist ()
             bumpFocusDist ()
             invalidateRings
                 { model with
                     RegView = v
                     BrushedSamples = Set.empty
+                    PointProbe = None
                     ScanPins = ScanPinModel.swapProbeViews model.ScanPins
-                    SurfaceDistance = model.SurfaceDistanceOther
-                    SurfaceDistanceOther = model.SurfaceDistance
                     FocusDist = model.FocusDistOther
                     FocusDistOther = model.FocusDist }
 
@@ -112,9 +104,13 @@ module UpdateHelpers =
             bumpFocusDist ()
             { model with MeshSolo = Some name }
 
+    // Symmetric bump: leaving solo re-opens the whole ensemble's difference
+    // fields, some of which may have been skipped while isolated.
     let exitSolo (model : Model) =
         if model.MeshSolo.IsNone then model
-        else { model with MeshSolo = None }
+        else
+            bumpFocusDist ()
+            { model with MeshSolo = None }
 
     let showToast (env : Env<Message>) (text : string) (model : Model) =
         toastCts.Cancel()
@@ -138,9 +134,9 @@ module UpdateHelpers =
     let allPinIds (model : Model) =
         model.ScanPins.Pins |> HashMap.toList |> List.map fst
 
-    // ROI-clamped auto-seed. refAnchor = pin centre (host = reference) or its
-    // closest-point projection onto the reference; per moving mesh the closest
-    // point to refAnchor. Anchors are stored mesh-local (own-frame closest point),
+    // ROI-clamped auto-seed. refAnchor = the pin centre's closest-point
+    // projection onto the reference; per moving mesh the closest point to
+    // refAnchor. Anchors are stored mesh-local (own-frame closest point),
     // so the before/after toggle moves them with the mesh. All geometry is
     // evaluated at the BEFORE (load) pose regardless of the current view —
     // correspondences exist in the Before state only, so a mesh that a solve
@@ -163,19 +159,17 @@ module UpdateHelpers =
                 let jobs =
                     pins |> List.map (fun pin ->
                         let keep = (ScanPin.correspondence pin).Anchors |> Map.filter (fun _ a -> a.Source <> AnchorAuto)
-                        pin.Id, pin.Centre, pin.InnerRadius, pin.HostMeshName, keep)
+                        pin.Id, pin.Centre, pin.InnerRadius, keep)
                 task {
                     try
                         let! perPin =
                             jobs
-                            |> List.map (fun (pinId, centre, innerR, host, keep) -> async {
+                            |> List.map (fun (pinId, centre, innerR, keep) -> async {
                                 let reach = ScanPin.roiReach innerR
                                 // refAnchor stored in the reference own frame (= world,
                                 // since the reference always sits at its LoadTransform).
                                 let! refAnchor =
-                                    if host = Some refMesh then
-                                        async.Return (Some (refT.Backward.TransformPos centre))
-                                    else async {
+                                    async {
                                         try
                                             let cOwn = refT.Backward.TransformPos centre
                                             let! res = Query.closestPoint ApiConfig.apiBase.Value refMesh 0 cOwn

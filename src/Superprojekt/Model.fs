@@ -23,15 +23,6 @@ module WorkflowStep =
         | Correspondence -> "Register"
         | Inspect -> "Inspect"
 
-// ProjPano = 360° perspective look-around fixed at the mesh's panorama centre;
-// Top = the world vertical drop.
-type FocusProjection =
-    | ProjPano
-    | ProjTop
-
-module FocusProjection =
-    let label = function ProjPano -> "360°" | ProjTop -> "Top"
-
 module DatasetScale =
     let forMesh (scales : Map<string, float>) (meshName : string) =
         let i = meshName.IndexOf '/'
@@ -107,14 +98,11 @@ module MeshVisibility =
         | None -> true
 
 // Snapshot captured when a "frame correspondence" (locate) starts, so a single
-// back-out restores the camera + solo to exactly what they were before.
+// back-out restores the solo state to exactly what it was before (the camera is
+// never touched — it only moves on explicit focus/zoom actions).
 // Plain record (not a ModelType) → a single aval<LocateState option> in the model.
 type LocateState = {
     PrevSolo    : string option
-    PrevCenter  : V3d
-    PrevRadius  : float
-    PrevPhi     : float
-    PrevTheta   : float
 }
 
 [<ModelType>]
@@ -163,8 +151,6 @@ type Model =
         SliceContextSpacing : float
         SliceVertPercentile : float
 
-        ActivePickingLayer : string option
-
         // LoadTransform is the immutable per-mesh baseline captured at load;
         // SolvedTransform (presence = solved) is written by the correspondence
         // solve; RegView picks which the meshes display. Render-space.
@@ -192,20 +178,12 @@ type Model =
         // heatmap (3D + focus). 0 = show everything.
         ShapeThreshold        : float
 
-        // Difference sub-mode for the Inspect focus tiles: false = signed M3C2,
-        // true = vertical Δz.
-        ExtrinsicZDiff        : bool
-        // All-meshes variance map (std of each visible moving mesh's distance),
-        // painted on the reference whenever Inspect is the active mode (the central
-        // 3D aggregate). SurfaceDistance holds the fetched per-reference-vertex
-        // array, keyed by the reference mesh. Like the pin probes, the maps are
+        // Inspect difference channel: per moving mesh, signed distance to the
+        // reference (the mesh's served vertex order), painted in the 3D view and on
+        // the focus tiles (the reference is never error-coloured). Lazily fetched;
         // per-pose pairs: main = the committed displayed pose, Other = the opposite
         // Before/After pose (fetched only once a solve exists). SetRegView swaps the
         // pairs in place; the reg peek selects the Other cache (visual, no query).
-        SurfaceDistance       : Map<string, float32[]>
-        SurfaceDistanceOther  : Map<string, float32[]>
-        // Inspect difference channel: per moving mesh, signed distance to the reference
-        // (the mesh's served vertex order), painted on the focus tile. Lazily fetched.
         FocusDist             : Map<string, float32[]>
         FocusDistOther        : Map<string, float32[]>
 
@@ -218,7 +196,15 @@ type Model =
         GearPopoverOpen     : bool
         WorkflowStep        : WorkflowStep
 
-        FocusProjection     : FocusProjection
+        // Exact-point error probe (Inspect): a clicked surface point's signed
+        // difference — (mesh, metric world point, value in metres). Cleared by
+        // Esc / background click / anything that invalidates the difference maps.
+        PointProbe          : (string * V3d * float) option
+
+        // Confirmation flash of the last committed correspondence pick: metric
+        // world point + a generation (bumped per commit so back-to-back picks
+        // restart the animation). Cleared by a short timer (ClearCorrFlash).
+        CorrFlash           : (V3d * int) option
 
         // Unified armed correspondence editing: Some (pin, mesh) = the editor
         // is armed for that pair. While armed, the mesh is isolated in the main view
@@ -237,6 +223,9 @@ type Model =
         // the scene Z range + isoline alpha. Tunable from the gear menu; see
         // OutlineEdge / buildOutlineNode. Image-space outlines + isolines are always on.
         OutlineThreshold    : float
+        // Silhouette/footprint line thickness (px) — the edge detect dilates by
+        // sampling at ±this many texels (gear slider, per participant).
+        OutlineWidthPx      : float
         IsolineBands        : float
         IsolineOpacity      : float
 
@@ -245,15 +234,10 @@ type Model =
         // solo state.
         LocateBackup        : LocateState option
 
-        // Slice mode: the TO-SCALE ortho measurement view around the
-        // selected pin. SliceCut = signed metric offset (m) of the cut plane
-        // from the pin centre toward the camera (the ortho near plane); scroll
-        // sweeps it, the reducer clamps it to the pin's neighbourhood.
-        SliceMode           : bool
-        SliceCut            : float
-        // Vertical-only exaggeration in slice mode: the factor is derived
-        // adaptively (ScanPinScene.sliceStretchFactor); this is the toggle.
-        SliceStretch        : bool
+        // In-view near-plane slice: the cut plane sits at this fraction of the
+        // eye→orbit-centre distance, ⊥ the view direction; 0 = off. Non-modal —
+        // the camera stays free, a thick line marks the intersection.
+        NearCutFrac         : float
     }
 
 // Displayed = the pose a mesh currently shows: at RegAfter a solved mesh uses its
@@ -327,7 +311,6 @@ module Model =
             SliceContextCount   = 2.0
             SliceContextSpacing = 0.15
             SliceVertPercentile = 0.95
-            ActivePickingLayer = None
             LoadTransforms        = Map.empty
             SolvedTransforms      = Map.empty
             SolveInputs           = None
@@ -335,9 +318,6 @@ module Model =
             RegPeekHeld           = false
             ReferenceMesh         = None
             Toast                 = None
-            ExtrinsicZDiff        = false
-            SurfaceDistance       = Map.empty
-            SurfaceDistanceOther  = Map.empty
             FocusDist             = Map.empty
             FocusDistOther        = Map.empty
             MeshHeatmap           = Map.empty
@@ -348,15 +328,15 @@ module Model =
             MeshSolo            = None
             GearPopoverOpen     = false
             WorkflowStep        = Overview
-            FocusProjection     = ProjTop
+            PointProbe          = None
+            CorrFlash           = None
             CorrArm             = None
             CorrPreview         = None
             BrushedSamples      = Set.empty
             OutlineThreshold    = 0.004
+            OutlineWidthPx      = 3.0
             IsolineBands        = 700.0
             IsolineOpacity      = 0.45
             LocateBackup        = None
-            SliceMode           = false
-            SliceCut            = 0.0
-            SliceStretch        = false
+            NearCutFrac         = 0.0
         }

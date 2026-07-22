@@ -1,5 +1,5 @@
-//ffb1fb03-f08b-fd84-d260-132f793bc19c
-//09eb0632-03d0-5e01-51b2-55eb10c5b259
+//2ac7a3ad-4d56-bf1f-43d2-3b979979e438
+//ef34474c-2776-faac-f9e6-2fcdc4585059
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -55,7 +55,6 @@ type AdaptiveModel(value : Model) =
     let _SliceContextCount_ = FSharp.Data.Adaptive.cval(value.SliceContextCount)
     let _SliceContextSpacing_ = FSharp.Data.Adaptive.cval(value.SliceContextSpacing)
     let _SliceVertPercentile_ = FSharp.Data.Adaptive.cval(value.SliceVertPercentile)
-    let _ActivePickingLayer_ = FSharp.Data.Adaptive.cval(value.ActivePickingLayer)
     let _LoadTransforms_ = FSharp.Data.Adaptive.cval(value.LoadTransforms)
     let _SolvedTransforms_ = FSharp.Data.Adaptive.cval(value.SolvedTransforms)
     let _SolveInputs_ = FSharp.Data.Adaptive.cval(value.SolveInputs)
@@ -65,9 +64,6 @@ type AdaptiveModel(value : Model) =
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
     let _MeshHeatmap_ = FSharp.Data.Adaptive.cval(value.MeshHeatmap)
     let _ShapeThreshold_ = FSharp.Data.Adaptive.cval(value.ShapeThreshold)
-    let _ExtrinsicZDiff_ = FSharp.Data.Adaptive.cval(value.ExtrinsicZDiff)
-    let _SurfaceDistance_ = FSharp.Data.Adaptive.cval(value.SurfaceDistance)
-    let _SurfaceDistanceOther_ = FSharp.Data.Adaptive.cval(value.SurfaceDistanceOther)
     let _FocusDist_ = FSharp.Data.Adaptive.cval(value.FocusDist)
     let _FocusDistOther_ = FSharp.Data.Adaptive.cval(value.FocusDistOther)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
@@ -76,17 +72,17 @@ type AdaptiveModel(value : Model) =
     let _MeshSolo_ = FSharp.Data.Adaptive.cval(value.MeshSolo)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let _WorkflowStep_ = FSharp.Data.Adaptive.cval(value.WorkflowStep)
-    let _FocusProjection_ = FSharp.Data.Adaptive.cval(value.FocusProjection)
+    let _PointProbe_ = FSharp.Data.Adaptive.cval(value.PointProbe)
+    let _CorrFlash_ = FSharp.Data.Adaptive.cval(value.CorrFlash)
     let _CorrArm_ = FSharp.Data.Adaptive.cval(value.CorrArm)
     let _CorrPreview_ = FSharp.Data.Adaptive.cval(value.CorrPreview)
     let _BrushedSamples_ = FSharp.Data.Adaptive.cval(value.BrushedSamples)
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
+    let _OutlineWidthPx_ = FSharp.Data.Adaptive.cval(value.OutlineWidthPx)
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
     let _IsolineOpacity_ = FSharp.Data.Adaptive.cval(value.IsolineOpacity)
     let _LocateBackup_ = FSharp.Data.Adaptive.cval(value.LocateBackup)
-    let _SliceMode_ = FSharp.Data.Adaptive.cval(value.SliceMode)
-    let _SliceCut_ = FSharp.Data.Adaptive.cval(value.SliceCut)
-    let _SliceStretch_ = FSharp.Data.Adaptive.cval(value.SliceStretch)
+    let _NearCutFrac_ = FSharp.Data.Adaptive.cval(value.NearCutFrac)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -121,7 +117,6 @@ type AdaptiveModel(value : Model) =
             _SliceContextCount_.Value <- value.SliceContextCount
             _SliceContextSpacing_.Value <- value.SliceContextSpacing
             _SliceVertPercentile_.Value <- value.SliceVertPercentile
-            _ActivePickingLayer_.Value <- value.ActivePickingLayer
             _LoadTransforms_.Value <- value.LoadTransforms
             _SolvedTransforms_.Value <- value.SolvedTransforms
             _SolveInputs_.Value <- value.SolveInputs
@@ -131,9 +126,6 @@ type AdaptiveModel(value : Model) =
             _Toast_.Value <- value.Toast
             _MeshHeatmap_.Value <- value.MeshHeatmap
             _ShapeThreshold_.Value <- value.ShapeThreshold
-            _ExtrinsicZDiff_.Value <- value.ExtrinsicZDiff
-            _SurfaceDistance_.Value <- value.SurfaceDistance
-            _SurfaceDistanceOther_.Value <- value.SurfaceDistanceOther
             _FocusDist_.Value <- value.FocusDist
             _FocusDistOther_.Value <- value.FocusDistOther
             _ScanPins_.Update(value.ScanPins)
@@ -142,17 +134,17 @@ type AdaptiveModel(value : Model) =
             _MeshSolo_.Value <- value.MeshSolo
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
             _WorkflowStep_.Value <- value.WorkflowStep
-            _FocusProjection_.Value <- value.FocusProjection
+            _PointProbe_.Value <- value.PointProbe
+            _CorrFlash_.Value <- value.CorrFlash
             _CorrArm_.Value <- value.CorrArm
             _CorrPreview_.Value <- value.CorrPreview
             _BrushedSamples_.Value <- value.BrushedSamples
             _OutlineThreshold_.Value <- value.OutlineThreshold
+            _OutlineWidthPx_.Value <- value.OutlineWidthPx
             _IsolineBands_.Value <- value.IsolineBands
             _IsolineOpacity_.Value <- value.IsolineOpacity
             _LocateBackup_.Value <- value.LocateBackup
-            _SliceMode_.Value <- value.SliceMode
-            _SliceCut_.Value <- value.SliceCut
-            _SliceStretch_.Value <- value.SliceStretch
+            _NearCutFrac_.Value <- value.NearCutFrac
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
@@ -180,7 +172,6 @@ type AdaptiveModel(value : Model) =
     member __.SliceContextCount = _SliceContextCount_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.SliceContextSpacing = _SliceContextSpacing_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.SliceVertPercentile = _SliceVertPercentile_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.ActivePickingLayer = _ActivePickingLayer_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.LoadTransforms = _LoadTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.SolvedTransforms = _SolvedTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>
     member __.SolveInputs = _SolveInputs_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<SolveInputs>>
@@ -190,9 +181,6 @@ type AdaptiveModel(value : Model) =
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MeshHeatmap = _MeshHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, HeatmapMode>>
     member __.ShapeThreshold = _ShapeThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.ExtrinsicZDiff = _ExtrinsicZDiff_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.SurfaceDistance = _SurfaceDistance_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
-    member __.SurfaceDistanceOther = _SurfaceDistanceOther_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.FocusDist = _FocusDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.FocusDistOther = _FocusDistOther_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.ScanPins = _ScanPins_
@@ -201,15 +189,15 @@ type AdaptiveModel(value : Model) =
     member __.MeshSolo = _MeshSolo_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.WorkflowStep = _WorkflowStep_ :> FSharp.Data.Adaptive.aval<WorkflowStep>
-    member __.FocusProjection = _FocusProjection_ :> FSharp.Data.Adaptive.aval<FocusProjection>
+    member __.PointProbe = _PointProbe_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.string * Aardvark.Base.V3d * Microsoft.FSharp.Core.float)>>
+    member __.CorrFlash = _CorrFlash_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Aardvark.Base.V3d * Microsoft.FSharp.Core.int)>>
     member __.CorrArm = _CorrArm_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(ScanPinId * Microsoft.FSharp.Core.string)>>
     member __.CorrPreview = _CorrPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.BrushedSamples = _BrushedSamples_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Set<Microsoft.FSharp.Core.int>>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.OutlineWidthPx = _OutlineWidthPx_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineOpacity = _IsolineOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.LocateBackup = _LocateBackup_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LocateState>>
-    member __.SliceMode = _SliceMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.SliceCut = _SliceCut_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.SliceStretch = _SliceStretch_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.NearCutFrac = _NearCutFrac_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
 

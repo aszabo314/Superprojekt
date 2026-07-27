@@ -24,39 +24,26 @@ type LsqPairsRequest = { MovingName: string; Pairs: LsqPairDto[] }
 [<CLIMutable>]
 type ContactRingsRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
 
+// World pose (Forward): mesh-local + centroid → world. The server is stateless
+// w.r.t. registration — callers compose and send the poses explicitly.
 [<CLIMutable>]
-type ProbeMeshDto = { Name: string; Transform: float[] }
-
-// TransformOther = the same mesh at the opposite registration pose; when present
-// the response carries planesOther so one request serves the before/after pair.
-[<CLIMutable>]
-type SliceMeshDto = { Name: string; Transform: float[]; TransformOther: float[] }
+type PairMeshDto = { Name: string; Transform: float[] }
 
 [<CLIMutable>]
-type SliceRequest = {
-    Meshes            : SliceMeshDto[]
-    // Azimuth source: the slice uDir is fitted on this mesh's ROI surface
-    // (dip direction); absent/unknown → +X.
-    ReferenceName     : string
-    Centre            : float[]
-    Radius            : float
-    Offsets           : float[]
-    MaxPointsPerPlane : int
-}
+type PinRoiDto = { Id: string; Centre: float[]; Radius: float }
 
 [<CLIMutable>]
-type ProbeRequest = {
-    Meshes           : ProbeMeshDto[]
-    ReferenceName    : string
-    Centre           : float[]
-    Radius           : float
+type PairErrorRequest = {
+    MeshA            : PairMeshDto
+    MeshB            : PairMeshDto
+    Pins             : PinRoiDto[]
     Length           : float
     MaxPointsPerMesh : int
 }
 
 // Per-vertex signed distance target→reference, in the target's served vertex
 // order (so the client binds it as an aligned vertex attribute). Transforms are
-// world-space rigid M44 (Forward), matching the probe convention.
+// world-space rigid M44 (Forward): local + centroid → world.
 [<CLIMutable>]
 type RegionDistanceRequest = {
     TargetName       : string
@@ -65,8 +52,6 @@ type RegionDistanceRequest = {
     RefIndex         : int
     TargetTransform  : float[]
     RefTransform     : float[]
-    // 0 = signed M3C2 closest-point (default), 1 = vertical Z difference.
-    Mode             : int
 }
 
 let inline toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
@@ -145,11 +130,11 @@ let private mat16 (a : float[]) =
     else M44d.Identity
 
 // Per-vertex signed M3C2-style distance (cloud-to-mesh), signed by the ref
-// surface normal at the closest point. Both modes share one support rule: a
-// vertex responds only where the vertical world line through it pierces the
-// reference (the meshes overlap in Z there); everywhere else → large sentinel
-// the shader treats as "no encoding". Without that gate the closest-point
-// distance fabricates error along the fringe of non-overlapping regions.
+// surface normal at the closest point. Support rule: a vertex responds only
+// where the vertical world line through it pierces the reference (the meshes
+// overlap in Z there); everywhere else → large sentinel the shader treats as
+// "no encoding". Without that gate the closest-point distance fabricates error
+// along the fringe of non-overlapping regions.
 let regionDistanceHandler : HttpHandler =
     tryQuery "region-distance" (fun ctx -> task {
         let log = ctx.GetLogger "Superserver"
@@ -166,24 +151,9 @@ let regionDistanceHandler : HttpHandler =
         let dist = Array.zeroCreate<float32> pos.Length
         let dnLocal = (rInv.TransformDir (V3d(0.0, 0.0, -1.0))).Normalized
         let upLocal = (rInv.TransformDir (V3d(0.0, 0.0,  1.0))).Normalized
-        if req.Mode = 1 then
-            // z-diff: vertical world ray onto the reference; signed Δz
-            // (moving above reference → positive). Down then up.
-            Parallel.For(0, pos.Length, fun i ->
-                let vWorld = tT.TransformPos (V3d pos.[i] + cT)
-                let vRefLocal = rInv.TransformPos vWorld - cR
-                let mutable hd = RayHit()
-                if lmR.scene.Intersect(V3f vRefLocal, V3f dnLocal, &hd) then
-                    dist.[i] <- float32 hd.T
-                else
-                    let mutable hu = RayHit()
-                    if lmR.scene.Intersect(V3f vRefLocal, V3f upLocal, &hu) then
-                        dist.[i] <- float32 (- hu.T)
-                    else dist.[i] <- 1e30f) |> ignore
-        else
-            // M3C2 closest point, but with mode-1 support: the vertical line
-            // through the vertex must pierce the reference, else no response.
-            Parallel.For(0, pos.Length, fun i ->
+        // M3C2 closest point with the Z-overlap support gate: the vertical
+        // line through the vertex must pierce the reference, else no response.
+        Parallel.For(0, pos.Length, fun i ->
                 let vWorld = tT.TransformPos (V3d pos.[i] + cT)
                 let vRefLocal = rInv.TransformPos vWorld - cR
                 let mutable h = RayHit()
@@ -225,90 +195,105 @@ let contactRingsHandler : HttpHandler =
         return json {| rings = out |}
     })
 
-// Vertical cross-sections through a pin: every mesh × every parallel plane ×
-// both registration poses in one request (per-mesh world transforms, probe
-// convention), 2D chart-frame polylines back — see MeshAnalysis.planeSlices.
-// The section azimuth is computed HERE, once per pin, from the reference mesh
-// (max z-range ≈ dip direction), so every cell of a pin's matrix row shares one
-// world-space line; the response returns it for the client's chart↔world maths.
-let sliceHandler : HttpHandler =
-    tryQuery "slice" (fun ctx -> task {
-        let log = ctx.GetLogger "Superserver"
-        let! req = ctx.BindJsonAsync<SliceRequest>()
-        let radius  = if req.Radius <= 0.0 then 1.0 else req.Radius
-        let maxPts  = if req.MaxPointsPerPlane <= 0 then 400 else min req.MaxPointsPerPlane 4000
-        let offsets =
-            if isNull req.Offsets || req.Offsets.Length = 0 then [| 0.0 |]
-            elif req.Offsets.Length > 65 then
-                log.LogWarning("slice: {Count} offsets capped to 65", req.Offsets.Length)
-                Array.truncate 65 req.Offsets
-            else req.Offsets
-        let centre  = toV3d req.Centre
-        let meshes  = req.Meshes |> Array.map (fun m ->
-            let other = if isNull m.TransformOther then None else Some (mat16 m.TransformOther)
-            m.Name, loadMesh m.Name 0, mat16 m.Transform, other)
-        let uDir =
-            meshes
-            |> Array.tryFind (fun (n, _, _, _) -> n = req.ReferenceName)
-            |> Option.bind (fun (_, lm, t, _) -> MeshAnalysis.dipAzimuth lm t centre radius)
-            |> Option.defaultValue V3d.IOO
-        let normal = Vec.cross V3d.OOI uDir
-        let flatten (planes : V2d[][][]) =
-            planes |> Array.map (Array.map (fun line ->
-                let flat = Array.zeroCreate<float> (line.Length * 2)
-                for i in 0 .. line.Length - 1 do
-                    flat.[i * 2]     <- line.[i].X
-                    flat.[i * 2 + 1] <- line.[i].Y
-                flat))
-        let results =
-            meshes
-            |> Array.Parallel.map (fun (name, lm, trafo, other) ->
-                let planes = MeshAnalysis.planeSlices lm trafo centre uDir normal radius offsets maxPts
-                {| name = name
-                   planes = flatten planes
-                   planesOther =
-                    match other with
-                    | Some t -> flatten (MeshAnalysis.planeSlices lm t centre uDir normal radius offsets maxPts)
-                    | None -> (null : float[][][]) |})
-        let pts = results |> Array.sumBy (fun m -> m.planes |> Array.sumBy (Array.sumBy (fun (l : float[]) -> l.Length / 2)))
-        log.LogInformation("slice r={Radius:F2} ×{Planes} planes az=({Ax:F2},{Ay:F2}): {Meshes} meshes, {Points} pts",
-            radius, offsets.Length, uDir.X, uDir.Y, results.Length, pts)
-        return json {| azimuth = fromV3d uDir; meshes = results |}
-    })
+let private pairMesh (dto : PairMeshDto) : PairError.PairMesh =
+    { Name = dto.Name; Lm = loadMesh dto.Name 0; Transform = mat16 dto.Transform }
 
-let probeHandler : HttpHandler =
-    tryQuery "probe" (fun ctx -> task {
+// Symmetric pairwise pin error at explicit poses — see the PairError module
+// doc-comment for the measure and sign convention. A pin without overlap
+// reports per-pin ok=false; the batch itself never fails on it.
+let pairErrorHandler : HttpHandler =
+    tryQuery "pair-error" (fun ctx -> task {
         let log = ctx.GetLogger "Superserver"
-        let! req = ctx.BindJsonAsync<ProbeRequest>()
-        let meshes =
-            req.Meshes |> Array.map (fun m ->
-                { MeshProbe.Name = m.Name; MeshProbe.Lm = loadMesh m.Name 0; MeshProbe.Transform = mat16 m.Transform })
-        let args : MeshProbe.ProbeArgs = {
-            Meshes           = meshes
-            ReferenceName    = req.ReferenceName
-            Centre           = toV3d req.Centre
-            Radius           = if req.Radius <= 0.0 then 1.0 else req.Radius
+        let! req = ctx.BindJsonAsync<PairErrorRequest>()
+        if isNull (box req.Pins) || req.Pins.Length = 0 then
+            raise (ArgumentException "pair-error needs at least one pin")
+        let toRoi (p : PinRoiDto) : PairError.PinRoi =
+            { Id = p.Id; Centre = toV3d p.Centre
+              Radius = if p.Radius <= 0.0 then 1.0 else p.Radius }
+        let args : PairError.PairErrorArgs = {
+            A                = pairMesh req.MeshA
+            B                = pairMesh req.MeshB
+            Pins             = req.Pins |> Array.map toRoi
             Length           = req.Length
             MaxPointsPerMesh = if req.MaxPointsPerMesh <= 0 then 8192 else min req.MaxPointsPerMesh 65536
         }
-        match MeshProbe.run args with
+        let pins = PairError.run args
+        log.LogInformation("pair-error {A} × {B}: {Pins} pins ({Ok} ok), {Points} samples",
+            req.MeshA.Name, req.MeshB.Name, pins.Length,
+            (pins |> Array.sumBy (fun p -> if p.Ok then 1 else 0)),
+            (pins |> Array.sumBy (fun p -> p.Count)))
+        return json {|
+            pins = pins |> Array.map (fun p ->
+                {| id = p.Id; ok = p.Ok; reason = p.Reason
+                   normal = fromV3d p.Normal
+                   count = p.Count; median = p.Median; lodHalfWidth = p.LodHalfWidth
+                   samples = p.Samples; positions = p.Positions |})
+        |}
+    })
+
+[<CLIMutable>]
+type PairPointErrorRequest = {
+    MeshA   : PairMeshDto
+    MeshB   : PairMeshDto
+    Point   : float[]
+    Radius  : float
+    MaxDist : float
+}
+
+// Exact pairwise error at one picked world point (hover readout / armed probe).
+let pairErrorAtHandler : HttpHandler =
+    tryQuery "pair-error-at" (fun ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        let! req = ctx.BindJsonAsync<PairPointErrorRequest>()
+        let args : PairError.PointErrorArgs = {
+            A       = pairMesh req.MeshA
+            B       = pairMesh req.MeshB
+            Point   = toV3d req.Point
+            Radius  = if req.Radius <= 0.0 then 1.0 else req.Radius
+            MaxDist = if req.MaxDist <= 0.0 then 100.0 else req.MaxDist
+        }
+        match PairError.atPoint args with
         | Result.Error reason ->
-            log.LogInformation("probe ref={Ref}: rejected ({Reason})", req.ReferenceName, reason)
+            log.LogInformation("pair-error-at {A} × {B}: rejected ({Reason})", req.MeshA.Name, req.MeshB.Name, reason)
             return json {| ok = false; reason = reason |}
         | Result.Ok r ->
-            let dists =
-                r.Distributions |> Array.map (fun d ->
-                    {| name = d.Name; count = d.Count
-                       median = d.Median; std = d.Std
-                       samples = d.Samples; positions = d.Positions |})
-            log.LogInformation("probe ref={Ref} r={Radius:F2} L={Length:F1}: {Meshes} meshes, {Points} pts",
-                req.ReferenceName, args.Radius, r.Length,
-                r.Distributions.Length, (r.Distributions |> Array.sumBy (fun d -> d.Count)))
+            log.LogInformation("pair-error-at {A} × {B}: {Value:F4} m", req.MeshA.Name, req.MeshB.Name, r.Value)
             return json {|
-                ok = true
-                normal = fromV3d r.Normal
-                distributions = dists
+                ok = true; value = r.Value; normal = fromV3d r.Normal
+                pointA = fromV3d r.PointA; pointB = fromV3d r.PointB
             |}
+    })
+
+[<CLIMutable>]
+type PairOverlapRequest = {
+    MeshA       : PairMeshDto
+    MeshB       : PairMeshDto
+    MaxDist     : float
+    MinFraction : float
+    MaxSamples  : int
+}
+
+// Cheap overlap sufficiency — drives the pair matrix "possible vs impossible".
+let pairOverlapHandler : HttpHandler =
+    tryQuery "pair-overlap" (fun ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        let! req = ctx.BindJsonAsync<PairOverlapRequest>()
+        let args : PairError.OverlapArgs = {
+            A           = pairMesh req.MeshA
+            B           = pairMesh req.MeshB
+            MaxDist     = req.MaxDist
+            MinFraction = req.MinFraction
+            MaxSamples  = req.MaxSamples
+        }
+        let r = PairError.overlap args
+        log.LogInformation("pair-overlap {A} × {B}: {Sufficient} (A→B {FracAB:F2}, B→A {FracBA:F2}, d≤{MaxDist:F1} m)",
+            req.MeshA.Name, req.MeshB.Name, r.Sufficient, r.FracAB, r.FracBA, r.MaxDist)
+        return json {|
+            sufficient = r.Sufficient
+            fracAB = r.FracAB; fracBA = r.FracBA
+            maxDist = r.MaxDist
+            samplesA = r.SamplesA; samplesB = r.SamplesB
+        |}
     })
 
 // Points arrive in world space at current poses; the returned transform is a

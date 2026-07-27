@@ -58,13 +58,9 @@ body.loaded { background: #f4f6f8; }
 
 /* ── Render canvas ──────────────────────────────────────────────────── */
 
-/* Bottom-dock height — dragged via the dock's top-edge handle (.dock-resize).
-   Everything anchored to the dock (render control, bottom overlays) reads
-   this one value, so a resize moves them all together. */
-/* Reference gold (§B1: gold = reference) — ONE token family for every
-   reference marker so the hue can't fork again. */
+/* Gold = the reference root — ONE token family for every root marker so the
+   hue can't fork again. */
 :root {
-    --dock-h: 220px;
     --ref-gold: #d4a106;
     --ref-gold-dark: #b45309;
     --ref-gold-pale: #fde68a;
@@ -72,8 +68,7 @@ body.loaded { background: #f4f6f8; }
 
 .render-control {
     width: 100%;
-    /* Reserve the bottom dock height so the 3D scene never sits under it. */
-    height: calc(100% - var(--dock-h));
+    height: 100%;
     background: rgb(244, 246, 248);
 }
 
@@ -118,7 +113,7 @@ body.loaded { background: #f4f6f8; }
 }
 .tb-btn-tiny:hover { background: #edf0f4; color: #0f172a; }
 
-/* ── Workflow rail (the three-mode rail) ───────────────────────────────────────────── */
+/* ── Left navigator rail ───────────────────────────────────────────── */
 .workflow-rail {
     position: fixed;
     top: 32px; left: 0;
@@ -133,231 +128,21 @@ body.loaded { background: #f4f6f8; }
     font-size: 12px;
     z-index: 998;
 }
-.rail-steps { display: flex; flex-direction: column; }
-.rail-step {
-    display: flex; align-items: center; gap: 6px;
-    width: 100%; text-align: left;
-    padding: 7px 10px;
-    background: #f8fafc;
-    border: none; border-bottom: 1px solid #e6eaf0;
-    cursor: pointer; font-size: 12px; color: #0f172a;
-}
-.rail-step:hover { background: #eef2f8; }
-.rail-step-active { background: #ffffff; box-shadow: inset 3px 0 0 #1a56db; font-weight: 600; }
-.rail-step-no {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 18px; height: 18px; border-radius: 50%;
-    background: #e2e8f0; color: #334155; font-size: 11px; font-weight: 600;
-}
-.rail-step-active .rail-step-no { background: #1a56db; color: #fff; }
-.rail-step-title { flex: 1; }
-.rail-pill {
-    display: inline-flex; align-items: center; justify-content: center;
-    min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px;
-    font-size: 10px; font-weight: 700;
-}
-.rail-pill-ready { background: #dcfce7; color: #16a34a; }
-.rail-pill-block { background: #fee2e2; color: #dc2626; }
-.rail-pill-info  { background: #e2e8f0; color: #475569; }
 .rail-body { padding: 8px 10px; border-bottom: 1px solid #e6eaf0; background: #fff; }
-.rail-mesh-list { display: flex; flex-direction: column; gap: 2px; }
 .rail-shape-cut { padding: 4px 2px 0 2px; border-top: 1px solid #eef2f6; margin-top: 4px; }
-.rail-mesh-row {
-    display: flex; align-items: center; gap: 4px; padding: 2px 0;
-}
-.rail-mesh-row { cursor: pointer; border-radius: 3px; }
-.rail-mesh-sel { background: #eef2ff; box-shadow: inset 2px 0 0 #1a56db; }
-.rail-mesh-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* Per-mesh intrinsic error-viz switches (Overview roster) — compact, right-aligned. */
+/* Per-mesh intrinsic error-viz switches (Setup survey rows) — compact, right-aligned. */
 .rail-mesh-modes { margin-left: auto; flex-shrink: 0; }
 .rail-mesh-modes .cbb-btn { padding: 1px 5px; font-size: 10px; line-height: 13px; }
-/* Solve button + reconstruction-readiness hint at the top of the Correspondence body. */
-.rail-solve-row { display: flex; align-items: flex-start; gap: 8px; margin-bottom: 2px; }
-.rail-solve { flex-shrink: 0; }
-.rail-readiness { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
-.rail-step-controls { display: flex; flex-direction: column; gap: 8px; }
 .rail-btn {
     padding: 5px 10px; border: 1px solid #cbd5e1; border-radius: 4px;
     background: #f1f5f9; color: #0f172a; cursor: pointer; font-size: 12px;
 }
 .rail-btn:hover { background: #e2e8f0; }
 .rail-btn:disabled { opacity: 0.5; cursor: default; }
-.rail-btn-primary, .rail-btn-active { background: #1a56db; border-color: #1a56db; color: #fff; }
-.rail-btn-primary:hover { background: #1648b8; }
-.rail-pins-head { display: flex; align-items: center; margin-bottom: 6px; }
-/* "Isolate pins" checkbox (§7) — a compactToggle beside the New-pin button */
+.rail-btn-active { background: #1a56db; border-color: #1a56db; color: #fff; }
 .rail-isolate { margin-left: 8px; border-radius: 3px; }
 
-/* ── pin × mesh matrix (§B) — the rail navigation backbone ── */
-.rail-matrix-wrap { overflow-x: auto; }
-.mx { display: flex; flex-direction: column; font-size: 11px; }
-.mx-head { display: flex; align-items: stretch; gap: 2px; margin-bottom: 2px; }
-/* empty spacer aligning the column heads over the cells */
-.mx-corner { width: 64px; flex: 0 0 64px; }
-.mx-colhead {
-    flex: 0 0 34px; width: 34px; display: flex; flex-direction: column; align-items: center;
-    cursor: pointer; padding: 1px 0; border-radius: 3px; gap: 1px;
-}
-.mx-colhead:hover { background: #ecfeff; }
-/* Two disjoint highlight channels: REFERENCE = colour (persistent gold
-   header + gold frame down the whole column); SELECTION = opacity + accent
-   (dim everything outside the selected row/column, accent-fill the headers,
-   ring the intersecting cell). Black is data ink inside the diagrams — no
-   black outlines here. */
-.mx-col-ref { background: var(--ref-gold-pale); box-shadow: inset 0 0 0 2px var(--ref-gold-dark); }
-/* selected mesh column header: accent-filled inline (mesh colour) + a neutral inset */
-.mx-colhead-sel { box-shadow: inset 0 0 0 1px #94a3b8; }
-.mx-colsw { width: 14px; height: 6px; border-radius: 2px; display: inline-block; }
-.mx-colnum { font-weight: 700; color: #334155; font-size: 10px; }
-.mx-rows { display: flex; flex-direction: column; gap: 2px; }
-.mx-row { display: flex; align-items: stretch; gap: 2px; border-radius: 3px; }
-.mx-row-hover { background: #f1f5f9; }
-/* selected pin row header: neutral accent fill + inset (pins carry no colour) */
-.mx-rowhead-sel { box-shadow: inset 0 0 0 1px #94a3b8; background: #dbe2ea; }
-.mx-rowhead {
-    width: 64px; flex: 0 0 64px; display: flex; align-items: center; gap: 4px;
-    cursor: pointer; padding: 1px 3px; overflow: hidden; border-radius: 3px;
-}
-/* pin identity: name-only, near-black text on the neutral header (v12 §4) */
-.mx-pinname {
-    flex: 1; border-radius: 3px; color: #292524; padding: 1px 0;
-    display: inline-flex; align-items: center; justify-content: center;
-    font-size: 10px; font-weight: 700; letter-spacing: 0.3px; line-height: 1.4;
-}
-.mx-del { color: #dc2626; visibility: hidden; }
-.mx-rowhead:hover .mx-del { visibility: visible; }
-/* slice cell (§A): fixed landscape footprint — the SVG diagram is generated at
-   exactly this CSS px size; the neutral grey ground is the cell background */
-.mx-cell {
-    flex: 0 0 34px; width: 34px; height: 26px; border-radius: 3px; cursor: pointer;
-    background: #e8edf3; border: 1px solid transparent; overflow: hidden;
-}
-.mx-cell svg { display: block; }
-.mx-cell:hover { border-color: #0891b2; }
-/* cells of the reference column: thick gold side-rails (bottom-closed on the
-   last row) so the whole column reads as one gold frame */
-.mx-cell-ref { box-shadow: inset 2px 0 0 var(--ref-gold), inset -2px 0 0 var(--ref-gold); }
-.mx-row:last-child .mx-cell-ref {
-    box-shadow: inset 2px 0 0 var(--ref-gold), inset -2px 0 0 var(--ref-gold), inset 0 -2px 0 var(--ref-gold);
-}
-/* the selection cross: every cell outside the selected row/column stands down */
-.mx-cell-dim { opacity: 0.4; }
-.mx-cell-active { border-color: #0891b2; box-shadow: 0 0 0 1px #0891b2; }
-/* the ACTIVE cell selection (SelCell): one strong accent ring — an OUTLINE so it
-   coexists with the reference column's inset gold rails */
-.mx-cell-sel { border-color: #1a56db; outline: 2px solid #1a56db; outline-offset: 0px; }
-/* out-of-ROI: a faint hairline hatch, not blank */
-.mx-cell-empty {
-    background: repeating-linear-gradient(45deg, #f4f6f8, #f4f6f8 3px, #e2e8f0 3px, #e2e8f0 4px) !important;
-}
-/* probe still running */
-.mx-cell-pending { background: #eef2f6 !important; opacity: 0.55; }
-
-/* dock pin-identity label (Correspondence): near-black name, neutral border */
-.ins-pinident {
-    display: inline-flex; align-items: center; padding: 1px 8px;
-    border-radius: 4px; color: #292524; font-weight: 700; letter-spacing: 0.3px;
-    border: 1px solid #cbd5e1; background: #f8fafc;
-}
-.ins-insp-sub { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; }
-
-/* ── Focus panel: large single + canvas small multiples ──────── */
-.focus-panel {
-    position: fixed;
-    top: 32px; right: 0;
-    width: 340px;
-    max-height: calc(100vh - 260px);
-    display: flex; flex-direction: column;
-    background: #ffffff;
-    border-left: 1px solid #d7dce4;
-    border-bottom: 1px solid #d7dce4;
-    box-shadow: -2px 2px 8px rgba(0,0,0,0.06);
-    font-size: 12px;
-    z-index: 998;
-}
-/* aspect-locked resize handle on the panel's left edge, with a visible grip bar */
-.focus-resize { position: absolute; left: -4px; top: 0; bottom: 0; width: 10px; cursor: ew-resize; z-index: 5; touch-action: none; display: flex; align-items: center; justify-content: center; }
-.focus-resize::before {
-  content: ""; width: 5px; height: 48px; border-radius: 3px;
-  background: #cbd5e1; border: 1px solid #94a3b8;
-  background-image: repeating-linear-gradient(to bottom, #64748b 0, #64748b 1px, transparent 1px, transparent 4px);
-  background-position: center; background-repeat: no-repeat; background-size: 1px 20px;
-}
-.focus-resize:hover::before { background-color: #1a56db; border-color: #1a56db; }
-/* min-height keeps the strip from collapsing when every control is hidden
-   (Overview, no pin) — the containers never move, only content changes */
-.focus-head {
-    display: flex; align-items: center; gap: 8px; min-height: 29px;
-    padding: 5px 8px; border-bottom: 1px solid #e6eaf0; background: #f8fafc;
-}
-/* selected-pin identity label: near-black name, neutral border */
-.focus-pinchip {
-    display: inline-flex; align-items: center;
-    font-weight: 700; font-size: 13px; letter-spacing: 0.3px; color: #292524;
-    padding: 1px 8px; border-radius: 10px;
-    border: 1px solid #cbd5e1; background: #f8fafc;
-}
-/* right-aligned button group in the focus head */
-.focus-head-right { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; }
-/* set-correspondence toggle */
-.focus-set {
-    padding: 3px 8px; border: 1px solid #cbd5e1; border-radius: 4px;
-    background: #fff; color: #1a56db; cursor: pointer; font-size: 11px;
-}
-.focus-set:hover { background: #eef2f6; }
-.focus-set.btn-active { background: #1a56db; color: #fff; border-color: #1a56db; }
-/* large single — WebGL render control (textured; pan/zoom/pick) */
-.focus-single { width: 100%; height: 280px; background: #eef2f6; position: relative; touch-action: none; }
-.focus-rc { display: block; width: 100%; height: 100%; }
-/* WebGL small-multiples strip — a grid so the tiles grow to fill each row exactly
-   (no ragged right-edge gap) and align column-to-column. */
-.focus-multiples {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
-    gap: 4px; align-content: flex-start;
-    padding: 6px; overflow-y: auto; max-height: 40vh;
-    border-top: 1px solid #e6eaf0;
-}
-.focus-tile {
-    display: flex; flex-direction: column; gap: 2px;
-    border: 1px solid #e2e8f0; border-radius: 4px; padding: 2px; background: #fff;
-    width: auto; min-width: 0;
-}
-.focus-tile:hover { border-color: #94a3b8; }
-.focus-tile.fm-active { border-color: #1a56db; box-shadow: 0 0 0 1px #1a56db inset; }
-/* reference tile: a prominent gold ring (T10) */
-.focus-tile.ft-ref { border-color: var(--ref-gold); box-shadow: 0 0 0 1px var(--ref-gold) inset; }
-.focus-tile .focus-rc { width: 100%; height: 72px; }
-.focus-tile-view { display: flex; flex-direction: column; gap: 2px; cursor: pointer; }
-.ft-refstar { color: var(--ref-gold); font-size: 10px; }
-.fm-label {
-    display: flex; align-items: center; gap: 4px;
-    font-size: 10px; color: #334155; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-.fm-sw { width: 8px; height: 8px; flex-shrink: 0; border-radius: 1px; display: inline-block; }
-/* Overview drops the large single; tiles fill the panel */
-.fp-overview .focus-multiples { max-height: none; flex: 1; }
-
 .lp-sublabel { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
-
-/* ── Mesh list ─────────────────────────────────────────────────────── */
-
-.mesh-swatch {
-    width: 10px; height: 10px;
-    border-radius: 2px;
-    border: 1px solid rgba(0,0,0,0.15);
-    flex-shrink: 0;
-}
-/* Stable 1-based mesh index, matches the palette colour; disambiguates
-   similar mesh names across every list / chart. */
-.mesh-num {
-    flex-shrink: 0;
-    min-width: 14px;
-    text-align: right;
-    font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 10px;
-    font-weight: 600;
-    color: #64748b;
-}
 
 
 /* ── Mini button ───────────────────────────────────────────────────── */
@@ -370,34 +155,6 @@ body.loaded { background: #f4f6f8; }
     flex-shrink: 0;
 }
 .mb:hover { background: #e2e8f0; color: #0f172a; }
-.mb-on { color: #1a56db; }
-.mb-ref.mb-on { color: var(--ref-gold-dark); }
-
-/* ── Global before/after registration toggle (top bar) ─────────────── */
-
-.tb-regview { display: inline-flex; border: 1px solid #cbd5e1; border-radius: 5px; overflow: hidden; }
-.tb-regview-off { opacity: 0.45; pointer-events: none; }
-.tb-regview-btn {
-    border: none; background: #fff; color: #334155; cursor: pointer;
-    font-size: 12px; padding: 3px 10px;
-}
-.tb-regview-btn + .tb-regview-btn { border-left: 1px solid #e2e8f0; }
-.tb-regview-btn.btn-active { background: #1a56db; color: #fff; }
-/* spring-loaded peek: amber while held (momentary), to read apart from the committed toggle */
-.tb-regview-peek { font-style: italic; }
-.tb-regview-peek.btn-active { background: #d97706; color: #fff; }
-
-.tb-ready-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; white-space: nowrap; padding: 2px 8px; border-radius: 10px; border: 1px solid #e2e8f0; background: #f8fafc; }
-.tb-ready-ic { flex-shrink: 0; }
-.tb-ready-tx { overflow: hidden; text-overflow: ellipsis; }
-.tb-ready-block { background: #fef2f2; border-color: #fecaca; color: #b91c1c; }
-.tb-ready-block .tb-ready-ic { color: #dc2626; }
-.tb-ready-warn { background: #fffbeb; border-color: #fde68a; color: #b45309; }
-.tb-ready-warn .tb-ready-ic { color: #d97706; }
-.tb-ready-ready { background: #f0fdf4; border-color: #bbf7d0; color: #15803d; }
-.tb-ready-ready .tb-ready-ic { color: #16a34a; }
-.tb-ready-info { color: #475569; }
-.tb-ready-info .tb-ready-ic { color: #94a3b8; }
 
 /* ── Toast ─────────────────────────────────────────────────────────── */
 
@@ -499,7 +256,6 @@ body.loaded { background: #f4f6f8; }
     align-self: center;
 }
 .tb-coord-w { color: #475569; }
-.tb-coord-l { color: #1a56db; font-weight: 600; }
 .tb-gear-wrap { position: relative; display: flex; }
 .tb-gear-popover {
     position: absolute; right: 0; top: 28px;
@@ -522,13 +278,6 @@ body.loaded { background: #f4f6f8; }
 .tb-gear-row .cbb-btn:hover { background: #334155; }
 .tb-gear-row .cbb-btn-active { background: #1a56db !important; color: #ffffff !important; }
 .tb-gear-row .lp-sublabel { color: #94a3b8; }
-.tb-gear-log {
-    font-family: 'SF Mono', 'Monaco', monospace;
-    font-size: 10px; color: #86efac;
-    max-height: 140px; overflow-y: auto;
-    border-top: 1px solid #334155; padding-top: 4px;
-    white-space: pre-wrap;
-}
 .tb-gear-val {
     font-family: 'SF Mono', 'Monaco', monospace;
     font-size: 10px; color: #cbd5e1;
@@ -544,35 +293,6 @@ body.loaded { background: #f4f6f8; }
 .tb-gear-mesh-name { flex: 0 0 140px; color: #60a5fa; }
 .tb-gear-mesh-coord { color: #cbd5e1; }
 
-/* placement hard-prohibit tooltip at the cursor */
-.placement-tooltip {
-    position: fixed;
-    pointer-events: none;
-    font-size: 11px; font-weight: 600;
-    color: #b91c1c;
-    background: rgba(255, 255, 255, 0.95);
-    border: 1px solid #dc2626;
-    border-radius: 3px;
-    padding: 2px 8px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
-    z-index: 10000;
-    white-space: nowrap;
-}
-
-/* correspondence-commit confirmation flash */
-.corr-flash-layer { position: fixed; inset: 0; pointer-events: none; z-index: 220; overflow: hidden; }
-.corr-flash {
-    position: absolute; width: 16px; height: 16px; margin: -8px 0 0 -8px;
-    border: 3px solid #292524; border-radius: 50%;
-    box-shadow: 0 0 0 2px rgba(255,255,255,0.9) inset;
-    animation: corr-flash-pop 0.6s ease-out forwards;
-}
-@keyframes corr-flash-pop {
-    0%   { transform: scale(0.4); opacity: 1; }
-    70%  { transform: scale(2.4); opacity: 0.7; }
-    100% { transform: scale(3.0); opacity: 0; }
-}
-
 /* near-cut slider in the top bar */
 .tb-cut { display: inline-flex; align-items: center; margin-right: 10px; }
 .tb-cut .is-range { width: 100px; }
@@ -582,7 +302,7 @@ body.loaded { background: #f4f6f8; }
 
 .scale-bar {
     position: fixed;
-    left: 12px; bottom: calc(var(--dock-h) + 10px);
+    left: 12px; bottom: 10px;
     pointer-events: none; z-index: 100;
     background: rgba(255,255,255,0.6);
     padding: 4px 6px 2px 6px;
@@ -609,7 +329,7 @@ body.loaded { background: #f4f6f8; }
 
 .orient-indicator {
     position: fixed;
-    right: 10px; bottom: calc(var(--dock-h) + 10px);
+    right: 10px; bottom: 10px;
     width: 60px; height: 60px;
     pointer-events: none; z-index: 100;
 }
@@ -618,7 +338,7 @@ body.loaded { background: #f4f6f8; }
 
 .color-legend {
     position: fixed;
-    left: 50%; bottom: calc(var(--dock-h) + 10px);
+    left: 50%; bottom: 10px;
     transform: translateX(-50%);
     pointer-events: none; z-index: 100;
     background: rgba(255,255,255,0.75);
@@ -637,84 +357,67 @@ body.loaded { background: #f4f6f8; }
     .tb-gear-popover { width: calc(100vw - 16px); }
     .tb-coord { font-size: 10px; }
 }
+.pmx { display: flex; flex-direction: column; gap: 3px; padding: 4px 2px; }
+.pmx-row { display: flex; gap: 3px; align-items: center; }
+.pmx-rowhead { width: 36px; display: flex; align-items: center; gap: 3px; flex: none; }
+.pmx-colhead { width: 22px; display: flex; align-items: center; justify-content: center; gap: 2px; flex: none; }
+.pmx-sw { width: 8px; height: 8px; border-radius: 2px; flex: none; }
+.pmx-num { font-size: 10px; font-weight: 600; color: #334155; }
+.pmx-cell { width: 22px; height: 22px; border-radius: 3px; flex: none; box-sizing: border-box; }
+.pmx-void { visibility: hidden; }
+.pmx-imp { background: #eef1f4; }
+.pmx-pos { background: #ffffff; border: 1.5px solid #94a3b8; }
+.pmx-reg { border: 1px solid #0f172a; }
+.pmx-order { display: flex; align-items: center; gap: 6px; padding: 2px 0 4px; }
+.pmx-order-label { font-size: 10px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
+.pmx-home { display: flex; flex-direction: column; gap: 4px; }
+.pmx-tabs { display: flex; align-items: center; padding: 2px 0; }
+.pmx-root { display: flex; flex-direction: column; gap: 2px; padding: 2px 0 6px; }
+.pmx-root-hint { font-size: 10px; color: #64748b; padding: 2px 0 4px; }
+.pmx-root-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
+.pmx-root-row:hover { background: #eef2f6; }
+.pmx-root-on { background: #fdf6e8; border-color: #b45309; }
+.pmx-root-name { flex: 1; font-size: 11px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pmx-root-star { color: #b45309; font-size: 12px; width: 14px; text-align: center; }
 
-/* ── Pin inspector: bottom dock ─────────────── */
+/* ── Cell-workspace (one pair): persistent A↔B header + per-pair toolkit. */
+.cw { display: flex; flex-direction: column; gap: 6px; }
+.cw-head { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
+.cw-back { border: 1px solid #cbd5e1; background: #ffffff; border-radius: 4px; width: 22px; height: 22px; cursor: pointer; font-size: 14px; line-height: 1; color: #334155; flex: none; }
+.cw-back:hover { background: #eef2f6; }
+.cw-chip { display: flex; align-items: center; gap: 4px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 6px; background: #ffffff; min-width: 0; }
+.cw-chip-name { font-size: 11px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cw-link { color: #64748b; font-weight: 700; flex: none; }
+.cw-state { font-size: 10px; color: #64748b; padding: 0 2px; }
+.cw-tools { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.cw-draft { display: flex; align-items: center; gap: 6px; padding: 3px 0; flex-wrap: wrap; }
+.cw-cue { font-size: 10px; color: #64748b; font-family: 'SF Mono', Monaco, monospace; }
+.cw-commit:not([disabled]) { border-color: #15803d; color: #15803d; }
+.cw-abort { color: #b91c1c; }
+.cw-pins { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
+.cw-pin-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; }
+.cw-pin-row:hover { background: #eef2f6; }
+.cw-pin-name { font-size: 11px; font-weight: 700; color: #292524; width: 22px; flex: none; }
+.cw-edit { font-size: 10px; }
+.cw-del { color: #b91c1c; }
+.cw-inspect { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid #e2e8f0; }
+.cw-readout { display: flex; gap: 10px; font-size: 10px; font-family: 'SF Mono', Monaco, monospace; color: #334155; min-height: 13px; }
+.cw-readout-probe { color: #b45309; }
+.cw-readout-hover { color: #0891b2; }
+.cw-chart { width: 100%; height: 160px; cursor: crosshair; touch-action: none; }
+.cw-brush-bridge { display: none; }
 
-.pin-inspector {
-    position: fixed;
-    left: 0; right: 0; bottom: 0;
-    height: var(--dock-h);
-    background: #ffffff;
-    border-top: 1px solid #d7dce4;
-    box-shadow: 0 -2px 8px rgba(0,0,0,0.06);
-    z-index: 997;
-    display: flex; flex-direction: column;
-    font-size: 12px;
-}
-/* dock resize handle on the top edge — the horizontal twin of .focus-resize */
-.dock-resize { position: absolute; top: -4px; left: 0; right: 0; height: 10px; cursor: ns-resize; z-index: 5; touch-action: none; display: flex; align-items: center; justify-content: center; }
-.dock-resize::before {
-  content: ""; width: 48px; height: 5px; border-radius: 3px;
-  background: #cbd5e1; border: 1px solid #94a3b8;
-  background-image: repeating-linear-gradient(to right, #64748b 0, #64748b 1px, transparent 1px, transparent 4px);
-  background-position: center; background-repeat: no-repeat; background-size: 20px 1px;
-}
-.dock-resize:hover::before { background-color: #1a56db; border-color: #1a56db; }
-/* step-contextual modes, cross-faded (containers never move); no mode-label
-   header row — the rail names the mode, the dock height goes to content */
-.ins-modes { position: relative; flex: 1; min-height: 0; }
-.ins-mode {
-    position: absolute; inset: 0; display: flex; min-width: 0;
-    opacity: 0; pointer-events: none; transition: opacity 0.18s ease;
-}
-.ins-mode.ins-mode-on { opacity: 1; pointer-events: auto; }
-.ins-mgr-wrap { flex: 1; display: flex; min-width: 0; }
-
-/* correspondence manager */
-.ins-mgr { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 6px 10px; }
-
-/* ── Three-mode rail / dock ────────────────────────────────────────── */
-.rail-row-hover { background: #ecfeff; box-shadow: inset 2px 0 0 #0891b2; }
-
-/* Register dock — manager head (identity chip + radius) */
-.ins-mgr-head { display: flex; align-items: center; gap: 8px; padding-bottom: 4px; border-bottom: 1px solid #eef2f6; margin-bottom: 4px; }
-
-/* Register dock — per-mesh correspondence coordinate editor */
-.ins-anchor-rows { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; }
-.ins-anchor-row { display: flex; align-items: center; gap: 6px; font-size: 11px; }
-.ins-anchor-name {
-    width: 120px; flex: 0 0 120px;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    color: #0f172a;
-}
-.ins-anchor-ref { width: 12px; flex: 0 0 12px; color: var(--ref-gold-dark); text-align: center; }
-.ins-anchor-axis { display: flex; align-items: center; gap: 3px; }
-.ins-anchor-axlabel { color: #94a3b8; font-size: 10px; }
-.ins-anchor-num {
-    width: 88px; height: 20px; padding: 0 4px;
-    border: 1px solid #c5cdd8; border-radius: 3px;
-    font-family: 'SF Mono', 'Monaco', monospace; font-size: 11px; color: #0f172a;
-    background: #ffffff;
-}
-.ins-anchor-num:disabled { background: #f4f6f8; color: #cbd5e1; }
-.ins-anchor-note { margin-left: auto; color: #b45309; font-size: 10px; white-space: nowrap; }
-
-/* Inspect dock — stub note */
-.ins-stub-note { font-size: 11px; color: #64748b; line-height: 1.4; margin-top: 4px; }
-
-/* Inspect dock — channel toggle + distribution + shift readout */
-.ins-inspect { flex: 1; display: flex; flex-direction: column; min-width: 0; padding: 4px 10px 6px; }
-.ins-insp-head { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; padding-bottom: 3px; border-bottom: 1px solid #eef2f6; margin-bottom: 3px; }
-.ins-insp-body { flex: 1; display: flex; min-width: 0; min-height: 0; gap: 8px; }
-/* the two fixed charts (v12 §3): equal halves, always mounted, no reflow */
-.ins-charts { flex: 1; min-width: 0; display: flex; gap: 6px; }
-.ins-chart { flex: 1 1 50%; min-width: 0; position: relative; touch-action: none; }
-.ins-chart canvas { display: block; }
-/* JS→Elm brush bridge: off-screen but still event-capable (not display:none) */
-.ins-brush-bridge { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
-.ins-shift { flex: 0 0 188px; border-left: 1px solid #eef2f6; padding-left: 10px; display: flex; flex-direction: column; gap: 6px; }
-.ins-shift-body { display: flex; flex-direction: column; gap: 4px; }
-.ins-shift-head { font-weight: 700; color: #334155; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ins-shift-row { display: flex; align-items: baseline; gap: 8px; font-variant-numeric: tabular-nums; }
-.ins-shift-k { flex: 1; color: #64748b; font-size: 11px; }
-.ins-shift-v { font-family: 'SF Mono', 'Monaco', monospace; font-size: 12px; color: #0f172a; }
+/* ── Forced loop-resolution modal (blocking; the whole interaction). */
+.modal-scrim { position: fixed; inset: 0; z-index: 300; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; }
+.loop-modal { background: #ffffff; border-radius: 8px; box-shadow: 0 12px 40px rgba(15, 23, 42, 0.35); padding: 16px 18px; width: 340px; display: flex; flex-direction: column; gap: 8px; }
+.lm-title { font-size: 14px; font-weight: 700; color: #0f172a; }
+.lm-residual { font-size: 12px; color: #b91c1c; font-weight: 600; }
+.lm-hint { font-size: 11px; color: #64748b; }
+.lm-rows { display: flex; flex-direction: column; gap: 3px; }
+.lm-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 8px; border: 1px solid #cbd5e1; border-radius: 5px; cursor: pointer; }
+.lm-row:hover { background: #eef2f6; }
+.lm-row-sel { border-color: #1a56db; background: #eff4ff; box-shadow: inset 0 0 0 1px #1a56db; }
+.lm-edge { font-size: 12px; color: #0f172a; font-weight: 600; }
+.lm-q { font-size: 11px; color: #64748b; font-family: 'SF Mono', Monaco, monospace; }
+.lm-buttons { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
+.lm-confirm { border-color: #15803d; color: #15803d; font-weight: 600; }

@@ -224,53 +224,6 @@ module LineGlyphs =
     let addRingXY out c r col w segs = addRing out c V3d.IOO V3d.OIO r col w segs
 
     // Dashed ring (every other segment drawn) — the uncoloured selection circle.
-    let addDashedRing (out : ResizeArray<V3d * V3d * V4d * float>)
-                      (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
-        for i in 0 .. segs - 1 do
-            if i % 2 = 0 then
-                let a0 = float i / float segs * Constant.PiTimesTwo
-                let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
-                out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
-
-    let addDashedRingXY out c r col w segs = addDashedRing out c V3d.IOO V3d.OIO r col w segs
-
-    // Arrow a→b: thin shaft + a line-triangle tip oriented to face the eye.
-    // Head scales with the shaft but caps at a modest render size.
-    let addArrow (out : ResizeArray<V3d * V3d * V4d * float>)
-                 (a : V3d) (b : V3d) (eye : V3d) (col : V4d) (width : float) =
-        let d = b - a
-        if d.Length > 1e-9 then
-            let dN = d.Normalized
-            let side =
-                let c = Vec.cross (b - eye) dN
-                if c.Length > 1e-9 then c.Normalized
-                else (Vec.cross dN (if abs dN.Z < 0.9 then V3d.OOI else V3d.IOO)).Normalized
-            let hl = min (d.Length * 0.35) 0.12
-            let hw = hl * 0.45
-            let back = b - dN * hl
-            out.Add(a, back, col, width)
-            out.Add(b, back + side * hw, col, width)
-            out.Add(b, back - side * hw, col, width)
-            out.Add(back + side * hw, back - side * hw, col, width)
-
-    // Top-view arrow a→b in the XY plane; head cap supplied by the caller
-    // (screen-fixed glyph size).
-    let addArrowXY (out : ResizeArray<V3d * V3d * V4d * float>)
-                   (a : V3d) (b : V3d) (headLen : float) (col : V4d) (w : float) =
-        let d = b - a
-        if d.Length > 1e-9 then
-            let dN = d.Normalized
-            let side =
-                let c = Vec.cross V3d.OOI dN
-                if c.Length > 1e-9 then c.Normalized else V3d.IOO
-            let hl = min (d.Length * 0.4) headLen
-            let hw = hl * 0.45
-            let back = b - dN * hl
-            out.Add(a, back, col, w)
-            out.Add(b, back + side * hw, col, w)
-            out.Add(b, back - side * hw, col, w)
-            out.Add(back + side * hw, back - side * hw, col, w)
-
     let addWireSphere (out : ResizeArray<V3d * V3d * V4d * float>)
                       (c : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
         addRing out c V3d.IOO V3d.OIO r col width segs
@@ -284,11 +237,6 @@ module LineGlyphs =
         out.Add(c - V3d.OOI * r, c + V3d.OOI * r, col, width)
 
     // XY-only cross — the focus Top glyph.
-    let addCrossXY (out : ResizeArray<V3d * V3d * V4d * float>)
-                   (c : V3d) (r : float) (col : V4d) (w : float) =
-        out.Add(c - V3d.IOO * r, c + V3d.IOO * r, col, w)
-        out.Add(c - V3d.OIO * r, c + V3d.OIO * r, col, w)
-
     let addBoxOutline (out : ResizeArray<V3d * V3d * V4d * float>)
                       (c : V3d) (hx : float) (hy : float) (hz : float) (col : V4d) (width : float) =
         let v = [|

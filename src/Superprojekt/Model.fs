@@ -11,18 +11,6 @@ type RenderingMode =
     | Shaded
     | SlopeColor
 
-type WorkflowStep =
-    | Overview
-    | Correspondence
-    | Inspect
-
-module WorkflowStep =
-    let index = function Overview -> 0 | Correspondence -> 1 | Inspect -> 2
-    let title = function
-        | Overview -> "Overview"
-        | Correspondence -> "Register"
-        | Inspect -> "Inspect"
-
 module DatasetScale =
     let forMesh (scales : Map<string, float>) (meshName : string) =
         let i = meshName.IndexOf '/'
@@ -49,61 +37,29 @@ module RigidTransform =
         * Trafo3d.Scale(1.0 / scale)
         * Trafo3d.Translation(cc)
 
-// Before shows every mesh at its immutable LoadTransform; After shows solved
-// meshes at their SolvedTransform (reference + unsolved stay at LoadTransform in
-// both). Disabled until any SolvedTransform exists.
-type RegView =
-    | RegBefore
-    | RegAfter
+// Navigator home states: the overview/setup surface (mesh survey + root
+// designation) vs the pair matrix. ONE instrument with two states — not rail
+// modes.
+type MatrixHome =
+    | HomeOverview
+    | HomePairs
 
-module RegView =
-    let other = function RegBefore -> RegAfter | RegAfter -> RegBefore
+// The two-level navigation hierarchy: matrix-home (the persistent home
+// surface) ⇄ cell-workspace (scoped to one pair's two meshes). Escape ascends
+// one level — the single backward primitive.
+type NavLevel =
+    | NavHome
+    | NavCell of a : string * b : string
 
-// One shared selection record every region reads/writes; linked highlighting is a
-// consequence of all panels binding here. hover = peek, click = select/promote.
-type HoverTarget =
-    | HoverPin   of ScanPinId
-    | HoverMesh  of string
-    | HoverPoint of ScanPinId * string
-
-// THE one active selection: a mesh (matrix column), a pin (matrix row), or a
-// cell = (pin, mesh) (their intersection). The matrix is the canonical driver;
-// roster rows, focus tiles, 3D pin markers and 3D surface clicks set the same
-// state. Every view follows it — there is no other selection state.
-type ActiveSelection =
-    | SelNone
-    | SelMesh of string
-    | SelPin  of ScanPinId
-    | SelCell of ScanPinId * string
-
-[<ModelType>]
-type Selection = {
-    Active  : ActiveSelection
-    Hovered : HoverTarget option
-}
-
-module Selection =
-    let initial = { Active = SelNone; Hovered = None }
-    // The pin / mesh a selection implies — the projections every follower reads.
-    let pin  = function SelPin p | SelCell (p, _) -> Some p | _ -> None
-    let mesh = function SelMesh m | SelCell (_, m) -> Some m | _ -> None
-
-// Mesh isolation (solo): while isolated, ONLY the isolated mesh is shown (the
-// reference included would occlude it in Inspect). Every shown/clickable
-// consumer (render MeshActive, raycasts, ring gating) goes through this one rule.
+// The ONE shown/clickable rule: in a cell-workspace only the pair's two
+// meshes show solid (the rest drop to the global ghost floor); at home all
+// meshes show. Every consumer — render MeshActive, raycast candidate sets,
+// the placement overlap count — goes through it.
 module MeshVisibility =
-    let shown (solo : string option) (name : string) =
-        match solo with
-        | Some s -> name = s
-        | None -> true
-
-// Snapshot captured when a "frame correspondence" (locate) starts, so a single
-// back-out restores the solo state to exactly what it was before (the camera is
-// never touched — it only moves on explicit focus/zoom actions).
-// Plain record (not a ModelType) → a single aval<LocateState option> in the model.
-type LocateState = {
-    PrevSolo    : string option
-}
+    let shown (nav : NavLevel) (name : string) =
+        match nav with
+        | NavHome -> true
+        | NavCell (a, b) -> name = a || name = b
 
 [<ModelType>]
 type Model =
@@ -113,8 +69,6 @@ type Model =
         MeshNames      : IndexList<string>
         MeshesLoaded   : HashSet<string>
         CommonCentroid : V3d
-
-        DebugLog       : IndexList<string>
 
         Datasets         : string list
         ActiveDataset    : string option
@@ -134,39 +88,26 @@ type Model =
         // Gear multiplier on the screen-constant 3D pin-flag size AND its
         // world-metre clamp bounds (ScanPin.flagHeightRender).
         FlagScale            : float
-        // Screen size (CSS px) of the brushed-sample circle+cross glyphs (gear).
-        BrushDotPx           : float
 
         SceneBounds    : Box3d
         MeshBounds     : Map<string, Box3d>
-        // Per-mesh mean sample spacing (m, from the bboxes payload); the slice
-        // cells derive the ONE global window from the coarsest loaded mesh.
-        MeshSpacing    : Map<string, float>
 
-        // Slice-cell tunables (gear menu): window = N × coarsest spacing; k
-        // context planes each side, spaced a fraction of the window; the global
-        // vertical extent is a robust percentile over all (pin, mesh) cells.
-        SliceNSamples       : float
-        SliceContextCount   : float
-        SliceContextSpacing : float
-        SliceVertPercentile : float
-
-        // LoadTransform is the immutable per-mesh baseline captured at load;
-        // SolvedTransform (presence = solved) is written by the correspondence
-        // solve; RegView picks which the meshes display. Render-space.
+        // The immutable per-mesh as-loaded baseline (render-space); a mesh
+        // without a composed graph pose displays this.
         LoadTransforms        : Map<string, Trafo3d>
-        SolvedTransforms      : Map<string, Trafo3d>
-        // The correspondence data the last solve consumed (None = no solve). The
-        // solve-validity postlude clears the registration when any tracked
-        // pin/point is deleted or moved — Before is the source of truth.
-        SolveInputs           : SolveInputs option
-        RegView               : RegView
-        // Spring-loaded before/after peek: hold to momentarily show the OTHER
-        // registration state (purely visual — flips the displayed transform, not
-        // the committed RegView or any query).
-        RegPeekHeld           : bool
-        // The ★ mesh all error is relative to (None only before the first load).
-        ReferenceMesh         : string option
+        // The registration graph: root (★ — the pose anchor all error is
+        // relative to) + committed pairwise edges. Plain record → ONE aval.
+        RegGraph              : RegGraph
+        // worldPose per tree mesh in RENDER space (edge transforms composed to
+        // the root, conjugated through the dataset similarity) — the displayed
+        // registered pose. Derived from RegGraph by the reducer (recompose on
+        // any edge/root change); mirrors Edges 1:1, so empty ⇔ unregistered.
+        ComposedPoses         : Map<string, Trafo3d>
+        // Pairwise registerability, unordered pair key (PairCell.key) →
+        // sufficient overlap. Evaluated ONCE per dataset at the as-loaded
+        // baselines (registerability is intrinsic to the pair, not the poses) by
+        // the lazy overlap sweep; drives the navigator's impossible/possible.
+        PairOverlaps          : Map<string * string, bool>
 
         Toast                 : string option
 
@@ -178,46 +119,51 @@ type Model =
         // heatmap (3D + focus). 0 = show everything.
         ShapeThreshold        : float
 
-        // Inspect difference channel: per moving mesh, signed distance to the
-        // reference (the mesh's served vertex order), painted in the 3D view and on
-        // the focus tiles (the reference is never error-coloured). Lazily fetched;
-        // per-pose pairs: main = the committed displayed pose, Other = the opposite
-        // Before/After pose (fetched only once a solve exists). SetRegView swaps the
-        // pairs in place; the reg peek selects the Other cache (visual, no query).
-        FocusDist             : Map<string, float32[]>
-        FocusDistOther        : Map<string, float32[]>
-
         ScanPins              : ScanPinModel
-        Selection             : Selection
 
         RenderingMode       : RenderingMode
-        // Isolated mesh (◐) — the one shown/clickable rule (MeshVisibility.shown).
-        MeshSolo            : string option
-        GearPopoverOpen     : bool
-        WorkflowStep        : WorkflowStep
+        // Row/col order of the pair-matrix navigator (a view preference).
+        MatrixOrder         : MatrixOrder
+        // Navigator home state: setup/overview (root designation) vs pairs.
+        MatrixHome          : MatrixHome
+        // Hierarchy level: matrix-home, or descended into one pair's workspace.
+        Nav                 : NavLevel
 
-        // Exact-point error probe (Inspect): a clicked surface point's signed
-        // difference — (mesh, metric world point, value in metres). Cleared by
-        // Esc / background click / anything that invalidates the difference maps.
-        PointProbe          : (string * V3d * float) option
-
-        // Confirmation flash of the last committed correspondence pick: metric
-        // world point + a generation (bumped per commit so back-to-back picks
-        // restart the animation). Cleared by a short timer (ClearCorrFlash).
-        CorrFlash           : (V3d * int) option
-
-        // Unified armed correspondence editing: Some (pin, mesh) = the editor
-        // is armed for that pair. While armed, the mesh is isolated in the main view
-        // and clicking in EITHER the focus or the 3D view sets the point
-        // (ROI-clamped; a committed pick disarms). CorrPreview = the live aim ghost
-        // shown in both views. None = idle.
-        CorrArm             : (ScanPinId * string) option
-        CorrPreview         : V3d option
-        // Per-sample distribution brushing: the set of brushed sample global
-        // ids (canonical order from ScanPinScene.brushSamples). Written by the chart
-        // canvases via the hidden-input bridge; read by the chart highlight + the
-        // 3D brushed-sample markers.
+        // ── In-cell error inspection (transient per cell — every cache clears
+        // on nav/pin/pose changes via invalidateCellError). Sample values are
+        // stored MOV-relative-to-REF (flipped at landing if the request
+        // orientation differed).
+        // Per-pin pairwise error at the CURRENT poses, canonical pin order.
+        CellError           : (ScanPinId * Query.PairPinError)[] option
+        // The same pins at the pair edge's BEFORE poses (registered pairs) —
+        // the diagram's before/after diff outline.
+        CellErrorBefore     : (ScanPinId * Query.PairPinError)[] option
+        // MOV's per-vertex signed distance vs REF (the false-colour buffer).
+        CellDist            : float32[] option
+        // False-colour error map toggle (in-cell inspect tool; MOV only).
+        CellMapOn           : bool
+        // Diagram brush: sample gids = indices into the canonical CellError
+        // sample concatenation, capped at 200.
         BrushedSamples      : Set<int>
+        // 3D-hovered brushed sample (diagram cross-highlight) + its exact
+        // value from the exact-point endpoint.
+        HoverSample         : int option
+        HoverReadout        : (int * float) option
+        // Armed point-sample probe: fully transient — the readout vanishes on
+        // disarm, persists nothing, links to no diagram.
+        ProbeArmed          : bool
+        ProbeReadout        : (V3d * float) option
+        // The two spring-loaded blink-comparator keys (cell scope only, REF/MOV
+        // from the tree; hold to swap, release to return; zero config):
+        //   PeekVis  — the MOV mesh blinks OFF (the REF alone answers "same rock?");
+        //   PeekPose — the MOV displays AS-LOADED instead of composed (REF
+        //              static — "did registration help?"). Purely visual.
+        PeekVis             : bool
+        PeekPose            : bool
+        // The transient loop awaiting FORCED resolution — the blocking modal is
+        // the whole interaction; the committed graph stays the prior tree.
+        LoopPending         : LoopPending option
+        GearPopoverOpen     : bool
 
         // Outline edge-detect threshold (depth Laplacian) + isoline band count over
         // the scene Z range + isoline alpha. Tunable from the gear menu; see
@@ -229,32 +175,23 @@ type Model =
         IsolineBands        : float
         IsolineOpacity      : float
 
-        // Active "frame correspondence" (locate) backup; Some while a locate is in
-        // effect so re-clicking the located matrix cell restores the prior camera +
-        // solo state.
-        LocateBackup        : LocateState option
-
         // In-view near-plane slice: the cut plane sits at this fraction of the
         // eye→orbit-centre distance, ⊥ the view direction; 0 = off. Non-modal —
         // the camera stays free, a thick line marks the intersection.
         NearCutFrac         : float
     }
 
-// Displayed = the pose a mesh currently shows: at RegAfter a solved mesh uses its
-// SolvedTransform, everything else (reference + unsolved) stays at its immutable
-// LoadTransform. Every query and scene-graph consumer goes through these, so the
-// before/after toggle stays consistent everywhere.
+// Displayed = the pose a mesh currently shows: its composed graph pose when it
+// is in the registration tree, its immutable as-loaded baseline otherwise.
+// Every query and scene-graph consumer goes through these.
 module ModelTransforms =
     let loadRender (model : Model) (mesh : string) =
         Map.tryFind mesh model.LoadTransforms |> Option.defaultValue Trafo3d.Identity
 
-    let displayedRenderAt (view : RegView) (model : Model) (mesh : string) =
-        match view, Map.tryFind mesh model.SolvedTransforms with
-        | RegAfter, Some t -> t
-        | _ -> loadRender model mesh
-
     let displayedRender (model : Model) (mesh : string) =
-        displayedRenderAt model.RegView model mesh
+        match Map.tryFind mesh model.ComposedPoses with
+        | Some t -> t
+        | None -> loadRender model mesh
 
     let private toWorld (model : Model) (mesh : string) (renderT : Trafo3d) =
         RigidTransform.renderToWorld
@@ -263,8 +200,29 @@ module ModelTransforms =
     let displayedWorld (model : Model) (mesh : string) =
         toWorld model mesh (displayedRender model mesh)
 
-    let displayedWorldAt (view : RegView) (model : Model) (mesh : string) =
-        toWorld model mesh (displayedRenderAt view model mesh)
+    // The as-loaded baseline in metric world — anchor seeding and solve inputs
+    // evaluate here (correspondences are baseline data, never pose followers).
+    let loadWorld (model : Model) (mesh : string) =
+        toWorld model mesh (loadRender model mesh)
+
+    // Per-edge before/after pose of `mesh` (the pose query the pair peek and
+    // cell diagrams read): the committed composition, with `edgeChild`'s edge
+    // zeroed on EdgeBefore. Meshes outside the tree stay at their baseline.
+    let edgeWorld (edgeChild : string) (side : EdgeSide) (model : Model) (mesh : string) : Trafo3d =
+        match Map.tryFind mesh (RegGraph.composeEdge edgeChild side model.RegGraph) with
+        | Some w -> w
+        | None -> loadWorld model mesh
+
+    // Rebuild ComposedPoses from the graph: compose the edge transforms to the
+    // root in metric world (RegGraph.composeAll), conjugate each into render
+    // space. Full recompute — the subtree-memoized path (composeSubtree) is for
+    // the per-edge re-solve flows.
+    let recomposePoses (model : Model) : Model =
+        let render =
+            RegGraph.composeAll model.RegGraph
+            |> Map.map (fun mesh w ->
+                RigidTransform.worldToRender (DatasetScale.forMesh model.DatasetScales mesh) model.CommonCentroid w)
+        { model with ComposedPoses = render }
 
     // A mesh's panorama centre in render space (load pose): stored PanoCenters[mesh]
     // (absolute world), else the centroid (= the mesh origin) — then (world − common)·scale.
@@ -290,7 +248,6 @@ module Model =
             MeshNames      = IndexList.empty
             MeshesLoaded   = HashSet.empty
             CommonCentroid = V3d.Zero
-            DebugLog       = IndexList.empty
             Datasets         = []
             ActiveDataset    = None
             DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
@@ -303,40 +260,36 @@ module Model =
             AnchorGhostMode     = true
             QuickPinRadius      = 0.5
             FlagScale           = 1.0
-            BrushDotPx          = 15.0
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
-            MeshSpacing    = Map.empty
-            SliceNSamples       = 5.0
-            SliceContextCount   = 2.0
-            SliceContextSpacing = 0.15
-            SliceVertPercentile = 0.95
             LoadTransforms        = Map.empty
-            SolvedTransforms      = Map.empty
-            SolveInputs           = None
-            RegView               = RegBefore
-            RegPeekHeld           = false
-            ReferenceMesh         = None
+            RegGraph              = RegGraph.empty
+            ComposedPoses         = Map.empty
+            PairOverlaps          = Map.empty
             Toast                 = None
-            FocusDist             = Map.empty
-            FocusDistOther        = Map.empty
             MeshHeatmap           = Map.empty
             ShapeThreshold        = 0.0
             ScanPins              = ScanPinModel.initial
-            Selection             = Selection.initial
             RenderingMode       = Textured
-            MeshSolo            = None
-            GearPopoverOpen     = false
-            WorkflowStep        = Overview
-            PointProbe          = None
-            CorrFlash           = None
-            CorrArm             = None
-            CorrPreview         = None
+            MatrixOrder         = OrderSensor
+            MatrixHome          = HomeOverview
+            Nav                 = NavHome
+            CellError           = None
+            CellErrorBefore     = None
+            CellDist            = None
+            CellMapOn           = true
             BrushedSamples      = Set.empty
+            HoverSample         = None
+            HoverReadout        = None
+            ProbeArmed          = false
+            ProbeReadout        = None
+            PeekVis             = false
+            PeekPose            = false
+            LoopPending         = None
+            GearPopoverOpen     = false
             OutlineThreshold    = 0.004
             OutlineWidthPx      = 3.0
             IsolineBands        = 700.0
             IsolineOpacity      = 0.45
-            LocateBackup        = None
             NearCutFrac         = 0.0
         }

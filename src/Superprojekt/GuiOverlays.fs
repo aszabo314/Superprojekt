@@ -12,24 +12,6 @@ module GuiOverlays =
         elif m >= 1.0 then sprintf "%g m" m
         else sprintf "%g cm" (m * 100.0)
 
-    // Cursor-side hard-prohibit tooltip — shown while a placement is armed and
-    // the hovered spot has < 2 meshes in range (placement is refused).
-    let placementTooltip (model : AdaptiveModel) (cursorScreen : aval<V2d option>) (placementValid : aval<bool option>) =
-        let placing =
-            model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
-        let visible =
-            (placing, placementValid, cursorScreen) |||> AVal.map3 (fun p v c ->
-                p && v = Some false && c.IsSome)
-        div {
-            Class "placement-tooltip"
-            Primitives.showWhen visible
-            cursorScreen |> AVal.map (Option.map (fun pos ->
-                Style [
-                    Left (sprintf "%.0fpx" (pos.X + 14.0))
-                    Top  (sprintf "%.0fpx" (pos.Y + 18.0))
-                ]))
-            "no overlapping meshes here"
-        }
 
     let private niceRoundDistance (d : float) =
         if d <= 0.0 || System.Double.IsNaN d || System.Double.IsInfinity d then 1.0
@@ -49,41 +31,6 @@ module GuiOverlays =
             steps |> Array.minBy (fun s -> abs (log (s / v)))
 
 
-    // Confirmation flash of a committed correspondence pick: a short expanding-
-    // ring CSS animation at the commit point, projected into the main 3D view
-    // (same 90° frustum as View.fs). The generation in the payload restarts the
-    // animation on back-to-back picks; ClearCorrFlash empties the layer.
-    let corrFlash (model : AdaptiveModel) (viewportSize : aval<V2i>) =
-        let flashJson =
-            AVal.custom (fun t ->
-                match model.CorrFlash.GetValue t with
-                | None -> "null"
-                | Some (w, gen) ->
-                    let vp = viewportSize.GetValue t
-                    let cc = model.CommonCentroid.GetValue t
-                    let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
-                    let p = ScanPin.renderCentre cc scale w
-                    let viewT = CameraView.viewTrafo (model.Camera.view.GetValue t)
-                    let aspect = float vp.X / float (max 1 vp.Y)
-                    let projT = Frustum.perspective 90.0 1.0 5000.0 aspect |> Frustum.projTrafo
-                    let h = (viewT * projT).Forward * V4d(p, 1.0)
-                    if h.W <= 1e-9 then "null"
-                    else
-                        let ndc = h.XYZ / h.W
-                        sprintf "{\"x\":%.1f,\"y\":%.1f,\"g\":%d}"
-                            ((ndc.X * 0.5 + 0.5) * float vp.X) ((0.5 - ndc.Y * 0.5) * float vp.Y) gen)
-        div {
-            Class "corr-flash-layer"
-            flashJson |> AVal.map (fun j -> Some (Attribute("data-flash", j)))
-            Primitives.observedRender "data-flash" "null" [
-                "  if(!d) return;"
-                "  var ring = document.createElement('div'); ring.className='corr-flash';"
-                "  ring.style.left=d.x+'px'; ring.style.top=d.y+'px';"
-                "  el.appendChild(ring);"
-            ]
-        }
-
-    // Transient feedback for blocked/failed actions (auto-clears).
     let toast (model : AdaptiveModel) =
         div {
             Class "app-toast"
@@ -120,62 +67,46 @@ module GuiOverlays =
             div { Class "sb-label"; barLabel }
         }
 
-    // Colormap legend (Inspect only, bottom centre): the ACTIVE false-colour map's
-    // gradient with nice-step ticks and the exact range ends — the difference map
-    // vs the reference (ensemble or the isolated pair) and a live brush (the
-    // brushed dots' shared signed range). All maps read on the unified pin-derived
-    // scale.
+    // Bottom-centre colour legend, two states: the in-cell DIFFERENCE map
+    // (diverging, over the ONE pair range — shown while the cell map paints)
+    // wins; else the Range heatmap while any mesh has Dst active.
     let colorLegend (model : AdaptiveModel) =
-        let rangeA = MeshView.inspectRange model
-        let orderContent = model.MeshOrder.Content
-        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         let fmt (span : float) (v : float) =
             if span < 0.095 then sprintf "%.0f mm" (v * 1000.0)
             elif span < 0.95 then sprintf "%.0f cm" (v * 100.0)
             elif span < 10.0 then sprintf "%.2f m" v
             else sprintf "%.0f m" v
         let heatRangeMaxA = MeshView.rangeMaxWorld model
-        // Outside Inspect the legend serves the Range heatmap: shown while any
-        // shown mesh has Dst active, on the ONE all-mesh scale.
         let anyRangeOn =
-            (model.MeshHeatmap, model.MeshSolo) ||> AVal.map2 (fun hm solo ->
-                hm |> Map.exists (fun m h -> h = HeatRange && MeshVisibility.shown solo m))
+            model.MeshHeatmap |> AVal.map (Map.exists (fun _ h -> h = HeatRange))
+        let diffOn =
+            AVal.custom (fun t ->
+                match model.Nav.GetValue t with
+                | NavCell _ -> model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome
+                | NavHome -> false)
         let legendJson =
             AVal.custom (fun t ->
-                let (lo, hi) = rangeA.GetValue t
-                let soloName = model.MeshSolo.GetValue t
                 let title, vLo, vHi, colorAt =
-                    if model.WorkflowStep.GetValue t <> Inspect then
+                    if diffOn.GetValue t then
+                        let lo, hi =
+                            match model.CellError.GetValue t with
+                            | Some cells -> ErrorRange.ofSamples (cells |> Seq.collect (fun (_, r) -> r.Samples))
+                            | None -> ErrorRange.ofSamples Seq.empty
+                        let name =
+                            match model.Nav.GetValue t with
+                            | NavCell(a, b) ->
+                                let order = model.MeshOrder.Content.GetValue t
+                                let num m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
+                                let refM, movM = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
+                                sprintf "Difference %d vs %d" (num movM) (num refM)
+                            | NavHome -> "Difference"
+                        name, lo, hi, Primitives.Diff.colorSignedV3 lo hi
+                    else
                         let m = max 1e-6 (heatRangeMaxA.GetValue t)
                         "Range", 0.0, m,
                         (fun (v : float) ->
                             let tt = clamp 0.0 1.0 (v / m)
                             V3d(0.13, 0.40, 0.85) * (1.0 - tt) + V3d(0.86, 0.20, 0.15) * tt)
-                    elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then
-                        // Live brush: the maps stand down but the 3D dots carry the
-                        // signed sample values on the shared diverging scale — the
-                        // legend describes THEM.
-                        "Difference · brushed", lo, hi, Primitives.Diff.colorSignedV3 lo hi
-                    else
-                        // Title names the compared meshes by display number: the
-                        // isolated moving mesh vs the reference, or — in the
-                        // ensemble — every moving mesh vs the reference; a cell
-                        // selection appends its pin identity.
-                        let order = orderContent.GetValue t
-                        let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
-                        let pair =
-                            match soloName, model.ReferenceMesh.GetValue t with
-                            | Some s, Some r -> sprintf " %d vs %d" (numOf s) (numOf r)
-                            | None, Some r -> sprintf " vs %d" (numOf r)
-                            | _ -> ""
-                        let pinSuffix =
-                            match model.Selection.Active.GetValue t with
-                            | SelCell (p, _) ->
-                                match HashMap.tryFind p (pinsVal.GetValue t) with
-                                | Some pin -> sprintf " · %s" pin.ShortName
-                                | None -> ""
-                            | _ -> ""
-                        sprintf "Difference%s%s" pair pinSuffix, lo, hi, Primitives.Diff.colorSignedV3 lo hi
                 let span = vHi - vLo
                 let hexAt (v : float) =
                     let c = colorAt v
@@ -185,9 +116,8 @@ module GuiOverlays =
                     [ for i in 0 .. 23 -> sprintf "\"%s\"" (hexAt (vLo + span * float i / 23.0)) ]
                     |> String.concat ","
                 // Nice-step ticks; ends carry the exact range values, so ticks that
-                // would collide with them (outer 12%) are dropped. The zero tick is
-                // flagged — its label renders one line lower so it can never overlap
-                // an edge label on an asymmetric range.
+                // would collide with them (outer 12%) are dropped; the zero tick
+                // renders one line lower so it never overlaps an edge label.
                 let step = niceRoundDistance (span / 4.0)
                 let ticks =
                     if step <= 0.0 || span <= 0.0 then []
@@ -200,13 +130,9 @@ module GuiOverlays =
                     |> String.concat ","
                 sprintf "{\"title\":\"%s\",\"min\":\"%s\",\"max\":\"%s\",\"stops\":[%s],\"ticks\":[%s]}"
                     title (fmt span vLo) (fmt span vHi) stops ticks)
-        // In Inspect the legend shows the active surface map, or — while a brush
-        // suppresses the maps — the value-coloured brushed dots' scale.
         div {
             Class "color-legend"
-            Primitives.showWhen
-                ((model.WorkflowStep, anyRangeOn) ||> AVal.map2 (fun s r ->
-                    s = Inspect || r))
+            Primitives.showWhen ((anyRangeOn, diffOn) ||> AVal.map2 (||))
             legendJson |> AVal.map (fun json -> Some (Attribute("data-legend", json)))
             Primitives.observedRender "data-legend" "{}" [
                 "  if(!d.stops) return;"
@@ -256,6 +182,72 @@ module GuiOverlays =
                 "  tt.textContent = d.title; el.appendChild(tt);"
                 "  el.appendChild(svg);"
             ]
+        }
+
+    // The FORCED loop-resolution modal (P9): blocking, minimal, self-
+    // announcing — the whole interaction for a transient loop (no 3D
+    // choreography, no standing overlay). It states the residual, lists every
+    // cycle edge with its single-scalar quality (weakest pre-selected), and
+    // the user removes exactly ONE edge; Confirm commits, Cancel/Esc discards
+    // the redundant edge and the prior tree stands.
+    let loopModal (env : Env<Message>) (model : AdaptiveModel) =
+        let pending = model.LoopPending
+        let residualLine =
+            pending |> AVal.map (function
+                | Some lp ->
+                    let trans =
+                        if lp.ResidualTransM < 1.0 then sprintf "%.1f cm" (lp.ResidualTransM * 100.0)
+                        else sprintf "%.2f m" lp.ResidualTransM
+                    sprintf "These paths disagree by %.1f° and %s." lp.ResidualRotDeg trans
+                | None -> "")
+        let rows =
+            (pending, model.MeshOrder.Content) ||> AVal.map2 (fun lp order ->
+                match lp with
+                | None -> IndexList.empty
+                | Some lp ->
+                    let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
+                    let row (label : string) (q : float) (sel : string option) =
+                        div {
+                            Class "lm-row"
+                            Primitives.classWhen "lm-row-sel"
+                                (model.LoopPending |> AVal.map (function
+                                    | Some p -> p.Selected = sel
+                                    | None -> false))
+                            Dom.OnClick(fun _ -> env.Emit [SelectLoopEdge sel])
+                            span { Class "lm-edge"; label }
+                            span { Class "lm-q"; sprintf "quality %.2f" q }
+                        }
+                    IndexList.ofList [
+                        yield row (sprintf "new edge %d ↔ %d" (numOf lp.Mov) (numOf lp.Ref)) lp.Quality None
+                        for e in lp.CycleEdges do
+                            yield row (sprintf "%d → %d" (numOf e.Child) (numOf e.Parent)) e.Quality (Some e.Child)
+                    ])
+            |> AList.ofAVal
+        div {
+            Class "modal-scrim"
+            Primitives.showWhen (pending |> AVal.map Option.isSome)
+            div {
+                Class "loop-modal"
+                div { Class "lm-title"; "Two paths now connect these meshes" }
+                div { Class "lm-residual"; residualLine }
+                div { Class "lm-hint"; "Remove one edge on the loop to keep a single registration path (the weakest link is pre-selected):" }
+                div { Class "lm-rows"; rows }
+                div {
+                    Class "lm-buttons"
+                    button {
+                        Class "rail-btn lm-cancel"
+                        Attribute("title", "Discard the just-added edge; the prior tree stands (Esc)")
+                        Dom.OnClick(fun _ -> env.Emit [CancelLoopResolution])
+                        "Cancel"
+                    }
+                    button {
+                        Class "rail-btn lm-confirm"
+                        Attribute("title", "Remove the selected edge and recompose the poses")
+                        Dom.OnClick(fun _ -> env.Emit [ConfirmLoopResolution])
+                        "Remove edge ✓"
+                    }
+                }
+            }
         }
 
     let orientationIndicator (model : AdaptiveModel) =

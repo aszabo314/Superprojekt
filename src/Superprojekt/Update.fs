@@ -32,11 +32,11 @@ module Update =
                 SceneBounds      = Box3d.Invalid
                 PanoCenters      = Map.empty
                 LoadTransforms   = loadTransforms
-                SolvedTransforms = Map.empty
-                SolveInputs      = None
-                RegView          = RegBefore
-                // Default reference = first mesh so reference-peek + registration UI work out of the box.
-                ReferenceMesh    = (if centroids.Length > 0 then Some (fst centroids.[0]) else None)
+                // Default root = first mesh so the registration UI works out of the box.
+                RegGraph         = { Root = (if centroids.Length > 0 then Some (fst centroids.[0]) else None)
+                                     Edges = Map.empty }
+                ComposedPoses    = Map.empty
+                PairOverlaps     = Map.empty
                 DatasetCentroids =
                     // Fresh map — entries never accumulate across dataset switches.
                     let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) Map.empty
@@ -79,172 +79,38 @@ module Update =
             { model with QuickPinRadius = max 0.01 v }
         | SetFlagScale v ->
             { model with FlagScale = clamp 0.1 10.0 v }
-        | SetBrushDotPx v ->
-            { model with BrushDotPx = clamp 4.0 60.0 v }
-        // Geometry knobs invalidate the slice caches (the ensureSlices postlude
-        // refetches); the percentile is view-only.
-        | SetSliceNSamples v ->
-            { model with SliceNSamples = max 1.0 v; ScanPins = ScanPinModel.invalidateSlices model.ScanPins }
-        | SetSliceContextCount v ->
-            { model with SliceContextCount = clamp 0.0 4.0 (round v); ScanPins = ScanPinModel.invalidateSlices model.ScanPins }
-        | SetSliceContextSpacing v ->
-            { model with SliceContextSpacing = clamp 0.02 0.5 v; ScanPins = ScanPinModel.invalidateSlices model.ScanPins }
-        | SetSliceVertPercentile v ->
-            { model with SliceVertPercentile = clamp 0.5 1.0 v }
-        | SetRegView v ->
-            // Editing is Before-only — switching the view cancels an armed
-            // correspondence editor.
-            if model.RegView = v || Map.isEmpty model.SolvedTransforms then model
-            else { applyRegView v model with CorrArm = None; CorrPreview = None }
-        | SetRegPeek held ->
-            // Purely visual (the displayed transform flips); no probe/ring invalidation.
-            // Solved-gate lives HERE so every entry path (button, hotkey I) behaves alike.
-            if model.RegPeekHeld = held || (held && Map.isEmpty model.SolvedTransforms) then model
-            else { model with RegPeekHeld = held }
-        | SetReferenceMesh mesh when model.ReferenceMesh = mesh ->
-            model    // idempotent: re-setting the same reference must not wipe a solve
-        | SetReferenceMesh mesh ->
-            // Reference change invalidates any solve (it was relative to the old reference).
-            bumpSolveGen ()
-            let hadSolve = not (Map.isEmpty model.SolvedTransforms)
+        | SetRegRoot mesh when model.RegGraph.Root = Some mesh ->
+            model    // idempotent: re-designating the same root must not touch the graph
+        | SetRegRoot mesh ->
+            let g = model.RegGraph
+            let recomposeWith (g' : RegGraph) (m : Model) =
+                invalidateCellError (invalidateRings (ModelTransforms.recomposePoses { m with RegGraph = g' }))
             let model =
-                invalidateProbes (invalidateRings
-                    { model with
-                        ReferenceMesh = mesh
-                        SolvedTransforms = Map.empty
-                        SolveInputs = None
-                        RegView = RegBefore
-                        CorrArm = None; CorrPreview = None })
-            let model =
-                match mesh with
-                | Some _ -> seedAnchors env model (allPinIds model)
-                | None -> model
-            // Invalidation → Before is the one automatic pose transition; make it explicit.
-            if hadSolve then showToast env "Registration cleared — the reference changed" model
-            else model
-
-        // Anchors are mesh-local, so the pairs are taken at the load pose — the
-        // solve yields an absolute transform a re-solve replaces wholesale.
-        | SolveCoarse ->
-            // Any other correspondence action cancels a live 3D pick.
-            let model = { model with CorrArm = None; CorrPreview = None }
-            match model.ReferenceMesh with
-            | None -> showToast env "Designate a reference mesh (★) first" model
-            | Some refMesh ->
-                let moving =
-                    model.MeshNames |> IndexList.toList |> List.filter (fun n -> n <> refMesh)
-                let enabledPins =
-                    model.ScanPins.Pins |> HashMap.toList
-                    |> List.choose (fun (_, p) ->
-                        let c = ScanPin.correspondence p
-                        c.RefAnchor |> Option.map (fun ra -> p.Id, ra, c.Anchors))
-                let pairsFor mesh =
-                    enabledPins
-                    |> List.choose (fun (pinId, ra, anchors) ->
-                        match Map.tryFind mesh anchors with
-                        | Some a -> Some (pinId, ra, a.Point)
-                        | None -> None)
-                    |> Array.ofList
-                let solvable = moving |> List.filter (fun m -> (pairsFor m).Length >= 3)
-                if List.isEmpty solvable then
-                    showToast env "No mesh has ≥3 correspondence markers yet" model
+                if RegGraph.hasEdges g && RegGraph.inTree g mesh then
+                    // Re-root in place: the registration survives — the path
+                    // edges reverse (the REF/MOV flip) and every composed pose
+                    // recomposes relative to the new root.
+                    showToast env "Re-rooted — registration kept, poses recomposed"
+                        (recomposeWith (RegGraph.reroot mesh g) model)
+                elif RegGraph.hasEdges g then
+                    // The registered tree cannot hang off a mesh outside it.
+                    showToast env "Registration cleared — the new root was outside the registered tree"
+                        (recomposeWith { Root = Some mesh; Edges = Map.empty } model)
                 else
-                    // Unsolvable meshes keep no SolvedTransform (stay at their load
-                    // pose). Results land as ONE CoarseSolved batch, stamped with
-                    // the generation this solve was issued under.
-                    bumpSolveGen ()
-                    let gen = solveGen
-                    task {
-                        let! results =
-                            solvable
-                            |> List.map (fun mesh -> async {
-                                // (refAnchor world, moving anchor at load pose = own-frame point, weight 1).
-                                let queryPairs = pairsFor mesh |> Array.map (fun (_, ra, mp) -> ra, mp, 1.0)
-                                try
-                                    let! world = Query.lsqPairs ApiConfig.apiBase.Value mesh queryPairs
-                                    return Choice1Of2 (mesh, world)
-                                with ex ->
-                                    return Choice2Of2 (mesh, ex.Message) })
-                            |> Async.Parallel
-                            |> Async.StartAsTask
-                        let solved = results |> Array.choose (function Choice1Of2 r -> Some r | _ -> None)
-                        let failed = results |> Array.choose (function Choice2Of2 r -> Some r | _ -> None)
-                        env.Emit [CoarseSolved(gen, solved, failed)]
-                    } |> ignore
-                    // Record the exact correspondence data this solve consumes —
-                    // the validity postlude clears the registration if any of it
-                    // is later deleted or moved.
-                    let snapshot =
-                        let pins =
-                            (Map.empty, solvable) ||> List.fold (fun acc mesh ->
-                                (acc, pairsFor mesh) ||> Array.fold (fun acc (pinId, ra, mp) ->
-                                    let _, meshPts = acc |> Map.tryFind pinId |> Option.defaultValue (ra, Map.empty)
-                                    Map.add pinId (ra, Map.add mesh mp meshPts) acc))
-                        { RefMesh = refMesh; Pins = pins }
-                    let n = List.length solvable
-                    let total = List.length moving
-                    let unsolvable = moving |> List.filter (fun m -> (pairsFor m).Length < 3)
-                    let summary =
-                        match unsolvable with
-                        | [] -> sprintf "Solving %d of %d meshes…" n total
-                        | first :: rest ->
-                            let need = max 1 (3 - (pairsFor first).Length)
-                            let extra = if List.isEmpty rest then "" else sprintf " (+%d more)" (List.length rest)
-                            sprintf "Solving %d of %d; %s needs %d more%s"
-                                n total (Primitives.shortName first) need extra
-                    showToast env summary { model with SolveInputs = Some snapshot }
-        | CoarseSolved(gen, solved, failed) ->
-            let model =
-                (model, failed) ||> Array.fold (fun m (mesh, reason) ->
-                    { m with DebugLog = m.DebugLog.InsertAt(0, sprintf "coarse solve failed (%s): %s" mesh reason) })
-            if gen <> solveGen then model    // registration cleared or re-solved while in flight
-            else
-                let model =
-                    match failed with
-                    | [||] -> model
-                    | _ -> showToast env (sprintf "Solve failed (%s)" (failed |> Array.map (fst >> Primitives.shortName) |> String.concat ", ")) model
-                if Array.isEmpty solved then model
-                else
-                    // lsqPairs returns the absolute world transform mapping the
-                    // load-pose moving anchors onto the reference.
-                    let st =
-                        (model.SolvedTransforms, solved) ||> Array.fold (fun st (mesh, world) ->
-                            let scale = DatasetScale.forMesh model.DatasetScales mesh
-                            Map.add mesh (RigidTransform.worldToRender scale model.CommonCentroid (Trafo3d(world, world.Inverse))) st)
-                    invalidateRings (invalidateProbes
-                        { model with
-                            SolvedTransforms = st
-                            RegView = RegAfter })
+                    recomposeWith { Root = Some mesh; Edges = Map.empty } model
+            model
+        | SetMatrixHome h ->
+            if model.MatrixHome = h then model else { model with MatrixHome = h }
+        | DescendPair(a, b) ->
+            if model.Nav = NavCell(a, b) then model
+            else invalidateCellError { model with Nav = NavCell(a, b); PeekVis = false; PeekPose = false }
+        | NavAscend ->
+            // The single backward primitive: cell → matrix; at home a no-op.
+            // Ascending also disarms the probe (its readout is cell-transient).
+            match model.Nav with
+            | NavCell _ -> invalidateCellError { model with Nav = NavHome; ProbeArmed = false; PeekVis = false; PeekPose = false }
+            | NavHome -> model
 
-        | AnchorsSeeded(refUpdates, seeded, inRoi) ->
-            let sp =
-                refUpdates |> Array.fold (fun sp (pinId, ra) ->
-                    updateCorr pinId (fun c -> { c with RefAnchor = Some ra }) sp)
-                    model.ScanPins
-            // Record ROI membership and drop the stale auto marker of every
-            // re-evaluated (pin, mesh) — the seeded fold below re-adds the accepted
-            // ones, so an auto anchor that no longer qualifies (out of the pin
-            // sphere, even if still within measurement reach) cannot linger. Manual
-            // picks are never touched here.
-            let sp =
-                inRoi |> Array.fold (fun sp (pinId, mesh, inside) ->
-                    updateCorr pinId (fun c ->
-                        let anchors =
-                            match Map.tryFind mesh c.Anchors with
-                            | Some a when a.Source = AnchorAuto -> Map.remove mesh c.Anchors
-                            | _ -> c.Anchors
-                        { c with InRoi = Map.add mesh inside c.InRoi; Anchors = anchors }) sp)
-                    sp
-            let sp =
-                seeded |> Array.fold (fun sp (pinId, mesh, point) ->
-                    updateCorr pinId (fun corr ->
-                        { corr with Anchors = Map.add mesh { Point = point; Source = AnchorAuto } corr.Anchors }) sp)
-                    sp
-            { model with ScanPins = sp }
-        | AnchorSeedFailed reason ->
-            showToast env "Correspondence seeding failed — see debug log"
-                { model with
-                    DebugLog = model.DebugLog.InsertAt(0, sprintf "correspondence seeding failed: %s" reason) }
         | ShowToast s ->
             showToast env s model
         | ClearToast ->
@@ -256,32 +122,99 @@ module Update =
             { model with MeshHeatmap = mh }
         | SetShapeThreshold v ->
             { model with ShapeThreshold = clamp 0.0 1.0 v }
-        | FocusDistComputed(gen, mesh, arr) ->
-            if gen = focusDistGen && model.WorkflowStep = Inspect then
-                { model with FocusDist = Map.add mesh arr model.FocusDist }
-            else model
-        | FocusDistOtherComputed(gen, mesh, arr) ->
-            if gen = focusDistGen && model.WorkflowStep = Inspect then
-                { model with FocusDistOther = Map.add mesh arr model.FocusDistOther }
-            else model
+        | CellErrorComputed(gen, after, before) ->
+            if gen <> cellErrorGen then model
+            else { model with CellError = Some after; CellErrorBefore = before }
+        | CellDistComputed(gen, dist) ->
+            if gen <> cellErrorGen then model
+            else { model with CellDist = Some dist }
+        | SetBrushedSamples ids ->
+            // Cap the brushed set so a wide brush can't flood the 3D marker node.
+            let st = ids |> List.truncate 200 |> Set.ofList
+            if model.BrushedSamples = st then model
+            else { model with BrushedSamples = st; HoverSample = None; HoverReadout = None }
+        | SetHoverSample gid ->
+            if model.HoverSample = gid then model
+            else { model with HoverSample = gid; HoverReadout = None }
+        | HoverReadoutComputed(gen, gid, v) ->
+            if gen <> cellErrorGen || model.HoverSample <> Some gid then model
+            else { model with HoverReadout = Some (gid, v) }
+        | ToggleProbeArmed ->
+            // Disarm wipes the readout — the probe persists nothing.
+            if model.ProbeArmed then { model with ProbeArmed = false; ProbeReadout = None }
+            else { model with ProbeArmed = true; ProbeReadout = None }
+        | ProbeReadoutComputed(gen, w, v) ->
+            if gen <> cellErrorGen || not model.ProbeArmed then model
+            else { model with ProbeReadout = Some (w, v) }
+        | ToggleCellMap ->
+            { model with CellMapOn = not model.CellMapOn }
+        | SetPeekVis held ->
+            // Cell scope only + both pair meshes GPU-resident — otherwise the
+            // press does NOT peek (an unloaded state would blink a blank).
+            // Releases always land.
+            let ok =
+                model.LoopPending.IsNone &&
+                (match model.Nav with
+                 | NavCell(a, b) -> HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
+                 | NavHome -> false)
+            if model.PeekVis = held || (held && not ok) then model
+            else { model with PeekVis = held }
+        | SetPeekPose held ->
+            let ok =
+                model.LoopPending.IsNone &&
+                (match model.Nav with
+                 | NavCell(a, b) -> HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
+                 | NavHome -> false)
+            if model.PeekPose = held || (held && not ok) then model
+            else { model with PeekPose = held }
+        | SelectLoopEdge sel ->
+            (match model.LoopPending with
+             | Some lp -> { model with LoopPending = Some { lp with Selected = sel } }
+             | None -> model)
+        | ConfirmLoopResolution ->
+            (match model.LoopPending with
+             | None -> model
+             | Some lp ->
+                bumpPairSolve ()
+                let m = { model with LoopPending = None }
+                match lp.Selected with
+                | None ->
+                    // Removing the NEW edge = the prior tree stands untouched.
+                    showToast env "Loop resolved — the new edge was discarded" m
+                | Some rc ->
+                    let g2 = RegGraph.resolveLoop lp.Mov lp.Ref lp.Transform lp.Quality rc model.RegGraph
+                    showToast env "Loop resolved — the tree re-hung through the new edge"
+                        (invalidateCellError
+                            (invalidateRings (ModelTransforms.recomposePoses { m with RegGraph = g2 }))))
+        | CancelLoopResolution ->
+            (match model.LoopPending with
+             | None -> model
+             | Some _ ->
+                showToast env "Redundant edge discarded — the prior tree stands"
+                    { model with LoopPending = None })
+        | PairOverlapComputed(gen, results) ->
+            if gen <> pairOverlapGen then model
+            else
+                let po =
+                    (model.PairOverlaps, results) ||> Array.fold (fun po (a, b, ok) ->
+                        Map.add (PairCell.key a b) ok po)
+                { model with PairOverlaps = po }
         | SceneBoundsLoaded bboxes ->
             if bboxes.Length = 0 then model
             else
                 let union =
-                    bboxes |> Array.fold (fun (acc : Box3d) (_, b, _) -> acc.ExtendedBy b) Box3d.Invalid
+                    bboxes |> Array.fold (fun (acc : Box3d) (_, b) -> acc.ExtendedBy b) Box3d.Invalid
                 let padded = Box3d(union.Min - V3d.III, union.Max + V3d.III)
-                let perMesh = bboxes |> Array.fold (fun m (n, b, _) -> Map.add n b m) Map.empty
-                let spacing = bboxes |> Array.fold (fun m (n, _, s) -> if s > 0.0 then Map.add n s m else m) Map.empty
+                let perMesh = bboxes |> Array.fold (fun m (n, b) -> Map.add n b m) Map.empty
                 let m =
                     { model with
                         SceneBounds = padded
-                        MeshBounds = perMesh
-                        MeshSpacing = spacing }
+                        MeshBounds = perMesh }
                 // Rest the camera on the default reference mesh (last load step, so
                 // PanoCenters/centroids are in): its panorama centre, framed to its own
                 // bounds rather than the whole scene. One-shot per dataset load.
                 let center, radius =
-                    match m.ReferenceMesh |> Option.bind (fun r -> Map.tryFind r perMesh |> Option.map (fun b -> r, b)) with
+                    match m.RegGraph.Root |> Option.bind (fun r -> Map.tryFind r perMesh |> Option.map (fun b -> r, b)) with
                     | Some (r, b) ->
                         let scale = DatasetScale.forMesh m.DatasetScales r
                         ModelTransforms.panoCenterRender m r, max 1.0 (b.Size.Length * scale * 0.6)
@@ -297,194 +230,158 @@ module Update =
             else
                 // Everything keyed by the old dataset's meshes/pins must go, and the
                 // scalar-map generations bump so old-dataset fetches land dead.
-                bumpSolveGen ()
-                bumpFocusDist ()
+                bumpPairOverlap ()
                 { model with
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
-                    Selection = Selection.initial
-                    MeshSolo = None
                     MeshBounds = Map.empty
-                    MeshSpacing = Map.empty
-                    SolvedTransforms = Map.empty
-                    SolveInputs = None
                     LoadTransforms = Map.empty
-                    RegView = RegBefore
-                    LocateBackup = None
-                    BrushedSamples = Set.empty
-                    PointProbe = None
-                    CorrArm = None
-                    CorrPreview = None
-                    FocusDist = Map.empty
-                    FocusDistOther = Map.empty
                     MeshHeatmap = Map.empty
-                    ReferenceMesh = None
+                    RegGraph = RegGraph.empty
+                    ComposedPoses = Map.empty
+                    PairOverlaps = Map.empty
+                    MatrixHome = HomeOverview
+                    Nav = NavHome
+                    CellError = None
+                    CellErrorBefore = None
+                    CellDist = None
+                    BrushedSamples = Set.empty
+                    HoverSample = None
+                    HoverReadout = None
+                    ProbeArmed = false
+                    ProbeReadout = None
+                    PeekVis = false
+                    PeekPose = false
+                    LoopPending = None
                     Toast = None }
         | SetRenderingMode m ->
             { model with RenderingMode = m }
+        | SetMatrixOrder o ->
+            if model.MatrixOrder = o then model else { model with MatrixOrder = o }
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
-        | ScanPinMsg (PlaceAnchor _ as msg) ->
-            // A freshly placed pin is a registration pin immediately; seed it
-            // against the reference (if any) so its markers appear at once. Pins
-            // and their correspondences exist in the BEFORE state — refused in
-            // After (never a silent view switch; arming is refused there too, this
-            // is the safety net for a view toggled mid-placement).
-            if model.RegView = RegAfter then
-                showToast env "Correspondences are edited in the Before state — switch the view" model
-            else
-                let model = ScanPinUpdate.handleMsg env model msg
-                match model.ReferenceMesh, Selection.pin model.Selection.Active with
-                | Some _, Some id -> seedAnchors env model [id]
-                | _ -> model
         | ScanPinMsg msg ->
-            // Correspondence/pin edits are Before-only: starting a placement or
-            // resizing a pin in the After view is refused with a prompt to switch —
-            // the displayed pose never changes as a side effect.
-            match msg with
-            | (EnterAnchorPlacement | SetInnerRadius _) when model.RegView = RegAfter ->
-                showToast env "Correspondences are edited in the Before state — switch the view" model
-            | _ ->
-                let m = ScanPinUpdate.handleMsg env model msg
+            let m = ScanPinUpdate.handleMsg env model msg
+            // Pin set / geometry changes re-scope the in-cell inspection.
+            let m =
                 match msg with
-                | EnterAnchorPlacement | DeletePin _ ->
-                    { m with CorrArm = None; CorrPreview = None }
-                // Probe/slice failures are otherwise invisible (the pin just stays
-                // blank until an unrelated invalidation) — surface them.
-                | ProbeFailed(_, e) | ProbeOtherFailed(_, e) | SliceFailed(_, e) | SliceOtherFailed(_, e) ->
-                    showToast env "Pin measurement failed — see debug log (⚙)"
-                        { m with DebugLog = m.DebugLog.InsertAt(0, sprintf "pin query failed: %s" e) }
+                | CommitPin | SetInnerRadius _ | EditPointAt _ | DeletePin _ -> invalidateCellError m
                 | _ -> m
-        | SetHovered h ->
-            if model.Selection.Hovered = h then model
-            else { model with Selection = { model.Selection with Hovered = h } }
-        | SetWorkflowStep step ->
-            // Entering/leaving Inspect (re)drives the difference maps, so drop
-            // their cache + bump the generation. Per-mode default: pin isolation
-            // defaults on in Correspondence, off elsewhere (the hold modifier overrides
-            // momentarily where it's off). A workflow switch ends any mesh isolation
-            // and drops the locate backup + the hover peek, both bound to the
-            // previous mode's view.
-            if model.WorkflowStep = step then model
+            // ANY committed-pin edit invalidates its pair's solve: the pair's
+            // edge (and every edge hanging beneath it — the subtree would
+            // strand) drops and the poses recompose. The pair is read from the
+            // PRE-edit model so a delete still resolves it.
+            let editedPair =
+                match msg with
+                | SetInnerRadius(id, _) | EditPointAt(id, _, _) | DeletePin id ->
+                    HashMap.tryFind id model.ScanPins.Pins |> Option.map (fun p -> p.Pair)
+                | _ -> None
+            match editedPair with
+            | Some (a, b) ->
+                match RegGraph.pairEdge a b m.RegGraph with
+                | Some e ->
+                    bumpPairSolve ()
+                    showToast env "Pair unregistered — a pin changed"
+                        (invalidateCellError
+                            (invalidateRings
+                                (ModelTransforms.recomposePoses
+                                    { m with RegGraph = RegGraph.removeEdgeCascading e.Child m.RegGraph })))
+                | None -> m
+            | None -> m
+        | SolvePair(a, b) ->
+            let key = PairCell.key a b
+            let pins =
+                model.ScanPins.Pins |> HashMap.toList |> List.map snd
+                |> List.filter (fun p -> p.Pair = key)
+            if List.length pins < 3 then
+                showToast env "Need ≥3 pins on this pair to solve" model
             else
-                bumpFocusDist ()
-                exitSolo
-                    { model with WorkflowStep = step
-                                 FocusDist = Map.empty; FocusDistOther = Map.empty
-                                 PointProbe = None
-                                 AnchorGhostMode = (step = Correspondence)
-                                 CorrArm = None; CorrPreview = None; BrushedSamples = Set.empty
-                                 LocateBackup = None
-                                 Selection = { model.Selection with Hovered = None } }
-        | SetNearCut v ->
-            { model with NearCutFrac = clamp 0.0 1.25 v }
-        | SetSelection selRaw ->
-            // Dangling-pin guard: a stale click can outlive its pin.
-            let sel =
-                // Same degradation as pin deletion: SelCell → its mesh, SelPin → none.
-                match selRaw with
-                | SelPin p when not (HashMap.containsKey p model.ScanPins.Pins) -> SelNone
-                | SelCell (p, m) when not (HashMap.containsKey p model.ScanPins.Pins) -> SelMesh m
-                | s -> s
-            if model.Selection.Active = sel then model
-            else
-                let model =
-                    { model with Selection = { model.Selection with Active = sel }
-                                 CorrArm = None; CorrPreview = None }
-                // Pin isolation (AnchorGhostMode) is Register-exclusive: the mode
-                // default (SetWorkflowStep — on in Correspondence, off elsewhere) is
-                // its only automatic driver; selection never mutates it, so in
-                // Inspect the meshes always stay fully shown.
-                match sel with
-                | SelNone ->
-                    if model.WorkflowStep = Inspect then exitSolo model
-                    else model
-                | SelMesh _ ->
-                    // Inspect renders the ensemble as-is: a selected mesh is
-                    // emphasized (accent outline; its difference field is already
-                    // painted) but NEVER isolates — any leftover locate isolation
-                    // ends here.
-                    if model.WorkflowStep = Inspect then exitSolo model
-                    else model
-                | SelPin _ ->
-                    if model.WorkflowStep = Inspect then exitSolo model
-                    else model
-                | SelCell (_, mesh) ->
-                    // The locate: solo the mesh, backup-captured for a single
-                    // BackOutLocate. No main-3D camera move — the zoom stays the
-                    // cell's double-click.
-                    let backup =
-                        match model.LocateBackup with
-                        | Some _ -> model.LocateBackup
-                        | None -> Some { PrevSolo = model.MeshSolo }
-                    enterSolo mesh { model with LocateBackup = backup }
-        | PickCorrespondenceAt(pinId, mesh, world) ->
-            // The point is stored mesh-local via the displayed transform, so the
-            // before/after toggle moves it. BEFORE-ONLY: a pick against the solved
-            // pose would store a point whose Before position is off-surface/outside
-            // the pin — the entry points force Before; this is the safety net for a
-            // view toggled mid-edit. The Peek hold counts as After too: the raycast
-            // hits the peeked (solved) geometry. A committed pick DISARMS the editor
-            // (one click = one edit); an out-of-ROI click stays armed so the toast's
-            // "try again" needs no re-arm.
-            if model.RegView = RegAfter
-               || (model.RegPeekHeld && not (Map.isEmpty model.SolvedTransforms)) then
-                showToast env "Correspondences are edited in the Before state — switch the view" model
-            else
-            match HashMap.tryFind pinId model.ScanPins.Pins with
-            | Some pin ->
-                if (world - pin.Centre).Length > pin.InnerRadius then
-                    showToast env "Pick inside the pin ROI" { model with CorrPreview = None }
-                else
-                    let own = (ModelTransforms.displayedWorld model mesh).Backward.TransformPos world
-                    let isRef = model.ReferenceMesh = Some mesh
-                    let sp =
-                        updateCorr pinId (fun corr ->
-                            if isRef then
-                                { corr with RefAnchor = Some own; InRoi = Map.add mesh true corr.InRoi }
-                            else
-                                { corr with
-                                    Anchors = Map.add mesh { Point = own; Source = AnchorPick3D } corr.Anchors
-                                    InRoi   = Map.add mesh true corr.InRoi }) model.ScanPins
-                    // Commit confirmation: a brief flash marker at the committed
-                    // point (generation bump restarts the animation per pick).
-                    let gen = match model.CorrFlash with Some (_, g) -> g + 1 | None -> 1
-                    corrFlashCts.Cancel()
-                    corrFlashCts <- new System.Threading.CancellationTokenSource()
-                    let token = corrFlashCts.Token
+                let g = model.RegGraph
+                // Orientation: a re-solve keeps the existing edge's REF/MOV;
+                // a fresh edge points the un-treed mesh (MOV) at the treed one.
+                let orient =
+                    match RegGraph.pairEdge a b g with
+                    | Some e -> Choice1Of2 (e.Child, e.Parent)
+                    | None ->
+                        match RegGraph.inTree g a, RegGraph.inTree g b with
+                        | true, false -> Choice1Of2 (b, a)
+                        | false, true -> Choice1Of2 (a, b)
+                        | true, true ->
+                            // Redundant pair: allowed — the landing closes a
+                            // TRANSIENT loop for the resolution modal. REF/MOV
+                            // from the tree (nearer root = REF).
+                            let r, m = MatrixNav.pairRefMov g a b
+                            Choice1Of2 (m, r)
+                        | false, false -> Choice2Of2 "neither mesh reaches the root yet — register a root-connected pair first"
+                match orient with
+                | Choice2Of2 why -> showToast env (sprintf "Cannot solve — %s" why) model
+                | Choice1Of2 (child, parent) ->
+                    bumpPairSolve ()
+                    let gen = pairSolveGen
+                    // Pairs at the AS-LOADED baselines: the edge transform maps
+                    // child-baseline points onto parent-baseline points, pose-
+                    // independent — ancestor registration composes on top (P1).
+                    let toBase mesh (local : V3d) =
+                        (ModelTransforms.loadWorld model mesh).Forward.TransformPos local
+                    let pairsArr =
+                        pins
+                        |> List.map (fun p ->
+                            let ptOf mesh = if mesh = fst key then p.PointA else p.PointB
+                            toBase parent (ptOf parent), toBase child (ptOf child), 1.0)
+                        |> Array.ofList
                     task {
                         try
-                            do! System.Threading.Tasks.Task.Delay(700, token)
-                            if not token.IsCancellationRequested then env.Emit [ClearCorrFlash]
-                        with _ -> ()
+                            let! (world, residuals) =
+                                Query.lsqPairs ApiConfig.apiBase.Value child pairsArr |> Async.StartAsTask
+                            env.Emit [PairSolved(gen, child, parent, world, residuals)]
+                        with ex ->
+                            env.Emit [ShowToast (sprintf "Solve failed: %s" ex.Message)]
                     } |> ignore
-                    { model with ScanPins = sp; CorrArm = None; CorrPreview = None
-                                 CorrFlash = Some (world, gen) }
-            | None -> model
-        | ClearCorrFlash ->
-            if model.CorrFlash.IsNone then model else { model with CorrFlash = None }
-        | SetPointProbe p ->
-            if model.PointProbe = p then model else { model with PointProbe = p }
-        | ToggleCorrArm(pinId, mesh) ->
-            // Edits are Before-only: arming in the After view is refused with a
-            // prompt (never a silent view switch). The mesh isolation while armed
-            // is a view-layer effect (wheelIsolation reads CorrArm).
-            if model.CorrArm = Some(pinId, mesh) then
-                { model with CorrArm = None; CorrPreview = None }
-            elif model.RegView = RegAfter then
-                showToast env "Correspondences are edited in the Before state — switch the view" model
+                    showToast env "Solving pair…" model
+        | PairSolved(gen, child, parent, world, residuals) ->
+            if gen <> pairSolveGen then model    // an edit/abort invalidated this solve mid-flight
             else
-                { model with
-                    CorrArm = Some(pinId, mesh)
-                    CorrPreview = None
-                    ScanPins = { model.ScanPins with Placement = PlacementIdle }
-                    Selection = { model.Selection with Active = SelCell(pinId, mesh) } }
-        | CorrPreviewComputed p ->
-            if model.CorrArm.IsSome then { model with CorrPreview = p } else model
-        | SetBrushedSamples ids ->
-            // Cap the brushed set so a wide brush can't flood the 3D marker node.
-            let s = ids |> List.truncate 200 |> Set.ofList
-            if model.BrushedSamples = s then model else { model with BrushedSamples = s }
+                let t = Trafo3d(world, world.Inverse)
+                let q = RegGraph.solveQuality residuals
+                let g = model.RegGraph
+                let commit g2 =
+                    showToast env (sprintf "Pair registered — quality %.2f" q)
+                        (invalidateCellError
+                            (invalidateRings (ModelTransforms.recomposePoses { model with RegGraph = g2 })))
+                // A re-solve of THIS pair's edge replaces it in place; child
+                // keying an edge to a DIFFERENT parent is the redundant case.
+                let existingSamePair =
+                    match Map.tryFind child g.Edges with
+                    | Some e -> e.Parent = parent
+                    | None -> false
+                if existingSamePair then commit (RegGraph.withEdge child t q g)
+                else
+                    match RegGraph.tryAddEdge child parent t q g with
+                    | EdgeAdded g2 -> commit g2
+                    | EdgeRejected why -> showToast env (sprintf "Solve not applied — %s" why) model
+                    | EdgeClosesLoop (cycle, residual) ->
+                        // Transient: the committed graph stays the prior tree —
+                        // the forced-resolution modal owns the next step. The
+                        // displacement is read at the MOV mesh's centroid (the
+                        // practical "how far do the paths disagree at the data").
+                        let probePt =
+                            Map.tryFind child model.DatasetCentroids |> Option.defaultValue V3d.Zero
+                        let weakest =
+                            (Some (cycle |> List.minBy (fun e -> e.Quality)), q)
+                            |> fun (minTree, qNew) ->
+                                match minTree with
+                                | Some e when e.Quality <= qNew -> Some e.Child
+                                | _ -> None    // the new edge itself is the weakest
+                        { model with
+                            LoopPending = Some {
+                                Mov = child; Ref = parent
+                                Transform = t; Quality = q
+                                CycleEdges = cycle
+                                ResidualRotDeg = RegGraph.residualRotationDeg residual
+                                ResidualTransM = RegGraph.residualAt residual probePt
+                                Selected = weakest } }
+        | SetNearCut v ->
+            { model with NearCutFrac = clamp 0.0 1.25 v }
         // Fly the main 3D to a metric-world point, keeping orientation.
         | FlyToPoint(world, radius) ->
             let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
@@ -492,8 +389,7 @@ module Update =
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, centreR))
                       CameraMessage (OrbitMessage.SetTargetRadius(max 0.2 (radius * scale)))]
             model
-        // 3D framing conventions for the double-click zoom grammar (the 2D focus side
-        // lives in the FocusScene.* helpers called at the same click sites).
+        // 3D framing conventions for the double-click zoom grammar.
         | ZoomToMesh m ->
             (match Map.tryFind m model.MeshBounds with
              | Some b when not b.IsInvalid -> env.Emit [FlyToPoint(b.Center, max 0.5 (b.Size.Length * 0.6))]
@@ -501,7 +397,9 @@ module Update =
             model
         | ZoomToPin id ->
             (match HashMap.tryFind id model.ScanPins.Pins with
-             | Some p -> env.Emit [FlyToPoint(p.Centre, max 0.5 (p.InnerRadius * 4.0))]
+             | Some p ->
+                let centre = ScanPin.centreWorldWith (ModelTransforms.displayedWorld model p.AnchorMesh) p
+                env.Emit [FlyToPoint(centre, max 0.5 (p.InnerRadius * 4.0))]
              | None -> ())
             model
         | FlyToSensor mesh ->
@@ -516,111 +414,117 @@ module Update =
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, center))
                       CameraMessage (OrbitMessage.SetTargetRadius radius)]
             model
-        | BackOutLocate ->
-            // Restores the isolation only — the camera never moves on a
-            // single-click action.
-            match model.LocateBackup with
-            | None -> model
-            | Some b ->
-                { model with
-                    MeshSolo = b.PrevSolo
-                    LocateBackup = None }
 
-    // Registration provenance: a solve is only as valid as the correspondences it
-    // consumed (SolveInputs). If any tracked pin was deleted, or any tracked
-    // refAnchor/anchor point no longer matches (moved by a pick, killed by a pin
-    // resize), the solved poses are stale — clear them and snap back to Before.
-    // Values are compared exactly: untouched anchors are structurally copied
-    // through updates, so only a real edit differs.
-    let private ensureSolveValidity (env : Env<Message>) (model : Model) : Model =
-        if Map.isEmpty model.SolvedTransforms then model
+    // Lazy pairwise-overlap sweep: every unordered mesh pair missing from the
+    // cache gets one baseline-pose sufficiency query; results land as ONE batch.
+    // Single-flight per generation — a dataset switch bumps it, so the sweep of
+    // a previous dataset can never land.
+    let private ensurePairOverlaps (env : Env<Message>) (model : Model) : Model =
+        let names = model.MeshNames |> IndexList.toList
+        let missing =
+            [ for i in 0 .. names.Length - 2 do
+                for j in i + 1 .. names.Length - 1 do
+                    let k = PairCell.key names.[i] names.[j]
+                    if not (Map.containsKey k model.PairOverlaps) then yield k ]
+        if List.isEmpty missing || pairOverlapReqGen = pairOverlapGen then model
         else
-            match model.SolveInputs with
-            | None -> model
-            | Some s ->
-                let intact =
-                    model.ReferenceMesh = Some s.RefMesh
-                    && s.Pins |> Map.forall (fun pinId (ra, meshPts) ->
-                        match HashMap.tryFind pinId model.ScanPins.Pins with
-                        | None -> false
-                        | Some pin ->
-                            let c = ScanPin.correspondence pin
-                            c.RefAnchor = Some ra
-                            && meshPts |> Map.forall (fun mesh pt ->
-                                match Map.tryFind mesh c.Anchors with
-                                | Some a -> a.Point = pt
-                                | None -> false))
-                if intact then model
-                else
-                    bumpSolveGen ()
-                    showToast env "Registration cleared — its correspondences changed"
-                        (invalidateRings (invalidateProbes
-                            { model with
-                                SolvedTransforms = Map.empty
-                                SolveInputs = None
-                                RegView = RegBefore
-                                BrushedSamples = Set.empty }))
-
-    // Inspect Difference channel: per shown moving mesh, fetch its signed distance
-    // to the reference (the mesh's own served vertex order) for the 3D + focus
-    // difference maps. Generation-guarded debounce; per-pose pairing: the Other
-    // pose is fetched only once a solve exists, in the same batch.
-    let private ensureFocusDist (env : Env<Message>) (model : Model) : Model =
-        if model.WorkflowStep <> Inspect then model
-        else
-            match model.ReferenceMesh with
-            | None -> model
-            | Some refMesh ->
-                // Shown moving meshes: under solo only the isolated mesh needs its field.
-                let moving =
-                    model.MeshNames |> IndexList.toList
-                    |> List.filter (fun n -> n <> refMesh && MeshVisibility.shown model.MeshSolo n)
-                let otherView = RegView.other model.RegView
-                let solved = not (Map.isEmpty model.SolvedTransforms)
-                let wanted =
-                    [ for m in moving do
-                        if not (Map.containsKey m model.FocusDist) then yield m, model.RegView, false
-                        if solved && not (Map.containsKey m model.FocusDistOther) then yield m, otherView, true ]
-                if List.isEmpty wanted || focusDistReqGen = focusDistGen then model
-                else
-                    focusDistReqGen <- focusDistGen
-                    let gen = focusDistGen
-                    // M3C2 is the sole difference metric (region-distance mode 0).
-                    let mode = 0
-                    let jobs =
-                        wanted |> List.map (fun (m, view, isOther) ->
-                            let refT = (ModelTransforms.displayedWorldAt view model refMesh).Forward
-                            let mT = (ModelTransforms.displayedWorldAt view model m).Forward
-                            async {
-                                try
-                                    let! d = Query.regionDistance ApiConfig.apiBase.Value m 0 refMesh 0 mT refT mode
-                                    return Some (m, d, isOther)
-                                with _ -> return None
-                            })
-                    focusDistCts.Cancel()
-                    focusDistCts <- new System.Threading.CancellationTokenSource()
-                    let token = focusDistCts.Token
-                    task {
+            pairOverlapReqGen <- pairOverlapGen
+            let gen = pairOverlapGen
+            let jobs =
+                missing |> List.map (fun (a, b) ->
+                    let tA = (ModelTransforms.loadWorld model a).Forward
+                    let tB = (ModelTransforms.loadWorld model b).Forward
+                    async {
                         try
-                            do! System.Threading.Tasks.Task.Delay(150, token)
-                            let! results = jobs |> Async.Parallel |> Async.StartAsTask
-                            if not token.IsCancellationRequested then
-                                for r in results do
-                                    match r with
-                                    | Some (m, d, false) -> env.Emit [FocusDistComputed(gen, m, d)]
-                                    | Some (m, d, true) -> env.Emit [FocusDistOtherComputed(gen, m, d)]
-                                    | None -> ()
-                        with
-                        | :? System.OperationCanceledException -> ()
-                        | _ -> ()
-                    } |> ignore
-                    model
+                            let! ok = Query.pairOverlap ApiConfig.apiBase.Value a tA b tB
+                            return Some (a, b, ok)
+                        with _ -> return None
+                    })
+            task {
+                try
+                    let! results = jobs |> Async.Parallel |> Async.StartAsTask
+                    let landed = results |> Array.choose id
+                    if landed.Length > 0 then env.Emit [PairOverlapComputed(gen, landed)]
+                with _ -> ()
+            } |> ignore
+            model
+
+    // In-cell pairwise error: one batch for the cell's pins at the CURRENT
+    // poses (+ the same pins at the pair edge's BEFORE poses when registered —
+    // the diagram's diff outline). Samples land MOV-relative-to-REF. Lazy,
+    // single-flight, gen-guarded.
+    let private ensureCellError (env : Env<Message>) (model : Model) : Model =
+        match model.Nav with
+        | NavHome -> model
+        | NavCell(a, b) ->
+            let key = PairCell.key a b
+            let pins =
+                model.ScanPins.Pins |> HashMap.toList |> List.map snd
+                |> List.filter (fun p -> p.Pair = key)
+                |> List.sortBy (fun p -> p.CreatedAt, p.ShortName)
+            if List.isEmpty pins || model.CellError.IsSome || cellErrorReqGen = cellErrorGen then model
+            else
+                cellErrorReqGen <- cellErrorGen
+                let gen = cellErrorGen
+                let ka, kb = key
+                let _refMesh, movMesh = MatrixNav.pairRefMov model.RegGraph ka kb
+                // The measure is meshB-relative-to-meshA; flip when MOV is meshA.
+                let flip = movMesh = ka
+                let orient (r : Query.PairPinError) =
+                    if flip then { r with Median = -r.Median; Samples = r.Samples |> Array.map (~-) } else r
+                let ids = pins |> List.map (fun p -> p.Id) |> Array.ofList
+                let roisAt (world : string -> Trafo3d) =
+                    pins |> List.map (fun p ->
+                        let (ScanPinId.ScanPinId g) = p.Id
+                        g.ToString "N", (world p.AnchorMesh).Forward.TransformPos p.CentreLocal, p.InnerRadius)
+                let edge = RegGraph.pairEdge ka kb model.RegGraph
+                let tNow (m : string) = (ModelTransforms.displayedWorld model m).Forward
+                let roisNow = roisAt (fun m -> ModelTransforms.displayedWorld model m)
+                let beforeReq =
+                    edge |> Option.map (fun e ->
+                        let w (m : string) = ModelTransforms.edgeWorld e.Child EdgeBefore model m
+                        (w ka).Forward, (w kb).Forward, roisAt w)
+                task {
+                    try
+                        let! after = Query.pairError ApiConfig.apiBase.Value ka (tNow ka) kb (tNow kb) roisNow |> Async.StartAsTask
+                        let after = Array.map orient after |> Array.zip ids
+                        let! before =
+                            match beforeReq with
+                            | Some (ta, tb, rois) ->
+                                task {
+                                    let! r = Query.pairError ApiConfig.apiBase.Value ka ta kb tb rois |> Async.StartAsTask
+                                    return Some (Array.map orient r |> Array.zip ids)
+                                }
+                            | None -> task { return None }
+                        env.Emit [CellErrorComputed(gen, after, before)]
+                    with _ -> ()
+                } |> ignore
+                model
+
+    // The in-cell false-colour buffer: MOV's per-vertex signed distance vs REF
+    // at the displayed poses — never the reference against itself.
+    let private ensureCellDist (env : Env<Message>) (model : Model) : Model =
+        match model.Nav with
+        | NavHome -> model
+        | NavCell(a, b) ->
+            if not model.CellMapOn || model.CellDist.IsSome || cellDistReqGen = cellErrorGen then model
+            else
+                cellDistReqGen <- cellErrorGen
+                let gen = cellErrorGen
+                let refMesh, movMesh = MatrixNav.pairRefMov model.RegGraph a b
+                let tOf (m : string) = (ModelTransforms.displayedWorld model m).Forward
+                task {
+                    try
+                        let! d = Query.regionDistance ApiConfig.apiBase.Value movMesh refMesh (tOf movMesh) (tOf refMesh) |> Async.StartAsTask
+                        env.Emit [CellDistComputed(gen, d)]
+                    with _ -> ()
+                } |> ignore
+                model
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
-        |> ensureSolveValidity env
-        |> ScanPinUpdate.ensureProbe env
-        |> ScanPinUpdate.ensureSlices env
         |> ScanPinUpdate.ensureRings env
-        |> ensureFocusDist env
+        |> ensureCellError env
+        |> ensureCellDist env
+        |> ensurePairOverlaps env
 

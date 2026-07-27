@@ -88,7 +88,7 @@ module MeshView =
             } |> ignore
             m
 
-    // Public: FocusScene builds its render trafos through this too, so the
+    // Public: every render trafo is built through this, so the
     // composition-order pitfall below has exactly one home.
     let meshTrafo
         (commonCentroid : aval<V3d>) (loaded : LoadedMesh)
@@ -106,49 +106,50 @@ module MeshView =
     let private scaleFor (model : AdaptiveModel) (name : string) =
         model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
 
-    // Effective registration view: the committed RegView, flipped while the before/after
-    // PEEK is held (purely visual).
-    let effectiveRegView (model : AdaptiveModel) =
-        (model.RegView, model.RegPeekHeld) ||> AVal.map2 (fun v held ->
-            match held, v with
-            | true, RegBefore -> RegAfter
-            | true, RegAfter -> RegBefore
-            | false, v -> v)
+    // The current cell's MOV while the given peek key holds — the blink keys
+    // are cell-scope only, REF/MOV derived from the tree (nearer-root = REF).
+    let private peekMovAt (held : bool) (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
+        held &&
+        (match model.Nav.GetValue t with
+         | NavCell(a, b) -> snd (MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b) = name
+         | NavHome -> false)
 
+    // The visibility peek hides the MOV outright (REF alone — never a ghost:
+    // the blink needs a clean swap, not a fade).
+    let peekVisHiddenAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
+        peekMovAt (model.PeekVis.GetValue t) model t name
+
+    // The pose the mesh currently SHOWS: the composed graph pose — flipped to
+    // the AS-LOADED baseline while the pose peek holds the cell's MOV (visual
+    // layer only; ModelTransforms stays committed for reducer-side queries).
+    // Same geometry, different trafo uniform ⇒ the swap is instant and both
+    // states are GPU-resident by construction.
     let displayedMeshT (model : AdaptiveModel) (name : string) =
-        (effectiveRegView model, model.SolvedTransforms, model.LoadTransforms)
-        |||> AVal.map3 (fun view solved load ->
-            match view, Map.tryFind name solved with
-            | RegAfter, Some t -> t
-            | _ -> Map.tryFind name load |> Option.defaultValue Trafo3d.Identity)
+        AVal.custom (fun t ->
+            let load () =
+                Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+            if peekMovAt (model.PeekPose.GetValue t) model t name then load ()
+            else
+                match Map.tryFind name (model.ComposedPoses.GetValue t) with
+                | Some tr -> tr
+                | None -> load ())
 
-    // Token-based sibling of displayedMeshT in metric world — the pose the mesh
-    // currently SHOWS (peek included), for AVal.custom computes that place
-    // mesh-local data (anchors, slice caches). Reads hit the caller's token
-    // directly; never build transient avals for this (see CLAUDE.md).
-    let displayedWorldPeekAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (mesh : string) =
+    // Token-based sibling of displayedMeshT in metric world, for AVal.custom
+    // computes that place mesh-local data (pin anchors, markers). Reads hit the
+    // caller's token directly; never build transient avals for this (see
+    // CLAUDE.md). Pose-peek-aware like displayedMeshT, so surface-riding
+    // annotations follow the blink.
+    let displayedWorldAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (mesh : string) =
         let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
         let cc = model.CommonCentroid.GetValue t
-        let view =
-            match model.RegView.GetValue t, model.RegPeekHeld.GetValue t with
-            | RegBefore, true -> RegAfter
-            | RegAfter, true -> RegBefore
-            | v, false -> v
+        let load () =
+            Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
         let disp =
-            match view, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
-            | RegAfter, Some s -> s
-            | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
-        RigidTransform.renderToWorld scale cc disp
-
-    // Committed-pose sibling (peek EXCLUDED) — for consumers pinned to the committed
-    // view (the focus camera; fly-to targets): the peek is purely visual.
-    let displayedWorldCommittedAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (mesh : string) =
-        let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) mesh
-        let cc = model.CommonCentroid.GetValue t
-        let disp =
-            match model.RegView.GetValue t, Map.tryFind mesh (model.SolvedTransforms.GetValue t) with
-            | RegAfter, Some s -> s
-            | _ -> Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+            if peekMovAt (model.PeekPose.GetValue t) model t mesh then load ()
+            else
+                match Map.tryFind mesh (model.ComposedPoses.GetValue t) with
+                | Some s -> s
+                | None -> load ()
         RigidTransform.renderToWorld scale cc disp
 
     // Per-vertex triangle shape quality (incident-face mean of 4√3·A/Σl², clamped
@@ -171,18 +172,6 @@ module MeshView =
         for i in 0 .. pos.Length - 1 do
             if cnt.[i] > 0 then q.[i] <- q.[i] / float32 cnt.[i]
         q
-
-    // The ONE Inspect error range: signed (lo, hi) in metres from the pin ROI
-    // samples, capped ±0.5 m (ScanPin.inspectRange). Shared by the 3D difference +
-    // variance painters, the focus tiles/single, the sample dots' per-pin gradient
-    // envelope, and the on-screen legend — so every false-colour map is comparable.
-    let inspectRange (model : AdaptiveModel) : aval<float * float> =
-        // Probe-only projection (adaptive-perf rule): slice/ring/edit churn on any
-        // pin must not re-scan every pin's samples and dirty the uniform chains.
-        let probesV = model.ScanPins.Pins |> AMap.map (fun _ p -> p.Probe) |> AMap.toAVal
-        let refV = model.ReferenceMesh
-        (probesV, refV) ||> AVal.map2 (fun probes rf ->
-            ScanPin.inspectRange rf (probes |> HashMap.toSeq |> Seq.map snd))
 
     // Shared saturation end (world metres) of the Range heatmap: the farthest
     // own-bbox corner from each mesh's own sensor, maxed over ALL meshes — ONE
@@ -251,16 +240,26 @@ module MeshView =
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
         let pinBlobs =
+            // Nav-scoped like the pin scene nodes; the centre rides its anchor
+            // mesh's displayed pose (token reads → the poses stay tracked).
             let pinsF =
                 model.ScanPins.Pins
-                |> AMap.map (fun _ p -> p.Centre, p.InnerRadius)
+                |> AMap.map (fun _ p -> p.AnchorMesh, p.CentreLocal, p.InnerRadius, p.Pair)
                 |> AMap.toAVal
-                |> AVal.map (fun pinsMap -> HashMap.toArray pinsMap |> Array.map snd)
-            (pinsF, model.CommonCentroid, datasetScale)
-            |||> AVal.map3 (fun pins cc scale ->
-                pins |> Array.map (fun (centre, innerR) ->
-                    let cr = ScanPin.renderCentre cc scale centre
-                    V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, float32 (ScanPin.renderLength scale innerR))))
+            AVal.custom (fun t ->
+                let pins = pinsF.GetValue t
+                let cc = model.CommonCentroid.GetValue t
+                let scale = datasetScale.GetValue t
+                let nav = model.Nav.GetValue t
+                [| for (_, (anchorMesh, centreLocal, innerR, pair)) in HashMap.toSeq pins do
+                    let shown =
+                        match nav with
+                        | NavHome -> true
+                        | NavCell (a, b) -> pair = PairCell.key a b
+                    if shown then
+                        let world = (displayedWorldAt model t anchorMesh).Forward.TransformPos centreLocal
+                        let cr = ScanPin.renderCentre cc scale world
+                        yield V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, float32 (ScanPin.renderLength scale innerR)) |])
         // Placement hover → flashlight blob (already render space), sized to
         // QuickPinRadius — previews exactly where the new pin will land.
         let previewBlob =
@@ -289,7 +288,7 @@ module MeshView =
         let loaded = loadMeshAsync (fun () -> ()) name
         loaded, meshTrafo model.CommonCentroid loaded (scaleFor model name) (displayedMeshT model name)
 
-    let buildScene (loadFinished : string -> unit) (clip : aval<int * V4f * V4f>) (placementPreview : aval<V3d option>) (wheelIsolation : aval<string option>) (model : AdaptiveModel) : aset<ISceneNode> =
+    let buildScene (loadFinished : string -> unit) (clip : aval<int * V4f * V4f>) (placementPreview : aval<V3d option>) (model : AdaptiveModel) : aset<ISceneNode> =
         let renderingModeInt =
             model.RenderingMode |> AVal.map (function
                 | Textured     -> 0
@@ -300,7 +299,6 @@ module MeshView =
 
         let blobCount, blobs = pinBlobUniforms placementPreview model
         let cutFwdU, cutDistU, cutBandU = nearCutUniforms model
-        let inspectRangeA = inspectRange model
         let rangeWorldA = rangeMaxWorld model
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
@@ -313,41 +311,22 @@ module MeshView =
             (model.AnchorGhostMode, model.ScanPins.Placement)
             ||> AVal.map2 (fun on pl ->
                 match pl with
-                | AnchorPlacement -> 0
-                | _ -> if on then 1 else 0)
+                | PlacementActive _ -> 0
+                | PlacementIdle -> if on then 1 else 0)
+        // The ONE in-cell error range (metres, spanning 0, capped ±0.5) over the
+        // pair's pin-ROI samples — shared by the map uniforms, the diagram and
+        // the legend so every false-colour read is comparable.
+        let cellRangeA =
+            model.CellError |> AVal.map (function
+                | Some cells -> ErrorRange.ofSamples (cells |> Seq.collect (fun (_, r) -> r.Samples))
+                | None -> ErrorRange.ofSamples Seq.empty)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
-            // Isolation: wheelIsolation (Alt-wheel / hover peek / armed editor) wins,
-            // then the solo overlay via MeshVisibility.shown (only the isolated mesh
-            // solid, the rest at the ghost floor), else selection emphasis + the
-            // Inspect no-solo ensemble ghosting.
-            let isActive =
-                AVal.custom (fun t ->
-                        match wheelIsolation.GetValue t with
-                        | Some iso -> iso = name
-                        | None ->
-                            match model.MeshSolo.GetValue t with
-                            | Some _ as solo ->
-                                MeshVisibility.shown solo name
-                            | None ->
-                                // Selection emphasis outside Inspect: the selected
-                                // mesh reads solid, the rest drop to the ghost floor
-                                // (Inspect routes mesh selection through the solo overlay).
-                                // Inspect central 3D, no solo: every mesh reads solid —
-                                // moving meshes paint their difference fields, the
-                                // reference stays the plain Inspect base.
-                                match Selection.mesh (model.Selection.Active.GetValue t) with
-                                | Some m when model.WorkflowStep.GetValue t <> Inspect ->
-                                    m = name
-                                | _ -> true)
+            // The ONE shown rule: at home every mesh is solid; in a cell only
+            // the pair's two meshes (the rest drop to the ghost floor).
+            let isActive = model.Nav |> AVal.map (fun nav -> MeshVisibility.shown nav name)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
-            // Outline-only: a zero ghost floor discards every non-emphasized
-            // fragment, while the offscreen outline pre-pass (OutlineView renders
-            // ALL loaded meshes independently of the main pass) keeps compositing
-            // this mesh's silhouette + isolines. Inspect drops every ghost fill,
-            // so the active false-colour map is the only filled surface.
-            let outlineOnly = model.WorkflowStep |> AVal.map ((=) Inspect)
             // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
             // absolute world → mesh frame → render); no entry ⇒ the mesh origin.
             // Drives the incidence + range heatmaps from the real sensor, not the
@@ -362,40 +341,30 @@ module MeshView =
             let rangeMax =
                 (rangeWorldA, scale, loaded.localMaxR) |||> AVal.map3 (fun g s lr ->
                     float32 (max 1e-6 ((if g > 0.0 then g else lr) * s)))
-            // Inactive meshes still render (as ghost); gate only on load state.
+            // Inactive meshes still render (as ghost); gate on load state and
+            // the visibility blink (the MOV vanishes outright while held).
             let renderEnabled =
-                loaded.fvc |> AVal.map (fun c -> c > 3)
+                AVal.custom (fun t ->
+                    loaded.fvc.GetValue t > 3 && not (peekVisHiddenAt model t name))
             let meshColor =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
-            // What this mesh paints in the MAIN 3D view (Inspect only): every SHOWN
-            // moving mesh carries its signed difference vs the reference (enc 1,
-            // FocusDist); the reference is NEVER error-coloured (plain Inspect base).
-            // Reading WorkflowStep first keeps non-Inspect meshes cheap (straight
-            // through to (0, None)). The scalar caches are pose-baked pairs (main =
-            // committed, Other = the opposite Before/After pose) — the reg peek
-            // selects the Other cache so the paint flips with the geometry (peek is
-            // only reachable once solved; Other not ready yet ⇒ unpainted while
-            // held, never stale values).
-            let inspectField : aval<int * float32[] option> =
+            // In-cell false-colour: THE MOV mesh paints its signed distance vs
+            // the REF — never the reference against itself, and nothing is
+            // isolated (both pair meshes render as-is). Brushing = sole focus:
+            // a non-empty brush suppresses the map (the dots carry the values).
+            let cellPaint : aval<float32[] option> =
                 AVal.custom (fun t ->
-                    if model.WorkflowStep.GetValue t <> Inspect then (0, None)
-                    // Brushing = sole focus: while samples are brushed every
-                    // false-colour error map stands down — only the dots carry value.
-                    elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then (0, None)
-                    elif model.ReferenceMesh.GetValue t = Some name then (0, None)
-                    elif not (MeshVisibility.shown (model.MeshSolo.GetValue t) name) then (0, None)
-                    else
-                        let fd =
-                            if model.RegPeekHeld.GetValue t then model.FocusDistOther
-                            else model.FocusDist
-                        match Map.tryFind name (fd.GetValue t) with
-                        | Some arr -> (1, Some arr)
-                        | None -> (0, None))
-            let distArr = inspectField |> AVal.map snd
+                    match model.Nav.GetValue t with
+                    | NavCell(a, b) when model.CellMapOn.GetValue t ->
+                        let _, mov = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
+                        if mov = name && Set.isEmpty (model.BrushedSamples.GetValue t)
+                        then model.CellDist.GetValue t
+                        else None
+                    | _ -> None)
             let distBuf =
-                (distArr, loaded.pos) ||> AVal.map2 (fun d _pos ->
+                (cellPaint, loaded.pos) ||> AVal.map2 (fun d _ ->
                     match d with
                     | Some arr -> ArrayBuffer arr :> IBuffer
                     | None ->
@@ -408,14 +377,14 @@ module MeshView =
                     match loaded.mesh.Value with
                     | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
                     | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
-            let distEncoding = inspectField |> AVal.map fst
-            // Map ends from the unified pin-derived range: enc 1 saturates at (lo, hi).
+            let distEncoding = cellPaint |> AVal.map (fun d -> if d.IsSome then 1 else 0)
+            // Map ends from the unified pair range: enc 1 saturates at (lo, hi).
             let distScale =
-                (distEncoding, inspectRangeA) ||> AVal.map2 (fun enc (_, hi) ->
+                (distEncoding, cellRangeA) ||> AVal.map2 (fun enc (_, hi) ->
                     if enc = 1 then float32 hi else 1.0f)
-            let distLoNeg = inspectRangeA |> AVal.map (fun (lo, _) -> float32 (abs lo))
+            let distLoNeg = cellRangeA |> AVal.map (fun (lo, _) -> float32 (abs lo))
             let diffIsoStep =
-                (distEncoding, inspectRangeA) ||> AVal.map2 (fun enc (lo, hi) ->
+                (distEncoding, cellRangeA) ||> AVal.map2 (fun enc (lo, hi) ->
                     if enc = 1 then float32 (Primitives.Diff.isoStep lo hi) else 0.0f)
             let surface =
                 sg {
@@ -429,30 +398,21 @@ module MeshView =
                     Sg.Uniform("DiffuseColorTexture", loaded.tex)
                     Sg.Uniform("MeshActive",      isActive)
                     // The ghost FLOOR is the global GhostSilhouette toggle: on → faint
-                    // context, off → hidden (α discarded). Solo/peek/isolation all send
-                    // non-emphasized meshes to that same floor — when the floor is
-                    // off, peek/isolation hide the others rather than dim them.
+                    // context, off → hidden (α discarded). Nav scoping and pin
+                    // isolation send non-emphasized meshes to this same floor.
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
-                            if outlineOnly.GetValue t then 0.0f
-                            else
-                                let floorOn = model.GhostSilhouette.GetValue t
-                                match wheelIsolation.GetValue t with
-                                | Some iso when iso <> name -> (if floorOn then 0.15f else 0.0f)
-                                | _ ->
-                                    // Register pin isolation: while the "Isolate pins"
-                                    // mode is on (and no placement flashlight runs), the
-                                    // context floor is 0 — only the pin blobs read. With
-                                    // isolation OFF the branch falls through to the normal
-                                    // floor: full textured meshes, exactly the Overview path.
-                                    let registerIsolation =
-                                        model.WorkflowStep.GetValue t = Correspondence
-                                        && model.AnchorGhostMode.GetValue t
-                                        && model.ScanPins.Placement.GetValue t = PlacementIdle
-                                    if registerIsolation then 0.0f
-                                    elif floorOn
-                                    then float32 (model.GhostOpacity.GetValue t)
-                                    else 0.0f))
+                            let floorOn = model.GhostSilhouette.GetValue t
+                            // "Isolate pins" (manual toggle): while on — and no
+                            // placement flashlight runs — the context floor is 0,
+                            // only the pin blobs read.
+                            let pinIsolation =
+                                model.AnchorGhostMode.GetValue t
+                                && (match model.ScanPins.Placement.GetValue t with
+                                    | PlacementIdle -> true | PlacementActive _ -> false)
+                            if pinIsolation then 0.0f
+                            elif floorOn then float32 (model.GhostOpacity.GetValue t)
+                            else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
                     Sg.Uniform("MeshColor",       meshColor)
                     Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)
@@ -472,21 +432,17 @@ module MeshView =
                     Sg.Uniform("DistScale",            distScale)
                     Sg.Uniform("DistLoNeg",            distLoNeg)
                     Sg.Uniform("DiffIsoStep",          diffIsoStep)
-                    // Per-mesh intrinsic error layer (set from the Overview mesh list),
-                    // respected in every workflow mode. Suppressed while this mesh paints
-                    // an Inspect comparison field (distEncoding ≠ 0) so the 2-mesh /
-                    // before-after encodings win where they apply.
+                    // Per-mesh intrinsic error layer (set from the survey mesh list).
                     Sg.Uniform("HeatmapMode",
-                        (model.MeshHeatmap, distEncoding) ||> AVal.map2 (fun mh enc ->
-                            if enc <> 0 then 0
-                            else match Map.tryFind name mh |> Option.defaultValue HeatOff with
-                                 | HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
+                        model.MeshHeatmap |> AVal.map (fun mh ->
+                            match Map.tryFind name mh |> Option.defaultValue HeatOff with
+                            | HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
                     Sg.Uniform("SensorOrigin",         sensorOrigin)
                     Sg.Uniform("RangeMax",             rangeMax)
                     Sg.Uniform("ShapeThreshold",       model.ShapeThreshold |> AVal.map float32)
-                    // Inspect de-clutter: the false-colour map is the base — no
-                    // photo texture competes in Inspect.
-                    Sg.Uniform("InspectPlain", model.WorkflowStep |> AVal.map (fun s -> if s = Inspect then 1.0f else 0.0f))
+                    // The painted mesh swaps its base to plain near-white — no
+                    // photo texture competes under the false colour.
+                    Sg.Uniform("InspectPlain", distEncoding |> AVal.map (fun e -> if e = 1 then 1.0f else 0.0f))
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
@@ -502,26 +458,11 @@ module MeshView =
             surface
         ) |> AList.toASet
 
-    // Per-mesh outline state for the image-space outline pass. Flag semantics
-    // (the edge composite's OutlineMask): 1 = silhouette + isolines · 0.5 =
-    // silhouette only (Inspect pair view: everything except the isolated mesh and
-    // the reference keeps just its contour).
-    let private outlineFlagAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
-        let silhouetteOnly =
-            model.WorkflowStep.GetValue t = Inspect
-            && (match model.MeshSolo.GetValue t with
-                | Some s -> name <> s && model.ReferenceMesh.GetValue t <> Some name
-                | None -> false)
-        if silhouetteOnly then 0.5f else 1.0f
-
     // The composite's per-mesh line gate, indexed like MeshId ((index+1)/255).
-    let outlineMask (model : AdaptiveModel) : aval<V4f[]> =
-        AVal.custom (fun t ->
-            let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-            let arr = Array.create 32 (V4f(1.0f, 0.0f, 0.0f, 0.0f))
-            names |> List.iteri (fun i name ->
-                if i < 32 then arr.[i] <- V4f(outlineFlagAt model t name, 0.0f, 0.0f, 0.0f))
-            arr)
+    // 1 = silhouette + isolines for every mesh (per-pair gating returns with the
+    // P8 inspect tool).
+    let outlineMask (_model : AdaptiveModel) : aval<V4f[]> =
+        AVal.constant (Array.create 32 (V4f(1.0f, 0.0f, 0.0f, 0.0f)))
 
     // Outline G-buffer: every mesh rendered solid with OutlineGBuffer.shade,
     // consumed by OutlineView's offscreen pass.
@@ -560,7 +501,9 @@ module MeshView =
                 let loaded, trafo = offscreenMesh model name
                 // Every loaded mesh renders into the G-buffer (visibility gates the
                 // main pass only).
-                let active = loaded.fvc |> AVal.map (fun c -> c > 3)
+                let active =
+                    AVal.custom (fun t ->
+                        loaded.fvc.GetValue t > 3 && not (peekVisHiddenAt model t name))
                 let meshColor =
                     meshIndices |> AVal.map (fun m ->
                         let i = Map.tryFind name m |> Option.defaultValue 0
@@ -568,11 +511,6 @@ module MeshView =
                 let meshId =
                     meshIndices |> AVal.map (fun m ->
                         float32 ((Map.tryFind name m |> Option.defaultValue 0) + 1) / 255.0f)
-                // Silhouette-only context meshes get a small depth push so the
-                // co-located inspected pair wins the G-buffer depth contest.
-                let depthBias =
-                    AVal.custom (fun t ->
-                        if outlineFlagAt model t name = 0.5f then 5.0e-5f else 0.0f)
                 sg {
                     Sg.Active active
                     Sg.Trafo trafo
@@ -582,7 +520,6 @@ module MeshView =
                     }
                     Sg.Uniform("MeshColor", meshColor)
                     Sg.Uniform("MeshId", meshId)
-                    Sg.Uniform("OutlineDepthBias", depthBias)
                     Sg.Uniform("ContourSpacing", contourSpacing)
                     Sg.VertexAttributes(
                         HashMap.ofList [
@@ -618,7 +555,9 @@ module MeshView =
                 let loaded, trafo = offscreenMesh model name
                 let channel = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
                 let active =
-                    (loaded.fvc, channel) ||> AVal.map2 (fun c i -> c > 3 && i < 8)
+                    AVal.custom (fun t ->
+                        loaded.fvc.GetValue t > 3 && (channel.GetValue t) < 8
+                        && not (peekVisHiddenAt model t name))
                 sg {
                     Sg.Active active
                     Sg.Trafo trafo
@@ -653,7 +592,7 @@ module MeshView =
     let buildSuitabilityNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
         let meshIndices = meshIndicesA model
         let placing =
-            model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
+            model.ScanPins.Placement |> AVal.map (function PlacementActive(ToolArea, _) -> true | _ -> false)
         let nodes =
             model.MeshNames |> AList.map (fun name ->
                 let loaded, trafo = offscreenMesh model name
@@ -664,7 +603,9 @@ module MeshView =
                         | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
                         | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
                 let active =
-                    (loaded.fvc, channel, placing) |||> AVal.map3 (fun c i p -> p && c > 3 && i < 8)
+                    AVal.custom (fun t ->
+                        placing.GetValue t && loaded.fvc.GetValue t > 3 && (channel.GetValue t) < 8
+                        && not (peekVisHiddenAt model t name))
                 sg {
                     Sg.Active active
                     Sg.Trafo trafo
@@ -686,48 +627,5 @@ module MeshView =
             Sg.Proj proj
             Sg.DepthTest (AVal.constant DepthTest.None)
             Sg.BlendMode (AVal.constant BlendMode.Add)
-            nodes
-        }
-
-    // Silhouette-only outline G-buffer for whichever mesh is the current reference
-    // (ContourSpacing 0 ⇒ no isolines, just the depth-break silhouette), in a fixed
-    // colour. Feeds OutlineView.buildFromNode for the focus single's reference overlay.
-    // The node set is stable (one per mesh, keyed by name); only the reference's node is
-    // Active, gated by `show` (the focus single passes "a reference exists and it isn't
-    // the shown mesh"), so a reference change just flips Active — no rebuild.
-    let buildReferenceOutlineNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (color : V4f) (show : aval<bool>) : ISceneNode =
-        let refNameA = model.ReferenceMesh
-        let nodes =
-            model.MeshNames |> AList.map (fun name ->
-                let loaded, trafo = offscreenMesh model name
-                let active =
-                    (refNameA, show, loaded.fvc) |||> AVal.map3 (fun rf s c ->
-                        s && c > 3 && rf = Some name)
-                sg {
-                    Sg.Active active
-                    Sg.Trafo trafo
-                    Sg.Shader {
-                        DefaultSurfaces.trafo
-                        OutlineGBuffer.shade
-                    }
-                    Sg.Uniform("MeshColor", AVal.constant color)
-                    Sg.Uniform("MeshId", AVal.constant (1.0f / 255.0f))
-                    Sg.Uniform("OutlineDepthBias", AVal.constant 0.0f)
-                    Sg.Uniform("ContourSpacing", AVal.constant 0.0f)
-                    Sg.VertexAttributes(
-                        HashMap.ofList [
-                            string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
-                        ])
-                    Sg.Index(BufferView(loaded.idx, typeof<int>))
-                    Sg.Render loaded.fvc
-                }) |> AList.toASet
-        sg {
-            Sg.View view
-            Sg.Proj proj
-            // The focus views never cut; the G-buffer shader still needs the uniforms.
-            Sg.Uniform("CutFwd",  AVal.constant V3f.OOI)
-            Sg.Uniform("CutDist", AVal.constant 0.0f)
-            Sg.Uniform("CutBand", AVal.constant 0.0f)
-            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
             nodes
         }

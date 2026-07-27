@@ -10,7 +10,6 @@ module GuiTopBar =
     open Primitives
 
     let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) =
-        let solved = model.SolvedTransforms |> AVal.map (Map.isEmpty >> not)
         div {
             Class "top-bar"
             div {
@@ -22,56 +21,14 @@ module GuiTopBar =
             }
 
             div {
-                Class "tb-regview"
-                classWhenNot "tb-regview-off" solved
-                Attribute("title", "Show meshes before or after registration")
-                // The active highlight always shows the DISPLAYED pose (also while
-                // unsolved, where it reads Before) — the visible indicator that a
-                // registration invalidation fell back to Before.
-                let btn (label : string) (v : RegView) =
-                    button {
-                        Class "tb-regview-btn"
-                        classWhen "btn-active" (model.RegView |> AVal.map (fun cur -> cur = v))
-                        Dom.OnClick(fun _ -> if AVal.force solved then env.Emit [SetRegView v])
-                        label
-                    }
-                btn "Before" RegBefore
-                btn "After" RegAfter
-                button {
-                    Class "tb-regview-btn tb-regview-peek"
-                    classWhen "btn-active" model.RegPeekHeld
-                    Attribute("title", "Peek: hold to momentarily show the other registration state (hotkey: I)")
-                    Dom.OnPointerDown((fun _ -> env.Emit [SetRegPeek true]), pointerCapture = true)
-                    Dom.OnPointerUp((fun _ -> env.Emit [SetRegPeek false]), pointerCapture = true)
-                    Dom.OnMouseLeave(fun _ -> env.Emit [SetRegPeek false])
-                    "Peek"
-                }
-            }
-
-            div {
                 Class "tb-right"
-                // The focused-mesh coordinate is world − centroid (that mesh's own
-                // frame, origin = its scan camera) — exact at the load pose, the
-                // relevant case here.
                 div {
                     Class "tb-coord"
-                    Attribute("title", "Cursor world coordinate (drops to the mean-elevation XY plane when off-mesh). Focused mesh → offset from that mesh's origin.")
+                    Attribute("title", "Cursor world coordinate (drops to the mean-elevation XY plane when off-mesh)")
                     let fmt (p : V3d) = sprintf "%.1f  %.1f  %.1f" p.X p.Y p.Z
                     span {
                         Class "tb-coord-w"
                         hoverCoord |> AVal.map (function Some p -> "world " + fmt p | None -> "world  –")
-                    }
-                    span {
-                        Class "tb-coord-l"
-                        let centsNames = (model.DatasetCentroids, model.MeshNames.Content) ||> AVal.map2 (fun c n -> c, IndexList.toList n)
-                        (hoverCoord, model.Selection.Active |> AVal.map Selection.mesh, centsNames)
-                        |||> AVal.map3 (fun hc fm (cents, names) ->
-                            match hc, fm with
-                            | Some p, Some name ->
-                                match Map.tryFind name cents with
-                                | Some c -> sprintf "    %s  %s" (Primitives.friendlyName names name) (fmt (p - c))
-                                | None -> ""
-                            | _ -> "")
                     }
                 }
                 div {
@@ -129,17 +86,6 @@ module GuiTopBar =
                             inlineSlider "Ghost opacity" 0.0 1.0 0.01 (sprintf "%.2f") model.GhostOpacity (fun v ->
                                 env.Emit [SetGhostOpacity v])
                         }
-                        div {
-                            Class "tb-gear-row"
-                            // Auto-suspended (and inert) while placing a pin, so
-                            // the terrain stays visible.
-                            let placing =
-                                model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
-                            let isoEffective =
-                                (model.AnchorGhostMode, placing) ||> AVal.map2 (fun on p -> on && not p)
-                            compactToggle "Isolate pins" isoEffective (fun () ->
-                                if not (AVal.force placing) then env.Emit [ToggleAnchorGhostMode])
-                        }
                         gearSlider "Shading strength" 0.0 1.0 0.01 (sprintf "%.2f") model.ShadingStrength SetShadingStrength
                         gearSlider "Slope threshold (°)" 1.0 89.0 1.0 (sprintf "%.0f°") model.SlopeThresholdDeg SetSlopeThresholdDeg
                         div {
@@ -148,13 +94,6 @@ module GuiTopBar =
                                 env.Emit [SetQuickPinRadius v])
                         }
                         gearSlider "Pin flag scale" 0.2 5.0 0.1 (sprintf "%.1f×") model.FlagScale SetFlagScale
-                        gearSlider "Brushed dot size (px)" 6.0 40.0 1.0 (sprintf "%.0f px") model.BrushDotPx SetBrushDotPx
-                        // Slice-cell tunables: one global window / context /
-                        // vertical scale for every matrix slice diagram.
-                        gearSlider "Slice window (× spacing)" 2.0 12.0 0.5 (sprintf "%.1f") model.SliceNSamples SetSliceNSamples
-                        gearSlider "Slice context (each side)" 0.0 4.0 1.0 (sprintf "%.0f") model.SliceContextCount SetSliceContextCount
-                        gearSlider "Slice context spacing (× window)" 0.02 0.5 0.01 (sprintf "%.2f") model.SliceContextSpacing SetSliceContextSpacing
-                        gearSlider "Slice vertical percentile" 0.5 1.0 0.01 (sprintf "%.2f") model.SliceVertPercentile SetSliceVertPercentile
                         div {
                             Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Dataset" }
@@ -186,10 +125,6 @@ module GuiTopBar =
                                             sprintf "centroid (%.1f, %.1f, %.1f)" c.X c.Y c.Z)
                                     }
                                 })
-                        }
-                        div {
-                            Class "tb-gear-log"
-                            model.DebugLog |> AList.map (fun line -> div { Class "tb-gear-log-line"; line })
                         }
                     }
                 }

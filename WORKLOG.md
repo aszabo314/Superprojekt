@@ -1,452 +1,541 @@
 # Worklog
 
-## ScanPin v13 — expert-session fixes (2026-07-22)
+> **Standing rules for this rework (2026-07-27):** documentation files
+> (CLAUDE.md, README.md) are FROZEN until the entire rework is finished —
+> do not edit them per-change. Log every change here as it lands; at the
+> end, reconstruct the net documentation updates from this file.
 
-All 16 spec tasks, in order, build-green each. P0: the reference is never
-error-coloured (variance map removed wholesale; default Inspect paints every
-moving mesh's difference field); Before/After is deterministic (edits in After
-are refused with a prompt, never a silent flip; the reg-view buttons always show
-the displayed pose); legibility (palette slot 7 dark-cyan → sky #0ea5e9, thick
-outlines + gear "Outline thickness" slider via wider edge-detect sampling, pin
-rings/flag names/corr markers as white-core-over-ink duplex — the armed aim
-ghost stays thin pure white); global Esc (deselect + disarm placement/editor +
-clear brush/probe). P1: 3D mesh-click select + Alt+wheel isolate removed (2D-only
-selection; ActivePickingLayer/HostMeshName pruned); 360° focus view removed (Top
-only); standalone slice mode removed, replaced by the in-view near-plane cut
-(top-bar "▤ Cut" slider, shader discard + flat-ink intersection band, outline
-G-buffer follows); M3C2|Δz toggle removed (M3C2 under the hood); roster ◎ flies
-to a mesh's sensor viewpoint; camera moves ONLY on explicit focus/zoom (placement
-recenter + back-out camera restore removed); orbit-centre cue while rotating;
-correspondence commits flash a confirmation ring (CorrFlash + CSS pop); placement
-forces full-mesh visibility; project-wide up-normal orients pins/flags on
-terrain-like data (`MeshView.projectUpNormal`, |mean normal| > 0.5, per-pin
-fallback). P2: Inspect never isolates on mesh selection; exact-point error probe
-(Inspect surface click → triangle-corner lookup in FocusDist → duplex marker +
-amber value line in both charts). Matrix slice-cell diagrams and auto-seeding
-untouched. CLAUDE.md not yet re-synced to v13 (follow-up).
+## v14 documentation reconstruction (2026-07-27) — FREEZE LIFTED
 
-## URL dataset override (2026-07-20)
+README.md + CLAUDE.md rewritten from this log; every per-phase DOC DEBT item
+resolved.
 
-- `?dataset=<name>` on the app URL picks the startup dataset:
-  `ApiConfig.urlDataset` (MeshData.fs) parses it from `Window.Location.Href`,
-  `ServerActions.init` uses it only when the name is in the fetched dataset
-  list — otherwise the existing `/api/datasets/default` (data/default.txt)
-  path runs unchanged. No server change; README updated.
+- **README**: "What you can do" rebuilt around the v14 shape — navigator
+  hierarchy (Setup survey/root ★ + pair matrix ⇄ cell workspace), atomic pin
+  transaction, pairwise solve into the registration tree, loop dialog,
+  in-cell chart/brush/probe/error map, V/B peek keys, Space-hold clean view,
+  near-plane Cut. Server blurb now names the pairwise error measure.
+- **CLAUDE.md**: state rules rewritten (registration graph + invariants/
+  hazards, navigation + ONE Esc chain, atomic pins, in-cell caches, peeks);
+  render section updated (passTwo, near cut, in-cell error range, ONE chart,
+  legend two-state, suitability trigger, OutlineWidthPx, OutlineMask now
+  all-on); coordinate rules updated to composed poses + own-frame pin
+  geometry; pano-centre consumers corrected; API list + compile orders
+  regenerated from the fsprojs; NEW "F# pitfalls" section (deleted-DU-case
+  catch-all patterns, Trafo3d struct equality, apply-a-first composition,
+  Result shadowing). Durable sections (comment discipline, DepthMask ban,
+  outline-pass rationale, adaptive-perf rules, Dom/FShade gotchas) kept.
+- Removed with the rewrite: every v13 `(TODO: …)` marker, the three-mode
+  rail/selection/focus-panel/dock/slice-cell/probe-star/Before-After
+  descriptions, `/query/probe|slice` + MeshProbe/ProbeModel/FocusScene/
+  FocusShaders/GuiFocus/GuiInspector references.
+- Final state: client + server builds green, Supertests 102/102, integration
+  29/29. Outstanding: the ONE whole-app browser pass (per-phase owed items
+  above, incl. the OutlineGBuffer bias-removal shader edit).
 
-## Distinct mesh palette + suitability stripe rework (2026-07-20)
+## v14 dead-code elimination pass (2026-07-27)
 
-- `Primitives.meshPalette` swapped from the muted cool/earth family to nine
-  distinct vivid hues (teal · orange · purple · green · magenta · brown ·
-  cyan · pink · olive), staying clear of the diverging map's #2151DB/#C00206
-  ends and near-white centre; gold remains the reference accent. Everything
-  downstream (matrix, charts, coverage/outline colours, weave) picks it up
-  via `meshPaletteV4d`/`meshColor`/`coverageColors` — no other code change.
-- `SuitabilityComposite` (placement overlay): the n=1 flat-grey fill is GONE —
-  ≤1 covered meshes now render nothing (invalid placement area = untouched
-  surface); ≥2 keeps the diagonal weave but with the covered meshes'
-  UNMODIFIED palette colours at fixed α 0.45 (the MIN-shape
-  desaturation/avg-blend muddling is removed). Stripe band doubled: 6 px → 12.
-- The coverage pass still writes shape-weighted values (composite only reads
-  the covered floor now) — noted in its comment.
-- ROOT-CAUSE FIX for colour in empty/n=1 regions: `C4f.Black` = (0,0,0,**1**)
-  and the offscreen clear reaches every colour attachment — so the coverage
-  MRTs' two ALPHA channels (= mesh channels 3 and 7 in the composites) read
-  1.0 on every uncovered pixel: two phantom "covered meshes" everywhere
-  (background counted n=2 → striped; real n=1 counted n=3). Predates the
-  rework — also why the original stripe colours looked wrong, and why meshes
-  with index 3/7 never got footprint contours (channel saturated ⇒ no
-  covered↔uncovered transition). The depth-free coverage branch of
-  `renderOffscreen` now clears to transparent (0,0,0,0); the with-depth
-  G-buffer branch is untouched.
-- Build green (type-check); visual pass owed: hue separability in the matrix
-  swatches, stripe width/α on real overlap, orange-vs-gold reference clash.
+Post-P9 cull of everything the rework orphaned. Client + server builds green,
+Supertests 102/102 (−3 dip tests), integration 29/29 on a fresh :8002.
 
-## Brushed dots: value-coloured outside slice mode + legend (2026-07-20)
+**Server:**
 
-- Main-3D brushed glyphs now carry the difference viz while slice mode is OFF:
-  each circle+cross stroke = its sample's signed value through the shared
-  diverging map/range (`Primitives.Diff.colorSignedV3` over
-  `MeshView.inspectRange`), drawn over a dark under-stroke (3.2 px under a
-  1.6 px colour stroke) so the near-white zero end reads on the plain Inspect
-  surface. `brushedBase` now carries valueMm through to the glyph builders.
-- Slice mode and the focus views keep the neutral dark-grey dots (values live
-  in the charts/ordinates; interest ranking/amber cross-highlight untouched).
-- Colour legend no longer hides on brush: in Inspect it now shows
-  "Difference (M3C2) · brushed" (probe samples are M3C2 regardless of the
-  surface M3C2|Δz sub-mode) on the shared range while a brush is active —
-  hiding only in slice mode + brush, the one state with no colour scale.
-- Build green (type-check); visual pass owed: near-zero dot readability on
-  the plain surface, halo weight, legend title fit.
+- `/api/query/slice` DELETED (route + `sliceHandler` + `SliceMeshDto`/
+  `SliceRequest`) — the parked P3 decision resolved as prune: no client
+  consumer since the slice-cell matrix died, integration coverage alone
+  doesn't justify the endpoint.
+- `MeshAnalysis.fs` → only `contactRings` (`dipAzimuth` + `planeSlices`
+  deleted); `MeshAnalysisCore.fs` lost `dipFromMoments`/`dipOfPoints`
+  (slice-azimuth fitting machinery — `traceLevelSet` + `decimate` stay,
+  contact rings use them).
+- `region-distance` mode 1 (vertical Δz) deleted: `RegionDistanceRequest.Mode`
+  field + the Δz branch — the endpoint has exactly ONE metric again (M3C2
+  closest-point with the Z-overlap support gate).
+- `bboxes` no longer computes/returns `spacing` (mean edge length) — its only
+  consumer was the slice-cell window; the edge-sampling loop went with it.
+  Handler is now purely bbox + cache warmer.
 
-## Slice mode: pin rings down, cut profile as black line (2026-07-20)
+**Client:**
 
-- The "black lines not aligned with the cut" were `pinRings` (influence ring +
-  1 m axis line + per-mesh sphere∩surface CONTACT rings, all pin ink) — the one
-  pin-chrome node the slice stand-down had missed; now gated by `flagsActive`
-  like the flags.
-- CUT PROFILE as data-ink black (OutlineEdge, all under the capOn slice gate):
-  - Root cause the profile was invisible against background: the FBO clear
-    leaves target0.w = 0, which under the slice ortho IS the cut plane's depth
-    — profile-vs-background gave a ~0 Laplacian. Background samples (mesh id
-    0) now substitute far depth (1.0) in the edge detect; perspective is
-    untouched (raw values already break hard there).
-  - An at-cut depth edge (16-bit depth within the first half of the fade
-    window) paints BLACK at up to α 0.92 ABOVE the 10 % cap, blending back to
-    the capped faded palette silhouette as the edge moves behind the cut — so
-    the profile line follows the cut as it sweeps.
-- CLAUDE.md: stand-down list + slice bullet + a new outline-pass bullet for
-  the background-depth substitution contract. Build green; visual pass owed
-  (profile line weight/alpha, no false lines at mesh-vs-mesh boundaries).
+- `Model.DebugLog` + the gear-popover log display (GuiTopBar), `.tb-gear-log`
+  CSS. `ModelTransforms.edgeRender`, `ScanPin.pointOn`,
+  `ScanPinUpdate.activeScale`, `Query.closestPoint` wrapper.
+- `Query.regionDistance` no longer sends `"mode":0`; `fetchBboxes` +
+  `SceneBoundsLoaded` payload narrowed to `(string * Box3d)[]`.
+- `MeshView.buildReferenceOutlineNode` (reference gold outline — no reference
+  concept in v14), `OutlineDepthBias` uniform + its shader term
+  (`OutlineGBuffer.shade` writes plain `v.fc.Z`), `OutlineView.maskAllOn`.
+- `LineShader.LineGlyphs`: `addDashedRing`/`addDashedRingXY`/`addArrow`/
+  `addArrowXY`/`addCrossXY` deleted (kept: duplex, basisFromNormal, addRing/XY,
+  addWireSphere, addCross, addBoxOutline).
+- `Primitives`: `numberedFriendly`, `pinInkCss`, `showWhenNot`, mesh-level
+  `shortName` (the `friendlyName` fallback now uses `meshLocal`).
+- CSS orphan sweep: `.tb-gear-log`, `.placement-tooltip`,
+  `@keyframes corr-flash-pop` removed; compound-selector orphans the
+  class-token sweep can't see caught by hand (`.focus-set.btn-active`,
+  `.tb-regview-btn/.tb-regview-peek`, `.rail-btn-primary`); `--dock-h`
+  (permanent 0 since P5) dissolved into plain offsets; stale rail/roster
+  comments + a §-spec-ref comment fixed.
+- **Latent bug found + fixed**: the gear popover still had an "Isolate pins"
+  copy whose gate matched the P6-deleted `AnchorPlacement` case — F# silently
+  reparsed it as a catch-all VARIABLE pattern (warning FS0049 only), so
+  `placing` was constantly true and the toggle permanently inert. Deleted (the
+  cell workspace hosts the real toggle). Full-rebuild warning tally now clean
+  of FS0049/FS0025/FS0026 — NEW PITFALL for CLAUDE.md: deleting a DU case
+  turns its remaining patterns into catch-alls, and only warnings betray it.
 
-## Slice-mode outline fade fixed (2026-07-20, after the touchups commit)
+**Tests:** Supertests dip-fit trio deleted (dipOfPoints gone);
+`tools/integration.mjs` slice §5 + Δz lift test deleted, sections renumbered,
+the `lift` matrix moved to the pair-error-at section (its other consumer).
 
-- Diagnosis: the round-1 `OutlineDistFade` was quantization-broken — the fade
-  window (FadeDist ≈ r/20 of a ~6r depth range) spans ~2 LSBs of the Rgba8
-  G-buffer depth, so silhouettes/isolines staircased on/off instead of fading;
-  and the per-mesh FOOTPRINT contours never faded at all (the coverage MRT is
-  depth-free by design — occlusion-free additive accumulation).
-- **16-bit depth packing**: `OutlineGBuffer` packs window depth hi/lo into
-  target0.w/.z (.z was written as constant 0 — free). The edge detect still
-  reads the HI byte alone (identical staircase, OutlineThreshold calibration
-  untouched); only the `OutlineEdge` fade multiplier reconstructs
-  `c.W + c.Z/255` — smooth falloff over the few-cm window, alpha 0 beyond, no
-  G-buffer discard needed (occlusion in the buffer stays correct).
-- **Footprints stand down in slice mode**: new `active` param on
-  `buildCoverage`, `Sg.Active (not SliceMode)` on the composite ONLY — the
-  coverage pass, shaders and non-slice rendering are untouched.
-- CLAUDE.md updated (packed-depth bullet, footprint gate, slice fade note).
-  Build green — shader change, so the owed browser pass now also covers the
-  packed-depth fade (verify no new false bands + footprints returning on exit).
+Browser verification still owed (with the per-phase items): the
+`OutlineGBuffer` shader edit renders correctly (bias removal).
 
-## Slice-mode GUI touchups (2026-07-20)
+## v14 P9 — loops + forced path resolution (2026-07-27) — FINAL PHASE
 
-- **Focus angle indicator gold → white** (arrow + cut-plane trace in
-  `addPinRingsAndSelectionCircle`): back on the transient/selection layer with
-  the dashed selection circle; gold stays on the slice badges only.
-- **Cut trace restructured** (follow-up): the double line is gone — SOLID white
-  = the cut plane itself, a fainter thinner white line = the end of the
-  transparency falloff (Near + FadeDist, same `traceAt` horizontal-plane
-  intersection), so the visible profile band reads as the gap between them.
-- **Stretch framing**: vertical fill fraction 0.9 → 0.75 (brushed/probe paths
-  of `sliceStretchFactor` — the data sits clear of the top/bottom edges) and
-  the ortho half-WIDTH tightened ×0.8 while stretched (1:1 is already given up
-  there; true scale untouched). New `MeshView.sliceOrthoHalfSizes` is the ONE
-  hw/hh source — View proj, `sliceOrdinates`, `sliceAxes` rulers all read it,
-  and `brushedDotSegments` shrinks the horizontal glyph axis by the same
-  factor so the marks stay circular.
-- **Correspondence constellation hidden in slice mode**: `constellationActive`
-  now also gates on `not SliceMode` — the wire-sphere/cross markers + ref lines
-  stand down with the flags and origin cross.
-- CLAUDE.md updated (white indicator, tighten + ¾ fill, stand-down list).
-  Client type-check green. Browser pass owed with the rest of v12.
+Spec: `ScanPin_v14_P9_loops_path_resolution.md`.
 
-## Removals: plan mode + displacement viz (2026-07-17)
+- **T1 invariant change**: `RegGraph.tryAddEdge` now returns `EdgeAddResult` —
+  `EdgeAdded` / `EdgeClosesLoop (cycleEdges, residual)` / `EdgeRejected`.
+  Both-endpoints-connected is TRANSIENTLY accepted (exactly one fundamental
+  cycle), never committed; disconnect-adds stay impossible. New pure
+  machinery: `treePath` (directed a→b steps via LCA, up = Transform, down =
+  Inverse), `loopResidual` (tNew ∘ path(ref→mov) — identity iff the paths
+  agree), `residualRotationDeg` + `residualAt` (displacement at a probe
+  point — rigid conjugation preserves translation length, so an injected 5 cm
+  reads 5 cm exactly, test-pinned). `SolvePair` no longer refuses redundant
+  pairs (orientation from `pairRefMov`); `PairSolved` distinguishes a
+  same-pair re-solve (parent check — `Map.containsKey` alone would misroute
+  a redundant child that keys an edge elsewhere) from a loop-closing add.
+- **T2 the blocking modal** (`GuiOverlays.loopModal`, `.modal-scrim` z-300):
+  "Two paths now connect these meshes" + "These paths disagree by X.X° and
+  Y cm" (displacement read at the MOV mesh's centroid); rows = the NEW edge
+  + every cycle edge, each with its single-scalar quality, WEAKEST
+  pre-selected; pick exactly one to remove; Confirm → `ConfirmLoopResolution`
+  (remove + recompose + invalidate cell caches + `bumpPairSolve`), Cancel/Esc
+  → `CancelLoopResolution` (redundant edge discarded, prior tree stands).
+  Esc chain: the modal now WINS (modal > transaction > point-edit > probe >
+  ascend); peek keys refuse while it is open; dataset switch clears it. State
+  = `Model.LoopPending` (`LoopPending` record in RegistrationModel; the
+  committed graph never holds the loop). No 3D choreography, no standing
+  overlay.
+- **T3 tree restored**: `RegGraph.resolveLoop (mov, ref, tNew, q, removeChild)`
+  — removes ONE cycle edge; the detached subtree (containing exactly one
+  endpoint — the cycle crossed the removed edge once) re-hangs through the
+  new edge, its internal path reversing like a reroot; the new edge INVERTS
+  when the REF side detaches. Result proven in tests: spanning tree over the
+  same members, every kept edge constraint pose(c) = T∘pose(p) holds (unique
+  poses), an exactly-agreeing loop resolves with poses unchanged, MOV-edge
+  and REF-side removals both correct.
+- Supertests 105/105 (+12 loop/resolve; all old cycle-rejection tests updated
+  to the transient semantics). Client + server builds green. Browser pass
+  owed: modal look/flow on a real redundant solve.
 
-- **Plan mode gone entirely** (the "🗺 Plan" / hold-O white-out overlay):
-  `Model.ShowOverlaysHeld` + `SetShowOverlays` + reducer arm, the top-bar
-  button, the O hotkey handlers, the `Whiteout` shader uniform + branch
-  (MeshShaders/MeshView), the pin-flag overlays-hold styling reads
-  (ScanPinScene), the 2D flag-tip name-tag overlay `GuiOverlays.pinFlagLabels`
-  + its mount + `.pin-flag-labels`/`.pfl` CSS. `ScanPin.flagTopRender` stays
-  (the 3D flag pole still uses it).
-- **Displacement visualization gone entirely** (the load→solved motion viz):
-  the `InspectChannel` type/field/message/handler (the dock keeps only the
-  M3C2|Δz sub-toggle — Difference is now THE Inspect pair channel), the 3D
-  enc-3 shader branch + `MeshView.displacementRange` + the inspectField/
-  distScale displacement paths, the focus mode-2 ramp + mode-3 white surface
-  (FocusShaders), the focus arrow glyphs (`arrowSegs` + node) +
-  `loadSolvedForwards` (orphaned) + the displacement→Top projection collapse
-  (single + tiles) + `dispLegend` + `.focus-displeg` CSS, and the legend's
-  Displacement branch. `ensureFocusDist` drops its channel gate. The numeric
-  SHIFT READOUT (total/vertical/horizontal/rotation numbers in the dock) is
-  a readout, not a viz — kept deliberately; say the word if it should go too.
-- CLAUDE.md swept (colour families, focus camera bullet, shader contracts,
-  dock/brushing bullets, the displacement bullet deleted). Adaptify re-run;
-  build + Supertests green.
+**v14 phases complete (P0–P9).** Outstanding before doc reconstruction:
+ONE whole-app browser pass (owed items listed per phase above) + the parked
+decision on the server `/query/slice` endpoint (client-consumer-less since
+P3; kept for integration coverage — prune or re-consume).
 
-## ScanPin v12 — follow-up round 3 (2026-07-17 feedback)
+## v14 P8 — peek system, blink comparator (2026-07-27)
 
-- **Dots of interest double-circled**: `brushedBase` now carries an isInterest
-  flag; `addGlyph` draws a second inner circle (×0.6) for interest dots in the
-  main 3D (focus glyphs never interest-marked).
-- **Outline/isoline opacity capped at 10 % in slice mode**: in `OutlineEdge`,
-  `OutlineDistFade > 0` doubles as the slice signal — silhouette + isoline
-  alpha = min(0.1, base·distFade), inlined (FShade lambda-free rule). Together
-  with the flag/cross removal this makes the terrain profiles the dominant ink.
-- **Flags + origin cross fully off in slice mode**: `flagsActive` gates
-  pole+ring, base cross and name labels (round-2's selected-pin exception
-  removed — the whole flag machinery stands down); SceneGraph's origin
-  indicator + axis labels gated the same way.
-- **Slice rulers** (`GuiOverlays.sliceAxes`, `.slice-axes` overlay spanning the
-  3D area): vertical ruler right of the rail (x=268), horizontal above the dock
-  edge, both ticking METRIC distance from the pin centre (nice 1/2/5 steps,
-  emphasized zero, faint grid lines across the view). The vertical ruler ticks
-  TRUE metres — its px spacing widens with the stretch factor, so it doubles as
-  a live exaggeration readout; recomputed from the ortho frame + viewport, so
-  it survives any projection change.
-- **Badges** (`sliceBadges`, replaces stretchBadge): "ortho slice view" while
-  slice is active + "vertical axis stretched ×N" while stretch is on, both on
-  the gold #b45309 accent.
-- **Focus angle indicator restyled**: GOLD instead of white (matches the
-  badges), arrow shrunk to ~75 % of the pin circle (half-length 0.75·r, head
-  0.15·r), cut-plane trace drawn as a DOUBLE line (±0.045·r offsets along the
-  view direction).
-- Build green. Browser pass owed as before.
+Spec: `ScanPin_v14_P8_peek_system.md`.
 
-## ScanPin v12 — follow-up round 2 (2026-07-17 feedback)
+- **T1**: already clean — the ensemble Peek button + hotkey I fell in P2
+  (grep-verified; only stale comments remained, fixed).
+- **T2 two spring-loaded keys**, cell scope only, zero config, REF/MOV from
+  the tree (`MatrixNav.pairRefMov`, nearer-root = REF), "before" = as-loaded
+  always: **V** (visibility) — the MOV blinks OFF outright while held, the
+  REF alone answers "same rock?" (design call: hidden means Sg.Active off —
+  never the ghost floor, a blink needs a clean swap; pin annotations stay);
+  **B** (pose) — the MOV displays AS-LOADED instead of composed while held,
+  REF static ("did registration help?"). `Model.PeekVis`/`PeekPose` +
+  `SetPeekVis`/`SetPeekPose` from view key down/up (reducer idempotence
+  absorbs key repeat); presses REFUSED unless in a cell AND both pair meshes
+  are resident (`MeshesLoaded`) — releases always land; peeks clear on
+  descend/ascend/dataset.
+- **T3 perceptual constraints**: instant swap — vis peek = Sg.Active flip on
+  the main surface + outline G-buffer + footprint coverage + suitability
+  nodes (`MeshView.peekVisHiddenAt` in all four actives — no silhouette or
+  footprint remnant); pose peek = a trafo change through the ONE
+  `displayedMeshT`/`displayedWorldAt` pair (now `peekMovAt`-aware, so
+  surface-riding pin markers follow the blink; the offscreen outline pass
+  shares displayedMeshT and follows automatically). Zero refetch: the error
+  map rides MOV's surface during the pose peek (registered-pose values,
+  purely visual — documented). Both states GPU-resident by construction
+  (same geometry; residency gated at the press). No camera writes, no UI
+  reads the peek state (zero reflow), whole meshes swap, wheel stays orbit
+  zoom, no indicator control (eyes-free), no auto-blink/cycling/config.
+  Reducer-side queries keep the COMMITTED pose (`ModelTransforms` untouched
+  by peeks).
+- Supertests 93/93; client + server builds green. Browser pass owed: blink
+  feel (V), pose jump (B), residency refusal on a cold pair.
 
-- **Outline/isoline falloff shrunk**: `OutlineDistFade` now uses the SAME
-  window as the mesh surface fade (`SliceCam.FadeDist` = max(5 cm, r/20)) —
-  lines vanish with the fill instead of trailing 4 radii behind the cut.
-- **Slice mode hides non-selected flags**: pole+ring (`pinFlags`), base cross
-  (`pinMarkerLines`) and name label (`pinLabels`, per-pin Active aval) all skip
-  pins other than the selected one while `SliceMode` is on.
-- **Stretch extents pre-calculated for the region**: `sliceStretchFactor`'s
-  inputs are now cut- AND azimuth-independent (axis-direction offsets from the
-  pin centre only): brushed ⇒ the SELECTED pin's brushed samples (not the
-  cut-ranked interest set); fallback ⇒ the ~20 probe samples closest to the
-  pin CENTRE (was: nearest the cut). The frame no longer breathes while the
-  slice plane scrolls or the azimuth steps.
-- **Focus angle indicator** (Top single + tiles, slice mode, selected pin):
-  white arrow through the pin centre along the slice view direction
-  (`addArrowXY`) + a white ⊥ segment tracing the cut plane — computed as the
-  cut plane ∩ the horizontal plane at the pin height (exact for tilted
-  dip-aligned sections). Lives in the shared `addPinRingsAndSelectionCircle`
-  (new `SliceCam option` param), so single and tiles cannot drift.
-- **Brushed dots → screen-aligned circle+cross glyphs** (line geometry; the
-  icosphere path + the whole `LineShader.Dots` module deleted as orphans):
-  - main 3D `brushedDotSegments`: constant screen size — new gear slider
-    "Brushed dot size (px)" (`BrushDotPx`, default 15, clamp 4–60); ortho
-    slice sizes from the frustum (2·hh/vpY per px), perspective per dot from
-    its eye distance (90° vfov); view-dependent recompute by design (pin-flag
-    precedent, ≤200 dots).
-  - stretch compensation: the vertical (screen-up = pin-axis) glyph axis is
-    divided by the stretch factor, so exaggeration never distorts the marks.
-  - focus single/tiles `brushedDotSegmentsFocus`: same glyph, XY-aligned,
-    fixed render size (the focus cameras keep their own zoom conventions — no
-    px constancy attempted there).
-- Build green; CLAUDE.md updated. Browser pass still owed (now also: falloff
-  tightness, indicator geometry, glyph sizing/squish).
+## v14 P7 — in-cell error inspection (2026-07-27)
 
-## ScanPin v12 — follow-up round (2026-07-17 feedback)
+Spec: `ScanPin_v14_P7_incell_error_inspection.md`. Consumes P0's
+`/query/pair-error` + `/query/pair-error-at` + the kept `/query/region-distance`.
 
-- **"Isolate pins" checkbox** replaces the "Full meshes" button: rendered as a
-  `compactToggle` (visual ■/□ checkbox, `.rail-isolate`), bound DIRECTLY to the
-  one pin-isolation mode (`AnchorGhostMode`). Checked (Register default) =
-  isolated pin patches (context floor 0); unchecked = isolation off entirely →
-  full textured meshes via the exact Overview code path. The interim
-  `RegisterFullMeshes` field + message are deleted (adaptify re-run).
-- **Dip-aligned slice projection**: `SliceCam.Up` = the pin axis (local normal,
-  `ScanPin.axis`); the azimuthal eye direction is the world heading projected
-  into the plane ⊥ the axis (degenerate-heading fallback). View + ordinate
-  overlay both use `lookAt … s.Up`; ordinates now drop along the pin axis (=
-  the M3C2 measurement direction), which is more correct than the old world-Z
-  drop.
-- **Outline/isoline distance falloff in the compositing pass**: yes — done
-  there. The G-buffer already stores window depth (target0.w), which under the
-  slice ORTHO is linear in eye distance with 0 exactly at the cut → new
-  `OutlineDistFade` uniform in `OutlineEdge` multiplies silhouette + isoline
-  alpha by `1 − depth·k`; `OutlineView.build` sets k to fade out ~4·pin-radius
-  behind the cut, 0 (off) outside slice mode; the focus reference overlay
-  passes 0.
-- **Adaptive stretch factor** (moved to `ScanPinScene.sliceStretchFactor`, it
-  needs the brush ranking): brushed ⇒ the fully-opaque dots of interest fill
-  the view height (max |axis-offset| → 90 % of half-height, exact, clamp
-  [1,1000]); no brush ⇒ the ~20 on-surface PROBE samples inside the pin sphere
-  nearest the cut plane stand in for "mesh vertices at the near plane" (probe
-  positions are on-mesh points in the pin area and already client-side — no
-  500k-vertex scan; this was the "is this difficult?" part — the probe-sample
-  stand-in makes it cheap); no probe ⇒ the old inspect-span formula as last
-  resort. Badge formats the exact factor (×%.0f / ×%.1f).
-- **Cut snapping**: `MeshView.sliceCutStep` = nice 1/2/5 increment ≈ 5 % of the
-  pin radius, never finer than 1 cm. The MODEL keeps the continuous cut (so
-  sub-notch trackpad deltas accumulate instead of rounding back); `sliceCamera`
-  snaps at read time, so the plane, the fade, the dot ranking and the ordinates
-  all click through the same grid.
-- Build green. Same in-browser pass still owed (now also: dip-aligned entry,
-  outline falloff, adaptive ×N values).
+- **T1**: already-clean verification — the two-diagram design, slice/stretch/
+  ordinate/dot-glyph machinery and the M3C2|Δz toggle all fell in P3/P5
+  (grep-verified zero remnants; the client hardcodes region-distance mode 0,
+  no metric UI exists — the measure stays opaque).
+- **T2 the ONE diagram** (cell workspace, `GuiRail.chartJs` + `chartData`):
+  the MOV mesh's error across the pair's pins, pin-source-STACKED (48-bin
+  histogram, achromatic pin ramp, per-pin median ticks, mean-LoD band, mm
+  axis), titled "Mesh N error vs M — across pins"; per-edge before/after diff
+  = fill (current poses) + near-black step outline (edge-BEFORE poses via
+  P2's `composeEdge`) with a "fill now · line before" key — registered pairs
+  only. Placeholder furniture when pinless. Data: `Model.CellError`/
+  `CellErrorBefore` per-pin `Query.pairError` batches at displayed poses
+  (before-batch pin ROIs follow the anchor mesh's edge-before pose), samples
+  stored MOV-relative-to-REF (sign flipped at landing when MOV = meshA);
+  REF/MOV from new `MatrixNav.pairRefMov` (edge parent, else hop depth,
+  unconnected = MOV, tie → key order). Lazy single-flight postludes
+  (`ensureCellError`/`ensureCellDist`), ONE `cellErrorGen` guard bumped by
+  `invalidateCellError` on descend/ascend/pin edits/solve/edge-drop/reroot/
+  dataset.
+- **T3**: diagram x-drag brush → `SetBrushedSamples` gid set (≤200; gid =
+  index into the canonical CellError sample concatenation) → white ink-under-
+  stroked 3D glyphs (`brushedSampleNode`); bidirectional: 3D hover (screen-
+  space nearest ≤12 px, 80 ms throttle) → `SetHoverSample` → amber diagram
+  cross-highlight + amber 3D glyph + exact value via pair-error-at into the
+  workspace readout. Armed probe: ⊕ toggle by the map toggle; while armed any
+  3D pick → pair-error-at → "probe ±N mm" readout — fully transient
+  (`ProbeReadout` wiped on disarm/ascend; no persistence, no diagram link).
+  False-colour map: `CellDist` = region-distance MOV vs REF at displayed
+  poses, painted on MOV ONLY (never the reference; `InspectPlain` swaps only
+  MOV's base to near-white), toggleable ("Error map"), suppressed by a
+  non-empty brush (brush = sole focus, established grammar); range = new
+  `ErrorRange.ofSamples` (pin-ROI samples, span-0, cap ±0.5 m) shared by map
+  uniforms + diagram + legend; legend gains the diverging branch back
+  ("Difference N vs M"). NO isolation in inspect: both pair meshes render
+  as-is (the P5 nav rule is scope, not isolation). Esc chain: transaction >
+  point-edit > probe disarm > ascend.
+- Supertests 93/93 (+4 pairRefMov). Client + server builds green. Browser
+  pass owed: diagram rendering/brush feel, glyph highlight, readouts, map on
+  MOV with legend, before/after outline after a solve.
 
-## ScanPin v12 — Task 9: prune + audit
+## v14 P6 — atomic pin placement, in-cell (2026-07-27)
 
-- Plan-mode overlay height-profile diagrams REMOVED (§5): the per-pin profile
-  charts on the show-overlays pills (`chartsJson` + chart DOM/CSS in
-  GuiOverlays.pinFlagLabels — pills keep the name tags only) AND their 3D
-  locator, the centre-slice lines (`pinSliceLines`, ScanPinScene). The matrix
-  slice cells (v11) are untouched — the slice caches, `ensureSlices`, the
-  server /query/slice, window/offset helpers all stay.
-- Orphans pruned with them: `ScanPin.DatasetColors` (field + `assignColors`),
-  `ScanPin.sliceToWorld`/`sliceUV` (chart-frame converters with no consumers
-  left), `.pfl-chart`/`.pfl-nochart` CSS. Earlier tasks already pruned the pin
-  palette/selectionTint (T2), the single dock diagram + `.ins-dist*` (T3), and
-  the false-colour-dot legend branch (T6); final grep sweep is clean.
-- CLAUDE.md drift fixed: pin identity → name-only pinInk; matrix centre-ring;
-  dock section rewritten (two fixed charts + neutral-dot brushing + interest
-  cross-highlight); Slice/SliceOther feed matrix cells only; new bullets for
-  Register full-mesh toggle, slice mode (camera/cut/stretch/ordinates) and the
-  placement suitability overlay + hard-prohibit.
-- Green: client type-check, server build, Supertests 45/45, integration.mjs
-  22/22 against :8004 (server killed after).
-- ONE BROWSER PASS OWED for the whole spec (dotnet build cannot compile
-  FShade→ESSL3): suitability overlay shaders (T4), slice fade + ortho cut (T5),
-  plus visual checks — Register context toggle, near-black pin marks, the two
-  dock charts + placeholders + brushing + amber interest markers, tooltip +
-  ghost fade on invalid placement, 10° azimuth stepping + profile silhouette,
-  stretch ordinates/tooltips/badge.
+Spec: `ScanPin_v14_P6_atomic_pin_placement.md`.
 
-## ScanPin v12 — Task 8: chart cross-highlight of the dots of interest (§6 bonus)
+- **T1 DELETED**: `Correspondence`/`MeshAnchor`/`AnchorSource` types + the
+  `ScanPin.Correspondence` field; auto-seeding wholesale (`seedAnchorsCore`/
+  `seedAnchors`, `AnchorsSeeded`/`AnchorSeedFailed`, `updateCorr`/`allPinIds`,
+  SetRegRoot's re-seed); ROI machinery (`roiReach`+`fixedProbeLength`, InRoi);
+  the whole star readiness/solve-filtering stack (`Readiness`, `ReadinessPin`/
+  `ReadinessInput`/`Diagnostic`/`Severity`, `RegConditioning` — server RegMath
+  keeps its own conditioning) + their Supertests sections; the old
+  `PlacementState.AnchorPlacement` click-place flow with its ≥2-overlap
+  hard-prohibit (`countOverlap`, `placementValid`, ghost fade,
+  `placementTooltip`) — atomic placement picks points explicitly, so the
+  prohibition is meaningless.
+- **T2 atomic pin + transaction**: `ScanPin` = { Pair (PairCell.key order),
+  AnchorMesh + CentreLocal (the pin RIDES its placement mesh), InnerRadius,
+  PointA + PointB (own-frame, NON-optional — no partial pin exists),
+  ShortName, CreatedAt, ContactRings }. `PlacementState.PlacementActive of
+  DraftTool × PinDraft` — modal, FREE ORDER: ◯ Area / ✚ Points sub-tools
+  re-armable, clicks route by tool (area = raycast whatever pair mesh is
+  under the cursor → anchor there; point = the HIT MESH attributes the slot,
+  re-pick replaces), "area ✓ · N of 2 points" cue lives only in the draft
+  bar, ✓ Commit enabled only complete (the one birth path), ✕/Esc abort =
+  full rollback (the draft never touches the pin map). Points are
+  UNCONSTRAINED (outside-ROI legal; ROI scopes analysis only). Draft renders
+  all-white (uncommitted layer): area wire sphere + point wire-sphere/cross;
+  flashlight ghost only while ToolArea aims.
+- **T3 anchoring/solve/edit**: pin world centre = displayedWorld(AnchorMesh)
+  ∘ CentreLocal everywhere (scene nodes token-read poses; blobs/rings/zoom/
+  flags updated; rings now fetch the pair's two meshes only). `SolvePair`
+  (cell toolkit ⌖ button, enabled ≥3 pair pins): orientation = existing edge
+  (re-solve) else un-treed mesh MOV → treed REF; both-in-tree ⇒ cycle refusal
+  toast, neither ⇒ connect-to-root-first toast. Pairs feed `/query/lsq-pairs`
+  at the AS-LOADED baselines (edge transform = child-baseline onto
+  parent-baseline, P1 convention — ancestor registration composes on top);
+  `Query.lsqPairs` re-added returning transform + residuals; landing
+  (`PairSolved`, `pairSolveGen`-guarded) → `tryAddEdge`/`withEdge` with
+  quality = `RegGraph.solveQuality` (1/(1+rms/0.05), halves at 5 cm rms) +
+  recompose. ANY pin edit (radius/point re-pick/delete) with a registered
+  pair → `RegGraph.removeEdgeCascading` (the edge + its whole subtree — a
+  stranded component would break the invariant) + recompose + toast + gen
+  bump (in-flight solves land dead). Edit mode = `PinEditState.EditPoint`
+  (pin row ·N buttons arm; single-mesh raycast replaces the point atomically;
+  never partial). Committed markers = MESH-COLOURED FILL + WHITE OUTLINE
+  (mini icosphere + white wire sphere) on both pair meshes. ONE Esc chain:
+  transaction abort > point-edit disarm > ascend.
+- Cell workspace: New pin / ⌖ Solve (n/3) / Isolate hide during a
+  transaction; pin rows = name · r log-slider · point re-pick per mesh · ✕.
+- Supertests 89/89 (+8: leaf/mid-tree cascade + reference-equal branch,
+  withEdge payload, quality bounds/monotonicity/calibration). Client+server
+  builds green. Browser pass owed: full transaction flow, draft visuals,
+  marker attribution colours, solve round-trip, edit invalidation toast.
+- DOC DEBT (frozen): CLAUDE.md correspondence/seeding/readiness bullets,
+  placement suitability hard-prohibit, pin-anchor conventions — superseded.
 
-- `focusData` (GuiInspector) = the interest gids from the shared
-  `sliceRankedBrush` ranking, fed to BOTH charts as `data-focus`; the chart JS
-  draws amber baseline markers (white-ringed dots) at those samples' x
-  positions and re-renders on attribute mutation — so the highlight follows
-  the cut plane live as the slice camera rotates/sweeps. Empty outside slice
-  mode. Build green.
+## v14 P5 — descend/ascend hierarchy; rail + global selection deleted (2026-07-27)
 
-## ScanPin v12 — Task 7: slice mode — stretch + ordinates (§6 stage 2)
+Spec: `ScanPin_v14_P5_hierarchy_descend_ascend.md`. The navigation rework —
+the largest P-phase deletion. The app is now: 3D view + top bar + the left
+navigator (matrix-home ⇄ cell-workspace) + overlays. The remaining pair tools
+land P6–P8.
 
-- `Model.SliceStretch` toggle (+ `ToggleSliceStretch`, top-bar "⇕ Stretch"
-  button shown only in slice mode). Factor N is DERIVED, not stored:
-  `MeshView.sliceStretchFactor` sizes the shared inspect error span to ~1/3 of
-  the slice view height, snapped 1/2/5, clamped [2, 500].
-- Exaggeration is implemented PURELY in the ortho projection (half-height ÷ N):
-  pitch is locked horizontal with up = +Z, so screen-vertical IS world-Z —
-  vertical-only by construction, zero geometry touched, cut/fade/picks stay
-  metric, and everything projected through the shared matrices stretches
-  automatically. `orthoProjTrafo` moved to MeshView (shared with the overlay).
-- `ScanPinScene.sliceRankedBrush` = the ONE slice ranking (gid, renderPos,
-  valueMm, |behind-cut|, sorted) shared by the 3D dots (T6 refactored onto it —
-  including a fix of a transient-aval read I nearly shipped), the ordinates,
-  and T8's chart highlight.
-- Ordinates (`GuiOverlays.sliceOrdinates`): per dot of interest a vertical line
-  dot → reference (its signed sample value), projected through the SAME
-  view/proj — rendered as hoverable HTML strips (`.slice-ord`), tooltip = TRUE
-  value in mm/cm (never pixel distance). Gated on stretch ∧ slice; true scale
-  never shows them.
-- Persistent amber "exaggerated ×N" badge (`.stretch-badge`) top-centre while
-  stretch is active.
-- Build green.
+- **T1 DELETED wholesale** (with every consumer branch):
+  - `WorkflowStep` (type/module/field/message; all per-mode branching:
+    Inspect gates in MeshView/legend, Correspondence gates for isolation +
+    constellation, per-mode isolation defaults in SetWorkflowStep).
+  - The GLOBAL SELECTION model: `ActiveSelection`/`Selection`/`HoverTarget`,
+    `SetSelection`/`SetHovered`, every panel's selection consequence, hover
+    peeks (`wheelIsolation`), 3D pin-dot select taps.
+  - `MeshSolo` + `enterSolo`/`exitSolo` + `LocateState`/`LocateBackup`/
+    `BackOutLocate` (the locate machinery).
+  - Whole FILES: `GuiFocus.fs`, `FocusScene.fs`, `FocusShaders.fs` (the
+    selection-framed focus panel), `GuiInspector.fs` (the dock: charts,
+    manager, XYZ editor, shift readout, brush bridge), `ProbeModel.fs`.
+  - With their only drivers gone: sample BRUSHING (`BrushedSamples`,
+    `SetBrushedSamples`, `ScanPinScene.brushSamples` + glyph builders,
+    `BrushDotPx` gear), the exact-point probe (`PointProbe`, `probeValueAt`),
+    correspondence ARMING/PICKING (`CorrArm`/`CorrPreview`/`ToggleCorrArm`/
+    `CorrPreviewComputed`/`PickCorrespondenceAt`/`CorrFlash` + the 3D aim
+    ghost/arrow + flash overlay + `raycastMesh`), the client PIN-PROBE layer
+    (`ScanPin.Probe`, `ProbeState`/`ProbeResult` DTOs, `ensureProbe`,
+    `Query.probe` — dead against the P0-deleted endpoint anyway; `ScanPin.axis`
+    → `axisWith` now globalUp-or-world-up), the Inspect difference stack
+    client-side (`FocusDist`, `ensureFocusDist`, `FocusDistComputed`,
+    `Query.regionDistance`... KEPT `Query.regionDistance`? NO — wait, see
+    below), `MeshView.inspectRange`/`inspectField` + per-mesh outline gating
+    (`outlineFlagAt` → mask all-on, depth bias 0), pin messages without hosts
+    (`SetInnerRadius`, `DeletePin`, `ProbeComputed/Failed`), the orphaned
+    query wrappers `Query.lsqPairs` (dead since P1; P6 re-adds) and
+    `Query.regionDistance` (its ensureFocusDist caller went with the Inspect
+    stack; P8 re-adds), `ClickGate` + `ReadinessView` adapter (Readiness
+    ENGINE kept — tested, P6-bound), the selection circle + constellation +
+    hover pulses in ScanPinScene, `SceneGraph.focusedOutline`, the top-bar
+    focused-mesh coordinate branch, `FocusScene.dpr` publisher.
+  - Legend reworked to Range-heatmap-only; ~106 orphaned CSS blocks pruned
+    (.ins-*, .focus-*, .rail-step*, .mx remnants, tb-regview, dock resize...);
+    `--dock-h` → 0 (dock gone; bottom overlays reach the bottom edge).
+- **T2 hierarchy**: `NavLevel = NavHome | NavCell of a*b` (`Model.Nav`,
+  dataset-reset), `DescendPair` (Possible/Registered cell click — impossible
+  cells are inert holes) and `NavAscend` (Esc + the workspace ‹ button; at
+  home a no-op). `MeshVisibility.shown` REDEFINED on Nav: home = all, cell =
+  the pair only — consumed by render MeshActive, raycast candidates and the
+  placement overlap count. Cell-workspace panel: persistent A↔B header
+  (swatch·num·name chips + ↔), live pair-state line (registered quality /
+  not yet / insufficient), back control. Esc order: armed placement cancels
+  first, then ascend (the single backward primitive).
+- **T3 per-pair toolkit**: "○ New pin" + "Isolate pins" moved INTO the cell
+  workspace (no global hosts remain); placement is pair-scoped through the
+  ONE visibility rule (countOverlap + raycasts filter by Nav, so the ≥2-mesh
+  rule = "both meshes of THIS pair"). No global mode state exists.
+- Green: client + server builds, Supertests 98/98 (pure layers untouched).
+  Browser pass owed: whole-app navigation flow, workspace header, ghosting of
+  non-pair meshes in a cell, placement inside a cell.
+- DOC DEBT (frozen): CLAUDE.md sections on the three-mode rail, ONE-selection
+  model, focus panel, dock, brushing, exact-point probe, solo/visibility,
+  Esc grammar — all superseded by the hierarchy.
 
-## ScanPin v12 — Task 6: slice mode — neutral dots of interest (§6 stage 1)
+## v14 P4 — reference-root designation (2026-07-27)
 
-- `brushedDotGeometry` rewritten: dots are ONE neutral dark grey (values live
-  in the charts) — the false-colouring on the shared inspect range is gone. New
-  `sliceAware` flag: main 3D passes true, the focus views false.
-- Slice mode: dots ranked by |distance behind the cut plane|; the nearest
-  `maxDotsOfInterest = 12` render at full strength, the rest fade out over
-  0.6 × the view half-height (α·0.45 → 0, dropped below 0.04); dots in front
-  of the cut are skipped (they're near-clipped like the surfaces, so they
-  never waste interest slots).
-- Legend: the "Brushed samples" gradient branch DELETED (false-colour-dot
-  code); the legend now hides entirely while a brush is active in Inspect —
-  no colour scale is in play with neutral dots.
-- No ordinates/hover in true scale (§6 explicitly defers them to stretch mode).
-- Build green.
+Spec: `ScanPin_v14_P4_root_designation.md`.
 
-## ScanPin v12 — Task 5: slice mode — constrained camera (§5)
+- **T1 old star reference picker DELETED**: the roster ★/☆ toggle button
+  (ClickGate single/double, toggle-off-to-None) is gone; the roster keeps a
+  display-only `rail-root-mark` ★ on the current root.
+- **T2 overview root designation** — a STATE of matrix-home, not a rail mode:
+  `MatrixHome = HomeOverview | HomePairs` (+ `SetMatrixHome`, default
+  Overview, reset per dataset), tabs "Setup | Pairs" atop the navigator;
+  Setup = mesh survey rows (swatch·num·name·★, gold row accent) where click =
+  `SetRegRoot name` (message narrowed from string option — None only ever
+  meant pre-load).
+- **True re-rooting** (`RegGraph.reroot`): designating a TREE MEMBER now
+  keeps the registration — every edge on the path new-root→old-root reverses
+  (Child/Parent swap = the REF/MOV flip, Transform inverted, Quality kept;
+  path children removed before reversed re-adds — interleaving would drop
+  edges), off-path edges untouched (subtrees follow their path node). All
+  poses recompose relative to the new root: pose'(m) = pose(m)∘pose(newRoot)⁻¹.
+  Reducer: member+edges → reroot + recompose + toast "registration kept";
+  non-member with edges → clear + toast (a registered tree cannot hang off an
+  outside mesh); no edges → plain designation. All paths re-seed anchors +
+  invalidate probes/rings.
+- Supertests 98/98 (+10: REF/MOV flip exactly on the path, off-path
+  reference-equality, quality carry, pose'(m)=pose(m)∘pose(B)⁻¹ over all
+  members, invariant survives (adds ok, cycles rejected), degenerate no-ops).
+  Client + server builds green. Browser pass owed: tabs, gold root rows,
+  roster ★ mark.
+- DOC DEBT (frozen): CLAUDE.md roster-★/reference-picker wording, "reference
+  change wipes solve" rule (now: member re-root PRESERVES registration).
 
-- Model: `SliceMode : bool` + `SliceCut : float` (metric, signed, 0 = through
-  the pin centre). Messages `SetSliceMode`/`AdjustSliceCut`; reducer clamps the
-  cut to ±2.5·InnerRadius with a radius-scaled wheel step; `ensureSliceMode`
-  postlude exits the mode whenever the selected pin goes away.
-- `MeshView.sliceCamera` = THE slice frame, shared by the main view/proj AND
-  the mesh-shader fade uniforms: ortho, pin-centred, half-height 1.6·r (zoom
-  locked, influence circle fills ~2/3 of the height), pitch locked horizontal,
-  up = +Z. Azimuth = orbit `phi` snapped to 10° — so ENTRY lands on the step
-  nearest the current perspective heading by construction, and dragging keeps
-  rotating the orbit while the displayed azimuth clicks in 10° steps (pitch
-  drags change hidden orbit state only). Eye at 6·r, far at 12·r.
-- The CUT = the ortho NEAR plane (near = 6·r − cut): geometry in front is
-  GL-clipped, and because View.fs feeds the same view/proj avals to the
-  offscreen outline pass, the profile at the cut gets the standard silhouette
-  treatment with zero extra outline code.
-- Behind-the-cut alpha falloff: new `SliceFwd`/`SliceFadeNear`/`SliceFadeDist`
-  uniforms in MeshShader — fade over max(5 cm, r/20) then discard; faded
-  fragments drop below the α-gated depth threshold, so picks fall through them.
-- Wheel is intercepted in View.fs while slice mode is on (`AdjustSliceCut`
-  instead of orbit zoom); Esc exits (shared with placement cancel — both
-  no-ops when idle); top-bar "▤ Slice" toggle, disabled without a pin
-  (`.tb-btn:disabled` styling added).
-- OWED IN-BROWSER: shader fade compiles only in the browser; verify entry snap
-  feel, 10° stepping, profile silhouette at the cut, sweep direction.
-- Build green.
+## v14 P3 — mesh×mesh matrix navigator, read-only (2026-07-27)
 
-## ScanPin v12 — Task 4: fused placement-suitability overlay (§2)
+Spec: `ScanPin_v14_P3_matrix_navigator.md`. Old pins×meshes matrix deleted
+wholesale; new upper-triangular mesh×mesh navigator (read-only — descend/root
+actions arrive P4/P5).
 
-- Auto-on strictly while a placement is armed (every piece gates on
-  `Placement = AnchorPlacement`); vanishes on cancel/commit.
-- New offscreen pass `MeshView.buildSuitabilityNode` + shader
-  `SuitabilityCoverage` (MeshShaders.fs): per mesh, additive occlusion-free
-  screen-space footprint like the outline coverage MRT, but the written value is
-  SHAPE-WEIGHTED — 0.25·(0.2+0.8·quality) — so one channel carries both
-  "covered" and an approximate per-mesh shape quality (multi-layer accumulation
-  clamps → biased crisp; accepted approximation, noted in the shader).
-- `SuitabilityComposite` fullscreen fragment (via `OutlineView.buildSuitability`):
-  0 covered channels → transparent; 1 → flat textureless grey α 0.78 (detail
-  visibly lost); ≥2 → diagonal weave cycling the covered meshes' palette colours
-  (no cap below the 8-channel MRT limit), saturation+separation+alpha modulated
-  by the MIN shape across them. Semi-transparent and drawn BEFORE the outline
-  composites in SceneGraph, so isolines/footprint contours read through it.
-- Hard-prohibit: `View.countOverlap` = closest-point fan-out per mesh at the
-  displayed pose, in-range = within QuickPinRadius. Hover (throttled, gen-
-  guarded) writes `placementValid`; <2 ⇒ the white ghost/outline fades to ×0.2
-  (ScanPinScene) + a red cursor-side tooltip "no overlapping meshes here"
-  (GuiOverlays.placementTooltip). The CLICK re-verifies at the actual point and
-  refuses with a toast (new `ShowToast` message for view-side guards).
-- OWED IN-BROWSER: the two new shaders compile only in the browser (ESSL3) —
-  verify placement arming shows the overlay, hatch colours, grey prohibit zones,
-  tooltip, and that picks still work (composite is NoEvents).
-- Build green.
+- **T1 pins×meshes matrix DELETED** — and with it the entire client slice-cell
+  ecosystem (its only consumer): GuiRail's `SliceDiagram` module + boot JS,
+  `refProfile`, `CellInfo`, matrixHead/matrixRow/matrixRows/matrixView, the
+  window/vert-extent global scales, all `.mx-*` CSS (27 rules);
+  `ScanPin.Slice` + `SliceState`/`PinSlice`/`SliceMesh` DTOs +
+  `SliceComputed`/`SliceFailed` + `ensureSlices` + `invalidateSlices` +
+  `Query.slice` + the slice helpers (`sliceWindow`/`sliceOffsets`/
+  `sliceClipRadius`/`sliceCentreIndex`/`sliceNormalOf`) + `Model.MeshSpacing`
+  + the four gear slice tunables (fields, messages, sliders). SERVER
+  `/query/slice` + MeshAnalysis.planeSlices/dipAzimuth KEPT (integration
+  tests cover them; the P7/P8 per-edge cell diagrams are their likely
+  consumer — prune at rework end if none materializes).
+- **T2 mesh×mesh navigator** (`GuiRail.pairMatrixView`, `.pmx-*` CSS): rows/
+  cols = meshes, upper triangle only, no diagonal; cell (A,B) IS the pair
+  edge. Emphasis ramp: impossible = background hole (`.pmx-imp`) < possible =
+  outlined vessel (`.pmx-pos`) < registered = filled (`.pmx-reg`), fill
+  strength = the edge's ONE quality scalar (achromatic ink alpha 0.30+0.65·q
+  — colour families stay free). `RegEdge.Quality : float` added ([0,1], 1 =
+  best; `tryAddEdge` takes it; P5's solve writes it). Pure state fn
+  `PairCell.state` (RegistrationModel): registered (either orientation, via
+  new `RegGraph.pairEdge`) beats overlap verdict; unfetched overlap reads
+  impossible. Overlap data: `Model.PairOverlaps` (unordered `PairCell.key`),
+  lazy `ensurePairOverlaps` postlude — all missing pairs fetched in parallel
+  at the as-loaded baselines via new `Query.pairOverlap` (P0 endpoint),
+  single-flight per generation (dataset switch bumps), ONE
+  `PairOverlapComputed` batch. Mounted in Register + Inspect rail bodies.
+- **T3 reordering**: `MatrixOrder` (OrderSensor | OrderCoverage |
+  OrderConnected) + `MatrixNav.hopDepth`/`orderMeshes` (canonical tiebreak;
+  coverage = bbox XY footprint; connected = root, hop distance, unconnected
+  last) + `Model.MatrixOrder`/`SetMatrixOrder` + the "Order
+  Sensor·Cover·Root" compactButtonBar above the matrix. Contents proven
+  order-invariant in tests.
+- Supertests 88/88 (+12: pair-cell states, quality carry, hop depth, the
+  three orders, permutation + content-invariance); client + server builds
+  green. Browser pass owed: navigator layout/ramp legibility, overlap sweep
+  landing (Hessigheim pairs should all read possible), order toggle.
+- DOC DEBT (frozen): CLAUDE.md matrix bullet (pin×mesh, slice cells, gold
+  column, dim cross), slice-cache state rules, slice gear tunables, matrix
+  selection-driver wording — all superseded.
 
-## ScanPin v12 — Task 3: detail dock = two fixed charts (§3)
+## v14 P2 — per-edge before/after (2026-07-27)
 
-- `GuiInspector`: the selection-driven single diagram is GONE. `chartsCore`
-  computes BOTH chart payloads in one pass (shared 1–99% quantile x-range over
-  all ready pins × moving meshes × both poses — the charts stay comparable):
-  - MESH chart = selected mesh across pins (matrix column); pin series on an
-    achromatic grey ramp (light→dark, canonical order — legend names them; no
-    pin colours per §4).
-  - PIN chart = selected pin across meshes (matrix row); mesh-palette series.
-- New `chartJs` single-chart renderer with full furniture ALWAYS drawn: bold
-  title, x axis (mm, nice-step ticks + "signed error vs reference (mm)" label),
-  y axis (counts, nice ticks + gridlines), inset legend (capped + "+N more"),
-  LoD band, zero line; solved ⇒ fill = emphasized pose + near-black step
-  outline = other pose with a "fill Before · line After" key. Empty half ⇒
-  same furniture + centred placeholder ("select a mesh" / "select a pin" /
-  "probing pins…" / "reference mesh — no error vs itself") — never blank.
-- Both charts mounted side-by-side in fixed 50% halves (`.ins-charts`), no
-  reflow; brushing works from EITHER chart via the one shared bridge input
-  (gids stay canonical-array indices); hover sentinels (`substHl`) kept per
-  chart. Shift readout unchanged. Old `.ins-dist*`/`.ins-ph` CSS pruned.
-- Build green.
+Spec: `ScanPin_v14_P2_per_edge_before_after.md`. Pose semantics only; the
+per-edge peek/diagram UI consumes it in P5/P7/P8.
 
-## ScanPin v12 — Task 2: pins name-only, near-black (§4)
+- **T1 ensemble before/after DELETED wholesale.** Gone: `RegView` type+module
+  and both model fields (`RegView`, `RegPeekHeld`), messages
+  `SetRegView`/`SetRegPeek`, the top-bar Before/After/Peek cluster, hotkey I,
+  `applyRegView` + `swapProbeViews` (the swap-in-place machinery), the whole
+  Other-pose cache layer — `ScanPin.ProbeOther`/`SliceOther` fields +
+  `ProbeOther*`/`SliceOther*` messages + their fetch halves in
+  `ensureProbe`/`ensureSlices` (slice requests now send transformOther=None),
+  `Model.FocusDistOther` + `FocusDistOtherComputed` + the other-pose branch of
+  `ensureFocusDist`, every peek-selected cache read (3D inspectField, focus
+  overlay/scalar, matrix cell slice choice), the dock charts' two-pose
+  machinery (ha/hb halves, fill-vs-outline, "fill Before · line After" key —
+  series now carry ONE `h` histogram), the After-refusal gates + toasts
+  (placement/resize/arm/pick/XYZ-editor read-only) — with no global After
+  state, editing is always legal. Displayed pose = composed graph pose else
+  as-loaded baseline (`ModelTransforms.displayedRender`/`displayedWorld`, no
+  view param); new `loadWorld` = the baseline in metric world — seeding + the
+  pin-resize anchor kill evaluate there (was `displayedWorldAt RegBefore`).
+  `MeshView.displayedWorldPeekAt`/`displayedWorldCommittedAt` merged into ONE
+  `displayedWorldAt`; `effectiveRegView` deleted.
+- **T2 per-edge before/after** (`RegistrationModel.fs`): `EdgeSide =
+  EdgeBefore | EdgeAfter` + `RegGraph.composeEdge child side g` — Before =
+  the committed graph with THIS edge's transform replaced by identity (pair
+  unregistered against each other; every ancestor edge still applied through
+  composition), After = committed. Model glue for later phases:
+  `ModelTransforms.edgeWorld`/`edgeRender` (baseline fallback outside the
+  tree). Supertests (+8, 76/76): on a 2-hop chain R←A←B, edge-B Before keeps
+  ancestor A's pose value-identical and parks B at its parent's pose; edge-A
+  Before moves the whole A-subtree while B keeps its own edge applied; purity.
+- DOC DEBT (frozen): CLAUDE.md Before/After machinery (RegView bullet, probe/
+  slice/FocusDist pose-pairing, Peek, Before-only correspondence guardrails,
+  charts' pose key) all superseded; correspondence flows now evaluate at the
+  as-loaded baseline.
 
-- `Primitives.PinPalette` DELETED; `selectionTint`/`c4bToGrey`/`v3dToGrey`
-  deleted too (they existed only for pin-colour de-emphasis — orphaned by the
-  removal; the white dashed selection circle is the remaining selected-pin mark).
-- New `Primitives.pinInk`/`pinInkV3d`/`pinInkCss` = #292524 (dark warm grey,
-  deliberately not the slice line's #000 nor the slate UI text) — the ONE colour
-  for every pin mark: 3D influence/contact rings, constellation markers, flag
-  pole under the overlays hold, flag name text, focus rings + Top glyphs,
-  slice-cell centre-ring (hardcoded in the SliceDiagram boot JS), overlay pill
-  border, dock chart pin layers (interim until Task 3 rewrites the chart).
-- `ScanPin.PinColor` field removed; `makeAnchor` lost the palette-slot logic;
-  GuiRail matrix row projections/payloads/labels reshaped (row head = near-black
-  text on the neutral header, selected row = neutral #dbe2ea fill); pin chips in
-  the dock + focus head are now bordered neutral labels with near-black names.
-- Build green; no `PinColor|PinPalette|selectionTint|c4bToGrey` references left.
+## v14 P1 — graph state model + composed world poses (2026-07-27)
 
-## ScanPin v12 — Task 1: Register full-mesh toggle (§7)
+Spec: `ScanPin_v14_P1_graph_state_composed_poses.md`. Client pose/state core;
+no new UI. In-app nothing creates edges yet (pair-solve flows = P2), so the app
+runs pose-flat like an unsolved v13 session; the Before/After+Peek machinery
+re-arms automatically once ComposedPoses is non-empty.
 
-- `Model.RegisterFullMeshes : bool` (default false) + `ToggleRegisterFullMeshes`
-  message + reducer arm; adaptify re-run.
-- Shader plumbing in `MeshView.buildScene`'s GhostOpacity chain: in
-  Correspondence with pin isolation on and no placement running, the context
-  floor is the toggle — off ⇒ 0 (isolated pins only, context fragments
-  discarded), on ⇒ `max GhostOpacity 0.12` (guaranteed visible even if the
-  gear's global ghost floor is off). The blob mask (pin emphasis) is untouched
-  in both states, so pins stay solid over the ghost context — the spec's
-  "without losing pin emphasis". Placement keeps the normal flashlight floor.
-- Rail: "Full meshes" toggle button next to "○ New pin" in the Register body
-  (`rail-full-meshes`, reuses rail-btn/rail-btn-active styling).
-- Client type-check green.
+- **T1 star pose model DELETED**: `Model.SolvedTransforms`, `SolveInputs`
+  (type + field), messages `SolveCoarse`/`CoarseSolved` + the whole ensemble
+  lsq fan-out in the reducer, `ensureSolveValidity` postlude, `solveGen`
+  guard, GuiRail's Solve button + `canSolve`. `LoadTransforms` (as-loaded
+  baseline, identity per mesh) kept.
+- **T2 registration graph** (`RegistrationModel.fs`, WASM-free → Supertests):
+  `RegEdge` = { Child (MOV), Parent (REF = nearer root), Transform } — metric
+  world, child-onto-parent at baseline (lsq convention); `RegGraph` =
+  { Root; Edges : Map<child, RegEdge> } (a parent map ⇔ rooted tree).
+  `RegGraph.tryAddEdge` enforces the committed invariant: accepted iff ref in
+  tree ∧ mov not — both-in ⇒ cycle rejected, ref-out ⇒ isolated rejected.
+  `withEdgeTransform` (re-solve), `children`, `inTree`, `hasEdges`.
+  `Model.ReferenceMesh` REPLACED by `Model.RegGraph` (plain record → ONE
+  aval); every reference-mesh read is now the graph root ((g).Root — ~30
+  sites); `SetReferenceMesh` → `SetRegRoot` (root change clears the graph;
+  same seed/invalidate/toast semantics). ReadinessInput keeps its own
+  `ReferenceMesh` DTO field (engine input, fed the root).
+- **T3 composed worldPose**: `RegGraph.composeAll` (BFS from root; pose(m) =
+  edge.Transform * parentPose, apply-left-first; root = identity, absent from
+  the map; a root-child's pose IS its edge transform ⇒ star graphs reproduce
+  the old star poses exactly) + `RegGraph.composeSubtree` (memoized: only the
+  changed child's subtree recomposes, prev entries carried through).
+  `Model.ComposedPoses : Map<string, Trafo3d>` = the render-space projection
+  (via `ModelTransforms.recomposePoses` — worldToRender per mesh), the
+  drop-in successor of SolvedTransforms: `displayedRenderAt`/`displayedMeshT`
+  /`displayedWorldPeekAt`/`displayedWorldCommittedAt`/FocusScene.cellZoom/
+  SceneGraph bbox outline all read it at RegAfter; every solved-gate
+  (SetRegView/SetRegPeek/applyRegView/ensureProbe/ensureSlices/
+  ensureFocusDist/top-bar/charts/shift readout) = `ComposedPoses` non-empty;
+  GuiRail corrStatus "aligned" = `hasEdges`.
+- Supertests: +24 (invariant: no-root/self/cycle/isolated rejections,
+  tree growth, children, transform replace; compose: star exactness, chain
+  child-first order, sentinel-proven subtree-only recompute, incremental edge
+  add). Trafo3d is a struct ⇒ memoization asserted via sentinel preservation,
+  not ReferenceEquals. 69/69 green; client + server builds green (adaptify
+  re-run).
+- DOC DEBT (frozen): CLAUDE.md registration-state bullet (LoadTransforms/
+  SolvedTransforms/SolveInputs wording), ReferenceMesh mentions, solve-flow
+  description — all superseded by RegGraph/ComposedPoses.
+
+## v14 P0 — server pairwise reference-free error (2026-07-27)
+
+Spec: `ScanPin_v14_P0_server_pairwise_error.md`. Server only; client untouched
+(its `/query/probe` calls now 404 at runtime — expected, later phases rework
+the client onto the pair endpoints).
+
+- **NEW `PairError.fs`** (replaces `MeshProbe.fs`, deleted with its fsproj
+  entry): the established M3C2-style measure symmetrized. Per pin: shared axis
+  n = PCA normal of the POOLED A∪B vertex set in the pin sphere (oriented
+  n.Z ≥ 0); both surfaces lattice-sampled in the cylinder; sample value =
+  signed axial offset of B relative to A (B-sample: t_B − median(t_A);
+  A-sample: median(t_B) − t_A) pooled into ONE distribution per pin — swap
+  A↔B negates every value. Median over the pooled set;
+  lodHalfWidth = 1.96·√(σ_A²+σ_B²). Full derivation + sign convention in the
+  module doc-comment. Poses always explicit in the request (server stateless
+  w.r.t. the registration tree).
+- **Endpoints** (QueryHandlers + Handlers routes; `/api/query/probe` +
+  probeHandler + ProbeRequest/ProbeMeshDto DELETED):
+  - `POST /api/query/pair-error` `{meshA{name,transform}, meshB{…}, pins:[{id,
+    centre,radius}], length, maxPointsPerMesh}` → `{pins:[{id, ok, reason,
+    normal, count, median, lodHalfWidth, samples, positions}]}` — per-pin
+    ok=false on no overlap, batch never fails on it; samples ≤300/pin with
+    aligned flat xyz positions (probe payload convention kept).
+  - `POST /api/query/pair-error-at` `{meshA, meshB, point, radius, maxDist}` →
+    exact signed value at one picked point: each mesh's surface crossing of
+    the line (point + t·n) nearest the point, value = t_B − t_A; 1 mm ray
+    origin back-off so exactly-on-surface picks still register.
+  - `POST /api/query/pair-overlap` `{meshA, meshB, maxDist, minFraction,
+    maxSamples}` → `{sufficient, fracAB, fracBA, maxDist, samplesA, samplesB}`
+    — stride-sampled closest-point coverage both directions, sufficient ⇔
+    max(frac) ≥ minFraction (default 0.05); maxDist default 1 % of mean posed
+    bbox diagonal clamped [0.5, 20] m; posed-bbox pre-reject.
+- Kept (comment-only touchups, "probe convention" → Forward wording):
+  `region-distance` (already pairwise pose-explicit), `slice` (referenceName
+  is azimuth-source only), `lsq-pairs`, `contact-rings`, `ray`, `closest`.
+- `tools/integration.mjs` §4 rewritten probe→pair-error (swap symmetry,
+  determinism, perturb→lsq-correct shrink, per-pin overlap gate in one batch)
+  + new §7 pair-error-at (antisymmetry, +5 m lift tracking, off-surface
+  reject) + §8 pair-overlap (co-located sufficient / disjoint insufficient).
+- Green: server build, integration 36/36 on :8002 (stale leftover Superserver
+  on the port killed first), Supertests 45/45.
+- DOC DEBT (frozen): CLAUDE.md API list still shows `/query/probe`, compile
+  order still lists `MeshProbe.fs`; probe-pair language ("ScanPin.Probe",
+  reference-star wording) all over the state rules — rewrite at rework end.

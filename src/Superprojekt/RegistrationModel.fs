@@ -7,200 +7,346 @@ open Aardvark.Base
 type ScanPinId = ScanPinId of Guid with
     static member create () = ScanPinId (Guid.NewGuid())
 
-type AnchorSource =
-    | AnchorAuto
-    | AnchorPick3D
-
-// Point is mesh-local (the mesh's own untransformed frame); the world position is
-// derived via the mesh's displayed transform, so the before/after toggle moves
-// each anchor with its mesh automatically.
-type MeshAnchor = {
-    Point    : V3d
-    Source   : AnchorSource
+// Registration graph: nodes = meshes, edges = pairwise registrations. The
+// committed graph is ONE rooted tree — every edge stores the rigid transform of
+// its child (MOV, the endpoint farther from the root) onto its parent (REF, the
+// endpoint nearer the root), in METRIC WORLD space at the meshes' as-loaded
+// baselines (the lsq output convention: applying Transform to the child's
+// baseline-posed surface aligns it with the parent's).
+type RegEdge = {
+    Child     : string
+    Parent    : string
+    Transform : Trafo3d
+    // The edge's ONE quality scalar in [0, 1] (1 = best) — the navigator cell's
+    // fill strength. Written by the pair solve alongside the transform.
+    Quality   : float
 }
 
-// Every pin is a registration correspondence (there is no enable/disable
-// distinction); a pin's correspondence is seeded as soon as a reference exists.
-type Correspondence = {
-    // Pin centre if the host is the reference mesh, else its closest-point
-    // projection onto the reference. None until seeded.
-    RefAnchor   : V3d option
-    Anchors     : Map<string, MeshAnchor>
-    // ROI membership computed server-side during seed: true = the mesh has surface
-    // inside the pin ROI (closest point ≤ roiRadius). Absent ⇒ not yet evaluated.
-    InRoi       : Map<string, bool>
+type RegGraph = {
+    // The pose anchor: worldPose(root) = identity. None only before any load.
+    Root  : string option
+    // child mesh → its edge. A rooted tree IS a parent map — acyclicity and
+    // connectedness hold by construction of tryAddEdge.
+    Edges : Map<string, RegEdge>
 }
 
-module Correspondence =
-    let empty = {
-        RefAnchor   = None
-        Anchors     = Map.empty
-        InRoi       = Map.empty
-    }
+// Outcome of an edge add. Both-endpoints-already-connected is no longer a
+// rejection: it closes exactly ONE fundamental cycle, TRANSIENTLY accepted for
+// the caller to resolve (the P9 forced-resolution modal) — the COMMITTED graph
+// stays the prior tree until then. Adds that would disconnect are still
+// impossible (edges only ever connect).
+type EdgeAddResult =
+    | EdgeAdded of RegGraph
+    | EdgeClosesLoop of cycleEdges : RegEdge list * residual : Trafo3d
+    | EdgeRejected of string
 
-    // The (pin, mesh) anchor in the mesh's OWN frame: the reference mesh's marker
-    // is the RefAnchor, any other mesh's its Anchors entry. Callers map to world
-    // via the mesh's displayed pose (a no-op for the reference at load pose).
-    let anchorOwn (isRef : bool) (mesh : string) (c : Correspondence) =
-        if isRef then c.RefAnchor
-        else Map.tryFind mesh c.Anchors |> Option.map (fun a -> a.Point)
+// Before/after is PER EDGE: for an edge, Before = the graph with THIS edge
+// unregistered (its transform = identity), After = as committed. It compares
+// exactly the two edge meshes pre/post this edge — every ancestor edge stays
+// applied through composition on both sides.
+type EdgeSide =
+    | EdgeBefore
+    | EdgeAfter
 
-// Provenance of a solve: the exact correspondence data it consumed — per pin the
-// reference anchor and the mesh-local anchor point of every (pin, mesh) pair fed
-// to the solver. A registration is only as valid as these inputs: if any tracked
-// pin/point is deleted or moved afterwards, the solve is stale and is cleared
-// (the solve-validity postlude compares against this snapshot).
-type SolveInputs = {
-    RefMesh : string
-    Pins    : Map<ScanPinId, V3d * Map<string, V3d>>
-}
+module RegGraph =
+    let empty = { Root = None; Edges = Map.empty }
 
-// λ2/λ1 of a weighted 3D point spread — the readiness line's conditioning check.
-// The server computes the same statistic during a solve (consumed by the
-// integration tests); the app itself reads only this client-side value.
-module RegConditioning =
-    let private jacobiEigenvalues (m : M33d) =
-        let a = [|
-            [| m.M00; m.M01; m.M02 |]
-            [| m.M10; m.M11; m.M12 |]
-            [| m.M20; m.M21; m.M22 |]
-        |]
-        for _ in 0 .. 31 do
-            let mutable p = 0
-            let mutable q = 1
-            let mutable off = abs a.[0].[1]
-            if abs a.[0].[2] > off then off <- abs a.[0].[2]; p <- 0; q <- 2
-            if abs a.[1].[2] > off then off <- abs a.[1].[2]; p <- 1; q <- 2
-            if off > 1e-14 then
-                let app = a.[p].[p]
-                let aqq = a.[q].[q]
-                let apq = a.[p].[q]
-                let theta = 0.5 * (aqq - app) / apq
-                let t = (if theta >= 0.0 then 1.0 else -1.0) / (abs theta + sqrt (theta * theta + 1.0))
-                let c = 1.0 / sqrt (t * t + 1.0)
-                let s = t * c
-                for k in 0 .. 2 do
-                    let akp = a.[k].[p]
-                    let akq = a.[k].[q]
-                    a.[k].[p] <- c * akp - s * akq
-                    a.[k].[q] <- s * akp + c * akq
-                for k in 0 .. 2 do
-                    let apk = a.[p].[k]
-                    let aqk = a.[q].[k]
-                    a.[p].[k] <- c * apk - s * aqk
-                    a.[q].[k] <- s * apk + c * aqk
-        [| a.[0].[0]; a.[1].[1]; a.[2].[2] |] |> Array.sortDescending
+    let inTree (g : RegGraph) (mesh : string) =
+        g.Root = Some mesh || Map.containsKey mesh g.Edges
 
-    // Descending eigenvalues of the weighted covariance of `points`.
-    let spreadEigenvalues (points : (V3d * float)[]) =
-        let wSum = points |> Array.sumBy snd
-        if points.Length < 2 || wSum <= 0.0 then [| 0.0; 0.0; 0.0 |]
+    let hasEdges (g : RegGraph) = not (Map.isEmpty g.Edges)
+
+    // Directed tree path between two members: steps from `a` to `b`, each an
+    // edge walked child→parent (up = true, apply Transform) or parent→child
+    // (up = false, apply Transform.Inverse). Both must be in the tree.
+    let treePath (g : RegGraph) (a : string) (b : string) : (RegEdge * bool) list =
+        let rec chain n =
+            match Map.tryFind n g.Edges with
+            | Some e -> e :: chain e.Parent
+            | None -> []
+        // Strip the shared root-side suffix (the edges above the LCA).
+        let rec strip (xa : RegEdge list) (xb : RegEdge list) =
+            match xa, xb with
+            | x :: ta, y :: tb when x.Child = y.Child -> strip ta tb
+            | _ -> xa, xb
+        let ua, ub = strip (List.rev (chain a)) (List.rev (chain b))
+        (List.rev ua |> List.map (fun e -> e, true)) @ (ub |> List.map (fun e -> e, false))
+
+    // Compose a directed path (apply-left-first: the first step first).
+    let private pathTransformOf (steps : (RegEdge * bool) list) : Trafo3d =
+        (Trafo3d.Identity, steps) ||> List.fold (fun acc (e, up) ->
+            acc * (if up then e.Transform else e.Transform.Inverse))
+
+    // Loop residual of a redundant edge (mov→ref, tNew): compose tNew with the
+    // tree path back from ref to mov — identity iff the two paths agree. The
+    // caller reports it as rotation° + displacement at a data point.
+    let loopResidual (g : RegGraph) (mov : string) (ref : string) (tNew : Trafo3d) : Trafo3d =
+        tNew * pathTransformOf (treePath g ref mov)
+
+    // Residual rotation angle (°) of a mismatch transform.
+    let residualRotationDeg (m : Trafo3d) =
+        let f = m.Forward
+        let trace = f.M00 + f.M11 + f.M22
+        acos (clamp -1.0 1.0 ((trace - 1.0) / 2.0)) * 180.0 / System.Math.PI
+
+    // Residual displacement (metres) the mismatch causes at a probe point.
+    let residualAt (m : Trafo3d) (p : V3d) = (m.Forward.TransformPos p - p).Length
+
+    // Committed-graph invariant: the edges form ONE tree containing the root.
+    // Ref-in-tree + mov-out ⇒ added. Both in ⇒ the add closes exactly one
+    // fundamental cycle — returned TRANSIENTLY (cycle edges + residual) for
+    // the forced-resolution modal; the committed graph is untouched. Ref out ⇒
+    // an isolated component, still impossible.
+    let tryAddEdge (mov : string) (ref : string) (t : Trafo3d) (quality : float) (g : RegGraph) : EdgeAddResult =
+        if g.Root.IsNone then EdgeRejected "no root designated"
+        elif mov = ref then EdgeRejected "an edge needs two distinct meshes"
+        elif inTree g mov && inTree g ref then
+            EdgeClosesLoop (treePath g mov ref |> List.map fst, loopResidual g mov ref t)
+        elif not (inTree g ref) then EdgeRejected (sprintf "%s is not connected to the root yet" ref)
+        else EdgeAdded { g with Edges = Map.add mov { Child = mov; Parent = ref; Transform = t; Quality = quality } g.Edges }
+
+    // Resolve a transient loop: commit the redundant edge (mov→ref, tNew) and
+    // remove ONE tree edge on its cycle (removeChild = that edge's Child key).
+    // The removal detaches a subtree containing exactly one of the endpoints
+    // (the cycle crossed the removed edge once); that side re-hangs through the
+    // new edge — its internal path re-orients like a reroot, the new edge
+    // inverts when the REF side is the detached one — so the result is again a
+    // spanning tree over the same members with uniquely defined poses.
+    let resolveLoop (mov : string) (ref : string) (tNew : Trafo3d) (quality : float)
+                    (removeChild : string) (g : RegGraph) : RegGraph =
+        match Map.tryFind removeChild g.Edges with
+        | None -> g
+        | Some _ ->
+            let edges = Map.remove removeChild g.Edges
+            let rec topOf n =
+                match Map.tryFind n edges with
+                | Some e -> topOf e.Parent
+                | None -> n
+            let sEnd, outEnd, tChild =
+                if topOf mov = removeChild then mov, ref, tNew
+                else ref, mov, tNew.Inverse
+            let rec pathEdges acc n =
+                match Map.tryFind n edges with
+                | Some e -> pathEdges (e :: acc) e.Parent
+                | None -> acc
+            let path = pathEdges [] sEnd
+            let cleared = (edges, path) ||> List.fold (fun m e -> Map.remove e.Child m)
+            let reversed =
+                (cleared, path) ||> List.fold (fun m e ->
+                    Map.add e.Parent
+                        { Child = e.Parent; Parent = e.Child
+                          Transform = e.Transform.Inverse; Quality = e.Quality } m)
+            { g with Edges = Map.add sEnd { Child = sEnd; Parent = outEnd; Transform = tChild; Quality = quality } reversed }
+
+    // Replace one edge's transform (a re-solve of that pair).
+    let withEdgeTransform (child : string) (t : Trafo3d) (g : RegGraph) =
+        match Map.tryFind child g.Edges with
+        | Some e -> { g with Edges = Map.add child { e with Transform = t } g.Edges }
+        | None -> g
+
+    // Replace one edge's full payload (transform + quality) — the re-solve path.
+    let withEdge (child : string) (t : Trafo3d) (quality : float) (g : RegGraph) =
+        match Map.tryFind child g.Edges with
+        | Some e -> { g with Edges = Map.add child { e with Transform = t; Quality = quality } g.Edges }
+        | None -> g
+
+    // Remove one edge AND every edge beneath it: the child's whole subtree
+    // hangs through this edge — keeping those edges would strand an isolated
+    // component (the committed-graph invariant forbids it).
+    let removeEdgeCascading (child : string) (g : RegGraph) : RegGraph =
+        let rec drop (edges : Map<string, RegEdge>) (c : string) =
+            let kids = edges |> Map.toList |> List.choose (fun (k, e) -> if e.Parent = c then Some k else None)
+            let edges = Map.remove c edges
+            (edges, kids) ||> List.fold drop
+        { g with Edges = drop g.Edges child }
+
+    // The edge's single quality scalar from the solve's point residuals:
+    // rms → (0, 1], 1 = perfect, halving at 5 cm rms (terrain-scale calibrated).
+    let solveQuality (residuals : float[]) : float =
+        if residuals.Length = 0 then 0.0
         else
-            let mean = (points |> Array.sumBy (fun (p, w) -> p * w)) / wSum
-            let mutable xx = 0.0
-            let mutable xy = 0.0
-            let mutable xz = 0.0
-            let mutable yy = 0.0
-            let mutable yz = 0.0
-            let mutable zz = 0.0
-            for (p, w) in points do
-                let d = p - mean
-                xx <- xx + w * d.X * d.X
-                xy <- xy + w * d.X * d.Y
-                xz <- xz + w * d.X * d.Z
-                yy <- yy + w * d.Y * d.Y
-                yz <- yz + w * d.Y * d.Z
-                zz <- zz + w * d.Z * d.Z
-            let s = 1.0 / wSum
-            jacobiEigenvalues (M33d(xx * s, xy * s, xz * s,
-                                    xy * s, yy * s, yz * s,
-                                    xz * s, yz * s, zz * s))
+            let rms = sqrt ((residuals |> Array.sumBy (fun r -> r * r)) / float residuals.Length)
+            1.0 / (1.0 + rms / 0.05)
 
-    let lambdaRatio (eigenvalues : float[]) =
-        if eigenvalues.Length < 2 || eigenvalues.[0] <= 1e-12 then 0.0
-        else max 0.0 eigenvalues.[1] / eigenvalues.[0]
+    let children (g : RegGraph) (parent : string) =
+        g.Edges |> Map.toList |> List.choose (fun (c, e) -> if e.Parent = parent then Some c else None)
 
-// Readiness engine: pure over a dedicated input DTO so Supertests can table-drive
-// it; the adaptive adapter is in Primitives.ReadinessView.
+    // Re-root the tree at a member mesh: every edge on the path new-root →
+    // old-root reverses (child/parent swap = the REF/MOV flip, transform
+    // inverted, quality kept); every other edge is untouched — a subtree
+    // hanging off a path node simply follows it. All composed poses become
+    // relative to the new root: pose'(m) = pose(m) ∘ pose(newRoot)⁻¹.
+    // Non-members return the graph unchanged — an existing registration cannot
+    // hang off a mesh outside its tree; the caller decides what that means.
+    let reroot (newRoot : string) (g : RegGraph) : RegGraph =
+        if g.Root = Some newRoot || not (inTree g newRoot) then g
+        else
+            let rec pathEdges acc m =
+                match Map.tryFind m g.Edges with
+                | Some e -> pathEdges (e :: acc) e.Parent
+                | None -> acc
+            let path = pathEdges [] newRoot
+            // Remove ALL path children first — a reversed edge re-uses the next
+            // path edge's child as its key, so interleaving would drop edges.
+            let cleared = (g.Edges, path) ||> List.fold (fun m e -> Map.remove e.Child m)
+            let edges =
+                (cleared, path) ||> List.fold (fun m e ->
+                    Map.add e.Parent
+                        { Child = e.Parent; Parent = e.Child
+                          Transform = e.Transform.Inverse; Quality = e.Quality } m)
+            { Root = Some newRoot; Edges = edges }
 
-type Severity =
-    | Blocker
-    | Warning
-    | Ready
-    | Info
+    // The edge of an UNORDERED mesh pair, whichever way it is oriented.
+    let pairEdge (a : string) (b : string) (g : RegGraph) : RegEdge option =
+        match Map.tryFind a g.Edges with
+        | Some e when e.Parent = b -> Some e
+        | _ ->
+            match Map.tryFind b g.Edges with
+            | Some e when e.Parent = a -> Some e
+            | _ -> None
 
-type Diagnostic = {
-    Severity : Severity
-    Text     : string
+    // Composed world pose of every tree mesh, walking from the root: the root's
+    // pose is identity and is NOT in the map; worldPose(m) = edge.Transform then
+    // the parent's own pose (`edge.Transform * parentPose` — Aardvark's `*`
+    // applies left first). A root-child's pose IS its edge transform (the same
+    // instance), so a star graph reproduces the star poses exactly.
+    let composeAll (g : RegGraph) : Map<string, Trafo3d> =
+        match g.Root with
+        | None -> Map.empty
+        | Some root ->
+            let rec walk (acc : Map<string, Trafo3d>) (parent : string) =
+                (acc, children g parent) ||> List.fold (fun acc c ->
+                    let pose =
+                        match Map.tryFind parent acc with
+                        | Some pp -> g.Edges.[c].Transform * pp
+                        | None -> g.Edges.[c].Transform    // parent = root (identity)
+                    walk (Map.add c pose acc) c)
+            walk Map.empty root
+
+    // The per-edge before/after pose query (peek pose-key, cell diagram sides):
+    // composed world poses of the whole tree with the edge's side applied —
+    // EdgeBefore zeroes exactly this one edge, so only the edge child's subtree
+    // differs between the two sides.
+    let composeEdge (child : string) (side : EdgeSide) (g : RegGraph) : Map<string, Trafo3d> =
+        match side with
+        | EdgeAfter -> composeAll g
+        | EdgeBefore -> composeAll (withEdgeTransform child Trafo3d.Identity g)
+
+    // Memoized recompute after ONE edge changed (transform replaced, or a fresh
+    // edge added): only the changed child's subtree recomposes — every other
+    // mesh keeps its previous, reference-equal pose. `prev` must be the current
+    // composition of the same graph (minus the changed subtree).
+    let composeSubtree (changedChild : string) (prev : Map<string, Trafo3d>) (g : RegGraph) : Map<string, Trafo3d> =
+        match Map.tryFind changedChild g.Edges with
+        | None -> composeAll g
+        | Some _ ->
+            let rec walk (acc : Map<string, Trafo3d>) (child : string) =
+                let e = g.Edges.[child]
+                let pose =
+                    match Map.tryFind e.Parent acc with
+                    | Some pp -> e.Transform * pp
+                    | None -> e.Transform
+                (Map.add child pose acc, children g child) ||> List.fold walk
+            walk prev changedChild
+
+// A transient loop awaiting FORCED resolution (the blocking modal's state):
+// the redundant edge (mov→ref from a solve) + the fundamental cycle's tree
+// edges + the loop residual. The committed graph stays the PRIOR tree until
+// confirm; cancel simply drops this record. Selected = the cycle edge to
+// remove (its Child key), None = the new edge itself.
+type LoopPending = {
+    Mov            : string
+    Ref            : string
+    Transform      : Trafo3d
+    Quality        : float
+    CycleEdges     : RegEdge list
+    ResidualRotDeg : float
+    ResidualTransM : float
+    Selected       : string option
 }
 
-type ReadinessPin = {
-    // reference anchor + reliability (the collinearity input)
-    RefAnchor     : (V3d * float) option
-    // moving meshes with an anchor for this pin
-    Accepted      : Set<string>
-}
+// Cell state of the mesh×mesh navigator: the (unordered) pair either cannot be
+// registered (insufficient overlap — a hole), can be (an empty vessel), or IS
+// registered — then the cell carries the edge's single quality scalar.
+type PairCell =
+    | PairImpossible
+    | PairPossible
+    | PairRegistered of quality : float
 
-type ReadinessInput = {
-    ReferenceMesh : string option
-    MovingMeshes  : string list
-    EnabledPins   : ReadinessPin list
-}
+module PairCell =
+    // Unordered-pair key of the overlap cache.
+    let key (a : string) (b : string) = (min a b, max a b)
 
-module Readiness =
+    // overlap: pair key → sufficient. An unfetched pair reads as impossible
+    // until the lazy overlap sweep lands (never "possible" on no evidence).
+    let state (overlap : Map<string * string, bool>) (g : RegGraph) (a : string) (b : string) =
+        match RegGraph.pairEdge a b g with
+        | Some e -> PairRegistered e.Quality
+        | None ->
+            match Map.tryFind (key a b) overlap with
+            | Some true -> PairPossible
+            | _ -> PairImpossible
 
-    let pairCounts (input : ReadinessInput) =
-        input.MovingMeshes
-        |> List.map (fun mesh ->
-            mesh, (input.EnabledPins |> List.sumBy (fun p -> if Set.contains mesh p.Accepted then 1 else 0)))
+// Row/col ordering of the navigator — reordering is the ONE scalability lever
+// (lens/fisheye/LOD are explicitly excluded from v14).
+type MatrixOrder =
+    | OrderSensor       // canonical acquisition order (the roster numbering)
+    | OrderCoverage     // largest footprint first
+    | OrderConnected    // root first, then hop distance to it; unconnected last
 
-    let lambdaRatioOf (input : ReadinessInput) =
-        input.EnabledPins
-        |> List.choose (fun p -> p.RefAnchor)
-        |> Array.ofList
-        |> RegConditioning.spreadEigenvalues
-        |> RegConditioning.lambdaRatio
+module MatrixNav =
+    // Hops from the root along parent edges; None = not connected (or no root).
+    let hopDepth (g : RegGraph) (mesh : string) : int option =
+        if g.Root = Some mesh then Some 0
+        else
+            let rec walk acc m =
+                match Map.tryFind m g.Edges with
+                | Some e when g.Root = Some e.Parent -> Some (acc + 1)
+                | Some e -> walk (acc + 1) e.Parent
+                | None -> None
+            walk 0 mesh
 
-    // Rules evaluated in order, all matches emitted; display sorts by severity.
-    let compute (input : ReadinessInput) : Diagnostic list =
-        let diags = ResizeArray<Diagnostic>()
-        let add severity text =
-            diags.Add { Severity = severity; Text = text }
+    // REF/MOV of an unordered pair: REF = the endpoint nearer the root (the
+    // edge's parent when the pair is registered; hop depth otherwise, with
+    // unconnected = farthest). Ties fall back to the pair-key order. Returns
+    // (ref, mov).
+    let pairRefMov (g : RegGraph) (a : string) (b : string) : string * string =
+        match RegGraph.pairEdge a b g with
+        | Some e -> e.Parent, e.Child
+        | None ->
+            let ka, kb = PairCell.key a b
+            let depth m = match hopDepth g m with Some d -> d | None -> System.Int32.MaxValue
+            if depth kb < depth ka then kb, ka else ka, kb
 
-        // Hard blockers are only: no reference, and zero SOLVABLE meshes (so a
-        // partial overlap still solves the meshes that do have ≥3 markers). A mesh
-        // short of 3 markers is a per-mesh WARNING, not a global blocker.
-        if input.ReferenceMesh.IsNone then
-            add Blocker "Set a reference (★)"
+    // Ties (and meshes without a metric) fall back to the canonical order.
+    let orderMeshes (mode : MatrixOrder) (canonical : Map<string, int>)
+                    (coverage : Map<string, float>) (g : RegGraph) (names : string list) : string list =
+        let canonOf m = Map.tryFind m canonical |> Option.defaultValue System.Int32.MaxValue
+        match mode with
+        | OrderSensor -> names |> List.sortBy canonOf
+        | OrderCoverage ->
+            names |> List.sortBy (fun m ->
+                -(Map.tryFind m coverage |> Option.defaultValue 0.0), canonOf m)
+        | OrderConnected ->
+            names |> List.sortBy (fun m ->
+                (match hopDepth g m with Some d -> d | None -> System.Int32.MaxValue), canonOf m)
 
-        if List.isEmpty input.EnabledPins then
-            add Blocker "Need ≥3 pins"
-
-        let counts = pairCounts input
-        let anySolvable = counts |> List.exists (fun (_, n) -> n >= 3)
-
-        if input.ReferenceMesh.IsSome
-           && not (List.isEmpty input.EnabledPins)
-           && not (List.isEmpty input.MovingMeshes)
-           && not anySolvable then
-            add Blocker "No mesh has ≥3 markers yet"
-
-        if List.length input.EnabledPins >= 3 && lambdaRatioOf input < 1e-3 then
-            let affected =
-                counts |> List.filter (fun (_, n) -> n >= 3) |> List.map fst
-            let suffix =
-                if List.isEmpty affected then ""
-                else sprintf " (%s)" (String.concat ", " affected)
-            add Warning (sprintf "Pins near-collinear%s" suffix)
-
-        if input.ReferenceMesh.IsSome && List.isEmpty input.MovingMeshes then
-            add Info "No moving meshes to solve"
-
-        let blocked = diags |> Seq.exists (fun d -> d.Severity = Blocker)
-        if not blocked && counts |> List.exists (fun (_, n) -> n >= 3) then
-            add Ready "Ready to align"
-
-        List.ofSeq diags
+// The ONE in-cell error range: signed (lo, hi) in metres spanning 0 over the
+// pair's pin-ROI samples, hard-capped at ±0.5 m — the shared scale of the
+// false-colour map, the diagram x-range envelope and the legend. No samples →
+// the full ±0.5 m.
+module ErrorRange =
+    let cap = 0.5
+    let ofSamples (samples : seq<float>) : float * float =
+        let mutable lo = 0.0
+        let mutable hi = 0.0
+        let mutable any = false
+        for v in samples do
+            any <- true
+            if v < lo then lo <- v
+            if v > hi then hi <- v
+        if not any then (-cap, cap)
+        else (max -cap lo, min cap hi)
 
 // Drives the intrinsic per-fragment channels in the mesh shader (the extrinsic
 // m3c2 surface map is the separate DistanceEncoding path).

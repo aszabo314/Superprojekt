@@ -125,8 +125,8 @@ module SceneGraph =
             @ labelNodes yColor V3d.OIO V3d.IOO textTrafoY
             @ labelNodes zColor V3d.OOI V3d.IOO textTrafoZ)
 
-    // Bbox edge outline of ONE mesh at its displayed (peek-aware) pose — the gold
-    // reference marker and the cyan focused-mesh accent share this builder.
+    // Bbox edge outline of ONE mesh at its committed displayed pose — the gold
+    // root marker's builder (the root is never a peek's MOV).
     let private bboxOutline (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>)
                             (model : AdaptiveModel)
                             (nameAt : AdaptiveToken -> string option) (col : V4d) (width : float) =
@@ -140,15 +140,10 @@ module SceneGraph =
                     | Some box ->
                         let cc = model.CommonCentroid.GetValue t
                         let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
-                        let view =
-                            match model.RegView.GetValue t, model.RegPeekHeld.GetValue t with
-                            | RegBefore, true -> RegAfter
-                            | RegAfter, true -> RegBefore
-                            | v, false -> v
                         let tr =
-                            match view, Map.tryFind name (model.SolvedTransforms.GetValue t) with
-                            | RegAfter, Some s -> s
-                            | _ -> Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+                            match Map.tryFind name (model.ComposedPoses.GetValue t) with
+                            | Some s -> s
+                            | None -> Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
                         let corner (ix : int) (iy : int) (iz : int) =
                             let w =
                                 V3d((if ix = 0 then box.Min.X else box.Max.X),
@@ -177,16 +172,8 @@ module SceneGraph =
     // focus reference tile ★), thick + bright so the reference is unmistakable in 3D.
     let private referenceOutline view proj active (model : AdaptiveModel) =
         bboxOutline view proj active model
-            (fun t -> model.ReferenceMesh.GetValue t)
+            (fun t -> (model.RegGraph.GetValue t).Root)
             (V4d(0.831, 0.631, 0.024, 0.95)) 2.5
-
-    // The focused mesh's bbox edges in a cyan accent — the 3D "active" treatment
-    // mirroring the rail row + focus tile. Depth-tested + subtle, distinct from
-    // the reference gold. Hidden when nothing is focused.
-    let private focusedOutline view proj active (model : AdaptiveModel) =
-        bboxOutline view proj active model
-            (fun t -> Selection.mesh (model.Selection.Active.GetValue t))
-            (V4d(0.031, 0.569, 0.698, 0.7)) 1.5
 
     let build
         (env : Env<Message>)
@@ -195,10 +182,7 @@ module SceneGraph =
         (proj : aval<Trafo3d>)
         (fullscreenActive : aval<bool>)
         (placementHover : aval<V3d option>)
-        (placementValid : aval<bool option>)
-        (viewportCss : aval<V2i>)
         (clipUniforms : aval<int * V4f * V4f>)
-        (wheelIsolation : aval<string option>)
         (model : AdaptiveModel) =
 
         let loadFinished (name : string) =
@@ -209,12 +193,12 @@ module SceneGraph =
         // writes depth from its shader; ordering is steered via Sg.DepthTest +
         // Sg.Pass alone. Cross + labels run in passOne (DepthTest.None) on top.
 
-        let meshScene  = MeshView.buildScene loadFinished clipUniforms placementHover wheelIsolation model
+        let meshScene  = MeshView.buildScene loadFinished clipUniforms placementHover model
         // Placement suitability draws before the outline composites so
         // isolines/footprints stay readable on top of the fused overlay.
         let suitScene  = OutlineView.buildSuitability info model view proj
         let outlineScene = OutlineView.build info model view proj
-        let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover placementValid viewportCss model
+        let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
 
         let notFullscreen = AVal.map not fullscreenActive
         // The cross + axis labels sit at the first mesh's panorama centre (render
@@ -234,7 +218,6 @@ module SceneGraph =
         let cross         = originIndicator view proj crossActive crossCenter
         let labels        = originLabels    view proj crossActive crossCenter
         let refOutline    = referenceOutline view proj notFullscreen model
-        let focusOutline  = focusedOutline   view proj notFullscreen model
 
         // Orbit-centre cue: a small ring+cross at the rotation centre, shown
         // only while a rotate drag is actively turning the camera (a rotate
@@ -284,7 +267,6 @@ module SceneGraph =
                 cross
                 pinScene
                 refOutline
-                focusOutline
                 orbitCue
                 labels
             }

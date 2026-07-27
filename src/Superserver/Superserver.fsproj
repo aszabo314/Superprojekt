@@ -10,7 +10,7 @@
     <Compile Include="MeshCache.fs" />
     <Compile Include="MeshAnalysisCore.fs" />
     <Compile Include="MeshAnalysis.fs" />
-    <Compile Include="MeshProbe.fs" />
+    <Compile Include="PairError.fs" />
     <Compile Include="RegMath.fs" />
     <Compile Include="QueryHandlers.fs" />
     <Compile Include="Handlers.fs" />

@@ -17,7 +17,6 @@
   <ItemGroup>
     <None Include="paket.references" />
     <Compile Include="MeshData.fs" />
-    <Compile Include="ProbeModel.fs" />
     <Compile Include="Query.fs" />
     <Compile Include="CameraModel.fs" />
     <Compile Include="CameraModel.g.fs" />
@@ -39,13 +38,9 @@
     <Compile Include="OutlineView.fs" />
     <Compile Include="ScanPinScene.fs" />
     <Compile Include="SceneGraph.fs" />
-    <Compile Include="FocusShaders.fs" />
-    <Compile Include="FocusScene.fs" />
     <Compile Include="GuiTopBar.fs" />
     <Compile Include="GuiOverlays.fs" />
     <Compile Include="GuiRail.fs" />
-    <Compile Include="GuiFocus.fs" />
-    <Compile Include="GuiInspector.fs" />
     <Compile Include="View.fs" />
     <Compile Include="ShaderCache.fs" />
     <Compile Include="Program.fs" />

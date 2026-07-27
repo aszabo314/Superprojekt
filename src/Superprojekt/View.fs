@@ -60,40 +60,25 @@ module View =
         let hoverCoord      = cval<V3d option> None
         let viewportSize    = cval (V2i(1, 1))
         let placementHover  = cval<V3d option> None
-        // Hard-prohibit state at the placement hover: Some false = < 2
-        // meshes in range (ghost fades, tooltip shows, click refuses); None =
-        // unknown / no hover.
-        let placementValid  = cval<bool option> None
         let cursorScreen    = cval<V2d option> None
         // Throttle/generation guard for the placement-hover ghost raycast (server
         // round-trip per move would flood; stale results must not overwrite).
         let mutable placeHoverMs  = 0.0
         let mutable placeHoverGen = 0
+        // Sample-hover throttle (3D → diagram cross-highlight + exact readout).
+        let mutable sampleHoverMs = 0.0
 
         let fullscreenActive = spaceHeld :> aval<bool>
-
-        // Mesh isolation for the main view — every other mesh ghosts while set.
-        let wheelIsolation =
-            AVal.custom (fun t ->
-                // The armed correspondence editor isolates its target mesh (solid; the
-                // rest drop to ghost) so the GPU pick lands on it alone.
-                match model.CorrArm.GetValue t with
-                | Some (_, mesh) -> Some mesh
-                | None ->
-                    match model.Selection.Hovered.GetValue t with
-                    | Some (HoverMesh m) -> Some m
-                    | Some (HoverPoint (_, m)) -> Some m
-                    | _ -> None)
 
         // Section/cutaway clipping was removed; the mesh shader keeps generic
         // clip-plane support but is fed a constant no-clip.
         let clipUniforms : aval<int * V4f * V4f> = AVal.constant (0, V4f.Zero, V4f.Zero)
 
-        // Shown = clickable: the raycast candidate set mirrors what renders solid or
-        // could be revealed (the solo overlay), evaluated at event time.
+        // Shown = clickable: the raycast candidate set mirrors what renders
+        // solid (the nav scope), evaluated at event time.
         let shownNow () =
-            let solo = AVal.force model.MeshSolo
-            fun (name : string) -> MeshVisibility.shown solo name
+            let nav = AVal.force model.Nav
+            fun (name : string) -> MeshVisibility.shown nav name
 
         body {
             OnBoot [
@@ -107,9 +92,9 @@ module View =
                 Class "render-control"
 
                 let pickModeOn =
-                    model.ScanPins.Placement |> AVal.map (function
-                        | PlacementIdle -> false
-                        | _ -> true)
+                    (model.ScanPins.Placement, model.ScanPins.Edit) ||> AVal.map2 (fun pl ed ->
+                        (match pl with PlacementActive _ -> true | PlacementIdle -> false)
+                        || (match ed with EditPoint _ -> true | EditIdle -> false))
                 pickModeOn |> AVal.map (fun pick ->
                     if pick then Some (Dom.Style [Css.Cursor "crosshair"]) else None)
 
@@ -130,14 +115,8 @@ module View =
 
                 RenderControl.OnRendered(fun _ ->
                     let s = AVal.force overlaySize
-                    let fb = AVal.force size
-                    // Share the device-pixel-ratio with the focus panel (its secondary
-                    // control can't bind ClientSize). overlaySize is CSS px, size is fb px.
-                    let d = if s.X > 0 then float fb.X / float s.X else 1.0
-                    if viewportSize.Value <> s || FocusScene.dpr.Value <> d then
-                        transact (fun () ->
-                            viewportSize.Value <- s
-                            FocusScene.dpr.Value <- d)
+                    if viewportSize.Value <> s then
+                        transact (fun () -> viewportSize.Value <- s)
                     env.Emit [CameraMessage OrbitMessage.Rendered]
                 )
 
@@ -150,7 +129,7 @@ module View =
                 // (the server just intersects geometry, ignoring the GPU ghost).
                 // Bbox-culls shown+loaded meshes, raycasts the survivors in
                 // parallel, returns the mesh name + render-space hit nearest the
-                // camera + the hit triangle (for the exact-point probe).
+                // camera + the hit triangle.
                 let raycastNearestNamed () : Async<(string * V3d * int) option> =
                     match cursorScreen.Value with
                     | None -> async.Return None
@@ -196,38 +175,8 @@ module View =
                         return hit |> Option.map (fun (_, rp, _) -> rp)
                     }
 
-                // Exact-point probe (Inspect): the hit triangle's nearest corner
-                // vertex indexes the mesh's per-vertex difference field — the
-                // stored value AT that surface point, no server round trip.
-                let probeValueAt (mesh : string) (renderPos : V3d) (triId : int) : float option =
-                    match Map.tryFind mesh (AVal.force model.FocusDist) with
-                    | None -> None
-                    | Some arr ->
-                        let lm = MeshView.loadMeshAsync (fun () -> ()) mesh
-                        match lm.mesh.Value with
-                        | Some md when triId >= 0 && triId * 3 + 2 < md.indices.Length ->
-                            let cc = AVal.force model.CommonCentroid
-                            let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
-                            let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model mesh))
-                            let own = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale renderPos)
-                            let local = V3f (own - md.centroid)
-                            let mutable best = -1
-                            let mutable bestD = System.Single.MaxValue
-                            for k in 0 .. 2 do
-                                let vi = md.indices.[triId * 3 + k]
-                                if vi >= 0 && vi < md.positions.Length then
-                                    let d = (md.positions.[vi] - local).LengthSquared
-                                    if d < bestD then
-                                        bestD <- d
-                                        best <- vi
-                            if best >= 0 && best < arr.Length && abs arr.[best] < 1e20f
-                            then Some (float arr.[best])
-                            else None
-                        | _ -> None
-
-                // Cursor → a SPECIFIC mesh's surface via server raycast (render-space
-                // hit). Used by the 3D correspondence pick, which isolates one mesh and
-                // must land on it alone (ignoring whatever else the ray crosses).
+                // Cursor → a SPECIFIC mesh's surface (render-space hit) — the
+                // point-edit pick must land on its target mesh alone.
                 let raycastMesh (name : string) : Async<V3d option> =
                     match cursorScreen.Value with
                     | None -> async.Return None
@@ -250,34 +199,6 @@ module View =
                     match frontmost with
                     | Some _ -> async.Return frontmost
                     | None -> raycastNearest ()
-
-                // Hard-prohibit: a pin may only be placed where ≥ 2 meshes
-                // have surface within the placement radius (the pin sphere).
-                // Closest-point fan-out at each mesh's displayed pose (rigid, so
-                // the returned distance is metric).
-                let countOverlap (world : V3d) : Async<int> =
-                    let names = AVal.force model.MeshNames.Content |> IndexList.toList
-                    let cc = AVal.force model.CommonCentroid
-                    let scales = AVal.force model.DatasetScales
-                    let radius = max 0.01 (AVal.force model.QuickPinRadius)
-                    let r2 = radius * radius
-                    async {
-                        let! hits =
-                            names
-                            |> List.map (fun n -> async {
-                                try
-                                    let scale = DatasetScale.forMesh scales n
-                                    let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model n))
-                                    let own = dispWorld.Backward.TransformPos world
-                                    let! r = Query.closestPoint ApiConfig.apiBase.Value n 0 own
-                                    return
-                                        match r with
-                                        | Some h -> if float h.distanceSquared <= r2 then 1 else 0
-                                        | None -> 0
-                                with _ -> return 0 })
-                            |> Async.Parallel
-                        return Array.sum hits
-                    }
 
                 Sg.View view
                 Sg.Proj proj
@@ -317,77 +238,82 @@ module View =
                     false
                 )
 
-                Sg.OnTap(fun e ->
-                    let frontmost =
-                        if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
-                    match AVal.force model.CorrArm with
-                    | Some (pinId, mesh) ->
-                        // Commit the picked surface point as this mesh's anchor (the
-                        // reducer stores it mesh-local and disarms the editor). GPU pick
-                        // on the isolated solid first, else a single-mesh raycast.
+                // A picked render position → the hit mesh's OWN frame (through its
+                // displayed pose — the surface the user clicked).
+                let ownLocalOf (mesh : string) (renderPos : V3d) =
+                    let cc = AVal.force model.CommonCentroid
+                    let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
+                    let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model mesh))
+                    dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale renderPos)
+
+                // Exact pairwise error at a metric-world point (the P0
+                // exact-point endpoint), oriented MOV-relative-to-REF like every
+                // stored sample; k runs on the landed value.
+                let exactPairValueAt (world : V3d) (radius : float) (k : float -> unit) =
+                    match AVal.force model.Nav with
+                    | NavHome -> ()
+                    | NavCell(a, b) ->
+                        let g = AVal.force model.RegGraph
+                        let ka, kb = PairCell.key a b
+                        let _, mov = MatrixNav.pairRefMov g ka kb
+                        let flip = mov = ka
+                        let tOf (m : string) =
+                            let cc = AVal.force model.CommonCentroid
+                            let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) m
+                            (RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model m))).Forward
                         async {
-                            let! resolved =
-                                match frontmost with
-                                | Some _ -> async.Return frontmost
-                                | None -> raycastMesh mesh
-                            match resolved with
-                            | Some renderPos ->
-                                env.Emit [PickCorrespondenceAt(pinId, mesh, worldFromRender model renderPos)]
+                            let! v = Query.pairErrorAt ApiConfig.apiBase.Value ka (tOf ka) kb (tOf kb) world radius
+                            match v with
+                            | Some v -> k (if flip then -v else v)
                             | None -> ()
                         } |> Async.Start
-                        true
-                    | None ->
-                        let placement = AVal.force model.ScanPins.Placement
-                        async {
-                            let! resolved =
-                                match placement with
-                                // During placement the terrain is ghosted AND the
-                                // translucent preview sphere writes depth in front of the
-                                // real surface, so the GPU pixel pick (`frontmost`) lands
-                                // ~QuickPinRadius toward the camera. Ignore it and resolve
-                                // on the server raycast, which intersects only real
-                                // geometry (the same surface the flashlight previews).
-                                | AnchorPlacement -> resolvePick None
-                                | _ -> async.Return frontmost
-                            match placement, resolved with
-                            | AnchorPlacement, Some renderPos ->
-                                // Hard-prohibit: verify overlap at the actual click
-                                // point (authoritative — not the hover cache).
-                                let worldPos = worldFromRender model renderPos
-                                let! n = countOverlap worldPos
-                                if n >= 2 then env.Emit [ScanPinMsg (PlaceAnchor worldPos)]
-                                else env.Emit [ShowToast "No overlapping meshes here — placement needs ≥2 scans in range"]
-                            | AnchorPlacement, None -> ()
-                            | _, Some renderPos ->
-                                // Mesh-surface clicks do NOT select — mesh selection
-                                // and visibility live in the 2D GUI (roster, matrix,
-                                // tiles). The click feeds the coordinate readout and,
-                                // in Inspect, probes the exact point's error value.
-                                let worldPos = worldFromRender model renderPos
-                                transact (fun () -> hoverCoord.Value <- Some worldPos)
-                                if AVal.force model.WorkflowStep = Inspect then
-                                    let! named = raycastNearestNamed ()
-                                    match named with
-                                    | Some (mesh, rp, tri) ->
-                                        match probeValueAt mesh rp tri with
-                                        | Some v ->
-                                            env.Emit [SetPointProbe (Some (mesh, worldFromRender model rp, v))]
-                                        | None -> env.Emit [SetPointProbe None]
-                                    | None -> ()
-                            | _, None ->
-                                // Depth 1.0 can also be a ghosted surface — raycast to
-                                // distinguish a genuine background miss (clears the
-                                // selection) from a click on ghosted terrain (nothing).
+
+                Sg.OnTap(fun _ ->
+                    let placement = AVal.force model.ScanPins.Placement
+                    let edit = AVal.force model.ScanPins.Edit
+                    async {
+                        match placement, edit with
+                        | PlacementActive(tool, _), _ ->
+                            // Transaction picks resolve on the server raycast of the
+                            // pair's shown meshes — the GPU pixel pick is unusable
+                            // under the ghosted/overlaid transaction rendering. The
+                            // hit mesh attributes the pick (area anchor / point slot).
+                            let! named = raycastNearestNamed ()
+                            match named with
+                            | Some (mesh, rp, _) ->
+                                let local = ownLocalOf mesh rp
+                                match tool with
+                                | ToolArea -> env.Emit [ScanPinMsg (DraftAreaAt(mesh, local))]
+                                | ToolPoint -> env.Emit [ScanPinMsg (DraftPointAt(mesh, local))]
+                            | None -> ()
+                        | PlacementIdle, EditPoint(id, mesh) ->
+                            // The edit pick must land on the TARGET mesh alone.
+                            let! hit = raycastMesh mesh
+                            match hit with
+                            | Some rp -> env.Emit [ScanPinMsg (EditPointAt(id, mesh, ownLocalOf mesh rp))]
+                            | None -> ()
+                        | PlacementIdle, EditIdle ->
+                            // Armed point probe: pick any 3D point → exact value
+                            // into the transient workspace readout.
+                            if AVal.force model.ProbeArmed then
                                 let! hit = raycastNearest ()
-                                if hit.IsNone then env.Emit [SetSelection SelNone; SetPointProbe None]
-                        } |> Async.Start
-                        true
+                                match hit with
+                                | Some rp ->
+                                    let world = worldFromRender model rp
+                                    let gen = UpdateHelpers.cellErrorGen
+                                    let radius = max 0.01 (AVal.force model.QuickPinRadius)
+                                    exactPairValueAt world radius (fun v ->
+                                        env.Emit [ProbeReadoutComputed(gen, world, v)])
+                                | None -> ()
+                    } |> Async.Start
+                    true
                 )
 
                 Sg.OnPointerMove(fun e ->
+                    // The flashlight ghost previews the AREA drop only.
                     let placementWanted =
                         match AVal.force model.ScanPins.Placement with
-                        | AnchorPlacement -> true
+                        | PlacementActive(ToolArea, _) -> true
                         | _ -> false
                     let pick =
                         if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
@@ -427,78 +353,99 @@ module View =
                                 let! hit = resolvePick None
                                 if gen = placeHoverGen && placementHover.Value <> hit then
                                     transact (fun () -> placementHover.Value <- hit)
-                                // Overlap validity at the hover: drives the ghost fade
-                                // + the cursor-side prohibit tooltip.
-                                match hit with
-                                | Some renderPos when gen = placeHoverGen ->
-                                    let! n = countOverlap (worldFromRender model renderPos)
-                                    if gen = placeHoverGen && placementValid.Value <> Some (n >= 2) then
-                                        transact (fun () -> placementValid.Value <- Some (n >= 2))
-                                | _ ->
-                                    if gen = placeHoverGen && placementValid.Value.IsSome then
-                                        transact (fun () -> placementValid.Value <- None)
                             } |> Async.Start
-                    // Armed correspondence editor (3D side): the target mesh is
-                    // isolated solid, so the GPU pick lands on it; over a ghost/
-                    // background fall back to a single-mesh raycast. Throttled → bounded
-                    // CorrPreview message rate.
-                    match AVal.force model.CorrArm with
-                    | Some (_, mesh) ->
+                    // 3D → diagram: hover the nearest brushed sample (screen
+                    // space, ≤ 12 px) → cross-highlight + exact-value readout.
+                    // Throttled; the exact value fetches only on a gid change.
+                    let brush = AVal.force model.BrushedSamples
+                    if not (Set.isEmpty brush) && not placementWanted then
                         let now = nowMs ()
-                        if now - placeHoverMs > 60.0 then
-                            placeHoverMs <- now
-                            placeHoverGen <- placeHoverGen + 1
-                            let gen = placeHoverGen
-                            match pick with
-                            | Some renderPos ->
-                                env.Emit [CorrPreviewComputed (Some (worldFromRender model renderPos))]
-                            | None ->
-                                async {
-                                    let! hit = raycastMesh mesh
-                                    if gen = placeHoverGen then
-                                        env.Emit [CorrPreviewComputed (hit |> Option.map (worldFromRender model))]
-                                } |> Async.Start
-                    | None -> ()
+                        if now - sampleHoverMs > 80.0 then
+                            sampleHoverMs <- now
+                            match AVal.force model.CellError, cursorScreen.Value with
+                            | Some cells, Some cur ->
+                                let cc = AVal.force model.CommonCentroid
+                                let scale = DatasetScale.active (AVal.force model.ActiveDataset) (AVal.force model.DatasetScales)
+                                let vp = (AVal.force view) * (AVal.force proj)
+                                let sizePx = AVal.force overlaySize
+                                let toScreen (w : V3d) =
+                                    let ndc = vp.Forward.TransformPosProj (ScanPin.renderCentre cc scale w)
+                                    V2d(0.5 * (ndc.X + 1.0) * float sizePx.X, 0.5 * (1.0 - ndc.Y) * float sizePx.Y)
+                                let mutable best = -1
+                                let mutable bestD = 12.0
+                                let mutable bestPin = None
+                                let mutable gid = 0
+                                for (pid, r) in cells do
+                                    for i in 0 .. r.Samples.Length - 1 do
+                                        if Set.contains gid brush && i < r.Positions.Length then
+                                            let d = Vec.distance (toScreen r.Positions.[i]) cur
+                                            if d < bestD then
+                                                bestD <- d
+                                                best <- gid
+                                                bestPin <- Some (pid, r.Positions.[i])
+                                        gid <- gid + 1
+                                let cur = AVal.force model.HoverSample
+                                if best >= 0 then
+                                    if cur <> Some best then
+                                        env.Emit [SetHoverSample (Some best)]
+                                        match bestPin with
+                                        | Some (pid, pos) ->
+                                            let radius =
+                                                HashMap.tryFind pid (AVal.force (model.ScanPins.Pins |> AMap.toAVal))
+                                                |> Option.map (fun p -> p.InnerRadius)
+                                                |> Option.defaultValue (AVal.force model.QuickPinRadius)
+                                            let gen = UpdateHelpers.cellErrorGen
+                                            exactPairValueAt pos radius (fun v ->
+                                                env.Emit [HoverReadoutComputed(gen, best, v)])
+                                        | None -> ()
+                                elif cur.IsSome then
+                                    env.Emit [SetHoverSample None]
+                            | _ -> ()
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) (placementValid :> aval<_>) (viewportSize :> aval<V2i>) clipUniforms wheelIsolation model
+                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) clipUniforms model
             }
 
             Dom.OnKeyDown(fun e ->
                 match e.Key with
                 | " " ->
                     transact (fun () -> spaceHeld.Value <- true)
-                | "i" | "I" ->
-                    // Hold-I = registration peek (the reducer gates on a solve existing).
-                    env.Emit [SetRegPeek true]
+                // The two spring-loaded blink keys (cell scope; the reducer
+                // refuses a press unless both pair meshes are resident). Key
+                // repeat is absorbed by the reducer's idempotence guard.
+                | "v" | "V" -> env.Emit [SetPeekVis true]
+                | "b" | "B" -> env.Emit [SetPeekPose true]
                 | "Escape" ->
-                    // Global cancel: disarm a placement, clear the brush, the
-                    // point probe and the selection — clearing the selection also
-                    // disarms the edit-point editor (arming forces a cell
-                    // selection, so an armed editor always has one to clear).
-                    // All no-ops when idle.
-                    env.Emit [ScanPinMsg CancelPlacement; SetBrushedSamples []
-                              SetPointProbe None; SetSelection SelNone]
+                    // ONE Esc: the innermost in-progress action cancels first —
+                    // the blocking loop modal (cancel = discard the redundant
+                    // edge) > transaction abort (full rollback) > point-edit
+                    // disarm > probe disarm > ascend one level (cell → matrix).
+                    if (AVal.force model.LoopPending).IsSome then
+                        env.Emit [CancelLoopResolution]
+                    else
+                        match AVal.force model.ScanPins.Placement, AVal.force model.ScanPins.Edit with
+                        | PlacementActive _, _ -> env.Emit [ScanPinMsg AbortPinTransaction]
+                        | _, EditPoint _ -> env.Emit [ScanPinMsg CancelPointEdit]
+                        | _ when AVal.force model.ProbeArmed -> env.Emit [ToggleProbeArmed]
+                        | _ -> env.Emit [NavAscend]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
                 match e.Key with
                 | " "     -> transact (fun () -> spaceHeld.Value <- false)
-                | "i" | "I" -> env.Emit [SetRegPeek false]
+                | "v" | "V" -> env.Emit [SetPeekVis false]
+                | "b" | "B" -> env.Emit [SetPeekPose false]
                 | _ -> ()
             )
 
             GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
             GuiRail.rail env model
-            GuiFocus.panel env model
             GuiOverlays.toast model
-            GuiOverlays.placementTooltip model (cursorScreen :> aval<_>) (placementValid :> aval<_>)
-            GuiOverlays.corrFlash model (viewportSize :> aval<V2i>)
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model
-            GuiInspector.dock env model
+            GuiOverlays.loopModal env model
         }
 
 module App =

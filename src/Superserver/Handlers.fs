@@ -39,22 +39,18 @@ let panoCentersHandler (dataset : string) : HttpHandler =
     pointMapHandler "pano-centers" dataset (fun () ->
         MeshLoader.getPanoCenters dataset |> Seq.map (fun (KeyValue(n, c)) -> n, c))
 
-// spacing = mean edge length (m, stride-sampled) — the mesh's sample spacing;
-// the client derives the ONE global slice-cell window from the coarsest mesh.
 // This is the CACHE WARMER: it loads every mesh, in parallel (the Lazy cache
 // makes concurrent loads safe), so cold start pays the slowest mesh, not the sum.
 let bboxesHandler (dataset : string) : HttpHandler =
     fun next ctx -> task {
         let log    = ctx.GetLogger "Superserver"
-        let bag    = Collections.Concurrent.ConcurrentDictionary<string, {| min: float[]; max: float[]; spacing: float |}>()
+        let bag    = Collections.Concurrent.ConcurrentDictionary<string, {| min: float[]; max: float[] |}>()
         let names  = MeshLoader.meshNames dataset |> Array.ofSeq
         Threading.Tasks.Parallel.ForEach(names, fun name ->
             let count = MeshLoader.meshCount dataset name
             if count > 0 then
                 let mutable wMin = V3d( infinity,  infinity,  infinity)
                 let mutable wMax = V3d(-infinity, -infinity, -infinity)
-                let mutable edgeSum = 0.0
-                let mutable edgeCnt = 0
                 for i in 0 .. count - 1 do
                     let pm = (MeshCache.get dataset name i).parsed
                     if not pm.bbox.IsInvalid then
@@ -62,20 +58,9 @@ let bboxesHandler (dataset : string) : HttpHandler =
                         let bMax = pm.centroid + pm.bbox.Max
                         wMin <- V3d(min wMin.X bMin.X, min wMin.Y bMin.Y, min wMin.Z bMin.Z)
                         wMax <- V3d(max wMax.X bMax.X, max wMax.Y bMax.Y, max wMax.Z bMax.Z)
-                    let tri = pm.indices.Length / 3
-                    let step = max 1 (tri / 30000)
-                    let mutable t = 0
-                    while t < tri do
-                        let p0 = V3d pm.positions.[pm.indices.[t * 3]]
-                        let p1 = V3d pm.positions.[pm.indices.[t * 3 + 1]]
-                        let p2 = V3d pm.positions.[pm.indices.[t * 3 + 2]]
-                        edgeSum <- edgeSum + (p1 - p0).Length + (p2 - p1).Length + (p0 - p2).Length
-                        edgeCnt <- edgeCnt + 3
-                        t <- t + step
                 if wMin.X <= wMax.X then
-                    let spacing = if edgeCnt > 0 then edgeSum / float edgeCnt else 0.0
-                    bag.[name] <- {| min = fromV3d wMin; max = fromV3d wMax; spacing = spacing |}) |> ignore
-        let result = Collections.Generic.Dictionary<string, {| min: float[]; max: float[]; spacing: float |}>(bag)
+                    bag.[name] <- {| min = fromV3d wMin; max = fromV3d wMax |}) |> ignore
+        let result = Collections.Generic.Dictionary<string, {| min: float[]; max: float[] |}>(bag)
         log.LogInformation("bboxes {Dataset}: {Count} meshes", dataset, result.Count)
         return! json result next ctx
     }
@@ -131,7 +116,8 @@ let webApp : HttpHandler =
         route  "/api/query/closest"                             >=> closestHandler
         route  "/api/query/contact-rings"                       >=> contactRingsHandler
         route  "/api/query/lsq-pairs"                           >=> lsqPairsHandler
-        route  "/api/query/probe"                               >=> probeHandler
-        route  "/api/query/slice"                               >=> sliceHandler
+        route  "/api/query/pair-error"                          >=> pairErrorHandler
+        route  "/api/query/pair-error-at"                       >=> pairErrorAtHandler
+        route  "/api/query/pair-overlap"                        >=> pairOverlapHandler
         route  "/api/query/region-distance"                     >=> regionDistanceHandler
     ]

@@ -33,8 +33,6 @@ module Primitives =
     // so pin marks stay recognisable without owning a hue family.
     let pinInk    = C4b(41uy, 37uy, 36uy)          // #292524
     let pinInkV3d = V3d(41.0 / 255.0, 37.0 / 255.0, 36.0 / 255.0)
-    let pinInkCss = "#292524"
-
     // Pronounceable 2-char pin code = consonant + vowel, collision-checked against
     // names already taken (other pins' short names + the mesh numbers). Seeded by the
     // pin's guid hash, so it is effectively random yet deterministic per pin.
@@ -95,16 +93,6 @@ module Primitives =
             let n = raw / mag
             (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
 
-    let shortName (name : string) =
-        let mesh =
-            let s = name.IndexOf('/')
-            if s >= 0 then name.[s + 1 ..] else name
-        if mesh.Length > 8 && mesh.[8] = '_' then
-            let date = mesh.[..7]
-            let si = mesh.LastIndexOf("_seg")
-            if si > 0 then date + "_" + mesh.[si + 1 ..] else date
-        else mesh
-
     // Friendly display names: drop the dataset prefix, then strip the longest common
     // prefix + suffix shared across the whole roster, so e.g. {job_0789, job_0791, …}
     // reads {0789, 0791, …}. Trailing digits of the common prefix (and leading digits
@@ -147,12 +135,7 @@ module Primitives =
                 full, (if r = "" then loc else r))
             |> Map.ofList
     let friendlyName (names : string list) (name : string) =
-        Map.tryFind name (friendlyMap names) |> Option.defaultValue (shortName name)
-    let numberedFriendly (order : HashMap<string, int>) (names : string list) (name : string) =
-        match HashMap.tryFind name order with
-        | Some i -> sprintf "%d  %s" (i + 1) (friendlyName names name)
-        | None -> friendlyName names name
-
+        Map.tryFind name (friendlyMap names) |> Option.defaultValue (meshLocal name)
     let parseFloat (s : string) =
         match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
         | true, v -> Some v
@@ -160,9 +143,6 @@ module Primitives =
 
     let showWhen (v : aval<bool>) =
         v |> AVal.map (fun on -> if on then None else Some (Class "hidden"))
-
-    let showWhenNot (v : aval<bool>) =
-        v |> AVal.map (fun on -> if on then Some (Class "hidden") else None)
 
     let classWhen (cls : string) (v : aval<bool>) =
         v |> AVal.map (fun on -> if on then Some (Class cls) else None)
@@ -285,70 +265,3 @@ module Primitives =
               sprintf "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['%s']});" attr
               "})();" ])
 
-// Single-vs-double click discrimination for controls whose SINGLE click toggles
-// state (matrix cell locate/back-out, 3D pin-dot select/deselect): a double-click's
-// two leading clicks/taps would toggle twice before the dblclick fires. `single`
-// defers the action one double-click window; `double` on the same key supersedes
-// any pending single and runs immediately. Double handlers must still be written
-// to END in the desired state (select + zoom, not toggle) — a slow double-click
-// can let the deferred single fire in between. Controls with idempotent single
-// clicks bind plain OnClick + OnDoubleClick instead.
-module ClickGate =
-
-    let private pending = System.Collections.Generic.Dictionary<string, System.Threading.CancellationTokenSource>()
-
-    let single (key : string) (action : unit -> unit) =
-        match pending.TryGetValue key with
-        | true, cts -> cts.Cancel()
-        | _ -> ()
-        let cts = new System.Threading.CancellationTokenSource()
-        pending.[key] <- cts
-        Async.Start(async {
-            do! Async.Sleep 350
-            // State is read at fire time, not click time, so a superseded toggle
-            // never acts on a stale snapshot.
-            if not cts.IsCancellationRequested then action () }, cts.Token)
-
-    let double (key : string) (action : unit -> unit) =
-        match pending.TryGetValue key with
-        | true, cts -> cts.Cancel(); pending.Remove key |> ignore
-        | _ -> ()
-        action ()
-
-    // Immediate action that also supersedes any pending deferred single on `key`
-    // — for IDEMPOTENT controls sharing a click neighbourhood with gated toggles
-    // (matrix row/column heads vs the gated cells): without this, a quick
-    // cell-then-head sequence lets the cell's deferred single fire last and
-    // override the head's selection.
-    let now = double
-
-// Readiness-engine adapter: builds the engine input from individual model leaves
-// (adaptive-performance rule — never depend on the whole record).
-module ReadinessView =
-
-    open FSharp.Data.Adaptive
-
-    let input (model : AdaptiveModel) : aval<ReadinessInput> =
-        let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-        let meshNamesVal = model.MeshNames |> AList.toAVal
-        AVal.custom (fun t ->
-            let pins = pinsVal.GetValue t
-            let refMesh = model.ReferenceMesh.GetValue t
-            let names = meshNamesVal.GetValue t |> IndexList.toList
-            let moving =
-                match refMesh with
-                | Some r -> names |> List.filter (fun n -> n <> r)
-                | None -> []
-            let enabledPins =
-                pins |> HashMap.toList
-                |> List.map (fun (_, p) ->
-                    let c = ScanPin.correspondence p
-                    {
-                        RefAnchor = c.RefAnchor |> Option.map (fun ra -> ra, 1.0)
-                        Accepted  = moving |> List.filter (fun m -> Map.containsKey m c.Anchors) |> Set.ofList
-                    })
-            {
-                ReferenceMesh = refMesh
-                MovingMeshes  = moving
-                EnabledPins   = enabledPins
-            })

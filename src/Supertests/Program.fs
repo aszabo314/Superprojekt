@@ -1,8 +1,8 @@
 module Supertests.Program
 
 // Unit tests for the pure registration + slice-geometry pieces (RegMath,
-// RegConditioning, Readiness, MeshAnalysisCore). Plain console runner (exit
-// code = failure count) so no new packages enter the paket lock.
+// RegGraph, MeshAnalysisCore). Plain console runner (exit code = failure
+// count) so no new packages enter the paket lock.
 
 open System
 open Aardvark.Base
@@ -134,78 +134,7 @@ let umeyamaTests () =
         checkLe "negative weight ≡ weight 0" (maxAbsDiff a.Transform b.Transform) 1e-10
     | _ -> check "negative weight solvable" false
 
-// ───────────────────────── RegConditioning sanity ─────────────────────────
-
-let conditioningTests () =
-    // λ2/λ1 < 1e-3 is the near-collinear threshold Readiness.compute applies.
-    let line = Array.init 6 (fun i -> V3d(float i, 0.0, 0.0), 1.0)
-    check "collinear spread flagged" (RegConditioning.lambdaRatio (RegConditioning.spreadEigenvalues line) < 1e-3)
-    let spread = Array.init 24 (fun _ -> randV3 10.0, 1.0)
-    check "spread set not flagged" (RegConditioning.lambdaRatio (RegConditioning.spreadEigenvalues spread) >= 1e-3)
-
-// ─────────────────── Workflow panel: readiness engine ─────────────────────
-
-let private mkRPin refAnchor (accepted : string list) : ReadinessPin =
-    { RefAnchor = refAnchor
-      Accepted = Set.ofList accepted }
-
-let readinessTests () =
-    let baseInput = {
-        ReferenceMesh       = Some "ref"
-        MovingMeshes = [ "A"; "B" ]
-        EnabledPins         = []
-    }
-    let ready (d : Diagnostic list) = d |> List.filter (fun x -> x.Severity = Severity.Ready)
-    // non-collinear spread (parabola) with anchors accepted on both meshes
-    let pinsN n =
-        List.init n (fun i ->
-            mkRPin (Some (V3d(float i * 3.0, float (i * i), 0.5), 1.0)) [ "A"; "B" ])
-
-    let d = Readiness.compute { baseInput with ReferenceMesh = None }
-    check "no-ref blocker"
-        (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "reference"))
-    check "no-ref never ready" (ready d |> List.isEmpty)
-
-    let d = Readiness.compute baseInput
-    check "zero pins blocker" (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "≥3 pins"))
-
-    let d = Readiness.compute { baseInput with EnabledPins = pinsN 2 }
-    check "zero solvable meshes is the hard blocker"
-        (d |> List.exists (fun x -> x.Severity = Blocker && x.Text.Contains "≥3 markers"))
-    check "no per-mesh marker hints (superseded by the matrix)"
-        (not (d |> List.exists (fun x -> x.Text.Contains "marker(s)")))
-    check "2 pins not ready" (ready d |> List.isEmpty)
-
-    let d = Readiness.compute { baseInput with EnabledPins = pinsN 3 }
-    check "3 pins → exactly one Ready" (ready d |> List.length = 1)
-    check "no blockers when clear" (d |> List.forall (fun x -> x.Severity <> Blocker))
-
-    let pinU = mkRPin (Some (V3d(9.0, 1.0, 2.0), 1.0)) [ "A" ]
-    let d = Readiness.compute { baseInput with EnabledPins = pinU :: pinsN 3 }
-    check "no per-pin unresolved hints (superseded by the matrix)"
-        (not (d |> List.exists (fun x -> x.Text.Contains "without a marker")))
-    check "extra pins still ready" (ready d |> List.length = 1)
-
-    let colinear =
-        List.init 4 (fun i -> mkRPin (Some (V3d(float i, 0.0, 0.0), 1.0)) [ "A"; "B" ])
-    let d = Readiness.compute { baseInput with EnabledPins = colinear }
-    check "collinear anchors → warning" (d |> List.exists (fun x -> x.Text.Contains "near-collinear"))
-    let d = Readiness.compute { baseInput with EnabledPins = pinsN 4 }
-    check "spread anchors → no collinear warning"
-        (not (d |> List.exists (fun x -> x.Text.Contains "near-collinear")))
-
-    let d = Readiness.compute { baseInput with MovingMeshes = []; EnabledPins = pinsN 3 }
-    check "no moving meshes → Info" (d |> List.exists (fun x -> x.Severity = Info && x.Text.Contains "No moving meshes"))
-    check "no moving meshes never ready" (ready d |> List.isEmpty)
-
-    let counts =
-        Readiness.pairCounts
-            { baseInput with
-                EnabledPins = [ mkRPin (Some (V3d.Zero, 1.0)) [ "A" ]
-                                mkRPin (Some (V3d.IOO, 1.0)) [ "A"; "B" ] ] }
-    check "pairCounts counts markers per mesh" (counts = [ "A", 2; "B", 1 ])
-
-// ─────────────── MeshAnalysisCore: level-set tracer · decimate · dip ───────
+// ─────────────── MeshAnalysisCore: level-set tracer · decimate ─────────────
 
 // Triangulated n×n-cell grid in the XY plane: vertex (i, j) at (i, j, 0).
 let private gridMesh (n : int) =
@@ -260,22 +189,369 @@ let sliceCoreTests () =
     check "decimate caps total" ((dec |> Array.sumBy Array.length) <= 130)
     check "decimate no-ops under the cap" (MeshAnalysisCore.decimate 1000 long = long)
 
-    // (d) dip fit: z = 2x + y → dip ∝ (2,1) (canonical +X); flat / sparse → None.
-    let slanted = [ for _ in 0 .. 40 -> let v = randV3 4.0 in V3d(v.X, v.Y, 2.0 * v.X + v.Y) ]
-    match MeshAnalysisCore.dipOfPoints slanted with
-    | Some u -> checkLe "dip of z=2x+y ∝ (2,1)" (Vec.distance u (V3d(2.0, 1.0, 0.0).Normalized)) 1e-9
-    | None -> check "dip of z=2x+y solvable" false
-    check "flat patch → no dip"
-        ((MeshAnalysisCore.dipOfPoints [ for _ in 0 .. 40 -> let v = randV3 4.0 in V3d(v.X, v.Y, 0.7) ]).IsNone)
-    check "sparse patch → no dip"
-        ((MeshAnalysisCore.dipOfPoints [ for i in 0 .. 5 -> V3d(float i, 0.0, float i) ]).IsNone)
+// ───────────────── Registration graph: tree invariant ─────────────────────
+
+let regGraphTests () =
+    let tr (x : float) = Trafo3d.Translation(V3d(x, 0.0, 0.0))
+    let expectOk name r =
+        match r with
+        | EdgeAdded g -> g
+        | EdgeClosesLoop _ -> check (sprintf "%s (unexpected loop)" name) false; RegGraph.empty
+        | EdgeRejected e -> check (sprintf "%s (%s)" name e) false; RegGraph.empty
+    let expectRejected name r = check name (match r with EdgeRejected _ -> true | _ -> false)
+    let expectLoop name r = check name (match r with EdgeClosesLoop _ -> true | _ -> false)
+
+    expectRejected "no root ⇒ add rejected" (RegGraph.tryAddEdge "A" "R" (tr 1.0) 1.0 RegGraph.empty)
+
+    let g0 = { Root = Some "R"; Edges = Map.empty }
+    check "root is in the tree" (RegGraph.inTree g0 "R")
+    check "others start outside" (not (RegGraph.inTree g0 "A"))
+    check "no edges yet" (not (RegGraph.hasEdges g0))
+    expectRejected "self edge rejected" (RegGraph.tryAddEdge "R" "R" (tr 1.0) 1.0 g0)
+
+    let g1 = expectOk "first edge A→R" (RegGraph.tryAddEdge "A" "R" (tr 1.0) 1.0 g0)
+    check "A joins the tree" (RegGraph.inTree g1 "A" && RegGraph.hasEdges g1)
+    // both endpoints already connected ⇒ any further edge between them is a cycle
+    // Both-connected adds are now TRANSIENT loops (P9), never silent commits.
+    expectLoop "A→R again ⇒ closes a transient loop" (RegGraph.tryAddEdge "A" "R" (tr 2.0) 1.0 g1)
+    expectLoop "R→A ⇒ closes a transient loop" (RegGraph.tryAddEdge "R" "A" (tr 2.0) 1.0 g1)
+    // neither endpoint connected ⇒ isolated component rejected
+    expectRejected "C→B (both outside) ⇒ isolated rejected" (RegGraph.tryAddEdge "C" "B" (tr 1.0) 1.0 g1)
+
+    let g2 = expectOk "chain B→A" (RegGraph.tryAddEdge "B" "A" (tr 2.0) 1.0 g1)
+    let g3 = expectOk "branch C→R" (RegGraph.tryAddEdge "C" "R" (tr 3.0) 1.0 g2)
+    expectLoop "B→C ⇒ closes a transient loop (committed tree untouched)" (RegGraph.tryAddEdge "B" "C" (tr 9.0) 1.0 g3)
+    check "children of R" (RegGraph.children g3 "R" |> List.sort = [ "A"; "C" ])
+    check "children of A" (RegGraph.children g3 "A" = [ "B" ])
+
+    let g4 = RegGraph.withEdgeTransform "B" (tr 7.0) g3
+    check "edge transform replaced" (g4.Edges.["B"].Transform.Forward.M03 = 7.0)
+    check "edge endpoints unchanged" (g4.Edges.["B"].Parent = "A" && g4.Edges.["B"].Child = "B")
+    check "unrelated edges untouched" (obj.ReferenceEquals(g4.Edges.["C"], g3.Edges.["C"]))
+
+// ───────────────── Registration graph: composed worldPose ─────────────────
+
+let regComposeTests () =
+    let tr (x : float) = Trafo3d.Translation(V3d(x, 0.0, 0.0))
+    let add mov ref t g =
+        match RegGraph.tryAddEdge mov ref t 1.0 g with
+        | EdgeAdded g -> g
+        | EdgeClosesLoop _ -> check (sprintf "add %s→%s (unexpected loop)" mov ref) false; g
+        | EdgeRejected e -> check (sprintf "add %s→%s (%s)" mov ref e) false; g
+    let root = { Root = Some "R"; Edges = Map.empty }
+
+    check "empty graph composes to nothing" (Map.isEmpty (RegGraph.composeAll root))
+
+    // Star graph (every edge to the root): worldPose = the old star pose,
+    // exactly — the SAME Trafo3d instance the solve stored on the edge.
+    let tA = tr 1.0
+    let tB = Trafo3d.RotationZ (Math.PI / 2.0)
+    let star = root |> add "A" "R" tA |> add "B" "R" tB
+    let starP = RegGraph.composeAll star
+    check "star: root has no pose entry" (not (Map.containsKey "R" starP))
+    // Trafo3d is a struct — exact value equality is the strongest observable.
+    check "star: A pose = its edge transform exactly" (starP.["A"] = tA)
+    check "star: B pose = its edge transform exactly" (starP.["B"] = tB)
+
+    // Chain R←A←B: worldPose(B) = tB then A's own pose (apply child first).
+    // tACh = rot90 about Z, tBCh = +2X ⇒ origin ↦ (2,0,0) ↦ (0,2,0).
+    let tACh = Trafo3d.RotationZ (Math.PI / 2.0)
+    let tBCh = tr 2.0
+    let chain = root |> add "A" "R" tACh |> add "B" "A" tBCh
+    let chainP = RegGraph.composeAll chain
+    checkLe "chain: B pose composes child-first"
+        (Vec.distance (chainP.["B"].Forward.TransformPos V3d.Zero) (V3d(0.0, 2.0, 0.0))) 1e-12
+
+    // Subtree memoization: R←A←B plus a branch R←D. Editing edge A recomposes
+    // A and B ONLY — proven by poisoning D's entry in prev with a sentinel:
+    // composeSubtree must carry it through untouched (it never visits D).
+    let tD = tr 5.0
+    let g0 = chain |> add "D" "R" tD
+    let p0 = RegGraph.composeAll g0
+    let sentinel = tr 99.0
+    let g1 = RegGraph.withEdgeTransform "A" (tr 10.0) g0
+    let p1 = RegGraph.composeSubtree "A" (Map.add "D" sentinel p0) g1
+    check "subtree: D never recomputed (sentinel preserved)" (p1.["D"] = sentinel)
+    let full1 = RegGraph.composeAll g1
+    check "subtree: A recomposed to the full-recompute pose" (p1.["A"] = full1.["A"])
+    check "subtree: descendant B recomposed too" (p1.["B"] = full1.["B"])
+
+    // Edge add composed incrementally: E under B — everything else untouched.
+    let g2 = g1 |> add "E" "B" (tr 0.5)
+    let p2 = RegGraph.composeSubtree "E" (Map.add "D" sentinel full1) g2
+    check "add: E composed under B, rest untouched"
+        (p2.["E"] = (RegGraph.composeAll g2).["E"] && p2.["D"] = sentinel && p2.["A"] = full1.["A"])
+
+// ──────────────── Registration graph: per-edge before/after ───────────────
+
+let regEdgeSideTests () =
+    let tr (x : float) = Trafo3d.Translation(V3d(x, 0.0, 0.0))
+    let add mov ref t g =
+        match RegGraph.tryAddEdge mov ref t 1.0 g with
+        | EdgeAdded g -> g
+        | EdgeClosesLoop _ -> check (sprintf "add %s→%s (unexpected loop)" mov ref) false; g
+        | EdgeRejected e -> check (sprintf "add %s→%s (%s)" mov ref e) false; g
+    // 2-hop chain R ← A ← B.
+    let tA = Trafo3d.RotationZ (Math.PI / 2.0)
+    let tB = tr 2.0
+    let g = { Root = Some "R"; Edges = Map.empty } |> add "A" "R" tA |> add "B" "A" tB
+
+    let after = RegGraph.composeEdge "B" EdgeAfter g
+    let before = RegGraph.composeEdge "B" EdgeBefore g
+    check "edge B after = the committed composition" (after = RegGraph.composeAll g)
+    // Only what edge B changes moves: the ancestor's pose is identical on both
+    // sides; B-before rides at its parent's registered pose (edge zeroed).
+    check "edge B before: ancestor A untouched" (before.["A"] = after.["A"])
+    check "edge B before: B rides at its parent's pose" (before.["B"] = after.["A"])
+    check "edge B before ≠ after for B" (before.["B"] <> after.["B"])
+
+    // Edge A: its whole subtree changes (B rides along), the root side does not;
+    // B keeps ITS OWN edge applied — only edge A is zeroed.
+    let beforeA = RegGraph.composeEdge "A" EdgeBefore g
+    check "edge A before: A unregistered" (beforeA.["A"] = Trafo3d.Identity)
+    check "edge A before: descendant keeps its own edge" (beforeA.["B"] = tB)
+
+    // The query never mutates the committed graph.
+    check "composeEdge is pure" (g.Edges.["A"].Transform = tA && g.Edges.["B"].Transform = tB)
+
+// ───────────────────── Navigator: pair-cell state ─────────────────────────
+
+let pairCellTests () =
+    let tr (x : float) = Trafo3d.Translation(V3d(x, 0.0, 0.0))
+    let add mov ref q g =
+        match RegGraph.tryAddEdge mov ref (tr 1.0) q g with
+        | EdgeAdded g -> g
+        | EdgeClosesLoop _ -> check (sprintf "add %s→%s (unexpected loop)" mov ref) false; g
+        | EdgeRejected e -> check (sprintf "add %s→%s (%s)" mov ref e) false; g
+    let g = { Root = Some "R"; Edges = Map.empty } |> add "A" "R" 0.8 |> add "B" "A" 0.3
+    let overlap = Map.ofList [ PairCell.key "R" "C", true; PairCell.key "C" "D", false ]
+    check "pair key is unordered" (PairCell.key "b" "a" = PairCell.key "a" "b")
+    check "registered pair (either orientation) carries its quality"
+        (PairCell.state overlap g "A" "R" = PairRegistered 0.8
+         && PairCell.state overlap g "R" "A" = PairRegistered 0.8
+         && PairCell.state overlap g "A" "B" = PairRegistered 0.3)
+    check "overlapping unregistered pair = possible" (PairCell.state overlap g "R" "C" = PairPossible)
+    check "insufficient overlap = impossible" (PairCell.state overlap g "C" "D" = PairImpossible)
+    check "unknown overlap = impossible until fetched" (PairCell.state overlap g "A" "D" = PairImpossible)
+    check "an edge is ground truth over the overlap verdict"
+        (PairCell.state (Map.add (PairCell.key "A" "R") false overlap) g "A" "R" = PairRegistered 0.8)
+
+// ───────────────────────── Registration graph: reroot ─────────────────────
+
+let rerootTests () =
+    let tr (x : float) = Trafo3d.Translation(V3d(x, 0.0, 0.0))
+    let add mov ref t q g =
+        match RegGraph.tryAddEdge mov ref t q g with
+        | EdgeAdded g -> g
+        | EdgeClosesLoop _ -> check (sprintf "add %s→%s (unexpected loop)" mov ref) false; g
+        | EdgeRejected e -> check (sprintf "add %s→%s (%s)" mov ref e) false; g
+    // R ← A(tA) ← B(tB), branch R ← D(tD).
+    let tA = Trafo3d.RotationZ (Math.PI / 2.0)
+    let tB = tr 2.0
+    let tD = tr 5.0
+    let g =
+        { Root = Some "R"; Edges = Map.empty }
+        |> add "A" "R" tA 0.7 |> add "B" "A" tB 0.4 |> add "D" "R" tD 0.9
+
+    let g2 = RegGraph.reroot "B" g
+    check "reroot: new root set" (g2.Root = Some "B")
+    check "reroot: same members, still one tree"
+        ([ "A"; "B"; "D"; "R" ] |> List.forall (RegGraph.inTree g2) && g2.Edges.Count = 3)
+    // REF/MOV flips exactly along the path B→A→R; the branch D is untouched.
+    check "reroot: path edges flipped (REF/MOV)"
+        (g2.Edges.["A"].Parent = "B" && g2.Edges.["R"].Parent = "A"
+         && not (Map.containsKey "B" g2.Edges))
+    check "reroot: off-path edge untouched (reference-equal)"
+        (obj.ReferenceEquals(g2.Edges.["D"], g.Edges.["D"]))
+    check "reroot: quality rides its edge through the flip"
+        (g2.Edges.["A"].Quality = 0.4 && g2.Edges.["R"].Quality = 0.7 && g2.Edges.["D"].Quality = 0.9)
+
+    // Every pose recomposes relative to the new root: pose'(m) = pose(m) ∘ pose(B)⁻¹.
+    let p1 = RegGraph.composeAll g
+    let p2 = RegGraph.composeAll g2
+    let poseOld m = if m = "R" then Trafo3d.Identity else p1.[m]
+    let poseNew m = if m = "B" then Trafo3d.Identity else p2.[m]
+    let probe = V3d(1.0, 2.0, 3.0)
+    check "reroot: every pose relative to the new root"
+        ([ "A"; "B"; "D"; "R" ] |> List.forall (fun m ->
+            let expected = (poseOld m * p1.["B"].Inverse).Forward.TransformPos probe
+            Vec.distance ((poseNew m).Forward.TransformPos probe) expected < 1e-9))
+
+    // The invariant survives: adds still work, cycles still reject.
+    check "reroot: tree accepts new edges" (match RegGraph.tryAddEdge "E" "B" (tr 1.0) 1.0 g2 with EdgeAdded _ -> true | _ -> false)
+    check "reroot: redundant adds close transient loops" (match RegGraph.tryAddEdge "R" "D" (tr 1.0) 1.0 g2 with EdgeClosesLoop _ -> true | _ -> false)
+
+    // Degenerate inputs: current root and non-members return the graph as-is.
+    check "reroot to current root = unchanged" (obj.ReferenceEquals(RegGraph.reroot "R" g, g))
+    check "reroot to non-member = unchanged (caller decides)" (obj.ReferenceEquals(RegGraph.reroot "X" g, g))
+
+// ──────────── Registration graph: edge invalidation + solve quality ────────
+
+let edgeInvalidationTests () =
+    let tr (x : float) = Trafo3d.Translation(V3d(x, 0.0, 0.0))
+    let add mov ref g =
+        match RegGraph.tryAddEdge mov ref (tr 1.0) 0.5 g with
+        | EdgeAdded g -> g
+        | EdgeClosesLoop _ -> check (sprintf "add %s→%s (unexpected loop)" mov ref) false; g
+        | EdgeRejected e -> check (sprintf "add %s→%s (%s)" mov ref e) false; g
+    // R ← A ← B ← C, branch R ← D.
+    let g = { Root = Some "R"; Edges = Map.empty } |> add "A" "R" |> add "B" "A" |> add "C" "B" |> add "D" "R"
+
+    // A leaf edge drops alone.
+    let g1 = RegGraph.removeEdgeCascading "C" g
+    check "cascade: leaf removal drops one edge"
+        (g1.Edges.Count = 3 && not (Map.containsKey "C" g1.Edges) && Map.containsKey "B" g1.Edges)
+    // A mid-tree edge takes its whole subtree (stranding is forbidden).
+    let g2 = RegGraph.removeEdgeCascading "A" g
+    check "cascade: mid-tree removal drops the subtree"
+        (g2.Edges.Count = 1 && Map.containsKey "D" g2.Edges
+         && not (RegGraph.inTree g2 "A") && not (RegGraph.inTree g2 "B") && not (RegGraph.inTree g2 "C"))
+    check "cascade: untouched branch keeps its edge (reference-equal)"
+        (obj.ReferenceEquals(g2.Edges.["D"], g.Edges.["D"]))
+
+    // withEdge replaces transform AND quality in place.
+    let g3 = RegGraph.withEdge "D" (tr 9.0) 0.9 g
+    check "withEdge replaces payload"
+        (g3.Edges.["D"].Transform.Forward.M03 = 9.0 && g3.Edges.["D"].Quality = 0.9
+         && g3.Edges.["D"].Parent = "R")
+
+    // Quality: perfect solve → 1; monotone decreasing in rms; stays in (0, 1].
+    check "quality: zero residuals = 1" (RegGraph.solveQuality [| 0.0; 0.0; 0.0 |] = 1.0)
+    let q5 = RegGraph.solveQuality [| 0.05; 0.05; 0.05 |]
+    let q20 = RegGraph.solveQuality [| 0.2; 0.2; 0.2 |]
+    check "quality: halves at 5 cm rms" (abs (q5 - 0.5) < 1e-9)
+    check "quality: monotone + bounded" (q20 < q5 && q20 > 0.0 && q5 < 1.0)
+    check "quality: no residuals = 0" (RegGraph.solveQuality [||] = 0.0)
+
+    // REF/MOV of a pair: REF = the endpoint nearer the root.
+    check "pairRefMov: registered pair follows the edge"
+        (MatrixNav.pairRefMov g "A" "B" = ("A", "B") && MatrixNav.pairRefMov g "B" "A" = ("A", "B"))
+    check "pairRefMov: unregistered pair by hop depth"
+        (MatrixNav.pairRefMov g "D" "B" = ("D", "B"))    // D depth 1 < B depth 2
+    check "pairRefMov: unconnected mesh is always MOV"
+        (MatrixNav.pairRefMov g "X" "A" = ("A", "X"))
+    check "pairRefMov: both unconnected falls back to key order"
+        (MatrixNav.pairRefMov g "Y" "X" = ("X", "Y"))
+
+// ────────────── Registration graph: transient loops + resolution ──────────
+
+let loopTests () =
+    let tr (x : float) = Trafo3d.Translation(V3d(x, 0.0, 0.0))
+    let add mov ref t q g =
+        match RegGraph.tryAddEdge mov ref t q g with
+        | EdgeAdded g -> g
+        | _ -> check (sprintf "add %s→%s" mov ref) false; g
+    let probe = V3d(1.0, 2.0, 3.0)
+    // R ← A(rot90) ← B(+2x); branch R ← D(+5x).
+    let tA = Trafo3d.RotationZ (Math.PI / 2.0)
+    let g =
+        { Root = Some "R"; Edges = Map.empty }
+        |> add "A" "R" tA 0.9 |> add "B" "A" (tr 2.0) 0.4 |> add "D" "R" (tr 5.0) 0.7
+    let poses = RegGraph.composeAll g
+    // The EXACT redundant edge B→D: both paths agree ⇒ residual = identity.
+    let tExact = poses.["B"] * poses.["D"].Inverse
+    (match RegGraph.tryAddEdge "B" "D" tExact 0.8 g with
+     | EdgeClosesLoop (cycle, residual) ->
+        check "loop: cycle = the tree path B→A→R→D"
+            ((cycle |> List.map (fun e -> e.Child)) = [ "B"; "A"; "D" ])
+        checkLe "loop: consistent edge ⇒ residual rotation ≈ 0°"
+            (RegGraph.residualRotationDeg residual) 1e-7
+        checkLe "loop: consistent edge ⇒ residual displacement ≈ 0"
+            (RegGraph.residualAt residual probe) 1e-9
+     | _ -> check "loop: redundant add closes a transient loop" false)
+    // A perturbed edge: rigid conjugation preserves the translation LENGTH, so
+    // the displacement residual reads the injected 5 cm exactly; rotation 0.
+    (match RegGraph.tryAddEdge "B" "D" (tExact * tr 0.05) 0.8 g with
+     | EdgeClosesLoop (_, residual) ->
+        checkLe "loop: 5 cm perturbation reads 5 cm"
+            (abs (RegGraph.residualAt residual probe - 0.05)) 1e-9
+        checkLe "loop: pure-translation perturbation ⇒ rotation 0"
+            (RegGraph.residualRotationDeg residual) 1e-7
+     | _ -> check "loop: perturbed add closes a loop" false)
+
+    // Every kept edge constraint must hold after a resolve: pose(child) =
+    // T ∘ pose(parent) — unique, consistent poses.
+    let consistent (g2 : RegGraph) =
+        let ps = RegGraph.composeAll g2
+        let poseOf m = if g2.Root = Some m then Trafo3d.Identity else ps.[m]
+        g2.Edges |> Map.forall (fun _ e ->
+            Vec.distance
+                ((poseOf e.Child).Forward.TransformPos probe)
+                ((e.Transform * poseOf e.Parent).Forward.TransformPos probe) < 1e-9)
+
+    // Remove the mid-path edge A: the detached {A, B} re-hangs through B→D,
+    // A's edge re-orients (A now hangs off B).
+    let g2 = RegGraph.resolveLoop "B" "D" tExact 0.8 "A" g
+    check "resolve: spanning tree over the same members"
+        (g2.Edges.Count = 3 && [ "A"; "B"; "D"; "R" ] |> List.forall (RegGraph.inTree g2))
+    check "resolve: new edge landed with its quality"
+        (g2.Edges.["B"].Parent = "D" && g2.Edges.["B"].Quality = 0.8)
+    check "resolve: detached path re-oriented" (g2.Edges.["A"].Parent = "B")
+    check "resolve: every kept constraint holds" (consistent g2)
+    // The exact edge closes an agreeing loop ⇒ resolving must not move anything.
+    let p2 = RegGraph.composeAll g2
+    check "resolve: exact loop ⇒ poses unchanged"
+        ([ "A"; "B"; "D" ] |> List.forall (fun m ->
+            Vec.distance (p2.[m].Forward.TransformPos probe) (poses.[m].Forward.TransformPos probe) < 1e-9))
+
+    // Removing the MOV's own edge = the plain swap.
+    let g3 = RegGraph.resolveLoop "B" "D" tExact 0.8 "B" g
+    check "resolve: removing the MOV's edge swaps it for the new one"
+        (g3.Edges.["B"].Parent = "D" && g3.Edges.["A"].Parent = "R" && g3.Edges.Count = 3 && consistent g3)
+
+    // REF-side removal: {D} detaches ⇒ the new edge lands INVERTED, keyed D.
+    let g4 = RegGraph.resolveLoop "B" "D" tExact 0.8 "D" g
+    check "resolve: ref-side removal inverts the new edge"
+        (g4.Edges.["D"].Parent = "B" && g4.Edges.Count = 3 && consistent g4)
+
+// ─────────────────────── Navigator: reordering ────────────────────────────
+
+let matrixOrderTests () =
+    let tr = Trafo3d.Translation(V3d(1.0, 0.0, 0.0))
+    let add mov ref g =
+        match RegGraph.tryAddEdge mov ref tr 1.0 g with
+        | EdgeAdded g -> g
+        | EdgeClosesLoop _ -> check (sprintf "add %s→%s (unexpected loop)" mov ref) false; g
+        | EdgeRejected e -> check (sprintf "add %s→%s (%s)" mov ref e) false; g
+    let names = [ "A"; "B"; "C"; "R" ]
+    let canon = Map.ofList [ "A", 0; "B", 1; "C", 2; "R", 3 ]
+    let cov = Map.ofList [ "A", 5.0; "B", 20.0; "C", 10.0; "R", 1.0 ]
+    let g = { Root = Some "R"; Edges = Map.empty } |> add "B" "R" |> add "C" "B"
+
+    check "hop depth: root 0, chain counts, unconnected none"
+        (MatrixNav.hopDepth g "R" = Some 0 && MatrixNav.hopDepth g "B" = Some 1
+         && MatrixNav.hopDepth g "C" = Some 2 && MatrixNav.hopDepth g "A" = None)
+    check "sensor order = canonical"
+        (MatrixNav.orderMeshes OrderSensor canon cov g names = [ "A"; "B"; "C"; "R" ])
+    check "coverage order = largest footprint first"
+        (MatrixNav.orderMeshes OrderCoverage canon cov g names = [ "B"; "C"; "A"; "R" ])
+    check "connected order = root, then hops, unconnected last"
+        (MatrixNav.orderMeshes OrderConnected canon cov g names = [ "R"; "B"; "C"; "A" ])
+    // Reordering is a permutation and never changes what a cell contains.
+    let overlap = Map.ofList [ PairCell.key "A" "B", true ]
+    let statesOf ns =
+        [ for a in (ns : string list) do
+            for b in ns do
+                if a < b then yield (a, b), PairCell.state overlap g a b ]
+        |> List.sortBy fst
+    check "reorder is a permutation"
+        (List.sort (MatrixNav.orderMeshes OrderCoverage canon cov g names) = List.sort names)
+    check "reordering never changes cell contents"
+        (statesOf (MatrixNav.orderMeshes OrderCoverage canon cov g names) = statesOf names
+         && statesOf (MatrixNav.orderMeshes OrderConnected canon cov g names) = statesOf names)
 
 [<EntryPoint>]
 let main _ =
     umeyamaTests ()
-    conditioningTests ()
-    readinessTests ()
     sliceCoreTests ()
+    regGraphTests ()
+    regComposeTests ()
+    regEdgeSideTests ()
+    pairCellTests ()
+    rerootTests ()
+    edgeInvalidationTests ()
+    loopTests ()
+    matrixOrderTests ()
     printfn ""
     printfn "%d/%d passed%s" (total - failures) total (if failures = 0 then "" else sprintf " — %d FAILED" failures)
     failures

@@ -76,7 +76,6 @@ module MeshShader =
         // silhouette-only context meshes, so co-located inspected surfaces win the
         // depth contest deterministically (no per-pixel ID/colour alternation
         // where epochs differ by only noise).
-        member x.OutlineDepthBias : float32 = x?OutlineDepthBias
         // Inspect de-clutter: 1 → the base surface is a plain near-white
         // (no photo texture / palette / slope), so the false-colour painters above
         // it are the only filled signal. Shading still applies.
@@ -265,9 +264,7 @@ module MeshShader =
         }
 
 // Outline G-buffer pass: world-Z band parity + mesh id + window depth → target0,
-// per-mesh palette colour + coverage mask → target1 (MRT). Depth is written from
-// the fragment (fc.Z + OutlineDepthBias) so silhouette-only context meshes can be
-// pushed behind the inspected pair.
+// per-mesh palette colour + coverage mask → target1 (MRT).
 [<ReflectedDefinition>]
 module OutlineGBuffer =
     open MeshShader
@@ -307,7 +304,7 @@ module OutlineGBuffer =
             return {
                 g0 = V4f(parity, uniform.MeshId, dLo, dHi / 255.0f)
                 g1 = V4f(col.X, col.Y, col.Z, 1.0f)
-                depth = v.fc.Z + uniform.OutlineDepthBias
+                depth = v.fc.Z
             }
         }
 

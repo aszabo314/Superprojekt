@@ -98,9 +98,7 @@ module MeshData =
     let fetchCentroids   = fetchVecMap "centroids"
     let fetchPanoCenters = fetchVecMap "pano-centers"
 
-    // Per mesh: world bbox + mean sample spacing (m); spacing 0.0 when the server
-    // predates it (slice-cell callers fall back to the pin diameter).
-    let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d * float)[]> =
+    let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d)[]> =
         async {
             let url = sprintf "%s/datasets/%s/bboxes" (serverUrl.TrimEnd('/')) dataset
             let! json = Http.client.GetStringAsync(url) |> Async.AwaitTask
@@ -110,8 +108,7 @@ module MeshData =
                 |> Seq.map (fun prop ->
                     let mn = prop.Value.GetProperty("min").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                     let mx = prop.Value.GetProperty("max").EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                    let sp = match prop.Value.TryGetProperty "spacing" with true, e -> e.GetDouble() | _ -> 0.0
-                    dataset + "/" + prop.Name, Box3d(V3d(mn.[0], mn.[1], mn.[2]), V3d(mx.[0], mx.[1], mx.[2])), sp
+                    dataset + "/" + prop.Name, Box3d(V3d(mn.[0], mn.[1], mn.[2]), V3d(mx.[0], mx.[1], mx.[2]))
                 )
                 |> Seq.toArray
         }

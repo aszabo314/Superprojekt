@@ -43,22 +43,12 @@ module Query =
                 return None
         }
 
-    let closestPoint (serverUrl : string) (name : string) (index : int) (queryPoint : V3d) =
-        async {
-            let json = sprintf """{"name":"%s","index":%d,"point":%s}""" name index (v3 queryPoint)
-            let! r = post serverUrl "/query/closest" json
-            if r.GetProperty("found").GetBoolean() then
-                return Some {| point = readV3 (r.GetProperty "point")
-                               distanceSquared = float32 (r.GetProperty("distanceSquared").GetDouble())
-                               triangleId = r.GetProperty("triangleId").GetInt32() |}
-            else
-                return None
-        }
-
-    // Weighted rigid landmark solve. pairs = (refPoint, movingPoint, weight); the
-    // moving point is taken at the load pose, so the returned transform is absolute.
+    // Weighted rigid landmark solve for one pair edge: pairs = (parentPoint,
+    // childPoint, weight) at the AS-LOADED baselines — the returned world
+    // transform maps the child points onto the parent points (the edge
+    // transform convention); perPairResiduals feed the edge quality.
     let lsqPairs (serverUrl : string) (movingName : string) (pairs : (V3d * V3d * float)[])
-            : Async<M44d> =
+            : Async<M44d * float[]> =
         async {
             let pairJson =
                 pairs
@@ -70,11 +60,14 @@ module Query =
             let tf =
                 r.GetProperty("transform").EnumerateArray()
                 |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+            let residuals =
+                r.GetProperty("perPairResiduals").EnumerateArray()
+                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
             return
                 M44d(tf.[0],  tf.[1],  tf.[2],  tf.[3],
                      tf.[4],  tf.[5],  tf.[6],  tf.[7],
                      tf.[8],  tf.[9],  tf.[10], tf.[11],
-                     tf.[12], tf.[13], tf.[14], tf.[15])
+                     tf.[12], tf.[13], tf.[14], tf.[15]), residuals
         }
 
     // Sphere–surface contact rings; centre is in the mesh's own (untransformed)
@@ -90,112 +83,84 @@ module Query =
                 |> Seq.toArray
         }
 
-    // length <= 0.0 → server auto-computes from the union bbox extent along the normal.
-    let probe
+    // One pin's pairwise error distribution (see the server PairError module
+    // for the measure): pooled signed samples of meshB relative to meshA with
+    // world positions aligned 1:1, plus median and the LoD half-width.
+    type PairPinError = {
+        Ok           : bool
+        Count        : int
+        Median       : float
+        LodHalfWidth : float
+        Samples      : float[]
+        Positions    : V3d[]
+    }
+
+    // Pairwise pin-error batch at explicit poses; results in request-pin order.
+    let pairError
             (serverUrl : string)
-            (meshes : (string * M44d) list)
-            (referenceName : string)
-            (centre : V3d) (radius : float) (length : float)
-            (maxPointsPerMesh : int)
-            : Async<Result<ProbeResult, string>> =
+            (meshA : string) (tA : M44d)
+            (meshB : string) (tB : M44d)
+            (pins : (string * V3d * float) list)
+            : Async<PairPinError[]> =
         async {
-            let meshesJson =
-                meshes
-                |> List.map (fun (n, t) -> sprintf """{"name":"%s","transform":[%s]}""" n (m44json t))
+            let pinsJson =
+                pins
+                |> List.map (fun (id, c, r) ->
+                    sprintf """{"id":"%s","centre":%s,"radius":%.17g}""" id (v3 c) r)
                 |> String.concat ","
             let json =
-                sprintf """{"meshes":[%s],"referenceName":"%s","centre":%s,"radius":%.17g,"length":%.17g,"maxPointsPerMesh":%d}"""
-                    meshesJson referenceName (v3 centre) radius length maxPointsPerMesh
-            let! r = post serverUrl "/query/probe" json
-            if not (r.GetProperty("ok").GetBoolean()) then
-                return Result.Error (r.GetProperty("reason").GetString())
-            else
-                let dists =
-                    r.GetProperty("distributions").EnumerateArray()
-                    |> Seq.map (fun d ->
-                        {
-                            MeshName  = d.GetProperty("name").GetString()
-                            Count     = d.GetProperty("count").GetInt32()
-                            Median    = d.GetProperty("median").GetDouble()
-                            Std       = d.GetProperty("std").GetDouble()
-                            Samples   =
-                                match d.TryGetProperty "samples" with
-                                | true, se -> se.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                                | _ -> [||]
-                            Positions =
-                                match d.TryGetProperty "positions" with
-                                | true, pe ->
-                                    let flat = pe.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                                    Array.init (flat.Length / 3) (fun i -> V3d(flat.[i*3], flat.[i*3+1], flat.[i*3+2]))
-                                | _ -> [||]
-                        })
-                    |> Seq.toArray
-                return Result.Ok {
-                    ReferenceMesh = referenceName
-                    Normal        = readV3 (r.GetProperty "normal")
-                    Distributions = dists
-                }
+                sprintf """{"meshA":{"name":"%s","transform":[%s]},"meshB":{"name":"%s","transform":[%s]},"pins":[%s],"length":0,"maxPointsPerMesh":8192}"""
+                    meshA (m44json tA) meshB (m44json tB) pinsJson
+            let! r = post serverUrl "/query/pair-error" json
+            return
+                r.GetProperty("pins").EnumerateArray()
+                |> Seq.map (fun p ->
+                    let samples =
+                        p.GetProperty("samples").EnumerateArray()
+                        |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                    let flat =
+                        p.GetProperty("positions").EnumerateArray()
+                        |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                    {
+                        Ok           = p.GetProperty("ok").GetBoolean()
+                        Count        = p.GetProperty("count").GetInt32()
+                        Median       = p.GetProperty("median").GetDouble()
+                        LodHalfWidth = p.GetProperty("lodHalfWidth").GetDouble()
+                        Samples      = samples
+                        Positions    = Array.init (flat.Length / 3) (fun i -> V3d(flat.[i*3], flat.[i*3+1], flat.[i*3+2]))
+                    })
+                |> Seq.toArray
         }
 
-    // Vertical cross-sections through a pin: mesh∩plane polylines for every mesh ×
-    // parallel offset × both registration poses in one request, in the slice's 2D
-    // chart frame ((u, v) metres about the pin centre). The section azimuth is
-    // fitted server-side on referenceName (dip direction) and returned. Transforms
-    // are world-space rigid M44 (Forward), probe convention; a mesh with a second
-    // (opposite-pose) transform gets paired opposite-pose polylines back.
-    let slice
+    // Exact pairwise error at one picked world point (meshB relative to meshA).
+    let pairErrorAt
             (serverUrl : string)
-            (meshes : (string * M44d * M44d option) list)
-            (referenceName : string)
-            (centre : V3d)
-            (radius : float) (offsets : float[]) (maxPointsPerPlane : int)
-            : Async<V3d * (string * V2d[][][] * V2d[][][] option)[]> =
+            (meshA : string) (tA : M44d)
+            (meshB : string) (tB : M44d)
+            (point : V3d) (radius : float)
+            : Async<float option> =
         async {
-            let meshesJson =
-                meshes
-                |> List.map (fun (n, t, tOther) ->
-                    match tOther with
-                    | Some o -> sprintf """{"name":"%s","transform":[%s],"transformOther":[%s]}""" n (m44json t) (m44json o)
-                    | None   -> sprintf """{"name":"%s","transform":[%s]}""" n (m44json t))
-                |> String.concat ","
-            let offsetsJson = offsets |> Array.map (sprintf "%.17g") |> String.concat ","
             let json =
-                sprintf """{"meshes":[%s],"referenceName":"%s","centre":%s,"radius":%.17g,"offsets":[%s],"maxPointsPerPlane":%d}"""
-                    meshesJson referenceName (v3 centre) radius offsetsJson maxPointsPerPlane
-            let! r = post serverUrl "/query/slice" json
-            let parsePlanes (pe : JsonElement) =
-                pe.EnumerateArray()
-                |> Seq.map (fun pl ->
-                    pl.EnumerateArray()
-                    |> Seq.map (fun line ->
-                        let flat = line.EnumerateArray() |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-                        Array.init (flat.Length / 2) (fun i -> V2d(flat.[i * 2], flat.[i * 2 + 1])))
-                    |> Seq.toArray)
-                |> Seq.toArray
-            let perMesh =
-                r.GetProperty("meshes").EnumerateArray()
-                |> Seq.map (fun m ->
-                    let other =
-                        match m.TryGetProperty "planesOther" with
-                        | true, oe when oe.ValueKind <> JsonValueKind.Null -> Some (parsePlanes oe)
-                        | _ -> None
-                    m.GetProperty("name").GetString(), parsePlanes (m.GetProperty "planes"), other)
-                |> Seq.toArray
-            return readV3 (r.GetProperty "azimuth"), perMesh
+                sprintf """{"meshA":{"name":"%s","transform":[%s]},"meshB":{"name":"%s","transform":[%s]},"point":%s,"radius":%.17g,"maxDist":100}"""
+                    meshA (m44json tA) meshB (m44json tB) (v3 point) radius
+            let! r = post serverUrl "/query/pair-error-at" json
+            if r.GetProperty("ok").GetBoolean()
+            then return Some (r.GetProperty("value").GetDouble())
+            else return None
         }
 
-    // Per-vertex signed distance of a target mesh to the reference, in the
-    // target's served vertex order. Transforms are world-space rigid M44 (Forward).
+    // Per-vertex signed distance of the MOV mesh to the REF at explicit poses,
+    // in MOV's served vertex order (the in-cell false-colour map's buffer).
+    // The measure is opaque — the endpoint has exactly one metric.
     let regionDistance
             (serverUrl : string)
-            (targetName : string) (targetIndex : int)
-            (refName : string) (refIndex : int)
-            (targetTransform : M44d) (refTransform : M44d) (mode : int)
+            (targetName : string) (refName : string)
+            (targetTransform : M44d) (refTransform : M44d)
             : Async<float32[]> =
         async {
             let json =
-                sprintf """{"targetName":"%s","targetIndex":%d,"refName":"%s","refIndex":%d,"targetTransform":[%s],"refTransform":[%s],"mode":%d}"""
-                    targetName targetIndex refName refIndex (m44json targetTransform) (m44json refTransform) mode
+                sprintf """{"targetName":"%s","targetIndex":0,"refName":"%s","refIndex":0,"targetTransform":[%s],"refTransform":[%s]}"""
+                    targetName refName (m44json targetTransform) (m44json refTransform)
             let! r = post serverUrl "/query/region-distance" json
             return
                 r.GetProperty("dist").EnumerateArray()
@@ -203,3 +168,17 @@ module Query =
                 |> Seq.toArray
         }
 
+    // Pairwise overlap sufficiency at explicit poses (server defaults for the
+    // distance/fraction/sampling knobs) → can the pair be registered at all.
+    let pairOverlap
+            (serverUrl : string)
+            (meshA : string) (tA : M44d)
+            (meshB : string) (tB : M44d)
+            : Async<bool> =
+        async {
+            let json =
+                sprintf """{"meshA":{"name":"%s","transform":[%s]},"meshB":{"name":"%s","transform":[%s]},"maxDist":0,"minFraction":0,"maxSamples":0}"""
+                    meshA (m44json tA) meshB (m44json tB)
+            let! r = post serverUrl "/query/pair-overlap" json
+            return r.GetProperty("sufficient").GetBoolean()
+        }

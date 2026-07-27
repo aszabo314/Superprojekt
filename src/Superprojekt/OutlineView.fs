@@ -66,9 +66,7 @@ module OutlineView =
     // coverage MRT (one channel per mesh, no depth) + a fullscreen composite that
     // outlines every channel's covered↔uncovered transition in that mesh's palette
     // colour — each mesh keeps its complete own contour even where the combined
-    // (depth-tested) G-buffer sees only the union. `active` gates the composite
-    // only (slice mode stands the footprints down: the depth-free additive MRT
-    // has nothing to fade with) — pass and shaders stay untouched.
+    // (depth-tested) G-buffer sees only the union.
     let private buildCoverage
         (info : Aardvark.Dom.RenderControlInfo)
         (widthA : aval<float32>)
@@ -99,14 +97,8 @@ module OutlineView =
 
         ASet.single composite
 
-    // A mask that gates nothing (every slot = full lines) — for callers without
-    // per-mesh outline state (the focus single's reference overlay).
-    let maskAllOn : aval<V4f[]> =
-        AVal.constant (Array.create 32 (V4f(1.0f, 0.0f, 0.0f, 0.0f)))
-
     // Offscreen G-buffer + fullscreen edge-detect composite for an arbitrary outline
-    // node (already carrying its own View/Proj/Trafo). Shared by the main-view all-mesh
-    // outline and the focus single's reference-mesh silhouette overlay. The composite is
+    // node (already carrying its own View/Proj/Trafo). The composite is
     // DepthTest.None → it draws on top of whatever preceded it in the framebuffer.
     // `mask` = the per-mesh line gate, indexed by the G-buffer mesh id (MeshView.outlineMask).
     let buildFromNode
@@ -157,7 +149,7 @@ module OutlineView =
         (proj : aval<Trafo3d>) : aset<ISceneNode> =
         let suit0, suit1, _ = renderOffscreen info coverage1 false (MeshView.buildSuitabilityNode model view proj)
         let active =
-            model.ScanPins.Placement |> AVal.map (function AnchorPlacement -> true | _ -> false)
+            model.ScanPins.Placement |> AVal.map (function PlacementActive(ToolArea, _) -> true | _ -> false)
         let composite =
             sg {
                 // NoEvents is load-bearing — see the main composite above.

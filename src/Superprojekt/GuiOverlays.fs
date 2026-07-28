@@ -81,25 +81,26 @@ module GuiOverlays =
             model.MeshHeatmap |> AVal.map (Map.exists (fun _ h -> h = HeatRange))
         let diffOn =
             AVal.custom (fun t ->
-                match model.Nav.GetValue t with
-                | NavCell _ -> model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome
-                | NavHome -> false)
+                let inPairScope =
+                    match model.Focus.GetValue t with
+                    | FocusPair | FocusPin -> true
+                    | FocusSetup | FocusMatrix -> false
+                inPairScope && (model.Sel.GetValue t).Pair.IsSome
+                && model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome)
         let legendJson =
             AVal.custom (fun t ->
                 let title, vLo, vHi, colorAt =
                     if diffOn.GetValue t then
                         let lo, hi =
-                            match model.CellError.GetValue t with
-                            | Some cells -> ErrorRange.ofSamples (cells |> Seq.collect (fun (_, r) -> r.Samples))
-                            | None -> ErrorRange.ofSamples Seq.empty
+                            MeshView.cellRange (model.CellError.GetValue t) (model.CellDist.GetValue t)
                         let name =
-                            match model.Nav.GetValue t with
-                            | NavCell(a, b) ->
+                            match (model.Sel.GetValue t).Pair with
+                            | Some (a, b) ->
                                 let order = model.MeshOrder.Content.GetValue t
                                 let num m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
                                 let refM, movM = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
                                 sprintf "Difference %d vs %d" (num movM) (num refM)
-                            | NavHome -> "Difference"
+                            | None -> "Difference"
                         name, lo, hi, Primitives.Diff.colorSignedV3 lo hi
                     else
                         let m = max 1e-6 (heatRangeMaxA.GetValue t)

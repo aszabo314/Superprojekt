@@ -169,7 +169,7 @@ module SceneGraph =
         }
 
     // Prominent reference-mesh marker: its bbox edges in gold (matching the
-    // focus reference tile ★), thick + bright so the reference is unmistakable in 3D.
+    // survey tile ★), thick + bright so the reference is unmistakable in 3D.
     let private referenceOutline view proj active (model : AdaptiveModel) =
         bboxOutline view proj active model
             (fun t -> (model.RegGraph.GetValue t).Root)
@@ -181,7 +181,6 @@ module SceneGraph =
         (view : aval<Trafo3d>)
         (proj : aval<Trafo3d>)
         (fullscreenActive : aval<bool>)
-        (placementHover : aval<V3d option>)
         (clipUniforms : aval<int * V4f * V4f>)
         (model : AdaptiveModel) =
 
@@ -193,16 +192,13 @@ module SceneGraph =
         // writes depth from its shader; ordering is steered via Sg.DepthTest +
         // Sg.Pass alone. Cross + labels run in passOne (DepthTest.None) on top.
 
-        let meshScene  = MeshView.buildScene loadFinished clipUniforms placementHover model
-        // Placement suitability draws before the outline composites so
-        // isolines/footprints stay readable on top of the fused overlay.
-        let suitScene  = OutlineView.buildSuitability info model view proj
+        let meshScene  = MeshView.buildScene loadFinished clipUniforms model
         // ONE coverage MRT render, shared by the footprint composite and the
         // mesh shader's matrix-hover overlap preview.
         let cov0, cov1, covTexel = OutlineView.coverageOffscreen info model view proj
         let outlineScene = OutlineView.build info model view proj (cov0, cov1, covTexel)
         let ovOn, ovSelA0, ovSelA1, ovSelB0, ovSelB1 = MeshView.overlapPreviewUniforms model
-        let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
+        let pinScene   = ScanPinScene.build env view proj fullscreenActive model
 
         let notFullscreen = AVal.map not fullscreenActive
         // The cross + axis labels sit at the first mesh's panorama centre (render
@@ -273,7 +269,6 @@ module SceneGraph =
                 Sg.Uniform("OverlapSelB0", ovSelB0)
                 Sg.Uniform("OverlapSelB1", ovSelB1)
                 meshScene
-                suitScene
                 outlineScene
                 cross
                 pinScene

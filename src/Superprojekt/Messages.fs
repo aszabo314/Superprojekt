@@ -5,6 +5,10 @@ open Superprojekt
 
 type Message =
     | CameraMessage      of OrbitMessage
+    // The Pin level's pane cameras (A | B), one orbit controller each.
+    | PaneCamMessage     of side : PaneSide * msg : OrbitMessage
+    // A survey tile's 2D camera (pan / zoom-to-cursor), computed view-side.
+    | SetTileCam         of mesh : string * TileCam
     | CentroidsLoaded    of (string * V3d)[]
     | PanoCentersLoaded  of (string * V3d)[]
     | LoadFinished       of string
@@ -23,12 +27,16 @@ type Message =
     // step). A tree member re-roots in place (registration kept, path edges
     // reversed); a mesh outside the registered tree clears the graph.
     | SetRegRoot of string
-    // Navigator home state: overview/setup vs the pair matrix.
-    | SetMatrixHome of MatrixHome
-    // Descend into a pair's cell-workspace (a Possible/Registered cell click).
-    | DescendPair of a:string * b:string
-    // Ascend one hierarchy level (Escape / the workspace's back control).
-    | NavAscend
+    // Focus rail: free jump to an enabled stop (the reducer re-guards
+    // enablement, so a stale click can never land on a disabled level).
+    | SetFocus of FocusLevel
+    // Escape: up one level (Pin→Pair→Matrix→Setup; at Setup a no-op).
+    | FocusAscend
+    // Matrix cell click: select the pair (a NEW pair cascade-clears pin/point)
+    // and enter its Pair level.
+    | SelectPair of a:string * b:string
+    // Pair-level pin list: choose the pin (enables the Pin stop).
+    | SelectPin of ScanPinId
     // Solve the current pair's edge from its pins (cell toolkit; needs ≥3).
     | SolvePair of a:string * b:string
     // ── In-cell error inspection. Results are gen-guarded (UpdateHelpers).
@@ -99,10 +107,9 @@ and ScanPinMessage =
     | DraftPointAt of mesh:string * local:V3d
     | CommitPin
     | AbortPinTransaction
-    // ── committed-pin edits (each invalidates the pair's solve).
+    // ── committed-pin edits (each invalidates the pair's solve). A point
+    // re-pick needs no arming: the Pin level's pane click attributes the mesh.
     | SetInnerRadius of ScanPinId * float
-    | BeginPointEdit of ScanPinId * mesh:string
-    | CancelPointEdit
     | EditPointAt of ScanPinId * mesh:string * local:V3d
     | DeletePin of ScanPinId
     | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>

@@ -106,13 +106,13 @@ module MeshView =
     let private scaleFor (model : AdaptiveModel) (name : string) =
         model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
 
-    // The current cell's MOV while the given peek key holds — the blink keys
-    // are cell-scope only, REF/MOV derived from the tree (nearer-root = REF).
+    // The selected pair's MOV while the given peek key holds — the blink keys
+    // are pair-scope only, REF/MOV derived from the tree (nearer-root = REF).
     let private peekMovAt (held : bool) (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
         held &&
-        (match model.Nav.GetValue t with
-         | NavCell(a, b) -> snd (MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b) = name
-         | NavHome -> false)
+        (match (model.Sel.GetValue t).Pair with
+         | Some (a, b) -> snd (MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b) = name
+         | None -> false)
 
     // The visibility peek hides the MOV outright (REF alone — never a ghost:
     // the blink needs a clean swap, not a fade).
@@ -154,7 +154,7 @@ module MeshView =
 
     // Per-vertex triangle shape quality (incident-face mean of 4√3·A/Σl², clamped
     // 0..1; 1 = equilateral, →0 = thin/degenerate). Shared by the 3D shape heatmap
-    // buffer and the 2D focus tile shape overlay.
+    // buffer and the survey-tile shape overlay.
     let shapeQuality (pos : V3f[]) (idx : int[]) : float32[] =
         let q   = Array.zeroCreate<float32> pos.Length
         let cnt = Array.zeroCreate<int> pos.Length
@@ -173,10 +173,30 @@ module MeshView =
             if cnt.[i] > 0 then q.[i] <- q.[i] / float32 cnt.[i]
         q
 
+    // THE in-cell scale, shared by the 3D map uniforms and the legend: the
+    // pin-ROI samples when any exist, else the per-vertex distance
+    // distribution (ErrorRange.ofDistances — a pinless cell would otherwise
+    // normalize to the ±cap default and read as an all-white wash).
+    let cellRange (ce : (ScanPinId * Query.PairPinError)[] option) (cd : float32[] option) =
+        match ce with
+        | Some cells when cells |> Array.exists (fun (_, r) -> r.Samples.Length > 0) ->
+            ErrorRange.ofSamples (cells |> Seq.collect (fun (_, r) -> r.Samples))
+        | _ ->
+            match cd with
+            | Some d -> ErrorRange.ofDistances d
+            | None -> ErrorRange.ofSamples Seq.empty
+
+    // Per-vertex shape-quality buffer of a loaded mesh (recomputed once on load).
+    let private shapeBufOf (loaded : LoadedMesh) =
+        loaded.pos |> AVal.map (fun _ ->
+            match loaded.mesh.Value with
+            | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
+            | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
+
     // Shared saturation end (world metres) of the Range heatmap: the farthest
     // own-bbox corner from each mesh's own sensor, maxed over ALL meshes — ONE
     // scale so range colours are comparable across meshes. Feeds the 3D
-    // RangeMax uniform, the focus mode-5 normalization and the Range legend.
+    // RangeMax uniform (main pass + survey tiles) and the Range legend.
     // 0 until bounds load (consumers fall back per mesh).
     let rangeMaxWorld (model : AdaptiveModel) : aval<float> =
         AVal.custom (fun t ->
@@ -234,13 +254,12 @@ module MeshView =
         cutFwd, cutDist, cutBand
 
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
-    // inner radius w), for the mesh shader's pin-isolation filter. The live
-    // placement hover is appended as a transient "flashlight" blob.
-    let private pinBlobUniforms (placementPreview : aval<V3d option>) (model : AdaptiveModel) =
+    // inner radius w), for the mesh shader's pin-isolation filter.
+    let private pinBlobUniforms (model : AdaptiveModel) =
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
         let pinBlobs =
-            // Nav-scoped like the pin scene nodes; the centre rides its anchor
+            // Focus-scoped like the pin scene nodes; the centre rides its anchor
             // mesh's displayed pose (token reads → the poses stay tracked).
             let pinsF =
                 model.ScanPins.Pins
@@ -250,29 +269,18 @@ module MeshView =
                 let pins = pinsF.GetValue t
                 let cc = model.CommonCentroid.GetValue t
                 let scale = datasetScale.GetValue t
-                let nav = model.Nav.GetValue t
+                let focus = model.Focus.GetValue t
+                let selPair = (model.Sel.GetValue t).Pair
                 [| for (_, (anchorMesh, centreLocal, innerR, pair)) in HashMap.toSeq pins do
-                    let shown =
-                        match nav with
-                        | NavHome -> true
-                        | NavCell (a, b) -> pair = PairCell.key a b
-                    if shown then
+                    if MeshVisibility.pinShown focus selPair pair then
                         let world = (displayedWorldAt model t anchorMesh).Forward.TransformPos centreLocal
                         let cr = ScanPin.renderCentre cc scale world
                         yield V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, float32 (ScanPin.renderLength scale innerR)) |])
-        // Placement hover → flashlight blob (already render space), sized to
-        // QuickPinRadius — previews exactly where the new pin will land.
-        let previewBlob =
-            (placementPreview, model.QuickPinRadius, datasetScale)
-            |||> AVal.map3 (fun prev qr scale ->
-                prev |> Option.map (fun p ->
-                    V4f(float32 p.X, float32 p.Y, float32 p.Z, float32 (ScanPin.renderLength scale qr))))
         let blobsArr =
-            (pinBlobs, previewBlob) ||> AVal.map2 (fun pins prev ->
-                let all = match prev with Some b -> Array.append pins [| b |] | None -> pins
-                let n = min all.Length MeshShader.MaxBlobs
+            pinBlobs |> AVal.map (fun pins ->
+                let n = min pins.Length MeshShader.MaxBlobs
                 let centres = Array.zeroCreate<V4f> MeshShader.MaxBlobs
-                for i in 0 .. n - 1 do centres.[i] <- all.[i]
+                for i in 0 .. n - 1 do centres.[i] <- pins.[i]
                 n, centres)
         blobsArr |> AVal.map fst,
         blobsArr |> AVal.map snd
@@ -288,7 +296,7 @@ module MeshView =
         let loaded = loadMeshAsync (fun () -> ()) name
         loaded, meshTrafo model.CommonCentroid loaded (scaleFor model name) (displayedMeshT model name)
 
-    let buildScene (loadFinished : string -> unit) (clip : aval<int * V4f * V4f>) (placementPreview : aval<V3d option>) (model : AdaptiveModel) : aset<ISceneNode> =
+    let buildScene (loadFinished : string -> unit) (clip : aval<int * V4f * V4f>) (model : AdaptiveModel) : aset<ISceneNode> =
         let renderingModeInt =
             model.RenderingMode |> AVal.map (function
                 | Textured     -> 0
@@ -297,41 +305,40 @@ module MeshView =
         let meshIndices = meshIndicesA model
         let palette = Primitives.meshPaletteV4d
 
-        let blobCount, blobs = pinBlobUniforms placementPreview model
+        let blobCount, blobs = pinBlobUniforms model
         let cutFwdU, cutDistU, cutBandU = nearCutUniforms model
         let rangeWorldA = rangeMaxWorld model
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
-        // Pin isolation = the persistent per-mode default (AnchorGhostMode),
-        // forced OFF while placing an anchor (view-level only, no model
-        // mutation): the full textured meshes show so the user can aim; the
-        // white ghost sphere + suitability overlay carry the placement feedback.
+        // Pin isolation = the persistent per-mode default (AnchorGhostMode).
         let anchorGhost =
-            (model.AnchorGhostMode, model.ScanPins.Placement)
-            ||> AVal.map2 (fun on pl ->
-                match pl with
-                | PlacementActive _ -> 0
-                | PlacementIdle -> if on then 1 else 0)
-        // The ONE in-cell error range (metres, spanning 0, capped ±0.5) over the
-        // pair's pin-ROI samples — shared by the map uniforms, the diagram and
-        // the legend so every false-colour read is comparable.
+            model.AnchorGhostMode |> AVal.map (fun on -> if on then 1 else 0)
+        // The ONE in-cell error range (metres, spanning 0, capped ±0.5) —
+        // shared by the map uniforms, the diagram and the legend so every
+        // false-colour read is comparable.
         let cellRangeA =
-            model.CellError |> AVal.map (function
-                | Some cells -> ErrorRange.ofSamples (cells |> Seq.collect (fun (_, r) -> r.Samples))
-                | None -> ErrorRange.ofSamples Seq.empty)
-        // Setup isolate: the hover preview wins over the click lock.
-        let isolateA =
-            (model.SetupIsolateHover, model.SetupIsolate) ||> AVal.map2 (fun h l ->
-                match h with Some _ -> h | None -> l)
+            (model.CellError, model.CellDist) ||> AVal.map2 cellRange
+        // The shown rule's shared inputs (Setup isolate: hover wins over the
+        // click lock) — ONE context aval, N cheap per-mesh bool projections.
+        let shownCtx =
+            AVal.custom (fun t ->
+                let focus = model.Focus.GetValue t
+                let selPair = (model.Sel.GetValue t).Pair
+                let iso =
+                    match model.SetupIsolateHover.GetValue t with
+                    | Some _ as h -> h
+                    | None -> model.SetupIsolate.GetValue t
+                let hp = model.MatrixHoverPair.GetValue t
+                focus, selPair, iso, hp)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
-            // The ONE shown rule: at home every mesh is solid (Setup isolate /
-            // matrix hover narrow it); in a cell only the pair's two meshes
-            // (the rest drop to the ghost floor).
+            // The ONE shown rule: survey levels show every mesh (Setup isolate /
+            // matrix hover narrow it); Pair/Pin isolate the selected pair (the
+            // rest drop to the ghost floor).
             let isActive =
-                (model.Nav, isolateA, model.MatrixHoverPair)
-                |||> AVal.map3 (fun nav iso hp -> MeshVisibility.shown nav iso hp name)
+                shownCtx |> AVal.map (fun (focus, selPair, iso, hp) ->
+                    MeshVisibility.shown focus selPair iso hp name)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
             // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
@@ -363,8 +370,12 @@ module MeshView =
             // a non-empty brush suppresses the map (the dots carry the values).
             let cellPaint : aval<float32[] option> =
                 AVal.custom (fun t ->
-                    match model.Nav.GetValue t with
-                    | NavCell(a, b) when model.CellMapOn.GetValue t ->
+                    let inPairScope =
+                        match model.Focus.GetValue t with
+                        | FocusPair | FocusPin -> true
+                        | FocusSetup | FocusMatrix -> false
+                    match (model.Sel.GetValue t).Pair with
+                    | Some (a, b) when inPairScope && model.CellMapOn.GetValue t ->
                         let _, mov = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
                         if mov = name && Set.isEmpty (model.BrushedSamples.GetValue t)
                         then model.CellDist.GetValue t
@@ -378,12 +389,7 @@ module MeshView =
                         match loaded.mesh.Value with
                         | Some md -> ArrayBuffer (Array.zeroCreate<float32> md.positions.Length) :> IBuffer
                         | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
-            // Shape heatmap: per-vertex triangle quality. Recomputed once on load.
-            let shapeBuf =
-                loaded.pos |> AVal.map (fun _ ->
-                    match loaded.mesh.Value with
-                    | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
-                    | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
+            let shapeBuf = shapeBufOf loaded
             let distEncoding = cellPaint |> AVal.map (fun d -> if d.IsSome then 1 else 0)
             // Map ends from the unified pair range: enc 1 saturates at (lo, hi).
             let distScale =
@@ -410,14 +416,9 @@ module MeshView =
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
                             let floorOn = model.GhostSilhouette.GetValue t
-                            // "Isolate pins" (manual toggle): while on — and no
-                            // placement flashlight runs — the context floor is 0,
-                            // only the pin blobs read.
-                            let pinIsolation =
-                                model.AnchorGhostMode.GetValue t
-                                && (match model.ScanPins.Placement.GetValue t with
-                                    | PlacementIdle -> true | PlacementActive _ -> false)
-                            if pinIsolation then 0.0f
+                            // "Isolate pins" (manual toggle): while on, the
+                            // context floor is 0 — only the pin blobs read.
+                            if model.AnchorGhostMode.GetValue t then 0.0f
                             elif floorOn then float32 (model.GhostOpacity.GetValue t)
                             else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
@@ -594,15 +595,15 @@ module MeshView =
 
     // Matrix-hover overlap-preview uniforms: the on-flag + the hovered pair's
     // coverage-channel selectors over the two MRT targets (channel = display
-    // index, 0-3 → target0, 4-7 → target1 — the OutlineCoverage layout). Home
-    // scope only; a pair mesh beyond the 8-channel cap disables the preview
-    // outright rather than half-testing.
+    // index, 0-3 → target0, 4-7 → target1 — the OutlineCoverage layout).
+    // Matrix scope only; a pair mesh beyond the 8-channel cap disables the
+    // preview outright rather than half-testing.
     let overlapPreviewUniforms (model : AdaptiveModel) =
         let pairIdx =
-            (model.MatrixHoverPair, model.Nav, meshIndicesA model)
-            |||> AVal.map3 (fun hp nav idx ->
-                match nav, hp with
-                | NavHome, Some (a, b) ->
+            (model.MatrixHoverPair, model.Focus, meshIndicesA model)
+            |||> AVal.map3 (fun hp focus idx ->
+                match focus, hp with
+                | FocusMatrix, Some (a, b) ->
                     let ia = Map.tryFind a idx |> Option.defaultValue 8
                     let ib = Map.tryFind b idx |> Option.defaultValue 8
                     if ia < 8 && ib < 8 then Some (ia, ib) else None
@@ -618,47 +619,129 @@ module MeshView =
         pairIdx |> AVal.map (function Some (_, ib) -> sel ib 0 | None -> V4f.Zero),
         pairIdx |> AVal.map (function Some (_, ib) -> sel ib 1 | None -> V4f.Zero)
 
-    // Placement-suitability coverage: every mesh accumulates its
-    // SHAPE-WEIGHTED footprint into its own channel (SuitabilityCoverage), no
-    // depth — active ONLY while a pin placement is armed, so the offscreen pass
-    // is idle otherwise. Same 8-channel cap as the footprint coverage.
-    let buildSuitabilityNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+    // One secondary-view mesh (a Pin pane or a Setup survey tile): the mesh
+    // `name` with the full shipped shader, inspection modes off but the
+    // per-mesh survey heatmap live. With `overlap = Some (other, cov0, cov1)`
+    // (the Pin panes) the isolate-overlap gate engages while a placement is
+    // armed: solid only where the view's coverage MRT covers the pixel in
+    // BOTH pair channels, the rest at the ghost floor — exactly the valid
+    // placement area. `None` (the tiles) binds an inert texture instead —
+    // the sampler slot must be fed even though the gate never reads it.
+    let buildPaneScene
+        (model : AdaptiveModel)
+        (name : string)
+        (paneActive : aval<bool>)
+        (overlap : (string * aval<IBackendTexture> * aval<IBackendTexture>) option)
+        (viewportSize : aval<V2i>) : ISceneNode =
+        let loaded = loadMeshAsync (fun () -> ()) name
+        let scale = scaleFor model name
+        let fullTrafo = meshTrafo model.CommonCentroid loaded scale (displayedMeshT model name)
         let meshIndices = meshIndicesA model
+        let palette = Primitives.meshPaletteV4d
+        let meshColor =
+            meshIndices |> AVal.map (fun m ->
+                let i = Map.tryFind name m |> Option.defaultValue 0
+                V4f palette.[i % palette.Length])
         let placing =
-            model.ScanPins.Placement |> AVal.map (function PlacementActive(ToolArea, _) -> true | _ -> false)
-        let nodes =
-            model.MeshNames |> AList.map (fun name ->
-                let loaded, trafo = offscreenMesh model name
-                let channel = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
-                let shapeBuf =
-                    loaded.pos |> AVal.map (fun _ ->
-                        match loaded.mesh.Value with
-                        | Some md -> ArrayBuffer (shapeQuality md.positions md.indices) :> IBuffer
-                        | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
-                let active =
-                    AVal.custom (fun t ->
-                        placing.GetValue t && loaded.fvc.GetValue t > 3 && (channel.GetValue t) < 8
-                        && not (peekVisHiddenAt model t name))
-                sg {
-                    Sg.Active active
-                    Sg.Trafo trafo
-                    Sg.Shader {
-                        DefaultSurfaces.trafo
-                        SuitabilityCoverage.shade
-                    }
-                    Sg.Uniform("CoverageChannel", channel)
-                    Sg.VertexAttributes(
-                        HashMap.ofList [
-                            string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
-                            "ShapeQ",                         BufferView(shapeBuf, typeof<float32>)
-                        ])
-                    Sg.Index(BufferView(loaded.idx, typeof<int>))
-                    Sg.Render loaded.fvc
-                }) |> AList.toASet
+            model.ScanPins.Placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
+        // The overlap gate needs BOTH pair channels below the 8-channel MRT cap;
+        // beyond it the gate disengages outright rather than half-testing.
+        let pairIdx =
+            match overlap with
+            | None -> AVal.constant None
+            | Some (other, _, _) ->
+                (placing, meshIndices) ||> AVal.map2 (fun pl idx ->
+                    if not pl then None
+                    else
+                        let ia = Map.tryFind name idx |> Option.defaultValue 8
+                        let ib = Map.tryFind other idx |> Option.defaultValue 8
+                        if ia < 8 && ib < 8 then Some (ia, ib) else None)
+        let sel (k : int) (target : int) =
+            if k / 4 = target then
+                match k % 4 with
+                | 0 -> V4f.IOOO | 1 -> V4f.OIOO | 2 -> V4f.OOIO | _ -> V4f.OOOI
+            else V4f.Zero
+        let active =
+            (paneActive, loaded.fvc) ||> AVal.map2 (fun a fvc -> a && fvc > 3)
+        let zeroBuf =
+            loaded.pos |> AVal.map (fun _ ->
+                match loaded.mesh.Value with
+                | Some md -> ArrayBuffer (Array.zeroCreate<float32> md.positions.Length) :> IBuffer
+                | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
+        // IBackendTexture → ITexture through AVal.map (aval is invariant — a
+        // direct upcast of the aval itself does not typecheck).
+        let covTex0, covTex1 =
+            match overlap with
+            | Some (_, c0, c1) ->
+                c0 |> AVal.map (fun t -> t :> ITexture), c1 |> AVal.map (fun t -> t :> ITexture)
+            | None -> DefaultTextures.checkerboard, DefaultTextures.checkerboard
+        // Survey heatmap inputs (same sensor/range conventions as the main pass).
+        let sensorOrigin =
+            (fullTrafo, model.PanoCenters, loaded.centroid) |||> AVal.map3 (fun t panos c ->
+                let local = match Map.tryFind name panos with Some w -> w - c | None -> V3d.Zero
+                V3f (t.Forward.TransformPos local))
+        let rangeMax =
+            (rangeMaxWorld model, scale, loaded.localMaxR) |||> AVal.map3 (fun g s lr ->
+                float32 (max 1e-6 ((if g > 0.0 then g else lr) * s)))
         sg {
-            Sg.View view
-            Sg.Proj proj
-            Sg.DepthTest (AVal.constant DepthTest.None)
-            Sg.BlendMode (AVal.constant BlendMode.Add)
-            nodes
+            Sg.Active active
+            Sg.Trafo fullTrafo
+            Sg.Shader {
+                DefaultSurfaces.trafo
+                DefaultSurfaces.diffuseTexture
+                MeshShader.shade
+            }
+            Sg.Uniform("ViewportSize", viewportSize)
+            Sg.Uniform("Coverage0", covTex0)
+            Sg.Uniform("Coverage1", covTex1)
+            Sg.Uniform("OverlapPreview", pairIdx |> AVal.map (fun o -> if o.IsSome then 1 else 0))
+            Sg.Uniform("OverlapSelA0", pairIdx |> AVal.map (function Some (ia, _) -> sel ia 0 | None -> V4f.Zero))
+            Sg.Uniform("OverlapSelA1", pairIdx |> AVal.map (function Some (ia, _) -> sel ia 1 | None -> V4f.Zero))
+            Sg.Uniform("OverlapSelB0", pairIdx |> AVal.map (function Some (_, ib) -> sel ib 0 | None -> V4f.Zero))
+            Sg.Uniform("OverlapSelB1", pairIdx |> AVal.map (function Some (_, ib) -> sel ib 1 | None -> V4f.Zero))
+            Sg.Uniform("DiffuseColorTexture", loaded.tex)
+            Sg.Uniform("MeshActive",      AVal.constant true)
+            Sg.Uniform("GhostOpacity",
+                (model.GhostSilhouette, model.GhostOpacity) ||> AVal.map2 (fun on o ->
+                    if on then float32 o else 0.0f))
+            Sg.Uniform("RenderingMode",
+                model.RenderingMode |> AVal.map (function
+                    | Textured -> 0 | Shaded -> 1 | SlopeColor -> 2))
+            Sg.Uniform("MeshColor",       meshColor)
+            Sg.Uniform("ShadingStrength", model.ShadingStrength |> AVal.map float32)
+            Sg.Uniform("SlopeThreshold",
+                model.SlopeThresholdDeg |> AVal.map (fun d ->
+                    sin (d * System.Math.PI / 180.0) |> float32))
+            Sg.Uniform("BlobCount",       AVal.constant 0)
+            Sg.Uniform("Blobs",           AVal.constant (Array.zeroCreate<V4f> MeshShader.MaxBlobs))
+            Sg.Uniform("AnchorGhost",     AVal.constant 0)
+            Sg.Uniform("ClipPlaneCount",  AVal.constant 0)
+            Sg.Uniform("ClipPlane0",      AVal.constant V4f.Zero)
+            Sg.Uniform("ClipPlane1",      AVal.constant V4f.Zero)
+            Sg.Uniform("CutFwd",          AVal.constant V3f.OOI)
+            Sg.Uniform("CutDist",         AVal.constant 0.0f)
+            Sg.Uniform("CutBand",         AVal.constant 0.0f)
+            Sg.Uniform("DistanceEncoding", AVal.constant 0)
+            Sg.Uniform("DistScale",       AVal.constant 1.0f)
+            Sg.Uniform("DistLoNeg",       AVal.constant 1.0f)
+            Sg.Uniform("DiffIsoStep",     AVal.constant 0.0f)
+            Sg.Uniform("HeatmapMode",
+                model.MeshHeatmap |> AVal.map (fun mh ->
+                    match Map.tryFind name mh |> Option.defaultValue HeatOff with
+                    | HeatOff -> 0 | HeatIncidence -> 1 | HeatRange -> 2 | HeatShape -> 3))
+            Sg.Uniform("SensorOrigin",    sensorOrigin)
+            Sg.Uniform("RangeMax",        rangeMax)
+            Sg.Uniform("ShapeThreshold",  model.ShapeThreshold |> AVal.map float32)
+            Sg.Uniform("InspectPlain",    AVal.constant 0.0f)
+            Sg.VertexAttributes(
+                HashMap.ofList [
+                    string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
+                    string DefaultSemantic.DiffuseColorCoordinates, BufferView(loaded.tc,  typeof<V2f>)
+                    string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
+                    "SurfaceDist",                                  BufferView(zeroBuf, typeof<float32>)
+                    "ShapeQ",                                       BufferView(shapeBufOf loaded, typeof<float32>)
+                ]
+            )
+            Sg.Index(BufferView(loaded.idx, typeof<int>))
+            Sg.Render loaded.fvc
         }

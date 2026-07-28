@@ -74,6 +74,65 @@ body.loaded { background: #f4f6f8; }
 
 .hidden { display: none !important; }
 
+/* ── Pin-level panes (mesh A | mesh B picking surface) ─────────────── */
+.pin-panes {
+    position: fixed;
+    top: 32px; left: 256px; right: 0; bottom: 0;
+    display: flex; gap: 2px;
+    background: #d7dce4;
+    z-index: 900;
+}
+/* Hidden via visibility, NOT display — a display:none render control
+   collapses its viewport. */
+.pin-panes.panes-off { visibility: hidden; pointer-events: none; }
+.pin-pane { position: relative; flex: 1 1 0; min-width: 0; cursor: crosshair; }
+.pane-rc { width: 100%; height: 100%; display: block; background: rgb(244, 246, 248); }
+.pane-chip {
+    position: absolute; top: 8px; left: 8px; z-index: 2;
+    display: flex; align-items: center; gap: 5px;
+    background: rgba(255, 255, 255, 0.92); border: 1px solid #d7dce4;
+    border-radius: 4px; padding: 3px 8px; font-size: 12px; font-weight: 600;
+    pointer-events: none;
+}
+.pane-chip-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Pick-value tooltips (probe / hovered sample) riding their 3D points. */
+.pick-tip {
+    position: fixed; z-index: 940;
+    transform: translate(10px, -50%);
+    background: rgba(15, 23, 42, 0.92); color: #ffffff;
+    padding: 2px 7px; border-radius: 3px;
+    font-size: 11px; font-family: 'SF Mono', Monaco, monospace;
+    pointer-events: none; white-space: nowrap;
+}
+
+/* ── Setup survey tiles (small multiples, right strip) ─────────────── */
+.setup-tiles {
+    position: fixed;
+    top: 32px; right: 0; bottom: 0;
+    width: 244px;
+    display: flex; flex-direction: column; gap: 2px;
+    padding-left: 6px;
+    overflow-y: auto;
+    background: #d7dce4;
+    border-left: 1px solid #d7dce4;
+    z-index: 900;
+}
+.setup-tiles.panes-off { visibility: hidden; pointer-events: none; }
+.tiles-handle {
+    position: absolute; left: 0; top: 0; bottom: 0; width: 6px;
+    cursor: ew-resize; z-index: 3; touch-action: none;
+}
+.tiles-handle:hover { background: rgba(26, 86, 219, 0.35); }
+.setup-tile { position: relative; flex: none; aspect-ratio: 3 / 2; }
+.setup-tile .pane-chip { max-width: calc(100% - 16px); }
+.setup-tile .pane-chip-name { max-width: 110px; }
+.tile-rc { width: 100%; height: 100%; display: block; background: rgb(244, 246, 248); }
+.tile-ref {
+    position: absolute; bottom: 6px; left: 8px; z-index: 2;
+    padding: 2px 8px; font-size: 11px;
+}
+
 /* ── Top bar ────────────────────────────────────────────────────────── */
 
 .top-bar {
@@ -141,6 +200,23 @@ body.loaded { background: #f4f6f8; }
 .rail-btn:disabled { opacity: 0.5; cursor: default; }
 .rail-btn-active { background: #1a56db; border-color: #1a56db; color: #fff; }
 .rail-isolate { margin-left: 8px; border-radius: 3px; }
+
+/* The four-stop focus rail: Setup · Matrix · Pair · Pin. */
+.rail-levels {
+    display: flex; flex: none;
+    border-bottom: 1px solid #d7dce4;
+    background: #f8fafc;
+}
+.rail-stop {
+    flex: 1 1 0; padding: 6px 0;
+    border: none; border-right: 1px solid #e6eaf0; border-radius: 0;
+    background: transparent; color: #334155;
+    font-size: 12px; font-weight: 600; cursor: pointer;
+}
+.rail-stop:last-child { border-right: none; }
+.rail-stop:hover:not(:disabled):not(.rail-btn-active) { background: #e2e8f0; }
+.rail-stop:disabled { color: #b6c0cd; cursor: default; }
+.rail-stop.rail-btn-active { background: #1a56db; color: #fff; }
 
 .lp-sublabel { font-size: 10px; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
 
@@ -375,10 +451,12 @@ body.loaded { background: #f4f6f8; }
 .pmx-pos { background: #ffffff; border: 1.5px solid #94a3b8; cursor: pointer; }
 .pmx-reg { border: 1px solid #0f172a; cursor: pointer; }
 .pmx-imp:hover, .pmx-pos:hover, .pmx-reg:hover { outline: 2px solid #1a56db; outline-offset: -1px; }
+/* The remembered pair selection — persists while surveying other levels. */
+.pmx-sel { outline: 2px solid #1a56db; outline-offset: -1px; box-shadow: 0 0 0 2px rgba(26, 86, 219, 0.35); }
+/* Gold = the reference root, readable straight off the matrix heads. */
+.pmx-head-root { background: var(--ref-gold-pale); box-shadow: inset 0 0 0 1px var(--ref-gold-dark); border-radius: 3px; }
 .pmx-order { display: flex; align-items: center; gap: 6px; padding: 2px 0 4px; }
 .pmx-order-label { font-size: 10px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
-.pmx-home { display: flex; flex-direction: column; gap: 4px; }
-.pmx-tabs { display: flex; align-items: center; padding: 2px 0; }
 .pmx-root { display: flex; flex-direction: column; gap: 2px; padding: 2px 0 6px; }
 .pmx-root-hint { font-size: 10px; color: #64748b; padding: 2px 0 4px; }
 .pmx-root-row { display: flex; flex-direction: column; gap: 3px; padding: 4px 6px; border-radius: 4px; border: 1px solid transparent; }
@@ -395,8 +473,6 @@ body.loaded { background: #f4f6f8; }
 /* ── Cell-workspace (one pair): persistent A↔B header + per-pair toolkit. */
 .cw { display: flex; flex-direction: column; gap: 6px; }
 .cw-head { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
-.cw-back { border: 1px solid #cbd5e1; background: #ffffff; border-radius: 4px; width: 22px; height: 22px; cursor: pointer; font-size: 14px; line-height: 1; color: #334155; flex: none; }
-.cw-back:hover { background: #eef2f6; }
 .cw-chip { display: flex; align-items: center; gap: 4px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 6px; background: #ffffff; min-width: 0; }
 .cw-chip-name { font-size: 11px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cw-link { color: #64748b; font-weight: 700; flex: none; }
@@ -407,8 +483,11 @@ body.loaded { background: #f4f6f8; }
 .cw-commit:not([disabled]) { border-color: #15803d; color: #15803d; }
 .cw-abort { color: #b91c1c; }
 .cw-pins { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
-.cw-pin-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; }
+.cw-pin-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
 .cw-pin-row:hover { background: #eef2f6; }
+/* The chosen pin (enables the Pin stop; remembered on re-entry). */
+.cw-pin-sel { background: #e8effc; box-shadow: inset 2px 0 0 #1a56db; }
+.cw-pin-sel:hover { background: #e0eafa; }
 .cw-pin-name { font-size: 11px; font-weight: 700; color: #292524; width: 22px; flex: none; }
 .cw-edit { font-size: 10px; }
 .cw-del { color: #b91c1c; }

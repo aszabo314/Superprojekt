@@ -38,6 +38,7 @@
     <Compile Include="OutlineView.fs" />
     <Compile Include="ScanPinScene.fs" />
     <Compile Include="SceneGraph.fs" />
+    <Compile Include="GuiPanes.fs" />
     <Compile Include="GuiTopBar.fs" />
     <Compile Include="GuiOverlays.fs" />
     <Compile Include="GuiRail.fs" />

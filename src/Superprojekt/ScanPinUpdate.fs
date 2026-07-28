@@ -54,7 +54,7 @@ module ScanPinUpdate =
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
         | BeginPinTransaction pair ->
-            { sp with Placement = PlacementActive(ToolArea, PinDraft.empty pair); Edit = EditIdle }
+            { sp with Placement = PlacementActive(ToolArea, PinDraft.empty pair) }
 
         | SetDraftTool tool ->
             match sp.Placement with
@@ -99,14 +99,7 @@ module ScanPinUpdate =
         | SetInnerRadius(id, r) ->
             sp |> updatePin id (fun pin -> { pin with InnerRadius = max 0.01 r; ContactRings = RingsNone })
 
-        | BeginPointEdit(id, mesh) ->
-            { sp with Edit = EditPoint(id, mesh); Placement = PlacementIdle }
-
-        | CancelPointEdit ->
-            { sp with Edit = EditIdle }
-
         | EditPointAt(id, mesh, local) ->
-            let sp = { sp with Edit = EditIdle }
             sp |> updatePin id (fun pin ->
                 if mesh = fst pin.Pair then { pin with PointA = local }
                 elif mesh = snd pin.Pair then { pin with PointB = local }

@@ -67,25 +67,20 @@ type PlacementState =
     | PlacementIdle
     | PlacementActive of DraftTool * PinDraft
 
-// Editing a COMMITTED pin's point: distinct from placement and never yields a
-// partial pin — the old point stands until the replacement pick commits.
-type PinEditState =
-    | EditIdle
-    | EditPoint of ScanPinId * mesh : string
-
-// The placement transaction + point-edit arming are the only pin-local UI state.
+// The placement transaction is the only pin-local UI state; a committed pin's
+// point re-pick needs no arming — at the Pin level each pane IS the pick
+// surface for its mesh (the old point stands until the pane click commits the
+// replacement, so no partial pin ever exists).
 [<ModelType>]
 type ScanPinModel = {
     Pins        : HashMap<ScanPinId, ScanPin>
     Placement   : PlacementState
-    Edit        : PinEditState
 }
 
 module ScanPinModel =
     let initial = {
         Pins        = HashMap.empty
         Placement   = PlacementIdle
-        Edit        = EditIdle
     }
 
     let invalidateRings (sp : ScanPinModel) =

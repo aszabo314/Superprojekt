@@ -4,6 +4,211 @@
 > (CLAUDE.md, README.md) are FROZEN until the entire rework is finished —
 > do not edit them per-change. Log every change here as it lands; at the
 > end, reconstruct the net documentation updates from this file.
+> *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
+
+## Polish: matrix root mark, white-map fix, tile resize + 2D cam, pick tooltips (2026-07-28)
+
+Feedback round on the A1–A3 build.
+
+- **Matrix shows the reference root**: row/col heads of the root mesh get
+  `.pmx-head-root` (gold-pale fill + gold-dark inset ring, token colours) +
+  a "— the reference root ★" title (`GuiRail.headRoot`).
+- **"White instead of textured" on cell click — root cause + fix**: entering
+  a pair auto-paints the error map (CellMapOn defaults on); in a cell with
+  NO pin samples `ErrorRange.ofSamples Seq.empty` returned the ±0.5 m cap
+  default, so typical cm-scale differences all normalized to the diverging
+  ramp's near-white centre AND the no-Z-overlap sentinel kept the
+  InspectPlain near-white base → the whole MOV read as a white wash. Fix:
+  (a) `ErrorRange.ofDistances` — a pinless cell's scale now comes from the
+  per-vertex distance distribution itself (per-sign 95th percentile, 1 mm
+  floors, same ±cap); `MeshView.cellRange` is the ONE selector (pin samples
+  win when any exist) shared by the map uniforms AND the legend; (b) the
+  shader paints sentinel fragments PALE GREY (grey = no-data; near-white
+  stays reserved for "difference ≈ 0"). SHADER EDIT — browser-verify.
+- **"Error map toggle does nothing"**: wiring audited end-to-end
+  (compactToggle → `ToggleCellMap` → `CellMapOn` → `cellPaint`/enc/
+  InspectPlain) — structurally sound; the dead feel is attributed to the
+  white-wash bug above (ON state ≈ indistinguishable from bright rock
+  texture). With the range fix the ON state is unmistakable. VERIFY in the
+  browser; if it still sticks, suspect the checkbox click region.
+- **Tile strip resize handle** (`.tiles-handle` + OnBoot JS): left-edge
+  ew-resize drag, width clamped 160–600 px, pure DOM (layout chrome, not
+  model state); tiles switched from fixed height to `aspect-ratio: 3/2`, so
+  the render controls reflow with the width.
+- **Tile 2D camera** (`TileCam { Centre; Radius }`, `Model.TileCams` map +
+  `SetTileCam`; reset on dataset switch): custom 2D controller per tile —
+  drag pans in the XY plane (anchored at drag start, no incremental drift;
+  screen right = +X, screen down = −Y under the top-down sky=+Y view),
+  wheel zooms TO THE CURSOR (the point under it stays put: centre' =
+  centre + off − off·k, off from the 60°-fov units-per-CSS-px at the centre
+  plane), radius clamped in the reducer. Default framing (bounds) applies
+  until the first interaction.
+- **Pick tooltips**: `.pick-tip` floating readouts riding the 3D points —
+  the armed probe's value at its click point and the hovered brushed
+  sample's value (gid → canonical CellError position) — projected in View
+  with the main camera (CSS-px viewport, behind-eye culled); the rail
+  readouts stay.
+- Build green (FS0044 ×4 pre-existing), Supertests 102/102 (ofDistances
+  compiles into the shared RegistrationModel).
+
+## Docs reconstructed after A1–A3 (2026-07-28)
+
+- CLAUDE.md: "Navigation & visibility" → "Navigation: the focus rail,
+  selection & visibility" (rail, `FocusSelection` manager — the old blanket
+  "no selection state" axiom is superseded by SCOPED selection; global blobs
+  and cross-panel emitters stay banned); Pins bullet (panes = the picking
+  surface, no edit arming); Peek keys (Pair-scope only, three node families
+  — peeks now REFUSED at Pin so a pose blink can't move the picking surface
+  mid-placement); new "Secondary views" section (panes + tiles,
+  `buildPaneScene`, visibility-not-display, checkerboard Coverage binding);
+  suitability MRT references removed; cache-invalidation bullet (caches ride
+  the selection); compile order (+GuiPanes.fs). README: rail intro, Setup
+  (tiles strip), Matrix (select+highlight), Pair (rows select/dbl-click),
+  Pin (two-pane placement/edit, overlap-while-placing, leave = abort), peeks.
+- Stale "focus tile/pano" comments updated in Model.fs / MeshView.fs /
+  MeshShaders.fs / SceneGraph.fs (the survey tiles are the referent now).
+- The three spec files (`ScanPin_v14_A1/A2/A3_*.md`) left in the repo root
+  for review — delete at review time per convention.
+- Final state: build green, Supertests 102/102.
+
+## A3: Setup survey tiles — small multiples (2026-07-28)
+
+Amendment `ScanPin_v14_A3` — per-mesh small multiples, Setup only.
+
+- **T1 — the tile strip** (`GuiPanes.setupTiles`/`surveyTile`, `.setup-tiles`
+  CSS): a fixed right-edge column, ONE tile per mesh — input-less top-down
+  thumbnail (fixed `CameraView.lookAt` over the mesh bounds, sky = +Y because
+  a look-down view cannot use +Z), displayed pose, LIVE per-mesh survey
+  heatmap; identity chip + ★; the explicit **☆ Set reference** button on
+  every tile (the only root-change path, same rule as the rows); double-click
+  flies the main camera to the sensor. Mounted ONCE per dataset (keyed on
+  MeshNames — never rebuilt on focus jumps), scoped to Setup by
+  visibility + `Sg.Active` like the Pin panes; Matrix/Pair/Pin show none.
+- **Shared builder generalized:** `MeshView.buildPaneScene model name active
+  overlap size` — `overlap = Some (other, cov0, cov1)` engages the Pin
+  panes' isolate-overlap gate, `None` (tiles) binds the checkerboard default
+  texture into the Coverage slots (the sampler must be fed even when the
+  gate never reads; IBackendTexture→ITexture goes through `AVal.map` — aval
+  is invariant). The builder now feeds the REAL survey-heatmap uniforms
+  (HeatmapMode/SensorOrigin/RangeMax/ShapeThreshold + the shared
+  `shapeBufOf` shape buffer), so tiles AND panes honour the per-mesh
+  Tex/Dst/Shp/Inc switches; the deliberate v13 small-multiples value (N
+  scalar views side by side) is back, scoped to Setup.
+- NOT a resurrection of the selection-framed focus panel: tiles are
+  input-less (no selection emitters, no per-tile cameras, no tile picking) —
+  the A1 axiom (scoped selection, no panel-to-panel emitters) holds.
+- Build green (FS0044 ×4 pre-existing); Supertests 102/102. Owed to the
+  browser pass: N-tile render-control cost on this backend (the known
+  "nested controls don't scale" risk — tiles are the bounded ≤8-mesh case;
+  fallback = mount-per-Setup-visit), tile framing/heatmap look, strip vs
+  overlays layout (orientation indicator sits under the strip at Setup).
+
+## A2: Pin level two-pane picking surface + placement fix (2026-07-28)
+
+Amendment `ScanPin_v14_A2` — builds the Pin level, fixes broken placement.
+P6 atomic-pin semantics unchanged.
+
+- **REVIEW finding (placement was broken — root cause):** the old main-view
+  placement pick resolved `raycastNearestNamed()` = the NEAREST hit among all
+  shown meshes and let the hit attribute the point. With a co-located pair
+  the upper surface always wins, so the occluded mesh's correspondence is
+  structurally unreachable — "no way to pick the second". The raycast
+  machinery itself is sound (double-tap recentre and the probe use the same
+  path successfully); the defect was nearest-hit ATTRIBUTION, which the panes
+  remove by construction (pane = mesh = attribution).
+- **T1 — deletions:** the crosshatch/weave suitability overlay
+  (`SuitabilityCoverage` + `SuitabilityComposite` shaders,
+  `MeshView.buildSuitabilityNode`, `OutlineView.buildSuitability`, SceneGraph
+  wiring) and the whole Pair-bolted placement path: main-view Sg.OnTap
+  placement/edit pick routing, the flashlight (`placementHover` cval +
+  throttled raycast + `previewBlob` + `ghostPreview`), the main-view
+  `draftMarkers`, the Pair workspace draft bar, the crosshair pickModeOn, and
+  the ENTIRE point-edit arming machinery (`PinEditState`/`Edit` field,
+  `BeginPointEdit`/`CancelPointEdit`, row ·N edit buttons, Esc-chain entries)
+  — a pane click IS the arming. `EditPointAt` (the atomic replace) stays. No
+  FS0049/25/26; leftover-symbol grep clean.
+- **T2 — the panes** (new `GuiPanes.fs`, `.pin-panes` overlay over the
+  central area): two side-by-side secondary render controls, mesh A | mesh B
+  of the selected pair, each with its OWN orbit camera (`Model.PaneCamA/B` +
+  `PaneCamMessage`, re-seeded to the sensor framing on pair change), identity
+  chip top-left. Hidden by `visibility` (never display:none — a collapsed
+  render control loses its viewport) + `Sg.Active` gating so hidden panes
+  cost ~nothing; controls are (re)built per selected pair. Pane meshes render
+  through the SHIPPED `MeshShader.shade` (lean constant uniforms) so
+  rendering modes and the ghost floor behave identically.
+- **T3 — transaction on the panes:** pane clicks (click-vs-drag: pointer-up
+  within 4 px) raycast ONLY the pane's mesh server-side (`Sg.OnTap` is
+  unreliable in secondary controls — Dom + raycast per the gotcha), the hit
+  lands directly in the mesh's own frame: Area tool → `DraftAreaAt` (either
+  pane; the pane's mesh anchors), Points tool → `DraftPointAt` (pane A ⇒
+  point A, pane B ⇒ point B, free order); the "N of 2" cue + tool bar +
+  ✓ Commit/✕ abort moved into the Pin rail column (`pinLevelView`);
+  `BeginPinTransaction` now jumps focus to Pin; **leaving Pin mid-placement
+  aborts** (`jumpFocus`: Focus=Pin → other ⇒ Placement=Idle; Esc =
+  FocusAscend, so Esc-aborts falls out). Commit auto-selects the newborn
+  (A1). Existing pin: select in Pair (dbl-click descends), pane click
+  re-picks that mesh's point; radius + delete in the Pin rail. Committed
+  markers in panes = mesh-colour icosphere fill + white wire outline
+  (`ScanPinScene.sphereShell` made public); draft = all-white wire marks.
+- **T4 — armed placement = isolate-overlap:** each pane renders its own
+  coverage MRT from ITS camera (`OutlineView.coverageOffscreen info model
+  paneView paneProj` — the shipped shared machinery) and feeds the shipped
+  `OverlapPreview` gate in the pane's mesh shader while `Placement` is
+  active: solid only where BOTH pair channels cover the pixel, rest at the
+  ghost floor; >8-channel pairs disable the gate outright; disarm restores
+  the full pane view.
+- Main-view simplifications that fell out: `pinBlobUniforms` lost the
+  flashlight append; `anchorGhost`/GhostOpacity lost their placement
+  special-cases; Esc chain = loop modal > probe > FocusAscend.
+- Build green (FS0044 ×4 pre-existing only). Owed to the browser pass —
+  HIGH-RISK items: MeshShader compile in the secondary pane contexts (FShade
+  is browser-verified only), per-pane coverage MRT + overlap gate, pane
+  orbit/wheel/pick feel, pane marker rendering, per-pair control rebuild
+  cost, main-view GPU cost under the overlay.
+
+## A1: four-level focus rail + selection manager + per-level visibility (2026-07-28)
+
+Amendment `ScanPin_v14_A1` — navigation/selection/visibility only.
+
+- **T1 — the focus rail** (`FocusLevel = FocusSetup | FocusMatrix | FocusPair
+  | FocusPin`, Model.fs; `GuiRail.railLevels` + `.rail-levels`/`.rail-stop`
+  CSS): four stops above the rail body, free jumps among ENABLED stops
+  (`SetFocus`, reducer re-guards via `FocusLevel.enabled`): Setup/Matrix
+  always, Pair needs a chosen pair, Pin a chosen pin or an in-flight
+  placement. Levels are scopes, not tool modes — the pair toolkit (pins,
+  Solve, inspect, peeks) stays inside the Pair workspace. DELETED:
+  `NavLevel`, `MatrixHome` (+ tabs/`matrixHomeView`, `.pmx-home`/`.pmx-tabs`
+  CSS), `SetMatrixHome`/`DescendPair`/`NavAscend`, the workspace ‹ back
+  button. No FS0049/25/26 from the case deletions; grep clean.
+- **T2 — selection manager** (`FocusSelection = { Pair; Pin; Point }`, ONE
+  plain-record aval `Model.Sel`): matrix cell click = `SelectPair` (selects +
+  enters Pair); pin row click = `SelectPin` (enables the Pin stop; commit
+  auto-selects the newborn pin; deleting the selected pin clears it).
+  MEMORY: re-selecting the remembered pair keeps its pin + in-cell caches
+  (no refetch on Pair⇄Matrix jumps — caches now ride the SELECTION, not the
+  visit); `.pmx-sel`/`.cw-pin-sel` highlights. CASCADE: a new pair clears
+  pin+point + caches + rolls back a placement bound to the old pair; root
+  designation (`SetRegRoot`) and dataset switch clear ALL selection.
+  `normalizeFocus` postlude demotes focus to the nearest enabled ancestor
+  whenever a step retracts its subject (pin deleted, placement aborted).
+- **T3 — per-level visibility**: `MeshVisibility.shown focus selPair isolate
+  hoverPair name` — Setup/Matrix all meshes (Setup isolate / matrix hover
+  narrow transiently), Pair/Pin isolate the selected pair; ascend restores by
+  construction. `MeshVisibility.pinShown` mirrors it for pins (blobs +
+  scene nodes). All consumers rewired: MeshView `shownCtx` (ONE context aval
+  → N cheap per-mesh projections), View `shownNow`, cell paint, legend,
+  peeks (`Sel.Pair` + pair-scope), overlap preview (Matrix scope),
+  `ensureCellError`/`ensureCellDist` gates (Pair/Pin scope).
+- **T4 — Esc + free nav coexist**: Esc = `FocusAscend` (one level, innermost-
+  cancel chain unchanged ahead of it); rail jumps and Esc share ONE
+  `jumpFocus` path (kills level-scoped transients: isolate, hover, peeks,
+  probe; leaving pair scope rolls back placement/point-edit), selection
+  memory untouched by jumps.
+- A1-scope Pin level = an identity stub (`pinLevelView`) — A2 builds the
+  two-pane surface.
+- Build green (only pre-existing FS0044 ×4). Owed to the browser pass: rail
+  enable/disable + jump feel, selection memory (pair re-entry restores pin +
+  chart instantly), cascade clears, Esc chain order.
 
 ## Polish: matrix-cell hover = 3D overlap preview (2026-07-28)
 

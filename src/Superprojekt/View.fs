@@ -59,12 +59,7 @@ module View =
         let spaceHeld       = cval false
         let hoverCoord      = cval<V3d option> None
         let viewportSize    = cval (V2i(1, 1))
-        let placementHover  = cval<V3d option> None
         let cursorScreen    = cval<V2d option> None
-        // Throttle/generation guard for the placement-hover ghost raycast (server
-        // round-trip per move would flood; stale results must not overwrite).
-        let mutable placeHoverMs  = 0.0
-        let mutable placeHoverGen = 0
         // Sample-hover throttle (3D → diagram cross-highlight + exact readout).
         let mutable sampleHoverMs = 0.0
 
@@ -75,16 +70,17 @@ module View =
         let clipUniforms : aval<int * V4f * V4f> = AVal.constant (0, V4f.Zero, V4f.Zero)
 
         // Shown = clickable: the raycast candidate set mirrors what renders
-        // solid (the nav scope + the Setup isolate + the matrix hover),
+        // solid (the focus scope + the Setup isolate + the matrix hover),
         // evaluated at event time.
         let shownNow () =
-            let nav = AVal.force model.Nav
+            let focus = AVal.force model.Focus
+            let selPair = (AVal.force model.Sel).Pair
             let iso =
                 match AVal.force model.SetupIsolateHover with
                 | Some _ as h -> h
                 | None -> AVal.force model.SetupIsolate
             let hp = AVal.force model.MatrixHoverPair
-            fun (name : string) -> MeshVisibility.shown nav iso hp name
+            fun (name : string) -> MeshVisibility.shown focus selPair iso hp name
 
         body {
             OnBoot [
@@ -96,13 +92,6 @@ module View =
             renderControl {
                 RenderControl.Samples 1
                 Class "render-control"
-
-                let pickModeOn =
-                    (model.ScanPins.Placement, model.ScanPins.Edit) ||> AVal.map2 (fun pl ed ->
-                        (match pl with PlacementActive _ -> true | PlacementIdle -> false)
-                        || (match ed with EditPoint _ -> true | EditIdle -> false))
-                pickModeOn |> AVal.map (fun pick ->
-                    if pick then Some (Dom.Style [Css.Cursor "crosshair"]) else None)
 
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
@@ -181,23 +170,6 @@ module View =
                         return hit |> Option.map (fun (_, rp, _) -> rp)
                     }
 
-                // Cursor → a SPECIFIC mesh's surface (render-space hit) — the
-                // point-edit pick must land on its target mesh alone.
-                let raycastMesh (name : string) : Async<V3d option> =
-                    match cursorScreen.Value with
-                    | None -> async.Return None
-                    | Some cursorPx ->
-                        let cc = AVal.force model.CommonCentroid
-                        let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) name
-                        let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
-                        async {
-                            let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model name))
-                            let serverOrigin = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale ray.Origin)
-                            let serverDir = (dispWorld.Backward.TransformDir ray.Direction).Normalized
-                            let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
-                            return hit |> Option.map (fun h -> ScanPin.renderCentre cc scale (dispWorld.Forward.TransformPos h.point))
-                        }
-
                 // Solid GPU pixel pick first, then fall through a ghost to the
                 // nearest raycast surface. Used by pin placement and by
                 // double-tap-to-recenter, so both work on ghosted meshes too.
@@ -244,21 +216,13 @@ module View =
                     false
                 )
 
-                // A picked render position → the hit mesh's OWN frame (through its
-                // displayed pose — the surface the user clicked).
-                let ownLocalOf (mesh : string) (renderPos : V3d) =
-                    let cc = AVal.force model.CommonCentroid
-                    let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) mesh
-                    let dispWorld = RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model mesh))
-                    dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale renderPos)
-
                 // Exact pairwise error at a metric-world point (the P0
                 // exact-point endpoint), oriented MOV-relative-to-REF like every
                 // stored sample; k runs on the landed value.
                 let exactPairValueAt (world : V3d) (radius : float) (k : float -> unit) =
-                    match AVal.force model.Nav with
-                    | NavHome -> ()
-                    | NavCell(a, b) ->
+                    match (AVal.force model.Sel).Pair with
+                    | None -> ()
+                    | Some (a, b) ->
                         let g = AVal.force model.RegGraph
                         let ka, kb = PairCell.key a b
                         let _, mov = MatrixNav.pairRefMov g ka kb
@@ -275,96 +239,47 @@ module View =
                         } |> Async.Start
 
                 Sg.OnTap(fun _ ->
-                    let placement = AVal.force model.ScanPins.Placement
-                    let edit = AVal.force model.ScanPins.Edit
                     async {
-                        match placement, edit with
-                        | PlacementActive(tool, _), _ ->
-                            // Transaction picks resolve on the server raycast of the
-                            // pair's shown meshes — the GPU pixel pick is unusable
-                            // under the ghosted/overlaid transaction rendering. The
-                            // hit mesh attributes the pick (area anchor / point slot).
-                            let! named = raycastNearestNamed ()
-                            match named with
-                            | Some (mesh, rp, _) ->
-                                let local = ownLocalOf mesh rp
-                                match tool with
-                                | ToolArea -> env.Emit [ScanPinMsg (DraftAreaAt(mesh, local))]
-                                | ToolPoint -> env.Emit [ScanPinMsg (DraftPointAt(mesh, local))]
-                            | None -> ()
-                        | PlacementIdle, EditPoint(id, mesh) ->
-                            // The edit pick must land on the TARGET mesh alone.
-                            let! hit = raycastMesh mesh
+                        // Armed point probe: pick any 3D point → exact value
+                        // into the transient workspace readout. (Placement and
+                        // point re-picks live in the Pin level's panes.)
+                        if AVal.force model.ProbeArmed then
+                            let! hit = raycastNearest ()
                             match hit with
-                            | Some rp -> env.Emit [ScanPinMsg (EditPointAt(id, mesh, ownLocalOf mesh rp))]
+                            | Some rp ->
+                                let world = worldFromRender model rp
+                                let gen = UpdateHelpers.cellErrorGen
+                                let radius = max 0.01 (AVal.force model.QuickPinRadius)
+                                exactPairValueAt world radius (fun v ->
+                                    env.Emit [ProbeReadoutComputed(gen, world, v)])
                             | None -> ()
-                        | PlacementIdle, EditIdle ->
-                            // Armed point probe: pick any 3D point → exact value
-                            // into the transient workspace readout.
-                            if AVal.force model.ProbeArmed then
-                                let! hit = raycastNearest ()
-                                match hit with
-                                | Some rp ->
-                                    let world = worldFromRender model rp
-                                    let gen = UpdateHelpers.cellErrorGen
-                                    let radius = max 0.01 (AVal.force model.QuickPinRadius)
-                                    exactPairValueAt world radius (fun v ->
-                                        env.Emit [ProbeReadoutComputed(gen, world, v)])
-                                | None -> ()
                     } |> Async.Start
                     true
                 )
 
                 Sg.OnPointerMove(fun e ->
-                    // The flashlight ghost previews the AREA drop only.
-                    let placementWanted =
-                        match AVal.force model.ScanPins.Placement with
-                        | PlacementActive(ToolArea, _) -> true
-                        | _ -> false
                     let pick =
                         if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
                     // Readout fallback: when the cursor ray misses every mesh, drop it
                     // onto the render Z=0 plane (dataset mean elevation) so the top-bar
                     // coordinate keeps reading over open ground / off-mesh.
                     let nextHover =
-                        // While placing, `pick` hits the translucent preview sphere (not
-                        // the surface), so read the coordinate off the raycast-driven
-                        // placement preview instead — consistent with where the pin lands.
-                        if placementWanted then
-                            placementHover.Value |> Option.map (worldFromRender model)
-                        else
-                            match pick with
-                            | Some renderPos -> Some (worldFromRender model renderPos)
-                            | None ->
-                                match cursorScreen.Value with
-                                | Some cursorPx ->
-                                    pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
-                                    |> rayPlaneZ0
-                                    |> Option.map (worldFromRender model)
-                                | None -> None
+                        match pick with
+                        | Some renderPos -> Some (worldFromRender model renderPos)
+                        | None ->
+                            match cursorScreen.Value with
+                            | Some cursorPx ->
+                                pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
+                                |> rayPlaneZ0
+                                |> Option.map (worldFromRender model)
+                            | None -> None
                     if hoverCoord.Value <> nextHover then
                         transact (fun () -> hoverCoord.Value <- nextHover)
-                    // Placement preview (flashlight): drive it purely from the server
-                    // raycast — the GPU pixel pick is unusable here (ghosted terrain +
-                    // the preview sphere occluding the surface), and the raycast is the
-                    // same surface the click commits. Throttled + generation-guarded;
-                    // the last preview is held between hits (None on a true miss).
-                    if placementWanted then
-                        let now = nowMs ()
-                        if now - placeHoverMs > 60.0 then
-                            placeHoverMs <- now
-                            placeHoverGen <- placeHoverGen + 1
-                            let gen = placeHoverGen
-                            async {
-                                let! hit = resolvePick None
-                                if gen = placeHoverGen && placementHover.Value <> hit then
-                                    transact (fun () -> placementHover.Value <- hit)
-                            } |> Async.Start
                     // 3D → diagram: hover the nearest brushed sample (screen
                     // space, ≤ 12 px) → cross-highlight + exact-value readout.
                     // Throttled; the exact value fetches only on a gid change.
                     let brush = AVal.force model.BrushedSamples
-                    if not (Set.isEmpty brush) && not placementWanted then
+                    if not (Set.isEmpty brush) then
                         let now = nowMs ()
                         if now - sampleHoverMs > 80.0 then
                             sampleHoverMs <- now
@@ -410,8 +325,65 @@ module View =
                     true
                 )
 
-                SceneGraph.build env info view proj fullscreenActive (placementHover :> aval<_>) clipUniforms model
+                SceneGraph.build env info view proj fullscreenActive clipUniforms model
             }
+
+            GuiPanes.panes env model
+            GuiPanes.setupTiles env model
+
+            // Pick-value tooltips riding their 3D points (the armed probe's
+            // readout + the hovered brushed sample), projected with the same
+            // camera the main view renders with.
+            let viewTOut = model.Camera.view |> AVal.map CameraView.viewTrafo
+            let projTOut =
+                viewportSize |> AVal.map (fun s ->
+                    Frustum.perspective 90.0 1.0 5000.0 (float s.X / float (max 1 s.Y)) |> Frustum.projTrafo)
+            let screenOf (t : FSharp.Data.Adaptive.AdaptiveToken) (world : V3d) =
+                let cc = model.CommonCentroid.GetValue t
+                let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
+                let rp = ScanPin.renderCentre cc scale world
+                let vT = viewTOut.GetValue t
+                // View space looks down −Z; a non-negative Z is behind the eye.
+                if (vT.Forward.TransformPos rp).Z >= 0.0 then None
+                else
+                    let ndc = (vT * projTOut.GetValue t).Forward.TransformPosProj rp
+                    let s = (viewportSize :> aval<V2i>).GetValue t
+                    Some (V2d(0.5 * (ndc.X + 1.0) * float s.X, 0.5 * (1.0 - ndc.Y) * float s.Y))
+            let probeTip =
+                AVal.custom (fun t ->
+                    if not (model.ProbeArmed.GetValue t) then None
+                    else
+                        match model.ProbeReadout.GetValue t with
+                        | Some (w, v) ->
+                            screenOf t w |> Option.map (fun p -> p, sprintf "%+.1f mm" (v * 1000.0))
+                        | None -> None)
+            let hoverTip =
+                AVal.custom (fun t ->
+                    match model.HoverReadout.GetValue t, model.CellError.GetValue t with
+                    | Some (gid, v), Some cells when model.HoverSample.GetValue t = Some gid ->
+                        // gid indexes the canonical CellError sample concatenation.
+                        let rec find (i : int) (cs : (ScanPinId * Query.PairPinError) list) =
+                            match cs with
+                            | [] -> None
+                            | (_, r) :: rest ->
+                                if i < r.Samples.Length then
+                                    (if i < r.Positions.Length then Some r.Positions.[i] else None)
+                                else find (i - r.Samples.Length) rest
+                        match find gid (Array.toList cells) with
+                        | Some w -> screenOf t w |> Option.map (fun p -> p, sprintf "%+.1f mm" (v * 1000.0))
+                        | None -> None
+                    | _ -> None)
+            let pickTip (extraClass : string) (dataA : aval<(V2d * string) option>) =
+                div {
+                    Class ("pick-tip " + extraClass)
+                    Primitives.showWhen (dataA |> AVal.map Option.isSome)
+                    dataA |> AVal.map (function
+                        | Some (p, _) -> Some (Style [Left (sprintf "%.0fpx" p.X); Top (sprintf "%.0fpx" p.Y)])
+                        | None -> None)
+                    dataA |> AVal.map (function Some (_, s) -> s | None -> "")
+                }
+            pickTip "pick-tip-probe" probeTip
+            pickTip "pick-tip-hover" hoverTip
 
             Dom.OnKeyDown(fun e ->
                 match e.Key with
@@ -425,16 +397,15 @@ module View =
                 | "Escape" ->
                     // ONE Esc: the innermost in-progress action cancels first —
                     // the blocking loop modal (cancel = discard the redundant
-                    // edge) > transaction abort (full rollback) > point-edit
-                    // disarm > probe disarm > ascend one level (cell → matrix).
+                    // edge) > probe disarm > ascend one focus level. Leaving Pin
+                    // mid-placement rolls the transaction back via the jump
+                    // itself — Esc needs no separate placement branch.
                     if (AVal.force model.LoopPending).IsSome then
                         env.Emit [CancelLoopResolution]
+                    elif AVal.force model.ProbeArmed then
+                        env.Emit [ToggleProbeArmed]
                     else
-                        match AVal.force model.ScanPins.Placement, AVal.force model.ScanPins.Edit with
-                        | PlacementActive _, _ -> env.Emit [ScanPinMsg AbortPinTransaction]
-                        | _, EditPoint _ -> env.Emit [ScanPinMsg CancelPointEdit]
-                        | _ when AVal.force model.ProbeArmed -> env.Emit [ToggleProbeArmed]
-                        | _ -> env.Emit [NavAscend]
+                        env.Emit [FocusAscend]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->

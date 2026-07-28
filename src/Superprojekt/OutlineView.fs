@@ -148,39 +148,6 @@ module OutlineView =
 
         ASet.single composite
 
-    // Fused placement-suitability overlay: the shape-weighted coverage
-    // MRT → one fullscreen composite (transparent / flat grey / mesh-colour
-    // hatch, see SuitabilityComposite). Composite active only while a placement
-    // is armed; drawn BEFORE the outline composites in SceneGraph, so isolines
-    // and footprint contours stay readable on top of it.
-    let buildSuitability
-        (info : Aardvark.Dom.RenderControlInfo)
-        (model : AdaptiveModel)
-        (view : aval<Trafo3d>)
-        (proj : aval<Trafo3d>) : aset<ISceneNode> =
-        let suit0, suit1, _ = renderOffscreen info coverage1 false (MeshView.buildSuitabilityNode model view proj)
-        let active =
-            model.ScanPins.Placement |> AVal.map (function PlacementActive(ToolArea, _) -> true | _ -> false)
-        let composite =
-            sg {
-                // NoEvents is load-bearing — see the main composite above.
-                Sg.NoEvents
-                Sg.Active active
-                Sg.DepthTest (AVal.constant DepthTest.None)
-                Sg.BlendMode (AVal.constant BlendMode.Blend)
-                Sg.Shader {
-                    OutlineEdge.vertex
-                    SuitabilityComposite.fragment
-                }
-                Sg.Uniform("Suit0", suit0)
-                Sg.Uniform("Suit1", suit1)
-                Sg.Uniform("CoverageColors", AVal.constant MeshView.coverageColors)
-                Sg.VertexAttributes quadAttrs
-                Sg.Index quadIdxView
-                Sg.Render (AVal.constant quadIdx.Length)
-            }
-        ASet.single composite
-
     let build
         (info : Aardvark.Dom.RenderControlInfo)
         (model : AdaptiveModel)

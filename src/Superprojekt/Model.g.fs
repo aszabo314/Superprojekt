@@ -1,5 +1,5 @@
-//376ae0bb-f596-7c74-9560-1ceb56b445fb
-//bc68b7b9-5566-e9c7-de24-bcb6cf45f6a5
+//644797c3-cbfc-5a74-c79f-986fd9601437
+//15c6e8cf-2528-6777-80f5-d2232724ae8d
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -13,6 +13,9 @@ open Superprojekt
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveModel(value : Model) =
     let _Camera_ = AdaptiveOrbitState(value.Camera)
+    let _PaneCamA_ = AdaptiveOrbitState(value.PaneCamA)
+    let _PaneCamB_ = AdaptiveOrbitState(value.PaneCamB)
+    let _TileCams_ = FSharp.Data.Adaptive.cval(value.TileCams)
     let _MeshOrder_ = FSharp.Data.Adaptive.cmap(value.MeshOrder)
     let _MeshNames_ = FSharp.Data.Adaptive.clist(value.MeshNames)
     let _MeshesLoaded_ = FSharp.Data.Adaptive.cset(value.MeshesLoaded)
@@ -44,8 +47,8 @@ type AdaptiveModel(value : Model) =
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _MatrixOrder_ = FSharp.Data.Adaptive.cval(value.MatrixOrder)
-    let _MatrixHome_ = FSharp.Data.Adaptive.cval(value.MatrixHome)
-    let _Nav_ = FSharp.Data.Adaptive.cval(value.Nav)
+    let _Focus_ = FSharp.Data.Adaptive.cval(value.Focus)
+    let _Sel_ = FSharp.Data.Adaptive.cval(value.Sel)
     let _CellError_ = FSharp.Data.Adaptive.cval(value.CellError)
     let _CellErrorBefore_ = FSharp.Data.Adaptive.cval(value.CellErrorBefore)
     let _CellDist_ = FSharp.Data.Adaptive.cval(value.CellDist)
@@ -73,6 +76,9 @@ type AdaptiveModel(value : Model) =
             __value <- value
             __adaptive.MarkOutdated()
             _Camera_.Update(value.Camera)
+            _PaneCamA_.Update(value.PaneCamA)
+            _PaneCamB_.Update(value.PaneCamB)
+            _TileCams_.Value <- value.TileCams
             _MeshOrder_.Value <- value.MeshOrder
             _MeshNames_.Value <- value.MeshNames
             _MeshesLoaded_.Value <- value.MeshesLoaded
@@ -104,8 +110,8 @@ type AdaptiveModel(value : Model) =
             _ScanPins_.Update(value.ScanPins)
             _RenderingMode_.Value <- value.RenderingMode
             _MatrixOrder_.Value <- value.MatrixOrder
-            _MatrixHome_.Value <- value.MatrixHome
-            _Nav_.Value <- value.Nav
+            _Focus_.Value <- value.Focus
+            _Sel_.Value <- value.Sel
             _CellError_.Value <- value.CellError
             _CellErrorBefore_.Value <- value.CellErrorBefore
             _CellDist_.Value <- value.CellDist
@@ -126,6 +132,9 @@ type AdaptiveModel(value : Model) =
             _NearCutFrac_.Value <- value.NearCutFrac
     member __.Current = __adaptive
     member __.Camera = _Camera_
+    member __.PaneCamA = _PaneCamA_
+    member __.PaneCamB = _PaneCamB_
+    member __.TileCams = _TileCams_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, TileCam>>
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
     member __.MeshNames = _MeshNames_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
     member __.MeshesLoaded = _MeshesLoaded_ :> FSharp.Data.Adaptive.aset<Microsoft.FSharp.Core.string>
@@ -157,8 +166,8 @@ type AdaptiveModel(value : Model) =
     member __.ScanPins = _ScanPins_
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.MatrixOrder = _MatrixOrder_ :> FSharp.Data.Adaptive.aval<MatrixOrder>
-    member __.MatrixHome = _MatrixHome_ :> FSharp.Data.Adaptive.aval<MatrixHome>
-    member __.Nav = _Nav_ :> FSharp.Data.Adaptive.aval<NavLevel>
+    member __.Focus = _Focus_ :> FSharp.Data.Adaptive.aval<FocusLevel>
+    member __.Sel = _Sel_ :> FSharp.Data.Adaptive.aval<FocusSelection>
     member __.CellError = _CellError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellErrorBefore = _CellErrorBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellDist = _CellDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.float32)[]>>

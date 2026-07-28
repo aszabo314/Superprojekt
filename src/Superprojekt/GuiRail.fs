@@ -139,6 +139,7 @@ module GuiRail =
         let pairCellView (a : string) (b : string) =
             let st =
                 (model.PairOverlaps, model.RegGraph) ||> AVal.map2 (fun po g -> PairCell.state po g a b)
+            let isSel = model.Sel |> AVal.map (fun s -> s.Pair = Some (PairCell.key a b))
             let title =
                 (st, model.MeshOrder.Content) ||> AVal.map2 (fun s order ->
                     let num m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
@@ -149,6 +150,7 @@ module GuiRail =
                     | PairRegistered q -> sprintf "%s — registered, quality %.2f" pair q)
             div {
                 Class "pmx-cell"
+                classWhen "pmx-sel" isSel
                 st |> AVal.map (function
                     | PairImpossible -> Some (Class "pmx-imp")
                     | PairPossible -> Some (Class "pmx-pos")
@@ -162,11 +164,11 @@ module GuiRail =
                 // impossible one shows exactly why: almost nothing lights up).
                 Dom.OnMouseEnter(fun _ -> env.Emit [SetMatrixHoverPair (Some (a, b))])
                 Dom.OnMouseLeave(fun _ -> env.Emit [SetMatrixHoverPair None])
-                // Descend: a Possible/Registered cell IS the pair — clicking it
-                // enters that pair's workspace (impossible cells are inert holes).
+                // A Possible/Registered cell IS the pair — clicking selects it
+                // and enters its Pair level (impossible cells are inert holes).
                 Dom.OnClick(fun _ ->
                     match AVal.force st with
-                    | PairPossible | PairRegistered _ -> env.Emit [DescendPair(a, b)]
+                    | PairPossible | PairRegistered _ -> env.Emit [SelectPair(a, b)]
                     | PairImpossible -> ())
             }
         let numSwatch (name : string) =
@@ -175,6 +177,10 @@ module GuiRail =
                 span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
                 span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
             ]
+        // Gold marks the reference root in the matrix heads — the tree reads
+        // from the matrix without a trip back to Setup.
+        let headRoot (name : string) =
+            model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
         // Rebuilt wholesale on an order change — a ≤ palette-sized grid that
         // changes rarely (the sanctioned simple AList form).
         let pairMatrixView () =
@@ -203,12 +209,26 @@ module GuiRail =
                             yield div {
                                 Class "pmx-row"
                                 div { Class "pmx-rowhead pmx-corner" }
-                                AList.ofList [ for j in 0 .. n - 1 -> div { Class "pmx-colhead"; Attribute("title", arr.[j]); numSwatch arr.[j] } ]
+                                AList.ofList [
+                                    for j in 0 .. n - 1 ->
+                                        div {
+                                            Class "pmx-colhead"
+                                            classWhen "pmx-head-root" (headRoot arr.[j])
+                                            (headRoot arr.[j]) |> AVal.map (fun r ->
+                                                Some (Attribute("title", if r then arr.[j] + " — the reference root ★" else arr.[j])))
+                                            numSwatch arr.[j]
+                                        } ]
                             }
                             for i in 0 .. n - 1 do
                                 yield div {
                                     Class "pmx-row"
-                                    div { Class "pmx-rowhead"; Attribute("title", arr.[i]); numSwatch arr.[i] }
+                                    div {
+                                        Class "pmx-rowhead"
+                                        classWhen "pmx-head-root" (headRoot arr.[i])
+                                        (headRoot arr.[i]) |> AVal.map (fun r ->
+                                            Some (Attribute("title", if r then arr.[i] + " — the reference root ★" else arr.[i])))
+                                        numSwatch arr.[i]
+                                    }
                                     AList.ofList [
                                         for j in 0 .. n - 1 ->
                                             if j < i then div { Class "pmx-cell pmx-void" }
@@ -292,20 +312,28 @@ module GuiRail =
                 }
             }
 
-        // ── Matrix-home: ONE instrument, two states — Setup (survey + root)
-        // and Pairs (the matrix).
-        let matrixHomeView () =
-            div {
-                Class "pmx-home"
-                div {
-                    Class "pmx-tabs"
-                    compactButtonBar [
-                        "Setup", (model.MatrixHome |> AVal.map ((=) HomeOverview)), (fun () -> env.Emit [SetMatrixHome HomeOverview])
-                        "Pairs", (model.MatrixHome |> AVal.map ((=) HomePairs)),    (fun () -> env.Emit [SetMatrixHome HomePairs])
-                    ]
+        // ── The focus rail: four stops, strictly narrowing scope. Enablement
+        // is selection-derived; the reducer re-guards every jump.
+        let railLevels =
+            let placing =
+                model.ScanPins.Placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
+            let stop (label : string) (title : string) (level : FocusLevel) =
+                let active = model.Focus |> AVal.map ((=) level)
+                let enabled = (model.Sel, placing) ||> AVal.map2 (fun sel pl -> FocusLevel.enabled sel pl level)
+                button {
+                    Class "rail-stop"
+                    classWhen "rail-btn-active" active
+                    enabled |> AVal.map (fun e -> if e then None else Some (Attribute("disabled", "disabled")))
+                    Attribute("title", title)
+                    Dom.OnClick(fun _ -> env.Emit [SetFocus level])
+                    label
                 }
-                div { showWhen (model.MatrixHome |> AVal.map ((=) HomeOverview)); rootOverview () }
-                div { showWhen (model.MatrixHome |> AVal.map ((=) HomePairs)); pairMatrixView () }
+            div {
+                Class "rail-levels"
+                stop "Setup"  "Designate the reference root + survey the meshes" FocusSetup
+                stop "Matrix" "Pick the next pair, read connectivity" FocusMatrix
+                stop "Pair"   "Work one pair: pins, solve, inspection (choose a pair in the matrix)" FocusPair
+                stop "Pin"    "Configure one scanpin (choose or place a pin in the pair)" FocusPin
             }
 
         // ── Cell-workspace: scoped to ONE pair. The A↔B header pins the pair
@@ -331,11 +359,6 @@ module GuiRail =
                     | PairPossible -> "not registered yet"
                     | PairImpossible -> "insufficient overlap")
             let pairKey = PairCell.key a b
-            let placement = model.ScanPins.Placement
-            let placing = placement |> AVal.map (function PlacementActive _ -> true | _ -> false)
-            let idle = placing |> AVal.map not
-            let numOf (mesh : string) =
-                model.MeshOrder |> AMap.tryFind mesh |> AVal.map (fun i -> (Option.defaultValue 0 i) + 1)
             // The pair's pins, canonical order — rebuilt on pin add/delete only
             // (identity projection; the sanctioned simple AList form at this size).
             let pairPins =
@@ -345,73 +368,24 @@ module GuiRail =
                     |> List.sortBy (fun p -> p.CreatedAt, p.ShortName))
             let pinCount = pairPins |> AVal.map List.length
 
-            // ── The placement transaction UI: self-announcing, free order —
-            // Area/Points sub-tools re-armable any time, re-picking replaces,
-            // the "N of 2" cue lives ONLY here, Esc/✕ aborts (full rollback),
-            // ✓ commits (enabled only when complete → the pin is born atomic).
-            let draftBar =
-                let toolIs tool =
-                    placement |> AVal.map (function
-                        | PlacementActive(t, _) -> t = tool
-                        | PlacementIdle -> false)
-                let draft = placement |> AVal.map (function PlacementActive(_, d) -> Some d | _ -> None)
-                let cue =
-                    draft |> AVal.map (function
-                        | Some d ->
-                            sprintf "area %s · %d of 2 points"
-                                (if d.Area.IsSome then "✓" else "·") (PinDraft.pointCount d)
-                        | None -> "")
-                let complete = draft |> AVal.map (function Some d -> PinDraft.complete d | None -> false)
-                div {
-                    Class "cw-draft"
-                    showWhen placing
-                    compactButtonBar [
-                        "◯ Area",  toolIs ToolArea,  (fun () -> env.Emit [ScanPinMsg (SetDraftTool ToolArea)])
-                        "✚ Points", toolIs ToolPoint, (fun () -> env.Emit [ScanPinMsg (SetDraftTool ToolPoint)])
-                    ]
-                    span { Class "cw-cue"; cue }
-                    button {
-                        Class "rail-btn cw-commit"
-                        complete |> AVal.map (fun ok -> if ok then None else Some (Attribute("disabled", "disabled")))
-                        Attribute("title", "Commit: the pin is born whole (area + both points)")
-                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg CommitPin])
-                        "✓ Commit"
-                    }
-                    button {
-                        Class "rail-btn cw-abort"
-                        Attribute("title", "Abort the placement — nothing persists (Esc)")
-                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg AbortPinTransaction])
-                        "✕"
-                    }
-                }
-
-            // ── Committed-pin rows: radius, per-mesh point re-pick, delete.
-            // Every edit invalidates the pair's solve (the reducer drops the edge).
+            // ── Committed-pin rows: select (single click), descend to the
+            // Pin panes (double click), radius, delete. Point re-picks live at
+            // the Pin level — each pane is its mesh's pick surface.
             let pinRow (p : ScanPin) =
-                let editArm (mesh : string) =
-                    let armed =
-                        model.ScanPins.Edit |> AVal.map (function
-                            | EditPoint(id, m) -> id = p.Id && m = mesh
-                            | EditIdle -> false)
-                    button {
-                        Class "mb cw-edit"
-                        classWhen "mb-on" armed
-                        numOf mesh |> AVal.map (fun n ->
-                            Some (Attribute("title", sprintf "Re-pick this pin's point on mesh %d (click its surface; Esc cancels)" n)))
-                        Dom.OnClick(fun _ ->
-                            if AVal.force armed then env.Emit [ScanPinMsg CancelPointEdit]
-                            else env.Emit [ScanPinMsg (BeginPointEdit(p.Id, mesh))])
-                        numOf mesh |> AVal.map (fun n -> sprintf "·%d" n)
-                    }
+                let isSel = model.Sel |> AVal.map (fun s -> s.Pin = Some p.Id)
                 div {
                     Class "cw-pin-row"
+                    classWhen "cw-pin-sel" isSel
+                    Attribute("title", "Click: choose this pin (enables the Pin stop) · double-click: open it in the Pin panes")
+                    // Any row click chooses the pin (enables the Pin stop);
+                    // the buttons inside keep their own actions on top.
+                    Dom.OnClick(fun _ -> env.Emit [SelectPin p.Id])
+                    Dom.OnDoubleClick(fun _ -> env.Emit [SelectPin p.Id; SetFocus FocusPin])
                     span { Class "cw-pin-name"; p.ShortName }
                     inlineLogSlider "r" 0.01 100.0 (sprintf "%.2f m")
                         (model.ScanPins.Pins |> AMap.tryFind p.Id
                          |> AVal.map (fun po -> po |> Option.map (fun q -> q.InnerRadius) |> Option.defaultValue p.InnerRadius))
                         (fun v -> env.Emit [ScanPinMsg (SetInnerRadius(p.Id, v))])
-                    editArm (fst pairKey)
-                    editArm (snd pairKey)
                     button {
                         Class "mb cw-del"
                         Attribute("title", "Delete pin")
@@ -561,12 +535,6 @@ module GuiRail =
                 Class "cw"
                 div {
                     Class "cw-head"
-                    button {
-                        Class "cw-back"
-                        Attribute("title", "Back to the pair matrix (Esc)")
-                        Dom.OnClick(fun _ -> env.Emit [NavAscend])
-                        "‹"
-                    }
                     meshChip a
                     span { Class "cw-link"; "↔" }
                     meshChip b
@@ -578,14 +546,12 @@ module GuiRail =
                     Class "cw-tools"
                     button {
                         Class "rail-btn rail-pin-add"
-                        showWhen idle
-                        Attribute("title", "Place a pin on this pair: drop the area marker + pick a point on each mesh, then commit (free order; Esc aborts)")
+                        Attribute("title", "Place a pin on this pair: opens the Pin panes — drop the area marker + pick a point in each pane, then commit (free order; Esc aborts)")
                         Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (BeginPinTransaction pairKey)])
                         "○ New pin"
                     }
                     button {
                         Class "rail-btn cw-solve"
-                        showWhen idle
                         pinCount |> AVal.map (fun n -> if n >= 3 then None else Some (Attribute("disabled", "disabled")))
                         Attribute("title", "Solve this pair's edge from its pins (needs ≥3)")
                         Dom.OnClick(fun _ ->
@@ -594,30 +560,129 @@ module GuiRail =
                     }
                     div {
                         Class "rail-isolate"
-                        showWhen idle
                         Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes")
                         compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
                             env.Emit [ToggleAnchorGhostMode])
                     }
                 }
-                draftBar
                 pinList
                 inspectSection
             }
 
+        // ── Pin level: configure ONE scanpin. The two panes (mesh A | mesh B)
+        // in the central area are the picking surface; this rail column carries
+        // the transaction/edit controls.
+        let pinLevelView () =
+            let placement = model.ScanPins.Placement
+            let placing = placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
+            let selPin =
+                (model.Sel, model.ScanPins.Pins |> AMap.toAVal) ||> AVal.map2 (fun s pins ->
+                    s.Pin |> Option.bind (fun id -> HashMap.tryFind id pins))
+            // ── The placement transaction: free order — Area/Points sub-tools
+            // re-armable any time, re-picking replaces, the "N of 2" cue lives
+            // ONLY here, ✕ aborts in place, leaving Pin aborts too (rollback),
+            // ✓ commits (enabled only when complete → the pin is born atomic).
+            let draftBar =
+                let toolIs tool =
+                    placement |> AVal.map (function
+                        | PlacementActive(t, _) -> t = tool
+                        | PlacementIdle -> false)
+                let draft = placement |> AVal.map (function PlacementActive(_, d) -> Some d | _ -> None)
+                let cue =
+                    draft |> AVal.map (function
+                        | Some d ->
+                            sprintf "area %s · %d of 2 points"
+                                (if d.Area.IsSome then "✓" else "·") (PinDraft.pointCount d)
+                        | None -> "")
+                let complete = draft |> AVal.map (function Some d -> PinDraft.complete d | None -> false)
+                div {
+                    Class "cw-draft"
+                    showWhen placing
+                    compactButtonBar [
+                        "◯ Area",  toolIs ToolArea,  (fun () -> env.Emit [ScanPinMsg (SetDraftTool ToolArea)])
+                        "✚ Points", toolIs ToolPoint, (fun () -> env.Emit [ScanPinMsg (SetDraftTool ToolPoint)])
+                    ]
+                    span { Class "cw-cue"; cue }
+                    button {
+                        Class "rail-btn cw-commit"
+                        complete |> AVal.map (fun ok -> if ok then None else Some (Attribute("disabled", "disabled")))
+                        Attribute("title", "Commit: the pin is born whole (area + both points)")
+                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg CommitPin])
+                        "✓ Commit"
+                    }
+                    button {
+                        Class "rail-btn cw-abort"
+                        Attribute("title", "Abort the placement — nothing persists (Esc leaves and aborts too)")
+                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg AbortPinTransaction])
+                        "✕"
+                    }
+                }
+            // ── Committed-pin controls (edit mode): radius + delete; a pane
+            // click re-picks that mesh's point.
+            let editBar =
+                div {
+                    Class "cw-tools"
+                    showWhen ((placing, selPin) ||> AVal.map2 (fun pl p -> not pl && p.IsSome))
+                    inlineLogSlider "r" 0.01 100.0 (sprintf "%.2f m")
+                        (selPin |> AVal.map (function Some p -> p.InnerRadius | None -> 0.5))
+                        (fun v ->
+                            match (AVal.force model.Sel).Pin with
+                            | Some id -> env.Emit [ScanPinMsg (SetInnerRadius(id, v))]
+                            | None -> ())
+                    button {
+                        Class "mb cw-del"
+                        Attribute("title", "Delete pin")
+                        Dom.OnClick(fun _ ->
+                            match AVal.force selPin with
+                            | Some p ->
+                                let ok = try JSRuntime.Instance.Invoke<bool>("confirm", sprintf "Delete pin %s? This cannot be undone." p.ShortName) with _ -> false
+                                if ok then env.Emit [ScanPinMsg (DeletePin p.Id)]
+                            | None -> ())
+                        "✕"
+                    }
+                }
+            div {
+                Class "cw pin-level"
+                div {
+                    Class "cw-head"
+                    span {
+                        Class "cw-pin-name"
+                        (placing, selPin) ||> AVal.map2 (fun pl p ->
+                            if pl then "New pin"
+                            else match p with Some p -> sprintf "Pin %s" p.ShortName | None -> "—")
+                    }
+                }
+                div {
+                    Class "cw-state"
+                    (placing, selPin) ||> AVal.map2 (fun pl p ->
+                        if pl then "pane A ↦ point on mesh A · pane B ↦ point on mesh B · area on either"
+                        else
+                            match p with
+                            | Some _ -> "click a pane to re-pick that mesh's point (unregisters the pair)"
+                            | None -> "")
+                }
+                draftBar
+                editBar
+            }
+
         div {
             Class "workflow-rail"
+            railLevels
             div {
                 Class "rail-body"
-                // Home vs cell — rebuilt on a nav change (rare; the workspace is
-                // freshly keyed to its pair).
+                // The level switch — rebuilt on a focus/pair change (rare; the
+                // pair workspace is freshly keyed to its pair).
+                let selPairA = model.Sel |> AVal.map (fun s -> s.Pair)
                 let levelNode =
-                    model.Nav
-                    |> AVal.map (fun nav ->
+                    (model.Focus, selPairA) ||> AVal.map2 (fun focus selPair ->
                         let node =
-                            match nav with
-                            | NavHome -> matrixHomeView ()
-                            | NavCell (a, b) -> cellWorkspace a b
+                            match focus, selPair with
+                            | FocusSetup, _ -> rootOverview ()
+                            | FocusMatrix, _ -> pairMatrixView ()
+                            | FocusPair, Some (a, b) -> cellWorkspace a b
+                            | FocusPin, Some _ -> pinLevelView ()
+                            // Unreachable — the reducer keeps Focus enabled.
+                            | (FocusPair | FocusPin), None -> pairMatrixView ()
                         IndexList.ofList [ node ])
                     |> AList.ofAVal
                 levelNode

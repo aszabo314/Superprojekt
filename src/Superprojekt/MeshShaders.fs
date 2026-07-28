@@ -222,11 +222,15 @@ module MeshShader =
             // Coolwarm diverging map (CET-D01) — zero = near-white centre
             // (welded to 0), + through salmon to red, − through lavender to blue,
             // each sign normalized by its own end, near-zero t^0.6 boost. Mirrors
-            // Primitives.Diff and the focus difference tile. On top: constant-value
+            // Primitives.Diff. On top: constant-value
             // isolines every DiffIsoStep metres (derivative-antialiased darkening),
             // suppressed beyond the range where the colour clamps.
             if uniform.DistanceEncoding = 1 && aboveGhost then
                 let d = v.sd
+                // Sentinel (no Z-overlap) = pale grey: grey is the no-data
+                // colour — near-white is reserved for "difference ≈ 0".
+                if abs d >= 1e20f then
+                    baseRgb <- V3f(0.816f, 0.839f, 0.859f)
                 if abs d < 1e20f then
                     let hiP = max 1e-6f uniform.DistScale
                     let hiN = max 1e-6f uniform.DistLoNeg
@@ -378,107 +382,6 @@ module OutlineCoverage =
             elif k = 6 then b <- V4f(0.0f, 0.0f, 0.25f, 0.0f)
             else b <- V4f(0.0f, 0.0f, 0.0f, 0.25f)
             return { c0 = a; c1 = b }
-        }
-
-// Placement-suitability coverage pass (placement-armed only): like
-// OutlineCoverage (additive, occlusion-free, one channel per mesh, cap 8) but
-// each fragment writes a SHAPE-WEIGHTED value 0.25·(0.2 + 0.8·quality), so
-// "covered" stays above a floor even at quality 0 (the composite currently
-// consumes only that floor; the shape weighting is kept for a possible
-// quality read-back). Multiple surface layers along the ray add up.
-[<ReflectedDefinition>]
-module SuitabilityCoverage =
-    type UniformScope with
-        member x.CoverageChannel : int = x?CoverageChannel
-    type Vtx = {
-        [<Position>]           pos : V4f
-        [<Semantic("ShapeQ")>] shq : float32
-    }
-    type FragOut = {
-        [<Color>]                 c0 : V4f
-        [<Semantic("Coverage1")>] c1 : V4f
-    }
-    let shade (v : Vtx) =
-        fragment {
-            let s = 0.25f * (0.2f + 0.8f * (clamp 0.0f 1.0f v.shq))
-            let k = uniform.CoverageChannel
-            let mutable a = V4f(0.0f, 0.0f, 0.0f, 0.0f)
-            let mutable b = V4f(0.0f, 0.0f, 0.0f, 0.0f)
-            if k = 0 then a <- V4f(s, 0.0f, 0.0f, 0.0f)
-            elif k = 1 then a <- V4f(0.0f, s, 0.0f, 0.0f)
-            elif k = 2 then a <- V4f(0.0f, 0.0f, s, 0.0f)
-            elif k = 3 then a <- V4f(0.0f, 0.0f, 0.0f, s)
-            elif k = 4 then b <- V4f(s, 0.0f, 0.0f, 0.0f)
-            elif k = 5 then b <- V4f(0.0f, s, 0.0f, 0.0f)
-            elif k = 6 then b <- V4f(0.0f, 0.0f, s, 0.0f)
-            else b <- V4f(0.0f, 0.0f, 0.0f, s)
-            return { c0 = a; c1 = b }
-        }
-
-// Fused placement-suitability composite: per pixel, count the covered
-// suitability channels. ≤1 → transparent (no overlap ⇒ placement is prohibited;
-// the surface shows through untouched); ≥2 → a screen-space diagonal weave
-// cycling through the covered meshes' palette colours (no colour cap below the
-// 8-channel MRT), semi-transparent so the surface and the isoline/outline
-// composite (drawn after it) stay readable.
-[<ReflectedDefinition>]
-module SuitabilityComposite =
-
-    type UniformScope with
-        member x.CoverageColors : Arr<N<8>, V4f> = x?CoverageColors
-
-    let private suit0 =
-        sampler2d {
-            texture uniform?Suit0
-            filter Filter.MinMagPoint
-            addressU WrapMode.Clamp
-            addressV WrapMode.Clamp
-        }
-    let private suit1 =
-        sampler2d {
-            texture uniform?Suit1
-            filter Filter.MinMagPoint
-            addressU WrapMode.Clamp
-            addressV WrapMode.Clamp
-        }
-
-    type Frag = {
-        [<Position>]        pos : V4f
-        [<Semantic("OTc")>] tc  : V2f
-        [<FragCoord>]       fc  : V4f
-    }
-
-    let fragment (v : Frag) =
-        fragment {
-            let cA = suit0.Sample(v.tc)
-            let cB = suit1.Sample(v.tc)
-            let vals = Arr<N<8>, float32>()
-            vals.[0] <- cA.X
-            vals.[1] <- cA.Y
-            vals.[2] <- cA.Z
-            vals.[3] <- cA.W
-            vals.[4] <- cB.X
-            vals.[5] <- cB.Y
-            vals.[6] <- cB.Z
-            vals.[7] <- cB.W
-            let th = 0.04f
-            let mutable n = 0
-            for i in 0 .. 7 do
-                if vals.[i] > th then n <- n + 1
-            if n <= 1 then
-                return V4f(0.0f, 0.0f, 0.0f, 0.0f)
-            else
-                // Diagonal weave: consecutive screen bands cycle through the
-                // covered meshes' UNMODIFIED palette colours.
-                let band = int (floor ((v.fc.X + v.fc.Y) / 12.0f))
-                let sel = ((band % n) + n) % n
-                let mutable cnt = 0
-                let mutable stripeCol = V3f(0.0f, 0.0f, 0.0f)
-                for i in 0 .. 7 do
-                    if vals.[i] > th then
-                        if cnt = sel then stripeCol <- uniform.CoverageColors.[i].XYZ
-                        cnt <- cnt + 1
-                return V4f(stripeCol.X, stripeCol.Y, stripeCol.Z, 0.45f)
         }
 
 // Edge-detect fullscreen pass: sample the g-buffer at centre ±1 texel and paint the

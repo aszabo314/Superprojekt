@@ -10,10 +10,41 @@ open UpdateHelpers
 
 module Update =
 
+    // The ONE focus-jump path: transient lenses (Setup isolate, matrix hover),
+    // the spring-loaded peeks and the armed probe are level-scoped and die on
+    // any jump; leaving Pin mid-placement (Esc or a rail jump) aborts the
+    // transaction — full rollback, its picking panes are gone.
+    let private jumpFocus (f : FocusLevel) (model : Model) =
+        let sp =
+            if model.Focus = FocusPin && f <> FocusPin
+            then { model.ScanPins with Placement = PlacementIdle }
+            else model.ScanPins
+        { model with
+            Focus = f; ScanPins = sp
+            SetupIsolate = None; SetupIsolateHover = None; MatrixHoverPair = None
+            PeekVis = false; PeekPose = false; ProbeArmed = false; ProbeReadout = None }
+
+    // A step may retract what the current focus level depends on (pin deleted,
+    // placement aborted, selection cleared) — demote to the nearest enabled
+    // ancestor. Runs after every reducer step.
+    let private normalizeFocus (model : Model) =
+        let placing = match model.ScanPins.Placement with PlacementActive _ -> true | PlacementIdle -> false
+        let rec fix f = if FocusLevel.enabled model.Sel placing f then f else fix (FocusLevel.parent f)
+        let f = fix model.Focus
+        if f = model.Focus then model else { model with Focus = f }
+
     let private updateCore (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
         | CameraMessage msg ->
             { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
+        | PaneCamMessage(side, msg) ->
+            let subEnv = Env.map (fun m -> PaneCamMessage(side, m)) env
+            match side with
+            | PaneA -> { model with PaneCamA = OrbitController.update subEnv model.PaneCamA msg }
+            | PaneB -> { model with PaneCamB = OrbitController.update subEnv model.PaneCamB msg }
+        | SetTileCam(mesh, cam) ->
+            let cam = { cam with Radius = clamp 0.05 100000.0 cam.Radius }
+            { model with TileCams = Map.add mesh cam model.TileCams }
         | CentroidsLoaded centroids ->
             let common  = if centroids.Length > 0 then centroids |> Array.averageBy snd else V3d.Zero
             let names   = centroids |> Array.map fst |> IndexList.ofArray
@@ -83,6 +114,12 @@ module Update =
             model    // idempotent: re-designating the same root must not touch the graph
         | SetRegRoot mesh ->
             let g = model.RegGraph
+            // A root change clears the whole per-level selection — every
+            // descendant level loses its subject (and any in-flight pin work).
+            let model =
+                { model with
+                    Sel = FocusSelection.empty
+                    ScanPins = { model.ScanPins with Placement = PlacementIdle } }
             let recomposeWith (g' : RegGraph) (m : Model) =
                 invalidateCellError (invalidateRings (ModelTransforms.recomposePoses { m with RegGraph = g' }))
             let model =
@@ -99,29 +136,50 @@ module Update =
                 else
                     recomposeWith { Root = Some mesh; Edges = Map.empty } model
             model
-        | SetMatrixHome h ->
-            if model.MatrixHome = h then model
-            // Each tab's transient lens dies with the tab: the Setup isolate on
-            // leaving Setup, the matrix hover preview on leaving Pairs.
-            elif h = HomeOverview then { model with MatrixHome = h; MatrixHoverPair = None }
-            else { model with MatrixHome = h; SetupIsolate = None; SetupIsolateHover = None }
         | SetSetupIsolateHover h ->
             if model.SetupIsolateHover = h then model else { model with SetupIsolateHover = h }
         | SetMatrixHoverPair hp ->
             if model.MatrixHoverPair = hp then model else { model with MatrixHoverPair = hp }
         | ToggleSetupIsolate mesh ->
             { model with SetupIsolate = if model.SetupIsolate = Some mesh then None else Some mesh }
-        | DescendPair(a, b) ->
-            // The hover preview must not survive the descend — the click leaves
-            // no mouse-leave behind it.
-            if model.Nav = NavCell(a, b) then { model with MatrixHoverPair = None }
-            else invalidateCellError { model with Nav = NavCell(a, b); PeekVis = false; PeekPose = false; MatrixHoverPair = None }
-        | NavAscend ->
-            // The single backward primitive: cell → matrix; at home a no-op.
-            // Ascending also disarms the probe (its readout is cell-transient).
-            match model.Nav with
-            | NavCell _ -> invalidateCellError { model with Nav = NavHome; ProbeArmed = false; PeekVis = false; PeekPose = false }
-            | NavHome -> model
+        | SetFocus f ->
+            let placing = match model.ScanPins.Placement with PlacementActive _ -> true | PlacementIdle -> false
+            if f = model.Focus || not (FocusLevel.enabled model.Sel placing f) then model
+            else jumpFocus f model
+        | FocusAscend ->
+            if model.Focus = FocusSetup then model
+            else jumpFocus (FocusLevel.parent model.Focus) model
+        | SelectPair(a, b) ->
+            let key = PairCell.key a b
+            if model.Sel.Pair = Some key then
+                // The remembered pair: the selection (incl. its pin memory)
+                // stands — re-entering restores the last workspace state.
+                jumpFocus FocusPair model
+            else
+                // A NEW pair cascade-clears its descendants and every in-cell
+                // cache; a placement bound to the old pair rolls back. The Pin
+                // panes re-seed to the pair meshes' sensor framings.
+                let paneCam mesh =
+                    let center = ModelTransforms.panoCenterRender model mesh
+                    let radius =
+                        match Map.tryFind mesh model.MeshBounds with
+                        | Some b when not b.IsInvalid ->
+                            max 1.0 (b.Size.Length * DatasetScale.forMesh model.DatasetScales mesh * 0.6)
+                        | _ -> 5.0
+                    OrbitState.create center 1.0 0.9 radius Button.Left Button.Middle
+                invalidateCellError
+                    { jumpFocus FocusPair model with
+                        Sel = { Pair = Some key; Pin = None; Point = None }
+                        ScanPins = { model.ScanPins with Placement = PlacementIdle }
+                        PaneCamA = paneCam (fst key)
+                        PaneCamB = paneCam (snd key) }
+        | SelectPin id ->
+            let valid =
+                match HashMap.tryFind id model.ScanPins.Pins with
+                | Some p -> model.Sel.Pair = Some p.Pair
+                | None -> false
+            if not valid || model.Sel.Pin = Some id then model
+            else { model with Sel = { model.Sel with Pin = Some id; Point = None } }
 
         | ShowToast s ->
             showToast env s model
@@ -161,22 +219,24 @@ module Update =
         | ToggleCellMap ->
             { model with CellMapOn = not model.CellMapOn }
         | SetPeekVis held ->
-            // Cell scope only + both pair meshes GPU-resident — otherwise the
+            // Pair scope only + both pair meshes GPU-resident — otherwise the
             // press does NOT peek (an unloaded state would blink a blank).
             // Releases always land.
             let ok =
                 model.LoopPending.IsNone &&
-                (match model.Nav with
-                 | NavCell(a, b) -> HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
-                 | NavHome -> false)
+                (match model.Focus, model.Sel.Pair with
+                 | FocusPair, Some (a, b) ->
+                    HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
+                 | _ -> false)
             if model.PeekVis = held || (held && not ok) then model
             else { model with PeekVis = held }
         | SetPeekPose held ->
             let ok =
                 model.LoopPending.IsNone &&
-                (match model.Nav with
-                 | NavCell(a, b) -> HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
-                 | NavHome -> false)
+                (match model.Focus, model.Sel.Pair with
+                 | FocusPair, Some (a, b) ->
+                    HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
+                 | _ -> false)
             if model.PeekPose = held || (held && not ok) then model
             else { model with PeekPose = held }
         | SelectLoopEdge sel ->
@@ -255,8 +315,9 @@ module Update =
                     RegGraph = RegGraph.empty
                     ComposedPoses = Map.empty
                     PairOverlaps = Map.empty
-                    MatrixHome = HomeOverview
-                    Nav = NavHome
+                    Focus = FocusSetup
+                    Sel = FocusSelection.empty
+                    TileCams = Map.empty
                     CellError = None
                     CellErrorBefore = None
                     CellDist = None
@@ -277,6 +338,27 @@ module Update =
             { model with GearPopoverOpen = not model.GearPopoverOpen }
         | ScanPinMsg msg ->
             let m = ScanPinUpdate.handleMsg env model msg
+            // New pin → enter Pin in placement: the two panes are the only
+            // picking surface, so arming the transaction moves focus there.
+            let m =
+                match msg with
+                | BeginPinTransaction _ -> jumpFocus FocusPin m
+                | _ -> m
+            // Selection maintenance: a commit selects the newborn pin (it IS
+            // the chosen pin from birth); deleting the selected pin clears it.
+            let m =
+                match msg with
+                | CommitPin ->
+                    let born =
+                        m.ScanPins.Pins |> HashMap.toSeq
+                        |> Seq.tryPick (fun (id, _) ->
+                            if HashMap.containsKey id model.ScanPins.Pins then None else Some id)
+                    (match born with
+                     | Some id -> { m with Sel = { m.Sel with Pin = Some id; Point = None } }
+                     | None -> m)
+                | DeletePin id when model.Sel.Pin = Some id ->
+                    { m with Sel = { m.Sel with Pin = None; Point = None } }
+                | _ -> m
             // Pin set / geometry changes re-scope the in-cell inspection.
             let m =
                 match msg with
@@ -463,9 +545,9 @@ module Update =
     // the diagram's diff outline). Samples land MOV-relative-to-REF. Lazy,
     // single-flight, gen-guarded.
     let private ensureCellError (env : Env<Message>) (model : Model) : Model =
-        match model.Nav with
-        | NavHome -> model
-        | NavCell(a, b) ->
+        match model.Focus, model.Sel.Pair with
+        | (FocusSetup | FocusMatrix), _ | _, None -> model
+        | (FocusPair | FocusPin), Some (a, b) ->
             let key = PairCell.key a b
             let pins =
                 model.ScanPins.Pins |> HashMap.toList |> List.map snd
@@ -513,9 +595,9 @@ module Update =
     // The in-cell false-colour buffer: MOV's per-vertex signed distance vs REF
     // at the displayed poses — never the reference against itself.
     let private ensureCellDist (env : Env<Message>) (model : Model) : Model =
-        match model.Nav with
-        | NavHome -> model
-        | NavCell(a, b) ->
+        match model.Focus, model.Sel.Pair with
+        | (FocusSetup | FocusMatrix), _ | _, None -> model
+        | (FocusPair | FocusPin), Some (a, b) ->
             if not model.CellMapOn || model.CellDist.IsSome || cellDistReqGen = cellErrorGen then model
             else
                 cellDistReqGen <- cellErrorGen
@@ -532,6 +614,7 @@ module Update =
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
+        |> normalizeFocus
         |> ScanPinUpdate.ensureRings env
         |> ensureCellError env
         |> ensureCellDist env

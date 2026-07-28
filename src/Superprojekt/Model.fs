@@ -37,38 +37,86 @@ module RigidTransform =
         * Trafo3d.Scale(1.0 / scale)
         * Trafo3d.Translation(cc)
 
-// Navigator home states: the overview/setup surface (mesh survey + root
-// designation) vs the pair matrix. ONE instrument with two states — not rail
-// modes.
-type MatrixHome =
-    | HomeOverview
-    | HomePairs
+// The four-level focus rail: Setup · Matrix · Pair · Pin — each a strictly
+// smaller scope of WHAT IS LOOKED AT, never a tool mode (tools stay a toolkit
+// inside their level). Free navigation among enabled stops; Escape ascends one
+// level.
+type FocusLevel =
+    | FocusSetup
+    | FocusMatrix
+    | FocusPair
+    | FocusPin
 
-// The two-level navigation hierarchy: matrix-home (the persistent home
-// surface) ⇄ cell-workspace (scoped to one pair's two meshes). Escape ascends
-// one level — the single backward primitive.
-type NavLevel =
-    | NavHome
-    | NavCell of a : string * b : string
+// The Pin level's two picking panes: A = fst of the selected pair's key,
+// B = snd (PairCell.key order — the same attribution the pin points use).
+type PaneSide =
+    | PaneA
+    | PaneB
 
-// The ONE shown/clickable rule: in a cell-workspace only the pair's two
-// meshes show solid (the rest drop to the global ghost floor); at home all
-// meshes show unless the Setup isolate narrows it to one. Every consumer —
-// render MeshActive, raycast candidate sets, the placement overlap count —
-// goes through it.
+// A survey tile's 2D top-down camera: Centre = the look-at point (render
+// space), Radius = the eye height above it. Pan/zoom-to-cursor only — no
+// orbit; absent from the map = the default bounds framing.
+type TileCam = { Centre : V3d; Radius : float }
+
+// The scoped per-level selection: each level's choice, remembered across
+// level jumps (Matrix keeps the last pair, Pair reopens the last pin);
+// changing an ancestor clears its descendants. Point = the mesh side of the
+// pin's correspondence point in focus. Plain record → ONE aval.
+type FocusSelection = {
+    // PairCell.key order.
+    Pair  : (string * string) option
+    Pin   : ScanPinId option
+    Point : string option
+}
+
+module FocusSelection =
+    let empty : FocusSelection = { Pair = None; Pin = None; Point = None }
+
+module FocusLevel =
+    let parent = function
+        | FocusPin -> FocusPair
+        | FocusPair -> FocusMatrix
+        | FocusMatrix | FocusSetup -> FocusSetup
+
+    // Reachability: Setup/Matrix always; Pair needs a chosen pair; Pin a
+    // chosen pin or a placement transaction in flight.
+    let enabled (sel : FocusSelection) (placing : bool) = function
+        | FocusSetup | FocusMatrix -> true
+        | FocusPair -> sel.Pair.IsSome
+        | FocusPin -> sel.Pair.IsSome && (sel.Pin.IsSome || placing)
+
+// The ONE shown/clickable rule per focus level: Setup/Matrix show all meshes
+// (narrowed transiently by the Setup isolate / the matrix hover preview);
+// Pair/Pin isolate the selected pair's two meshes. Every consumer — render
+// MeshActive, raycast candidate sets, coverage gating — goes through it.
 module MeshVisibility =
-    let shown (nav : NavLevel) (isolate : string option) (hoverPair : (string * string) option) (name : string) =
-        match nav with
-        | NavHome ->
-            match hoverPair with
+    let shown (focus : FocusLevel) (selPair : (string * string) option)
+              (isolate : string option) (hoverPair : (string * string) option) (name : string) =
+        match focus with
+        | FocusSetup -> (match isolate with Some m -> name = m | None -> true)
+        | FocusMatrix -> (match hoverPair with Some (a, b) -> name = a || name = b | None -> true)
+        | FocusPair | FocusPin ->
+            match selPair with
             | Some (a, b) -> name = a || name = b
-            | None -> (match isolate with Some m -> name = m | None -> true)
-        | NavCell (a, b) -> name = a || name = b
+            | None -> true
+
+    // Pin scoping mirrors mesh scoping: every pin at the survey levels, only
+    // the selected pair's pins inside its Pair/Pin scope.
+    let pinShown (focus : FocusLevel) (selPair : (string * string) option) (pair : string * string) =
+        match focus with
+        | FocusSetup | FocusMatrix -> true
+        | FocusPair | FocusPin -> selPair = Some pair
 
 [<ModelType>]
 type Model =
     {
         Camera         : OrbitState
+        // The Pin level's per-pane orbit cameras (A | B), re-seeded to each
+        // mesh's sensor framing when the pair selection changes.
+        PaneCamA       : OrbitState
+        PaneCamB       : OrbitState
+        // Per-mesh survey-tile 2D cameras; reset on dataset switch.
+        TileCams       : Map<string, TileCam>
         MeshOrder      : HashMap<string,int>
         MeshNames      : IndexList<string>
         MeshesLoaded   : HashSet<string>
@@ -80,7 +128,7 @@ type Model =
         DatasetCentroids : Map<string, V3d>
         // Per-mesh panorama centre (the calibrated-camera origin), absolute world
         // coords — same frame as the centroid. Read from <dataset>/pano-centers.txt
-        // on load; the focus pano subtracts the mesh centroid to place its eye.
+        // on load; sensor-viewpoint framing subtracts the mesh centroid for its eye.
         PanoCenters      : Map<string, V3d>
 
         GhostSilhouette      : bool
@@ -117,7 +165,7 @@ type Model =
 
         // Per-mesh intrinsic single-mesh error visualization (incidence / range /
         // shape), set from the Overview mesh list. Absent ⇒ HeatOff (textured).
-        // Respected in the 3D view and the 2D focus tiles/single alike.
+        // Respected in the 3D view and the Setup survey tiles alike.
         MeshHeatmap           : Map<string, HeatmapMode>
         // Setup-scoped mesh isolation (survey rows): the clicked lock + the
         // transient button-hover preview (hover wins over the lock). Both are
@@ -137,10 +185,9 @@ type Model =
         RenderingMode       : RenderingMode
         // Row/col order of the pair-matrix navigator (a view preference).
         MatrixOrder         : MatrixOrder
-        // Navigator home state: setup/overview (root designation) vs pairs.
-        MatrixHome          : MatrixHome
-        // Hierarchy level: matrix-home, or descended into one pair's workspace.
-        Nav                 : NavLevel
+        // The focus rail's current stop + the per-level selection it navigates.
+        Focus               : FocusLevel
+        Sel                 : FocusSelection
 
         // ── In-cell error inspection (transient per cell — every cache clears
         // on nav/pin/pose changes via invalidateCellError). Sample values are
@@ -257,6 +304,9 @@ module Model =
     let initial =
         {
             Camera         = OrbitState.create V3d.Zero 1.0 0.3 3.0 Button.Left Button.Middle
+            PaneCamA       = OrbitState.create V3d.Zero 1.0 0.9 3.0 Button.Left Button.Middle
+            PaneCamB       = OrbitState.create V3d.Zero 1.0 0.9 3.0 Button.Left Button.Middle
+            TileCams       = Map.empty
             MeshOrder      = HashMap.empty
             MeshNames      = IndexList.empty
             MeshesLoaded   = HashSet.empty
@@ -288,8 +338,8 @@ module Model =
             ScanPins              = ScanPinModel.initial
             RenderingMode       = Textured
             MatrixOrder         = OrderSensor
-            MatrixHome          = HomeOverview
-            Nav                 = NavHome
+            Focus               = FocusSetup
+            Sel                 = FocusSelection.empty
             CellError           = None
             CellErrorBefore     = None
             CellDist            = None

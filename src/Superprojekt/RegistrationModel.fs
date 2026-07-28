@@ -348,6 +348,22 @@ module ErrorRange =
         if not any then (-cap, cap)
         else (max -cap lo, min cap hi)
 
+    // Fallback scale for a cell WITHOUT pin samples: the per-vertex distance
+    // distribution itself — per-sign 95th percentile (robust against the far
+    // tail), 1 mm floor per side, same ±cap. Normalizing such a cell to the
+    // ±cap default would wash the whole map into the near-white centre.
+    let ofDistances (dist : float32[]) : float * float =
+        let finite =
+            dist |> Array.choose (fun v ->
+                let v = float v in if abs v < 1e20 then Some v else None)
+        if finite.Length = 0 then (-cap, cap)
+        else
+            let neg = finite |> Array.filter (fun v -> v < 0.0) |> Array.map abs |> Array.sort
+            let pos = finite |> Array.filter (fun v -> v > 0.0) |> Array.sort
+            let pct (a : float[]) =
+                if a.Length = 0 then 0.0 else a.[min (a.Length - 1) (int (0.95 * float a.Length))]
+            (max -cap (-(max 0.001 (pct neg))), min cap (max 0.001 (pct pos)))
+
 // Drives the intrinsic per-fragment channels in the mesh shader (the extrinsic
 // m3c2 surface map is the separate DistanceEncoding path).
 type HeatmapMode =

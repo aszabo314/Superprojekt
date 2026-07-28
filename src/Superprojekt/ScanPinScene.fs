@@ -15,8 +15,8 @@ module ScanPinScene =
     let private sphereIdxBuf = AVal.constant (ArrayBuffer sphereIdx :> IBuffer)
     let private sphereIdxCnt = AVal.constant sphereIdx.Length
 
-    // Small flat-colour icosphere (placement ghost shell, point-marker fill).
-    let private sphereShell
+    // Small flat-colour icosphere (point-marker fill; the Pin panes reuse it).
+    let sphereShell
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (active : aval<bool>) (trafo : aval<Trafo3d>) (color : aval<V4d>) =
         sg {
@@ -39,7 +39,6 @@ module ScanPinScene =
             (env : Env<Message>)
             (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
             (fullscreenActive : aval<bool>)
-            (placementHover : aval<V3d option>)
             (model : AdaptiveModel) =
 
         let datasetScale =
@@ -79,11 +78,10 @@ module ScanPinScene =
         let pinCentreWorldAt (t : AdaptiveToken) (p : ScanPin) =
             (dispWorldAt t p.AnchorMesh).Forward.TransformPos p.CentreLocal
 
-        // Nav scoping: at home every pin shows; in a cell only its pair's pins.
+        // Focus scoping: survey levels show every pin; Pair/Pin scope shows the
+        // selected pair's pins only.
         let pinShownAt (t : AdaptiveToken) (pair : string * string) =
-            match model.Nav.GetValue t with
-            | NavHome -> true
-            | NavCell (a, b) -> pair = PairCell.key a b
+            MeshVisibility.pinShown (model.Focus.GetValue t) ((model.Sel.GetValue t).Pair) pair
 
         // Mesh identity colour of a marker (the palette index via MeshOrder).
         let meshColAt (t : AdaptiveToken) (mesh : string) =
@@ -238,43 +236,6 @@ module ScanPinScene =
                       linesNodeTop notFullscreen outline ]
                 ASet.ofList (markerOn 0 @ markerOn 1))
 
-        // The in-flight draft, all WHITE (the uncommitted-transient layer):
-        // area = wire sphere at the dropped centre (QuickPinRadius), points =
-        // wire sphere + cross. Vanishes wholesale on commit/abort.
-        let draftMarkers =
-            let draftVal = model.ScanPins.Placement |> AVal.map (function
-                | PlacementActive(_, d) -> Some d
-                | PlacementIdle -> None)
-            let segs =
-                AVal.custom (fun t ->
-                    match draftVal.GetValue t with
-                    | None -> [||]
-                    | Some d ->
-                        let cc = model.CommonCentroid.GetValue t
-                        let s = datasetScale.GetValue t
-                        let white = V4d(1.0, 1.0, 1.0, 0.95)
-                        let out = ResizeArray<V3d * V3d * V4d * float>()
-                        (match d.Area with
-                         | Some (mesh, local) ->
-                            let w = (dispWorldAt t mesh).Forward.TransformPos local
-                            let cR = ScanPin.renderCentre cc s w
-                            let rR = ScanPin.renderLength s (model.QuickPinRadius.GetValue t)
-                            for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.8)) 1.5 do
-                                out.Add seg
-                         | None -> ())
-                        let pt (mesh : string) (local : V3d option) =
-                            match local with
-                            | Some l ->
-                                let w = (dispWorldAt t mesh).Forward.TransformPos l
-                                let cR = ScanPin.renderCentre cc s w
-                                addWireSphere out cR 0.06 white 1.8 20
-                                addCross out cR 0.075 white 1.8
-                            | None -> ()
-                        pt (fst d.Pair) d.PointA
-                        pt (snd d.Pair) d.PointB
-                        out.ToArray())
-            linesNodeTop notFullscreen segs
-
         // Brushed diagram samples in 3D: transient WHITE glyphs (ink under-
         // stroke for readability) at the sample world positions, gid-addressed
         // into the canonical CellError concatenation; the 3D-hovered one turns
@@ -310,37 +271,6 @@ module ScanPinScene =
                                     gid <- gid + 1
                             out.ToArray())
             linesNodeTop notFullscreen segs
-
-        let ghostPreview =
-            // Preview radius = the radius a commit would set (QuickPinRadius,
-            // metric) in render space, so the hover sphere matches the real pin.
-            // Shown only while the AREA sub-tool aims.
-            let areaArmed =
-                model.ScanPins.Placement |> AVal.map (function
-                    | PlacementActive(ToolArea, _) -> true
-                    | _ -> false)
-            let previewR =
-                (model.QuickPinRadius, datasetScale) ||> AVal.map2 (fun r s ->
-                    max 1e-4 (ScanPin.renderLength s r))
-            let active =
-                (notFullscreen, areaArmed, placementHover) |||> AVal.map3 (fun nf pa hOpt ->
-                    nf && pa && hOpt.IsSome)
-            let trafo =
-                (placementHover, previewR) ||> AVal.map2 (fun hOpt r ->
-                    match hOpt with
-                    | Some c -> Trafo3d.Scale r * Trafo3d.Translation c
-                    | None -> Trafo3d.Scale 0.0)
-            // WHITE: the uncommitted-transient layer — the tap turns it into
-            // the draft's area marker.
-            let outlineSegs =
-                (placementHover, previewR) ||> AVal.map2 (fun hOpt r ->
-                    match hOpt with
-                    | Some c -> PinGeometry.buildSphereOutline c r (V4d(1.0, 1.0, 1.0, 0.9)) 1.5
-                    | None -> [||])
-            ASet.ofList [
-                sphereShell view proj active trafo (AVal.constant (V4d(1.0, 1.0, 1.0, 0.22)))
-                linesNode active outlineSegs
-            ]
 
         // Pin flag pole (far view): a neutral pole + top ring along the display
         // axis per committed pin, screen-constant size (ScanPin.flagHeightRender:
@@ -428,4 +358,4 @@ module ScanPinScene =
                     }
                 | None -> sg { Sg.NoEvents })
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointMarkers; ASet.ofList [draftMarkers]; ASet.ofList [brushedSampleNode]; pinFlags; pinLabels; ghostPreview])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointMarkers; ASet.ofList [brushedSampleNode]; pinFlags; pinLabels])

@@ -365,20 +365,32 @@ body.loaded { background: #f4f6f8; }
 .pmx-num { font-size: 10px; font-weight: 600; color: #334155; }
 .pmx-cell { width: 22px; height: 22px; border-radius: 3px; flex: none; box-sizing: border-box; }
 .pmx-void { visibility: hidden; }
+/* Diagonal = cosmetic self-pair placeholders: inert disabled cells with a slash. */
+.pmx-diag {
+    background: #f4f6f8;
+    border: 1px dashed #cbd5e1;
+    background-image: linear-gradient(45deg, transparent 46%, #cbd5e1 46%, #cbd5e1 54%, transparent 54%);
+}
 .pmx-imp { background: #eef1f4; }
-.pmx-pos { background: #ffffff; border: 1.5px solid #94a3b8; }
-.pmx-reg { border: 1px solid #0f172a; }
+.pmx-pos { background: #ffffff; border: 1.5px solid #94a3b8; cursor: pointer; }
+.pmx-reg { border: 1px solid #0f172a; cursor: pointer; }
+.pmx-imp:hover, .pmx-pos:hover, .pmx-reg:hover { outline: 2px solid #1a56db; outline-offset: -1px; }
 .pmx-order { display: flex; align-items: center; gap: 6px; padding: 2px 0 4px; }
 .pmx-order-label { font-size: 10px; font-weight: 600; color: #64748b; text-transform: uppercase; letter-spacing: 0.04em; }
 .pmx-home { display: flex; flex-direction: column; gap: 4px; }
 .pmx-tabs { display: flex; align-items: center; padding: 2px 0; }
 .pmx-root { display: flex; flex-direction: column; gap: 2px; padding: 2px 0 6px; }
 .pmx-root-hint { font-size: 10px; color: #64748b; padding: 2px 0 4px; }
-.pmx-root-row { display: flex; align-items: center; gap: 6px; padding: 3px 6px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
+.pmx-root-row { display: flex; flex-direction: column; gap: 3px; padding: 4px 6px; border-radius: 4px; border: 1px solid transparent; }
 .pmx-root-row:hover { background: #eef2f6; }
-.pmx-root-on { background: #fdf6e8; border-color: #b45309; }
+.pmx-root-on { background: #fdf6e8; border-color: var(--ref-gold-dark); }
+.pmx-root-head { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.pmx-root-ctl { display: flex; align-items: center; gap: 6px; }
+.pmx-root-ctl .rail-btn { padding: 2px 8px; font-size: 11px; }
+.setup-ref-on { background: var(--ref-gold-pale); border-color: var(--ref-gold-dark); color: var(--ref-gold-dark); font-weight: 600; }
+.setup-ref-on:hover { background: var(--ref-gold-pale); }
 .pmx-root-name { flex: 1; font-size: 11px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.pmx-root-star { color: #b45309; font-size: 12px; width: 14px; text-align: center; }
+.pmx-root-star { color: var(--ref-gold-dark); font-size: 12px; width: 14px; text-align: center; }
 
 /* ── Cell-workspace (one pair): persistent A↔B header + per-pair toolkit. */
 .cw { display: flex; flex-direction: column; gap: 6px; }

@@ -5,6 +5,75 @@
 > do not edit them per-change. Log every change here as it lands; at the
 > end, reconstruct the net documentation updates from this file.
 
+## Polish: matrix-cell hover = 3D overlap preview (2026-07-28)
+
+- Hovering ANY real matrix cell (incl. impossible — it shows why) previews
+  the pair's overlap area in 3D: only pixels covered by BOTH meshes'
+  screen-space footprints keep normal rendering, the rest drops to the ghost
+  floor. Screen-space by design (the camera-ray test ≈ the vertical Z-pierce
+  from top-down); the server-mask variant stays the upgrade path if the
+  view-dependence ever bothers.
+- Zero new passes/fetches: the footprint coverage MRT now renders ONCE
+  (`OutlineView.coverageOffscreen`, typed `aval<IBackendTexture>` — NOT
+  aval<ITexture>, aval isn't covariant) and is shared via SceneGraph with
+  the footprint composite AND the forward mesh shader.
+- Shader: `OverlapPreview` + 4 `OverlapSel*` channel-selector V4fs in
+  `MeshShader.shade` — coverage sampled at gl_FragCoord/ViewportSize,
+  both-channels > 0.12 (one additive 0.25 layer) ⇒ solid, else the ghost
+  path (α-gated depth/picks follow free). Selectors built in
+  `MeshView.overlapPreviewUniforms`: home-scope gated, pair mesh beyond the
+  8-channel cap disables the preview outright.
+- State: `Model.MatrixHoverPair` + `SetMatrixHoverPair`; threaded through
+  `MeshVisibility.shown nav isolate hoverPair name` (other meshes ghost) and
+  View `shownNow`. Wiped on cell leave, DescendPair (the click leaves no
+  mouse-leave!), tab switch, dataset switch. Cell hover ring + cursor CSS.
+- Owed to the browser pass: the shader edit (sampler bindings, the
+  both-channel gate) AND that footprint contours still render after the
+  shared-MRT refactor.
+
+## Polish: setup rows two-line + isolate, matrix diagonal (2026-07-28)
+
+- **Setup survey rows are two-line** (GuiRail `surveyRow` + `.pmx-root-*`
+  CSS): head line = swatch · number · name · ★; control line = the buttons.
+  Root designation moved OFF the name click onto an explicit **☆ Set
+  reference / ★ Reference** button (gold `setup-ref-on` state, token
+  colours); the name-click root hazard is gone. Double-click on the head
+  line = the focus interaction (FlyToSensor). The ◎ fly-to-sensor button and
+  the name-dblclick ZoomToMesh are gone — `ZoomToMesh` message + handler
+  DELETED (no emitters left; ZoomToPin stays).
+- **Setup isolate** (replaces the focus button): `◉ Isolate` per row —
+  hover = transient preview (`SetupIsolateHover`), click = lock
+  (`SetupIsolate`), click again clears; the reducer wipes both on leaving
+  Setup (`SetMatrixHome` away) and on dataset switch. Threaded through THE
+  visibility rule: `MeshVisibility.shown nav isolate name` (signature
+  changed) — render MeshActive (MeshView `isolateA`, hover wins over lock)
+  and the event-time raycast candidates (View `shownNow`) both follow, so
+  non-isolated meshes drop to the ghost floor and are unpickable.
+- **Pair matrix carries a cosmetic diagonal**: full n×n grid (head row/col
+  0-based now), `j < i` void, `j = i` = `.pmx-diag` inert placeholder
+  (dashed border + 45° slash), upper triangle unchanged. Last row/first
+  column exist solely for the diagonal.
+- Gold literals in `.pmx-root-on`/`.pmx-root-star` (#b45309) replaced with
+  `var(--ref-gold-dark)` per the token rule.
+- Docs updated alongside (README Setup/matrix bullets; CLAUDE.md visibility
+  rule). Build green, no FS0049/25/26 from the ZoomToMesh case deletion.
+- Owed to the browser pass: two-line row layout, hover/lock isolate feel,
+  diagonal look.
+
+---
+
+# ═══ SPEC PHASE COMPLETE — POLISHING/ADJUSTING PHASE (from 2026-07-28) ═══
+
+Everything below this line is the v14 spec-implementation record (P0–P9 +
+dead-code pass + doc reconstruction), committed and pushed as `8379bb6`.
+Everything above is the polishing phase: user-driven adjustments against the
+running app. The docs freeze is over — CLAUDE.md/README.md now update
+normally alongside changes; keep logging entries here as work lands.
+
+Open from the spec phase: the ONE whole-app browser pass (per-phase owed
+items listed in the entries below, incl. the OutlineGBuffer bias-removal
+shader edit).
+
 ## v14 documentation reconstruction (2026-07-27) — FREEZE LIFTED
 
 README.md + CLAUDE.md rewritten from this log; every per-phase DOC DEBT item

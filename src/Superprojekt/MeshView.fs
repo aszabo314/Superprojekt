@@ -320,11 +320,18 @@ module MeshView =
             model.CellError |> AVal.map (function
                 | Some cells -> ErrorRange.ofSamples (cells |> Seq.collect (fun (_, r) -> r.Samples))
                 | None -> ErrorRange.ofSamples Seq.empty)
+        // Setup isolate: the hover preview wins over the click lock.
+        let isolateA =
+            (model.SetupIsolateHover, model.SetupIsolate) ||> AVal.map2 (fun h l ->
+                match h with Some _ -> h | None -> l)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
-            // The ONE shown rule: at home every mesh is solid; in a cell only
-            // the pair's two meshes (the rest drop to the ghost floor).
-            let isActive = model.Nav |> AVal.map (fun nav -> MeshVisibility.shown nav name)
+            // The ONE shown rule: at home every mesh is solid (Setup isolate /
+            // matrix hover narrow it); in a cell only the pair's two meshes
+            // (the rest drop to the ghost floor).
+            let isActive =
+                (model.Nav, isolateA, model.MatrixHoverPair)
+                |||> AVal.map3 (fun nav iso hp -> MeshVisibility.shown nav iso hp name)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
             // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
@@ -584,6 +591,32 @@ module MeshView =
     // Palette colours for the footprint composite, indexed like the coverage channels.
     let coverageColors : V4f[] =
         Array.init 8 (fun i -> V4f Primitives.meshPaletteV4d.[i % Primitives.meshPaletteV4d.Length])
+
+    // Matrix-hover overlap-preview uniforms: the on-flag + the hovered pair's
+    // coverage-channel selectors over the two MRT targets (channel = display
+    // index, 0-3 → target0, 4-7 → target1 — the OutlineCoverage layout). Home
+    // scope only; a pair mesh beyond the 8-channel cap disables the preview
+    // outright rather than half-testing.
+    let overlapPreviewUniforms (model : AdaptiveModel) =
+        let pairIdx =
+            (model.MatrixHoverPair, model.Nav, meshIndicesA model)
+            |||> AVal.map3 (fun hp nav idx ->
+                match nav, hp with
+                | NavHome, Some (a, b) ->
+                    let ia = Map.tryFind a idx |> Option.defaultValue 8
+                    let ib = Map.tryFind b idx |> Option.defaultValue 8
+                    if ia < 8 && ib < 8 then Some (ia, ib) else None
+                | _ -> None)
+        let sel (k : int) (target : int) =
+            if k / 4 = target then
+                match k % 4 with
+                | 0 -> V4f.IOOO | 1 -> V4f.OIOO | 2 -> V4f.OOIO | _ -> V4f.OOOI
+            else V4f.Zero
+        pairIdx |> AVal.map (fun o -> if o.IsSome then 1 else 0),
+        pairIdx |> AVal.map (function Some (ia, _) -> sel ia 0 | None -> V4f.Zero),
+        pairIdx |> AVal.map (function Some (ia, _) -> sel ia 1 | None -> V4f.Zero),
+        pairIdx |> AVal.map (function Some (_, ib) -> sel ib 0 | None -> V4f.Zero),
+        pairIdx |> AVal.map (function Some (_, ib) -> sel ib 1 | None -> V4f.Zero)
 
     // Placement-suitability coverage: every mesh accumulates its
     // SHAPE-WEIGHTED footprint into its own channel (SuitabilityCoverage), no

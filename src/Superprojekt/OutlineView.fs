@@ -62,18 +62,29 @@ module OutlineView =
                 V2f(1.0f / float32 (max 1 s.X), 1.0f / float32 (max 1 s.Y)))
         output.GetOutputTexture DefaultSemantic.Colors, output.GetOutputTexture target1, texel
 
+    // The footprint coverage MRT, rendered ONCE per frame and shared: the
+    // coverage-edge composite outlines it, and the main mesh pass samples it
+    // for the matrix-hover overlap preview.
+    let coverageOffscreen
+        (info : Aardvark.Dom.RenderControlInfo)
+        (model : AdaptiveModel)
+        (view : aval<Trafo3d>)
+        (proj : aval<Trafo3d>) =
+        let c0, c1, texel = renderOffscreen info coverage1 false (MeshView.buildCoverageNode model view proj)
+        c0 :> aval<IBackendTexture>, c1 :> aval<IBackendTexture>, texel
+
     // Occlusion-free per-mesh footprint contours: an additive
     // coverage MRT (one channel per mesh, no depth) + a fullscreen composite that
     // outlines every channel's covered↔uncovered transition in that mesh's palette
     // colour — each mesh keeps its complete own contour even where the combined
     // (depth-tested) G-buffer sees only the union.
     let private buildCoverage
-        (info : Aardvark.Dom.RenderControlInfo)
         (widthA : aval<float32>)
         (mask : aval<V4f[]>)
-        (node : ISceneNode) : aset<ISceneNode> =
+        (cov0 : aval<IBackendTexture>)
+        (cov1 : aval<IBackendTexture>)
+        (texel : aval<V2f>) : aset<ISceneNode> =
 
-        let cov0, cov1, texel = renderOffscreen info coverage1 false node
         let composite =
             sg {
                 // NoEvents is load-bearing — see the main composite below.
@@ -174,7 +185,8 @@ module OutlineView =
         (info : Aardvark.Dom.RenderControlInfo)
         (model : AdaptiveModel)
         (view : aval<Trafo3d>)
-        (proj : aval<Trafo3d>) : aset<ISceneNode> =
+        (proj : aval<Trafo3d>)
+        (cov0 : aval<IBackendTexture>, cov1 : aval<IBackendTexture>, covTexel : aval<V2f>) : aset<ISceneNode> =
         let mask = MeshView.outlineMask model
         let widthA = model.OutlineWidthPx |> AVal.map float32
         let combined =
@@ -183,6 +195,5 @@ module OutlineView =
                 (model.IsolineOpacity |> AVal.map float32)
                 mask (MeshView.buildOutlineNode model view proj)
         let footprints =
-            buildCoverage info widthA mask
-                (MeshView.buildCoverageNode model view proj)
+            buildCoverage widthA mask cov0 cov1 covTexel
         ASet.union combined footprints

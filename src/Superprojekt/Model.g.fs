@@ -1,5 +1,5 @@
-//198fa3ee-7d8d-2205-7a5a-5b8285bf7460
-//bf500bd7-95ea-2b89-917c-e8b99c53e2f9
+//376ae0bb-f596-7c74-9560-1ceb56b445fb
+//bc68b7b9-5566-e9c7-de24-bcb6cf45f6a5
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -37,6 +37,9 @@ type AdaptiveModel(value : Model) =
     let _PairOverlaps_ = FSharp.Data.Adaptive.cval(value.PairOverlaps)
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
     let _MeshHeatmap_ = FSharp.Data.Adaptive.cval(value.MeshHeatmap)
+    let _SetupIsolate_ = FSharp.Data.Adaptive.cval(value.SetupIsolate)
+    let _SetupIsolateHover_ = FSharp.Data.Adaptive.cval(value.SetupIsolateHover)
+    let _MatrixHoverPair_ = FSharp.Data.Adaptive.cval(value.MatrixHoverPair)
     let _ShapeThreshold_ = FSharp.Data.Adaptive.cval(value.ShapeThreshold)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
@@ -94,6 +97,9 @@ type AdaptiveModel(value : Model) =
             _PairOverlaps_.Value <- value.PairOverlaps
             _Toast_.Value <- value.Toast
             _MeshHeatmap_.Value <- value.MeshHeatmap
+            _SetupIsolate_.Value <- value.SetupIsolate
+            _SetupIsolateHover_.Value <- value.SetupIsolateHover
+            _MatrixHoverPair_.Value <- value.MatrixHoverPair
             _ShapeThreshold_.Value <- value.ShapeThreshold
             _ScanPins_.Update(value.ScanPins)
             _RenderingMode_.Value <- value.RenderingMode
@@ -144,6 +150,9 @@ type AdaptiveModel(value : Model) =
     member __.PairOverlaps = _PairOverlaps_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<(Microsoft.FSharp.Core.string * Microsoft.FSharp.Core.string), Microsoft.FSharp.Core.bool>>
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MeshHeatmap = _MeshHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, HeatmapMode>>
+    member __.SetupIsolate = _SetupIsolate_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.SetupIsolateHover = _SetupIsolateHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.MatrixHoverPair = _MatrixHoverPair_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.string * Microsoft.FSharp.Core.string)>>
     member __.ShapeThreshold = _ShapeThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ScanPins = _ScanPins_
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>

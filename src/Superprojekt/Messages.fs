@@ -62,6 +62,12 @@ type Message =
     | ClearToast
     // Per-mesh intrinsic error visualization (Overview mesh list). HeatOff = textured.
     | SetMeshHeatmap of mesh:string * HeatmapMode
+    // Setup mesh isolation: transient hover preview + click lock (survey rows).
+    // Both clear on leaving the Setup view.
+    | SetSetupIsolateHover of string option
+    | ToggleSetupIsolate of string
+    // Matrix-cell hover: preview the pair's screen-space overlap area in 3D.
+    | SetMatrixHoverPair of (string * string) option
     // Shp cutoff — triangles below the quality threshold render transparent.
     | SetShapeThreshold of float
     // One batch from the lazy pairwise-overlap sweep: (meshA, meshB, sufficient).
@@ -80,7 +86,6 @@ type Message =
     // Explicit MAIN-3D camera framing (the double-click grammar) — these own
     // the 3D radius conventions.
     | FlyToPoint of world:V3d * radius:float
-    | ZoomToMesh of string
     | ZoomToPin of ScanPinId
     // Fly the main 3D to a mesh's sensor/scan-camera viewpoint (roster control) —
     // the same framing the dataset load rests on.

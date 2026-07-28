@@ -80,6 +80,33 @@ module MeshShader =
         // (no photo texture / palette / slope), so the false-colour painters above
         // it are the only filled signal. Shading still applies.
         member x.InspectPlain     : float32 = x?InspectPlain
+        // Matrix-hover overlap preview: 1 → a fragment is solid only where the
+        // footprint coverage MRT covers its pixel in BOTH hovered-pair channels
+        // (screen-space test along the camera ray); everything else drops to
+        // the ghost floor. The Sel vectors dot-select each pair mesh's channel
+        // out of the two coverage targets.
+        member x.OverlapPreview   : int = x?OverlapPreview
+        member x.OverlapSelA0     : V4f = x?OverlapSelA0
+        member x.OverlapSelA1     : V4f = x?OverlapSelA1
+        member x.OverlapSelB0     : V4f = x?OverlapSelB0
+        member x.OverlapSelB1     : V4f = x?OverlapSelB1
+
+    // The footprint coverage MRT (rendered by the offscreen coverage pass with
+    // this same camera and viewport, so gl_FragCoord/ViewportSize addresses it).
+    let private cov0Tex =
+        sampler2d {
+            texture uniform?Coverage0
+            filter Filter.MinMagPoint
+            addressU WrapMode.Clamp
+            addressV WrapMode.Clamp
+        }
+    let private cov1Tex =
+        sampler2d {
+            texture uniform?Coverage1
+            filter Filter.MinMagPoint
+            addressU WrapMode.Clamp
+            addressV WrapMode.Clamp
+        }
 
     type FragIn = {
         [<Color>]                              c  : V4f
@@ -135,7 +162,20 @@ module MeshShader =
                 if blobsActive then
                     if inAnyBlob then 1.0f else 0.0f
                 else 1.0f
-            let maskFactor = blobComponent
+            // Matrix-hover overlap preview: both hovered-pair coverage channels
+            // must cover this pixel (0.12 = the coverage composites' threshold —
+            // one additive 0.25 layer clears it).
+            let mutable overlapFull = true
+            if uniform.OverlapPreview <> 0 then
+                let vs = uniform.ViewportSize
+                let uv = V2f(v.fc.X / float32 vs.X, v.fc.Y / float32 vs.Y)
+                let ca = cov0Tex.Sample(uv)
+                let cb = cov1Tex.Sample(uv)
+                let covA = Vec.dot ca uniform.OverlapSelA0 + Vec.dot cb uniform.OverlapSelA1
+                let covB = Vec.dot ca uniform.OverlapSelB0 + Vec.dot cb uniform.OverlapSelB1
+                overlapFull <- covA > 0.12f && covB > 0.12f
+            let overlapComponent = if overlapFull then 1.0f else 0.0f
+            let maskFactor = blobComponent * overlapComponent
             let ghost = uniform.GhostOpacity
             let mutable alpha = 0.0f
             if uniform.MeshActive then
@@ -146,7 +186,7 @@ module MeshShader =
             // α-gated depth: clamp ghost/outside fragments below opaqueThreshold
             // so only fully-solid surface writes natural depth (below).
             let blobFull  = (not blobsActive) || inAnyBlob
-            let fullySolid = blobFull
+            let fullySolid = blobFull && overlapFull
             if uniform.MeshActive && not fullySolid then
                 alpha <- min alpha (opaqueThreshold - 0.01f)
             let n = v.n |> Vec.normalize

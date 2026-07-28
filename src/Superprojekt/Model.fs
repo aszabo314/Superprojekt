@@ -53,12 +53,16 @@ type NavLevel =
 
 // The ONE shown/clickable rule: in a cell-workspace only the pair's two
 // meshes show solid (the rest drop to the global ghost floor); at home all
-// meshes show. Every consumer — render MeshActive, raycast candidate sets,
-// the placement overlap count — goes through it.
+// meshes show unless the Setup isolate narrows it to one. Every consumer —
+// render MeshActive, raycast candidate sets, the placement overlap count —
+// goes through it.
 module MeshVisibility =
-    let shown (nav : NavLevel) (name : string) =
+    let shown (nav : NavLevel) (isolate : string option) (hoverPair : (string * string) option) (name : string) =
         match nav with
-        | NavHome -> true
+        | NavHome ->
+            match hoverPair with
+            | Some (a, b) -> name = a || name = b
+            | None -> (match isolate with Some m -> name = m | None -> true)
         | NavCell (a, b) -> name = a || name = b
 
 [<ModelType>]
@@ -115,6 +119,15 @@ type Model =
         // shape), set from the Overview mesh list. Absent ⇒ HeatOff (textured).
         // Respected in the 3D view and the 2D focus tiles/single alike.
         MeshHeatmap           : Map<string, HeatmapMode>
+        // Setup-scoped mesh isolation (survey rows): the clicked lock + the
+        // transient button-hover preview (hover wins over the lock). Both are
+        // wiped on leaving the Setup view — never a persistent mode.
+        SetupIsolate          : string option
+        SetupIsolateHover     : string option
+        // Matrix-cell hover: the pair whose screen-space overlap area previews
+        // in 3D (per-pixel coverage test in the mesh shader). Transient — wiped
+        // on cell leave, descend, tab switch and dataset switch.
+        MatrixHoverPair       : (string * string) option
         // Shape-quality cutoff: fragments below it render transparent in the Shp
         // heatmap (3D + focus). 0 = show everything.
         ShapeThreshold        : float
@@ -268,6 +281,9 @@ module Model =
             PairOverlaps          = Map.empty
             Toast                 = None
             MeshHeatmap           = Map.empty
+            SetupIsolate          = None
+            SetupIsolateHover     = None
+            MatrixHoverPair       = None
             ShapeThreshold        = 0.0
             ScanPins              = ScanPinModel.initial
             RenderingMode       = Textured

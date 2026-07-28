@@ -75,10 +75,16 @@ module View =
         let clipUniforms : aval<int * V4f * V4f> = AVal.constant (0, V4f.Zero, V4f.Zero)
 
         // Shown = clickable: the raycast candidate set mirrors what renders
-        // solid (the nav scope), evaluated at event time.
+        // solid (the nav scope + the Setup isolate + the matrix hover),
+        // evaluated at event time.
         let shownNow () =
             let nav = AVal.force model.Nav
-            fun (name : string) -> MeshVisibility.shown nav name
+            let iso =
+                match AVal.force model.SetupIsolateHover with
+                | Some _ as h -> h
+                | None -> AVal.force model.SetupIsolate
+            let hp = AVal.force model.MatrixHoverPair
+            fun (name : string) -> MeshVisibility.shown nav iso hp name
 
         body {
             OnBoot [

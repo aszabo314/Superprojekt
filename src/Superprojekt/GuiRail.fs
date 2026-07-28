@@ -117,9 +117,10 @@ module GuiRail =
     let rail (env : Env<Message>) (model : AdaptiveModel) =
 
         // ── Mesh × mesh navigator: rows/cols = meshes, UPPER TRIANGLE only
-        // (registration is symmetric — no lower half; no diagonal, root
-        // designation is the Setup step). Cell (A,B) IS the pair's registration
-        // edge. Emphasis ramp: impossible fades into the background (a hole) <
+        // (registration is symmetric — no lower half; the diagonal is cosmetic
+        // placeholders, root designation is the Setup step). Cell (A,B) IS the
+        // pair's registration edge. Emphasis ramp: impossible fades into the
+        // background (a hole) <
         // possible = an outlined empty vessel < registered = filled, fill
         // strength = the edge's ONE quality scalar (achromatic ink — the colour
         // families stay free for gradients and mesh identity).
@@ -157,6 +158,10 @@ module GuiRail =
                         Some (Style [Css.Background (sprintf "rgba(15, 23, 42, %.3f)" (0.30 + 0.65 * clamp 0.0 1.0 q))])
                     | _ -> None)
                 title |> AVal.map (fun tt -> Some (Attribute("title", tt)))
+                // Hover = the 3D overlap preview (every real cell — hovering an
+                // impossible one shows exactly why: almost nothing lights up).
+                Dom.OnMouseEnter(fun _ -> env.Emit [SetMatrixHoverPair (Some (a, b))])
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetMatrixHoverPair None])
                 // Descend: a Possible/Registered cell IS the pair — clicking it
                 // enters that pair's workspace (impossible cells are inert holes).
                 Dom.OnClick(fun _ ->
@@ -184,6 +189,10 @@ module GuiRail =
                         "Root",   (model.MatrixOrder |> AVal.map ((=) OrderConnected)), (fun () -> env.Emit [SetMatrixOrder OrderConnected])
                     ]
                 }
+            // Cosmetic diagonal: a mesh has no pair with itself — the cell is an
+            // inert disabled placeholder that only anchors the matrix shape.
+            let diagCell () =
+                div { Class "pmx-cell pmx-diag"; Attribute("title", "a mesh has no pair with itself") }
             let rowsA =
                 orderedNames |> AVal.map (fun ns ->
                     let arr = List.toArray ns
@@ -194,15 +203,16 @@ module GuiRail =
                             yield div {
                                 Class "pmx-row"
                                 div { Class "pmx-rowhead pmx-corner" }
-                                AList.ofList [ for j in 1 .. n - 1 -> div { Class "pmx-colhead"; Attribute("title", arr.[j]); numSwatch arr.[j] } ]
+                                AList.ofList [ for j in 0 .. n - 1 -> div { Class "pmx-colhead"; Attribute("title", arr.[j]); numSwatch arr.[j] } ]
                             }
-                            for i in 0 .. n - 2 do
+                            for i in 0 .. n - 1 do
                                 yield div {
                                     Class "pmx-row"
                                     div { Class "pmx-rowhead"; Attribute("title", arr.[i]); numSwatch arr.[i] }
                                     AList.ofList [
-                                        for j in 1 .. n - 1 ->
-                                            if j <= i then div { Class "pmx-cell pmx-void" }
+                                        for j in 0 .. n - 1 ->
+                                            if j < i then div { Class "pmx-cell pmx-void" }
+                                            elif j = i then diagCell ()
                                             else pairCellView arr.[i] arr.[j]
                                     ]
                                 }
@@ -221,35 +231,50 @@ module GuiRail =
             let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
             let isRoot = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
             let hm = model.MeshHeatmap |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue HeatOff)
+            let isolated = model.SetupIsolate |> AVal.map ((=) (Some name))
             div {
                 Class "pmx-root-row"
                 classWhen "pmx-root-on" isRoot
-                Attribute("title", name)
-                span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
-                span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                span {
-                    Class "pmx-root-name"
-                    Attribute("title", "Designate as the reference root. Re-rooting inside the registered tree keeps the registration; a mesh outside it clears the graph. Double-click = 3D zoom.")
-                    Dom.OnClick(fun _ -> env.Emit [SetRegRoot name])
-                    Dom.OnDoubleClick(fun _ -> env.Emit [ZoomToMesh name])
-                    model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
-                }
-                span { Class "pmx-root-star"; isRoot |> AVal.map (fun r -> if r then "★" else "") }
-                button {
-                    Class "mb mb-cam"
-                    Attribute("title", "Fly the 3D camera to this mesh's sensor viewpoint")
-                    Dom.OnClick(fun _ -> env.Emit [FlyToSensor name])
-                    "◎"
+                div {
+                    Class "pmx-root-head"
+                    Attribute("title", sprintf "%s — double-click: fly to the sensor viewpoint" name)
+                    Dom.OnDoubleClick(fun _ -> env.Emit [FlyToSensor name])
+                    span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
+                    span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+                    span {
+                        Class "pmx-root-name"
+                        model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
+                    }
+                    span { Class "pmx-root-star"; isRoot |> AVal.map (fun r -> if r then "★" else "") }
                 }
                 div {
-                    Class "rail-mesh-modes"
-                    Attribute("title", "Error visualization for this mesh: Textured · Distance · Shape · Incidence")
-                    compactButtonBar [
-                        "Tex",  (hm |> AVal.map ((=) HeatOff)),       (fun () -> env.Emit [SetMeshHeatmap(name, HeatOff)])
-                        "Dst",  (hm |> AVal.map ((=) HeatRange)),     (fun () -> env.Emit [SetMeshHeatmap(name, HeatRange)])
-                        "Shp",  (hm |> AVal.map ((=) HeatShape)),     (fun () -> env.Emit [SetMeshHeatmap(name, HeatShape)])
-                        "Inc",  (hm |> AVal.map ((=) HeatIncidence)), (fun () -> env.Emit [SetMeshHeatmap(name, HeatIncidence)])
-                    ]
+                    Class "pmx-root-ctl"
+                    button {
+                        Class "rail-btn setup-ref"
+                        classWhen "setup-ref-on" isRoot
+                        Attribute("title", "Designate as the reference root. Re-rooting inside the registered tree keeps the registration; a mesh outside it clears the graph.")
+                        Dom.OnClick(fun _ -> env.Emit [SetRegRoot name])
+                        isRoot |> AVal.map (fun r -> if r then "★ Reference" else "☆ Set reference")
+                    }
+                    button {
+                        Class "rail-btn setup-iso"
+                        classWhen "rail-btn-active" isolated
+                        Attribute("title", "Isolate this mesh: hover previews, click locks (click again clears; leaving Setup clears)")
+                        Dom.OnMouseEnter(fun _ -> env.Emit [SetSetupIsolateHover (Some name)])
+                        Dom.OnMouseLeave(fun _ -> env.Emit [SetSetupIsolateHover None])
+                        Dom.OnClick(fun _ -> env.Emit [ToggleSetupIsolate name])
+                        "◉ Isolate"
+                    }
+                    div {
+                        Class "rail-mesh-modes"
+                        Attribute("title", "Error visualization for this mesh: Textured · Distance · Shape · Incidence")
+                        compactButtonBar [
+                            "Tex",  (hm |> AVal.map ((=) HeatOff)),       (fun () -> env.Emit [SetMeshHeatmap(name, HeatOff)])
+                            "Dst",  (hm |> AVal.map ((=) HeatRange)),     (fun () -> env.Emit [SetMeshHeatmap(name, HeatRange)])
+                            "Shp",  (hm |> AVal.map ((=) HeatShape)),     (fun () -> env.Emit [SetMeshHeatmap(name, HeatShape)])
+                            "Inc",  (hm |> AVal.map ((=) HeatIncidence)), (fun () -> env.Emit [SetMeshHeatmap(name, HeatIncidence)])
+                        ]
+                    }
                 }
             }
         let anyShapeOn =

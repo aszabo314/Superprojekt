@@ -197,7 +197,11 @@ module SceneGraph =
         // Placement suitability draws before the outline composites so
         // isolines/footprints stay readable on top of the fused overlay.
         let suitScene  = OutlineView.buildSuitability info model view proj
-        let outlineScene = OutlineView.build info model view proj
+        // ONE coverage MRT render, shared by the footprint composite and the
+        // mesh shader's matrix-hover overlap preview.
+        let cov0, cov1, covTexel = OutlineView.coverageOffscreen info model view proj
+        let outlineScene = OutlineView.build info model view proj (cov0, cov1, covTexel)
+        let ovOn, ovSelA0, ovSelA1, ovSelB0, ovSelB1 = MeshView.overlapPreviewUniforms model
         let pinScene   = ScanPinScene.build env view proj fullscreenActive placementHover model
 
         let notFullscreen = AVal.map not fullscreenActive
@@ -261,6 +265,13 @@ module SceneGraph =
                 Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.Uniform("ViewportSize", info.ViewportSize)
+                Sg.Uniform("Coverage0", cov0)
+                Sg.Uniform("Coverage1", cov1)
+                Sg.Uniform("OverlapPreview", ovOn)
+                Sg.Uniform("OverlapSelA0", ovSelA0)
+                Sg.Uniform("OverlapSelA1", ovSelA1)
+                Sg.Uniform("OverlapSelB0", ovSelB0)
+                Sg.Uniform("OverlapSelB1", ovSelB1)
                 meshScene
                 suitScene
                 outlineScene

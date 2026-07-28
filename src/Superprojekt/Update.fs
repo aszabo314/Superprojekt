@@ -100,10 +100,22 @@ module Update =
                     recomposeWith { Root = Some mesh; Edges = Map.empty } model
             model
         | SetMatrixHome h ->
-            if model.MatrixHome = h then model else { model with MatrixHome = h }
+            if model.MatrixHome = h then model
+            // Each tab's transient lens dies with the tab: the Setup isolate on
+            // leaving Setup, the matrix hover preview on leaving Pairs.
+            elif h = HomeOverview then { model with MatrixHome = h; MatrixHoverPair = None }
+            else { model with MatrixHome = h; SetupIsolate = None; SetupIsolateHover = None }
+        | SetSetupIsolateHover h ->
+            if model.SetupIsolateHover = h then model else { model with SetupIsolateHover = h }
+        | SetMatrixHoverPair hp ->
+            if model.MatrixHoverPair = hp then model else { model with MatrixHoverPair = hp }
+        | ToggleSetupIsolate mesh ->
+            { model with SetupIsolate = if model.SetupIsolate = Some mesh then None else Some mesh }
         | DescendPair(a, b) ->
-            if model.Nav = NavCell(a, b) then model
-            else invalidateCellError { model with Nav = NavCell(a, b); PeekVis = false; PeekPose = false }
+            // The hover preview must not survive the descend — the click leaves
+            // no mouse-leave behind it.
+            if model.Nav = NavCell(a, b) then { model with MatrixHoverPair = None }
+            else invalidateCellError { model with Nav = NavCell(a, b); PeekVis = false; PeekPose = false; MatrixHoverPair = None }
         | NavAscend ->
             // The single backward primitive: cell → matrix; at home a no-op.
             // Ascending also disarms the probe (its readout is cell-transient).
@@ -237,6 +249,9 @@ module Update =
                     MeshBounds = Map.empty
                     LoadTransforms = Map.empty
                     MeshHeatmap = Map.empty
+                    SetupIsolate = None
+                    SetupIsolateHover = None
+                    MatrixHoverPair = None
                     RegGraph = RegGraph.empty
                     ComposedPoses = Map.empty
                     PairOverlaps = Map.empty
@@ -388,12 +403,6 @@ module Update =
             let centreR = ScanPin.renderCentre model.CommonCentroid scale world
             env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, centreR))
                       CameraMessage (OrbitMessage.SetTargetRadius(max 0.2 (radius * scale)))]
-            model
-        // 3D framing conventions for the double-click zoom grammar.
-        | ZoomToMesh m ->
-            (match Map.tryFind m model.MeshBounds with
-             | Some b when not b.IsInvalid -> env.Emit [FlyToPoint(b.Center, max 0.5 (b.Size.Length * 0.6))]
-             | _ -> ())
             model
         | ZoomToPin id ->
             (match HashMap.tryFind id model.ScanPins.Pins with

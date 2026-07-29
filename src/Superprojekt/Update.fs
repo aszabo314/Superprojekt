@@ -10,7 +10,7 @@ open UpdateHelpers
 
 module Update =
 
-    // The ONE focus-jump path: transient lenses (Setup isolate, matrix hover),
+    // The ONE focus-jump path: transient lenses (tile isolate, matrix hover),
     // the spring-loaded peeks, the armed probe and the armed pick are
     // level-scoped and die on any jump; leaving Pin mid-placement (Esc or a
     // rail jump) aborts the transaction — full rollback.
@@ -21,9 +21,10 @@ module Update =
             else model.ScanPins
         { model with
             Focus = f; ScanPins = sp
-            SetupIsolate = None; SetupIsolateHover = None; MatrixHoverPair = None
-            PeekVis = false; PeekPose = false; ProbeArmed = false; ProbeReadout = None
-            ArmedPick = None; ArmPreview = None; PinFocusHover = None }
+            TileIsolate = None; TileIsolateHover = None; MatrixHoverPair = None
+            PeekVis = false; PeekPose = false; ProbeReadout = None
+            ArmedPick = None; ArmPreview = None; PinFocusHover = None
+            PinRadiusEditOpen = false; PinExitPending = None }
 
     // A step may retract what the current focus level depends on (pin deleted,
     // placement aborted, selection cleared) — demote to the nearest enabled
@@ -204,19 +205,33 @@ module Update =
                 else
                     recomposeWith { Root = Some mesh; Edges = Map.empty } model
             model
-        | SetSetupIsolateHover h ->
-            if model.SetupIsolateHover = h then model else { model with SetupIsolateHover = h }
+        | SetTileIsolateHover h ->
+            if model.TileIsolateHover = h then model else { model with TileIsolateHover = h }
         | SetMatrixHoverPair hp ->
             if model.MatrixHoverPair = hp then model else { model with MatrixHoverPair = hp }
-        | ToggleSetupIsolate mesh ->
-            { model with SetupIsolate = if model.SetupIsolate = Some mesh then None else Some mesh }
+        | ToggleTileIsolate mesh ->
+            { model with TileIsolate = if model.TileIsolate = Some mesh then None else Some mesh }
         | SetFocus f ->
             let placing = match model.ScanPins.Placement with PlacementActive _ -> true | PlacementIdle -> false
             if f = model.Focus || not (FocusLevel.enabled model.Sel placing f) then model
+            // The exit-guard: leaving Pin with an incomplete pin (an in-flight
+            // draft is always incomplete — completion is implicit) parks the
+            // jump behind the confirm-delete popup instead of silently
+            // rolling back. Esc's FocusAscend goes through the same gate.
+            elif model.Focus = FocusPin && placing then { model with PinExitPending = Some f }
             else jumpFocus f model
         | FocusAscend ->
-            if model.Focus = FocusSetup then model
+            let placing = match model.ScanPins.Placement with PlacementActive _ -> true | PlacementIdle -> false
+            if model.Focus = FocusMatrix then model
+            elif model.Focus = FocusPin && placing then { model with PinExitPending = Some FocusPair }
             else jumpFocus (FocusLevel.parent model.Focus) model
+        | ConfirmPinExit ->
+            (match model.PinExitPending with
+             // The jump itself rolls the draft back (Pin → elsewhere).
+             | Some f -> jumpFocus f model
+             | None -> model)
+        | CancelPinExit ->
+            if model.PinExitPending.IsNone then model else { model with PinExitPending = None }
         | SelectPair(a, b) ->
             let key = PairCell.key a b
             if model.Sel.Pair = Some key then
@@ -237,7 +252,11 @@ module Update =
                 | Some p -> model.Sel.Pair = Some p.Pair
                 | None -> false
             if not valid || model.Sel.Pin = Some id then model
-            else framePinTiles { model with Sel = { model.Sel with Pin = Some id; Point = None } }
+            else
+                framePinTiles
+                    { model with
+                        Sel = { model.Sel with Pin = Some id; Point = None }
+                        PinRadiusEditOpen = false }
         | SelectPoint p ->
             let valid =
                 model.Focus = FocusPin &&
@@ -255,19 +274,24 @@ module Update =
                 | None -> framePinTiles m
         | SetPinFocusHover h ->
             if model.PinFocusHover = h then model else { model with PinFocusHover = h }
+        | ToggleRadiusEdit ->
+            { model with PinRadiusEditOpen = not model.PinRadiusEditOpen }
         | ToggleArmPick target ->
             let placing = match model.ScanPins.Placement with PlacementActive _ -> true | PlacementIdle -> false
             let valid =
-                model.Focus = FocusPin &&
-                (match target, model.Sel.Pair with
-                 // Committed pins are immovable — the centre pick only exists
-                 // inside the placement transaction.
-                 | ArmCentre, Some _ -> placing
-                 | ArmPoint m, Some (a, b) -> (m = a || m = b) && (placing || model.Sel.Pin.IsSome)
-                 | _, None -> false)
+                match target, model.Sel.Pair with
+                // Centre: places the draft's area marker, or re-anchors the
+                // selected committed pin (the panel's centre edit).
+                | ArmCentre, Some _ -> model.Focus = FocusPin && (placing || model.Sel.Pin.IsSome)
+                | ArmPoint m, Some (a, b) ->
+                    model.Focus = FocusPin && (m = a || m = b) && (placing || model.Sel.Pin.IsSome)
+                // The probe rides the inspect panel's scope: Pair and Pin.
+                | ArmProbe, Some _ -> model.Focus = FocusPair || model.Focus = FocusPin
+                | _, None -> false
             if not valid then model
-            elif model.ArmedPick = Some target then { model with ArmedPick = None; ArmPreview = None }
-            else { model with ArmedPick = Some target; ArmPreview = None }
+            elif model.ArmedPick = Some target then
+                { model with ArmedPick = None; ArmPreview = None; ProbeReadout = None }
+            else { model with ArmedPick = Some target; ArmPreview = None; ProbeReadout = None }
         | SetArmPreview p ->
             if model.ArmedPick.IsNone then
                 if model.ArmPreview.IsSome then { model with ArmPreview = None } else model
@@ -302,13 +326,12 @@ module Update =
         | HoverReadoutComputed(gen, gid, v) ->
             if gen <> cellErrorGen || model.HoverSample <> Some gid then model
             else { model with HoverReadout = Some (gid, v) }
-        | ToggleProbeArmed ->
-            // Disarm wipes the readout — the probe persists nothing.
-            if model.ProbeArmed then { model with ProbeArmed = false; ProbeReadout = None }
-            else { model with ProbeArmed = true; ProbeReadout = None }
         | ProbeReadoutComputed(gen, w, v) ->
-            if gen <> cellErrorGen || not model.ProbeArmed then model
-            else { model with ProbeReadout = Some (w, v) }
+            // Lands only while the probe is still armed (Esc between click and
+            // landing kills it); the landing disarms — the universal
+            // landed-pick-disarms rule — but the readout survives to be read.
+            if gen <> cellErrorGen || model.ArmedPick <> Some ArmProbe then model
+            else { model with ProbeReadout = Some (w, v); ArmedPick = None; ArmPreview = None }
         | ToggleCellMap ->
             { model with CellMapOn = not model.CellMapOn }
         | SetPeekVis held ->
@@ -402,13 +425,13 @@ module Update =
                     MeshBounds = Map.empty
                     LoadTransforms = Map.empty
                     MeshHeatmap = Map.empty
-                    SetupIsolate = None
-                    SetupIsolateHover = None
+                    TileIsolate = None
+                    TileIsolateHover = None
                     MatrixHoverPair = None
                     RegGraph = RegGraph.empty
                     ComposedPoses = Map.empty
                     PairOverlaps = Map.empty
-                    Focus = FocusSetup
+                    Focus = FocusMatrix
                     Sel = FocusSelection.empty
                     TileCams = Map.empty
                     CellError = None
@@ -417,61 +440,77 @@ module Update =
                     BrushedSamples = Set.empty
                     HoverSample = None
                     HoverReadout = None
-                    ProbeArmed = false
                     ProbeReadout = None
                     ArmedPick = None
                     ArmPreview = None
                     PinFocusHover = None
+                    PinRadiusEditOpen = false
                     PeekVis = false
                     PeekPose = false
                     LoopPending = None
+                    PinExitPending = None
                     Toast = None }
         | SetRenderingMode m ->
             { model with RenderingMode = m }
-        | SetMatrixOrder o ->
-            if model.MatrixOrder = o then model else { model with MatrixOrder = o }
         | ToggleGearPopover ->
             { model with GearPopoverOpen = not model.GearPopoverOpen }
+        | ToggleMeshMenu ->
+            { model with MeshMenuOpen = not model.MeshMenuOpen }
+        | ToggleSensorMenu ->
+            { model with SensorMenuOpen = not model.SensorMenuOpen }
+        | ToggleInspectPanel ->
+            { model with InspectOpen = not model.InspectOpen }
         | ScanPinMsg msg ->
             let m = ScanPinUpdate.handleMsg env model msg
             // New pin → enter Pin in placement with the CENTRE pick pre-armed
-            // (the natural first pick) and the tiles framed on the pair's
-            // overlap area.
+            // (the natural first pick), the tiles framed on the pair's overlap
+            // area, and the pin selection cleared — the DRAFT is the subject
+            // (the newborn re-selects on completion).
             let m =
                 match msg with
                 | BeginPinTransaction (a, b) ->
-                    frameOverlapTiles a b { jumpFocus FocusPin m with ArmedPick = Some ArmCentre }
+                    frameOverlapTiles a b
+                        { jumpFocus FocusPin m with
+                            ArmedPick = Some ArmCentre
+                            Sel = { m.Sel with Pin = None; Point = None } }
                 | _ -> m
             // A landed pick exits its arm (the spec'd disarm path); the tiles
             // re-frame on placement/edit — tight on the pin.
             let m =
                 match msg with
-                | DraftAreaAt _ | DraftPointAt _ | EditPointAt _ ->
+                | DraftAreaAt _ | DraftPointAt _ | EditPointAt _ | EditCentreAt _ ->
                     { m with ArmedPick = None; ArmPreview = None }
                 | _ -> m
             let m =
                 match msg with
-                | DraftAreaAt _ | SetInnerRadius _ | EditPointAt _ -> framePinTiles m
+                | DraftAreaAt _ | SetInnerRadius _ | EditPointAt _ | EditCentreAt _ -> framePinTiles m
                 | _ -> m
-            // Selection maintenance: a commit selects the newborn pin (it IS
-            // the chosen pin from birth); deleting the selected pin clears it.
+            // Selection maintenance: a draft pick that COMPLETED the pin is
+            // its birth (implicit completion) — the newborn is selected from
+            // birth and re-scopes the inspection; deleting the selected pin
+            // clears it.
+            let born =
+                match msg with
+                | DraftAreaAt _ | DraftPointAt _ ->
+                    m.ScanPins.Pins |> HashMap.toSeq
+                    |> Seq.tryPick (fun (id, _) ->
+                        if HashMap.containsKey id model.ScanPins.Pins then None else Some id)
+                | _ -> None
+            let m =
+                match born with
+                | Some id ->
+                    invalidateCellError
+                        (framePinTiles { m with Sel = { m.Sel with Pin = Some id; Point = None } })
+                | None -> m
             let m =
                 match msg with
-                | CommitPin ->
-                    let born =
-                        m.ScanPins.Pins |> HashMap.toSeq
-                        |> Seq.tryPick (fun (id, _) ->
-                            if HashMap.containsKey id model.ScanPins.Pins then None else Some id)
-                    (match born with
-                     | Some id -> framePinTiles { m with Sel = { m.Sel with Pin = Some id; Point = None } }
-                     | None -> m)
                 | DeletePin id when model.Sel.Pin = Some id ->
                     { m with Sel = { m.Sel with Pin = None; Point = None } }
                 | _ -> m
-            // Pin set / geometry changes re-scope the in-cell inspection.
+            // Pin geometry changes re-scope the in-cell inspection.
             let m =
                 match msg with
-                | CommitPin | SetInnerRadius _ | EditPointAt _ | DeletePin _ -> invalidateCellError m
+                | SetInnerRadius _ | EditPointAt _ | EditCentreAt _ | DeletePin _ -> invalidateCellError m
                 | _ -> m
             // ANY committed-pin edit invalidates its pair's solve: the pair's
             // edge (and every edge hanging beneath it — the subtree would
@@ -479,7 +518,7 @@ module Update =
             // PRE-edit model so a delete still resolves it.
             let editedPair =
                 match msg with
-                | SetInnerRadius(id, _) | EditPointAt(id, _, _) | DeletePin id ->
+                | SetInnerRadius(id, _) | EditPointAt(id, _, _) | EditCentreAt(id, _, _) | DeletePin id ->
                     HashMap.tryFind id model.ScanPins.Pins |> Option.map (fun p -> p.Pair)
                 | _ -> None
             match editedPair with
@@ -658,7 +697,7 @@ module Update =
     // single-flight, gen-guarded.
     let private ensureCellError (env : Env<Message>) (model : Model) : Model =
         match model.Focus, model.Sel.Pair with
-        | (FocusSetup | FocusMatrix), _ | _, None -> model
+        | FocusMatrix, _ | _, None -> model
         | (FocusPair | FocusPin), Some (a, b) ->
             let key = PairCell.key a b
             let pins =
@@ -708,7 +747,7 @@ module Update =
     // at the displayed poses — never the reference against itself.
     let private ensureCellDist (env : Env<Message>) (model : Model) : Model =
         match model.Focus, model.Sel.Pair with
-        | (FocusSetup | FocusMatrix), _ | _, None -> model
+        | FocusMatrix, _ | _, None -> model
         | (FocusPair | FocusPin), Some (a, b) ->
             if not model.CellMapOn || model.CellDist.IsSome || cellDistReqGen = cellErrorGen then model
             else

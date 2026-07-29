@@ -27,6 +27,36 @@ module GuiTopBar =
                     model.FarCutFrac (fun v -> env.Emit [SetFarCut v])
             }
 
+            // Jump-to-sensor: the ONE explicit per-mesh main-camera jump
+            // (the double-click/fly-to grammar's menu form).
+            div {
+                Class "tb-gear-wrap tb-sensor"
+                button {
+                    Class "tb-btn tb-sensor-btn"
+                    classWhen "tb-btn-active" model.SensorMenuOpen
+                    Attribute("title", "Fly the main camera to a mesh's scan-sensor viewpoint")
+                    Dom.OnClick(fun _ -> env.Emit [ToggleSensorMenu])
+                    "Sensor ▾"
+                }
+                div {
+                    Class "tb-gear-popover tb-menu-left tb-sensor-popover"
+                    showWhen model.SensorMenuOpen
+                    model.MeshNames |> AList.map (fun name ->
+                        let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                        div {
+                            Class "tb-gear-row tb-sensor-row"
+                            Attribute("title", sprintf "%s — fly to its sensor viewpoint" name)
+                            Dom.OnClick(fun _ -> env.Emit [FlyToSensor name; ToggleSensorMenu])
+                            span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (c4bToRgbCss (meshColor i))])) }
+                            span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+                            span {
+                                Class "tb-mesh-menu-name"
+                                model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
+                            }
+                        })
+                }
+            }
+
             // Spring-loaded peek buttons: press-and-hold twins of the V/B keys
             // (Pair scope; the reducer re-guards, releases always land).
             // Pointer capture keeps the release landing even when the cursor
@@ -71,6 +101,65 @@ module GuiTopBar =
                     span {
                         Class "tb-coord-w"
                         hoverCoord |> AVal.map (function Some p -> "world " + fmt p | None -> "world  –")
+                    }
+                }
+                // The hidden mesh menu: reference-root designation + per-mesh
+                // render toggles — out of the workflow rail by design.
+                div {
+                    Class "tb-gear-wrap"
+                    button {
+                        Class "tb-btn-tiny"
+                        classWhen "tb-btn-active" model.MeshMenuOpen
+                        Attribute("title", "Meshes: reference root + per-mesh rendering")
+                        Dom.OnClick(fun _ -> env.Emit [ToggleMeshMenu])
+                        "▦"
+                    }
+                    div {
+                        Class "tb-gear-popover tb-mesh-popover"
+                        showWhen model.MeshMenuOpen
+                        div {
+                            Class "tb-gear-row"
+                            span { Class "lp-sublabel"; "Reference root · rendering" }
+                        }
+                        model.MeshNames |> AList.map (fun name ->
+                            let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                            let isRoot = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
+                            let hm = model.MeshHeatmap |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue HeatOff)
+                            div {
+                                Class "tb-gear-row tb-mesh-setup-row"
+                                Attribute("title", name)
+                                span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (c4bToRgbCss (meshColor i))])) }
+                                span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+                                span {
+                                    Class "tb-mesh-menu-name"
+                                    model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
+                                }
+                                button {
+                                    Class "tb-gear-btn tb-ref-btn"
+                                    classWhen "setup-ref-on" isRoot
+                                    Attribute("title", "Designate as the reference root. Re-rooting inside the registered tree keeps the registration; a mesh outside it clears the graph.")
+                                    Dom.OnClick(fun _ -> env.Emit [SetRegRoot name])
+                                    isRoot |> AVal.map (fun r -> if r then "★ Reference" else "☆ Set reference")
+                                }
+                                div {
+                                    Class "rail-mesh-modes"
+                                    Attribute("title", "Error visualization for this mesh: Textured · Distance · Shape · Incidence")
+                                    compactButtonBar [
+                                        "Tex",  (hm |> AVal.map ((=) HeatOff)),       (fun () -> env.Emit [SetMeshHeatmap(name, HeatOff)])
+                                        "Dst",  (hm |> AVal.map ((=) HeatRange)),     (fun () -> env.Emit [SetMeshHeatmap(name, HeatRange)])
+                                        "Shp",  (hm |> AVal.map ((=) HeatShape)),     (fun () -> env.Emit [SetMeshHeatmap(name, HeatShape)])
+                                        "Inc",  (hm |> AVal.map ((=) HeatIncidence)), (fun () -> env.Emit [SetMeshHeatmap(name, HeatIncidence)])
+                                    ]
+                                }
+                            })
+                        let anyShapeOn =
+                            model.MeshHeatmap |> AVal.map (Map.exists (fun _ h -> h = HeatShape))
+                        div {
+                            Class "tb-gear-row"
+                            showWhen anyShapeOn
+                            inlineSlider "Shape ≥" 0.0 1.0 0.01 (sprintf "%.2f") model.ShapeThreshold (fun v ->
+                                env.Emit [SetShapeThreshold v])
+                        }
                     }
                 }
                 div {

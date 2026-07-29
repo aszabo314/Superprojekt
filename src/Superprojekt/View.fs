@@ -72,15 +72,15 @@ module View =
         let clipUniforms : aval<int * V4f * V4f> = AVal.constant (0, V4f.Zero, V4f.Zero)
 
         // Shown = clickable: the raycast candidate set mirrors what renders
-        // solid (the focus scope + the Setup isolate + the matrix hover + the
+        // solid (the focus scope + the tile isolate + the matrix hover + the
         // Pin-level focus/arm narrowing), evaluated at event time.
         let shownNow () =
             let focus = AVal.force model.Focus
             let sel = AVal.force model.Sel
             let iso =
-                match AVal.force model.SetupIsolateHover with
+                match AVal.force model.TileIsolateHover with
                 | Some _ as h -> h
-                | None -> AVal.force model.SetupIsolate
+                | None -> AVal.force model.TileIsolate
             let hp = AVal.force model.MatrixHoverPair
             let pf =
                 MeshVisibility.pinFocusMesh (AVal.force model.PinFocusHover)
@@ -247,29 +247,15 @@ module View =
                         } |> Async.Start
 
                 Sg.OnTap(fun _ ->
-                    // Armed pick first (the Pin level's picking mode — the main
-                    // 3D is its primary surface), then the armed probe.
+                    // No pick without an arm (A5): the armed pick captures the
+                    // click — centre/point/probe all route through it; an
+                    // unarmed tap does nothing here.
                     if (AVal.force model.ArmedPick).IsSome then
                         (match cursorScreen.Value with
                          | Some cur ->
                             let ray = pickRay cur (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
                             GuiPanes.armedPick env model ray
                          | None -> ())
-                    else
-                        async {
-                            // Armed point probe: pick any 3D point → exact value
-                            // into the transient workspace readout.
-                            if AVal.force model.ProbeArmed then
-                                let! hit = raycastNearest ()
-                                match hit with
-                                | Some rp ->
-                                    let world = worldFromRender model rp
-                                    let gen = UpdateHelpers.cellErrorGen
-                                    let radius = max 0.01 (AVal.force model.QuickPinRadius)
-                                    exactPairValueAt world radius (fun v ->
-                                        env.Emit [ProbeReadoutComputed(gen, world, v)])
-                                | None -> ()
-                        } |> Async.Start
                     true
                 )
 
@@ -354,8 +340,7 @@ module View =
                 SceneGraph.build env info view proj fullscreenActive clipUniforms model
             }
 
-            GuiPanes.panes env model
-            GuiPanes.setupTiles env model
+            GuiPanes.tileStrip env model
 
             // Pick-value tooltips riding their 3D points (the armed probe's
             // readout + the hovered brushed sample), projected with the same
@@ -377,12 +362,12 @@ module View =
                     Some (V2d(0.5 * (ndc.X + 1.0) * float s.X, 0.5 * (1.0 - ndc.Y) * float s.Y))
             let probeTip =
                 AVal.custom (fun t ->
-                    if not (model.ProbeArmed.GetValue t) then None
-                    else
-                        match model.ProbeReadout.GetValue t with
-                        | Some (w, v) ->
-                            screenOf t w |> Option.map (fun p -> p, sprintf "%+.1f mm" (v * 1000.0))
-                        | None -> None)
+                    // The readout survives the landing's auto-disarm; the next
+                    // arm / jump / invalidation clears it.
+                    match model.ProbeReadout.GetValue t with
+                    | Some (w, v) ->
+                        screenOf t w |> Option.map (fun p -> p, sprintf "%+.1f mm" (v * 1000.0))
+                    | None -> None)
             let hoverTip =
                 AVal.custom (fun t ->
                     match model.HoverReadout.GetValue t, model.CellError.GetValue t with
@@ -422,21 +407,21 @@ module View =
                 | "b" | "B" -> env.Emit [SetPeekPose true]
                 | "Escape" ->
                     // ONE Esc: the innermost in-progress action cancels first —
-                    // the blocking loop modal (cancel = discard the redundant
-                    // edge) > armed-pick disarm > probe disarm > ascend one
-                    // focus level. Leaving Pin mid-placement rolls the
-                    // transaction back via the jump itself — Esc needs no
-                    // separate placement branch.
-                    if (AVal.force model.LoopPending).IsSome then
+                    // the pin exit-guard popup (cancel = stay) > the blocking
+                    // loop modal (cancel = discard the redundant edge) >
+                    // armed-pick disarm (probe included — every pick is an
+                    // arm) > ascend one focus level. Ascending out of Pin with
+                    // an incomplete pin raises the exit-guard (the reducer's
+                    // gate); rail jumps go through the same gate, so Esc and
+                    // jumps stay consistent.
+                    if (AVal.force model.PinExitPending).IsSome then
+                        env.Emit [CancelPinExit]
+                    elif (AVal.force model.LoopPending).IsSome then
                         env.Emit [CancelLoopResolution]
                     else
                         match AVal.force model.ArmedPick with
                         | Some target -> env.Emit [ToggleArmPick target]
-                        | None ->
-                            if AVal.force model.ProbeArmed then
-                                env.Emit [ToggleProbeArmed]
-                            else
-                                env.Emit [FocusAscend]
+                        | None -> env.Emit [FocusAscend]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->
@@ -448,8 +433,8 @@ module View =
             )
 
             GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
-            // Left column: the navigator rail with the floating inspection
-            // panel directly below it (one fixed flex column, so the panel
+            // Left column: the navigator rail with the docked inspection
+            // toolbox directly below it (one fixed flex column, so the dock
             // rides the rail's height).
             div {
                 Class "left-col"
@@ -461,6 +446,7 @@ module View =
             GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model
             GuiOverlays.loopModal env model
+            GuiOverlays.pinExitModal env model
         }
 
 module App =

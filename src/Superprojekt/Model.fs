@@ -37,12 +37,10 @@ module RigidTransform =
         * Trafo3d.Scale(1.0 / scale)
         * Trafo3d.Translation(cc)
 
-// The four-level focus rail: Setup · Matrix · Pair · Pin — each a strictly
-// smaller scope of WHAT IS LOOKED AT, never a tool mode (tools stay a toolkit
-// inside their level). Free navigation among enabled stops; Escape ascends one
-// level.
+// The three-level focus rail: Matrix · Pair · Pin — each a strictly smaller
+// scope of WHAT IS LOOKED AT, never a tool mode (tools stay a toolkit inside
+// their level). Free navigation among enabled stops; Escape ascends one level.
 type FocusLevel =
-    | FocusSetup
     | FocusMatrix
     | FocusPair
     | FocusPin
@@ -53,14 +51,17 @@ type FocusLevel =
 // orbit; absent from the map = the default bounds framing.
 type TileCam = { Centre : V3d; Radius : float }
 
-// The Pin level's armed pick — the ONE picking mode: while armed, a click in
-// ANY view (main 3D or either tile) places this pick and the left button no
-// longer orbits; the ARM TARGET is the attribution (an ArmPoint pick raycasts
-// its own mesh alone, ArmCentre raycasts both pair meshes — nearest hit
-// anchors). Disarm = a landed pick, Esc, or clicking the arm button again.
+// The armed pick — the ONE picking mode (no pick without an arm; only camera
+// moves are exempt): while armed, a click in ANY view (main 3D or any tile)
+// places this pick and the left button no longer orbits; the ARM TARGET is
+// the attribution (an ArmPoint pick raycasts its own mesh alone, ArmCentre
+// and ArmProbe raycast both pair meshes — nearest hit lands). Disarm = a
+// landed pick, Esc, or clicking the arm control again. ArmProbe = the
+// inspection point probe (Pair + Pin); the rest are Pin-level pin picks.
 type ArmTarget =
     | ArmCentre
     | ArmPoint of string
+    | ArmProbe
 
 // Transient hover preview of the Pin-level focus/arm buttons: what the 3D
 // visibility WOULD narrow to on click (one side, or the whole pin).
@@ -87,20 +88,20 @@ module FocusSelection =
 module FocusLevel =
     let parent = function
         | FocusPin -> FocusPair
-        | FocusPair -> FocusMatrix
-        | FocusMatrix | FocusSetup -> FocusSetup
+        | FocusPair | FocusMatrix -> FocusMatrix
 
-    // Reachability: Setup/Matrix always; Pair needs a chosen pair; Pin a
-    // chosen pin or a placement transaction in flight.
+    // Reachability: Matrix always; Pair needs a chosen pair; Pin a chosen pin
+    // or a placement transaction in flight.
     let enabled (sel : FocusSelection) (placing : bool) = function
-        | FocusSetup | FocusMatrix -> true
+        | FocusMatrix -> true
         | FocusPair -> sel.Pair.IsSome
         | FocusPin -> sel.Pair.IsSome && (sel.Pin.IsSome || placing)
 
-// The ONE shown/clickable rule per focus level: Setup/Matrix show all meshes
-// (narrowed transiently by the Setup isolate / the matrix hover preview);
-// Pair isolates the selected pair's two meshes; Pin narrows further to the
-// effective focus mesh (pinFocusMesh — focus buttons / armed pick / hover).
+// The ONE shown/clickable rule per focus level: Matrix shows all meshes
+// (narrowed transiently by the matrix hover preview); Pair isolates the
+// selected pair's two meshes; Pin narrows further to the effective focus mesh
+// (pinFocusMesh — focus buttons / armed pick / hover). The tile isolate
+// intersects EVERY level's scope (a transient lens, tile-click/hover-driven).
 // Every consumer — render MeshActive, raycast candidate sets, coverage
 // gating — goes through it.
 module MeshVisibility =
@@ -114,32 +115,33 @@ module MeshVisibility =
         | None ->
             match armed with
             | Some (ArmPoint m) -> Some m
-            | Some ArmCentre -> None
+            | Some ArmCentre | Some ArmProbe -> None
             | None -> point
 
     let shown (focus : FocusLevel) (selPair : (string * string) option)
               (isolate : string option) (hoverPair : (string * string) option)
               (pinFocus : string option) (name : string) =
-        match focus with
-        | FocusSetup -> (match isolate with Some m -> name = m | None -> true)
-        | FocusMatrix -> (match hoverPair with Some (a, b) -> name = a || name = b | None -> true)
-        | FocusPair ->
-            match selPair with
-            | Some (a, b) -> name = a || name = b
-            | None -> true
-        | FocusPin ->
-            match selPair with
-            | Some (a, b) ->
-                (match pinFocus with
-                 | Some m -> name = m
-                 | None -> name = a || name = b)
-            | None -> true
+        let inScope =
+            match focus with
+            | FocusMatrix -> (match hoverPair with Some (a, b) -> name = a || name = b | None -> true)
+            | FocusPair ->
+                match selPair with
+                | Some (a, b) -> name = a || name = b
+                | None -> true
+            | FocusPin ->
+                match selPair with
+                | Some (a, b) ->
+                    (match pinFocus with
+                     | Some m -> name = m
+                     | None -> name = a || name = b)
+                | None -> true
+        inScope && (match isolate with Some m -> name = m | None -> true)
 
-    // Pin scoping mirrors mesh scoping: every pin at the survey levels, only
+    // Pin scoping mirrors mesh scoping: every pin at the Matrix survey, only
     // the selected pair's pins inside its Pair/Pin scope.
     let pinShown (focus : FocusLevel) (selPair : (string * string) option) (pair : string * string) =
         match focus with
-        | FocusSetup | FocusMatrix -> true
+        | FocusMatrix -> true
         | FocusPair | FocusPin -> selPair = Some pair
 
 [<ModelType>]
@@ -198,11 +200,11 @@ type Model =
         // shape), set from the Overview mesh list. Absent ⇒ HeatOff (textured).
         // Respected in the 3D view and the Setup survey tiles alike.
         MeshHeatmap           : Map<string, HeatmapMode>
-        // Setup-scoped mesh isolation (survey rows): the clicked lock + the
-        // transient button-hover preview (hover wins over the lock). Both are
-        // wiped on leaving the Setup view — never a persistent mode.
-        SetupIsolate          : string option
-        SetupIsolateHover     : string option
+        // Tile-strip mesh isolation (any level): the clicked lock + the
+        // transient tile-hover preview (hover wins over the lock). Both are
+        // wiped on any focus jump — never a persistent mode.
+        TileIsolate           : string option
+        TileIsolateHover      : string option
         // Matrix-cell hover: the pair whose screen-space overlap area previews
         // in 3D (per-pixel coverage test in the mesh shader). Transient — wiped
         // on cell leave, descend, tab switch and dataset switch.
@@ -214,8 +216,6 @@ type Model =
         ScanPins              : ScanPinModel
 
         RenderingMode       : RenderingMode
-        // Row/col order of the pair-matrix navigator (a view preference).
-        MatrixOrder         : MatrixOrder
         // The focus rail's current stop + the per-level selection it navigates.
         Focus               : FocusLevel
         Sel                 : FocusSelection
@@ -240,17 +240,20 @@ type Model =
         // value from the exact-point endpoint.
         HoverSample         : int option
         HoverReadout        : (int * float) option
-        // Armed point-sample probe: fully transient — the readout vanishes on
-        // disarm, persists nothing, links to no diagram.
-        ProbeArmed          : bool
+        // The landed probe readout (ArmProbe): transient — survives the
+        // landing's auto-disarm so the value stays readable, wiped by the next
+        // arm, any focus jump and every cell invalidation.
         ProbeReadout        : (V3d * float) option
-        // The Pin level's armed pick + its cursor preview (metric world, on
-        // the armed surface) — the preview renders in EVERY view at once.
-        // Both transient: wiped on disarm, any focus jump, dataset switch.
+        // The armed pick + its cursor preview (metric world, on the armed
+        // surface) — the preview renders in EVERY view at once. Both
+        // transient: wiped on disarm, any focus jump, dataset switch.
         ArmedPick           : ArmTarget option
         ArmPreview          : V3d option
         // Focus/arm button hover: the transient Pin-level visibility preview.
         PinFocusHover       : PinHover option
+        // The Pin panel's radius disclosure: the slider stays hidden until its
+        // edit is clicked. Transient — collapses on pin change and focus jump.
+        PinRadiusEditOpen   : bool
         // The two spring-loaded blink-comparator keys (cell scope only, REF/MOV
         // from the tree; hold to swap, release to return; zero config):
         //   PeekVis  — the MOV mesh blinks OFF (the REF alone answers "same rock?");
@@ -261,7 +264,20 @@ type Model =
         // The transient loop awaiting FORCED resolution — the blocking modal is
         // the whole interaction; the committed graph stays the prior tree.
         LoopPending         : LoopPending option
+        // The Pin exit-guard: leaving Pin with an incomplete pin (an in-flight
+        // draft) parks the wanted destination here and raises the blocking
+        // confirm-delete popup — confirm jumps (the jump rolls the draft
+        // back), cancel stays. Esc and rail jumps share this one path.
+        PinExitPending      : FocusLevel option
         GearPopoverOpen     : bool
+        // The hidden top-bar mesh menu: reference-root designation + per-mesh
+        // render toggles (deliberately out of the workflow rail).
+        MeshMenuOpen        : bool
+        // The top-bar jump-to-sensor dropdown (per-mesh main-camera jumps).
+        SensorMenuOpen      : bool
+        // The docked inspection toolbox's expand state (collapsed = the thin
+        // header edge alone) — a view preference, survives level jumps.
+        InspectOpen         : bool
 
         // Outline edge-detect threshold (depth Laplacian) + isoline band count over
         // the scene Z range + isoline alpha. Tunable from the gear menu; see
@@ -371,14 +387,13 @@ module Model =
             PairOverlaps          = Map.empty
             Toast                 = None
             MeshHeatmap           = Map.empty
-            SetupIsolate          = None
-            SetupIsolateHover     = None
+            TileIsolate           = None
+            TileIsolateHover      = None
             MatrixHoverPair       = None
             ShapeThreshold        = 0.0
             ScanPins              = ScanPinModel.initial
             RenderingMode       = Textured
-            MatrixOrder         = OrderSensor
-            Focus               = FocusSetup
+            Focus               = FocusMatrix
             Sel                 = FocusSelection.empty
             CellError           = None
             CellErrorBefore     = None
@@ -387,15 +402,19 @@ module Model =
             BrushedSamples      = Set.empty
             HoverSample         = None
             HoverReadout        = None
-            ProbeArmed          = false
             ProbeReadout        = None
             ArmedPick           = None
             ArmPreview          = None
             PinFocusHover       = None
+            PinRadiusEditOpen   = false
             PeekVis             = false
             PeekPose            = false
             LoopPending         = None
+            PinExitPending      = None
             GearPopoverOpen     = false
+            MeshMenuOpen        = false
+            SensorMenuOpen      = false
+            InspectOpen         = true
             OutlineThreshold    = 0.004
             OutlineWidthPx      = 3.0
             IsolineBands        = 700.0

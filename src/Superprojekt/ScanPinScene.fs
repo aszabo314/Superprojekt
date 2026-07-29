@@ -327,6 +327,8 @@ module ScanPinScene =
                             addCross out cR (rR * 0.15) white 1.6
                          | ArmPoint _ ->
                             addWireSphere out cR 0.06 white 1.6 20
+                            addCross out cR 0.075 white 1.6
+                         | ArmProbe ->
                             addCross out cR 0.075 white 1.6)
                         out.ToArray()
                     | _ -> [||])

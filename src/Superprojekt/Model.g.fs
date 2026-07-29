@@ -1,5 +1,5 @@
-//dccbb812-8670-2b2d-7fd1-301357fa65aa
-//f154a595-21c8-46f5-56d0-7d6a84dbba89
+//e311f1a4-a458-0d50-ed72-5a2008dfc42b
+//113cccd8-c71d-fc37-f6be-6c34480a42e5
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -38,13 +38,12 @@ type AdaptiveModel(value : Model) =
     let _PairOverlaps_ = FSharp.Data.Adaptive.cval(value.PairOverlaps)
     let _Toast_ = FSharp.Data.Adaptive.cval(value.Toast)
     let _MeshHeatmap_ = FSharp.Data.Adaptive.cval(value.MeshHeatmap)
-    let _SetupIsolate_ = FSharp.Data.Adaptive.cval(value.SetupIsolate)
-    let _SetupIsolateHover_ = FSharp.Data.Adaptive.cval(value.SetupIsolateHover)
+    let _TileIsolate_ = FSharp.Data.Adaptive.cval(value.TileIsolate)
+    let _TileIsolateHover_ = FSharp.Data.Adaptive.cval(value.TileIsolateHover)
     let _MatrixHoverPair_ = FSharp.Data.Adaptive.cval(value.MatrixHoverPair)
     let _ShapeThreshold_ = FSharp.Data.Adaptive.cval(value.ShapeThreshold)
     let _ScanPins_ = AdaptiveScanPinModel(value.ScanPins)
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
-    let _MatrixOrder_ = FSharp.Data.Adaptive.cval(value.MatrixOrder)
     let _Focus_ = FSharp.Data.Adaptive.cval(value.Focus)
     let _Sel_ = FSharp.Data.Adaptive.cval(value.Sel)
     let _CellError_ = FSharp.Data.Adaptive.cval(value.CellError)
@@ -54,15 +53,19 @@ type AdaptiveModel(value : Model) =
     let _BrushedSamples_ = FSharp.Data.Adaptive.cval(value.BrushedSamples)
     let _HoverSample_ = FSharp.Data.Adaptive.cval(value.HoverSample)
     let _HoverReadout_ = FSharp.Data.Adaptive.cval(value.HoverReadout)
-    let _ProbeArmed_ = FSharp.Data.Adaptive.cval(value.ProbeArmed)
     let _ProbeReadout_ = FSharp.Data.Adaptive.cval(value.ProbeReadout)
     let _ArmedPick_ = FSharp.Data.Adaptive.cval(value.ArmedPick)
     let _ArmPreview_ = FSharp.Data.Adaptive.cval(value.ArmPreview)
     let _PinFocusHover_ = FSharp.Data.Adaptive.cval(value.PinFocusHover)
+    let _PinRadiusEditOpen_ = FSharp.Data.Adaptive.cval(value.PinRadiusEditOpen)
     let _PeekVis_ = FSharp.Data.Adaptive.cval(value.PeekVis)
     let _PeekPose_ = FSharp.Data.Adaptive.cval(value.PeekPose)
     let _LoopPending_ = FSharp.Data.Adaptive.cval(value.LoopPending)
+    let _PinExitPending_ = FSharp.Data.Adaptive.cval(value.PinExitPending)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
+    let _MeshMenuOpen_ = FSharp.Data.Adaptive.cval(value.MeshMenuOpen)
+    let _SensorMenuOpen_ = FSharp.Data.Adaptive.cval(value.SensorMenuOpen)
+    let _InspectOpen_ = FSharp.Data.Adaptive.cval(value.InspectOpen)
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
     let _OutlineWidthPx_ = FSharp.Data.Adaptive.cval(value.OutlineWidthPx)
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
@@ -103,13 +106,12 @@ type AdaptiveModel(value : Model) =
             _PairOverlaps_.Value <- value.PairOverlaps
             _Toast_.Value <- value.Toast
             _MeshHeatmap_.Value <- value.MeshHeatmap
-            _SetupIsolate_.Value <- value.SetupIsolate
-            _SetupIsolateHover_.Value <- value.SetupIsolateHover
+            _TileIsolate_.Value <- value.TileIsolate
+            _TileIsolateHover_.Value <- value.TileIsolateHover
             _MatrixHoverPair_.Value <- value.MatrixHoverPair
             _ShapeThreshold_.Value <- value.ShapeThreshold
             _ScanPins_.Update(value.ScanPins)
             _RenderingMode_.Value <- value.RenderingMode
-            _MatrixOrder_.Value <- value.MatrixOrder
             _Focus_.Value <- value.Focus
             _Sel_.Value <- value.Sel
             _CellError_.Value <- value.CellError
@@ -119,15 +121,19 @@ type AdaptiveModel(value : Model) =
             _BrushedSamples_.Value <- value.BrushedSamples
             _HoverSample_.Value <- value.HoverSample
             _HoverReadout_.Value <- value.HoverReadout
-            _ProbeArmed_.Value <- value.ProbeArmed
             _ProbeReadout_.Value <- value.ProbeReadout
             _ArmedPick_.Value <- value.ArmedPick
             _ArmPreview_.Value <- value.ArmPreview
             _PinFocusHover_.Value <- value.PinFocusHover
+            _PinRadiusEditOpen_.Value <- value.PinRadiusEditOpen
             _PeekVis_.Value <- value.PeekVis
             _PeekPose_.Value <- value.PeekPose
             _LoopPending_.Value <- value.LoopPending
+            _PinExitPending_.Value <- value.PinExitPending
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
+            _MeshMenuOpen_.Value <- value.MeshMenuOpen
+            _SensorMenuOpen_.Value <- value.SensorMenuOpen
+            _InspectOpen_.Value <- value.InspectOpen
             _OutlineThreshold_.Value <- value.OutlineThreshold
             _OutlineWidthPx_.Value <- value.OutlineWidthPx
             _IsolineBands_.Value <- value.IsolineBands
@@ -161,13 +167,12 @@ type AdaptiveModel(value : Model) =
     member __.PairOverlaps = _PairOverlaps_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<(Microsoft.FSharp.Core.string * Microsoft.FSharp.Core.string), Microsoft.FSharp.Core.bool>>
     member __.Toast = _Toast_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MeshHeatmap = _MeshHeatmap_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, HeatmapMode>>
-    member __.SetupIsolate = _SetupIsolate_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
-    member __.SetupIsolateHover = _SetupIsolateHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.TileIsolate = _TileIsolate_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.TileIsolateHover = _TileIsolateHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.MatrixHoverPair = _MatrixHoverPair_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.string * Microsoft.FSharp.Core.string)>>
     member __.ShapeThreshold = _ShapeThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ScanPins = _ScanPins_
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
-    member __.MatrixOrder = _MatrixOrder_ :> FSharp.Data.Adaptive.aval<MatrixOrder>
     member __.Focus = _Focus_ :> FSharp.Data.Adaptive.aval<FocusLevel>
     member __.Sel = _Sel_ :> FSharp.Data.Adaptive.aval<FocusSelection>
     member __.CellError = _CellError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
@@ -177,15 +182,19 @@ type AdaptiveModel(value : Model) =
     member __.BrushedSamples = _BrushedSamples_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Set<Microsoft.FSharp.Core.int>>
     member __.HoverSample = _HoverSample_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.int>>
     member __.HoverReadout = _HoverReadout_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.int * Microsoft.FSharp.Core.float)>>
-    member __.ProbeArmed = _ProbeArmed_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ProbeReadout = _ProbeReadout_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Aardvark.Base.V3d * Microsoft.FSharp.Core.float)>>
     member __.ArmedPick = _ArmedPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ArmTarget>>
     member __.ArmPreview = _ArmPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.PinFocusHover = _PinFocusHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PinHover>>
+    member __.PinRadiusEditOpen = _PinRadiusEditOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PeekVis = _PeekVis_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PeekPose = _PeekPose_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.LoopPending = _LoopPending_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LoopPending>>
+    member __.PinExitPending = _PinExitPending_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<FocusLevel>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.MeshMenuOpen = _MeshMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.SensorMenuOpen = _SensorMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.InspectOpen = _InspectOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.OutlineWidthPx = _OutlineWidthPx_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>

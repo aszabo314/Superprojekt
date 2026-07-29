@@ -64,13 +64,15 @@ module OutlineView =
 
     // The footprint coverage MRT, rendered ONCE per frame and shared: the
     // coverage-edge composite outlines it, and the main mesh pass samples it
-    // for the matrix-hover overlap preview.
+    // for the matrix-hover overlap preview. `active` gates the pass (per-tile
+    // MRTs render only while their overlap gate reads them).
     let coverageOffscreen
         (info : Aardvark.Dom.RenderControlInfo)
         (model : AdaptiveModel)
+        (active : aval<bool>)
         (view : aval<Trafo3d>)
         (proj : aval<Trafo3d>) =
-        let c0, c1, texel = renderOffscreen info coverage1 false (MeshView.buildCoverageNode model view proj)
+        let c0, c1, texel = renderOffscreen info coverage1 false (MeshView.buildCoverageNode model active view proj)
         c0 :> aval<IBackendTexture>, c1 :> aval<IBackendTexture>, texel
 
     // Per-tile ROOT footprint MRT (channel 0 only, from the tile's camera) —

@@ -51,6 +51,18 @@ module ScanPinUpdate =
         | Some pin -> { sp with Pins = HashMap.add id (f pin) sp.Pins }
         | None -> sp
 
+    // Implicit completion: the pin IS its correspondences — the moment the
+    // last of {centre, point A, point B} lands, the draft mints the pin and
+    // the placement ends; there is no separate completion act.
+    let private landDraft (model : Model) (sp : ScanPinModel) (d : PinDraft) =
+        match d.Area, d.PointA, d.PointB with
+        | Some (am, c), Some pa, Some pb ->
+            let id = ScanPinId.create()
+            { sp with
+                Pins = HashMap.add id (makePin model id d.Pair am c pa pb) sp.Pins
+                Placement = PlacementIdle }
+        | _ -> { sp with Placement = PlacementActive d }
+
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
         | BeginPinTransaction pair ->
@@ -59,7 +71,7 @@ module ScanPinUpdate =
         | DraftAreaAt(mesh, local) ->
             match sp.Placement with
             | PlacementActive d ->
-                { sp with Placement = PlacementActive { d with Area = Some(mesh, local) } }
+                landDraft model sp { d with Area = Some(mesh, local) }
             | PlacementIdle -> sp
 
         | DraftPointAt(mesh, local) ->
@@ -70,24 +82,8 @@ module ScanPinUpdate =
                     if mesh = fst d.Pair then { d with PointA = Some local }
                     elif mesh = snd d.Pair then { d with PointB = Some local }
                     else d
-                { sp with Placement = PlacementActive d }
+                landDraft model sp d
             | PlacementIdle -> sp
-
-        | CommitPin ->
-            match sp.Placement with
-            | PlacementActive d ->
-                match d.Area, d.PointA, d.PointB with
-                | Some (am, c), Some pa, Some pb ->
-                    let id = ScanPinId.create()
-                    { sp with
-                        Pins = HashMap.add id (makePin model id d.Pair am c pa pb) sp.Pins
-                        Placement = PlacementIdle }
-                | _ -> sp    // incomplete — the commit control is disabled anyway
-            | PlacementIdle -> sp
-
-        | AbortPinTransaction ->
-            // Full rollback: the draft never touched the pin map.
-            { sp with Placement = PlacementIdle }
 
         | SetInnerRadius(id, r) ->
             sp |> updatePin id (fun pin -> { pin with InnerRadius = max 0.01 r; ContactRings = RingsNone })
@@ -96,6 +92,13 @@ module ScanPinUpdate =
             sp |> updatePin id (fun pin ->
                 if mesh = fst pin.Pair then { pin with PointA = local }
                 elif mesh = snd pin.Pair then { pin with PointB = local }
+                else pin)
+
+        | EditCentreAt(id, mesh, local) ->
+            // Re-anchor: the pin rides whichever mesh the new centre landed on.
+            sp |> updatePin id (fun pin ->
+                if mesh = fst pin.Pair || mesh = snd pin.Pair then
+                    { pin with AnchorMesh = mesh; CentreLocal = local; ContactRings = RingsNone }
                 else pin)
 
         | DeletePin id ->

@@ -287,13 +287,6 @@ module PairCell =
             | Some true -> PairPossible
             | _ -> PairImpossible
 
-// Row/col ordering of the navigator — reordering is the ONE scalability lever
-// (lens/fisheye/LOD are explicitly excluded from v14).
-type MatrixOrder =
-    | OrderSensor       // canonical acquisition order (the roster numbering)
-    | OrderCoverage     // largest footprint first
-    | OrderConnected    // root first, then hop distance to it; unconnected last
-
 module MatrixNav =
     // Hops from the root along parent edges; None = not connected (or no root).
     let hopDepth (g : RegGraph) (mesh : string) : int option =
@@ -317,19 +310,6 @@ module MatrixNav =
             let ka, kb = PairCell.key a b
             let depth m = match hopDepth g m with Some d -> d | None -> System.Int32.MaxValue
             if depth kb < depth ka then kb, ka else ka, kb
-
-    // Ties (and meshes without a metric) fall back to the canonical order.
-    let orderMeshes (mode : MatrixOrder) (canonical : Map<string, int>)
-                    (coverage : Map<string, float>) (g : RegGraph) (names : string list) : string list =
-        let canonOf m = Map.tryFind m canonical |> Option.defaultValue System.Int32.MaxValue
-        match mode with
-        | OrderSensor -> names |> List.sortBy canonOf
-        | OrderCoverage ->
-            names |> List.sortBy (fun m ->
-                -(Map.tryFind m coverage |> Option.defaultValue 0.0), canonOf m)
-        | OrderConnected ->
-            names |> List.sortBy (fun m ->
-                (match hopDepth g m with Some d -> d | None -> System.Int32.MaxValue), canonOf m)
 
 // The ONE in-cell error range: signed (lo, hi) in metres spanning 0 over the
 // pair's pin-ROI samples, hard-capped at ±0.5 m — the shared scale of the

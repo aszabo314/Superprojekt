@@ -504,41 +504,20 @@ let loopTests () =
     check "resolve: ref-side removal inverts the new edge"
         (g4.Edges.["D"].Parent = "B" && g4.Edges.Count = 3 && consistent g4)
 
-// ─────────────────────── Navigator: reordering ────────────────────────────
+// ─────────────────────── Navigator: hop depth ─────────────────────────────
 
-let matrixOrderTests () =
+let hopDepthTests () =
     let tr = Trafo3d.Translation(V3d(1.0, 0.0, 0.0))
     let add mov ref g =
         match RegGraph.tryAddEdge mov ref tr 1.0 g with
         | EdgeAdded g -> g
         | EdgeClosesLoop _ -> check (sprintf "add %s→%s (unexpected loop)" mov ref) false; g
         | EdgeRejected e -> check (sprintf "add %s→%s (%s)" mov ref e) false; g
-    let names = [ "A"; "B"; "C"; "R" ]
-    let canon = Map.ofList [ "A", 0; "B", 1; "C", 2; "R", 3 ]
-    let cov = Map.ofList [ "A", 5.0; "B", 20.0; "C", 10.0; "R", 1.0 ]
     let g = { Root = Some "R"; Edges = Map.empty } |> add "B" "R" |> add "C" "B"
 
     check "hop depth: root 0, chain counts, unconnected none"
         (MatrixNav.hopDepth g "R" = Some 0 && MatrixNav.hopDepth g "B" = Some 1
          && MatrixNav.hopDepth g "C" = Some 2 && MatrixNav.hopDepth g "A" = None)
-    check "sensor order = canonical"
-        (MatrixNav.orderMeshes OrderSensor canon cov g names = [ "A"; "B"; "C"; "R" ])
-    check "coverage order = largest footprint first"
-        (MatrixNav.orderMeshes OrderCoverage canon cov g names = [ "B"; "C"; "A"; "R" ])
-    check "connected order = root, then hops, unconnected last"
-        (MatrixNav.orderMeshes OrderConnected canon cov g names = [ "R"; "B"; "C"; "A" ])
-    // Reordering is a permutation and never changes what a cell contains.
-    let overlap = Map.ofList [ PairCell.key "A" "B", true ]
-    let statesOf ns =
-        [ for a in (ns : string list) do
-            for b in ns do
-                if a < b then yield (a, b), PairCell.state overlap g a b ]
-        |> List.sortBy fst
-    check "reorder is a permutation"
-        (List.sort (MatrixNav.orderMeshes OrderCoverage canon cov g names) = List.sort names)
-    check "reordering never changes cell contents"
-        (statesOf (MatrixNav.orderMeshes OrderCoverage canon cov g names) = statesOf names
-         && statesOf (MatrixNav.orderMeshes OrderConnected canon cov g names) = statesOf names)
 
 [<EntryPoint>]
 let main _ =
@@ -551,7 +530,7 @@ let main _ =
     rerootTests ()
     edgeInvalidationTests ()
     loopTests ()
-    matrixOrderTests ()
+    hopDepthTests ()
     printfn ""
     printfn "%d/%d passed%s" (total - failures) total (if failures = 0 then "" else sprintf " — %d FAILED" failures)
     failures

@@ -5,6 +5,154 @@
 > do not edit them per-change. Log every change here as it lands; at the
 > end, reconstruct the net documentation updates from this file.
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
+> *(A4–A7 amendment instance completed 2026-07-29 — docs reconstructed.)*
+
+## A4–A7 docs reconstructed (2026-07-29)
+
+CLAUDE.md: three-level rail + exit-guard in Navigation; shown-rule =
+level scope ∩ tile isolate; Esc chain (pin-exit popup first); camera rule
+mentions Sensor ▾; Pins section rewritten (implicit completion, exit-guard,
+universal arming incl. ArmProbe, the control panel, centre re-anchoring,
+centre-edit added to the cascade-drop rule); inspection = the docked
+toolbox (+ Isolate pins, probe-readout survival); Secondary views section
+rewritten for the ONE persistent tile strip (crisp line, root-framed
+defaults, active-gated per-tile coverage MRTs, adaptive `other`); Misc
+gained the top-bar cluster/menus; heatmap + pano-center consumer lines,
+render-pipeline/outline/picking mentions and the client compile-order
+descriptions updated. README: three-stop intro, Explore + Sensor ▾, new
+"tile strip" and "mesh setup (▦ menu)" bullets replacing Survey (Setup),
+matrix without the order bar, pins rewritten (no commit, exit-guard,
+two-column panel), inspection = docked collapsible toolbox hosting the
+probe-as-arm and Isolate pins.
+
+## A7 — persistent toolboxes: inspection dock + view-control cluster (2026-07-29)
+
+Spec: `ScanPin_v14_A7_persistent_toolboxes.md`. Build green after each task.
+
+- **T1 — the inspection toolbox is DOCKED, persistent, collapsible.** The
+  floating `.inspect-panel` deleted; `.inspect-dock` (same top-left column
+  slot below the rail) gains a thin header bar — the header IS the top-left
+  collapse/expand toggle (`Model.InspectOpen` + `ToggleInspectPanel`;
+  collapsed = the header edge alone; a view preference that survives
+  jumps). Present at Pair AND Pin as before (Pair = full cell, Pin =
+  pin-local map + pin-scoped chart, canonical gids — untouched). The
+  **Isolate pins** view mode moved INTO the dock (it is an inspection
+  instrument): the `AnchorGhostMode` toggle left the pair workspace's
+  cw-tools and sits beside the error-map toggle + probe. The chart's
+  ResizeObserver re-render already covers the collapse/expand cycle.
+- **T2 — the view-control cluster.** The top-left cluster is now: ▤ Cut ·
+  ▤ Far · **Sensor ▾** · Peek ◌V/↺B. The jump-to-sensor dropdown
+  (`Model.SensorMenuOpen` + `ToggleSensorMenu`, `.tb-menu-left` popover)
+  lists every mesh (swatch/number/name) and flies the main camera via the
+  existing `FlyToSensor` — the menu form of the explicit fly-to grammar,
+  replacing the A4-removed tile double-click. Peek buttons unchanged
+  (always visible, disabled-with-why outside Pair).
+
+## A6 — Pin: implicit completion + exit-guard + control panel (2026-07-29)
+
+Spec: `ScanPin_v14_A6_pin_implicit_placement_controlpanel.md`. Build green
+after each task; Supertests 97/97.
+
+- **T1 — commit mechanic DELETED; completion implicit.**
+  `ScanPinUpdate.landDraft`: the moment the last of {centre, point A,
+  point B} lands, the draft mints the pin and placement ends — no separate
+  act. `CommitPin` + `AbortPinTransaction` messages, the ✓ Commit / ✕ abort
+  buttons and their handlers deleted (no FS0049/25/26). Birth detection in
+  the reducer postlude moved from the CommitPin case to the completing
+  draft pick (new-key diff): newborn auto-selects, tiles re-frame, cell
+  caches invalidate.
+- **T2 — exit-guard (supersedes P6's silent rollback).**
+  `Model.PinExitPending : FocusLevel option` parks the wanted destination:
+  `SetFocus`/`FocusAscend` leaving Pin with an in-flight draft (always
+  incomplete under implicit completion) raise the blocking confirm-delete
+  popup (`GuiOverlays.pinExitModal`) instead of jumping. `ConfirmPinExit` =
+  jumpFocus to the parked stop (the jump itself rolls the draft back);
+  `CancelPinExit` = stay. Esc chain gained the popup as its FIRST slot
+  (cancel = stay); Esc-ascend and rail jumps share the ONE gate. A complete
+  pin (placement idle) exits promptless.
+- **T3 — the Pin control panel** (`.pin-panel`, a 2-column grid: rows =
+  subjects A/B/pin, columns = Edit | Isolate & focus). Edit = arm-driven:
+  ✚ point A / ✚ point B / ◯ Centre / ⌀ Radius — the radius SLIDER stays
+  hidden until its edit is clicked (`Model.PinRadiusEditOpen` +
+  `ToggleRadiusEdit`; collapses on pin change + focus jump). Isolate &
+  focus = the existing `SelectPoint` buttons (◎ point A / ◎ point B /
+  ◉ Pin) with hover previews + tile reframe. The SAME arms serve placement
+  and committed edits — **the centre-immovable rule is retired**: new
+  `EditCentreAt` re-anchors a committed pin onto the hit mesh (`ArmCentre`
+  valid with a selected pin; joins every pin-edit postlude: disarm, tile
+  reframe, cache invalidation, cascade edge drop). `BeginPinTransaction`
+  now clears the pin selection (the DRAFT is the subject; the newborn
+  re-selects on completion). The old focusRow/draftBar/editBar deleted; a
+  draft-progress cue + delete row remain below the panel.
+
+## A5 — universal arming for all picking (2026-07-29)
+
+Spec: `ScanPin_v14_A5_universal_arming.md`. Build green; no FS0049/25/26.
+
+- **T1+T2 — the probe folded into the ONE arm mechanism.** `ArmTarget` gained
+  `ArmProbe`; `Model.ProbeArmed` + `ToggleProbeArmed` DELETED — the probe
+  arms via `ToggleArmPick ArmProbe` (valid at Pair AND Pin with a selected
+  pair; ArmCentre/ArmPoint stay Pin-only). `armedResolve`: ArmProbe raycasts
+  both pair meshes (nearest hit); `GuiPanes.probeValueAt` fetches the exact
+  pair value (moved from the View-local probe branch); the main-view unarmed
+  probe tap path DELETED — `Sg.OnTap` now only routes armed picks. While
+  ANY arm is up (probe included) LMB never orbits and the white cursor
+  preview renders in every view (`ArmProbe` glyph = plain cross).
+- **Probe landing semantics:** the universal landed-pick-disarms rule now
+  applies — `ProbeReadoutComputed` lands only while still armed (Esc between
+  click and landing kills it), disarms, and the READOUT SURVIVES the disarm
+  (else it could never be read); the next arm, any focus jump and every cell
+  invalidation wipe it. The probe tooltip + panel readout follow the
+  readout, not the armed flag.
+- **T3 — Esc chain:** loop modal > armed-pick disarm (probe included) >
+  `FocusAscend`; the separate probe slot is gone. Rail jumps run the same
+  cleanup through `jumpFocus` (arm + preview + probe readout), so Esc and
+  its jump redundancy stay consistent; the A6 incomplete-pin guard slots in
+  next.
+
+## A4 — drop Setup · 3-level rail · persistent tile strip · top-bar menus (2026-07-29)
+
+Spec: `ScanPin_v14_A4_rail_tiles_menus.md`. All four tasks landed, build green
+after each; Supertests 97/97 (the five reorder tests left with the deleted
+code). Crisp line adopted for A4–A7: **tiles do VISIBILITY; arming does
+PICKING; tiles never pick unarmed.**
+
+- **T1 — Setup level deleted.** `FocusSetup` case removed (rail =
+  Matrix·Pair·Pin; `FocusLevel.parent/enabled` compact; initial + dataset
+  switch land on Matrix; `FocusAscend` stops at Matrix). The Setup survey
+  view (`GuiRail.surveyRow`/`rootOverview` incl. the row double-click
+  fly-to-sensor and the ◉ Isolate button) deleted outright.
+  `MeshVisibility.shown` restructured: level scope (Matrix all + hover-pair
+  narrow, Pair sel-pair, Pin pinFocus) **intersected** with the isolate lens
+  at every level. `pinShown`: Matrix = all. Greps + build: no FocusSetup
+  remains, no FS0049/25/26.
+- **T2 — ONE persistent tile strip** (`GuiPanes.meshTile`/`tileStrip`,
+  `.mesh-tiles`): mounted once per dataset, present at every level. Matrix =
+  all meshes; Pair/Pin = the pair's two. Off-scope tiles hide via
+  `.tile-off` = `position:absolute` + `visibility:hidden` (render controls
+  keep their viewports — never display:none) with scenes Sg.Active-gated.
+  Tile-click = isolate/de-isolate (`ToggleTileIsolate`), hover = preview
+  (`SetTileIsolateHover`) — `SetupIsolate*` renamed `TileIsolate*`, now a
+  strip-wide transient lens wiped on any focus jump. While a pick is ARMED
+  the tile click lands the pick instead (unchanged arm doctrine). Default
+  tile camera framing = the REFERENCE ROOT's bounds (comparable small
+  multiples); own bounds only rootless. The old `paneControl`/`surveyTile`/
+  `setupTiles`/`panes` deleted; pin marks now pair-scoped (`marksOn`) so
+  they show at Pair AND Pin; `buildPaneScene` takes an adaptive
+  `other : aval<string option>` + always-real coverage MRT (checkerboard
+  fallback gone); `buildCoverageNode`/`coverageOffscreen` gained an `active`
+  gate — per-tile MRTs render only while a placement is in flight on that
+  tile's pair (main view passes constant true). Tile ☆ Set-reference button
+  and tile double-click-fly deleted (→ T3 menu / A7 dropdown).
+- **T3 — hidden top-bar mesh menu** (`▦` button, `tb-mesh-popover`,
+  `Model.MeshMenuOpen` + `ToggleMeshMenu`): per-mesh rows (swatch, number,
+  name, ☆/★ Set-reference = the ONLY root-change path again, Tex/Dst/Shp/Inc
+  heatmap bar) + the Shape ≥ threshold slider (shown while any Shp is on).
+- **T4 — reorder-matrix toggle deleted:** the matrix order bar,
+  `Model.MatrixOrder`, `SetMatrixOrder`, the `MatrixOrder` DU and
+  `MatrixNav.orderMeshes` (RegistrationModel.fs) all gone; the matrix reads
+  `MeshNames` in sensor order. Supertests' reorder block reduced to the
+  still-live `hopDepth` check (`hopDepthTests`).
 
 ## Feature round: armed picking, pin focus, far cut, inspect panel, tile refocus (2026-07-29)
 

@@ -84,7 +84,7 @@ module GuiOverlays =
                 let inPairScope =
                     match model.Focus.GetValue t with
                     | FocusPair | FocusPin -> true
-                    | FocusSetup | FocusMatrix -> false
+                    | FocusMatrix -> false
                 inPairScope && (model.Sel.GetValue t).Pair.IsSome
                 && model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome)
         let legendJson =
@@ -246,6 +246,37 @@ module GuiOverlays =
                         Attribute("title", "Remove the selected edge and recompose the poses")
                         Dom.OnClick(fun _ -> env.Emit [ConfirmLoopResolution])
                         "Remove edge ✓"
+                    }
+                }
+            }
+        }
+
+    // The Pin exit-guard: blocking confirm-delete for leaving Pin with an
+    // incomplete pin (supersedes the old silent rollback). Esc cancels.
+    let pinExitModal (env : Env<Message>) (model : AdaptiveModel) =
+        div {
+            Class "modal-scrim"
+            Primitives.showWhen (model.PinExitPending |> AVal.map Option.isSome)
+            div {
+                Class "loop-modal"
+                div { Class "lm-title"; "Delete the incomplete pin?" }
+                div {
+                    Class "lm-hint"
+                    "This pin does not have all its parts yet (centre + a point on each mesh). Leaving the Pin level now deletes it."
+                }
+                div {
+                    Class "lm-buttons"
+                    button {
+                        Class "rail-btn lm-cancel"
+                        Attribute("title", "Stay in the Pin level and keep placing (Esc)")
+                        Dom.OnClick(fun _ -> env.Emit [CancelPinExit])
+                        "Stay"
+                    }
+                    button {
+                        Class "rail-btn lm-danger"
+                        Attribute("title", "Delete the incomplete pin and leave")
+                        Dom.OnClick(fun _ -> env.Emit [ConfirmPinExit])
+                        "Delete & leave"
                     }
                 }
             }

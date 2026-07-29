@@ -7,14 +7,15 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Superprojekt.LineGlyphs
 
-// The secondary 2D views: the Setup survey tiles (small multiples) and the Pin
-// level's two viewing/picking tiles — one right-edge strip layout, one
-// top-down ORTHOGRAPHIC camera controller, one per-mesh camera state, shared
-// by both. Picking is ARM-DRIVEN: the armed target attributes the mesh (an
+// The secondary 2D views: ONE persistent right-edge tile strip (a top-down
+// ORTHOGRAPHIC thumbnail per mesh, shared per-mesh 2D cameras), present at
+// every focus level — Matrix shows all meshes, Pair/Pin the selected pair's
+// two. Tiles do VISIBILITY (unarmed click = isolate/de-isolate, hover =
+// preview); picking is ARM-DRIVEN — the armed target attributes the mesh (an
 // ArmPoint pick raycasts its own mesh alone regardless of the view — that is
-// what keeps co-located pairs pickable), so the tiles are optional redundant
-// views beside the primary 3D surface. Picks resolve through server raycasts —
-// Sg pointer events do not fire reliably in secondary render controls.
+// what keeps co-located pairs pickable), so an armed click in a tile is just
+// another pick surface. Picks resolve through server raycasts — Sg pointer
+// events do not fire reliably in secondary render controls.
 module GuiPanes =
 
     open Primitives
@@ -29,16 +30,16 @@ module GuiPanes =
 
     let private nowMs () = float System.DateTime.UtcNow.Ticks / 10000.0
 
-    // ── The armed pick, shared by EVERY view (main 3D and both tiles; ray in
+    // ── The armed pick, shared by EVERY view (main 3D and any tile; ray in
     // RENDER space): the arm target picks the raycast candidates — ArmPoint
-    // its own mesh alone, ArmCentre both pair meshes (nearest hit anchors).
-    // Returns (mesh, own-frame local, metric world).
+    // its own mesh alone, ArmCentre/ArmProbe both pair meshes (nearest hit
+    // lands). Returns (mesh, own-frame local, metric world).
     let private armedResolve (model : AdaptiveModel) (target : ArmTarget) (ray : Ray3d)
         : Async<(string * V3d * V3d) option> =
         match (AVal.force model.Sel).Pair with
         | None -> async.Return None
         | Some (a, b) ->
-            let candidates = match target with ArmPoint m -> [m] | ArmCentre -> [a; b]
+            let candidates = match target with ArmPoint m -> [m] | ArmCentre | ArmProbe -> [a; b]
             async {
                 let! hits =
                     candidates
@@ -61,8 +62,32 @@ module GuiPanes =
                     |> Array.tryHead |> Option.map (fun (_, n, local, world) -> n, local, world)
             }
 
-    // A landed armed pick: route into the draft (centre/point) or a committed
-    // pin's point re-pick; the reducer postlude disarms on landing.
+    // A landed ArmProbe pick: exact pairwise error at the picked metric-world
+    // point, oriented MOV-relative-to-REF like every stored sample; the
+    // reducer disarms when the readout lands.
+    let private probeValueAt (env : Env<Message>) (model : AdaptiveModel) (world : V3d) =
+        match (AVal.force model.Sel).Pair with
+        | None -> ()
+        | Some (a, b) ->
+            let ka, kb = PairCell.key a b
+            let _, mov = MatrixNav.pairRefMov (AVal.force model.RegGraph) ka kb
+            let flip = mov = ka
+            let tOf (m : string) =
+                let cc = AVal.force model.CommonCentroid
+                let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) m
+                (RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model m))).Forward
+            let gen = UpdateHelpers.cellErrorGen
+            let radius = max 0.01 (AVal.force model.QuickPinRadius)
+            async {
+                let! v = Query.pairErrorAt ApiConfig.apiBase.Value ka (tOf ka) kb (tOf kb) world radius
+                match v with
+                | Some v -> env.Emit [ProbeReadoutComputed(gen, world, (if flip then -v else v))]
+                | None -> ()
+            } |> Async.Start
+
+    // A landed armed pick: route into the draft (centre/point), a committed
+    // pin's point re-pick, or the probe readout; the reducer disarms on
+    // landing.
     let armedPick (env : Env<Message>) (model : AdaptiveModel) (ray : Ray3d) =
         match AVal.force model.ArmedPick with
         | None -> ()
@@ -70,18 +95,23 @@ module GuiPanes =
             async {
                 let! hit = armedResolve model target ray
                 match hit with
-                | Some (mesh, local, _) ->
-                    let msgs =
-                        match AVal.force model.ScanPins.Placement with
-                        | PlacementActive _ ->
-                            match target with
-                            | ArmCentre -> [ScanPinMsg (DraftAreaAt(mesh, local))]
-                            | ArmPoint m -> [ScanPinMsg (DraftPointAt(m, local))]
-                        | PlacementIdle ->
-                            match target, (AVal.force model.Sel).Pin with
-                            | ArmPoint m, Some id -> [ScanPinMsg (EditPointAt(id, m, local))]
-                            | _ -> []
-                    if not (List.isEmpty msgs) then env.Emit msgs
+                | Some (mesh, local, world) ->
+                    match target with
+                    | ArmProbe -> probeValueAt env model world
+                    | ArmCentre | ArmPoint _ ->
+                        let msgs =
+                            match AVal.force model.ScanPins.Placement with
+                            | PlacementActive _ ->
+                                match target with
+                                | ArmCentre -> [ScanPinMsg (DraftAreaAt(mesh, local))]
+                                | ArmPoint m -> [ScanPinMsg (DraftPointAt(m, local))]
+                                | ArmProbe -> []
+                            | PlacementIdle ->
+                                match target, (AVal.force model.Sel).Pin with
+                                | ArmPoint m, Some id -> [ScanPinMsg (EditPointAt(id, m, local))]
+                                | ArmCentre, Some id -> [ScanPinMsg (EditCentreAt(id, mesh, local))]
+                                | _ -> []
+                        if not (List.isEmpty msgs) then env.Emit msgs
                 | None -> ()
             } |> Async.Start
 
@@ -101,17 +131,24 @@ module GuiPanes =
                         env.Emit [SetArmPreview (hit |> Option.map (fun (_, _, w) -> w))]
                 } |> Async.Start
 
-    // ── The ONE 2D top-down camera (tiles AND panes, keyed per mesh — a mesh
-    // keeps its view across levels): the stored pan/zoom, else the bounds
-    // framing (sky = +Y — a look-down view cannot use +Z).
+    // ── The ONE 2D top-down camera (keyed per mesh — a mesh keeps its view
+    // across levels): the stored pan/zoom, else the default bounds framing
+    // (sky = +Y — a look-down view cannot use +Z). The default frames the
+    // REFERENCE ROOT's bounds, so unpanned tiles all show the same area
+    // (comparable small multiples); own bounds only without a root.
     let private tileCamOf (model : AdaptiveModel) (name : string) : aval<TileCam> =
         AVal.custom (fun t ->
             match Map.tryFind name (model.TileCams.GetValue t) with
             | Some c -> c
             | None ->
                 let cc = model.CommonCentroid.GetValue t
-                let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
-                match Map.tryFind name (model.MeshBounds.GetValue t) with
+                let bounds = model.MeshBounds.GetValue t
+                let subject =
+                    match (model.RegGraph.GetValue t).Root with
+                    | Some r when (match Map.tryFind r bounds with Some b -> not b.IsInvalid | None -> false) -> r
+                    | _ -> name
+                let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) subject
+                match Map.tryFind subject bounds with
                 | Some b when not b.IsInvalid ->
                     { Centre = ScanPin.renderCentre cc scale b.Center
                       Radius = max 1.0 (b.Size.Length * scale * 0.55) }
@@ -205,14 +242,40 @@ module GuiPanes =
                 env.Emit [SetTileCam(name, { Centre = cam.Centre + off - off * k; Radius = cam.Radius * k })])
         }
 
-    let private paneControl (env : Env<Message>) (model : AdaptiveModel)
-                            (name : string) (other : string) =
-        let paneOn = model.Focus |> AVal.map ((=) FocusPin)
+    // One strip tile: a top-down thumbnail of the mesh (displayed pose, live
+    // survey heatmap, the shared 2D pan/zoom camera), identity chip, the gold
+    // root outline on top, and the pair's pin marks while this mesh sits in
+    // the selected pair. The tile's OWN interaction is visibility: unarmed
+    // click = isolate/de-isolate, hover = isolate preview. While a pick is
+    // armed the click lands the pick instead — the ARM TARGET attributes the
+    // mesh, the tile is just another view surface.
+    let private meshTile (env : Env<Message>) (model : AdaptiveModel) (name : string) =
+        // Strip scope: Matrix = every mesh, Pair/Pin = the selected pair only.
+        let shownA =
+            (model.Focus, model.Sel) ||> AVal.map2 (fun f s ->
+                match f with
+                | FocusMatrix -> true
+                | FocusPair | FocusPin ->
+                    match s.Pair with
+                    | Some (a, b) -> name = a || name = b
+                    | None -> false)
         let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+        let isRoot = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
+        let isolated = model.TileIsolate |> AVal.map ((=) (Some name))
         let datasetScale =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
-        // Own-frame local → this pane's render position, riding the mesh's
+        // The other pair mesh while this mesh sits in the selected pair —
+        // scopes the pin marks and feeds the armed-placement overlap gate.
+        let otherA =
+            model.Sel |> AVal.map (fun s ->
+                match s.Pair with
+                | Some (a, b) when name = a -> Some b
+                | Some (a, b) when name = b -> Some a
+                | _ -> None)
+        let marksOn =
+            (shownA, otherA) ||> AVal.map2 (fun sh o -> sh && o.IsSome)
+        // Own-frame local → this tile's render position, riding the mesh's
         // displayed pose.
         let renderOf (t : AdaptiveToken) (local : V3d) =
             let cc = model.CommonCentroid.GetValue t
@@ -220,7 +283,10 @@ module GuiPanes =
             ScanPin.renderCentre cc s ((MeshView.displayedWorldAt model t name).Forward.TransformPos local)
 
         div {
-            Class "pin-pane"
+            Class "mesh-tile"
+            classWhen "tile-off" (shownA |> AVal.map not)
+            classWhen "tile-iso" isolated
+            classWhen "tile-armed" (model.ArmedPick |> AVal.map Option.isSome)
             div {
                 Class "pane-chip"
                 Attribute("title", name)
@@ -230,10 +296,11 @@ module GuiPanes =
                     Class "pane-chip-name"
                     model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
                 }
+                span { Class "pmx-root-star"; isRoot |> AVal.map (fun r -> if r then "★" else "") }
             }
             renderControl {
                 RenderControl.Samples 1
-                Class "pane-rc"
+                Class "tile-rc"
 
                 let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
@@ -248,19 +315,20 @@ module GuiPanes =
                 let view = cam2dView model camA
                 let proj = cam2dProj model camA size
 
-                // Picking/hover only while a pick is ARMED — the arm target
-                // attributes the mesh (not this tile); unarmed clicks stay
-                // camera-only.
                 let rayOf (cursorPx : V2d) =
                     pickRay cursorPx (AVal.force clientSize) (AVal.force view) (AVal.force proj)
+                // The tile's click: an armed pick captures it (any view is a
+                // pick surface); unarmed it toggles the isolation.
                 let pick (cursorPx : V2d) =
-                    if (AVal.force model.ArmedPick).IsSome then
-                        armedPick env model (rayOf cursorPx)
+                    if (AVal.force model.ArmedPick).IsSome then armedPick env model (rayOf cursorPx)
+                    else env.Emit [ToggleTileIsolate name]
                 let hover (p : V2d option) =
                     if (AVal.force model.ArmedPick).IsSome then
                         match p with
                         | Some cursorPx -> armedHover env model (rayOf cursorPx)
                         | None -> env.Emit [SetArmPreview None]
+                    else
+                        env.Emit [SetTileIsolateHover (p |> Option.map (fun _ -> name))]
 
                 cam2dAtts env name camA clientSize (Some pick) (Some hover)
 
@@ -269,15 +337,18 @@ module GuiPanes =
                 Sg.Pass RenderPass.passZero
                 Sg.Uniform("ViewportSize", size)
 
-                // Pane-camera coverage MRT: feeds the armed-placement
-                // isolate-overlap gate inside the pane mesh shader.
-                let cov0, cov1, _ = OutlineView.coverageOffscreen info model view proj
-                MeshView.buildPaneScene model name paneOn (Some (other, cov0, cov1)) size
+                // Tile-camera coverage MRT for the armed-placement
+                // isolate-overlap gate — rendered only while the gate reads it.
+                let covActive =
+                    (marksOn, model.ScanPins.Placement) ||> AVal.map2 (fun m pl ->
+                        m && (match pl with PlacementActive _ -> true | PlacementIdle -> false))
+                let cov0, cov1, _ = OutlineView.coverageOffscreen info model covActive view proj
+                MeshView.buildPaneScene model name shownA (otherA, cov0, cov1) size
 
                 // The gold reference outline: the ROOT mesh's footprint from
                 // this tile's camera, on top of everything.
-                let rc0, rc1, rtexel = OutlineView.rootCoverageOffscreen info model paneOn view proj
-                OutlineView.buildRootOutline paneOn (model.OutlineWidthPx |> AVal.map float32) rc0 rc1 rtexel
+                let rc0, rc1, rtexel = OutlineView.rootCoverageOffscreen info model shownA view proj
+                OutlineView.buildRootOutline shownA (model.OutlineWidthPx |> AVal.map float32) rc0 rc1 rtexel
 
                 // Committed point fills on this mesh: mesh-colour icospheres
                 // (the white outlines ride in the line node below); the
@@ -292,7 +363,8 @@ module GuiPanes =
                         let st =
                             AVal.custom (fun t ->
                                 match HashMap.tryFind id (pinsVal.GetValue t) with
-                                | Some p when (model.Sel.GetValue t).Pair = Some p.Pair ->
+                                | Some p when (model.Sel.GetValue t).Pair = Some p.Pair
+                                              && (name = fst p.Pair || name = snd p.Pair) ->
                                     let local = if name = fst p.Pair then p.PointA else p.PointB
                                     let sz = if (model.Sel.GetValue t).Pin = Some id then 0.05 else 0.038
                                     Some (renderOf t local, sz)
@@ -303,19 +375,19 @@ module GuiPanes =
                                 | None -> Trafo3d.Scale 0.0)
                         sg {
                             Sg.Pass RenderPass.passOne
-                            ScanPinScene.sphereShell view proj paneOn trafo meshColV4
+                            ScanPinScene.sphereShell view proj marksOn trafo meshColV4
                         })
                 pointFills
 
-                // Every line mark of the pane: white outlines of the committed
+                // Every line mark of the tile: white outlines of the committed
                 // points, the selected pin's area sphere, and the ALL-WHITE
                 // in-flight draft (uncommitted layer).
                 let segs =
                     AVal.custom (fun t ->
                         let sel = model.Sel.GetValue t
                         match sel.Pair with
-                        | None -> [||]
-                        | Some pair ->
+                        | Some (pa, pb) when name = pa || name = pb ->
+                            let pair = (pa, pb)
                             let pins = pinsVal.GetValue t
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             for (id, p) in HashMap.toSeq pins do
@@ -365,11 +437,14 @@ module GuiPanes =
                                     addCross out cR (rR * 0.15) white 1.6
                                  | ArmPoint _ ->
                                     addWireSphere out cR 0.06 white 1.6 20
+                                    addCross out cR 0.075 white 1.6
+                                 | ArmProbe ->
                                     addCross out cR 0.075 white 1.6)
                              | _ -> ())
-                            out.ToArray())
+                            out.ToArray()
+                        | _ -> [||])
                 sg {
-                    Sg.Active paneOn
+                    Sg.Active marksOn
                     Sg.Pass RenderPass.passOne
                     Sg.DepthTest (AVal.constant DepthTest.None)
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
@@ -379,61 +454,9 @@ module GuiPanes =
             }
         }
 
-    // One Setup survey tile: a top-down thumbnail of the mesh (displayed pose,
-    // live survey heatmap, the shared 2D pan/zoom camera) + identity chip +
-    // the explicit ☆ Set-reference button — the tile strip IS the survey/
-    // root-selection browser. Double-click flies the main camera to the sensor.
-    let private surveyTile (env : Env<Message>) (model : AdaptiveModel) (name : string) =
-        let onSetup = model.Focus |> AVal.map ((=) FocusSetup)
-        let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-        let isRoot = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
-        div {
-            Class "setup-tile"
-            Attribute("title", sprintf "%s — double-click: fly the main view to the sensor viewpoint" name)
-            Dom.OnDoubleClick(fun _ -> env.Emit [FlyToSensor name])
-            div {
-                Class "pane-chip"
-                span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (c4bToRgbCss (meshColor i))])) }
-                span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                span {
-                    Class "pane-chip-name"
-                    model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
-                }
-                span { Class "pmx-root-star"; isRoot |> AVal.map (fun r -> if r then "★" else "") }
-            }
-            button {
-                Class "rail-btn setup-ref tile-ref"
-                classWhen "setup-ref-on" isRoot
-                Attribute("title", "Designate as the reference root. Re-rooting inside the registered tree keeps the registration; a mesh outside it clears the graph.")
-                Dom.OnClick(fun _ -> env.Emit [SetRegRoot name])
-                isRoot |> AVal.map (fun r -> if r then "★ Reference" else "☆ Set reference")
-            }
-            renderControl {
-                RenderControl.Samples 1
-                Class "tile-rc"
-                let! info = RenderControl.Info
-                let! size = RenderControl.ViewportSize
-                let! client = RenderControl.ClientSize
-                let clientSize =
-                    (client, size) ||> AVal.map2 (fun c v ->
-                        if c.X > 1 && c.Y > 1 then c else v)
-                let camA = tileCamOf model name
-                let view = cam2dView model camA
-                let proj = cam2dProj model camA size
-                cam2dAtts env name camA clientSize None None
-                Sg.View view
-                Sg.Proj proj
-                Sg.Uniform("ViewportSize", size)
-                MeshView.buildPaneScene model name onSetup None size
-                // The gold reference outline (root footprint), on top.
-                let rc0, rc1, rtexel = OutlineView.rootCoverageOffscreen info model onSetup view proj
-                OutlineView.buildRootOutline onSetup (model.OutlineWidthPx |> AVal.map float32) rc0 rc1 rtexel
-            }
-        }
-
-    // The left-edge width-resize handle both right-edge strips share — pure
-    // DOM (layout chrome, not model state); the render controls track their
-    // client size, so the tiles reflow for free.
+    // The strip's left-edge width-resize handle — pure DOM (layout chrome,
+    // not model state); the render controls track their client size, so the
+    // tiles reflow for free.
     let private stripResizeHandle (title : string) =
         div {
             Class "tiles-handle"
@@ -450,38 +473,16 @@ module GuiPanes =
             ]
         }
 
-    // The Setup tile strip: per-mesh small multiples, mounted once per dataset
-    // (mesh list) and visibility-scoped to the Setup level — no tiles at
-    // Matrix/Pair/Pin.
-    let setupTiles (env : Env<Message>) (model : AdaptiveModel) =
-        let onSetup = model.Focus |> AVal.map ((=) FocusSetup)
+    // The tile strip: one top-down tile per mesh down the right edge, mounted
+    // ONCE per dataset and present at EVERY level — Matrix shows all meshes
+    // (default-framed on the reference root, comparable small multiples),
+    // Pair/Pin narrow to the selected pair's two. Off-scope tiles hide via
+    // visibility + absolute positioning — never display:none (a collapsed
+    // render control loses its viewport) — and their scenes are
+    // Sg.Active-gated, so hidden tiles cost ~nothing per frame.
+    let tileStrip (env : Env<Message>) (model : AdaptiveModel) =
         div {
-            Class "setup-tiles"
-            onSetup |> AVal.map (fun on -> if on then None else Some (Class "panes-off"))
+            Class "mesh-tiles"
             stripResizeHandle "Drag to resize the tile strip"
-            model.MeshNames |> AList.map (surveyTile env model)
-        }
-
-    // The Pin strip: the pair's two picking tiles stacked vertically — the
-    // same thin, resizable right-edge strip as the Setup small multiples (the
-    // main 3D stays visible beside it for context). Hidden via visibility
-    // (NOT display:none — a collapsed render control would lose its
-    // viewport); the tile scenes are Sg.Active-gated so hidden tiles cost
-    // nothing.
-    let panes (env : Env<Message>) (model : AdaptiveModel) =
-        let onPin = model.Focus |> AVal.map ((=) FocusPin)
-        div {
-            Class "pin-panes"
-            onPin |> AVal.map (fun on -> if on then None else Some (Class "panes-off"))
-            stripResizeHandle "Drag to resize the pin tiles"
-            let content =
-                model.Sel
-                |> AVal.map (fun s -> s.Pair)
-                |> AVal.map (function
-                    | Some (a, b) ->
-                        IndexList.ofList [ paneControl env model a b
-                                           paneControl env model b a ]
-                    | None -> IndexList.empty)
-                |> AList.ofAVal
-            content
+            model.MeshNames |> AList.map (meshTile env model)
         }

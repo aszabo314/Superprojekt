@@ -23,8 +23,8 @@ type ContactRingState =
 //  • each correspondence point in its own mesh's frame.
 // The points are UNCONSTRAINED — they may lie outside the area marker's ROI
 // (that displacement is what registration corrects); the ROI scopes error
-// analysis only. Pins are immovable and unrenamable — edits are radius,
-// delete, and point re-pick.
+// analysis only. Pins are unrenamable — edits are radius, delete, point
+// re-pick and centre re-pick (which re-anchors onto the hit mesh).
 type ScanPin = {
     Id           : ScanPinId
     // Immutable identity, assigned at creation: a random 2-char ShortName.

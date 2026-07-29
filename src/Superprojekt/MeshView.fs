@@ -334,16 +334,16 @@ module MeshView =
         // false-colour read is comparable.
         let cellRangeA =
             (model.CellError, model.CellDist) ||> AVal.map2 cellRange
-        // The shown rule's shared inputs (Setup isolate: hover wins over the
+        // The shown rule's shared inputs (tile isolate: hover wins over the
         // click lock) — ONE context aval, N cheap per-mesh bool projections.
         let shownCtx =
             AVal.custom (fun t ->
                 let focus = model.Focus.GetValue t
                 let sel = model.Sel.GetValue t
                 let iso =
-                    match model.SetupIsolateHover.GetValue t with
+                    match model.TileIsolateHover.GetValue t with
                     | Some _ as h -> h
-                    | None -> model.SetupIsolate.GetValue t
+                    | None -> model.TileIsolate.GetValue t
                 let hp = model.MatrixHoverPair.GetValue t
                 let pf =
                     MeshVisibility.pinFocusMesh (model.PinFocusHover.GetValue t)
@@ -351,7 +351,7 @@ module MeshView =
                 focus, sel.Pair, iso, hp, pf)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
-            // The ONE shown rule: survey levels show every mesh (Setup isolate /
+            // The ONE shown rule: Matrix shows every mesh (tile isolate /
             // matrix hover narrow it); Pair isolates the selected pair, Pin
             // narrows further to the effective focus mesh (the rest drop to
             // the ghost floor).
@@ -392,7 +392,7 @@ module MeshView =
                     let inPairScope =
                         match model.Focus.GetValue t with
                         | FocusPair | FocusPin -> true
-                        | FocusSetup | FocusMatrix -> false
+                        | FocusMatrix -> false
                     match (model.Sel.GetValue t).Pair with
                     | Some (a, b) when inPairScope && model.CellMapOn.GetValue t ->
                         let _, mov = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
@@ -602,8 +602,10 @@ module MeshView =
     // displayed pose — no depth buffer, no occlusion — so the coverage composite
     // can outline each mesh separately even where meshes overlap or are hidden.
     // Channels cap at 8 (2×Rgba8 MRT); meshes beyond keep only the combined
-    // union outline.
-    let buildCoverageNode (model : AdaptiveModel) (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+    // union outline. `activeA` gates the whole pass (the per-tile MRTs render
+    // only while their overlap gate can read them; the main view passes true).
+    let buildCoverageNode (model : AdaptiveModel) (activeA : aval<bool>)
+                          (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
         let meshIndices = meshIndicesA model
         let nodes =
             model.MeshNames |> AList.map (fun name ->
@@ -611,7 +613,8 @@ module MeshView =
                 let channel = meshIndices |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue 0)
                 let active =
                     AVal.custom (fun t ->
-                        loaded.fvc.GetValue t > 3 && (channel.GetValue t) < 8
+                        activeA.GetValue t
+                        && loaded.fvc.GetValue t > 3 && (channel.GetValue t) < 8
                         && not (peekVisHiddenAt model t name))
                 sg {
                     Sg.Active active
@@ -702,19 +705,18 @@ module MeshView =
         pairIdx |> AVal.map (function Some (_, ib) -> sel ib 0 | None -> V4f.Zero),
         pairIdx |> AVal.map (function Some (_, ib) -> sel ib 1 | None -> V4f.Zero)
 
-    // One secondary-view mesh (a Pin pane or a Setup survey tile): the mesh
-    // `name` with the full shipped shader, inspection modes off but the
-    // per-mesh survey heatmap live. With `overlap = Some (other, cov0, cov1)`
-    // (the Pin panes) the isolate-overlap gate engages while a placement is
-    // armed: solid only where the view's coverage MRT covers the pixel in
-    // BOTH pair channels, the rest at the ghost floor — exactly the valid
-    // placement area. `None` (the tiles) binds an inert texture instead —
-    // the sampler slot must be fed even though the gate never reads it.
+    // One strip-tile mesh: the mesh `name` with the full shipped shader,
+    // inspection modes off but the per-mesh survey heatmap live. `overlap` =
+    // (other pair mesh — adaptive, Some while this tile's mesh sits in the
+    // selected pair — plus the tile-camera coverage MRT): the isolate-overlap
+    // gate engages while a placement is armed — solid only where the MRT
+    // covers the pixel in BOTH pair channels, the rest at the ghost floor —
+    // exactly the valid placement area.
     let buildPaneScene
         (model : AdaptiveModel)
         (name : string)
         (paneActive : aval<bool>)
-        (overlap : (string * aval<IBackendTexture> * aval<IBackendTexture>) option)
+        (overlap : aval<string option> * aval<IBackendTexture> * aval<IBackendTexture>)
         (viewportSize : aval<V2i>) : ISceneNode =
         let loaded = loadMeshAsync (fun () -> ()) name
         let scale = scaleFor model name
@@ -727,18 +729,17 @@ module MeshView =
                 V4f palette.[i % palette.Length])
         let placing =
             model.ScanPins.Placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
+        let otherA, cov0, cov1 = overlap
         // The overlap gate needs BOTH pair channels below the 8-channel MRT cap;
         // beyond it the gate disengages outright rather than half-testing.
         let pairIdx =
-            match overlap with
-            | None -> AVal.constant None
-            | Some (other, _, _) ->
-                (placing, meshIndices) ||> AVal.map2 (fun pl idx ->
-                    if not pl then None
-                    else
-                        let ia = Map.tryFind name idx |> Option.defaultValue 8
-                        let ib = Map.tryFind other idx |> Option.defaultValue 8
-                        if ia < 8 && ib < 8 then Some (ia, ib) else None)
+            (placing, otherA, meshIndices) |||> AVal.map3 (fun pl other idx ->
+                match other with
+                | Some o when pl ->
+                    let ia = Map.tryFind name idx |> Option.defaultValue 8
+                    let ib = Map.tryFind o idx |> Option.defaultValue 8
+                    if ia < 8 && ib < 8 then Some (ia, ib) else None
+                | _ -> None)
         let sel (k : int) (target : int) =
             if k / 4 = target then
                 match k % 4 with
@@ -754,10 +755,7 @@ module MeshView =
         // IBackendTexture → ITexture through AVal.map (aval is invariant — a
         // direct upcast of the aval itself does not typecheck).
         let covTex0, covTex1 =
-            match overlap with
-            | Some (_, c0, c1) ->
-                c0 |> AVal.map (fun t -> t :> ITexture), c1 |> AVal.map (fun t -> t :> ITexture)
-            | None -> DefaultTextures.checkerboard, DefaultTextures.checkerboard
+            cov0 |> AVal.map (fun t -> t :> ITexture), cov1 |> AVal.map (fun t -> t :> ITexture)
         // Survey heatmap inputs (same sensor/range conventions as the main pass).
         let sensorOrigin =
             (fullTrafo, model.PanoCenters, loaded.centroid) |||> AVal.map3 (fun t panos c ->

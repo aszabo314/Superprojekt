@@ -29,8 +29,12 @@ type Message =
     // Focus rail: free jump to an enabled stop (the reducer re-guards
     // enablement, so a stale click can never land on a disabled level).
     | SetFocus of FocusLevel
-    // Escape: up one level (Pin→Pair→Matrix→Setup; at Setup a no-op).
+    // Escape: up one level (Pin→Pair→Matrix; at Matrix a no-op).
     | FocusAscend
+    // The Pin exit-guard popup: confirm = delete the incomplete pin and
+    // perform the parked jump; cancel = stay in Pin.
+    | ConfirmPinExit
+    | CancelPinExit
     // Matrix cell click: select the pair (a NEW pair cascade-clears pin/point)
     // and enter its Pair level.
     | SelectPair of a:string * b:string
@@ -42,8 +46,10 @@ type Message =
     | SelectPoint of string option
     // Transient hover preview of the Pin-level focus/arm buttons.
     | SetPinFocusHover of PinHover option
-    // Arm/disarm a Pin-level pick (same target again = disarm; the reducer
-    // guards level + validity — ArmCentre only during placement).
+    // The Pin panel's radius disclosure (slider hidden until clicked).
+    | ToggleRadiusEdit
+    // Arm/disarm a pick (same target again = disarm; the reducer guards level
+    // + validity — ArmCentre only during placement, ArmProbe at Pair/Pin).
     | ToggleArmPick of ArmTarget
     // The armed pick's cursor preview point (metric world; view-side hover
     // raycasts, throttled). Ignored while nothing is armed.
@@ -58,8 +64,7 @@ type Message =
     // 3D hover over a brushed sample (diagram cross-highlight + exact readout).
     | SetHoverSample of int option
     | HoverReadoutComputed of gen:int * gid:int * value:float
-    // The armed point-sample probe (fully transient).
-    | ToggleProbeArmed
+    // A landed ArmProbe pick's exact value (the landing auto-disarms).
     | ProbeReadoutComputed of gen:int * world:V3d * value:float
     // The in-cell false-colour error map toggle.
     | ToggleCellMap
@@ -81,10 +86,10 @@ type Message =
     | ClearToast
     // Per-mesh intrinsic error visualization (Overview mesh list). HeatOff = textured.
     | SetMeshHeatmap of mesh:string * HeatmapMode
-    // Setup mesh isolation: transient hover preview + click lock (survey rows).
-    // Both clear on leaving the Setup view.
-    | SetSetupIsolateHover of string option
-    | ToggleSetupIsolate of string
+    // Tile-strip mesh isolation: transient hover preview + click lock (the
+    // tiles' own interaction). Both clear on any focus jump.
+    | SetTileIsolateHover of string option
+    | ToggleTileIsolate of string
     // Matrix-cell hover: preview the pair's screen-space overlap area in 3D.
     | SetMatrixHoverPair of (string * string) option
     // Shp cutoff — triangles below the quality threshold render transparent.
@@ -97,9 +102,13 @@ type Message =
     | SetActiveDataset   of string
     | ScanPinMsg              of ScanPinMessage
     | SetRenderingMode of RenderingMode
-    // Row/col order of the pair-matrix navigator.
-    | SetMatrixOrder of MatrixOrder
     | ToggleGearPopover
+    // The hidden top-bar mesh menu (reference root + per-mesh render toggles).
+    | ToggleMeshMenu
+    // The top-bar jump-to-sensor dropdown.
+    | ToggleSensorMenu
+    // Collapse/expand the docked inspection toolbox.
+    | ToggleInspectPanel
     // In-view near-plane slice: cut-plane fraction of the eye→centre distance (0 = off).
     | SetNearCut of float
     // The far twin (fraction of the eye→centre distance; ≥ 2.495 = off).
@@ -114,15 +123,17 @@ type Message =
 
 and ScanPinMessage =
     // ── the placement transaction: modal, FREE ORDER (the arm buttons pick
-    // which of centre / point A / point B lands next), Esc aborts wholesale.
+    // which of centre / point A / point B lands next); the pin exists
+    // IMPLICITLY the moment all three parts are placed — leaving Pin with an
+    // incomplete draft raises the exit-guard (confirm-delete).
     | BeginPinTransaction of pair:(string * string)
     | DraftAreaAt of mesh:string * local:V3d
     | DraftPointAt of mesh:string * local:V3d
-    | CommitPin
-    | AbortPinTransaction
-    // ── committed-pin edits (each invalidates the pair's solve). A point
-    // re-pick goes through the armed pick like every placement pick.
+    // ── committed-pin edits (each invalidates the pair's solve). Point and
+    // centre re-picks go through the armed pick like every placement pick;
+    // the centre re-pick re-anchors the pin onto the hit mesh.
     | SetInnerRadius of ScanPinId * float
     | EditPointAt of ScanPinId * mesh:string * local:V3d
+    | EditCentreAt of ScanPinId * mesh:string * local:V3d
     | DeletePin of ScanPinId
     | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>

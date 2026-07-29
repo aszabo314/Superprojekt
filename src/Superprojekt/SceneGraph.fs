@@ -195,7 +195,7 @@ module SceneGraph =
         let meshScene  = MeshView.buildScene loadFinished clipUniforms model
         // ONE coverage MRT render, shared by the footprint composite and the
         // mesh shader's matrix-hover overlap preview.
-        let cov0, cov1, covTexel = OutlineView.coverageOffscreen info model view proj
+        let cov0, cov1, covTexel = OutlineView.coverageOffscreen info model (AVal.constant true) view proj
         let outlineScene = OutlineView.build info model view proj (cov0, cov1, covTexel)
         let ovOn, ovSelA0, ovSelA1, ovSelB0, ovSelB1 = MeshView.overlapPreviewUniforms model
         let pinScene   = ScanPinScene.build env view proj fullscreenActive model

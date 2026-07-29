@@ -6,10 +6,10 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Microsoft.JSInterop
 
-// Left panel: the registration navigator — the focus rail (survey/root Setup +
-// the mesh×mesh pair matrix) and the cell-workspace (per-pair toolkit +
-// error inspection). Pure view — every control dispatches an existing message
-// and never issues server queries itself.
+// Left panel: the registration navigator — the focus rail (the mesh×mesh pair
+// matrix and its narrowing Pair/Pin scopes) and the cell-workspace (per-pair
+// toolkit + error inspection). Pure view — every control dispatches an
+// existing message and never issues server queries itself.
 module GuiRail =
 
     open Primitives
@@ -117,11 +117,12 @@ module GuiRail =
         "})();"
     ]
 
-    // ── The floating inspection panel's body, keyed to ONE pair: the diagram,
-    // the false-colour map toggle, the transient armed probe and the readouts.
-    // The Pin level narrows the diagram to the selected pin — gids stay
-    // CANONICAL (indices into the full CellError sample concatenation), so the
-    // brush keeps addressing the same 3D samples at either level.
+    // ── The inspection toolbox's body, keyed to ONE pair: the diagram, the
+    // false-colour map toggle, the armed probe, the isolate-pins view mode
+    // and the readouts. The Pin level narrows the diagram to the selected
+    // pin — gids stay CANONICAL (indices into the full CellError sample
+    // concatenation), so the brush keeps addressing the same 3D samples at
+    // either level.
     let private inspectBody (env : Env<Message>) (model : AdaptiveModel) (a : string) (b : string) =
         let chartData =
             AVal.custom (fun t ->
@@ -217,20 +218,27 @@ module GuiRail =
                 }
                 button {
                     Class "rail-btn cw-probe"
-                    classWhen "rail-btn-active" model.ProbeArmed
-                    Attribute("title", "Armed point probe: while armed, pick any 3D point for its exact error value. Fully transient — disarm wipes it (Esc).")
-                    Dom.OnClick(fun _ -> env.Emit [ToggleProbeArmed])
+                    classWhen "rail-btn-active" (model.ArmedPick |> AVal.map ((=) (Some ArmProbe)))
+                    Attribute("title", "Arm the point probe: click any view for the exact error value at that point (a landed pick disarms; Esc disarms). Transient — the next arm or jump wipes it.")
+                    Dom.OnClick(fun _ -> env.Emit [ToggleArmPick ArmProbe])
                     "⊕ Probe"
+                }
+                div {
+                    Class "rail-isolate"
+                    Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes")
+                    compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
+                        env.Emit [ToggleAnchorGhostMode])
                 }
             }
             div {
                 Class "cw-readout"
                 span {
                     Class "cw-readout-probe"
-                    showWhen model.ProbeArmed
+                    showWhen ((model.ArmedPick, model.ProbeReadout) ||> AVal.map2 (fun a r ->
+                        a = Some ArmProbe || r.IsSome))
                     model.ProbeReadout |> AVal.map (function
                         | Some (_, v) -> sprintf "probe %+.1f mm" (v * 1000.0)
-                        | None -> "probe: pick a 3D point")
+                        | None -> "probe: pick a point in any view")
                 }
                 span {
                     Class "cw-readout-hover"
@@ -261,9 +269,10 @@ module GuiRail =
             }
         }
 
-    // ── The floating inspection panel: below the navigator, Pair AND Pin
-    // levels (the Pin level shows the selected pin only). Detached from the
-    // rail so inspection reads the same in both scopes; keyed to the pair.
+    // ── The docked inspection toolbox: top-left below the navigator,
+    // present at Pair AND Pin (it escapes individual workflow steps; the Pin
+    // level shows the selected pin only), collapsible to its thin header
+    // edge — the header IS the top-left toggle. Keyed to the pair.
     let inspectPanel (env : Env<Message>) (model : AdaptiveModel) =
         let visible =
             (model.Focus, model.Sel) ||> AVal.map2 (fun f s ->
@@ -276,33 +285,36 @@ module GuiRail =
                 | None -> IndexList.empty)
             |> AList.ofAVal
         div {
-            Class "inspect-panel"
+            Class "inspect-dock"
             Primitives.showWhen visible
-            content
+            div {
+                Class "inspect-dock-head"
+                Attribute("title", "Inspection toolbox — click to collapse/expand")
+                Dom.OnClick(fun _ -> env.Emit [ToggleInspectPanel])
+                span {
+                    Class "inspect-dock-caret"
+                    model.InspectOpen |> AVal.map (fun o -> if o then "▾" else "▸")
+                }
+                span { Class "lp-sublabel"; "Inspect" }
+            }
+            div {
+                Class "inspect-dock-body"
+                Primitives.showWhen model.InspectOpen
+                content
+            }
         }
 
     let rail (env : Env<Message>) (model : AdaptiveModel) =
 
-        // ── Mesh × mesh navigator: rows/cols = meshes, UPPER TRIANGLE only
-        // (registration is symmetric — no lower half; the diagonal is cosmetic
-        // placeholders, root designation is the Setup step). Cell (A,B) IS the
-        // pair's registration edge. Emphasis ramp: impossible fades into the
-        // background (a hole) <
+        // ── Mesh × mesh navigator: rows/cols = meshes in sensor (acquisition)
+        // order, UPPER TRIANGLE only (registration is symmetric — no lower
+        // half; the diagonal is cosmetic placeholders, root designation lives
+        // in the top-bar mesh menu). Cell (A,B) IS the pair's registration
+        // edge. Emphasis ramp: impossible fades into the background (a hole) <
         // possible = an outlined empty vessel < registered = filled, fill
         // strength = the edge's ONE quality scalar (achromatic ink — the colour
         // families stay free for gradients and mesh identity).
-        // Ordering = the one scalability lever: sensor (canonical) / coverage
-        // (XY footprint) / connectedness to the root. Contents never change
-        // with the order — cells derive from the pair alone.
-        let orderedNames =
-            AVal.custom (fun t ->
-                let names = model.MeshNames.Content.GetValue t |> IndexList.toList
-                let canonical = model.MeshOrder.Content.GetValue t |> HashMap.toList |> Map.ofList
-                let coverage =
-                    model.MeshBounds.GetValue t
-                    |> Map.map (fun _ (b : Box3d) -> if b.IsInvalid then 0.0 else b.Size.X * b.Size.Y)
-                MatrixNav.orderMeshes (model.MatrixOrder.GetValue t) canonical coverage
-                    (model.RegGraph.GetValue t) names)
+        let orderedNames = model.MeshNames.Content |> AVal.map IndexList.toList
         let pairCellView (a : string) (b : string) =
             let st =
                 (model.PairOverlaps, model.RegGraph) ||> AVal.map2 (fun po g -> PairCell.state po g a b)
@@ -351,17 +363,6 @@ module GuiRail =
         // Rebuilt wholesale on an order change — a ≤ palette-sized grid that
         // changes rarely (the sanctioned simple AList form).
         let pairMatrixView () =
-            let orderBar =
-                div {
-                    Class "pmx-order"
-                    Attribute("title", "Row/column order: sensor (acquisition), coverage (footprint), or connectedness to the root")
-                    span { Class "pmx-order-label"; "Order" }
-                    compactButtonBar [
-                        "Sensor", (model.MatrixOrder |> AVal.map ((=) OrderSensor)),    (fun () -> env.Emit [SetMatrixOrder OrderSensor])
-                        "Cover",  (model.MatrixOrder |> AVal.map ((=) OrderCoverage)),  (fun () -> env.Emit [SetMatrixOrder OrderCoverage])
-                        "Root",   (model.MatrixOrder |> AVal.map ((=) OrderConnected)), (fun () -> env.Emit [SetMatrixOrder OrderConnected])
-                    ]
-                }
             // Cosmetic diagonal: a mesh has no pair with itself — the cell is an
             // inert disabled placeholder that only anchors the matrix shape.
             let diagCell () =
@@ -406,80 +407,10 @@ module GuiRail =
                         ])
             div {
                 Class "pmx"
-                orderBar
                 rowsA |> AList.ofAVal
             }
 
-        // ── Setup state: survey the meshes (identity, sensor fly-to, intrinsic
-        // error visualization) + designate the reference-root as an explicit
-        // separate step. Root designation lives HERE deliberately: not on the
-        // matrix diagonal, not on a cell.
-        let surveyRow (name : string) =
-            let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-            let isRoot = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
-            let hm = model.MeshHeatmap |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue HeatOff)
-            let isolated = model.SetupIsolate |> AVal.map ((=) (Some name))
-            div {
-                Class "pmx-root-row"
-                classWhen "pmx-root-on" isRoot
-                div {
-                    Class "pmx-root-head"
-                    Attribute("title", sprintf "%s — double-click: fly to the sensor viewpoint" name)
-                    Dom.OnDoubleClick(fun _ -> env.Emit [FlyToSensor name])
-                    span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
-                    span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                    span {
-                        Class "pmx-root-name"
-                        model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
-                    }
-                    span { Class "pmx-root-star"; isRoot |> AVal.map (fun r -> if r then "★" else "") }
-                }
-                div {
-                    Class "pmx-root-ctl"
-                    button {
-                        Class "rail-btn setup-ref"
-                        classWhen "setup-ref-on" isRoot
-                        Attribute("title", "Designate as the reference root. Re-rooting inside the registered tree keeps the registration; a mesh outside it clears the graph.")
-                        Dom.OnClick(fun _ -> env.Emit [SetRegRoot name])
-                        isRoot |> AVal.map (fun r -> if r then "★ Reference" else "☆ Set reference")
-                    }
-                    button {
-                        Class "rail-btn setup-iso"
-                        classWhen "rail-btn-active" isolated
-                        Attribute("title", "Isolate this mesh: hover previews, click locks (click again clears; leaving Setup clears)")
-                        Dom.OnMouseEnter(fun _ -> env.Emit [SetSetupIsolateHover (Some name)])
-                        Dom.OnMouseLeave(fun _ -> env.Emit [SetSetupIsolateHover None])
-                        Dom.OnClick(fun _ -> env.Emit [ToggleSetupIsolate name])
-                        "◉ Isolate"
-                    }
-                    div {
-                        Class "rail-mesh-modes"
-                        Attribute("title", "Error visualization for this mesh: Textured · Distance · Shape · Incidence")
-                        compactButtonBar [
-                            "Tex",  (hm |> AVal.map ((=) HeatOff)),       (fun () -> env.Emit [SetMeshHeatmap(name, HeatOff)])
-                            "Dst",  (hm |> AVal.map ((=) HeatRange)),     (fun () -> env.Emit [SetMeshHeatmap(name, HeatRange)])
-                            "Shp",  (hm |> AVal.map ((=) HeatShape)),     (fun () -> env.Emit [SetMeshHeatmap(name, HeatShape)])
-                            "Inc",  (hm |> AVal.map ((=) HeatIncidence)), (fun () -> env.Emit [SetMeshHeatmap(name, HeatIncidence)])
-                        ]
-                    }
-                }
-            }
-        let anyShapeOn =
-            model.MeshHeatmap |> AVal.map (Map.exists (fun _ h -> h = HeatShape))
-        let rootOverview () =
-            div {
-                Class "pmx-root"
-                div { Class "pmx-root-hint"; "Reference root ★ — every pose composes toward it" }
-                model.MeshNames |> AList.map surveyRow
-                div {
-                    Class "rail-shape-cut"
-                    showWhen anyShapeOn
-                    inlineSlider "Shape ≥" 0.0 1.0 0.01 (sprintf "%.2f") model.ShapeThreshold (fun v ->
-                        env.Emit [SetShapeThreshold v])
-                }
-            }
-
-        // ── The focus rail: four stops, strictly narrowing scope. Enablement
+        // ── The focus rail: three stops, strictly narrowing scope. Enablement
         // is selection-derived; the reducer re-guards every jump.
         let railLevels =
             let placing =
@@ -497,7 +428,6 @@ module GuiRail =
                 }
             div {
                 Class "rail-levels"
-                stop "Setup"  "Designate the reference root + survey the meshes" FocusSetup
                 stop "Matrix" "Pick the next pair, read connectivity" FocusMatrix
                 stop "Pair"   "Work one pair: pins, solve, inspection (choose a pair in the matrix)" FocusPair
                 stop "Pin"    "Configure one scanpin (choose or place a pin in the pair)" FocusPin
@@ -587,7 +517,7 @@ module GuiRail =
                     Class "cw-tools"
                     button {
                         Class "rail-btn rail-pin-add"
-                        Attribute("title", "Place a pin on this pair: enters the Pin level with the centre pick armed — click the 3D view or a tile to place, then pick both correspondence points and commit (free order; Esc aborts)")
+                        Attribute("title", "Place a pin on this pair: enters the Pin level with the centre pick armed — click any view to place the centre and both correspondence points (free order); the pin exists once all three are placed")
                         Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (BeginPinTransaction pairKey)])
                         "○ New pin"
                     }
@@ -599,20 +529,15 @@ module GuiRail =
                             if AVal.force pinCount >= 3 then env.Emit [SolvePair(a, b)])
                         pinCount |> AVal.map (fun n -> sprintf "⌖ Solve (%d/3)" (min n 3))
                     }
-                    div {
-                        Class "rail-isolate"
-                        Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes")
-                        compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
-                            env.Emit [ToggleAnchorGhostMode])
-                    }
                 }
                 pinList
             }
 
-        // ── Pin level: configure ONE scanpin. Picking is ARM-driven — an armed
-        // pick lands in ANY view (the main 3D is the primary surface, the two
-        // tiles are redundant ortho views); the focus buttons steer what the
-        // 3D shows and re-frame the tiles.
+        // ── Pin level: configure ONE scanpin through the two-column control
+        // panel — SAME subjects (correspondence A · correspondence B · the
+        // pin), TWO verbs: Edit (change geometry, arm-driven — placement and
+        // committed re-picks are the same arms) | Isolate & focus (change
+        // view). An armed pick lands in ANY view.
         let pinLevelView (a : string) (b : string) =
             let placement = model.ScanPins.Placement
             let placing = placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
@@ -625,7 +550,7 @@ module GuiRail =
                     span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
                     span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                 ]
-            // ── Focus row: what the Pin level LOOKS AT — the whole pin (both
+            // Focus buttons: what the Pin level LOOKS AT — the whole pin (both
             // meshes) or one correspondence side (that mesh alone). Hover
             // previews the narrowing; a click also re-frames the tiles.
             let focusBtn (target : string option) (hover : PinHover) (title : string)
@@ -641,21 +566,11 @@ module GuiRail =
                     chipList
                     label
                 }
-            let focusRow =
-                div {
-                    Class "cw-tools pin-focus-row"
-                    span { Class "lp-sublabel"; "Focus" }
-                    focusBtn None HoverBoth
-                        "Focus the whole pin: both meshes visible; the tiles re-frame to the pin" None "◉ Pin"
-                    focusBtn (Some a) (HoverSide a)
-                        "Focus this mesh's correspondence: it renders alone; the tiles re-frame to its point" (Some a) "point"
-                    focusBtn (Some b) (HoverSide b)
-                        "Focus this mesh's correspondence: it renders alone; the tiles re-frame to its point" (Some b) "point"
-                }
             // Arm buttons: the ONE way picking engages. While armed the left
             // button picks (never orbits) in every view; a landed pick, Esc or
             // a re-click disarms. Arming a correspondence pick isolates its
-            // mesh (hover previews).
+            // mesh (hover previews). The SAME arms serve placement (the draft
+            // part lands) and a committed pin (the pick replaces/re-anchors).
             let armBtn (target : ArmTarget) (hover : PinHover) (title : string)
                        (withChip : string option) (label : string) =
                 button {
@@ -669,65 +584,70 @@ module GuiRail =
                     chipList
                     label
                 }
-            // ── The placement transaction: free order — the arm buttons pick
-            // which of centre / point A / point B lands next, re-picking
-            // replaces, the "N of 2" cue lives ONLY here, ✕ aborts in place,
-            // leaving Pin aborts too (rollback), ✓ commits (enabled only when
-            // complete → the pin is born atomic).
-            let draftBar =
-                let draft = placement |> AVal.map (function PlacementActive d -> Some d | _ -> None)
-                let cue =
-                    draft |> AVal.map (function
-                        | Some d ->
-                            sprintf "centre %s · %d of 2 points"
-                                (if d.Area.IsSome then "✓" else "·") (PinDraft.pointCount d)
-                        | None -> "")
-                let complete = draft |> AVal.map (function Some d -> PinDraft.complete d | None -> false)
+            let hasPin = selPin |> AVal.map Option.isSome
+            // ── The control panel: rows = subjects (corr A / corr B / the
+            // pin), columns = the two verbs. Radius stays hidden until its
+            // edit is clicked.
+            let controlPanel =
                 div {
-                    Class "cw-draft"
-                    showWhen placing
-                    armBtn ArmCentre HoverBoth
-                        "Arm the pin-centre pick: click any view to drop the area marker (the hit mesh anchors the pin)"
-                        None "◯ Centre"
+                    Class "pin-panel"
+                    div { Class "pin-panel-head"; "Edit" }
+                    div { Class "pin-panel-head"; "Isolate & focus" }
                     armBtn (ArmPoint a) (HoverSide a)
-                        "Arm the correspondence pick on this mesh — it renders alone while armed; click any view"
-                        (Some a) "✚"
+                        "Arm the correspondence pick on this mesh — it renders alone while armed; click any view (a re-pick replaces the point and unregisters the pair)"
+                        (Some a) "✚ point"
+                    focusBtn (Some a) (HoverSide a)
+                        "Focus this mesh's correspondence: it renders alone; the tiles re-frame to its point" (Some a) "◎ point"
                     armBtn (ArmPoint b) (HoverSide b)
-                        "Arm the correspondence pick on this mesh — it renders alone while armed; click any view"
-                        (Some b) "✚"
-                    span { Class "cw-cue"; cue }
-                    button {
-                        Class "rail-btn cw-commit"
-                        complete |> AVal.map (fun ok -> if ok then None else Some (Attribute("disabled", "disabled")))
-                        Attribute("title", "Commit: the pin is born whole (centre + both points)")
-                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg CommitPin])
-                        "✓ Commit"
+                        "Arm the correspondence pick on this mesh — it renders alone while armed; click any view (a re-pick replaces the point and unregisters the pair)"
+                        (Some b) "✚ point"
+                    focusBtn (Some b) (HoverSide b)
+                        "Focus this mesh's correspondence: it renders alone; the tiles re-frame to its point" (Some b) "◎ point"
+                    div {
+                        Class "pin-panel-pin-edit"
+                        armBtn ArmCentre HoverBoth
+                            "Arm the centre pick: click any view — during placement it drops the area marker, on a committed pin it moves the centre (the hit mesh anchors the pin; unregisters the pair)"
+                            None "◯ Centre"
+                        button {
+                            Class "rail-btn pin-arm-btn"
+                            classWhen "rail-btn-active" model.PinRadiusEditOpen
+                            hasPin |> AVal.map (fun p -> if p then None else Some (Attribute("disabled", "disabled")))
+                            Attribute("title", "Edit the pin radius (reveals the slider; the radius scopes error analysis)")
+                            Dom.OnClick(fun _ -> env.Emit [ToggleRadiusEdit])
+                            "⌀ Radius"
+                        }
                     }
-                    button {
-                        Class "rail-btn cw-abort"
-                        Attribute("title", "Abort the placement — nothing persists (Esc leaves and aborts too)")
-                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg AbortPinTransaction])
-                        "✕"
-                    }
+                    focusBtn None HoverBoth
+                        "Focus the whole pin: both meshes visible; the tiles re-frame to the pin" None "◉ Pin"
                 }
-            // ── Committed-pin controls (edit mode): arm a point re-pick,
-            // radius, delete. The centre is immovable — no centre arm here.
-            let editBar =
+            let radiusRow =
                 div {
                     Class "cw-tools"
-                    showWhen ((placing, selPin) ||> AVal.map2 (fun pl p -> not pl && p.IsSome))
-                    armBtn (ArmPoint a) (HoverSide a)
-                        "Arm a re-pick of this mesh's point (unregisters the pair); click any view"
-                        (Some a) "✚"
-                    armBtn (ArmPoint b) (HoverSide b)
-                        "Arm a re-pick of this mesh's point (unregisters the pair); click any view"
-                        (Some b) "✚"
+                    showWhen ((model.PinRadiusEditOpen, hasPin) ||> AVal.map2 (fun o p -> o && p))
                     inlineLogSlider "r" 0.01 100.0 (sprintf "%.2f m")
                         (selPin |> AVal.map (function Some p -> p.InnerRadius | None -> 0.5))
                         (fun v ->
                             match (AVal.force model.Sel).Pin with
                             | Some id -> env.Emit [ScanPinMsg (SetInnerRadius(id, v))]
                             | None -> ())
+                }
+            // Placement progress cue (draft only — a committed pin needs none).
+            let draftCue =
+                let cue =
+                    placement |> AVal.map (function
+                        | PlacementActive d ->
+                            sprintf "centre %s · %d of 2 points — the pin exists once all three are placed"
+                                (if d.Area.IsSome then "✓" else "·") (PinDraft.pointCount d)
+                        | PlacementIdle -> "")
+                div {
+                    Class "cw-draft"
+                    showWhen placing
+                    span { Class "cw-cue"; cue }
+                }
+            let deleteRow =
+                div {
+                    Class "cw-tools"
+                    showWhen ((placing, hasPin) ||> AVal.map2 (fun pl p -> not pl && p))
                     button {
                         Class "mb cw-del"
                         Attribute("title", "Delete pin")
@@ -754,15 +674,16 @@ module GuiRail =
                 div {
                     Class "cw-state"
                     (placing, selPin) ||> AVal.map2 (fun pl p ->
-                        if pl then "arm a pick · click the 3D view or a tile · a landed pick disarms · Esc disarms/aborts"
+                        if pl then "arm an edit · click any view · a landed pick disarms"
                         else
                             match p with
-                            | Some _ -> "arm a point re-pick to replace it (unregisters the pair)"
+                            | Some _ -> "arm an edit to change geometry · focus to steer the view"
                             | None -> "")
                 }
-                focusRow
-                draftBar
-                editBar
+                controlPanel
+                radiusRow
+                draftCue
+                deleteRow
             }
 
         div {
@@ -777,7 +698,6 @@ module GuiRail =
                     (model.Focus, selPairA) ||> AVal.map2 (fun focus selPair ->
                         let node =
                             match focus, selPair with
-                            | FocusSetup, _ -> rootOverview ()
                             | FocusMatrix, _ -> pairMatrixView ()
                             | FocusPair, Some (a, b) -> cellWorkspace a b
                             | FocusPin, Some (a, b) -> pinLevelView a b

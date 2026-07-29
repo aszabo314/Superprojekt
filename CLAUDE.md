@@ -72,7 +72,7 @@ Form: as short as possible. State the constraint or invariant, nothing else — 
 
 ### Peek keys
 
-- **V** (visibility: MOV blinks off) and **B** (pose: MOV shows as-loaded) are spring-loaded — the keys AND the top-bar hold-buttons (`.tb-peeks`, shown at Pair only; pointer capture so the release lands even off-button) — **Pair-level scope only** (refused at Pin — a pose blink would move the picking surface mid-placement), refused unless both pair meshes are GPU-resident and no loop modal is open; releases always land; peeks clear on any focus jump and on dataset switch.
+- **V** (visibility: MOV blinks off) and **B** (pose: MOV shows as-loaded) are spring-loaded — the keys AND the top-bar hold-buttons (`.tb-peeks`, always visible, disabled outside Pair-with-loaded-meshes; pointer capture so the release lands even off-button) — **Pair-level scope only** (refused at Pin — a pose blink would move the picking surface mid-placement), refused unless both pair meshes are GPU-resident and no loop modal is open; releases always land; peeks clear on any focus jump and on dataset switch.
 - The peeks are **purely visual**: `MeshView.displayedMeshT`/`displayedWorldAt` are peek-aware (rendering + view-side picks + surface-riding pin markers follow the blink); `ModelTransforms.*` (reducer/query side) is peek-**blind** — no query may read a peeked pose. The vis peek flips `Sg.Active` on all three mesh node families (main surface, outline G-buffer, footprint coverage) — never the ghost floor, a blink needs a clean swap. Zero refetch: during the pose peek the error map rides MOV's surface with registered-pose values (accepted approximation).
 
 ### Secondary views: the Pin panes & the Setup survey tiles (GuiPanes.fs)

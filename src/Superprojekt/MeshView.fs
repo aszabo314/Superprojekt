@@ -32,7 +32,13 @@ module MeshView =
 
     let loadMeshAsync (finished : unit -> unit) (name : string) : LoadedMesh =
         match meshes.TryGetValue(name) with
-        | true, m -> m
+        | true, m ->
+            // Cache hit on a dataset REVISIT: the completion callback must
+            // still fire — Model.MeshesLoaded resets per dataset and gates the
+            // peeks, which would otherwise stay dead for cached meshes. (A
+            // still-in-flight first load reports through its own task.)
+            if (m.mesh : MeshData option ref).Value.IsSome then finished ()
+            m
         | _ ->
             let ccc = cval V3d.Zero
             let m =

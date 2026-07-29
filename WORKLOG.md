@@ -6,6 +6,22 @@
 > end, reconstruct the net documentation updates from this file.
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
 
+## Fix: peek buttons never visible (2026-07-29)
+
+- User report: the top-bar peek buttons never appear. Cause 1 — they were
+  `showWhen`-HIDDEN except at Pair-with-loaded-meshes: undiscoverable
+  chrome. Now ALWAYS visible, `disabled` (with a why-tooltip) whenever a
+  peek couldn't land; the enable guard is unchanged.
+- Cause 2 (latent, also killed the V/B KEYS): `Model.MeshesLoaded` resets
+  on every dataset switch, but `loadMeshAsync`'s cache-hit path never fired
+  the completion callback — after REVISITING a dataset the loaded-guard
+  stayed false forever. The cache-hit branch now calls `finished()` when
+  the mesh data is present (an in-flight first load still reports through
+  its task); `LoadFinished` gained a `wasNew` guard so re-emissions can't
+  append duplicate loading-done marker divs.
+- Build green. Browser-verify: buttons visible at every level, enabled at
+  Pair; peeks alive after a dataset round-trip.
+
 ## Polish: Pin panel = a right-edge tile strip, shared ortho camera (2026-07-29)
 
 - **The Pin panel is now the TWIN of the Setup strip**: the pair's two

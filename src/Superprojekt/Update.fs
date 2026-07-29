@@ -70,10 +70,13 @@ module Update =
         | PanoCentersLoaded pcs ->
             { model with PanoCenters = Map.ofArray pcs }
         | LoadFinished name ->
+            // Cached-mesh revisits re-emit completions — only a FIRST landing
+            // may append the loading-done marker (no duplicate divs).
+            let wasNew = not (HashSet.contains name model.MeshesLoaded)
             let model = { model with MeshesLoaded = HashSet.add name model.MeshesLoaded }
 
             let missing = HashSet.difference (HashSet.ofSeq model.MeshNames) model.MeshesLoaded
-            if missing.Count = 0 then
+            if wasNew && missing.Count = 0 then
                 let d = Window.Document.CreateElement("div")
                 d.Id <- "loading-done"
                 d.Style.Visibility <- "hidden"

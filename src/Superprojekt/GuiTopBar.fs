@@ -23,7 +23,8 @@ module GuiTopBar =
             // Spring-loaded peek buttons: press-and-hold twins of the V/B keys
             // (Pair scope; the reducer re-guards, releases always land).
             // Pointer capture keeps the release landing even when the cursor
-            // slides off the button mid-hold.
+            // slides off the button mid-hold. Always visible, DISABLED when a
+            // peek couldn't land — hidden buttons are undiscoverable chrome.
             let canPeek =
                 AVal.custom (fun t ->
                     model.Focus.GetValue t = FocusPair &&
@@ -36,14 +37,17 @@ module GuiTopBar =
                 button {
                     Class "tb-btn-tiny tb-peek"
                     classWhen "tb-btn-active" heldA
-                    Attribute("title", title)
+                    canPeek |> AVal.map (fun ok ->
+                        if ok then Some (Attribute("title", title))
+                        else Some (Attribute("title", title + " — available at the Pair level once both pair meshes are loaded")))
+                    canPeek |> AVal.map (fun ok ->
+                        if ok then None else Some (Attribute("disabled", "disabled")))
                     Dom.OnPointerDown((fun _ -> set true), pointerCapture = true)
                     Dom.OnPointerUp((fun _ -> set false), pointerCapture = true)
                     label
                 }
             div {
                 Class "tb-peeks"
-                showWhen canPeek
                 span { Class "lp-sublabel"; "Peek" }
                 peekBtn "◌ V" "Hold: the moving mesh blinks off — is this the same rock? (same as holding V)"
                     model.PeekVis (fun h -> env.Emit [SetPeekVis h])

@@ -547,7 +547,13 @@ module GuiRail =
                     Class "cw-tools"
                     button {
                         Class "rail-btn rail-pin-add"
-                        Attribute("title", "Place a pin on this pair: enters the Pin level with the centre pick armed — click any view to place the centre and both correspondence points (free order); the pin exists once all three are placed")
+                        Attribute("title", "Place a pin on this pair: enters the Pin level with the centre pick armed — click any view to place the centre and both correspondence points (free order); the pin exists once all three are placed. Only the highlighted overlap region is a valid pin location")
+                        // Hover lights the pair's overlap-region gate (only the
+                        // overlap is a valid pin location); the click's focus
+                        // jump wipes the hover, and the pre-armed centre pick
+                        // carries the gate seamlessly.
+                        Dom.OnMouseEnter(fun _ -> env.Emit [SetNewPinHover true])
+                        Dom.OnMouseLeave(fun _ -> env.Emit [SetNewPinHover false])
                         Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (BeginPinTransaction pairKey)])
                         "○ New pin"
                     }
@@ -679,22 +685,6 @@ module GuiRail =
                     showWhen placing
                     span { Class "cw-cue"; cue }
                 }
-            let deleteRow =
-                div {
-                    Class "cw-tools"
-                    showWhen ((placing, hasPin) ||> AVal.map2 (fun pl p -> not pl && p))
-                    button {
-                        Class "mb cw-del"
-                        Attribute("title", "Delete pin")
-                        Dom.OnClick(fun _ ->
-                            match AVal.force selPin with
-                            | Some p ->
-                                let ok = try JSRuntime.Instance.Invoke<bool>("confirm", sprintf "Delete pin %s? This cannot be undone." p.ShortName) with _ -> false
-                                if ok then env.Emit [ScanPinMsg (DeletePin p.Id)]
-                            | None -> ())
-                        "✕"
-                    }
-                }
             div {
                 Class "cw pin-level"
                 div {
@@ -718,7 +708,6 @@ module GuiRail =
                 controlPanel
                 radiusRow
                 draftCue
-                deleteRow
             }
 
         div {

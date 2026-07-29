@@ -1,5 +1,5 @@
-//f71b38ba-0456-eb8a-d924-2c3c31e8cb61
-//7f895add-b5b1-c7e8-b42b-f661ec86f0ec
+//bb9f9267-ed21-0d85-f19e-f275892c7576
+//c39d757e-b652-2b9e-4746-487376900702
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -57,6 +57,7 @@ type AdaptiveModel(value : Model) =
     let _ArmPreview_ = FSharp.Data.Adaptive.cval(value.ArmPreview)
     let _PinFocusHover_ = FSharp.Data.Adaptive.cval(value.PinFocusHover)
     let _TilePinHover_ = FSharp.Data.Adaptive.cval(value.TilePinHover)
+    let _NewPinHover_ = FSharp.Data.Adaptive.cval(value.NewPinHover)
     let _PinRadiusEditOpen_ = FSharp.Data.Adaptive.cval(value.PinRadiusEditOpen)
     let _PeekVis_ = FSharp.Data.Adaptive.cval(value.PeekVis)
     let _PeekPose_ = FSharp.Data.Adaptive.cval(value.PeekPose)
@@ -125,6 +126,7 @@ type AdaptiveModel(value : Model) =
             _ArmPreview_.Value <- value.ArmPreview
             _PinFocusHover_.Value <- value.PinFocusHover
             _TilePinHover_.Value <- value.TilePinHover
+            _NewPinHover_.Value <- value.NewPinHover
             _PinRadiusEditOpen_.Value <- value.PinRadiusEditOpen
             _PeekVis_.Value <- value.PeekVis
             _PeekPose_.Value <- value.PeekPose
@@ -186,6 +188,7 @@ type AdaptiveModel(value : Model) =
     member __.ArmPreview = _ArmPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.PinFocusHover = _PinFocusHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PinHover>>
     member __.TilePinHover = _TilePinHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
+    member __.NewPinHover = _NewPinHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PinRadiusEditOpen = _PinRadiusEditOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PeekVis = _PeekVis_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PeekPose = _PeekPose_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>

@@ -7,6 +7,25 @@
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
 > *(A4–A7 amendment instance completed 2026-07-29 — docs reconstructed.)*
 
+## Post-A7 polish IV: draft-mark fade, no pin-level delete, overlap gate (2026-07-29)
+
+- **Draft marks fade while armed too**: the draft's already-placed parts
+  (white wire-sphere+cross points, area outline) now share the committed
+  marks' armed fade (×0.15) in the main 3D AND the tiles — only the armed
+  cursor preview stays full.
+- **Pin-level ✕ delete REMOVED** (`deleteRow`): deletion is the pair
+  workspace pin rows' job alone.
+- **Overlap gate on pin-location interactions**: the shader's
+  `OverlapPreview` (formerly matrix-hover-only) now also lights at
+  Pair/Pin for the selected pair while the ○ New pin button is hovered
+  (new `Model.NewPinHover` transient + `SetNewPinHover`; wiped by
+  jumpFocus/dataset switch — the click's focus jump hands over to the
+  pre-armed centre) or while the CENTRE pick is armed (placement AND
+  committed re-pick) — only the overlap region is a valid pin location.
+  `overlapPreviewUniforms` rewritten as one AVal.custom (meshIndicesA
+  bound outside — the transient-aval trap).
+- Green: client type-check; adaptify rerun.
+
 ## Post-A7 polish III: isolate-pins suspension, dock resize (2026-07-29)
 
 - **Isolate pins suspends while the centre pick is armed**: aiming a

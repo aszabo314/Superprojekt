@@ -295,13 +295,17 @@ module ScanPinScene =
                     | PlacementActive d ->
                         let cc = model.CommonCentroid.GetValue t
                         let s = datasetScale.GetValue t
-                        let white = V4d(1.0, 1.0, 1.0, 0.9)
+                        // The draft's ALREADY-PLACED marks fade like committed
+                        // ones while a pick is armed — only the aim preview
+                        // stays full (nothing may hide the pick spot).
+                        let dim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
+                        let white = V4d(1.0, 1.0, 1.0, 0.9 * dim)
                         let out = ResizeArray<V3d * V3d * V4d * float>()
                         (match d.Area with
                          | Some (m, local) ->
                             let cR = ScanPin.renderCentre cc s ((dispWorldAt t m).Forward.TransformPos local)
                             let rR = ScanPin.renderLength s (model.QuickPinRadius.GetValue t)
-                            for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.8)) 1.5 do
+                            for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.8 * dim)) 1.5 do
                                 out.Add seg
                          | None -> ())
                         let pt (mesh : string) (lp : V3d option) =

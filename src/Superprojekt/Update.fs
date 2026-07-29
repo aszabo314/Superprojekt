@@ -27,7 +27,8 @@ module Update =
             TileIsolate = None; TileIsolateHover = None; MatrixHoverPair = None
             PeekVis = false; PeekPose = false; ProbeReadout = None
             ArmedPick = None; ArmPreview = None; PinFocusHover = None
-            TilePinHover = None; PinRadiusEditOpen = false; PinExitPending = None }
+            TilePinHover = None; NewPinHover = false
+            PinRadiusEditOpen = false; PinExitPending = None }
 
     // The exit-guard's threshold: a draft only deserves a confirm-delete once
     // its centre is placed — a centreless draft exits silently.
@@ -317,6 +318,8 @@ module Update =
             if model.PinFocusHover = h then model else { model with PinFocusHover = h }
         | SetTilePinHover h ->
             if model.TilePinHover = h then model else { model with TilePinHover = h }
+        | SetNewPinHover h ->
+            if model.NewPinHover = h then model else { model with NewPinHover = h }
         | ToggleRadiusEdit ->
             { model with PinRadiusEditOpen = not model.PinRadiusEditOpen }
         | ToggleArmPick target ->
@@ -486,6 +489,7 @@ module Update =
                     ArmPreview = None
                     PinFocusHover = None
                     TilePinHover = None
+                    NewPinHover = false
                     PinRadiusEditOpen = false
                     PeekVis = false
                     PeekPose = false

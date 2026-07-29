@@ -692,21 +692,32 @@ module MeshView =
             nodes
         }
 
-    // Matrix-hover overlap-preview uniforms: the on-flag + the hovered pair's
-    // coverage-channel selectors over the two MRT targets (channel = display
-    // index, 0-3 → target0, 4-7 → target1 — the OutlineCoverage layout).
-    // Matrix scope only; a pair mesh beyond the 8-channel cap disables the
-    // preview outright rather than half-testing.
+    // Overlap-preview uniforms: the on-flag + the active pair's coverage-
+    // channel selectors over the two MRT targets (channel = display index,
+    // 0-3 → target0, 4-7 → target1 — the OutlineCoverage layout). The gate
+    // lights for the MATRIX HOVER (pair preview) and for the pin-LOCATION
+    // interactions at Pair/Pin — the ○ New pin hover and the armed centre
+    // pick — where only the overlap is a valid spot. A pair mesh beyond the
+    // 8-channel cap disables the preview outright rather than half-testing.
     let overlapPreviewUniforms (model : AdaptiveModel) =
+        let idxA = meshIndicesA model
         let pairIdx =
-            (model.MatrixHoverPair, model.Focus, meshIndicesA model)
-            |||> AVal.map3 (fun hp focus idx ->
-                match focus, hp with
-                | FocusMatrix, Some (a, b) ->
+            AVal.custom (fun t ->
+                let pair =
+                    match model.Focus.GetValue t with
+                    | FocusMatrix -> model.MatrixHoverPair.GetValue t
+                    | FocusPair | FocusPin ->
+                        match (model.Sel.GetValue t).Pair with
+                        | Some p when model.NewPinHover.GetValue t
+                                      || model.ArmedPick.GetValue t = Some ArmCentre -> Some p
+                        | _ -> None
+                match pair with
+                | Some (a, b) ->
+                    let idx = idxA.GetValue t
                     let ia = Map.tryFind a idx |> Option.defaultValue 8
                     let ib = Map.tryFind b idx |> Option.defaultValue 8
                     if ia < 8 && ib < 8 then Some (ia, ib) else None
-                | _ -> None)
+                | None -> None)
         let sel (k : int) (target : int) =
             if k / 4 = target then
                 match k % 4 with

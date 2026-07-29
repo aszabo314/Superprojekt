@@ -438,12 +438,14 @@ module GuiPanes =
                              | _ -> ())
                             (match model.ScanPins.Placement.GetValue t with
                              | PlacementActive d ->
-                                let white = V4d(1.0, 1.0, 1.0, 0.95)
+                                // Placed draft marks fade with the committed
+                                // ones while armed; only the preview stays full.
+                                let white = V4d(1.0, 1.0, 1.0, 0.95 * armDim)
                                 (match d.Area with
                                  | Some (m, local) ->
                                     let cR = renderOn t m local
                                     let rR = ScanPin.renderLength (datasetScale.GetValue t) (model.QuickPinRadius.GetValue t)
-                                    for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.8)) 1.5 do
+                                    for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.8 * armDim)) 1.5 do
                                         out.Add seg
                                  | None -> ())
                                 (match (if name = fst d.Pair then d.PointA else d.PointB) with

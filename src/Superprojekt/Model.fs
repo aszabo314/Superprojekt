@@ -250,6 +250,9 @@ type Model =
         // Pin-row hover: the tile cameras preview-frame this pin while it
         // lasts (a click makes the framing persistent via SelectPin).
         TilePinHover        : ScanPinId option
+        // ○ New pin button hover: lights the pair's overlap-region gate in the
+        // main 3D (only the overlap is a valid pin location). Transient.
+        NewPinHover         : bool
         // The Pin panel's radius disclosure: the slider stays hidden until its
         // edit is clicked. Transient — collapses on pin change and focus jump.
         PinRadiusEditOpen   : bool
@@ -407,6 +410,7 @@ module Model =
             ArmPreview          = None
             PinFocusHover       = None
             TilePinHover        = None
+            NewPinHover         = false
             PinRadiusEditOpen   = false
             PeekVis             = false
             PeekPose            = false

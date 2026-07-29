@@ -7,13 +7,13 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Superprojekt.LineGlyphs
 
-// The Pin level's picking surface: two side-by-side panes — mesh A | mesh B of
-// the selected pair — each an independent orbit view of ITS mesh alone. The
-// panes are the navigator AND the only pick surface for correspondence work:
-// a click in pane A always attributes to mesh A (nearest-hit attribution in
-// the shared 3D view can never reach the occluded mesh of a co-located pair).
-// Picks resolve through server raycasts — Sg pointer events do not fire
-// reliably in secondary render controls.
+// The secondary 2D views: the Setup survey tiles (small multiples) and the Pin
+// level's two picking tiles — one right-edge strip layout, one top-down
+// ORTHOGRAPHIC camera controller, one per-mesh camera state, shared by both.
+// A click in pin tile A always attributes to mesh A (nearest-hit attribution
+// in the shared 3D view can never reach the occluded mesh of a co-located
+// pair). Picks resolve through server raycasts — Sg pointer events do not
+// fire reliably in secondary render controls.
 module GuiPanes =
 
     open Primitives
@@ -26,10 +26,103 @@ module GuiPanes =
         let p1 = vp.Backward.TransformPosProj(V3d(ndc, 1.0))
         Ray3d(p0, (p1 - p0) |> Vec.normalize)
 
+    // ── The ONE 2D top-down camera (tiles AND panes, keyed per mesh — a mesh
+    // keeps its view across levels): the stored pan/zoom, else the bounds
+    // framing (sky = +Y — a look-down view cannot use +Z).
+    let private tileCamOf (model : AdaptiveModel) (name : string) : aval<TileCam> =
+        AVal.custom (fun t ->
+            match Map.tryFind name (model.TileCams.GetValue t) with
+            | Some c -> c
+            | None ->
+                let cc = model.CommonCentroid.GetValue t
+                let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
+                match Map.tryFind name (model.MeshBounds.GetValue t) with
+                | Some b when not b.IsInvalid ->
+                    { Centre = ScanPin.renderCentre cc scale b.Center
+                      Radius = max 1.0 (b.Size.Length * scale * 0.55) }
+                | _ -> { Centre = V3d.Zero; Radius = 5.0 })
+
+    // The view is ORTHOGRAPHIC top-down: Radius drives the ortho half-width
+    // (tan 30° keeps the framing the earlier 60°-fov perspective had, so
+    // stored cameras keep their meaning), and the eye rides high enough above
+    // the centre plane that no terrain near-clips at any zoom.
+    let private halfWidthOf (cam : TileCam) =
+        cam.Radius * tan (30.0 * System.Math.PI / 180.0)
+
+    // Render units per CSS pixel at the centre plane.
+    let private unitsPerPx (cam : TileCam) (w : int) =
+        2.0 * halfWidthOf cam / float (max 1 w)
+
+    // Scene Z extent in render units — the eye-height margin that keeps the
+    // whole terrain inside the ortho volume.
+    let private zExtent (model : AdaptiveModel) (t : AdaptiveToken) =
+        let b = model.SceneBounds.GetValue t
+        let s = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
+        if b.IsInvalid then 100.0 else max 10.0 (b.Size.Z * s)
+
+    let private cam2dView (model : AdaptiveModel) (camA : aval<TileCam>) =
+        AVal.custom (fun t ->
+            let c = camA.GetValue t
+            let d = c.Radius + zExtent model t
+            CameraView.lookAt (c.Centre + V3d.OOI * d) c.Centre V3d.OIO |> CameraView.viewTrafo)
+
+    let private cam2dProj (model : AdaptiveModel) (camA : aval<TileCam>) (size : aval<V2i>) =
+        AVal.custom (fun t ->
+            let c = camA.GetValue t
+            let s = size.GetValue t
+            let aspect = float s.X / float (max 1 s.Y)
+            let halfW = halfWidthOf c
+            let halfH = halfW / aspect
+            let zext = zExtent model t
+            let fr : Frustum =
+                { left = -halfW; right = halfW; bottom = -halfH; top = halfH
+                  near = 0.1; far = c.Radius + 2.0 * zext + 10.0; isOrtho = true }
+            Frustum.projTrafo fr)
+
+    // The controller attributes: drag pans in the XY plane (anchored at the
+    // drag start — no incremental drift; screen right = +X, screen down = −Y),
+    // wheel zooms TO the cursor (the point under it stays put: its offset from
+    // the centre scales with the radius). A drag-free pointer-up (≤ 4 px) is a
+    // click → `onPick` (the panes' picking surface; tiles pass None).
+    let private cam2dAtts (env : Env<Message>) (name : string)
+                          (camA : aval<TileCam>) (clientSize : aval<V2i>)
+                          (onPick : (V2d -> unit) option) =
+        let mutable drag : (V2d * TileCam * bool) option = None
+        att {
+            Dom.OnPointerDown((fun e ->
+                drag <- Some (V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y), AVal.force camA, false)),
+                pointerCapture = true)
+            Dom.OnPointerUp((fun e ->
+                (match drag, onPick with
+                 | Some (p0, _, moved), Some pick ->
+                    let p = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
+                    if not moved && Vec.distance p0 p < 4.0 then pick p
+                 | _ -> ())
+                drag <- None),
+                pointerCapture = true)
+            Dom.OnPointerMove(fun e ->
+                match drag with
+                | Some (p0, cam0, moved) ->
+                    let p = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
+                    let d = p - p0
+                    // Jitter under the click threshold stays a click.
+                    if moved || d.Length >= 4.0 then
+                        drag <- Some (p0, cam0, true)
+                        let u = unitsPerPx cam0 (AVal.force clientSize).X
+                        env.Emit [SetTileCam(name, { cam0 with Centre = cam0.Centre - V3d(d.X * u, -d.Y * u, 0.0) })]
+                | None -> ())
+            Dom.OnMouseWheel(fun e ->
+                let cam = AVal.force camA
+                let s = AVal.force clientSize
+                let u = unitsPerPx cam s.X
+                let k = 1.1 ** (e.DeltaY / 120.0)
+                let off = V3d((float e.OffsetPosition.X - float s.X * 0.5) * u,
+                              -(float e.OffsetPosition.Y - float s.Y * 0.5) * u, 0.0)
+                env.Emit [SetTileCam(name, { Centre = cam.Centre + off - off * k; Radius = cam.Radius * k })])
+        }
+
     let private paneControl (env : Env<Message>) (model : AdaptiveModel)
-                            (side : PaneSide) (name : string) (other : string) =
-        let cam = match side with PaneA -> model.PaneCamA | PaneB -> model.PaneCamB
-        let paneEnv = Env.map (fun m -> PaneCamMessage(side, m)) env
+                            (name : string) (other : string) =
         let paneOn = model.Focus |> AVal.map ((=) FocusPin)
         let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
         let datasetScale =
@@ -41,9 +134,6 @@ module GuiPanes =
             let cc = model.CommonCentroid.GetValue t
             let s = datasetScale.GetValue t
             ScanPin.renderCentre cc s ((MeshView.displayedWorldAt model t name).Forward.TransformPos local)
-        // Click-vs-drag discrimination: a pointer-up within a few pixels of its
-        // down is a pick, anything longer was an orbit drag.
-        let mutable downPos : V2d option = None
 
         div {
             Class "pin-pane"
@@ -66,19 +156,13 @@ module GuiPanes =
                 let! client = RenderControl.ClientSize
                 // CSS-pixel size for cursor→ray math (ViewportSize is
                 // framebuffer px; ClientSize is V2i.II until the first DOM event).
-                let overlaySize =
+                let clientSize =
                     (client, size) ||> AVal.map2 (fun c v ->
                         if c.X > 1 && c.Y > 1 then c else v)
 
-                OrbitController.getAttributes paneEnv
-                RenderControl.OnRendered(fun _ -> env.Emit [PaneCamMessage(side, OrbitMessage.Rendered)])
-                Dom.OnMouseWheel(fun e ->
-                    env.Emit [PaneCamMessage(side, OrbitMessage.Wheel (V2d(e.DeltaX, e.DeltaY) / 120.0))])
-
-                let view = cam.view |> AVal.map CameraView.viewTrafo
-                let proj =
-                    size |> AVal.map (fun s ->
-                        Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo)
+                let camA = tileCamOf model name
+                let view = cam2dView model camA
+                let proj = cam2dProj model camA size
 
                 // The pane pick: raycast THIS mesh alone (the pane IS the
                 // attribution); the hit lands directly in the mesh's own frame.
@@ -86,7 +170,7 @@ module GuiPanes =
                     async {
                         let cc = AVal.force model.CommonCentroid
                         let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) name
-                        let ray = pickRay cursorPx (AVal.force overlaySize) (AVal.force view) (AVal.force proj)
+                        let ray = pickRay cursorPx (AVal.force clientSize) (AVal.force view) (AVal.force proj)
                         let dispWorld =
                             RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model name))
                         let serverOrigin = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale ray.Origin)
@@ -108,14 +192,7 @@ module GuiPanes =
                         | None -> ()
                     } |> Async.Start
 
-                Dom.OnPointerDown(fun e ->
-                    downPos <- Some (V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)))
-                Dom.OnPointerUp(fun e ->
-                    let up = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
-                    (match downPos with
-                     | Some dp when Vec.distance dp up < 4.0 -> pick up
-                     | _ -> ())
-                    downPos <- None)
+                cam2dAtts env name camA clientSize (Some pick)
 
                 Sg.View view
                 Sg.Proj proj
@@ -208,10 +285,10 @@ module GuiPanes =
             }
         }
 
-    // One Setup survey tile: an input-less top-down thumbnail of the mesh
-    // (displayed pose, live survey heatmap) + identity chip + the explicit
-    // ☆ Set-reference button — the tile strip IS the survey/root-selection
-    // browser. Double-click flies the main camera to the mesh's sensor.
+    // One Setup survey tile: a top-down thumbnail of the mesh (displayed pose,
+    // live survey heatmap, the shared 2D pan/zoom camera) + identity chip +
+    // the explicit ☆ Set-reference button — the tile strip IS the survey/
+    // root-selection browser. Double-click flies the main camera to the sensor.
     let private surveyTile (env : Env<Message>) (model : AdaptiveModel) (name : string) =
         let onSetup = model.Focus |> AVal.map ((=) FocusSetup)
         let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
@@ -245,59 +322,32 @@ module GuiPanes =
                 let clientSize =
                     (client, size) ||> AVal.map2 (fun c v ->
                         if c.X > 1 && c.Y > 1 then c else v)
-                // The 2D top-down tile camera: the stored pan/zoom, else the
-                // bounds framing (sky = +Y — a look-down view cannot use +Z).
-                let camA =
-                    AVal.custom (fun t ->
-                        match Map.tryFind name (model.TileCams.GetValue t) with
-                        | Some c -> c
-                        | None ->
-                            let cc = model.CommonCentroid.GetValue t
-                            let scale = DatasetScale.forMesh (model.DatasetScales.GetValue t) name
-                            match Map.tryFind name (model.MeshBounds.GetValue t) with
-                            | Some b when not b.IsInvalid ->
-                                { Centre = ScanPin.renderCentre cc scale b.Center
-                                  Radius = max 1.0 (b.Size.Length * scale * 0.55) }
-                            | _ -> { Centre = V3d.Zero; Radius = 5.0 })
-                // 60° horizontal fov ⇒ render units per CSS pixel at the centre plane.
-                let unitsPerPx (cam : TileCam) (w : int) =
-                    2.0 * cam.Radius * tan (30.0 * System.Math.PI / 180.0) / float (max 1 w)
-                let mutable drag : (V2d * TileCam) option = None
-                Dom.OnPointerDown((fun e ->
-                    drag <- Some (V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y), AVal.force camA)),
-                    pointerCapture = true)
-                Dom.OnPointerUp((fun _ -> drag <- None), pointerCapture = true)
-                Dom.OnPointerMove(fun e ->
-                    match drag with
-                    | Some (p0, cam0) ->
-                        // Anchored at the drag start (no incremental drift):
-                        // screen right = +X, screen down = −Y in this view.
-                        let p = V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)
-                        let d = p - p0
-                        let u = unitsPerPx cam0 (AVal.force clientSize).X
-                        env.Emit [SetTileCam(name, { cam0 with Centre = cam0.Centre - V3d(d.X * u, -d.Y * u, 0.0) })]
-                    | None -> ())
-                Dom.OnMouseWheel(fun e ->
-                    let cam = AVal.force camA
-                    let s = AVal.force clientSize
-                    let u = unitsPerPx cam s.X
-                    let k = 1.1 ** (e.DeltaY / 120.0)
-                    // Zoom anchored at the cursor: the point under it stays put
-                    // (its offset from the centre scales with the radius).
-                    let off = V3d((float e.OffsetPosition.X - float s.X * 0.5) * u,
-                                  -(float e.OffsetPosition.Y - float s.Y * 0.5) * u, 0.0)
-                    env.Emit [SetTileCam(name, { Centre = cam.Centre + off - off * k; Radius = cam.Radius * k })])
-                let view =
-                    camA |> AVal.map (fun c ->
-                        CameraView.lookAt (c.Centre + V3d.OOI * c.Radius) c.Centre V3d.OIO |> CameraView.viewTrafo)
-                let proj =
-                    size |> AVal.map (fun s ->
-                        Frustum.perspective 60.0 1.0 5000.0 (float s.X / float (max 1 s.Y)) |> Frustum.projTrafo)
-                Sg.View view
-                Sg.Proj proj
+                let camA = tileCamOf model name
+                cam2dAtts env name camA clientSize None
+                Sg.View (cam2dView model camA)
+                Sg.Proj (cam2dProj model camA size)
                 Sg.Uniform("ViewportSize", size)
                 MeshView.buildPaneScene model name onSetup None size
             }
+        }
+
+    // The left-edge width-resize handle both right-edge strips share — pure
+    // DOM (layout chrome, not model state); the render controls track their
+    // client size, so the tiles reflow for free.
+    let private stripResizeHandle (title : string) =
+        div {
+            Class "tiles-handle"
+            Attribute("title", title)
+            OnBoot [
+                "(function(){"
+                "var h=__THIS__; var p=h.parentElement;"
+                "h.addEventListener('pointerdown',function(e){"
+                "  e.preventDefault(); h.setPointerCapture(e.pointerId);"
+                "  function mv(ev){ var w=Math.max(160,Math.min(600,window.innerWidth-ev.clientX)); p.style.width=w+'px'; }"
+                "  function up(){ h.removeEventListener('pointermove',mv); h.removeEventListener('pointerup',up); }"
+                "  h.addEventListener('pointermove',mv); h.addEventListener('pointerup',up); });"
+                "})();"
+            ]
         }
 
     // The Setup tile strip: per-mesh small multiples, mounted once per dataset
@@ -308,42 +358,29 @@ module GuiPanes =
         div {
             Class "setup-tiles"
             onSetup |> AVal.map (fun on -> if on then None else Some (Class "panes-off"))
-            // Width-resize handle on the strip's left edge — pure DOM (layout
-            // chrome, not model state); the tile render controls track their
-            // client size, so they reflow for free.
-            div {
-                Class "tiles-handle"
-                Attribute("title", "Drag to resize the tile strip")
-                OnBoot [
-                    "(function(){"
-                    "var h=__THIS__; var p=h.parentElement;"
-                    "h.addEventListener('pointerdown',function(e){"
-                    "  e.preventDefault(); h.setPointerCapture(e.pointerId);"
-                    "  function mv(ev){ var w=Math.max(160,Math.min(600,window.innerWidth-ev.clientX)); p.style.width=w+'px'; }"
-                    "  function up(){ h.removeEventListener('pointermove',mv); h.removeEventListener('pointerup',up); }"
-                    "  h.addEventListener('pointermove',mv); h.addEventListener('pointerup',up); });"
-                    "})();"
-                ]
-            }
+            stripResizeHandle "Drag to resize the tile strip"
             model.MeshNames |> AList.map (surveyTile env model)
         }
 
-    // The pane overlay: covers the central 3D area while the Pin level is
-    // focused. Hidden via visibility (NOT display:none — a collapsed render
-    // control would lose its viewport); the pane scenes are Sg.Active-gated so
-    // hidden panes cost nothing.
+    // The Pin strip: the pair's two picking tiles stacked vertically — the
+    // same thin, resizable right-edge strip as the Setup small multiples (the
+    // main 3D stays visible beside it for context). Hidden via visibility
+    // (NOT display:none — a collapsed render control would lose its
+    // viewport); the tile scenes are Sg.Active-gated so hidden tiles cost
+    // nothing.
     let panes (env : Env<Message>) (model : AdaptiveModel) =
         let onPin = model.Focus |> AVal.map ((=) FocusPin)
         div {
             Class "pin-panes"
             onPin |> AVal.map (fun on -> if on then None else Some (Class "panes-off"))
+            stripResizeHandle "Drag to resize the pin tiles"
             let content =
                 model.Sel
                 |> AVal.map (fun s -> s.Pair)
                 |> AVal.map (function
                     | Some (a, b) ->
-                        IndexList.ofList [ paneControl env model PaneA a b
-                                           paneControl env model PaneB b a ]
+                        IndexList.ofList [ paneControl env model a b
+                                           paneControl env model b a ]
                     | None -> IndexList.empty)
                 |> AList.ofAVal
             content

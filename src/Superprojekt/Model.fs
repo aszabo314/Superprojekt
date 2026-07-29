@@ -47,13 +47,8 @@ type FocusLevel =
     | FocusPair
     | FocusPin
 
-// The Pin level's two picking panes: A = fst of the selected pair's key,
-// B = snd (PairCell.key order — the same attribution the pin points use).
-type PaneSide =
-    | PaneA
-    | PaneB
-
-// A survey tile's 2D top-down camera: Centre = the look-at point (render
+// The ONE per-mesh 2D top-down camera (Setup survey tiles AND the Pin panes —
+// a mesh keeps its view across levels): Centre = the look-at point (render
 // space), Radius = the eye height above it. Pan/zoom-to-cursor only — no
 // orbit; absent from the map = the default bounds framing.
 type TileCam = { Centre : V3d; Radius : float }
@@ -111,11 +106,7 @@ module MeshVisibility =
 type Model =
     {
         Camera         : OrbitState
-        // The Pin level's per-pane orbit cameras (A | B), re-seeded to each
-        // mesh's sensor framing when the pair selection changes.
-        PaneCamA       : OrbitState
-        PaneCamB       : OrbitState
-        // Per-mesh survey-tile 2D cameras; reset on dataset switch.
+        // The per-mesh 2D cameras (tiles + panes); reset on dataset switch.
         TileCams       : Map<string, TileCam>
         MeshOrder      : HashMap<string,int>
         MeshNames      : IndexList<string>
@@ -304,8 +295,6 @@ module Model =
     let initial =
         {
             Camera         = OrbitState.create V3d.Zero 1.0 0.3 3.0 Button.Left Button.Middle
-            PaneCamA       = OrbitState.create V3d.Zero 1.0 0.9 3.0 Button.Left Button.Middle
-            PaneCamB       = OrbitState.create V3d.Zero 1.0 0.9 3.0 Button.Left Button.Middle
             TileCams       = Map.empty
             MeshOrder      = HashMap.empty
             MeshNames      = IndexList.empty

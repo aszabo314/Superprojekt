@@ -5,9 +5,8 @@ open Superprojekt
 
 type Message =
     | CameraMessage      of OrbitMessage
-    // The Pin level's pane cameras (A | B), one orbit controller each.
-    | PaneCamMessage     of side : PaneSide * msg : OrbitMessage
-    // A survey tile's 2D camera (pan / zoom-to-cursor), computed view-side.
+    // The per-mesh 2D camera (tiles + panes: pan / zoom-to-cursor), computed
+    // view-side.
     | SetTileCam         of mesh : string * TileCam
     | CentroidsLoaded    of (string * V3d)[]
     | PanoCentersLoaded  of (string * V3d)[]

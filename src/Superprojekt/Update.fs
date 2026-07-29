@@ -37,11 +37,6 @@ module Update =
         match msg with
         | CameraMessage msg ->
             { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
-        | PaneCamMessage(side, msg) ->
-            let subEnv = Env.map (fun m -> PaneCamMessage(side, m)) env
-            match side with
-            | PaneA -> { model with PaneCamA = OrbitController.update subEnv model.PaneCamA msg }
-            | PaneB -> { model with PaneCamB = OrbitController.update subEnv model.PaneCamB msg }
         | SetTileCam(mesh, cam) ->
             let cam = { cam with Radius = clamp 0.05 100000.0 cam.Radius }
             { model with TileCams = Map.add mesh cam model.TileCams }
@@ -158,21 +153,11 @@ module Update =
             else
                 // A NEW pair cascade-clears its descendants and every in-cell
                 // cache; a placement bound to the old pair rolls back. The Pin
-                // panes re-seed to the pair meshes' sensor framings.
-                let paneCam mesh =
-                    let center = ModelTransforms.panoCenterRender model mesh
-                    let radius =
-                        match Map.tryFind mesh model.MeshBounds with
-                        | Some b when not b.IsInvalid ->
-                            max 1.0 (b.Size.Length * DatasetScale.forMesh model.DatasetScales mesh * 0.6)
-                        | _ -> 5.0
-                    OrbitState.create center 1.0 0.9 radius Button.Left Button.Middle
+                // panes keep their meshes' shared 2D tile cameras.
                 invalidateCellError
                     { jumpFocus FocusPair model with
                         Sel = { Pair = Some key; Pin = None; Point = None }
-                        ScanPins = { model.ScanPins with Placement = PlacementIdle }
-                        PaneCamA = paneCam (fst key)
-                        PaneCamB = paneCam (snd key) }
+                        ScanPins = { model.ScanPins with Placement = PlacementIdle } }
         | SelectPin id ->
             let valid =
                 match HashMap.tryFind id model.ScanPins.Pins with

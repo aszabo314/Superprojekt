@@ -6,6 +6,65 @@
 > end, reconstruct the net documentation updates from this file.
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
 
+## Polish: Pin panel = a right-edge tile strip, shared ortho camera (2026-07-29)
+
+- **The Pin panel is now the TWIN of the Setup strip**: the pair's two
+  picking tiles stacked VERTICALLY (mesh A above B) in a thin fixed
+  right-edge column (244 px, `.pin-panes` restyled; `.pin-pane` gets the
+  tile `aspect-ratio: 3/2`), the same left-edge width-resize handle
+  (`stripResizeHandle`, shared with `setupTiles`; the A|B split divider is
+  DELETED — one width knob rules both tiles). The central-area overlay is
+  gone: the MAIN 3D stays visible at Pin (it already isolates the pair via
+  the visibility rule) — picking still happens ONLY in the tiles.
+- **The shared 2D camera is now ORTHOGRAPHIC top-down** (tiles AND pin
+  tiles — `cam2dView`/`cam2dProj` rebuilt): `TileCam.Radius` drives the
+  ortho half-width via tan 30°, so stored cameras keep exactly the framing
+  the earlier 60°-fov perspective gave, and `unitsPerPx` (pan/zoom math) is
+  unchanged; the eye rides `Radius + scene-Z-extent` above the centre plane
+  with `far = Radius + 2·zext + 10`, so no terrain near-clips at any zoom;
+  ortho Frustum built as a record literal (`isOrtho = true`). `pickRay`
+  is viewProj-generic, so tile picks work unmodified under ortho.
+- Rail/UI copy switched from "pane" to "tile" wording. Rendering (shipped
+  shader, overlap gate, markers) and pick routing untouched.
+- Build green (FS0044 ×4 pre-existing). Owed to the browser pass: ortho
+  framing/depth (near/far margins over real datasets), tile-strip picking
+  at the small default size, both strips' resize feel.
+
+## Polish: hold-to-peek buttons in the top bar (2026-07-29)
+
+- `.tb-peeks` (GuiTopBar, between the Cut slider and the right group —
+  tb-right keeps its margin-left:auto): "Peek" sublabel + two hold-down
+  buttons "◌ V" (vis peek) and "↺ B" (pose peek), press = `SetPeek* true`,
+  release = false, `pointerCapture = true` so the release lands even when
+  the cursor slides off mid-hold; `classWhen tb-btn-active` mirrors the held
+  state (keys and buttons share it — the reducer's idempotence absorbs
+  overlap). Shown only when a peek could land: Focus = Pair ∧ both pair
+  meshes GPU-resident (the same guard the reducer enforces). Keys unchanged.
+- Build green. Owed to the browser pass: hold/release feel incl.
+  capture-release edge cases (context menu, touch).
+
+## Polish: Pin panes = minimal small-multiples variant (2026-07-29)
+
+- The two Pin viewports are now a two-tile variant of the small multiples:
+  the pane orbit cameras are GONE (`PaneSide`, `PaneCamA/B`,
+  `PaneCamMessage` + handler + the SelectPair sensor re-seeding all
+  DELETED — no FS0049/25/26, leftover grep clean); panes drive the SAME
+  top-down 2D controller as the survey tiles, extracted into shared helpers
+  (`GuiPanes.tileCamOf`/`cam2dView`/`cam2dProj`/`cam2dAtts`) over the ONE
+  per-mesh `Model.TileCams` map — a mesh keeps its pan/zoom across levels
+  (tile at Setup ⇄ pane at Pin), fov unified at 60°.
+- `cam2dAtts` takes an optional `onPick`: a drag-free pointer-up (≤4 px,
+  jitter-tolerant via a moved flag) is a click — the panes pass their
+  raycast pick (placement/edit routing unchanged; rendering — shipped
+  shader, overlap gate, markers — unchanged), tiles pass None.
+- **A|B split divider** (`.panes-divider` + OnBoot JS): drag resizes the
+  pane split (15–85 % clamp), pure DOM like the tile-strip handle; pane A
+  is looked up LAZILY inside the handler (the boot-time later-sibling
+  capture gotcha).
+- Build green (FS0044 ×4 pre-existing), Supertests 102/102. Owed to the
+  browser pass: pane pan/zoom + click-pick feel, divider drag, marker
+  readability under the top-down view.
+
 ## Polish: matrix root mark, white-map fix, tile resize + 2D cam, pick tooltips (2026-07-28)
 
 Feedback round on the A1–A3 build.

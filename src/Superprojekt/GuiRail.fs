@@ -6,7 +6,7 @@ open FSharp.Data.Adaptive
 open Aardvark.Dom
 open Microsoft.JSInterop
 
-// Left panel: the registration navigator — matrix-home (survey/root Setup +
+// Left panel: the registration navigator — the focus rail (survey/root Setup +
 // the mesh×mesh pair matrix) and the cell-workspace (per-pair toolkit +
 // error inspection). Pure view — every control dispatches an existing message
 // and never issues server queries itself.
@@ -369,14 +369,14 @@ module GuiRail =
             let pinCount = pairPins |> AVal.map List.length
 
             // ── Committed-pin rows: select (single click), descend to the
-            // Pin panes (double click), radius, delete. Point re-picks live at
-            // the Pin level — each pane is its mesh's pick surface.
+            // Pin tiles (double click), radius, delete. Point re-picks live at
+            // the Pin level — each tile is its mesh's pick surface.
             let pinRow (p : ScanPin) =
                 let isSel = model.Sel |> AVal.map (fun s -> s.Pin = Some p.Id)
                 div {
                     Class "cw-pin-row"
                     classWhen "cw-pin-sel" isSel
-                    Attribute("title", "Click: choose this pin (enables the Pin stop) · double-click: open it in the Pin panes")
+                    Attribute("title", "Click: choose this pin (enables the Pin stop) · double-click: open it in the Pin tiles")
                     // Any row click chooses the pin (enables the Pin stop);
                     // the buttons inside keep their own actions on top.
                     Dom.OnClick(fun _ -> env.Emit [SelectPin p.Id])
@@ -546,7 +546,7 @@ module GuiRail =
                     Class "cw-tools"
                     button {
                         Class "rail-btn rail-pin-add"
-                        Attribute("title", "Place a pin on this pair: opens the Pin panes — drop the area marker + pick a point in each pane, then commit (free order; Esc aborts)")
+                        Attribute("title", "Place a pin on this pair: opens the Pin tiles — drop the area marker + pick a point in each tile, then commit (free order; Esc aborts)")
                         Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (BeginPinTransaction pairKey)])
                         "○ New pin"
                     }
@@ -569,7 +569,7 @@ module GuiRail =
                 inspectSection
             }
 
-        // ── Pin level: configure ONE scanpin. The two panes (mesh A | mesh B)
+        // ── Pin level: configure ONE scanpin. The two tiles (mesh A / mesh B)
         // in the central area are the picking surface; this rail column carries
         // the transaction/edit controls.
         let pinLevelView () =
@@ -617,7 +617,7 @@ module GuiRail =
                         "✕"
                     }
                 }
-            // ── Committed-pin controls (edit mode): radius + delete; a pane
+            // ── Committed-pin controls (edit mode): radius + delete; a tile
             // click re-picks that mesh's point.
             let editBar =
                 div {
@@ -655,10 +655,10 @@ module GuiRail =
                 div {
                     Class "cw-state"
                     (placing, selPin) ||> AVal.map2 (fun pl p ->
-                        if pl then "pane A ↦ point on mesh A · pane B ↦ point on mesh B · area on either"
+                        if pl then "tile A ↦ point on mesh A · tile B ↦ point on mesh B · area on either"
                         else
                             match p with
-                            | Some _ -> "click a pane to re-pick that mesh's point (unregisters the pair)"
+                            | Some _ -> "click a tile to re-pick that mesh's point (unregisters the pair)"
                             | None -> "")
                 }
                 draftBar

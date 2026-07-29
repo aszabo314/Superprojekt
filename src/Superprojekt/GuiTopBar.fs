@@ -20,6 +20,37 @@ module GuiTopBar =
                     model.NearCutFrac (fun v -> env.Emit [SetNearCut v])
             }
 
+            // Spring-loaded peek buttons: press-and-hold twins of the V/B keys
+            // (Pair scope; the reducer re-guards, releases always land).
+            // Pointer capture keeps the release landing even when the cursor
+            // slides off the button mid-hold.
+            let canPeek =
+                AVal.custom (fun t ->
+                    model.Focus.GetValue t = FocusPair &&
+                    (match (model.Sel.GetValue t).Pair with
+                     | Some (a, b) ->
+                        let loaded = model.MeshesLoaded.Content.GetValue t
+                        HashSet.contains a loaded && HashSet.contains b loaded
+                     | None -> false))
+            let peekBtn (label : string) (title : string) (heldA : aval<bool>) (set : bool -> unit) =
+                button {
+                    Class "tb-btn-tiny tb-peek"
+                    classWhen "tb-btn-active" heldA
+                    Attribute("title", title)
+                    Dom.OnPointerDown((fun _ -> set true), pointerCapture = true)
+                    Dom.OnPointerUp((fun _ -> set false), pointerCapture = true)
+                    label
+                }
+            div {
+                Class "tb-peeks"
+                showWhen canPeek
+                span { Class "lp-sublabel"; "Peek" }
+                peekBtn "◌ V" "Hold: the moving mesh blinks off — is this the same rock? (same as holding V)"
+                    model.PeekVis (fun h -> env.Emit [SetPeekVis h])
+                peekBtn "↺ B" "Hold: the moving mesh snaps to its as-loaded pose — did registration help? (same as holding B)"
+                    model.PeekPose (fun h -> env.Emit [SetPeekPose h])
+            }
+
             div {
                 Class "tb-right"
                 div {

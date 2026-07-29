@@ -1,5 +1,5 @@
-//644797c3-cbfc-5a74-c79f-986fd9601437
-//15c6e8cf-2528-6777-80f5-d2232724ae8d
+//40341f66-fc9c-8848-a977-a253bb4ed610
+//05f6436f-89f1-5f81-0edd-79fd5f9c53b7
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -13,8 +13,6 @@ open Superprojekt
 [<System.Diagnostics.CodeAnalysis.SuppressMessage("NameConventions", "*")>]
 type AdaptiveModel(value : Model) =
     let _Camera_ = AdaptiveOrbitState(value.Camera)
-    let _PaneCamA_ = AdaptiveOrbitState(value.PaneCamA)
-    let _PaneCamB_ = AdaptiveOrbitState(value.PaneCamB)
     let _TileCams_ = FSharp.Data.Adaptive.cval(value.TileCams)
     let _MeshOrder_ = FSharp.Data.Adaptive.cmap(value.MeshOrder)
     let _MeshNames_ = FSharp.Data.Adaptive.clist(value.MeshNames)
@@ -76,8 +74,6 @@ type AdaptiveModel(value : Model) =
             __value <- value
             __adaptive.MarkOutdated()
             _Camera_.Update(value.Camera)
-            _PaneCamA_.Update(value.PaneCamA)
-            _PaneCamB_.Update(value.PaneCamB)
             _TileCams_.Value <- value.TileCams
             _MeshOrder_.Value <- value.MeshOrder
             _MeshNames_.Value <- value.MeshNames
@@ -132,8 +128,6 @@ type AdaptiveModel(value : Model) =
             _NearCutFrac_.Value <- value.NearCutFrac
     member __.Current = __adaptive
     member __.Camera = _Camera_
-    member __.PaneCamA = _PaneCamA_
-    member __.PaneCamB = _PaneCamB_
     member __.TileCams = _TileCams_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, TileCam>>
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
     member __.MeshNames = _MeshNames_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>

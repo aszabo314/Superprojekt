@@ -163,6 +163,8 @@ body.loaded { background: #f4f6f8; }
     color: #475569; font-size: 12px;
 }
 .tb-btn-tiny:hover { background: #edf0f4; color: #0f172a; }
+.tb-btn-tiny:disabled { opacity: 0.45; cursor: default; }
+.tb-btn-tiny:disabled:hover { background: transparent; color: #475569; }
 
 /* ── Left column: the navigator rail + the floating inspection panel ── */
 .left-col {

@@ -29,15 +29,20 @@ module MeshView =
     let apiBase = ApiConfig.apiBase
 
     let private meshes = System.Collections.Generic.Dictionary<string, LoadedMesh>()
+    // Completion callbacks accumulate per name: several scene builders (tiles,
+    // offscreen passes, up-normal) request a mesh before the main pass does,
+    // but only the FIRST call starts the fetch — dropping a later caller's
+    // callback loses the main pass's MeshesLoaded report (dead peeks).
+    let private pendingFinished = System.Collections.Generic.Dictionary<string, ResizeArray<unit -> unit>>()
 
     let loadMeshAsync (finished : unit -> unit) (name : string) : LoadedMesh =
         match meshes.TryGetValue(name) with
         | true, m ->
-            // Cache hit on a dataset REVISIT: the completion callback must
-            // still fire — Model.MeshesLoaded resets per dataset and gates the
-            // peeks, which would otherwise stay dead for cached meshes. (A
-            // still-in-flight first load reports through its own task.)
+            // Cache hit: the callback must still fire — Model.MeshesLoaded
+            // resets per dataset and gates the peeks. Loaded ⇒ now; still in
+            // flight ⇒ queue on the load's pending list.
             if (m.mesh : MeshData option ref).Value.IsSome then finished ()
+            else pendingFinished.[name].Add finished
             m
         | _ ->
             let ccc = cval V3d.Zero
@@ -55,6 +60,8 @@ module MeshView =
                     mesh = ref None
                 }
             meshes.[name] <- m
+            let pending = ResizeArray [ finished ]
+            pendingFinished.[name] <- pending
             task {
                 try
                     let! mesh = MeshData.fetch apiBase.Value name 0
@@ -88,7 +95,8 @@ module MeshView =
                     let! img = JSImage.load mesh.atlasUrl
                     transact (fun () -> (m.tex :?> cval<ITexture>).Value <- JSTexture(img, true))
 
-                    finished()
+                    for f in pending do f ()
+                    pending.Clear()
                 with e ->
                     Log.error "failed to load mesh %s: %A" name e
             } |> ignore

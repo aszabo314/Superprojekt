@@ -7,6 +7,26 @@
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
 > *(A4–A7 amendment instance completed 2026-07-29 — docs reconstructed.)*
 
+## Fix: peeks permanently dead — mesh-load completions were dropped (2026-07-29)
+
+- **Root cause**: `MeshView.loadMeshAsync` fired the completion callback
+  only for the caller that CREATED the cache entry (or a cache hit after
+  the load finished); a caller hitting a still-in-flight entry was
+  silently dropped. The tile strip (`buildPaneScene`), the offscreen
+  passes (`offscreenMesh`) and `projectUpNormal` all request meshes with
+  no-op callbacks and evaluate before the main pass — so THEY created the
+  entries and the main scene's real callback (the one emitting
+  `LoadFinished`) never fired. `Model.MeshesLoaded` stayed empty forever
+  → `peekPairLoaded` false → V/B keys AND top-bar buttons permanently
+  refused (also: the `loading-done` marker never appeared).
+- **Fix**: per-name pending-callback list (`pendingFinished`) — the entry
+  creator seeds it, in-flight cache hits append, the load task fires all;
+  loaded cache hits keep firing immediately (dataset-revisit path).
+- **CSS**: `.tb-btn-tiny:disabled` (opacity 0.45, no hover) — a disabled
+  peek button previously looked identical to an enabled one, masking the
+  bug as "clicks do nothing".
+- Green: client type-check.
+
 ## Post-A7 polish IV: draft-mark fade, no pin-level delete, overlap gate (2026-07-29)
 
 - **Draft marks fade while armed too**: the draft's already-placed parts

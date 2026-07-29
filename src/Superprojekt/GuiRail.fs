@@ -111,8 +111,175 @@ module GuiRail =
         "  var v=cursorV(e); if(Math.abs(v-anchorV)<1e-9) range=null; emit(); render(); });"
         "render();"
         "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-chart','data-brushed','data-hover']});"
+        // Re-render on size changes — including display:none → shown (the
+        // floating panel hides wholesale), where boot painted at width 0.
+        "new ResizeObserver(function(){ render(); }).observe(el);"
         "})();"
     ]
+
+    // ── The floating inspection panel's body, keyed to ONE pair: the diagram,
+    // the false-colour map toggle, the transient armed probe and the readouts.
+    // The Pin level narrows the diagram to the selected pin — gids stay
+    // CANONICAL (indices into the full CellError sample concatenation), so the
+    // brush keeps addressing the same 3D samples at either level.
+    let private inspectBody (env : Env<Message>) (model : AdaptiveModel) (a : string) (b : string) =
+        let chartData =
+            AVal.custom (fun t ->
+                let inv = System.Globalization.CultureInfo.InvariantCulture
+                let gf (v : float) =
+                    if System.Double.IsNaN v || System.Double.IsInfinity v then "0" else v.ToString("0.###", inv)
+                let order = model.MeshOrder.Content.GetValue t
+                let numOfN m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
+                let refM, movM = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
+                let pins = model.ScanPins.Pins.Content.GetValue t
+                let onlyPin =
+                    match model.Focus.GetValue t, (model.Sel.GetValue t).Pin with
+                    | FocusPin, Some id -> Some id
+                    | _ -> None
+                let title =
+                    match onlyPin |> Option.bind (fun id -> HashMap.tryFind id pins) with
+                    | Some p -> sprintf "Pin %s — mesh %d error vs %d" p.ShortName (numOfN movM) (numOfN refM)
+                    | None -> sprintf "Mesh %d error vs %d — across pins" (numOfN movM) (numOfN refM)
+                match model.CellError.GetValue t with
+                | None ->
+                    sprintf "{\"title\":\"%s\",\"ph\":\"place pins to measure\",\"lo\":-10,\"hi\":10,\"bins\":48,\"series\":[]}" title
+                | Some cells ->
+                    let before = model.CellErrorBefore.GetValue t
+                    // The x-range stays the FULL cell's (the shared-scale rule),
+                    // so a pin-narrowed diagram is comparable across pins.
+                    let allSamples =
+                        seq {
+                            for (_, r) in cells do yield! r.Samples
+                            match before with
+                            | Some bs -> for (_, r) in bs do yield! r.Samples
+                            | None -> ()
+                        }
+                    let lo0, hi0 = ErrorRange.ofSamples allSamples
+                    let lo, hi = lo0 * 1000.0, hi0 * 1000.0
+                    let pad = max 1.0 (hi - lo) * 0.08
+                    let lo, hi = lo - pad, hi + pad
+                    let bins = 48
+                    let binW = (hi - lo) / float bins
+                    let histOf (samples : float[]) =
+                        let c : int[] = Array.zeroCreate bins
+                        for v in samples do
+                            let idx = max 0 (min (bins - 1) (int ((v * 1000.0 - lo) / binW)))
+                            c.[idx] <- c.[idx] + 1
+                        c
+                    let greyOf (i : int) (n : int) =
+                        let tt = if n <= 1 then 0.5 else float i / float (n - 1)
+                        let v = 190 - int (tt * 140.0)
+                        c4bToHex (C4b(byte v, byte v, byte v))
+                    let lods = cells |> Array.choose (fun (_, r) -> if r.Count > 0 then Some r.LodHalfWidth else None)
+                    let lod = if lods.Length = 0 then 0.0 else (Array.average lods) * 1000.0
+                    let mutable gid = 0
+                    let series =
+                        cells |> Array.mapi (fun i (pid, r) ->
+                            let g0 = gid
+                            gid <- gid + r.Samples.Length
+                            match onlyPin with
+                            | Some id when id <> pid -> None
+                            | _ ->
+                                let name =
+                                    match HashMap.tryFind pid pins with
+                                    | Some p -> p.ShortName
+                                    | None -> "?"
+                                let hb =
+                                    match before with
+                                    | Some bs ->
+                                        bs |> Array.tryFind (fun (bid, _) -> bid = pid)
+                                        |> Option.map (fun (_, br) -> histOf br.Samples)
+                                    | None -> None
+                                let gids = Array.init r.Samples.Length (fun k -> g0 + k)
+                                let med = if r.Count > 0 then gf (r.Median * 1000.0) else "null"
+                                let hj = histOf r.Samples |> Array.map string |> String.concat ","
+                                let hbj = hb |> Option.map (fun c -> c |> Array.map string |> String.concat ",") |> Option.defaultValue ""
+                                Some (
+                                    sprintf "{\"name\":\"%s\",\"color\":\"%s\",\"med\":%s,\"g\":[%s],\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
+                                        name (greyOf i cells.Length) med
+                                        (gids |> Array.map string |> String.concat ",")
+                                        (r.Samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
+                                        hj hbj))
+                        |> Array.choose id
+                        |> String.concat ","
+                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"series\":[%s]}"
+                        title (gf lo) (gf hi) bins (gf lod) series)
+        let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
+        let hoverData = model.HoverSample |> AVal.map (function Some g -> string g | None -> "")
+        div {
+            Class "cw-inspect"
+            div {
+                Class "cw-tools"
+                div {
+                    Class "rail-isolate"
+                    Attribute("title", "False-colour error map: paints the MOV mesh's signed distance vs the reference (the reference is never error-coloured). At the Pin level the map narrows to the pin's area.")
+                    compactToggle "Error map" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
+                }
+                button {
+                    Class "rail-btn cw-probe"
+                    classWhen "rail-btn-active" model.ProbeArmed
+                    Attribute("title", "Armed point probe: while armed, pick any 3D point for its exact error value. Fully transient — disarm wipes it (Esc).")
+                    Dom.OnClick(fun _ -> env.Emit [ToggleProbeArmed])
+                    "⊕ Probe"
+                }
+            }
+            div {
+                Class "cw-readout"
+                span {
+                    Class "cw-readout-probe"
+                    showWhen model.ProbeArmed
+                    model.ProbeReadout |> AVal.map (function
+                        | Some (_, v) -> sprintf "probe %+.1f mm" (v * 1000.0)
+                        | None -> "probe: pick a 3D point")
+                }
+                span {
+                    Class "cw-readout-hover"
+                    model.HoverReadout |> AVal.map (function
+                        | Some (_, v) -> sprintf "sample %+.1f mm" (v * 1000.0)
+                        | None -> "")
+                }
+            }
+            div {
+                Class "cw-chart"
+                chartData |> AVal.map (fun j -> Some (Attribute("data-chart", j)))
+                brushedData |> AVal.map (fun bd -> Some (Attribute("data-brushed", bd)))
+                hoverData |> AVal.map (fun h -> Some (Attribute("data-hover", h)))
+                OnBoot chartJs
+            }
+            // The JS→Elm brush bridge (hidden; the chart dispatches input).
+            input {
+                Class "cw-brush-bridge"
+                Dom.OnInput(fun e ->
+                    let ids =
+                        (e.Value : string).Split(',')
+                        |> Array.choose (fun sSeg ->
+                            match System.Int32.TryParse sSeg with
+                            | true, v -> Some v
+                            | _ -> None)
+                        |> Array.toList
+                    env.Emit [SetBrushedSamples ids])
+            }
+        }
+
+    // ── The floating inspection panel: below the navigator, Pair AND Pin
+    // levels (the Pin level shows the selected pin only). Detached from the
+    // rail so inspection reads the same in both scopes; keyed to the pair.
+    let inspectPanel (env : Env<Message>) (model : AdaptiveModel) =
+        let visible =
+            (model.Focus, model.Sel) ||> AVal.map2 (fun f s ->
+                s.Pair.IsSome && (f = FocusPair || f = FocusPin))
+        let content =
+            model.Sel
+            |> AVal.map (fun s -> s.Pair)
+            |> AVal.map (function
+                | Some (a, b) -> IndexList.ofList [ inspectBody env model a b ]
+                | None -> IndexList.empty)
+            |> AList.ofAVal
+        div {
+            Class "inspect-panel"
+            Primitives.showWhen visible
+            content
+        }
 
     let rail (env : Env<Message>) (model : AdaptiveModel) =
 
@@ -369,14 +536,14 @@ module GuiRail =
             let pinCount = pairPins |> AVal.map List.length
 
             // ── Committed-pin rows: select (single click), descend to the
-            // Pin tiles (double click), radius, delete. Point re-picks live at
-            // the Pin level — each tile is its mesh's pick surface.
+            // Pin level (double click), radius, delete. Point re-picks live at
+            // the Pin level via the armed pick.
             let pinRow (p : ScanPin) =
                 let isSel = model.Sel |> AVal.map (fun s -> s.Pin = Some p.Id)
                 div {
                     Class "cw-pin-row"
                     classWhen "cw-pin-sel" isSel
-                    Attribute("title", "Click: choose this pin (enables the Pin stop) · double-click: open it in the Pin tiles")
+                    Attribute("title", "Click: choose this pin (enables the Pin stop) · double-click: open it at the Pin level")
                     // Any row click chooses the pin (enables the Pin stop);
                     // the buttons inside keep their own actions on top.
                     Dom.OnClick(fun _ -> env.Emit [SelectPin p.Id])
@@ -405,132 +572,6 @@ module GuiRail =
                     rows
                 }
 
-            // ── In-cell error inspection: the ONE diagram (MOV across pins),
-            // the false-colour map toggle, and the transient armed probe.
-            let chartData =
-                AVal.custom (fun t ->
-                    let inv = System.Globalization.CultureInfo.InvariantCulture
-                    let gf (v : float) =
-                        if System.Double.IsNaN v || System.Double.IsInfinity v then "0" else v.ToString("0.###", inv)
-                    let order = model.MeshOrder.Content.GetValue t
-                    let numOfN m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
-                    let refM, movM = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
-                    let title = sprintf "Mesh %d error vs %d — across pins" (numOfN movM) (numOfN refM)
-                    match model.CellError.GetValue t with
-                    | None ->
-                        sprintf "{\"title\":\"%s\",\"ph\":\"place pins to measure\",\"lo\":-10,\"hi\":10,\"bins\":48,\"series\":[]}" title
-                    | Some cells ->
-                        let before = model.CellErrorBefore.GetValue t
-                        let pins = model.ScanPins.Pins.Content.GetValue t
-                        let allSamples =
-                            seq {
-                                for (_, r) in cells do yield! r.Samples
-                                match before with
-                                | Some bs -> for (_, r) in bs do yield! r.Samples
-                                | None -> ()
-                            }
-                        let lo0, hi0 = ErrorRange.ofSamples allSamples
-                        let lo, hi = lo0 * 1000.0, hi0 * 1000.0
-                        let pad = max 1.0 (hi - lo) * 0.08
-                        let lo, hi = lo - pad, hi + pad
-                        let bins = 48
-                        let binW = (hi - lo) / float bins
-                        let histOf (samples : float[]) =
-                            let c : int[] = Array.zeroCreate bins
-                            for v in samples do
-                                let idx = max 0 (min (bins - 1) (int ((v * 1000.0 - lo) / binW)))
-                                c.[idx] <- c.[idx] + 1
-                            c
-                        let greyOf (i : int) (n : int) =
-                            let tt = if n <= 1 then 0.5 else float i / float (n - 1)
-                            let v = 190 - int (tt * 140.0)
-                            c4bToHex (C4b(byte v, byte v, byte v))
-                        let lods = cells |> Array.choose (fun (_, r) -> if r.Count > 0 then Some r.LodHalfWidth else None)
-                        let lod = if lods.Length = 0 then 0.0 else (Array.average lods) * 1000.0
-                        let mutable gid = 0
-                        let series =
-                            cells |> Array.mapi (fun i (pid, r) ->
-                                let name =
-                                    match HashMap.tryFind pid pins with
-                                    | Some p -> p.ShortName
-                                    | None -> "?"
-                                let hb =
-                                    match before with
-                                    | Some bs ->
-                                        bs |> Array.tryFind (fun (bid, _) -> bid = pid)
-                                        |> Option.map (fun (_, br) -> histOf br.Samples)
-                                    | None -> None
-                                let gids = Array.init r.Samples.Length (fun k -> gid + k)
-                                gid <- gid + r.Samples.Length
-                                let med = if r.Count > 0 then gf (r.Median * 1000.0) else "null"
-                                let hj = histOf r.Samples |> Array.map string |> String.concat ","
-                                let hbj = hb |> Option.map (fun c -> c |> Array.map string |> String.concat ",") |> Option.defaultValue ""
-                                sprintf "{\"name\":\"%s\",\"color\":\"%s\",\"med\":%s,\"g\":[%s],\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
-                                    name (greyOf i cells.Length) med
-                                    (gids |> Array.map string |> String.concat ",")
-                                    (r.Samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
-                                    hj hbj)
-                            |> String.concat ","
-                        sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"series\":[%s]}"
-                            title (gf lo) (gf hi) bins (gf lod) series)
-            let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
-            let hoverData = model.HoverSample |> AVal.map (function Some g -> string g | None -> "")
-            let inspectSection =
-                div {
-                    Class "cw-inspect"
-                    div {
-                        Class "cw-tools"
-                        div {
-                            Class "rail-isolate"
-                            Attribute("title", "False-colour error map: paints the MOV mesh's signed distance vs the reference (the reference is never error-coloured)")
-                            compactToggle "Error map" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
-                        }
-                        button {
-                            Class "rail-btn cw-probe"
-                            classWhen "rail-btn-active" model.ProbeArmed
-                            Attribute("title", "Armed point probe: while armed, pick any 3D point for its exact error value. Fully transient — disarm wipes it (Esc).")
-                            Dom.OnClick(fun _ -> env.Emit [ToggleProbeArmed])
-                            "⊕ Probe"
-                        }
-                    }
-                    div {
-                        Class "cw-readout"
-                        span {
-                            Class "cw-readout-probe"
-                            showWhen model.ProbeArmed
-                            model.ProbeReadout |> AVal.map (function
-                                | Some (_, v) -> sprintf "probe %+.1f mm" (v * 1000.0)
-                                | None -> "probe: pick a 3D point")
-                        }
-                        span {
-                            Class "cw-readout-hover"
-                            model.HoverReadout |> AVal.map (function
-                                | Some (_, v) -> sprintf "sample %+.1f mm" (v * 1000.0)
-                                | None -> "")
-                        }
-                    }
-                    div {
-                        Class "cw-chart"
-                        chartData |> AVal.map (fun j -> Some (Attribute("data-chart", j)))
-                        brushedData |> AVal.map (fun bd -> Some (Attribute("data-brushed", bd)))
-                        hoverData |> AVal.map (fun h -> Some (Attribute("data-hover", h)))
-                        OnBoot chartJs
-                    }
-                    // The JS→Elm brush bridge (hidden; the chart dispatches input).
-                    input {
-                        Class "cw-brush-bridge"
-                        Dom.OnInput(fun e ->
-                            let ids =
-                                (e.Value : string).Split(',')
-                                |> Array.choose (fun sSeg ->
-                                    match System.Int32.TryParse sSeg with
-                                    | true, v -> Some v
-                                    | _ -> None)
-                                |> Array.toList
-                            env.Emit [SetBrushedSamples ids])
-                    }
-                }
-
             div {
                 Class "cw"
                 div {
@@ -546,7 +587,7 @@ module GuiRail =
                     Class "cw-tools"
                     button {
                         Class "rail-btn rail-pin-add"
-                        Attribute("title", "Place a pin on this pair: opens the Pin tiles — drop the area marker + pick a point in each tile, then commit (free order; Esc aborts)")
+                        Attribute("title", "Place a pin on this pair: enters the Pin level with the centre pick armed — click the 3D view or a tile to place, then pick both correspondence points and commit (free order; Esc aborts)")
                         Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (BeginPinTransaction pairKey)])
                         "○ New pin"
                     }
@@ -566,47 +607,99 @@ module GuiRail =
                     }
                 }
                 pinList
-                inspectSection
             }
 
-        // ── Pin level: configure ONE scanpin. The two tiles (mesh A / mesh B)
-        // in the central area are the picking surface; this rail column carries
-        // the transaction/edit controls.
-        let pinLevelView () =
+        // ── Pin level: configure ONE scanpin. Picking is ARM-driven — an armed
+        // pick lands in ANY view (the main 3D is the primary surface, the two
+        // tiles are redundant ortho views); the focus buttons steer what the
+        // 3D shows and re-frame the tiles.
+        let pinLevelView (a : string) (b : string) =
             let placement = model.ScanPins.Placement
             let placing = placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
             let selPin =
                 (model.Sel, model.ScanPins.Pins |> AMap.toAVal) ||> AVal.map2 (fun s pins ->
                     s.Pin |> Option.bind (fun id -> HashMap.tryFind id pins))
-            // ── The placement transaction: free order — Area/Points sub-tools
-            // re-armable any time, re-picking replaces, the "N of 2" cue lives
-            // ONLY here, ✕ aborts in place, leaving Pin aborts too (rollback),
-            // ✓ commits (enabled only when complete → the pin is born atomic).
+            let chip (name : string) =
+                let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                AList.ofList [
+                    span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
+                    span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+                ]
+            // ── Focus row: what the Pin level LOOKS AT — the whole pin (both
+            // meshes) or one correspondence side (that mesh alone). Hover
+            // previews the narrowing; a click also re-frames the tiles.
+            let focusBtn (target : string option) (hover : PinHover) (title : string)
+                         (withChip : string option) (label : string) =
+                button {
+                    Class "rail-btn pin-focus-btn"
+                    classWhen "rail-btn-active" (model.Sel |> AVal.map (fun s -> s.Point = target))
+                    Attribute("title", title)
+                    Dom.OnMouseEnter(fun _ -> env.Emit [SetPinFocusHover (Some hover)])
+                    Dom.OnMouseLeave(fun _ -> env.Emit [SetPinFocusHover None])
+                    Dom.OnClick(fun _ -> env.Emit [SelectPoint target])
+                    let chipList = match withChip with Some m -> chip m | None -> AList.empty
+                    chipList
+                    label
+                }
+            let focusRow =
+                div {
+                    Class "cw-tools pin-focus-row"
+                    span { Class "lp-sublabel"; "Focus" }
+                    focusBtn None HoverBoth
+                        "Focus the whole pin: both meshes visible; the tiles re-frame to the pin" None "◉ Pin"
+                    focusBtn (Some a) (HoverSide a)
+                        "Focus this mesh's correspondence: it renders alone; the tiles re-frame to its point" (Some a) "point"
+                    focusBtn (Some b) (HoverSide b)
+                        "Focus this mesh's correspondence: it renders alone; the tiles re-frame to its point" (Some b) "point"
+                }
+            // Arm buttons: the ONE way picking engages. While armed the left
+            // button picks (never orbits) in every view; a landed pick, Esc or
+            // a re-click disarms. Arming a correspondence pick isolates its
+            // mesh (hover previews).
+            let armBtn (target : ArmTarget) (hover : PinHover) (title : string)
+                       (withChip : string option) (label : string) =
+                button {
+                    Class "rail-btn pin-arm-btn"
+                    classWhen "rail-btn-active" (model.ArmedPick |> AVal.map ((=) (Some target)))
+                    Attribute("title", title)
+                    Dom.OnMouseEnter(fun _ -> env.Emit [SetPinFocusHover (Some hover)])
+                    Dom.OnMouseLeave(fun _ -> env.Emit [SetPinFocusHover None])
+                    Dom.OnClick(fun _ -> env.Emit [ToggleArmPick target])
+                    let chipList = match withChip with Some m -> chip m | None -> AList.empty
+                    chipList
+                    label
+                }
+            // ── The placement transaction: free order — the arm buttons pick
+            // which of centre / point A / point B lands next, re-picking
+            // replaces, the "N of 2" cue lives ONLY here, ✕ aborts in place,
+            // leaving Pin aborts too (rollback), ✓ commits (enabled only when
+            // complete → the pin is born atomic).
             let draftBar =
-                let toolIs tool =
-                    placement |> AVal.map (function
-                        | PlacementActive(t, _) -> t = tool
-                        | PlacementIdle -> false)
-                let draft = placement |> AVal.map (function PlacementActive(_, d) -> Some d | _ -> None)
+                let draft = placement |> AVal.map (function PlacementActive d -> Some d | _ -> None)
                 let cue =
                     draft |> AVal.map (function
                         | Some d ->
-                            sprintf "area %s · %d of 2 points"
+                            sprintf "centre %s · %d of 2 points"
                                 (if d.Area.IsSome then "✓" else "·") (PinDraft.pointCount d)
                         | None -> "")
                 let complete = draft |> AVal.map (function Some d -> PinDraft.complete d | None -> false)
                 div {
                     Class "cw-draft"
                     showWhen placing
-                    compactButtonBar [
-                        "◯ Area",  toolIs ToolArea,  (fun () -> env.Emit [ScanPinMsg (SetDraftTool ToolArea)])
-                        "✚ Points", toolIs ToolPoint, (fun () -> env.Emit [ScanPinMsg (SetDraftTool ToolPoint)])
-                    ]
+                    armBtn ArmCentre HoverBoth
+                        "Arm the pin-centre pick: click any view to drop the area marker (the hit mesh anchors the pin)"
+                        None "◯ Centre"
+                    armBtn (ArmPoint a) (HoverSide a)
+                        "Arm the correspondence pick on this mesh — it renders alone while armed; click any view"
+                        (Some a) "✚"
+                    armBtn (ArmPoint b) (HoverSide b)
+                        "Arm the correspondence pick on this mesh — it renders alone while armed; click any view"
+                        (Some b) "✚"
                     span { Class "cw-cue"; cue }
                     button {
                         Class "rail-btn cw-commit"
                         complete |> AVal.map (fun ok -> if ok then None else Some (Attribute("disabled", "disabled")))
-                        Attribute("title", "Commit: the pin is born whole (area + both points)")
+                        Attribute("title", "Commit: the pin is born whole (centre + both points)")
                         Dom.OnClick(fun _ -> env.Emit [ScanPinMsg CommitPin])
                         "✓ Commit"
                     }
@@ -617,12 +710,18 @@ module GuiRail =
                         "✕"
                     }
                 }
-            // ── Committed-pin controls (edit mode): radius + delete; a tile
-            // click re-picks that mesh's point.
+            // ── Committed-pin controls (edit mode): arm a point re-pick,
+            // radius, delete. The centre is immovable — no centre arm here.
             let editBar =
                 div {
                     Class "cw-tools"
                     showWhen ((placing, selPin) ||> AVal.map2 (fun pl p -> not pl && p.IsSome))
+                    armBtn (ArmPoint a) (HoverSide a)
+                        "Arm a re-pick of this mesh's point (unregisters the pair); click any view"
+                        (Some a) "✚"
+                    armBtn (ArmPoint b) (HoverSide b)
+                        "Arm a re-pick of this mesh's point (unregisters the pair); click any view"
+                        (Some b) "✚"
                     inlineLogSlider "r" 0.01 100.0 (sprintf "%.2f m")
                         (selPin |> AVal.map (function Some p -> p.InnerRadius | None -> 0.5))
                         (fun v ->
@@ -655,12 +754,13 @@ module GuiRail =
                 div {
                     Class "cw-state"
                     (placing, selPin) ||> AVal.map2 (fun pl p ->
-                        if pl then "tile A ↦ point on mesh A · tile B ↦ point on mesh B · area on either"
+                        if pl then "arm a pick · click the 3D view or a tile · a landed pick disarms · Esc disarms/aborts"
                         else
                             match p with
-                            | Some _ -> "click a tile to re-pick that mesh's point (unregisters the pair)"
+                            | Some _ -> "arm a point re-pick to replace it (unregisters the pair)"
                             | None -> "")
                 }
+                focusRow
                 draftBar
                 editBar
             }
@@ -680,7 +780,7 @@ module GuiRail =
                             | FocusSetup, _ -> rootOverview ()
                             | FocusMatrix, _ -> pairMatrixView ()
                             | FocusPair, Some (a, b) -> cellWorkspace a b
-                            | FocusPin, Some _ -> pinLevelView ()
+                            | FocusPin, Some (a, b) -> pinLevelView a b
                             // Unreachable — the reducer keeps Focus enabled.
                             | (FocusPair | FocusPin), None -> pairMatrixView ()
                         IndexList.ofList [ node ])

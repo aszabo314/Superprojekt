@@ -33,6 +33,10 @@ module Primitives =
     // so pin marks stay recognisable without owning a hue family.
     let pinInk    = C4b(41uy, 37uy, 36uy)          // #292524
     let pinInkV3d = V3d(41.0 / 255.0, 37.0 / 255.0, 36.0 / 255.0)
+    // The --ref-gold CSS token's F# mirror (#d4a106) — every render-side root
+    // marker (3D bbox outline, tile footprint overlay) reads THIS, never a
+    // re-derived gold.
+    let refGoldV3d = V3d(212.0 / 255.0, 161.0 / 255.0, 6.0 / 255.0)
     // Pronounceable 2-char pin code = consonant + vowel, collision-checked against
     // names already taken (other pins' short names + the mesh numbers). Seeded by the
     // pin's guid hash, so it is effectively random yet deterministic per pin.

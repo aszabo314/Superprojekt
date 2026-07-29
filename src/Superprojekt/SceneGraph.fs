@@ -173,7 +173,7 @@ module SceneGraph =
     let private referenceOutline view proj active (model : AdaptiveModel) =
         bboxOutline view proj active model
             (fun t -> (model.RegGraph.GetValue t).Root)
-            (V4d(0.831, 0.631, 0.024, 0.95)) 2.5
+            (V4d(Primitives.refGoldV3d, 0.95)) 2.5
 
     let build
         (env : Env<Message>)

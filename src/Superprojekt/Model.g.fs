@@ -1,5 +1,5 @@
-//40341f66-fc9c-8848-a977-a253bb4ed610
-//05f6436f-89f1-5f81-0edd-79fd5f9c53b7
+//dccbb812-8670-2b2d-7fd1-301357fa65aa
+//f154a595-21c8-46f5-56d0-7d6a84dbba89
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -56,6 +56,9 @@ type AdaptiveModel(value : Model) =
     let _HoverReadout_ = FSharp.Data.Adaptive.cval(value.HoverReadout)
     let _ProbeArmed_ = FSharp.Data.Adaptive.cval(value.ProbeArmed)
     let _ProbeReadout_ = FSharp.Data.Adaptive.cval(value.ProbeReadout)
+    let _ArmedPick_ = FSharp.Data.Adaptive.cval(value.ArmedPick)
+    let _ArmPreview_ = FSharp.Data.Adaptive.cval(value.ArmPreview)
+    let _PinFocusHover_ = FSharp.Data.Adaptive.cval(value.PinFocusHover)
     let _PeekVis_ = FSharp.Data.Adaptive.cval(value.PeekVis)
     let _PeekPose_ = FSharp.Data.Adaptive.cval(value.PeekPose)
     let _LoopPending_ = FSharp.Data.Adaptive.cval(value.LoopPending)
@@ -65,6 +68,7 @@ type AdaptiveModel(value : Model) =
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
     let _IsolineOpacity_ = FSharp.Data.Adaptive.cval(value.IsolineOpacity)
     let _NearCutFrac_ = FSharp.Data.Adaptive.cval(value.NearCutFrac)
+    let _FarCutFrac_ = FSharp.Data.Adaptive.cval(value.FarCutFrac)
     let mutable __value = value
     let __adaptive = FSharp.Data.Adaptive.AVal.custom((fun (token : FSharp.Data.Adaptive.AdaptiveToken) -> __value))
     static member Create(value : Model) = AdaptiveModel(value)
@@ -117,6 +121,9 @@ type AdaptiveModel(value : Model) =
             _HoverReadout_.Value <- value.HoverReadout
             _ProbeArmed_.Value <- value.ProbeArmed
             _ProbeReadout_.Value <- value.ProbeReadout
+            _ArmedPick_.Value <- value.ArmedPick
+            _ArmPreview_.Value <- value.ArmPreview
+            _PinFocusHover_.Value <- value.PinFocusHover
             _PeekVis_.Value <- value.PeekVis
             _PeekPose_.Value <- value.PeekPose
             _LoopPending_.Value <- value.LoopPending
@@ -126,6 +133,7 @@ type AdaptiveModel(value : Model) =
             _IsolineBands_.Value <- value.IsolineBands
             _IsolineOpacity_.Value <- value.IsolineOpacity
             _NearCutFrac_.Value <- value.NearCutFrac
+            _FarCutFrac_.Value <- value.FarCutFrac
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.TileCams = _TileCams_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, TileCam>>
@@ -171,6 +179,9 @@ type AdaptiveModel(value : Model) =
     member __.HoverReadout = _HoverReadout_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.int * Microsoft.FSharp.Core.float)>>
     member __.ProbeArmed = _ProbeArmed_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ProbeReadout = _ProbeReadout_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Aardvark.Base.V3d * Microsoft.FSharp.Core.float)>>
+    member __.ArmedPick = _ArmedPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ArmTarget>>
+    member __.ArmPreview = _ArmPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
+    member __.PinFocusHover = _PinFocusHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PinHover>>
     member __.PeekVis = _PeekVis_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PeekPose = _PeekPose_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.LoopPending = _LoopPending_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LoopPending>>
@@ -180,4 +191,5 @@ type AdaptiveModel(value : Model) =
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineOpacity = _IsolineOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.NearCutFrac = _NearCutFrac_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.FarCutFrac = _FarCutFrac_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
 

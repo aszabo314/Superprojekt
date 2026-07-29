@@ -36,6 +36,18 @@ type Message =
     | SelectPair of a:string * b:string
     // Pair-level pin list: choose the pin (enables the Pin stop).
     | SelectPin of ScanPinId
+    // Pin-level focus buttons: Some mesh = focus that correspondence side
+    // (that mesh alone in 3D, tiles tight on the point); None = the whole pin
+    // (both meshes, tiles tight on the pin). Writes Sel.Point.
+    | SelectPoint of string option
+    // Transient hover preview of the Pin-level focus/arm buttons.
+    | SetPinFocusHover of PinHover option
+    // Arm/disarm a Pin-level pick (same target again = disarm; the reducer
+    // guards level + validity — ArmCentre only during placement).
+    | ToggleArmPick of ArmTarget
+    // The armed pick's cursor preview point (metric world; view-side hover
+    // raycasts, throttled). Ignored while nothing is armed.
+    | SetArmPreview of V3d option
     // Solve the current pair's edge from its pins (cell toolkit; needs ≥3).
     | SolvePair of a:string * b:string
     // ── In-cell error inspection. Results are gen-guarded (UpdateHelpers).
@@ -90,6 +102,8 @@ type Message =
     | ToggleGearPopover
     // In-view near-plane slice: cut-plane fraction of the eye→centre distance (0 = off).
     | SetNearCut of float
+    // The far twin (fraction of the eye→centre distance; ≥ 2.495 = off).
+    | SetFarCut of float
     // Explicit MAIN-3D camera framing (the double-click grammar) — these own
     // the 3D radius conventions.
     | FlyToPoint of world:V3d * radius:float
@@ -99,15 +113,15 @@ type Message =
     | FlyToSensor of string
 
 and ScanPinMessage =
-    // ── the placement transaction: modal, FREE ORDER, Esc aborts wholesale.
+    // ── the placement transaction: modal, FREE ORDER (the arm buttons pick
+    // which of centre / point A / point B lands next), Esc aborts wholesale.
     | BeginPinTransaction of pair:(string * string)
-    | SetDraftTool of DraftTool
     | DraftAreaAt of mesh:string * local:V3d
     | DraftPointAt of mesh:string * local:V3d
     | CommitPin
     | AbortPinTransaction
     // ── committed-pin edits (each invalidates the pair's solve). A point
-    // re-pick needs no arming: the Pin level's pane click attributes the mesh.
+    // re-pick goes through the armed pick like every placement pick.
     | SetInnerRadius of ScanPinId * float
     | EditPointAt of ScanPinId * mesh:string * local:V3d
     | DeletePin of ScanPinId

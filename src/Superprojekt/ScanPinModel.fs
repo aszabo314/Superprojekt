@@ -41,13 +41,9 @@ type ScanPin = {
     ContactRings : ContactRingState
 }
 
-// The in-flight placement transaction: modal, FREE ORDER (area and the two
-// points in any sequence, re-picking allowed), nothing persists until commit —
-// abort rolls the whole draft back.
-type DraftTool =
-    | ToolArea
-    | ToolPoint
-
+// The in-flight placement transaction: modal, FREE ORDER (centre and the two
+// points in any sequence via the arm buttons, re-picking allowed), nothing
+// persists until commit — abort rolls the whole draft back.
 type PinDraft = {
     Pair   : string * string
     // (placement mesh, own-frame centre) once dropped.
@@ -65,12 +61,13 @@ module PinDraft =
 
 type PlacementState =
     | PlacementIdle
-    | PlacementActive of DraftTool * PinDraft
+    | PlacementActive of PinDraft
 
-// The placement transaction is the only pin-local UI state; a committed pin's
-// point re-pick needs no arming — at the Pin level each pane IS the pick
-// surface for its mesh (the old point stands until the pane click commits the
-// replacement, so no partial pin ever exists).
+// The placement transaction is the only pin-local UI state; every pick —
+// draft picks AND a committed pin's point re-pick — goes through the armed
+// pick (Model.ArmedPick): the ARM TARGET attributes the mesh, so any view can
+// be the pick surface (the old point stands until the pick commits the
+// replacement — no partial pin ever exists).
 [<ModelType>]
 type ScanPinModel = {
     Pins        : HashMap<ScanPinId, ScanPin>

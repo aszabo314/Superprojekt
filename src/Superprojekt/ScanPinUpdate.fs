@@ -54,35 +54,28 @@ module ScanPinUpdate =
     let update (model : Model) (msg : ScanPinMessage) (sp : ScanPinModel) =
         match msg with
         | BeginPinTransaction pair ->
-            { sp with Placement = PlacementActive(ToolArea, PinDraft.empty pair) }
-
-        | SetDraftTool tool ->
-            match sp.Placement with
-            | PlacementActive(_, d) -> { sp with Placement = PlacementActive(tool, d) }
-            | PlacementIdle -> sp
+            { sp with Placement = PlacementActive (PinDraft.empty pair) }
 
         | DraftAreaAt(mesh, local) ->
             match sp.Placement with
-            | PlacementActive(_, d) ->
-                // Dropping the area auto-advances to point picking; the tool
-                // buttons re-arm either sub-tool at any time (free order).
-                { sp with Placement = PlacementActive(ToolPoint, { d with Area = Some(mesh, local) }) }
+            | PlacementActive d ->
+                { sp with Placement = PlacementActive { d with Area = Some(mesh, local) } }
             | PlacementIdle -> sp
 
         | DraftPointAt(mesh, local) ->
             match sp.Placement with
-            | PlacementActive(tool, d) ->
-                // The hit mesh attributes the point; re-picking replaces.
+            | PlacementActive d ->
+                // The armed target attributed the mesh; re-picking replaces.
                 let d =
                     if mesh = fst d.Pair then { d with PointA = Some local }
                     elif mesh = snd d.Pair then { d with PointB = Some local }
                     else d
-                { sp with Placement = PlacementActive(tool, d) }
+                { sp with Placement = PlacementActive d }
             | PlacementIdle -> sp
 
         | CommitPin ->
             match sp.Placement with
-            | PlacementActive(_, d) ->
+            | PlacementActive d ->
                 match d.Area, d.PointA, d.PointB with
                 | Some (am, c), Some pa, Some pb ->
                     let id = ScanPinId.create()

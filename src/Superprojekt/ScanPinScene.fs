@@ -272,6 +272,66 @@ module ScanPinScene =
                             out.ToArray())
             linesNodeTop notFullscreen segs
 
+        // The in-flight draft in the MAIN view: ALL-WHITE uncommitted marks
+        // (area sphere at the draft centre, point glyphs on each mesh) — the
+        // 3D view is the primary picking surface, so picks must land visibly
+        // where they were placed. Rides the meshes' displayed poses.
+        let draftMarks =
+            let segs =
+                AVal.custom (fun t ->
+                    match model.ScanPins.Placement.GetValue t with
+                    | PlacementActive d ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let s = datasetScale.GetValue t
+                        let white = V4d(1.0, 1.0, 1.0, 0.9)
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        (match d.Area with
+                         | Some (m, local) ->
+                            let cR = ScanPin.renderCentre cc s ((dispWorldAt t m).Forward.TransformPos local)
+                            let rR = ScanPin.renderLength s (model.QuickPinRadius.GetValue t)
+                            for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.8)) 1.5 do
+                                out.Add seg
+                         | None -> ())
+                        let pt (mesh : string) (lp : V3d option) =
+                            match lp with
+                            | Some local ->
+                                let cR = ScanPin.renderCentre cc s ((dispWorldAt t mesh).Forward.TransformPos local)
+                                addWireSphere out cR 0.06 white 1.8 20
+                                addCross out cR 0.075 white 1.8
+                            | None -> ()
+                        pt (fst d.Pair) d.PointA
+                        pt (snd d.Pair) d.PointB
+                        out.ToArray()
+                    | PlacementIdle -> [||])
+            linesNodeTop notFullscreen segs
+
+        // The armed pick's cursor preview: what is ABOUT to be placed, at the
+        // hovered surface point — single-stroke pure white (the uncommitted
+        // convention). The same model state renders in the Pin tiles, so the
+        // preview is synchronized across every view.
+        let armPreviewMarks =
+            let segs =
+                AVal.custom (fun t ->
+                    match model.ArmedPick.GetValue t, model.ArmPreview.GetValue t with
+                    | Some target, Some world ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let s = datasetScale.GetValue t
+                        let cR = ScanPin.renderCentre cc s world
+                        let white = V4d(1.0, 1.0, 1.0, 0.9)
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        (match target with
+                         | ArmCentre ->
+                            let rR = ScanPin.renderLength s (model.QuickPinRadius.GetValue t)
+                            for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.7)) 1.4 do
+                                out.Add seg
+                            addCross out cR (rR * 0.15) white 1.6
+                         | ArmPoint _ ->
+                            addWireSphere out cR 0.06 white 1.6 20
+                            addCross out cR 0.075 white 1.6)
+                        out.ToArray()
+                    | _ -> [||])
+            linesNodeTop notFullscreen segs
+
         // Pin flag pole (far view): a neutral pole + top ring along the display
         // axis per committed pin, screen-constant size (ScanPin.flagHeightRender:
         // fixed screen fraction, world-clamped, gear-scaled — hence the view
@@ -358,4 +418,4 @@ module ScanPinScene =
                     }
                 | None -> sg { Sg.NoEvents })
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointMarkers; ASet.ofList [brushedSampleNode]; pinFlags; pinLabels])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointMarkers; ASet.ofList [brushedSampleNode; draftMarks; armPreviewMarks]; pinFlags; pinLabels])

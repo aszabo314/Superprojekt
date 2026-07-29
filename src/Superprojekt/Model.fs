@@ -53,10 +53,27 @@ type FocusLevel =
 // orbit; absent from the map = the default bounds framing.
 type TileCam = { Centre : V3d; Radius : float }
 
+// The Pin level's armed pick — the ONE picking mode: while armed, a click in
+// ANY view (main 3D or either tile) places this pick and the left button no
+// longer orbits; the ARM TARGET is the attribution (an ArmPoint pick raycasts
+// its own mesh alone, ArmCentre raycasts both pair meshes — nearest hit
+// anchors). Disarm = a landed pick, Esc, or clicking the arm button again.
+type ArmTarget =
+    | ArmCentre
+    | ArmPoint of string
+
+// Transient hover preview of the Pin-level focus/arm buttons: what the 3D
+// visibility WOULD narrow to on click (one side, or the whole pin).
+type PinHover =
+    | HoverSide of string
+    | HoverBoth
+
 // The scoped per-level selection: each level's choice, remembered across
 // level jumps (Matrix keeps the last pair, Pair reopens the last pin);
 // changing an ancestor clears its descendants. Point = the mesh side of the
-// pin's correspondence point in focus. Plain record → ONE aval.
+// pin's correspondence point in focus (the Pin level's focus buttons): it
+// narrows the 3D view to that mesh and re-frames the tiles onto the point;
+// None = the whole pin (both meshes). Plain record → ONE aval.
 type FocusSelection = {
     // PairCell.key order.
     Pair  : (string * string) option
@@ -82,17 +99,40 @@ module FocusLevel =
 
 // The ONE shown/clickable rule per focus level: Setup/Matrix show all meshes
 // (narrowed transiently by the Setup isolate / the matrix hover preview);
-// Pair/Pin isolate the selected pair's two meshes. Every consumer — render
-// MeshActive, raycast candidate sets, coverage gating — goes through it.
+// Pair isolates the selected pair's two meshes; Pin narrows further to the
+// effective focus mesh (pinFocusMesh — focus buttons / armed pick / hover).
+// Every consumer — render MeshActive, raycast candidate sets, coverage
+// gating — goes through it.
 module MeshVisibility =
+    // The Pin level's effective mesh isolation: the button-hover preview wins,
+    // else an armed correspondence pick isolates its mesh, else the focused
+    // side (Sel.Point). None = both pair meshes.
+    let pinFocusMesh (hover : PinHover option) (armed : ArmTarget option) (point : string option) =
+        match hover with
+        | Some (HoverSide m) -> Some m
+        | Some HoverBoth -> None
+        | None ->
+            match armed with
+            | Some (ArmPoint m) -> Some m
+            | Some ArmCentre -> None
+            | None -> point
+
     let shown (focus : FocusLevel) (selPair : (string * string) option)
-              (isolate : string option) (hoverPair : (string * string) option) (name : string) =
+              (isolate : string option) (hoverPair : (string * string) option)
+              (pinFocus : string option) (name : string) =
         match focus with
         | FocusSetup -> (match isolate with Some m -> name = m | None -> true)
         | FocusMatrix -> (match hoverPair with Some (a, b) -> name = a || name = b | None -> true)
-        | FocusPair | FocusPin ->
+        | FocusPair ->
             match selPair with
             | Some (a, b) -> name = a || name = b
+            | None -> true
+        | FocusPin ->
+            match selPair with
+            | Some (a, b) ->
+                (match pinFocus with
+                 | Some m -> name = m
+                 | None -> name = a || name = b)
             | None -> true
 
     // Pin scoping mirrors mesh scoping: every pin at the survey levels, only
@@ -204,6 +244,13 @@ type Model =
         // disarm, persists nothing, links to no diagram.
         ProbeArmed          : bool
         ProbeReadout        : (V3d * float) option
+        // The Pin level's armed pick + its cursor preview (metric world, on
+        // the armed surface) — the preview renders in EVERY view at once.
+        // Both transient: wiped on disarm, any focus jump, dataset switch.
+        ArmedPick           : ArmTarget option
+        ArmPreview          : V3d option
+        // Focus/arm button hover: the transient Pin-level visibility preview.
+        PinFocusHover       : PinHover option
         // The two spring-loaded blink-comparator keys (cell scope only, REF/MOV
         // from the tree; hold to swap, release to return; zero config):
         //   PeekVis  — the MOV mesh blinks OFF (the REF alone answers "same rock?");
@@ -230,6 +277,10 @@ type Model =
         // eye→orbit-centre distance, ⊥ the view direction; 0 = off. Non-modal —
         // the camera stays free, a thick line marks the intersection.
         NearCutFrac         : float
+        // The far twin: fragments BEYOND this fraction discard. Off sits at
+        // the slider's RIGHT end (≥ 2.495) — a small fraction cuts almost
+        // everything, so "off" cannot be the 0 end like the near cut.
+        FarCutFrac          : float
     }
 
 // Displayed = the pose a mesh currently shows: its composed graph pose when it
@@ -338,6 +389,9 @@ module Model =
             HoverReadout        = None
             ProbeArmed          = false
             ProbeReadout        = None
+            ArmedPick           = None
+            ArmPreview          = None
+            PinFocusHover       = None
             PeekVis             = false
             PeekPose            = false
             LoopPending         = None
@@ -347,4 +401,5 @@ module Model =
             IsolineBands        = 700.0
             IsolineOpacity      = 0.45
             NearCutFrac         = 0.0
+            FarCutFrac          = 2.5
         }

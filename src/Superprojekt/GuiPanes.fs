@@ -8,12 +8,13 @@ open Aardvark.Dom
 open Superprojekt.LineGlyphs
 
 // The secondary 2D views: the Setup survey tiles (small multiples) and the Pin
-// level's two picking tiles — one right-edge strip layout, one top-down
-// ORTHOGRAPHIC camera controller, one per-mesh camera state, shared by both.
-// A click in pin tile A always attributes to mesh A (nearest-hit attribution
-// in the shared 3D view can never reach the occluded mesh of a co-located
-// pair). Picks resolve through server raycasts — Sg pointer events do not
-// fire reliably in secondary render controls.
+// level's two viewing/picking tiles — one right-edge strip layout, one
+// top-down ORTHOGRAPHIC camera controller, one per-mesh camera state, shared
+// by both. Picking is ARM-DRIVEN: the armed target attributes the mesh (an
+// ArmPoint pick raycasts its own mesh alone regardless of the view — that is
+// what keeps co-located pairs pickable), so the tiles are optional redundant
+// views beside the primary 3D surface. Picks resolve through server raycasts —
+// Sg pointer events do not fire reliably in secondary render controls.
 module GuiPanes =
 
     open Primitives
@@ -25,6 +26,80 @@ module GuiPanes =
         let p0 = vp.Backward.TransformPosProj(V3d(ndc, -1.0))
         let p1 = vp.Backward.TransformPosProj(V3d(ndc, 1.0))
         Ray3d(p0, (p1 - p0) |> Vec.normalize)
+
+    let private nowMs () = float System.DateTime.UtcNow.Ticks / 10000.0
+
+    // ── The armed pick, shared by EVERY view (main 3D and both tiles; ray in
+    // RENDER space): the arm target picks the raycast candidates — ArmPoint
+    // its own mesh alone, ArmCentre both pair meshes (nearest hit anchors).
+    // Returns (mesh, own-frame local, metric world).
+    let private armedResolve (model : AdaptiveModel) (target : ArmTarget) (ray : Ray3d)
+        : Async<(string * V3d * V3d) option> =
+        match (AVal.force model.Sel).Pair with
+        | None -> async.Return None
+        | Some (a, b) ->
+            let candidates = match target with ArmPoint m -> [m] | ArmCentre -> [a; b]
+            async {
+                let! hits =
+                    candidates
+                    |> List.map (fun name -> async {
+                        let cc = AVal.force model.CommonCentroid
+                        let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) name
+                        let dispWorld =
+                            RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model name))
+                        let serverOrigin = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale ray.Origin)
+                        let serverDir = (dispWorld.Backward.TransformDir ray.Direction).Normalized
+                        let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
+                        return hit |> Option.map (fun h ->
+                            let world = dispWorld.Forward.TransformPos h.point
+                            let rp = ScanPin.renderCentre cc scale world
+                            Vec.dot (rp - ray.Origin) ray.Direction, name, h.point, world)
+                    })
+                    |> Async.Parallel
+                return
+                    hits |> Array.choose id |> Array.sortBy (fun (d, _, _, _) -> d)
+                    |> Array.tryHead |> Option.map (fun (_, n, local, world) -> n, local, world)
+            }
+
+    // A landed armed pick: route into the draft (centre/point) or a committed
+    // pin's point re-pick; the reducer postlude disarms on landing.
+    let armedPick (env : Env<Message>) (model : AdaptiveModel) (ray : Ray3d) =
+        match AVal.force model.ArmedPick with
+        | None -> ()
+        | Some target ->
+            async {
+                let! hit = armedResolve model target ray
+                match hit with
+                | Some (mesh, local, _) ->
+                    let msgs =
+                        match AVal.force model.ScanPins.Placement with
+                        | PlacementActive _ ->
+                            match target with
+                            | ArmCentre -> [ScanPinMsg (DraftAreaAt(mesh, local))]
+                            | ArmPoint m -> [ScanPinMsg (DraftPointAt(m, local))]
+                        | PlacementIdle ->
+                            match target, (AVal.force model.Sel).Pin with
+                            | ArmPoint m, Some id -> [ScanPinMsg (EditPointAt(id, m, local))]
+                            | _ -> []
+                    if not (List.isEmpty msgs) then env.Emit msgs
+                | None -> ()
+            } |> Async.Start
+
+    // The armed hover preview (server raycast, throttled; the reducer drops
+    // stale landings once disarmed).
+    let mutable private armHoverMs = 0.0
+    let armedHover (env : Env<Message>) (model : AdaptiveModel) (ray : Ray3d) =
+        match AVal.force model.ArmedPick with
+        | None -> ()
+        | Some target ->
+            let now = nowMs ()
+            if now - armHoverMs > 70.0 then
+                armHoverMs <- now
+                async {
+                    let! hit = armedResolve model target ray
+                    if (AVal.force model.ArmedPick).IsSome then
+                        env.Emit [SetArmPreview (hit |> Option.map (fun (_, _, w) -> w))]
+                } |> Async.Start
 
     // ── The ONE 2D top-down camera (tiles AND panes, keyed per mesh — a mesh
     // keeps its view across levels): the stored pan/zoom, else the bounds
@@ -83,10 +158,12 @@ module GuiPanes =
     // drag start — no incremental drift; screen right = +X, screen down = −Y),
     // wheel zooms TO the cursor (the point under it stays put: its offset from
     // the centre scales with the radius). A drag-free pointer-up (≤ 4 px) is a
-    // click → `onPick` (the panes' picking surface; tiles pass None).
+    // click → `onPick`; a drag-free move → `onHover Some`, leave → `onHover
+    // None` (the pin tiles' armed pick/preview; the survey tiles pass None).
     let private cam2dAtts (env : Env<Message>) (name : string)
                           (camA : aval<TileCam>) (clientSize : aval<V2i>)
-                          (onPick : (V2d -> unit) option) =
+                          (onPick : (V2d -> unit) option)
+                          (onHover : (V2d option -> unit) option) =
         let mutable drag : (V2d * TileCam * bool) option = None
         att {
             Dom.OnPointerDown((fun e ->
@@ -110,6 +187,13 @@ module GuiPanes =
                         drag <- Some (p0, cam0, true)
                         let u = unitsPerPx cam0 (AVal.force clientSize).X
                         env.Emit [SetTileCam(name, { cam0 with Centre = cam0.Centre - V3d(d.X * u, -d.Y * u, 0.0) })]
+                | None ->
+                    match onHover with
+                    | Some h -> h (Some (V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)))
+                    | None -> ())
+            Dom.OnMouseLeave(fun _ ->
+                match onHover with
+                | Some h -> h None
                 | None -> ())
             Dom.OnMouseWheel(fun e ->
                 let cam = AVal.force camA
@@ -164,35 +248,21 @@ module GuiPanes =
                 let view = cam2dView model camA
                 let proj = cam2dProj model camA size
 
-                // The pane pick: raycast THIS mesh alone (the pane IS the
-                // attribution); the hit lands directly in the mesh's own frame.
+                // Picking/hover only while a pick is ARMED — the arm target
+                // attributes the mesh (not this tile); unarmed clicks stay
+                // camera-only.
+                let rayOf (cursorPx : V2d) =
+                    pickRay cursorPx (AVal.force clientSize) (AVal.force view) (AVal.force proj)
                 let pick (cursorPx : V2d) =
-                    async {
-                        let cc = AVal.force model.CommonCentroid
-                        let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) name
-                        let ray = pickRay cursorPx (AVal.force clientSize) (AVal.force view) (AVal.force proj)
-                        let dispWorld =
-                            RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model name))
-                        let serverOrigin = dispWorld.Backward.TransformPos (ScanPin.worldCentre cc scale ray.Origin)
-                        let serverDir = (dispWorld.Backward.TransformDir ray.Direction).Normalized
-                        let! hit = Query.rayHit ApiConfig.apiBase.Value name 0 serverOrigin serverDir
-                        match hit with
-                        | Some h ->
-                            let msgs =
-                                match AVal.force model.ScanPins.Placement with
-                                | PlacementActive(ToolArea, _) -> [ScanPinMsg (DraftAreaAt(name, h.point))]
-                                | PlacementActive(ToolPoint, _) -> [ScanPinMsg (DraftPointAt(name, h.point))]
-                                | PlacementIdle ->
-                                    // Edit mode: the pane click re-picks the selected
-                                    // committed pin's point on this mesh (atomic replace).
-                                    match (AVal.force model.Sel).Pin with
-                                    | Some id -> [ScanPinMsg (EditPointAt(id, name, h.point))]
-                                    | None -> []
-                            if not (List.isEmpty msgs) then env.Emit msgs
-                        | None -> ()
-                    } |> Async.Start
+                    if (AVal.force model.ArmedPick).IsSome then
+                        armedPick env model (rayOf cursorPx)
+                let hover (p : V2d option) =
+                    if (AVal.force model.ArmedPick).IsSome then
+                        match p with
+                        | Some cursorPx -> armedHover env model (rayOf cursorPx)
+                        | None -> env.Emit [SetArmPreview None]
 
-                cam2dAtts env name camA clientSize (Some pick)
+                cam2dAtts env name camA clientSize (Some pick) (Some hover)
 
                 Sg.View view
                 Sg.Proj proj
@@ -203,6 +273,11 @@ module GuiPanes =
                 // isolate-overlap gate inside the pane mesh shader.
                 let cov0, cov1, _ = OutlineView.coverageOffscreen info model view proj
                 MeshView.buildPaneScene model name paneOn (Some (other, cov0, cov1)) size
+
+                // The gold reference outline: the ROOT mesh's footprint from
+                // this tile's camera, on top of everything.
+                let rc0, rc1, rtexel = OutlineView.rootCoverageOffscreen info model paneOn view proj
+                OutlineView.buildRootOutline paneOn (model.OutlineWidthPx |> AVal.map float32) rc0 rc1 rtexel
 
                 // Committed point fills on this mesh: mesh-colour icospheres
                 // (the white outlines ride in the line node below); the
@@ -257,7 +332,7 @@ module GuiPanes =
                                     out.Add seg
                              | _ -> ())
                             (match model.ScanPins.Placement.GetValue t with
-                             | PlacementActive(_, d) ->
+                             | PlacementActive d ->
                                 let white = V4d(1.0, 1.0, 1.0, 0.95)
                                 (match d.Area with
                                  | Some (m, local) when m = name ->
@@ -273,6 +348,25 @@ module GuiPanes =
                                     addCross out cR 0.075 white 1.8
                                  | None -> ())
                              | PlacementIdle -> ())
+                            // The armed pick's cursor preview (metric world —
+                            // no mesh pose re-apply), synchronized with the
+                            // main 3D: the same model state draws everywhere.
+                            (match model.ArmedPick.GetValue t, model.ArmPreview.GetValue t with
+                             | Some target, Some world ->
+                                let cc = model.CommonCentroid.GetValue t
+                                let s = datasetScale.GetValue t
+                                let cR = ScanPin.renderCentre cc s world
+                                let white = V4d(1.0, 1.0, 1.0, 0.9)
+                                (match target with
+                                 | ArmCentre ->
+                                    let rR = ScanPin.renderLength s (model.QuickPinRadius.GetValue t)
+                                    for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.7)) 1.4 do
+                                        out.Add seg
+                                    addCross out cR (rR * 0.15) white 1.6
+                                 | ArmPoint _ ->
+                                    addWireSphere out cR 0.06 white 1.6 20
+                                    addCross out cR 0.075 white 1.6)
+                             | _ -> ())
                             out.ToArray())
                 sg {
                     Sg.Active paneOn
@@ -317,17 +411,23 @@ module GuiPanes =
             renderControl {
                 RenderControl.Samples 1
                 Class "tile-rc"
+                let! info = RenderControl.Info
                 let! size = RenderControl.ViewportSize
                 let! client = RenderControl.ClientSize
                 let clientSize =
                     (client, size) ||> AVal.map2 (fun c v ->
                         if c.X > 1 && c.Y > 1 then c else v)
                 let camA = tileCamOf model name
-                cam2dAtts env name camA clientSize None
-                Sg.View (cam2dView model camA)
-                Sg.Proj (cam2dProj model camA size)
+                let view = cam2dView model camA
+                let proj = cam2dProj model camA size
+                cam2dAtts env name camA clientSize None None
+                Sg.View view
+                Sg.Proj proj
                 Sg.Uniform("ViewportSize", size)
                 MeshView.buildPaneScene model name onSetup None size
+                // The gold reference outline (root footprint), on top.
+                let rc0, rc1, rtexel = OutlineView.rootCoverageOffscreen info model onSetup view proj
+                OutlineView.buildRootOutline onSetup (model.OutlineWidthPx |> AVal.map float32) rc0 rc1 rtexel
             }
         }
 

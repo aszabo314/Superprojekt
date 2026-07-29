@@ -259,6 +259,14 @@ module MeshView =
         let cutBand = cutDist |> AVal.map (fun d -> d * 0.008f)
         cutFwd, cutDist, cutBand
 
+    // The far twin (shares CutFwd): the slider's right end (≥ 2.495) is off.
+    let farCutUniforms (model : AdaptiveModel) =
+        let dist =
+            (model.FarCutFrac, model.Camera.radius) ||> AVal.map2 (fun f r ->
+                if f >= 2.495 then 0.0f else float32 (f * r))
+        let band = dist |> AVal.map (fun d -> d * 0.008f)
+        dist, band
+
     // Pin blobs as a 32-slot uniform array, metric → render space (centre xyz,
     // inner radius w), for the mesh shader's pin-isolation filter.
     let private pinBlobUniforms (model : AdaptiveModel) =
@@ -313,6 +321,7 @@ module MeshView =
 
         let blobCount, blobs = pinBlobUniforms model
         let cutFwdU, cutDistU, cutBandU = nearCutUniforms model
+        let farCutDistU, farCutBandU = farCutUniforms model
         let rangeWorldA = rangeMaxWorld model
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
@@ -330,21 +339,25 @@ module MeshView =
         let shownCtx =
             AVal.custom (fun t ->
                 let focus = model.Focus.GetValue t
-                let selPair = (model.Sel.GetValue t).Pair
+                let sel = model.Sel.GetValue t
                 let iso =
                     match model.SetupIsolateHover.GetValue t with
                     | Some _ as h -> h
                     | None -> model.SetupIsolate.GetValue t
                 let hp = model.MatrixHoverPair.GetValue t
-                focus, selPair, iso, hp)
+                let pf =
+                    MeshVisibility.pinFocusMesh (model.PinFocusHover.GetValue t)
+                        (model.ArmedPick.GetValue t) sel.Point
+                focus, sel.Pair, iso, hp, pf)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             // The ONE shown rule: survey levels show every mesh (Setup isolate /
-            // matrix hover narrow it); Pair/Pin isolate the selected pair (the
-            // rest drop to the ghost floor).
+            // matrix hover narrow it); Pair isolates the selected pair, Pin
+            // narrows further to the effective focus mesh (the rest drop to
+            // the ghost floor).
             let isActive =
-                shownCtx |> AVal.map (fun (focus, selPair, iso, hp) ->
-                    MeshVisibility.shown focus selPair iso hp name)
+                shownCtx |> AVal.map (fun (focus, selPair, iso, hp, pf) ->
+                    MeshVisibility.shown focus selPair iso hp pf name)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
             // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
@@ -383,8 +396,32 @@ module MeshView =
                     match (model.Sel.GetValue t).Pair with
                     | Some (a, b) when inPairScope && model.CellMapOn.GetValue t ->
                         let _, mov = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
-                        if mov = name && Set.isEmpty (model.BrushedSamples.GetValue t)
-                        then model.CellDist.GetValue t
+                        if mov = name && Set.isEmpty (model.BrushedSamples.GetValue t) then
+                            match model.CellDist.GetValue t with
+                            | Some dist ->
+                                // The Pin level narrows the map to the selected
+                                // pin's ROI sphere: outside vertices get the
+                                // 3e30 keep-base sentinel (1e30 stays the
+                                // server's no-data grey). Distances compare in
+                                // MOV's own frame — rigid poses preserve them.
+                                let roi =
+                                    match model.Focus.GetValue t, (model.Sel.GetValue t).Pin with
+                                    | FocusPin, Some id ->
+                                        HashMap.tryFind id (model.ScanPins.Pins.Content.GetValue t)
+                                        |> Option.map (fun p ->
+                                            let w = (displayedWorldAt model t p.AnchorMesh).Forward.TransformPos p.CentreLocal
+                                            (displayedWorldAt model t name).Backward.TransformPos w, p.InnerRadius)
+                                    | _ -> None
+                                match roi, loaded.mesh.Value with
+                                | Some (centreOwn, r), Some md ->
+                                    // Served positions are centroid-subtracted.
+                                    let c = V3f (centreOwn - md.centroid)
+                                    let r2 = float32 (r * r)
+                                    Some (Array.init dist.Length (fun i ->
+                                        if i < md.positions.Length && (md.positions.[i] - c).LengthSquared <= r2
+                                        then dist.[i] else 3.0e30f))
+                                | _ -> Some dist
+                            | None -> None
                         else None
                     | _ -> None)
             let distBuf =
@@ -442,6 +479,8 @@ module MeshView =
                     Sg.Uniform("CutFwd",               cutFwdU)
                     Sg.Uniform("CutDist",              cutDistU)
                     Sg.Uniform("CutBand",              cutBandU)
+                    Sg.Uniform("FarCutDist",           farCutDistU)
+                    Sg.Uniform("FarCutBand",           farCutBandU)
                     Sg.Uniform("DistanceEncoding",     distEncoding)
                     Sg.Uniform("DistScale",            distScale)
                     Sg.Uniform("DistLoNeg",            distLoNeg)
@@ -544,14 +583,16 @@ module MeshView =
                 }
             ) |> AList.toASet
         let cutFwdU, cutDistU, cutBandU = nearCutUniforms model
+        let farCutDistU, _ = farCutUniforms model
         sg {
             Sg.View view
             Sg.Proj proj
-            // The G-buffer follows the near-plane cut so lines of cut-away
-            // geometry vanish with it.
+            // The G-buffer follows both cuts so lines of cut-away geometry
+            // vanish with them.
             Sg.Uniform("CutFwd",  cutFwdU)
             Sg.Uniform("CutDist", cutDistU)
             Sg.Uniform("CutBand", cutBandU)
+            Sg.Uniform("FarCutDist", farCutDistU)
             Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
             nodes
         }
@@ -598,6 +639,42 @@ module MeshView =
     // Palette colours for the footprint composite, indexed like the coverage channels.
     let coverageColors : V4f[] =
         Array.init 8 (fun i -> V4f Primitives.meshPaletteV4d.[i % Primitives.meshPaletteV4d.Length])
+
+    // The reference root ALONE into coverage channel 0, from a tile's own
+    // camera — every ortho tile/pane overlays this footprint as the gold
+    // reference outline (occlusion-free, unobscured by the tile's mesh).
+    // Gated by the strip's visibility so hidden tiles pay nothing.
+    let buildRootCoverageNode (model : AdaptiveModel) (active : aval<bool>)
+                              (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+        let nodes =
+            model.RegGraph
+            |> AVal.map (fun g -> g.Root |> Option.toList |> IndexList.ofList)
+            |> AList.ofAVal
+            |> AList.map (fun name ->
+                let loaded, trafo = offscreenMesh model name
+                let a = (active, loaded.fvc) ||> AVal.map2 (fun on c -> on && c > 3)
+                sg {
+                    Sg.Active a
+                    Sg.Trafo trafo
+                    Sg.Shader {
+                        DefaultSurfaces.trafo
+                        OutlineCoverage.shade
+                    }
+                    Sg.Uniform("CoverageChannel", AVal.constant 0)
+                    Sg.VertexAttributes(
+                        HashMap.ofList [
+                            string DefaultSemantic.Positions, BufferView(loaded.pos, typeof<V3f>)
+                        ])
+                    Sg.Index(BufferView(loaded.idx, typeof<int>))
+                    Sg.Render loaded.fvc
+                }) |> AList.toASet
+        sg {
+            Sg.View view
+            Sg.Proj proj
+            Sg.DepthTest (AVal.constant DepthTest.None)
+            Sg.BlendMode (AVal.constant BlendMode.Add)
+            nodes
+        }
 
     // Matrix-hover overlap-preview uniforms: the on-flag + the hovered pair's
     // coverage-channel selectors over the two MRT targets (channel = display
@@ -727,6 +804,8 @@ module MeshView =
             Sg.Uniform("CutFwd",          AVal.constant V3f.OOI)
             Sg.Uniform("CutDist",         AVal.constant 0.0f)
             Sg.Uniform("CutBand",         AVal.constant 0.0f)
+            Sg.Uniform("FarCutDist",      AVal.constant 0.0f)
+            Sg.Uniform("FarCutBand",      AVal.constant 0.0f)
             Sg.Uniform("DistanceEncoding", AVal.constant 0)
             Sg.Uniform("DistScale",       AVal.constant 1.0f)
             Sg.Uniform("DistLoNeg",       AVal.constant 1.0f)

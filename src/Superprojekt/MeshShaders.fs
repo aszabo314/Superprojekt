@@ -48,6 +48,11 @@ module MeshShader =
         member x.CutFwd  : V3f     = x?CutFwd
         member x.CutDist : float32 = x?CutDist
         member x.CutBand : float32 = x?CutBand
+        // The far twin: fragments FARTHER along CutFwd than FarCutDist discard,
+        // the band-wide sliver just before it paints the intersection line.
+        // FarCutDist 0 = off.
+        member x.FarCutDist : float32 = x?FarCutDist
+        member x.FarCutBand : float32 = x?FarCutBand
         // Per-vertex SurfaceDist painter (above-ghost only): 0 = none;
         // 1 = signed difference, diverging blue↔grey↔red (moving meshes, Inspect).
         // DistScale saturates the positive end, DistLoNeg the |negative| end —
@@ -143,6 +148,10 @@ module MeshShader =
                 let dAlong = Vec.dot (wp - uniform.CameraLocation) uniform.CutFwd
                 if dAlong < uniform.CutDist then discard()
                 elif dAlong < uniform.CutDist + uniform.CutBand then cutLine <- true
+            if uniform.FarCutDist > 0.0f then
+                let dAlong = Vec.dot (wp - uniform.CameraLocation) uniform.CutFwd
+                if dAlong > uniform.FarCutDist then discard()
+                elif dAlong > uniform.FarCutDist - uniform.FarCutBand then cutLine <- true
             let mutable inAnyBlob = false
             let bc = uniform.BlobCount
             let blobsActive = bc > 0 && uniform.AnchorGhost <> 0
@@ -227,9 +236,10 @@ module MeshShader =
             // suppressed beyond the range where the colour clamps.
             if uniform.DistanceEncoding = 1 && aboveGhost then
                 let d = v.sd
-                // Sentinel (no Z-overlap) = pale grey: grey is the no-data
-                // colour — near-white is reserved for "difference ≈ 0".
-                if abs d >= 1e20f then
+                // Two sentinels: 1e30 (server no-Z-overlap) = pale grey — the
+                // no-data colour, near-white stays "difference ≈ 0"; 3e30
+                // (out of the pin-local map's ROI) keeps the base colour.
+                if d < 2.0e30f && abs d >= 1e20f then
                     baseRgb <- V3f(0.816f, 0.839f, 0.859f)
                 if abs d < 1e20f then
                     let hiP = max 1e-6f uniform.DistScale
@@ -324,12 +334,15 @@ module OutlineGBuffer =
     }
     let shade (v : FragIn) =
         fragment {
-            // The near-plane cut discards here too, so silhouettes/isolines of
-            // cut-away geometry vanish with it (and the cut boundary silhouettes
-            // for free via the resulting depth break).
+            // Both cuts discard here too, so silhouettes/isolines of cut-away
+            // geometry vanish with them (and the cut boundaries silhouette for
+            // free via the resulting depth break).
             if uniform.CutDist > 0.0f then
                 let dAlong = Vec.dot (v.wp.XYZ - uniform.CameraLocation) uniform.CutFwd
                 if dAlong < uniform.CutDist then discard()
+            if uniform.FarCutDist > 0.0f then
+                let dAlong = Vec.dot (v.wp.XYZ - uniform.CameraLocation) uniform.CutFwd
+                if dAlong > uniform.FarCutDist then discard()
             let col = uniform.MeshColor
             // target0.x = world-Z band parity (0/1) → edge-detected into crisp 1px
             // isolines, world-locked since the band index is a pure function of world Z.

@@ -11,9 +11,9 @@ open UpdateHelpers
 module Update =
 
     // The ONE focus-jump path: transient lenses (Setup isolate, matrix hover),
-    // the spring-loaded peeks and the armed probe are level-scoped and die on
-    // any jump; leaving Pin mid-placement (Esc or a rail jump) aborts the
-    // transaction — full rollback, its picking panes are gone.
+    // the spring-loaded peeks, the armed probe and the armed pick are
+    // level-scoped and die on any jump; leaving Pin mid-placement (Esc or a
+    // rail jump) aborts the transaction — full rollback.
     let private jumpFocus (f : FocusLevel) (model : Model) =
         let sp =
             if model.Focus = FocusPin && f <> FocusPin
@@ -22,21 +22,91 @@ module Update =
         { model with
             Focus = f; ScanPins = sp
             SetupIsolate = None; SetupIsolateHover = None; MatrixHoverPair = None
-            PeekVis = false; PeekPose = false; ProbeArmed = false; ProbeReadout = None }
+            PeekVis = false; PeekPose = false; ProbeArmed = false; ProbeReadout = None
+            ArmedPick = None; ArmPreview = None; PinFocusHover = None }
 
     // A step may retract what the current focus level depends on (pin deleted,
     // placement aborted, selection cleared) — demote to the nearest enabled
-    // ancestor. Runs after every reducer step.
+    // ancestor. Runs after every reducer step. A demotion out of Pin takes the
+    // pin-level transients with it (this path bypasses jumpFocus).
     let private normalizeFocus (model : Model) =
         let placing = match model.ScanPins.Placement with PlacementActive _ -> true | PlacementIdle -> false
         let rec fix f = if FocusLevel.enabled model.Sel placing f then f else fix (FocusLevel.parent f)
         let f = fix model.Focus
-        if f = model.Focus then model else { model with Focus = f }
+        if f = model.Focus then model
+        else { model with Focus = f; ArmedPick = None; ArmPreview = None; PinFocusHover = None }
+
+    // ── Tile refocus (the camera rule: the MAIN 3D never moves on a GUI
+    // action without an explicit prompt — the ortho tiles are EXEMPT and
+    // re-frame to the current subject). frameTiles writes both pair meshes'
+    // shared 2D cameras: one metric-world centre, one wanted half-width.
+    let private frameTiles (meshes : string list) (centreWorld : V3d) (halfWidthMetric : float) (model : Model) =
+        let scale = DatasetScale.active model.ActiveDataset model.DatasetScales
+        let centreR = ScanPin.renderCentre model.CommonCentroid scale centreWorld
+        // TileCam.Radius drives the ortho half-width via tan 30° — inverted
+        // here so the frame lands at the wanted width.
+        let radius =
+            clamp 0.05 100000.0
+                (ScanPin.renderLength scale halfWidthMetric / tan (30.0 * System.Math.PI / 180.0))
+        { model with
+            TileCams =
+                meshes |> List.fold (fun tc m ->
+                    Map.add m { Centre = centreR; Radius = radius } tc) model.TileCams }
+
+    // Tight on the pin: the selected committed pin, else the draft's centre.
+    let private framePinTiles (model : Model) =
+        match model.Sel.Pair with
+        | None -> model
+        | Some (a, b) ->
+            let subject =
+                match model.Sel.Pin |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
+                | Some p ->
+                    Some (ScanPin.centreWorldWith (ModelTransforms.displayedWorld model p.AnchorMesh) p,
+                          max 0.5 (p.InnerRadius * 3.0))
+                | None ->
+                    match model.ScanPins.Placement with
+                    | PlacementActive d ->
+                        d.Area |> Option.map (fun (m, local) ->
+                            (ModelTransforms.displayedWorld model m).Forward.TransformPos local,
+                            max 0.5 (model.QuickPinRadius * 3.0))
+                    | PlacementIdle -> None
+            match subject with
+            | Some (c, hw) -> frameTiles [a; b] c hw model
+            | None -> model
+
+    // Tight on one correspondence point (the focused side's stored point).
+    let private framePointTiles (mesh : string) (model : Model) =
+        match model.Sel.Pair, model.Sel.Pin |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
+        | Some (a, b), Some p ->
+            let local = if mesh = fst p.Pair then p.PointA else p.PointB
+            let w = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos local
+            frameTiles [a; b] w (max 0.25 (p.InnerRadius * 1.5)) model
+        | _ -> model
+
+    // The pair's overlap area (as-loaded world bbox intersection in XY; the
+    // union when they don't meet) — the new-transaction framing.
+    let private frameOverlapTiles (a : string) (b : string) (model : Model) =
+        match Map.tryFind a model.MeshBounds, Map.tryFind b model.MeshBounds with
+        | Some ba, Some bb when not ba.IsInvalid && not bb.IsInvalid ->
+            let lo = V3d(max ba.Min.X bb.Min.X, max ba.Min.Y bb.Min.Y, min ba.Min.Z bb.Min.Z)
+            let hi = V3d(min ba.Max.X bb.Max.X, min ba.Max.Y bb.Max.Y, max ba.Max.Z bb.Max.Z)
+            let box = if lo.X < hi.X && lo.Y < hi.Y then Box3d(lo, hi) else ba.ExtendedBy bb
+            frameTiles [a; b] box.Center (max 1.0 (0.6 * max box.Size.X box.Size.Y)) model
+        | _ -> model
 
     let private updateCore (env : Env<Message>) (model : Model) (msg : Message) =
         match msg with
         | CameraMessage msg ->
-            { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
+            // While a pick is armed the LEFT button IS the pick — swallow left
+            // rotate-begins so the main 3D holds still under a picking click
+            // (pan/middle/wheel/touch stay live).
+            let swallow =
+                model.ArmedPick.IsSome &&
+                (match msg with
+                 | OrbitMessage.PointerDown(_, b, false, _) -> b = model.Camera.rotateButton
+                 | _ -> false)
+            if swallow then model
+            else { model with Camera = OrbitController.update (Env.map CameraMessage env) model.Camera msg }
         | SetTileCam(mesh, cam) ->
             let cam = { cam with Radius = clamp 0.05 100000.0 cam.Radius }
             { model with TileCams = Map.add mesh cam model.TileCams }
@@ -167,7 +237,42 @@ module Update =
                 | Some p -> model.Sel.Pair = Some p.Pair
                 | None -> false
             if not valid || model.Sel.Pin = Some id then model
-            else { model with Sel = { model.Sel with Pin = Some id; Point = None } }
+            else framePinTiles { model with Sel = { model.Sel with Pin = Some id; Point = None } }
+        | SelectPoint p ->
+            let valid =
+                model.Focus = FocusPin &&
+                (match p, model.Sel.Pair with
+                 | Some m, Some (a, b) -> m = a || m = b
+                 | None, Some _ -> true
+                 | _, None -> false)
+            if not valid then model
+            else
+                // A re-click still re-frames the tiles (cheap, and the frame
+                // is the point of the button).
+                let m = { model with Sel = { model.Sel with Point = p } }
+                match p with
+                | Some mesh -> framePointTiles mesh m
+                | None -> framePinTiles m
+        | SetPinFocusHover h ->
+            if model.PinFocusHover = h then model else { model with PinFocusHover = h }
+        | ToggleArmPick target ->
+            let placing = match model.ScanPins.Placement with PlacementActive _ -> true | PlacementIdle -> false
+            let valid =
+                model.Focus = FocusPin &&
+                (match target, model.Sel.Pair with
+                 // Committed pins are immovable — the centre pick only exists
+                 // inside the placement transaction.
+                 | ArmCentre, Some _ -> placing
+                 | ArmPoint m, Some (a, b) -> (m = a || m = b) && (placing || model.Sel.Pin.IsSome)
+                 | _, None -> false)
+            if not valid then model
+            elif model.ArmedPick = Some target then { model with ArmedPick = None; ArmPreview = None }
+            else { model with ArmedPick = Some target; ArmPreview = None }
+        | SetArmPreview p ->
+            if model.ArmedPick.IsNone then
+                if model.ArmPreview.IsSome then { model with ArmPreview = None } else model
+            elif model.ArmPreview = p then model
+            else { model with ArmPreview = p }
 
         | ShowToast s ->
             showToast env s model
@@ -314,6 +419,9 @@ module Update =
                     HoverReadout = None
                     ProbeArmed = false
                     ProbeReadout = None
+                    ArmedPick = None
+                    ArmPreview = None
+                    PinFocusHover = None
                     PeekVis = false
                     PeekPose = false
                     LoopPending = None
@@ -326,11 +434,24 @@ module Update =
             { model with GearPopoverOpen = not model.GearPopoverOpen }
         | ScanPinMsg msg ->
             let m = ScanPinUpdate.handleMsg env model msg
-            // New pin → enter Pin in placement: the two panes are the only
-            // picking surface, so arming the transaction moves focus there.
+            // New pin → enter Pin in placement with the CENTRE pick pre-armed
+            // (the natural first pick) and the tiles framed on the pair's
+            // overlap area.
             let m =
                 match msg with
-                | BeginPinTransaction _ -> jumpFocus FocusPin m
+                | BeginPinTransaction (a, b) ->
+                    frameOverlapTiles a b { jumpFocus FocusPin m with ArmedPick = Some ArmCentre }
+                | _ -> m
+            // A landed pick exits its arm (the spec'd disarm path); the tiles
+            // re-frame on placement/edit — tight on the pin.
+            let m =
+                match msg with
+                | DraftAreaAt _ | DraftPointAt _ | EditPointAt _ ->
+                    { m with ArmedPick = None; ArmPreview = None }
+                | _ -> m
+            let m =
+                match msg with
+                | DraftAreaAt _ | SetInnerRadius _ | EditPointAt _ -> framePinTiles m
                 | _ -> m
             // Selection maintenance: a commit selects the newborn pin (it IS
             // the chosen pin from birth); deleting the selected pin clears it.
@@ -342,7 +463,7 @@ module Update =
                         |> Seq.tryPick (fun (id, _) ->
                             if HashMap.containsKey id model.ScanPins.Pins then None else Some id)
                     (match born with
-                     | Some id -> { m with Sel = { m.Sel with Pin = Some id; Point = None } }
+                     | Some id -> framePinTiles { m with Sel = { m.Sel with Pin = Some id; Point = None } }
                      | None -> m)
                 | DeletePin id when model.Sel.Pin = Some id ->
                     { m with Sel = { m.Sel with Pin = None; Point = None } }
@@ -467,6 +588,9 @@ module Update =
                                 Selected = weakest } }
         | SetNearCut v ->
             { model with NearCutFrac = clamp 0.0 1.25 v }
+        | SetFarCut v ->
+            // 0 would cut everything — the off position is the RIGHT end.
+            { model with FarCutFrac = clamp 0.05 2.5 v }
         // Fly the main 3D to a metric-world point, keeping orientation.
         | FlyToPoint(world, radius) ->
             let scale = DatasetScale.active model.ActiveDataset model.DatasetScales

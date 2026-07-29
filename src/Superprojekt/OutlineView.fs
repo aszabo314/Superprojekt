@@ -73,6 +73,53 @@ module OutlineView =
         let c0, c1, texel = renderOffscreen info coverage1 false (MeshView.buildCoverageNode model view proj)
         c0 :> aval<IBackendTexture>, c1 :> aval<IBackendTexture>, texel
 
+    // Per-tile ROOT footprint MRT (channel 0 only, from the tile's camera) —
+    // the source of the strips' gold reference overlay.
+    let rootCoverageOffscreen
+        (info : Aardvark.Dom.RenderControlInfo)
+        (model : AdaptiveModel)
+        (active : aval<bool>)
+        (view : aval<Trafo3d>)
+        (proj : aval<Trafo3d>) =
+        let c0, c1, texel =
+            renderOffscreen info coverage1 false (MeshView.buildRootCoverageNode model active view proj)
+        c0 :> aval<IBackendTexture>, c1 :> aval<IBackendTexture>, texel
+
+    // The gold on-top composite of the root coverage: channel 0's covered↔
+    // uncovered transition in the reference gold, DepthTest.None in passOne —
+    // unobscured by whatever the tile renders beneath.
+    let buildRootOutline
+        (active : aval<bool>)
+        (widthA : aval<float32>)
+        (cov0 : aval<IBackendTexture>)
+        (cov1 : aval<IBackendTexture>)
+        (texel : aval<V2f>) : ISceneNode =
+        let mask = AVal.constant (Array.init 32 (fun i -> if i = 0 then V4f.IOOO else V4f.Zero))
+        let colors =
+            AVal.constant (Array.init 8 (fun i ->
+                if i = 0 then V4f(V3f Primitives.refGoldV3d, 1.0f) else V4f.Zero))
+        sg {
+            Sg.Active active
+            // NoEvents is load-bearing — see the main composite below.
+            Sg.NoEvents
+            Sg.Pass RenderPass.passOne
+            Sg.DepthTest (AVal.constant DepthTest.None)
+            Sg.BlendMode (AVal.constant BlendMode.Blend)
+            Sg.Shader {
+                OutlineEdge.vertex
+                OutlineCoverageEdge.fragment
+            }
+            Sg.Uniform("Coverage0", cov0)
+            Sg.Uniform("Coverage1", cov1)
+            Sg.Uniform("OutlineTexel", texel)
+            Sg.Uniform("OutlineWidthPx", widthA)
+            Sg.Uniform("OutlineMask", mask)
+            Sg.Uniform("CoverageColors", colors)
+            Sg.VertexAttributes quadAttrs
+            Sg.Index quadIdxView
+            Sg.Render (AVal.constant quadIdx.Length)
+        }
+
     // Occlusion-free per-mesh footprint contours: an additive
     // coverage MRT (one channel per mesh, no depth) + a fullscreen composite that
     // outlines every channel's covered↔uncovered transition in that mesh's palette

@@ -6,6 +6,80 @@
 > end, reconstruct the net documentation updates from this file.
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
 
+## Feature round: armed picking, pin focus, far cut, inspect panel, tile refocus (2026-07-29)
+
+Seven-item feedback round; all landed in one build.
+
+- **Far cut slider** (`▤ Far`, beside `▤ Cut`): `Model.FarCutFrac` +
+  `SetFarCut`; OFF is the slider's RIGHT end (≥ 2.495 — a small fraction
+  cuts nearly everything, so 0-as-off can't work like the near cut).
+  Shader: `FarCutDist`/`FarCutBand` uniforms (shares `CutFwd`), discard
+  beyond + the same flat-ink intersection band just before the plane; the
+  outline G-buffer discards with it. Panes bind constants 0.
+- **Pin-level focus buttons** (`◉ Pin` / point-on-A / point-on-B): reuse
+  the until-now-unused `Sel.Point` as the focused correspondence side
+  (None = whole pin). They control 3D visibility (side → that mesh alone),
+  hover-preview via new `Model.PinFocusHover` (`PinHover` DU), and
+  re-frame the tiles (pin ↔ point). `MeshVisibility.shown` gained a
+  `pinFocus` param; `MeshVisibility.pinFocusMesh` resolves hover > armed
+  pick > `Sel.Point`. `shownCtx`/`shownNow` extended.
+- **Arm-based picking — 3D is the primary picking surface**:
+  `ArmTarget = ArmCentre | ArmPoint of mesh`, `Model.ArmedPick`. Arm
+  buttons live in the Pin rail (draft bar: Centre/A/B replacing the old
+  Area/Points sub-tools — `DraftTool`/`SetDraftTool` DELETED, no
+  FS0049/25/26; edit bar: A/B re-pick, centre immovable). While armed:
+  LMB never orbits (reducer swallows left rotate-begins), a click in ANY
+  view picks — the ARM TARGET is the attribution (ArmPoint raycasts its
+  own mesh alone — this supersedes the old tile-=-attribution doctrine;
+  ArmCentre raycasts both pair meshes, nearest hit anchors), via the
+  shared `GuiPanes.armedResolve/armedPick`. Disarm = landed pick / Esc
+  (new chain slot: loop modal > pick disarm > probe disarm > ascend) /
+  re-click. Arming an A/B pick isolates its mesh in the main 3D (hover
+  preview). `BeginPinTransaction` auto-arms the centre pick.
+- **Synchronized cursor preview** (`Model.ArmPreview`, metric world):
+  all-white uncommitted marks (centre = QuickPinRadius sphere outline,
+  point = wire-sphere+cross) rendered in the main 3D (`ScanPinScene`)
+  AND both pin tiles from the same model state. Main-view hover feeds it
+  from the GPU pick (throttled 40 ms, no server traffic — isolation
+  makes the frontmost solid surface the armed set); tiles server-raycast
+  (70 ms throttle); reducer drops stale/disarmed landings. The in-flight
+  DRAFT now also renders in the main 3D (white area sphere + point
+  glyphs) — picks must land visibly on the primary surface.
+- **Detached inspection panel** (`GuiRail.inspectPanel`, `.left-col`
+  fixed flex column: rail on top, panel floating below): the ONE diagram
+  + error-map toggle + probe moved out of the pair workspace; visible at
+  Pair AND Pin. At Pin the diagram narrows to the selected pin — gids
+  stay CANONICAL (indices into the full CellError concatenation) so the
+  brush addresses the same 3D samples; the x-range stays the full cell's
+  (shared-scale rule). The chart boot JS gained a ResizeObserver
+  re-render (the panel hides via display:none). The error map at Pin is
+  pin-LOCAL: `cellPaint` masks vertices outside the pin's ROI sphere
+  with a NEW 3e30 keep-base sentinel (shader: ≥2e30 keeps base colour;
+  1e30 stays the no-Z-overlap pale grey).
+- **Gold reference outline in every ortho tile** (setup tiles + pin
+  tiles): a per-tile root-only coverage pass
+  (`MeshView.buildRootCoverageNode`, channel 0, strip-visibility-gated)
+  + `OutlineView.rootCoverageOffscreen`/`buildRootOutline` — the
+  `OutlineCoverageEdge` composite reused with slot-0-only mask and gold
+  in `CoverageColors[0]`; DepthTest.None in passOne = unobscured.
+  `Primitives.refGoldV3d` added as the ONE F# mirror of `--ref-gold`
+  (SceneGraph's 3D root outline now reads it too). REVIEW: "reference
+  mesh" interpreted as the registration ROOT everywhere.
+- **Camera rule + tile auto-refocus**: RULE — no GUI interaction moves
+  the main 3D camera without an explicit prompt (already held; now
+  documented), but the TILES SHALL refocus: new transaction → pair
+  overlap area (XY bbox intersection, union fallback); DraftAreaAt /
+  CommitPin / SetInnerRadius / EditPointAt / SelectPin → tight on the
+  pin (r×3); SelectPoint side → tight on that point (r×1.5), `◉ Pin` →
+  pin. `frameTiles` inverts the tan 30° half-width mapping so frames
+  land exact.
+- Build green (FS0044 ×4 pre-existing; the [FShade] PropertySet warnings
+  are library-AOT noise), Supertests 102/102. Owed to the browser pass:
+  armed pick end-to-end on co-located pairs, LMB suppression feel,
+  preview sync + throttles, far-cut band look, pin-local map mask, root
+  outline in tiles (incl. root-mesh tiles), refocus framings, the
+  detached panel's chart on show/resize.
+
 ## Fix: peek buttons never visible (2026-07-29)
 
 - User report: the top-bar peek buttons never appear. Cause 1 — they were

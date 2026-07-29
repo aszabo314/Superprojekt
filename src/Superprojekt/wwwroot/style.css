@@ -176,12 +176,22 @@ body.loaded { background: #f4f6f8; }
 }
 .tb-btn-tiny:hover { background: #edf0f4; color: #0f172a; }
 
-/* ── Left navigator rail ───────────────────────────────────────────── */
-.workflow-rail {
+/* ── Left column: the navigator rail + the floating inspection panel ── */
+.left-col {
     position: fixed;
     top: 32px; left: 0;
     width: 256px;
+    max-height: calc(100vh - 44px);
+    display: flex; flex-direction: column; gap: 8px;
+    z-index: 998;
+    pointer-events: none;
+}
+.left-col > * { pointer-events: auto; }
+.workflow-rail {
+    position: relative;
+    width: 100%;
     max-height: calc(100vh - 260px);
+    flex: none;
     display: flex; flex-direction: column;
     background: #ffffff;
     border-right: 1px solid #d7dce4;
@@ -189,7 +199,18 @@ body.loaded { background: #f4f6f8; }
     box-shadow: 2px 2px 8px rgba(0,0,0,0.06);
     overflow-y: auto;
     font-size: 12px;
-    z-index: 998;
+}
+/* The detached inspection panel (Pair + Pin): floats below the rail. */
+.inspect-panel {
+    width: 100%;
+    flex: none;
+    background: #ffffff;
+    border-right: 1px solid #d7dce4;
+    border-bottom: 1px solid #d7dce4;
+    box-shadow: 2px 2px 8px rgba(0,0,0,0.06);
+    padding: 8px 10px;
+    font-size: 12px;
+    overflow-y: auto;
 }
 .rail-body { padding: 8px 10px; border-bottom: 1px solid #e6eaf0; background: #fff; }
 .rail-shape-cut { padding: 4px 2px 0 2px; border-top: 1px solid #eef2f6; margin-top: 4px; }
@@ -498,6 +519,12 @@ body.loaded { background: #f4f6f8; }
 .cw-pin-name { font-size: 11px; font-weight: 700; color: #292524; width: 22px; flex: none; }
 .cw-edit { font-size: 10px; }
 .cw-del { color: #b91c1c; }
+/* Pin-level focus/arm buttons: identity chips ride inside the buttons. */
+.pin-focus-btn, .pin-arm-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; font-size: 11px;
+}
+.pin-focus-row { flex-wrap: wrap; }
 .cw-inspect { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid #e2e8f0; }
 .cw-readout { display: flex; gap: 10px; font-size: 10px; font-family: 'SF Mono', Monaco, monospace; color: #334155; min-height: 13px; }
 .cw-readout-probe { color: #b45309; }

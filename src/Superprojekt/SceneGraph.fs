@@ -41,7 +41,7 @@ module SceneGraph =
     let private zColor = V4d(0.15, 0.35, 0.90, 1.0)
 
     // Origin cross + tick segments, anchored at `center` (render space — the first
-    // mesh's panorama centre).
+    // mesh's sensor position).
     let private originIndicator (view : aval<Trafo3d>) (proj : aval<Trafo3d>) (active : aval<bool>) (center : aval<V3d>) =
         let tickSegs (o : V3d) (color : V4d) (dir : V3d) (perpA : V3d) =
             let n = int (axisLength / tickSpacing)
@@ -201,17 +201,14 @@ module SceneGraph =
         let pinScene   = ScanPinScene.build env view proj fullscreenActive model
 
         let notFullscreen = AVal.map not fullscreenActive
-        // The cross + axis labels sit at the first mesh's panorama centre (render
-        // space): stored PanoCenters[first] else its centroid (= origin); empty → origin.
+        // The cross + axis labels sit at the first mesh's sensor position (render
+        // space): its origin = its centroid-file world coordinate; empty → origin.
         let crossCenter =
             AVal.custom (fun t ->
                 match model.MeshNames.Content.GetValue t |> IndexList.toList with
                 | first :: _ ->
                     let cc = model.CommonCentroid.GetValue t
-                    let world =
-                        match Map.tryFind first (model.PanoCenters.GetValue t) with
-                        | Some w -> w
-                        | None -> Map.tryFind first (model.DatasetCentroids.GetValue t) |> Option.defaultValue cc
+                    let world = Map.tryFind first (model.DatasetCentroids.GetValue t) |> Option.defaultValue cc
                     ScanPin.renderCentre cc (DatasetScale.forMesh (model.DatasetScales.GetValue t) first) world
                 | [] -> V3d.Zero)
         let crossActive   = notFullscreen

@@ -138,6 +138,26 @@ module GuiPanes =
     // (comparable small multiples); own bounds only without a root.
     let private tileCamOf (model : AdaptiveModel) (name : string) : aval<TileCam> =
         AVal.custom (fun t ->
+            // Pin-row hover: every tile preview-frames the hovered pin — the
+            // exact framing a row click (SelectPin → frameTiles) makes
+            // persistent, so click = "keep what you see".
+            let hovered =
+                match model.TilePinHover.GetValue t with
+                | Some id ->
+                    match HashMap.tryFind id (model.ScanPins.Pins.Content.GetValue t) with
+                    | Some p ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
+                        let world = (MeshView.displayedWorldAt model t p.AnchorMesh).Forward.TransformPos p.CentreLocal
+                        let radius =
+                            clamp 0.05 100000.0
+                                (ScanPin.renderLength scale (max 0.5 (p.InnerRadius * 3.0)) / tan (30.0 * System.Math.PI / 180.0))
+                        Some { Centre = ScanPin.renderCentre cc scale world; Radius = radius }
+                    | None -> None
+                | None -> None
+            match hovered with
+            | Some c -> c
+            | None ->
             match Map.tryFind name (model.TileCams.GetValue t) with
             | Some c -> c
             | None ->
@@ -275,12 +295,13 @@ module GuiPanes =
                 | _ -> None)
         let marksOn =
             (shownA, otherA) ||> AVal.map2 (fun sh o -> sh && o.IsSome)
-        // Own-frame local → this tile's render position, riding the mesh's
-        // displayed pose.
-        let renderOf (t : AdaptiveToken) (local : V3d) =
+        // Own-frame local of ANY mesh → render position (the pair tiles share
+        // render space — a mark rides its own mesh's pose whichever tile draws it).
+        let renderOn (t : AdaptiveToken) (mesh : string) (local : V3d) =
             let cc = model.CommonCentroid.GetValue t
             let s = datasetScale.GetValue t
-            ScanPin.renderCentre cc s ((MeshView.displayedWorldAt model t name).Forward.TransformPos local)
+            ScanPin.renderCentre cc s ((MeshView.displayedWorldAt model t mesh).Forward.TransformPos local)
+        let renderOf (t : AdaptiveToken) (local : V3d) = renderOn t name local
 
         div {
             Class "mesh-tile"
@@ -354,9 +375,11 @@ module GuiPanes =
                 // (the white outlines ride in the line node below); the
                 // selected pin's marker is larger.
                 let meshColV4 =
-                    idxVal |> AVal.map (fun i ->
+                    // Fades with the committed marks while a pick is armed.
+                    (idxVal, model.ArmedPick) ||> AVal.map2 (fun i armed ->
                         let c = meshColor i
-                        V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0, 1.0))
+                        V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0,
+                            (if armed.IsSome then 0.15 else 1.0)))
                 let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
                 let pointFills =
                     pinIdSet |> ASet.map (fun id ->
@@ -389,30 +412,40 @@ module GuiPanes =
                         | Some (pa, pb) when name = pa || name = pb ->
                             let pair = (pa, pb)
                             let pins = pinsVal.GetValue t
+                            // While a pick is armed the COMMITTED marks fade to
+                            // near-invisible so they can't hide the pick spot;
+                            // the draft + the armed preview stay full.
+                            let armDim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             for (id, p) in HashMap.toSeq pins do
                                 if p.Pair = pair then
                                     let local = if name = fst pair then p.PointA else p.PointB
                                     let c = renderOf t local
                                     let sz = if sel.Pin = Some id then 0.065 else 0.05
-                                    addWireSphere out c sz (V4d(1.0, 1.0, 1.0, 0.95)) 1.6 16
+                                    addWireSphere out c sz (V4d(1.0, 1.0, 1.0, 0.95 * armDim)) 1.6 16
+                            // The selected pin's area sphere in BOTH pair tiles
+                            // (its centre rides the anchor mesh's pose); the
+                            // anchor tile alone adds a dashed outer ring — the
+                            // anchorage cue.
                             (match sel.Pin |> Option.bind (fun id -> HashMap.tryFind id pins) with
-                             | Some p when p.AnchorMesh = name ->
-                                let cR = renderOf t p.CentreLocal
+                             | Some p ->
+                                let cR = renderOn t p.AnchorMesh p.CentreLocal
                                 let rR = ScanPin.renderLength (datasetScale.GetValue t) p.InnerRadius
-                                for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.85)) 1.5 do
+                                for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.85 * armDim)) 1.5 do
                                     out.Add seg
+                                if p.AnchorMesh = name then
+                                    addDashedRing out cR V3d.IOO V3d.OIO (rR * 1.08) (V4d(1.0, 1.0, 1.0, 0.85 * armDim)) 1.5 64
                              | _ -> ())
                             (match model.ScanPins.Placement.GetValue t with
                              | PlacementActive d ->
                                 let white = V4d(1.0, 1.0, 1.0, 0.95)
                                 (match d.Area with
-                                 | Some (m, local) when m = name ->
-                                    let cR = renderOf t local
+                                 | Some (m, local) ->
+                                    let cR = renderOn t m local
                                     let rR = ScanPin.renderLength (datasetScale.GetValue t) (model.QuickPinRadius.GetValue t)
                                     for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.8)) 1.5 do
                                         out.Add seg
-                                 | _ -> ())
+                                 | None -> ())
                                 (match (if name = fst d.Pair then d.PointA else d.PointB) with
                                  | Some local ->
                                     let cR = renderOf t local

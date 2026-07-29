@@ -159,10 +159,6 @@ type Model =
         ActiveDataset    : string option
         DatasetScales    : Map<string, float>
         DatasetCentroids : Map<string, V3d>
-        // Per-mesh panorama centre (the calibrated-camera origin), absolute world
-        // coords — same frame as the centroid. Read from <dataset>/pano-centers.txt
-        // on load; sensor-viewpoint framing subtracts the mesh centroid for its eye.
-        PanoCenters      : Map<string, V3d>
 
         GhostSilhouette      : bool
         GhostOpacity         : float
@@ -234,7 +230,7 @@ type Model =
         // False-colour error map toggle (in-cell inspect tool; MOV only).
         CellMapOn           : bool
         // Diagram brush: sample gids = indices into the canonical CellError
-        // sample concatenation, capped at 200.
+        // sample concatenation, capped at 4000.
         BrushedSamples      : Set<int>
         // 3D-hovered brushed sample (diagram cross-highlight) + its exact
         // value from the exact-point endpoint.
@@ -251,6 +247,9 @@ type Model =
         ArmPreview          : V3d option
         // Focus/arm button hover: the transient Pin-level visibility preview.
         PinFocusHover       : PinHover option
+        // Pin-row hover: the tile cameras preview-frame this pin while it
+        // lasts (a click makes the framing persistent via SelectPin).
+        TilePinHover        : ScanPinId option
         // The Pin panel's radius disclosure: the slider stays hidden until its
         // edit is clicked. Transient — collapses on pin change and focus jump.
         PinRadiusEditOpen   : bool
@@ -342,20 +341,22 @@ module ModelTransforms =
                 RigidTransform.worldToRender (DatasetScale.forMesh model.DatasetScales mesh) model.CommonCentroid w)
         { model with ComposedPoses = render }
 
-    // A mesh's panorama centre in render space (load pose): stored PanoCenters[mesh]
-    // (absolute world), else the centroid (= the mesh origin) — then (world − common)·scale.
-    let panoCenterRender (model : Model) (mesh : string) =
-        let world =
-            match Map.tryFind mesh model.PanoCenters with
-            | Some w -> w
-            | None -> Map.tryFind mesh model.DatasetCentroids |> Option.defaultValue model.CommonCentroid
-        ScanPin.renderCentre model.CommonCentroid (DatasetScale.forMesh model.DatasetScales mesh) world
+    // A mesh's sensor position: the mesh origin, whose world coordinate is the
+    // *centroid.txt value (the radial-scan pipeline centres each OPC on its scan
+    // station — data-verified, not an assumption). Metric world at load pose:
+    let sensorWorld (model : Model) (mesh : string) =
+        Map.tryFind mesh model.DatasetCentroids |> Option.defaultValue model.CommonCentroid
 
-    // The first mesh in the list's panorama centre (render space), the anchor for the
+    // …and in render space (load pose): (world − common)·scale.
+    let sensorRender (model : Model) (mesh : string) =
+        ScanPin.renderCentre model.CommonCentroid (DatasetScale.forMesh model.DatasetScales mesh)
+            (sensorWorld model mesh)
+
+    // The first mesh in the list's sensor position (render space), the anchor for the
     // coordinate cross + the camera's resting target. Empty list → render origin.
-    let firstPanoCenterRender (model : Model) =
+    let firstSensorRender (model : Model) =
         match model.MeshNames |> IndexList.toList with
-        | first :: _ -> panoCenterRender model first
+        | first :: _ -> sensorRender model first
         | [] -> V3d.Zero
 
 module Model =
@@ -371,7 +372,6 @@ module Model =
             ActiveDataset    = None
             DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
             DatasetCentroids = Map.empty
-            PanoCenters      = Map.empty
             GhostSilhouette     = true
             GhostOpacity        = 0.12
             ShadingStrength     = 0.15
@@ -398,7 +398,7 @@ module Model =
             CellError           = None
             CellErrorBefore     = None
             CellDist            = None
-            CellMapOn           = true
+            CellMapOn           = false
             BrushedSamples      = Set.empty
             HoverSample         = None
             HoverReadout        = None
@@ -406,6 +406,7 @@ module Model =
             ArmedPick           = None
             ArmPreview          = None
             PinFocusHover       = None
+            TilePinHover        = None
             PinRadiusEditOpen   = false
             PeekVis             = false
             PeekPose            = false

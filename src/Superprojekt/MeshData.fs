@@ -95,8 +95,7 @@ module MeshData =
                 |> Seq.toArray
         }
 
-    let fetchCentroids   = fetchVecMap "centroids"
-    let fetchPanoCenters = fetchVecMap "pano-centers"
+    let fetchCentroids = fetchVecMap "centroids"
 
     let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d)[]> =
         async {

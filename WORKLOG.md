@@ -7,6 +7,94 @@
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
 > *(A4–A7 amendment instance completed 2026-07-29 — docs reconstructed.)*
 
+## Post-A7 polish III: isolate-pins suspension, dock resize (2026-07-29)
+
+- **Isolate pins suspends while the centre pick is armed**: aiming a
+  whole-pin move needs the full terrain. Derived, not stored —
+  `MeshView.anchorGhostOn = AnchorGhostMode && ArmedPick <> Some ArmCentre`
+  feeds both the `AnchorGhost` uniform and the GhostOpacity zeroing, so the
+  toggle restores itself on disarm with zero bookkeeping.
+- **Inspect-dock resize handle** (right edge, pure DOM like the strip's):
+  writes `--dockw`/`--charth` custom properties on the PERSISTENT dock div
+  (the chart re-mounts per pair, the vars don't). CSS:
+  `.inspect-dock { width: var(--dockw, 100%) }`,
+  `.cw-chart { height: var(--charth, 160px) }`, `.inspect-handle`.
+  Growth keeps the chart's fixed 236×160 aspect until the chart would pass
+  the viewport bottom (minus whatever dock rows sit BELOW it — measured
+  live as dockBottom−chartBottom), then height clamps and only width grows;
+  re-clamped on window resize. Chart canvas already renders at element size
+  via ResizeObserver — no JS chart changes.
+- Green: client type-check.
+
+## Post-A7 polish II: frustum, isolate&focus sync, peeks, brush cap (2026-07-29)
+
+Ten-item user feedback round; client type-check + full server build green,
+Supertests 97/97.
+
+- **Frustum**: near 1 cm / far 1000 m METRIC (× DatasetScale), both View.fs
+  projections (render control + overlay tooltips — they must match).
+- **Error map default OFF** (`CellMapOn = false` initial).
+- **Isolate & focus buttons = the tile isolate**: a ◎-side click toggles
+  `Sel.Point` AND `TileIsolate` together (ONE state — the tile lock, the
+  shown rule and the button highlight all read it; a Pin-level tile click
+  keeps `Sel.Point` in step) and on enable flies the main camera onto the
+  correspondence point (`FlyToPoint`, r×2); ◉ Pin releases + `ZoomToPin`.
+  `jumpFocus` now resets `Sel.Point` with the isolate (lockstep).
+- **Armed dimming**: while ANY pick is armed every committed pin mark fades
+  to α×0.15 — main-3D rings/points/centre jacks (ScanPinScene) and the tile
+  wire-spheres/area circle/point fills (GuiPanes); the draft and the armed
+  cursor preview stay full.
+- **Pin rows**: radius slider REMOVED (radius lives in the Pin panel);
+  hover = tile-camera preview of that pin (`Model.TilePinHover` transient,
+  `tileCamOf` override with the exact SelectPin framing), click = keep.
+- **Brush cap 200 → 4000** (`SetBrushedSamples`): 200 truncated inside the
+  first pin's gid block (≤300 samples/pin) — the reported "brush only
+  selects one pin". JS emits on pointer-up only, no JS-side cap.
+- **Esc before the centre**: a centreless draft aborts silently straight to
+  Pair — Esc chain gets the branch BEFORE armed-disarm (one Esc out), and
+  the SetFocus/FocusAscend exit-guard thresholds on `placingWithCentre`
+  (popup only once the centre exists).
+- **Draft blob**: the in-flight draft's area (centre + QuickPinRadius)
+  joins the `Blobs` mask, so Isolate pins shows the in-edit patch opaque.
+- **Peeks fixed**: scope was FocusPair-only (hence "always disabled" at
+  Pin). Now `peekPairLoaded` = Pair OR Pin + both meshes resident + no loop
+  modal; V = exactly that (isolate never disables); B additionally requires
+  `RegGraph.pairEdge` (registered pair). Top-bar buttons mirror via
+  `canVis`/`canPose` with per-button disabled hints.
+
+## Post-A7 polish: tile pin circles, white contact rings, true sensor jump (2026-07-29)
+
+- **Tile pin circles in BOTH pair tiles.** `GuiPanes.meshTile`: the selected
+  pin's area-sphere outline no longer gates on `AnchorMesh = name` — its
+  centre rides the ANCHOR mesh's pose (shared render space), so both pair
+  tiles draw it; the anchor tile alone adds a dashed outer ring (r×1.08,
+  new `LineGlyphs.addDashedRing`) as the anchorage cue. The in-flight
+  draft's area circle got the same lift (both tiles; no dashed ring —
+  uncommitted). New helper `renderOn` (any mesh's own-frame local → render
+  position); `renderOf` = `renderOn name`.
+- **Contact rings render pure white.** `ScanPinScene.pinRings`: the
+  sphere∩surface intersection polylines dropped the duplex ink under-stroke
+  — single white stroke (α 0.85, 1.6 px), a deliberate user choice over the
+  duplex convention; the equator ring stays duplex.
+- **Sensor ▾ jumps to the TRUE sensor.** Investigation: the JOB OBJs are
+  radial panorama scans whose origin IS the scan station (stored-frame
+  vertex means sit ~0–2 m from the origin; Job_0792's origin lies 190 m
+  from its siblings' because that scan has its own station), so the
+  sensor's world coordinate = the `*centroid.txt` value — already in the
+  app as `DatasetCentroids`. The hand-estimated
+  `JOB_lowpoly2/pano-centers.txt` was ~1.5 m off (0792: 190 m off — it
+  marked the data centre, not the station) — DELETED, along with the whole
+  pano-centers layer: `Model.PanoCenters`, `PanoCentersLoaded`,
+  `fetchPanoCenters`, server `getPanoCenters` + handler + route (adaptify
+  rerun; FS0049 greps clean). `ModelTransforms.panoCenterRender`/
+  `firstPanoCenterRender` → `sensorWorld`/`sensorRender`/`firstSensorRender`
+  (centroid-backed). `FlyToSensor` = a sensor-VIEWPOINT jump:
+  `FlyToPoint(displayedWorld ∘ sensorWorld, 10 m)` — a close orbit at the
+  station riding the mesh's displayed pose, replacing the own-bounds
+  overview framing. The MeshView sensor origins simplify to the posed mesh
+  origin; the coordinate cross reads `DatasetCentroids`.
+- Green: client type-check, server build, Supertests 97/97.
+
 ## A4–A7 docs reconstructed (2026-07-29)
 
 CLAUDE.md: three-level rail + exit-guard in Navigation; shown-rule =

@@ -207,17 +207,13 @@ module MeshView =
     let rangeMaxWorld (model : AdaptiveModel) : aval<float> =
         AVal.custom (fun t ->
             let bounds = model.MeshBounds.GetValue t
-            let panos = model.PanoCenters.GetValue t
             let cents = model.DatasetCentroids.GetValue t
             let names = model.MeshNames.Content.GetValue t |> IndexList.toList
             let mutable mx = 0.0
             for name in names do
                 match Map.tryFind name bounds with
                 | Some (b : Box3d) when not b.IsInvalid ->
-                    let sensor =
-                        match Map.tryFind name panos with
-                        | Some w -> w
-                        | None -> Map.tryFind name cents |> Option.defaultValue b.Center
+                    let sensor = Map.tryFind name cents |> Option.defaultValue b.Center
                     let dx = max (abs (b.Min.X - sensor.X)) (abs (b.Max.X - sensor.X))
                     let dy = max (abs (b.Min.Y - sensor.Y)) (abs (b.Max.Y - sensor.Y))
                     let dz = max (abs (b.Min.Z - sensor.Z)) (abs (b.Max.Z - sensor.Z))
@@ -289,7 +285,20 @@ module MeshView =
                     if MeshVisibility.pinShown focus selPair pair then
                         let world = (displayedWorldAt model t anchorMesh).Forward.TransformPos centreLocal
                         let cr = ScanPin.renderCentre cc scale world
-                        yield V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, float32 (ScanPin.renderLength scale innerR)) |])
+                        yield V4f(float32 cr.X, float32 cr.Y, float32 cr.Z, float32 (ScanPin.renderLength scale innerR))
+                   // The in-flight draft's area is a blob too — under the
+                   // Isolate-pins view the in-edit area must read opaque like
+                   // any committed patch.
+                   match model.ScanPins.Placement.GetValue t with
+                   | PlacementActive d ->
+                        match d.Area with
+                        | Some (m, local) when MeshVisibility.pinShown focus selPair d.Pair ->
+                            let world = (displayedWorldAt model t m).Forward.TransformPos local
+                            let cr = ScanPin.renderCentre cc scale world
+                            yield V4f(float32 cr.X, float32 cr.Y, float32 cr.Z,
+                                      float32 (ScanPin.renderLength scale (model.QuickPinRadius.GetValue t)))
+                        | _ -> ()
+                   | PlacementIdle -> () |])
         let blobsArr =
             pinBlobs |> AVal.map (fun pins ->
                 let n = min pins.Length MeshShader.MaxBlobs
@@ -326,9 +335,14 @@ module MeshView =
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
-        // Pin isolation = the persistent per-mode default (AnchorGhostMode).
-        let anchorGhost =
-            model.AnchorGhostMode |> AVal.map (fun on -> if on then 1 else 0)
+        // Pin isolation = the persistent per-mode default (AnchorGhostMode) —
+        // SUSPENDED while the centre pick is armed (aiming a whole-pin move
+        // needs the full terrain); derived, so the stored toggle restores
+        // itself on disarm.
+        let anchorGhostOn =
+            (model.AnchorGhostMode, model.ArmedPick) ||> AVal.map2 (fun on armed ->
+                on && armed <> Some ArmCentre)
+        let anchorGhost = anchorGhostOn |> AVal.map (fun on -> if on then 1 else 0)
         // The ONE in-cell error range (metres, spanning 0, capped ±0.5) —
         // shared by the map uniforms, the diagram and the legend so every
         // false-colour read is comparable.
@@ -360,17 +374,15 @@ module MeshView =
                     MeshVisibility.shown focus selPair iso hp pf name)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
-            // Sensor origin = the mesh's panorama/camera centre (PanoCenters,
-            // absolute world → mesh frame → render); no entry ⇒ the mesh origin.
+            // Sensor origin = the mesh origin (the radial-scan pipeline centres
+            // each OPC on its scan station), ridden through the displayed pose.
             // Drives the incidence + range heatmaps from the real sensor, not the
             // interactive camera. RangeMax = the GLOBAL all-mesh saturation end
             // (rangeMaxWorld) so range colours compare across meshes; local
             // fallback while bounds are pending.
             let fullTrafo = meshTrafo model.CommonCentroid loaded scale meshT
             let sensorOrigin =
-                (fullTrafo, model.PanoCenters, loaded.centroid) |||> AVal.map3 (fun t panos c ->
-                    let local = match Map.tryFind name panos with Some w -> w - c | None -> V3d.Zero
-                    V3f (t.Forward.TransformPos local))
+                fullTrafo |> AVal.map (fun t -> V3f (t.Forward.TransformPos V3d.Zero))
             let rangeMax =
                 (rangeWorldA, scale, loaded.localMaxR) |||> AVal.map3 (fun g s lr ->
                     float32 (max 1e-6 ((if g > 0.0 then g else lr) * s)))
@@ -459,9 +471,10 @@ module MeshView =
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
                             let floorOn = model.GhostSilhouette.GetValue t
-                            // "Isolate pins" (manual toggle): while on, the
-                            // context floor is 0 — only the pin blobs read.
-                            if model.AnchorGhostMode.GetValue t then 0.0f
+                            // "Isolate pins" (armed-centre suspension included):
+                            // while effectively on, the context floor is 0 —
+                            // only the pin blobs read.
+                            if anchorGhostOn.GetValue t then 0.0f
                             elif floorOn then float32 (model.GhostOpacity.GetValue t)
                             else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
@@ -758,9 +771,7 @@ module MeshView =
             cov0 |> AVal.map (fun t -> t :> ITexture), cov1 |> AVal.map (fun t -> t :> ITexture)
         // Survey heatmap inputs (same sensor/range conventions as the main pass).
         let sensorOrigin =
-            (fullTrafo, model.PanoCenters, loaded.centroid) |||> AVal.map3 (fun t panos c ->
-                let local = match Map.tryFind name panos with Some w -> w - c | None -> V3d.Zero
-                V3f (t.Forward.TransformPos local))
+            fullTrafo |> AVal.map (fun t -> V3f (t.Forward.TransformPos V3d.Zero))
         let rangeMax =
             (rangeMaxWorld model, scale, loaded.localMaxR) |||> AVal.map3 (fun g s lr ->
                 float32 (max 1e-6 ((if g > 0.0 then g else lr) * s)))

@@ -76,24 +76,6 @@ let getCentroid (dataset : string) (name : string) : V3d option =
         | None   -> Some V3d.Zero
         | Some f -> Some (parseCentroidFile f)
 
-// Per-mesh panorama centre from dataset-level "pano-centers.txt" (lines:
-// <mesh-folder> x y z, absolute world — same frame as centroid.txt). Unlisted → no entry.
-let getPanoCenters (dataset : string) : Map<string, V3d> =
-    let path = Path.Combine(dataRoot.Value, dataset, "pano-centers.txt")
-    if not (File.Exists path) then Map.empty
-    else
-        File.ReadAllLines path
-        |> Array.choose (fun l ->
-            let l = l.Trim()
-            if l.StartsWith "#" || l.Length = 0 then None
-            else
-                let p = l.Split([|' '; '\t'|], StringSplitOptions.RemoveEmptyEntries)
-                if p.Length >= 4 then
-                    try Some (p.[0], V3d(float p.[1], float p.[2], float p.[3]))
-                    with _ -> None
-                else None)
-        |> Map.ofArray
-
 let parseMesh (dataset : string) (name : string) (index : int) : ParsedMesh =
     let folder = Path.Combine(dataRoot.Value, dataset, name)
     // Typed exceptions: the query error shell maps these to 404 (vs 500).

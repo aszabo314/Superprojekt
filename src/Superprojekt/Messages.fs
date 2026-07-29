@@ -9,7 +9,6 @@ type Message =
     // view-side.
     | SetTileCam         of mesh : string * TileCam
     | CentroidsLoaded    of (string * V3d)[]
-    | PanoCentersLoaded  of (string * V3d)[]
     | LoadFinished       of string
     | ToggleGhostSilhouette
     | SetGhostOpacity of float
@@ -46,6 +45,8 @@ type Message =
     | SelectPoint of string option
     // Transient hover preview of the Pin-level focus/arm buttons.
     | SetPinFocusHover of PinHover option
+    // Pin-row hover: preview-frame the tile cameras onto this pin.
+    | SetTilePinHover of ScanPinId option
     // The Pin panel's radius disclosure (slider hidden until clicked).
     | ToggleRadiusEdit
     // Arm/disarm a pick (same target again = disarm; the reducer guards level

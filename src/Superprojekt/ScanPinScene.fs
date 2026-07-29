@@ -142,9 +142,10 @@ module ScanPinScene =
                     let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
                     let fs = model.FlagScale.GetValue t
                     let out = ResizeArray<V3d * V3d * V4d * float>()
+                    let dim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
                     for (_, p) in HashMap.toSeq pins do
                         if pinShownAt t p.Pair then
-                            let col = V4d(0.45, 0.48, 0.53, 0.4)
+                            let col = V4d(0.45, 0.48, 0.53, 0.4 * dim)
                             let w = 1.0
                             let cR = ScanPin.renderCentre cc scale (pinCentreWorldAt t p)
                             let h = ScanPin.flagHeightRender scale fs (Vec.length (eye - cR))
@@ -155,10 +156,11 @@ module ScanPinScene =
                     out.ToArray())
             linesNodeTop flagsActive segs
 
-        // Pin influence visuals: a thin equator ring (⊥ display axis, radius =
-        // InnerRadius) + sphere–surface contact rings per pair mesh, in the
-        // shared pin ink. Normal depth testing on purpose — occlusion is the
-        // spatial cue.
+        // Pin influence visuals: a thin duplex equator ring (⊥ display axis,
+        // radius = InnerRadius) + sphere–surface contact rings per pair mesh —
+        // the sphere∩surface intersection figures render PURE WHITE (a
+        // deliberate user choice over the duplex convention). Normal depth
+        // testing on purpose — occlusion is the spatial cue.
         let pinRings =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
@@ -172,7 +174,10 @@ module ScanPinScene =
                         | Some (anchorMesh, centreLocal, radius, pair), Some rings when pinShownAt t pair ->
                             let cc = model.CommonCentroid.GetValue t
                             let scale = datasetScale.GetValue t
-                            let a = 0.65
+                            // Committed marks fade to near-invisible while a
+                            // pick is armed — they must not hide the pick spot.
+                            let dim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
+                            let a = 0.65 * dim
                             let coreW = 1.4
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             let centre = (dispWorldAt t anchorMesh).Forward.TransformPos centreLocal
@@ -183,15 +188,15 @@ module ScanPinScene =
                             duplex (fun c w -> addRing out cR u v rR c w 64) a coreW
                             // 1 m direction indicator along the display axis — thin
                             // + semitransparent (orientation, not geometry).
-                            let axisCol = V4d(Primitives.pinInkV3d, 0.35)
+                            let axisCol = V4d(Primitives.pinInkV3d, 0.35 * dim)
                             out.Add(cR, cR + nN * ScanPin.renderLength scale 1.0, axisCol, 1.0)
-                            duplex (fun c w ->
-                                for KeyValue(_mesh, meshRings) in rings do
-                                    for ring in meshRings do
-                                        if ring.Length >= 2 then
-                                            let rp = ring |> Array.map (ScanPin.renderCentre cc scale)
-                                            for i in 0 .. rp.Length - 2 do
-                                                out.Add(rp.[i], rp.[i + 1], c, w)) a coreW
+                            let ringWhite = V4d(1.0, 1.0, 1.0, 0.85 * dim)
+                            for KeyValue(_mesh, meshRings) in rings do
+                                for ring in meshRings do
+                                    if ring.Length >= 2 then
+                                        let rp = ring |> Array.map (ScanPin.renderCentre cc scale)
+                                        for i in 0 .. rp.Length - 2 do
+                                            out.Add(rp.[i], rp.[i + 1], ringWhite, 1.6)
                             out.ToArray()
                         | _ -> [||])
                 ASet.ofList [ linesNode flagsActive segs ])
@@ -221,15 +226,22 @@ module ScanPinScene =
                         world |> AVal.map (function
                             | Some (c, _) -> Trafo3d.Scale 0.05 * Trafo3d.Translation c
                             | None -> Trafo3d.Scale 0.0)
+                    // Committed markers fade while a pick is armed (they must
+                    // not hide the pick spot); sphereShell blends, so the
+                    // alpha alone does it.
+                    let armDim =
+                        model.ArmedPick |> AVal.map (fun a -> if a.IsSome then 0.15 else 1.0)
                     let fill =
-                        world |> AVal.map (function
-                            | Some (_, col) -> V4d(col, 1.0)
+                        (world, armDim) ||> AVal.map2 (fun w d ->
+                            match w with
+                            | Some (_, col) -> V4d(col, d)
                             | None -> V4d.Zero)
                     let outline =
-                        world |> AVal.map (function
+                        (world, armDim) ||> AVal.map2 (fun w d ->
+                            match w with
                             | Some (c, _) ->
                                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                                addWireSphere out c 0.065 (V4d(1.0, 1.0, 1.0, 0.95)) 1.6 16
+                                addWireSphere out c 0.065 (V4d(1.0, 1.0, 1.0, 0.95 * d)) 1.6 16
                                 out.ToArray()
                             | None -> [||])
                     [ sphereShell view proj notFullscreen trafo fill

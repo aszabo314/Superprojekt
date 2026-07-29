@@ -19,7 +19,7 @@ let defaultDatasetHandler : HttpHandler =
         return! json (MeshLoader.defaultDataset ()) next ctx
     }
 
-// { meshName: [x,y,z] } marshalling shared by the centroid + pano-centre endpoints.
+// { meshName: [x,y,z] } marshalling for the centroids endpoint.
 let private pointMapHandler (label : string) (dataset : string) (pairs : unit -> (string * V3d) seq) : HttpHandler =
     fun next ctx -> task {
         let log    = ctx.GetLogger "Superserver"
@@ -34,10 +34,6 @@ let centroidsHandler (dataset : string) : HttpHandler =
     pointMapHandler "centroids" dataset (fun () ->
         MeshLoader.meshNames dataset
         |> Seq.choose (fun n -> MeshLoader.getCentroid dataset n |> Option.map (fun c -> n, c)))
-
-let panoCentersHandler (dataset : string) : HttpHandler =
-    pointMapHandler "pano-centers" dataset (fun () ->
-        MeshLoader.getPanoCenters dataset |> Seq.map (fun (KeyValue(n, c)) -> n, c))
 
 // This is the CACHE WARMER: it loads every mesh, in parallel (the Lazy cache
 // makes concurrent loads safe), so cold start pays the slowest mesh, not the sum.
@@ -108,7 +104,6 @@ let webApp : HttpHandler =
         route  "/api/datasets"                                  >=> datasetsHandler
         route  "/api/datasets/default"                          >=> defaultDatasetHandler
         routef "/api/datasets/%s/centroids"                     centroidsHandler
-        routef "/api/datasets/%s/pano-centers"                  panoCentersHandler
         routef "/api/datasets/%s/bboxes"                        bboxesHandler
         routef "/api/datasets/%s/mesh/%s/%i/atlas"              (fun (d,n,i) -> atlasHandler(d,n,i))
         routef "/api/datasets/%s/mesh/%s/%i"                    (fun (d,n,i) -> meshHandler(d,n,i))

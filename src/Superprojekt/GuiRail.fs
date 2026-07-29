@@ -302,6 +302,37 @@ module GuiRail =
                 Primitives.showWhen model.InspectOpen
                 content
             }
+            // Right-edge width-resize handle — pure DOM like the tile strip's.
+            // Writes --dockw/--charth custom properties on the dock (it
+            // persists across pair swaps; the chart re-mounts, the vars
+            // don't). The chart grows with a FIXED aspect until it would pass
+            // the viewport bottom (minus whatever dock rows sit below it),
+            // then the height clamps and only the width keeps growing.
+            div {
+                Class "inspect-handle"
+                Attribute("title", "Drag to resize the inspection toolbox")
+                OnBoot [
+                    "(function(){"
+                    "var h=__THIS__; var d=h.parentElement;"
+                    "function apply(w){"
+                    "  w=Math.max(256,Math.min(Math.max(320,window.innerWidth*0.9),w));"
+                    "  d.style.setProperty('--dockw',w+'px');"
+                    "  var c=d.querySelector('.cw-chart');"
+                    "  if(c){ var r=c.getBoundingClientRect(), dr=d.getBoundingClientRect();"
+                    "    var reserve=Math.max(0,dr.bottom-r.bottom);"
+                    "    var hMax=window.innerHeight-r.top-reserve-10;"
+                    "    var hT=(w-20)*160/236;"
+                    "    d.style.setProperty('--charth',Math.max(160,Math.min(hMax,hT))+'px'); } }"
+                    "h.addEventListener('pointerdown',function(e){"
+                    "  e.preventDefault(); h.setPointerCapture(e.pointerId);"
+                    "  function mv(ev){ apply(ev.clientX); }"
+                    "  function up(){ h.removeEventListener('pointermove',mv); h.removeEventListener('pointerup',up); }"
+                    "  h.addEventListener('pointermove',mv); h.addEventListener('pointerup',up); });"
+                    "window.addEventListener('resize',function(){"
+                    "  var w=parseFloat(d.style.getPropertyValue('--dockw')); if(w) apply(w); });"
+                    "})();"
+                ]
+            }
         }
 
     let rail (env : Env<Message>) (model : AdaptiveModel) =
@@ -466,23 +497,22 @@ module GuiRail =
             let pinCount = pairPins |> AVal.map List.length
 
             // ── Committed-pin rows: select (single click), descend to the
-            // Pin level (double click), radius, delete. Point re-picks live at
-            // the Pin level via the armed pick.
+            // Pin level (double click), delete. Radius editing lives in the
+            // Pin panel; point re-picks at the Pin level via the armed pick.
+            // Hovering a row preview-frames the tile cameras onto the pin.
             let pinRow (p : ScanPin) =
                 let isSel = model.Sel |> AVal.map (fun s -> s.Pin = Some p.Id)
                 div {
                     Class "cw-pin-row"
                     classWhen "cw-pin-sel" isSel
-                    Attribute("title", "Click: choose this pin (enables the Pin stop) · double-click: open it at the Pin level")
+                    Attribute("title", "Click: choose this pin (enables the Pin stop; the tiles frame it) · double-click: open it at the Pin level")
                     // Any row click chooses the pin (enables the Pin stop);
                     // the buttons inside keep their own actions on top.
                     Dom.OnClick(fun _ -> env.Emit [SelectPin p.Id])
                     Dom.OnDoubleClick(fun _ -> env.Emit [SelectPin p.Id; SetFocus FocusPin])
+                    Dom.OnMouseEnter(fun _ -> env.Emit [SetTilePinHover (Some p.Id)])
+                    Dom.OnMouseLeave(fun _ -> env.Emit [SetTilePinHover None])
                     span { Class "cw-pin-name"; p.ShortName }
-                    inlineLogSlider "r" 0.01 100.0 (sprintf "%.2f m")
-                        (model.ScanPins.Pins |> AMap.tryFind p.Id
-                         |> AVal.map (fun po -> po |> Option.map (fun q -> q.InnerRadius) |> Option.defaultValue p.InnerRadius))
-                        (fun v -> env.Emit [ScanPinMsg (SetInnerRadius(p.Id, v))])
                     button {
                         Class "mb cw-del"
                         Attribute("title", "Delete pin")
@@ -550,14 +580,19 @@ module GuiRail =
                     span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
                     span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                 ]
-            // Focus buttons: what the Pin level LOOKS AT — the whole pin (both
-            // meshes) or one correspondence side (that mesh alone). Hover
-            // previews the narrowing; a click also re-frames the tiles.
+            // Isolate & focus buttons: what the Pin level LOOKS AT — the whole
+            // pin (both meshes) or one correspondence side. A side click
+            // TOGGLES the tile-strip isolate (ONE shared state — the tiles'
+            // lock and this highlight read the same TileIsolate) and flies
+            // the camera onto the correspondence; hover previews the
+            // narrowing; every click re-frames the tiles.
             let focusBtn (target : string option) (hover : PinHover) (title : string)
                          (withChip : string option) (label : string) =
                 button {
                     Class "rail-btn pin-focus-btn"
-                    classWhen "rail-btn-active" (model.Sel |> AVal.map (fun s -> s.Point = target))
+                    classWhen "rail-btn-active"
+                        ((model.Sel, model.TileIsolate) ||> AVal.map2 (fun s iso ->
+                            iso = target && s.Point = target))
                     Attribute("title", title)
                     Dom.OnMouseEnter(fun _ -> env.Emit [SetPinFocusHover (Some hover)])
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetPinFocusHover None])
@@ -597,12 +632,12 @@ module GuiRail =
                         "Arm the correspondence pick on this mesh — it renders alone while armed; click any view (a re-pick replaces the point and unregisters the pair)"
                         (Some a) "✚ point"
                     focusBtn (Some a) (HoverSide a)
-                        "Focus this mesh's correspondence: it renders alone; the tiles re-frame to its point" (Some a) "◎ point"
+                        "Isolate this mesh (the SAME lock as clicking its tile) and fly the camera onto its correspondence point; click again to release" (Some a) "◎ point"
                     armBtn (ArmPoint b) (HoverSide b)
                         "Arm the correspondence pick on this mesh — it renders alone while armed; click any view (a re-pick replaces the point and unregisters the pair)"
                         (Some b) "✚ point"
                     focusBtn (Some b) (HoverSide b)
-                        "Focus this mesh's correspondence: it renders alone; the tiles re-frame to its point" (Some b) "◎ point"
+                        "Isolate this mesh (the SAME lock as clicking its tile) and fly the camera onto its correspondence point; click again to release" (Some b) "◎ point"
                     div {
                         Class "pin-panel-pin-edit"
                         armBtn ArmCentre HoverBoth
@@ -618,7 +653,7 @@ module GuiRail =
                         }
                     }
                     focusBtn None HoverBoth
-                        "Focus the whole pin: both meshes visible; the tiles re-frame to the pin" None "◉ Pin"
+                        "Focus the whole pin: the isolation releases, both meshes show, the camera and tiles fly to the pin" None "◉ Pin"
                 }
             let radiusRow =
                 div {

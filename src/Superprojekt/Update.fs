@@ -21,10 +21,29 @@ module Update =
             else model.ScanPins
         { model with
             Focus = f; ScanPins = sp
+            // Point focus rides the tile isolate (ONE state) — both reset on a
+            // jump; the pair/pin memory itself survives.
+            Sel = { model.Sel with Point = None }
             TileIsolate = None; TileIsolateHover = None; MatrixHoverPair = None
             PeekVis = false; PeekPose = false; ProbeReadout = None
             ArmedPick = None; ArmPreview = None; PinFocusHover = None
-            PinRadiusEditOpen = false; PinExitPending = None }
+            TilePinHover = None; PinRadiusEditOpen = false; PinExitPending = None }
+
+    // The exit-guard's threshold: a draft only deserves a confirm-delete once
+    // its centre is placed — a centreless draft exits silently.
+    let private placingWithCentre (model : Model) =
+        match model.ScanPins.Placement with
+        | PlacementActive d -> d.Area.IsSome
+        | PlacementIdle -> false
+
+    // The peeks' shared scope: the pair workspace (Pair AND Pin) with both
+    // pair meshes GPU-resident and no blocking modal.
+    let private peekPairLoaded (model : Model) =
+        model.LoopPending.IsNone &&
+        (match model.Focus, model.Sel.Pair with
+         | (FocusPair | FocusPin), Some (a, b) ->
+            HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
+         | _ -> false)
 
     // A step may retract what the current focus level depends on (pin deleted,
     // placement aborted, selection cleared) — demote to the nearest enabled
@@ -127,7 +146,6 @@ module Update =
                 MeshOrder        = indices
                 MeshesLoaded     = HashSet.empty
                 SceneBounds      = Box3d.Invalid
-                PanoCenters      = Map.empty
                 LoadTransforms   = loadTransforms
                 // Default root = first mesh so the registration UI works out of the box.
                 RegGraph         = { Root = (if centroids.Length > 0 then Some (fst centroids.[0]) else None)
@@ -138,8 +156,6 @@ module Update =
                     // Fresh map — entries never accumulate across dataset switches.
                     let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) Map.empty
                     if dataset <> "" then Map.add dataset common perMesh else perMesh }
-        | PanoCentersLoaded pcs ->
-            { model with PanoCenters = Map.ofArray pcs }
         | LoadFinished name ->
             // Cached-mesh revisits re-emit completions — only a FIRST landing
             // may append the loading-done marker (no duplicate divs).
@@ -210,20 +226,28 @@ module Update =
         | SetMatrixHoverPair hp ->
             if model.MatrixHoverPair = hp then model else { model with MatrixHoverPair = hp }
         | ToggleTileIsolate mesh ->
-            { model with TileIsolate = if model.TileIsolate = Some mesh then None else Some mesh }
+            let iso = if model.TileIsolate = Some mesh then None else Some mesh
+            // At the Pin level the isolate and the point focus are ONE state
+            // (the focus buttons write both) — a tile click keeps them in step.
+            let sel =
+                match model.Focus, model.Sel.Pair with
+                | FocusPin, Some (a, b) when mesh = a || mesh = b ->
+                    { model.Sel with Point = iso }
+                | _ -> model.Sel
+            { model with TileIsolate = iso; Sel = sel }
         | SetFocus f ->
             let placing = match model.ScanPins.Placement with PlacementActive _ -> true | PlacementIdle -> false
             if f = model.Focus || not (FocusLevel.enabled model.Sel placing f) then model
-            // The exit-guard: leaving Pin with an incomplete pin (an in-flight
-            // draft is always incomplete — completion is implicit) parks the
+            // The exit-guard: leaving Pin with an incomplete pin parks the
             // jump behind the confirm-delete popup instead of silently
-            // rolling back. Esc's FocusAscend goes through the same gate.
-            elif model.Focus = FocusPin && placing then { model with PinExitPending = Some f }
+            // rolling back — but ONLY once the centre exists; a centreless
+            // draft is worthless and exits silently (the jump rolls it back).
+            // Esc's FocusAscend goes through the same gate.
+            elif model.Focus = FocusPin && placingWithCentre model then { model with PinExitPending = Some f }
             else jumpFocus f model
         | FocusAscend ->
-            let placing = match model.ScanPins.Placement with PlacementActive _ -> true | PlacementIdle -> false
             if model.Focus = FocusMatrix then model
-            elif model.Focus = FocusPin && placing then { model with PinExitPending = Some FocusPair }
+            elif model.Focus = FocusPin && placingWithCentre model then { model with PinExitPending = Some FocusPair }
             else jumpFocus (FocusLevel.parent model.Focus) model
         | ConfirmPinExit ->
             (match model.PinExitPending with
@@ -266,14 +290,33 @@ module Update =
                  | _, None -> false)
             if not valid then model
             else
-                // A re-click still re-frames the tiles (cheap, and the frame
-                // is the point of the button).
-                let m = { model with Sel = { model.Sel with Point = p } }
+                // Isolate & focus: the button's isolation IS the tile-strip
+                // isolate (ONE state — the tiles' lock highlight, the shown
+                // rule and this button all read TileIsolate). First click
+                // isolates + flies the camera onto the correspondence
+                // (an explicit prompt — the fly-to grammar); the second click
+                // releases the isolation.
+                let selPin = model.Sel.Pin |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins)
                 match p with
-                | Some mesh -> framePointTiles mesh m
-                | None -> framePinTiles m
+                | Some mesh when model.TileIsolate = Some mesh ->
+                    framePinTiles { model with Sel = { model.Sel with Point = None }; TileIsolate = None }
+                | Some mesh ->
+                    (match selPin with
+                     | Some pin ->
+                        let local = if mesh = fst pin.Pair then pin.PointA else pin.PointB
+                        let w = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos local
+                        env.Emit [FlyToPoint(w, max 0.5 (pin.InnerRadius * 2.0))]
+                     | None -> ())
+                    framePointTiles mesh { model with Sel = { model.Sel with Point = Some mesh }; TileIsolate = Some mesh }
+                | None ->
+                    (match model.Sel.Pin with
+                     | Some id -> env.Emit [ZoomToPin id]
+                     | None -> ())
+                    framePinTiles { model with Sel = { model.Sel with Point = None }; TileIsolate = None }
         | SetPinFocusHover h ->
             if model.PinFocusHover = h then model else { model with PinFocusHover = h }
+        | SetTilePinHover h ->
+            if model.TilePinHover = h then model else { model with TilePinHover = h }
         | ToggleRadiusEdit ->
             { model with PinRadiusEditOpen = not model.PinRadiusEditOpen }
         | ToggleArmPick target ->
@@ -316,8 +359,10 @@ module Update =
             if gen <> cellErrorGen then model
             else { model with CellDist = Some dist }
         | SetBrushedSamples ids ->
-            // Cap the brushed set so a wide brush can't flood the 3D marker node.
-            let st = ids |> List.truncate 200 |> Set.ofList
+            // Cap the brushed set so a runaway brush can't flood the 3D marker
+            // node — generous enough to span every pin of a cell (≤300
+            // samples/pin), so a wide brush never silently drops whole pins.
+            let st = ids |> List.truncate 4000 |> Set.ofList
             if model.BrushedSamples = st then model
             else { model with BrushedSamples = st; HoverSample = None; HoverReadout = None }
         | SetHoverSample gid ->
@@ -335,24 +380,20 @@ module Update =
         | ToggleCellMap ->
             { model with CellMapOn = not model.CellMapOn }
         | SetPeekVis held ->
-            // Pair scope only + both pair meshes GPU-resident — otherwise the
-            // press does NOT peek (an unloaded state would blink a blank).
-            // Releases always land.
-            let ok =
-                model.LoopPending.IsNone &&
-                (match model.Focus, model.Sel.Pair with
-                 | FocusPair, Some (a, b) ->
-                    HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
-                 | _ -> false)
-            if model.PeekVis = held || (held && not ok) then model
+            // Pair-workspace scope (Pair AND Pin) + both pair meshes
+            // GPU-resident — otherwise the press does NOT peek (an unloaded
+            // state would blink a blank). An active isolate never disables a
+            // peek. Releases always land.
+            if model.PeekVis = held || (held && not (peekPairLoaded model)) then model
             else { model with PeekVis = held }
         | SetPeekPose held ->
+            // Same scope as the vis peek, plus the pair must be REGISTERED —
+            // as-loaded vs as-loaded blinks nothing.
             let ok =
-                model.LoopPending.IsNone &&
-                (match model.Focus, model.Sel.Pair with
-                 | FocusPair, Some (a, b) ->
-                    HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
-                 | _ -> false)
+                peekPairLoaded model &&
+                (match model.Sel.Pair with
+                 | Some (a, b) -> (RegGraph.pairEdge a b model.RegGraph).IsSome
+                 | None -> false)
             if model.PeekPose = held || (held && not ok) then model
             else { model with PeekPose = held }
         | SelectLoopEdge sel ->
@@ -399,15 +440,15 @@ module Update =
                         SceneBounds = padded
                         MeshBounds = perMesh }
                 // Rest the camera on the default reference mesh (last load step, so
-                // PanoCenters/centroids are in): its panorama centre, framed to its own
+                // the centroids are in): its sensor position, framed to its own
                 // bounds rather than the whole scene. One-shot per dataset load.
                 let center, radius =
                     match m.RegGraph.Root |> Option.bind (fun r -> Map.tryFind r perMesh |> Option.map (fun b -> r, b)) with
                     | Some (r, b) ->
                         let scale = DatasetScale.forMesh m.DatasetScales r
-                        ModelTransforms.panoCenterRender m r, max 1.0 (b.Size.Length * scale * 0.6)
+                        ModelTransforms.sensorRender m r, max 1.0 (b.Size.Length * scale * 0.6)
                     | None ->
-                        ModelTransforms.firstPanoCenterRender m, max 1.0 (padded.Size.Length * 0.6)
+                        ModelTransforms.firstSensorRender m, max 1.0 (padded.Size.Length * 0.6)
                 env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, center))
                           CameraMessage (OrbitMessage.SetTargetRadius(radius))]
                 m
@@ -444,6 +485,7 @@ module Update =
                     ArmedPick = None
                     ArmPreview = None
                     PinFocusHover = None
+                    TilePinHover = None
                     PinRadiusEditOpen = false
                     PeekVis = false
                     PeekPose = false
@@ -645,16 +687,12 @@ module Update =
              | None -> ())
             model
         | FlyToSensor mesh ->
-            // The dataset-load framing, per mesh: the sensor (panorama centre,
-            // mesh-origin fallback), framed to the mesh's own bounds.
-            let center = ModelTransforms.panoCenterRender model mesh
-            let radius =
-                match Map.tryFind mesh model.MeshBounds with
-                | Some b when not b.IsInvalid ->
-                    max 1.0 (b.Size.Length * DatasetScale.forMesh model.DatasetScales mesh * 0.6)
-                | _ -> model.Camera.radius
-            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, center))
-                      CameraMessage (OrbitMessage.SetTargetRadius radius)]
+            // A sensor-VIEWPOINT jump, not an overview framing: a close orbit
+            // around where the scanner actually stood — the sensor rides the
+            // mesh's displayed pose (server frame == metric world at load).
+            let world = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos
+                            (ModelTransforms.sensorWorld model mesh)
+            env.Emit [FlyToPoint(world, 10.0)]
             model
 
     // Lazy pairwise-overlap sweep: every unordered mesh pair missing from the

@@ -58,26 +58,35 @@ module GuiTopBar =
             }
 
             // Spring-loaded peek buttons: press-and-hold twins of the V/B keys
-            // (Pair scope; the reducer re-guards, releases always land).
-            // Pointer capture keeps the release landing even when the cursor
-            // slides off the button mid-hold. Always visible, DISABLED when a
-            // peek couldn't land — hidden buttons are undiscoverable chrome.
-            let canPeek =
+            // (pair-workspace scope — Pair AND Pin; the reducer re-guards,
+            // releases always land). Pointer capture keeps the release landing
+            // even when the cursor slides off the button mid-hold. Always
+            // visible, DISABLED when a peek couldn't land — hidden buttons are
+            // undiscoverable chrome. Mirrors the reducer's guards: V = the
+            // pair loaded (isolation never disables it), B = additionally
+            // registered.
+            let canVis =
                 AVal.custom (fun t ->
-                    model.Focus.GetValue t = FocusPair &&
+                    (match model.Focus.GetValue t with FocusPair | FocusPin -> true | FocusMatrix -> false) &&
                     (match (model.Sel.GetValue t).Pair with
                      | Some (a, b) ->
                         let loaded = model.MeshesLoaded.Content.GetValue t
                         HashSet.contains a loaded && HashSet.contains b loaded
                      | None -> false))
-            let peekBtn (label : string) (title : string) (heldA : aval<bool>) (set : bool -> unit) =
+            let canPose =
+                (canVis, model.RegGraph, model.Sel) |||> AVal.map3 (fun ok g s ->
+                    ok && (match s.Pair with
+                           | Some (a, b) -> (RegGraph.pairEdge a b g).IsSome
+                           | None -> false))
+            let peekBtn (label : string) (title : string) (offHint : string)
+                        (canA : aval<bool>) (heldA : aval<bool>) (set : bool -> unit) =
                 button {
                     Class "tb-btn-tiny tb-peek"
                     classWhen "tb-btn-active" heldA
-                    canPeek |> AVal.map (fun ok ->
+                    canA |> AVal.map (fun ok ->
                         if ok then Some (Attribute("title", title))
-                        else Some (Attribute("title", title + " — available at the Pair level once both pair meshes are loaded")))
-                    canPeek |> AVal.map (fun ok ->
+                        else Some (Attribute("title", title + offHint)))
+                    canA |> AVal.map (fun ok ->
                         if ok then None else Some (Attribute("disabled", "disabled")))
                     Dom.OnPointerDown((fun _ -> set true), pointerCapture = true)
                     Dom.OnPointerUp((fun _ -> set false), pointerCapture = true)
@@ -87,9 +96,11 @@ module GuiTopBar =
                 Class "tb-peeks"
                 span { Class "lp-sublabel"; "Peek" }
                 peekBtn "◌ V" "Hold: the moving mesh blinks off — is this the same rock? (same as holding V)"
-                    model.PeekVis (fun h -> env.Emit [SetPeekVis h])
+                    " — available at the Pair/Pin level once both pair meshes are loaded"
+                    canVis model.PeekVis (fun h -> env.Emit [SetPeekVis h])
                 peekBtn "↺ B" "Hold: the moving mesh snaps to its as-loaded pose — did registration help? (same as holding B)"
-                    model.PeekPose (fun h -> env.Emit [SetPeekPose h])
+                    " — available at the Pair/Pin level once the pair is registered"
+                    canPose model.PeekPose (fun h -> env.Emit [SetPeekPose h])
             }
 
             div {

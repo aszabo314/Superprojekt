@@ -1,9 +1,0 @@
-# Panorama centre per mesh — absolute world coordinates, same frame and units as
-# each mesh's <mesh>/*centroid.txt. One line per mesh: <mesh-folder-name> x y z.
-# Lines starting with # and blank lines are ignored. Meshes not listed fall back
-# to the mesh origin (0,0,0 in its own frame). The renderer subtracts the mesh
-# centroid to obtain the camera position in the mesh's own frame.
-Job_0789_8808-034-rad_opc 19.6 -3.7 3393767.2
-Job_0791_8814-034-rad_opc 20.2 -2.5 3393768.5
-Job_0792_8817-110-rad_opc 21.6 -4.1 3393766.8
-Job_0805_8826-034-rad_opc 20.3 -2.5 3393768.3

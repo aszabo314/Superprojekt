@@ -223,7 +223,15 @@ module LineGlyphs =
 
     let addRingXY out c r col w segs = addRing out c V3d.IOO V3d.OIO r col w segs
 
-    // Dashed ring (every other segment drawn) — the uncoloured selection circle.
+    // Dashed ring (every other segment drawn).
+    let addDashedRing (out : ResizeArray<V3d * V3d * V4d * float>)
+                      (c : V3d) (u : V3d) (v : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
+        for i in 0 .. segs - 1 do
+            if i % 2 = 0 then
+                let a0 = float i / float segs * Constant.PiTimesTwo
+                let a1 = float (i + 1) / float segs * Constant.PiTimesTwo
+                out.Add(c + (u * cos a0 + v * sin a0) * r, c + (u * cos a1 + v * sin a1) * r, col, width)
+
     let addWireSphere (out : ResizeArray<V3d * V3d * V4d * float>)
                       (c : V3d) (r : float) (col : V4d) (width : float) (segs : int) =
         addRing out c V3d.IOO V3d.OIO r col width segs

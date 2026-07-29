@@ -121,9 +121,14 @@ module View =
                 )
 
                 let view = model.Camera.view |> AVal.map CameraView.viewTrafo
+                // Near 1 cm / far 1000 m METRIC (× DatasetScale into render
+                // units) — close-up inspection must not near-clip. Must match
+                // the overlay tooltip projection below.
+                let projScale =
+                    (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
                 let proj =
-                    size |> AVal.map (fun s ->
-                        Frustum.perspective 90.0 1.0 5000.0 (float s.X / float s.Y) |> Frustum.projTrafo)
+                    (size, projScale) ||> AVal.map2 (fun s sc ->
+                        Frustum.perspective 90.0 (0.01 * sc) (1000.0 * sc) (float s.X / float s.Y) |> Frustum.projTrafo)
 
                 // Cursor → nearest mesh surface via server raycast, ghost-agnostic
                 // (the server just intersects geometry, ignoring the GPU ghost).
@@ -346,9 +351,13 @@ module View =
             // readout + the hovered brushed sample), projected with the same
             // camera the main view renders with.
             let viewTOut = model.Camera.view |> AVal.map CameraView.viewTrafo
+            // Same frustum as the main render control (near 1 cm / far 1000 m
+            // metric) or the tooltips drift off their 3D points.
             let projTOut =
-                viewportSize |> AVal.map (fun s ->
-                    Frustum.perspective 90.0 1.0 5000.0 (float s.X / float (max 1 s.Y)) |> Frustum.projTrafo)
+                let projScale =
+                    (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
+                (viewportSize, projScale) ||> AVal.map2 (fun s sc ->
+                    Frustum.perspective 90.0 (0.01 * sc) (1000.0 * sc) (float s.X / float (max 1 s.Y)) |> Frustum.projTrafo)
             let screenOf (t : FSharp.Data.Adaptive.AdaptiveToken) (world : V3d) =
                 let cc = model.CommonCentroid.GetValue t
                 let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
@@ -408,10 +417,12 @@ module View =
                 | "Escape" ->
                     // ONE Esc: the innermost in-progress action cancels first —
                     // the pin exit-guard popup (cancel = stay) > the blocking
-                    // loop modal (cancel = discard the redundant edge) >
+                    // loop modal (cancel = discard the redundant edge) > a
+                    // CENTRELESS placement aborts straight to Pair (nothing
+                    // worth guarding yet — skips the disarm step on purpose) >
                     // armed-pick disarm (probe included — every pick is an
                     // arm) > ascend one focus level. Ascending out of Pin with
-                    // an incomplete pin raises the exit-guard (the reducer's
+                    // a centred draft raises the exit-guard (the reducer's
                     // gate); rail jumps go through the same gate, so Esc and
                     // jumps stay consistent.
                     if (AVal.force model.PinExitPending).IsSome then
@@ -419,9 +430,16 @@ module View =
                     elif (AVal.force model.LoopPending).IsSome then
                         env.Emit [CancelLoopResolution]
                     else
-                        match AVal.force model.ArmedPick with
-                        | Some target -> env.Emit [ToggleArmPick target]
-                        | None -> env.Emit [FocusAscend]
+                        let centrelessDraft =
+                            AVal.force model.Focus = FocusPin &&
+                            (match AVal.force model.ScanPins.Placement with
+                             | PlacementActive d -> d.Area.IsNone
+                             | PlacementIdle -> false)
+                        if centrelessDraft then env.Emit [FocusAscend]
+                        else
+                            match AVal.force model.ArmedPick with
+                            | Some target -> env.Emit [ToggleArmPick target]
+                            | None -> env.Emit [FocusAscend]
                 | _ -> ()
             )
             Dom.OnKeyUp(fun e ->

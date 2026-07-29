@@ -1,5 +1,5 @@
-//e311f1a4-a458-0d50-ed72-5a2008dfc42b
-//113cccd8-c71d-fc37-f6be-6c34480a42e5
+//f71b38ba-0456-eb8a-d924-2c3c31e8cb61
+//7f895add-b5b1-c7e8-b42b-f661ec86f0ec
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -22,7 +22,6 @@ type AdaptiveModel(value : Model) =
     let _ActiveDataset_ = FSharp.Data.Adaptive.cval(value.ActiveDataset)
     let _DatasetScales_ = FSharp.Data.Adaptive.cval(value.DatasetScales)
     let _DatasetCentroids_ = FSharp.Data.Adaptive.cval(value.DatasetCentroids)
-    let _PanoCenters_ = FSharp.Data.Adaptive.cval(value.PanoCenters)
     let _GhostSilhouette_ = FSharp.Data.Adaptive.cval(value.GhostSilhouette)
     let _GhostOpacity_ = FSharp.Data.Adaptive.cval(value.GhostOpacity)
     let _ShadingStrength_ = FSharp.Data.Adaptive.cval(value.ShadingStrength)
@@ -57,6 +56,7 @@ type AdaptiveModel(value : Model) =
     let _ArmedPick_ = FSharp.Data.Adaptive.cval(value.ArmedPick)
     let _ArmPreview_ = FSharp.Data.Adaptive.cval(value.ArmPreview)
     let _PinFocusHover_ = FSharp.Data.Adaptive.cval(value.PinFocusHover)
+    let _TilePinHover_ = FSharp.Data.Adaptive.cval(value.TilePinHover)
     let _PinRadiusEditOpen_ = FSharp.Data.Adaptive.cval(value.PinRadiusEditOpen)
     let _PeekVis_ = FSharp.Data.Adaptive.cval(value.PeekVis)
     let _PeekPose_ = FSharp.Data.Adaptive.cval(value.PeekPose)
@@ -90,7 +90,6 @@ type AdaptiveModel(value : Model) =
             _ActiveDataset_.Value <- value.ActiveDataset
             _DatasetScales_.Value <- value.DatasetScales
             _DatasetCentroids_.Value <- value.DatasetCentroids
-            _PanoCenters_.Value <- value.PanoCenters
             _GhostSilhouette_.Value <- value.GhostSilhouette
             _GhostOpacity_.Value <- value.GhostOpacity
             _ShadingStrength_.Value <- value.ShadingStrength
@@ -125,6 +124,7 @@ type AdaptiveModel(value : Model) =
             _ArmedPick_.Value <- value.ArmedPick
             _ArmPreview_.Value <- value.ArmPreview
             _PinFocusHover_.Value <- value.PinFocusHover
+            _TilePinHover_.Value <- value.TilePinHover
             _PinRadiusEditOpen_.Value <- value.PinRadiusEditOpen
             _PeekVis_.Value <- value.PeekVis
             _PeekPose_.Value <- value.PeekPose
@@ -151,7 +151,6 @@ type AdaptiveModel(value : Model) =
     member __.ActiveDataset = _ActiveDataset_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.DatasetScales = _DatasetScales_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
     member __.DatasetCentroids = _DatasetCentroids_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.V3d>>
-    member __.PanoCenters = _PanoCenters_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.V3d>>
     member __.GhostSilhouette = _GhostSilhouette_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.GhostOpacity = _GhostOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ShadingStrength = _ShadingStrength_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
@@ -186,6 +185,7 @@ type AdaptiveModel(value : Model) =
     member __.ArmedPick = _ArmedPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ArmTarget>>
     member __.ArmPreview = _ArmPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.PinFocusHover = _PinFocusHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PinHover>>
+    member __.TilePinHover = _TilePinHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ScanPinId>>
     member __.PinRadiusEditOpen = _PinRadiusEditOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PeekVis = _PeekVis_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.PeekPose = _PeekPose_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>

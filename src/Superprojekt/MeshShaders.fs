@@ -262,8 +262,8 @@ module MeshShader =
                         let fade = clamp 0.0f 1.0f ((0.5f - aa) * 4.0f)
                         let line = 0.45f + 0.55f * min 1.0f (g / (aa * 1.3f))
                         baseRgb <- baseRgb * (1.0f - fade * (1.0f - line))
-            // Incidence heatmap: incidence angle to the scan sensor (the mesh's
-            // panorama centre, fed via SensorOrigin), grazing = red, head-on = green.
+            // Incidence heatmap: incidence angle to the scan sensor (the mesh
+            // origin, fed via SensorOrigin), grazing = red, head-on = green.
             // Uses the GEOMETRIC (per-triangle, from screen-space derivatives) normal,
             // sign-oriented by the stored vertex normal — smoothed vertex normals let
             // grazing sliver/bridging triangles read head-on. No abs: a surface facing
@@ -282,8 +282,8 @@ module MeshShader =
                 baseRgb <-
                     if incid < 0.5f then lo + (mid - lo) * (incid * 2.0f)
                     else mid + (hi - mid) * ((incid - 0.5f) * 2.0f)
-            // Range heatmap: distance from the scan sensor (SensorOrigin = the mesh's
-            // panorama centre) over its max range, near = blue → far = red.
+            // Range heatmap: distance from the scan sensor (SensorOrigin = the
+            // mesh origin) over its max range, near = blue → far = red.
             if uniform.HeatmapMode = 2 && aboveGhost then
                 let rng = (wp - uniform.SensorOrigin).Length
                 let tr  = clamp 0.0f 1.0f (rng / max 1e-6f uniform.RangeMax)

@@ -79,6 +79,9 @@ module GuiOverlays =
         let heatRangeMaxA = MeshView.rangeMaxWorld model
         let anyRangeOn =
             model.MeshHeatmap |> AVal.map (Map.exists (fun _ h -> h = HeatRange))
+        // The ONE difference scale, shown while anything paints on it: the
+        // surface map, or the brushed dots (which carry the same ramp — never a
+        // second legend).
         let diffOn =
             AVal.custom (fun t ->
                 let inPairScope =
@@ -86,7 +89,29 @@ module GuiOverlays =
                     | FocusPair | FocusPin -> true
                     | FocusMatrix -> false
                 inPairScope && (model.Sel.GetValue t).Pair.IsSome
-                && model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome)
+                && ((model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome)
+                    || not (Set.isEmpty (model.BrushedSamples.GetValue t))))
+        // The 3D-hovered dot's value, connecting "this value" to the scale: the
+        // exact probed number the tooltip shows, or the dot's own sample value
+        // until that fetch lands.
+        let hoveredValue =
+            AVal.custom (fun t ->
+                match model.HoverSample.GetValue t with
+                | None -> None
+                | Some gid ->
+                    match model.HoverReadout.GetValue t with
+                    | Some (g, v) when g = gid -> Some v
+                    | _ ->
+                        match model.CellError.GetValue t with
+                        | None -> None
+                        | Some cells ->
+                            let rec find (i : int) (cs : (ScanPinId * Query.PairPinError) list) =
+                                match cs with
+                                | [] -> None
+                                | (_, r) :: rest ->
+                                    if i < r.Samples.Length then Some r.Samples.[i]
+                                    else find (i - r.Samples.Length) rest
+                            find gid (Array.toList cells))
         let legendJson =
             AVal.custom (fun t ->
                 let title, vLo, vHi, colorAt =
@@ -129,8 +154,16 @@ module GuiOverlays =
                             if p > 0.12 && p < 0.88 then
                                 yield sprintf "{\"p\":%.4f,\"l\":\"%s\",\"z\":%d}" p (fmt span v) (if k = 0 then 1 else 0) ]
                     |> String.concat ","
-                sprintf "{\"title\":\"%s\",\"min\":\"%s\",\"max\":\"%s\",\"stops\":[%s],\"ticks\":[%s]}"
-                    title (fmt span vLo) (fmt span vHi) stops ticks)
+                // The hovered dot's mark on the bar: -1 = none (the diff scale
+                // only — the Range heatmap carries no brushed samples).
+                let hov =
+                    if diffOn.GetValue t && span > 0.0 then
+                        match hoveredValue.GetValue t with
+                        | Some v -> clamp 0.0 1.0 ((v - vLo) / span)
+                        | None -> -1.0
+                    else -1.0
+                sprintf "{\"title\":\"%s\",\"min\":\"%s\",\"max\":\"%s\",\"hov\":%.4f,\"stops\":[%s],\"ticks\":[%s]}"
+                    title (fmt span vLo) (fmt span vHi) hov stops ticks)
         div {
             Class "color-legend"
             Primitives.showWhen ((anyRangeOn, diffOn) ||> AVal.map2 (||))
@@ -178,6 +211,18 @@ module GuiOverlays =
                 "  });"
                 "  txt(PAD, 'start', d.min, 28);"
                 "  txt(W - PAD, 'end', d.max, 28);"
+                // The 3D-hovered dot's value, in the diagram's own hover amber:
+                // appended last, so it rides over the bar and every tick.
+                "  if(d.hov >= 0){"
+                "    var hx = PAD + d.hov * bw;"
+                "    ['#ffffff','#d97706'].forEach(function(c, i){"
+                "      var hl = document.createElementNS(ns, 'line');"
+                "      hl.setAttribute('x1', hx); hl.setAttribute('y1', 0);"
+                "      hl.setAttribute('x2', hx); hl.setAttribute('y2', BH + 5);"
+                "      hl.setAttribute('stroke', c); hl.setAttribute('stroke-width', i ? 2 : 4);"
+                "      svg.appendChild(hl);"
+                "    });"
+                "  }"
                 "  el.innerHTML = '';"
                 "  var tt = document.createElement('div'); tt.className = 'cl-title';"
                 "  tt.textContent = d.title; el.appendChild(tt);"

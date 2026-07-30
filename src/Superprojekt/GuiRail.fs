@@ -216,12 +216,19 @@ module GuiRail =
                     Attribute("title", "False-colour error map: paints the MOV mesh's signed distance vs the reference (the reference is never error-coloured). At the Pin level the map narrows to the pin's area.")
                     compactToggle "Error map" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
                 }
+                let probeHeld =
+                    (model.ArmedPick, model.ProbeReadout) ||> AVal.map2 (fun a r ->
+                        a <> Some ArmProbe && r.IsSome)
                 button {
                     Class "rail-btn cw-probe"
                     classWhen "rail-btn-active arm-lit" (model.ArmedPick |> AVal.map ((=) (Some ArmProbe)))
-                    Attribute("title", "Arm the point probe: click any view for the exact error value at that point (a landed pick disarms; Esc disarms). Transient — the next arm or jump wipes it.")
+                    classWhen "cw-probe-held" probeHeld
+                    probeHeld |> AVal.map (fun held ->
+                        Some (Attribute("title",
+                                if held then "Clear the probe reading (click again afterwards to probe a new point)."
+                                else "Arm the point probe: click any view for the exact error value at that point (a landed pick disarms; Esc disarms). Transient — the next arm or jump wipes it.")))
                     Dom.OnClick(fun _ -> env.Emit [ToggleArmPick ArmProbe])
-                    "⊕ Probe"
+                    probeHeld |> AVal.map (fun held -> if held then "⊗ Clear probe" else "⊕ Probe")
                 }
                 div {
                     Class "rail-isolate"

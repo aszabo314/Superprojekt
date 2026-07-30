@@ -85,6 +85,10 @@ module MeshShader =
         // (no photo texture / palette / slope), so the false-colour painters above
         // it are the only filled signal. Shading still applies.
         member x.InspectPlain     : float32 = x?InspectPlain
+        // Brush colour-isolation: 1 → NOTHING on this mesh carries colour (the
+        // ghost silhouette whitens with the surface, the intrinsic heatmaps are
+        // suppressed), so the brushed dots are the only coloured signal left.
+        member x.ColorIsolate     : float32 = x?ColorIsolate
         // Matrix-hover overlap preview: 1 → a fragment is solid only where the
         // footprint coverage MRT covers its pixel in BOTH hovered-pair channels
         // (screen-space test along the camera ray); everything else drops to
@@ -222,7 +226,11 @@ module MeshShader =
             // silhouette reads uniformly regardless of mode.
             let aboveGhost = alpha > ghost + 1e-4f
             let mutable baseRgb =
-                if not aboveGhost then uniform.MeshColor.XYZ
+                if not aboveGhost then
+                    // Colour isolation reaches the ghost too: a ghosted mesh
+                    // stays ghosted, it just stops carrying identity colour.
+                    if uniform.ColorIsolate > 0.5f then V3f(0.957f, 0.969f, 0.980f)
+                    else uniform.MeshColor.XYZ
                 elif uniform.InspectPlain > 0.5f then V3f(0.957f, 0.969f, 0.980f)
                 elif uniform.RenderingMode = 1 then uniform.MeshColor.XYZ
                 elif uniform.RenderingMode = 2 then slopeCol
@@ -268,7 +276,7 @@ module MeshShader =
             // sign-oriented by the stored vertex normal — smoothed vertex normals let
             // grazing sliver/bridging triangles read head-on. No abs: a surface facing
             // AWAY from the sensor cannot have been scanned, so it reads worst, not best.
-            if uniform.HeatmapMode = 1 && aboveGhost then
+            if uniform.HeatmapMode = 1 && aboveGhost && uniform.ColorIsolate < 0.5f then
                 let toSensor = (uniform.SensorOrigin - wp) |> Vec.normalize
                 let gx = V3f(ddx wp.X, ddx wp.Y, ddx wp.Z)
                 let gy = V3f(ddy wp.X, ddy wp.Y, ddy wp.Z)
@@ -284,7 +292,7 @@ module MeshShader =
                     else mid + (hi - mid) * ((incid - 0.5f) * 2.0f)
             // Range heatmap: distance from the scan sensor (SensorOrigin = the
             // mesh origin) over its max range, near = blue → far = red.
-            if uniform.HeatmapMode = 2 && aboveGhost then
+            if uniform.HeatmapMode = 2 && aboveGhost && uniform.ColorIsolate < 0.5f then
                 let rng = (wp - uniform.SensorOrigin).Length
                 let tr  = clamp 0.0f 1.0f (rng / max 1e-6f uniform.RangeMax)
                 let nearC = V3f(0.13f, 0.40f, 0.85f)
@@ -296,11 +304,13 @@ module MeshShader =
             if uniform.HeatmapMode = 3 && aboveGhost then
                 if v.shq < uniform.ShapeThreshold then discard()
                 // Quality ≥ 0.75 reads fully green, so a larger share of a
-                // well-formed mesh shows as good.
-                let ts = clamp 0.0f 1.0f (v.shq / 0.75f)
-                let loC = V3f(0.86f, 0.20f, 0.15f)
-                let hiC = V3f(0.18f, 0.55f, 0.34f)
-                baseRgb <- loC * (1.0f - ts) + hiC * ts
+                // well-formed mesh shows as good. Colour isolation suppresses the
+                // COLOUR only — the cutoff stays a filter.
+                if uniform.ColorIsolate < 0.5f then
+                    let ts = clamp 0.0f 1.0f (v.shq / 0.75f)
+                    let loC = V3f(0.86f, 0.20f, 0.15f)
+                    let hiC = V3f(0.18f, 0.55f, 0.34f)
+                    baseRgb <- loC * (1.0f - ts) + hiC * ts
             // THE INTERSECTION LINE: the at-cut band renders as flat, fully
             // opaque data ink over every painter (opaque ⇒ natural depth below,
             // so the line is pickable surface like any solid fragment).

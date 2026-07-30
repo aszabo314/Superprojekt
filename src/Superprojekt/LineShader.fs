@@ -189,6 +189,112 @@ module Lines =
             Sg.Render count
         }
 
+// Flat camera-facing discs (the brushed-sample locators): a pure locator +
+// colour channel, no 3D body. Billboarding AND the screen-constant sizing run
+// in the VERTEX shader, so the buffers hold plain unit-circle offsets and
+// rebuild only when the dot SET changes — a camera move costs three uniform
+// updates instead of re-uploading every disc.
+module Discs =
+    open Aardvark.Dom
+    open FSharp.Data.Adaptive
+    open FShade
+
+    [<Literal>]
+    let private segs = 16
+
+    // Radius as a fraction of the eye distance (render space): ~4 px at a
+    // 1000 px viewport under the 90° frustum. Literal so the vertex shader
+    // inlines it; public because marks sized to a disc's rim read it too.
+    [<Literal>]
+    let screenFrac = 0.008f
+
+    type UniformScope with
+        member x.DiscRight : V3f     = x?DiscRight
+        member x.DiscUp    : V3f     = x?DiscUp
+        member x.DiscMinR  : float32 = x?DiscMinR
+        member x.DiscMaxR  : float32 = x?DiscMaxR
+
+    type Vertex = {
+        [<Position>]               pos : V4f
+        [<Semantic("DiscOffset")>] off : V2f
+        [<Semantic("DiscColor")>]  col : V4f
+    }
+
+    let vertex (v : Vertex) =
+        vertex {
+            let c = v.pos.XYZ
+            let d = Vec.length (uniform.CameraLocation - c)
+            let r = clamp uniform.DiscMinR uniform.DiscMaxR (screenFrac * d)
+            let w = c + (uniform.DiscRight * v.off.X + uniform.DiscUp * v.off.Y) * r
+            return { v with pos = uniform.ModelViewProjTrafo * V4f(w, 1.0f) }
+        }
+
+    // Flat fill + a thin ink rim (the offsets are unit-circle, so the rim is a
+    // fixed proportion of the disc) — a near-white dot must still read on the
+    // whitened surface. #292524 = Primitives.pinInk (defined later in compile order).
+    let fragment (v : Vertex) =
+        fragment {
+            if Vec.length v.off > 0.80f then return V4f(0.161f, 0.145f, 0.141f, v.col.W)
+            else return v.col
+        }
+
+    let private buildBuffers (dots : aval<(V3d * V4d)[]>) =
+        let buffers =
+            dots |> AVal.map (fun ds ->
+                let n = ds.Length
+                let vpd = segs + 1
+                let posBuf = Array.zeroCreate<V3f> (max 1 (n * vpd))
+                let offBuf = Array.zeroCreate<V2f> (max 1 (n * vpd))
+                let colBuf = Array.zeroCreate<V4f> (max 1 (n * vpd))
+                let indices = Array.zeroCreate<int> (max 1 (n * segs * 3))
+                for i in 0 .. n - 1 do
+                    let (c, col) = ds.[i]
+                    let cf = V3f c
+                    let colf = V4f(float32 col.X, float32 col.Y, float32 col.Z, float32 col.W)
+                    let b = i * vpd
+                    posBuf.[b] <- cf
+                    offBuf.[b] <- V2f.Zero
+                    colBuf.[b] <- colf
+                    for k in 0 .. segs - 1 do
+                        let a = float32 k / float32 segs * 6.2831855f
+                        posBuf.[b + 1 + k] <- cf
+                        offBuf.[b + 1 + k] <- V2f(cos a, sin a)
+                        colBuf.[b + 1 + k] <- colf
+                    let ib = i * segs * 3
+                    for k in 0 .. segs - 1 do
+                        indices.[ib + k * 3 + 0] <- b
+                        indices.[ib + k * 3 + 1] <- b + 1 + k
+                        indices.[ib + k * 3 + 2] <- b + 1 + (k + 1) % segs
+                posBuf, offBuf, colBuf, indices, n)
+        buffers |> AVal.map (fun (a,_,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,a,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,a,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,a,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,_,n) -> if n = 0 then 0 else n * segs * 3)
+
+    // dots = (centre in render space, colour); minR/maxR are the render-space
+    // clamp of the screen-constant radius.
+    let render (view : aval<Trafo3d>) (minR : aval<float>) (maxR : aval<float>)
+               (dots : aval<(V3d * V4d)[]>) =
+        let posArr, offArr, colArr, idxArr, count = buildBuffers dots
+        let camDir (d : V3d) = view |> AVal.map (fun (v : Trafo3d) -> V3f (v.Backward.TransformDir d))
+        sg {
+            Sg.Shader { vertex; fragment }
+            Sg.NoEvents
+            Sg.Uniform("DiscRight", camDir V3d.IOO)
+            Sg.Uniform("DiscUp",    camDir V3d.OIO)
+            Sg.Uniform("DiscMinR",  minR |> AVal.map float32)
+            Sg.Uniform("DiscMaxR",  maxR |> AVal.map float32)
+            Sg.VertexAttributes(
+                HashMap.ofList [
+                    string DefaultSemantic.Positions, BufferView(posArr, typeof<V3f>)
+                    "DiscOffset", BufferView(offArr, typeof<V2f>)
+                    "DiscColor",  BufferView(colArr, typeof<V4f>)
+                ])
+            Sg.Index(BufferView(idxArr, typeof<int>))
+            Sg.Render count
+        }
+
 // Shared line-glyph builders for the 3D + focus overlays — segments appended as
 // (a, b, colour, width) for Lines.render. ONE home so the conventions
 // (dash phase, ring segment counts, arrowhead shape) cannot fork

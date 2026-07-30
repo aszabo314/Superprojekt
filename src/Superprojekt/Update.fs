@@ -344,6 +344,10 @@ module Update =
             if not valid then model
             elif model.ArmedPick = Some target then
                 { model with ArmedPick = None; ArmPreview = None; ProbeReadout = None }
+            elif target = ArmProbe && model.ProbeReadout.IsSome then
+                // A landed reading holds the probe button in its own state: the
+                // click drops the reading, it does not re-arm.
+                { model with ProbeReadout = None }
             else
                 // Arming enters the scrimmed quasi-mode: the top-bar menus
                 // close (an open one would float dead over the scrim).

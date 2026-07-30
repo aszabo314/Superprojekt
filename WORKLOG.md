@@ -7,6 +7,65 @@
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
 > *(A4–A7 amendment instance completed 2026-07-29 — docs reconstructed.)*
 > *(A8–A10 amendment instance completed 2026-07-30 — docs reconstructed.)*
+> *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
+
+## A11 — brush-point rendering: disc locators + colour isolation (2026-07-30)
+
+Spec: `ScanPin_v14_A11_brush_point_rendering.md`. Client only.
+
+- **T1 — the dot is a flat camera-facing DISC.** The wire-sphere+cross brush
+  glyph is DELETED. New `Discs` module (LineShader.fs, next to `Lines`):
+  own float32-only vertex+fragment shaders, billboarding AND the
+  screen-constant sizing done in the VERTEX stage (`DiscRight`/`DiscUp`/
+  `DiscMinR`/`DiscMaxR` uniforms + `[<Literal>] screenFrac = 0.008` of the eye
+  distance), so the buffers hold plain unit-circle offsets and rebuild only
+  when the dot SET changes — a camera move costs three uniform updates, not a
+  re-upload of ≤4000 dots. Radius clamped in METRIC world to [5 mm, 0.5 m]
+  (`ScanPin.renderLength`). The fragment paints a thin ink rim past |off| >
+  0.80 so a near-white dot still reads on the whitened surface. Node =
+  `ScanPinScene.brushedSampleNode` (DepthTest.None, blended, `Sg.NoEvents`);
+  hover/select behaviour untouched (View.fs's 12 px screen-space search).
+  The hovered dot's emphasis moved OUT of the dot buffers into
+  `hoverRingNode` — ONE duplex camera-facing ring at 2.2× the disc radius, so
+  a hover never re-uploads the geometry (and the dot keeps its VALUE colour).
+- **T2 — value colour on the ONE shared scale.** Dot colour =
+  `Primitives.Diff.colorSignedV3` over `MeshView.cellRange` — the same ramp and
+  the same range as the surface false-colour map, chart and legend.
+  `GuiOverlays.colorLegend`'s `diffOn` now also lights on a non-empty brush
+  (the map's own gate OR dots exist) — the existing legend, never a second one.
+- **T3 — colour isolation while brushed.** New `MeshView.brushFrameAt model t`
+  = (REF, MOV) of the selected pair while dots exist, else None — THE frame
+  every consumer reads.
+  - Scene whitens: `MeshShader.ColorIsolate` uniform (new) — the GHOST branch
+    takes the plain near-white too (a ghosted mesh stays ghosted, it just stops
+    carrying identity colour) and the three intrinsic heatmap painters are
+    suppressed (Shp keeps its cutoff — that is a filter, not colour);
+    `InspectPlain` now = `distEncoding = 1 || colorIsolate`, so every mesh's
+    base goes near-white. Tiles pass `ColorIsolate = 0` (the strip keeps its
+    colours).
+  - Spatial frame: `MeshVisibility.withBrushIsolate` (Model.fs) folds MOV in as
+    the DEFAULT isolate — an explicit `TileIsolate` (and through it every
+    transient preview and the vis peek) still wins, so the mode COMPOSES.
+    Applied at all four isoLock sites (`MeshView.buildScene` shownCtx,
+    `View.shownNow`, `ScanPinScene.isoLockAt` → markerAlphaAt/isoCueMeshAt).
+  - REF = its gold footprint: `MeshView.outlineMask` (was constant all-on) now
+    gates the G-BUFFER composite to MOV alone while brushed (the G-buffer holds
+    every mesh regardless of visibility, so a ghost's palette silhouette would
+    otherwise compete); new `footprintMask` gates the FOOTPRINT composite to the
+    pair; new `coverageColorsA` repaints the REF channel `Primitives.refGoldV3d`.
+    `OutlineView.buildCoverage` takes the colours as an aval.
+- **T4 — dots ride the anchor mesh.** `brushAlphaAt` = `markerAlphaAt` of the
+  frame's MOV (the A10 rule): full / 0.15 faded / gone — carried in the dot
+  colour's alpha and the hover ring's.
+- **T5 — no 3D ruler** (none existed; none added). The legend JSON gained
+  `"hov"` = the hovered dot's normalized position on the bar (the tooltip's
+  exact probed value, falling back to the dot's own sample until that fetch
+  lands); the SVG draws a white-haloed `#d97706` tick — the diagram's own hover
+  amber — appended last so it rides over bar and ticks.
+- Green after every task: client type-check (52 pre-existing warnings, 0
+  errors), Supertests 97/97. No `[<ModelType>]` change ⇒ no adaptify run.
+- NOT verified in a browser: the new `Discs` shaders and the `ColorIsolate`
+  branch (the documented FShade failure mode is runtime-only).
 
 ## Post-A10: hover previews REPLACE the isolation; crosshairs mute (2026-07-30)
 

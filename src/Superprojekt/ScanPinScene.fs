@@ -98,6 +98,12 @@ module ScanPinScene =
                 Some other, (pf |> Option.map (fun x -> if x = m then other else x))
             | _ -> iso, pf
 
+        // The brush's colour-isolation frame, folded into the committed lock the
+        // same way the shown rule does it (default isolate, an explicit lock wins).
+        let isoLockAt (t : AdaptiveToken) =
+            MeshVisibility.withBrushIsolate
+                (MeshView.brushFrameAt model t |> Option.map snd) (model.TileIsolate.GetValue t)
+
         // A correspondence point's mesh-bound marks (the intersection reveal)
         // follow their MESH's solid visibility: solid under the EFFECTIVE
         // narrowing (hover previews replace the lock — a previewed-solid mesh
@@ -109,11 +115,11 @@ module ScanPinScene =
         let markerAlphaAt (t : AdaptiveToken) (mesh : string) : float option =
             let focus = model.Focus.GetValue t
             let sel = model.Sel.GetValue t
-            let isoC, pfC = peekSwapAt t sel.Pair (model.TileIsolate.GetValue t) sel.Point
+            let isoC, pfC = peekSwapAt t sel.Pair (isoLockAt t) sel.Point
             let committed = MeshVisibility.shown focus sel.Pair isoC None pfC mesh
             let isoF, pfF =
                 MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t) None
-                    (model.TileIsolateHover.GetValue t) (model.TileIsolate.GetValue t) sel.Point
+                    (model.TileIsolateHover.GetValue t) (isoLockAt t) sel.Point
             let isoF, pfF = peekSwapAt t sel.Pair isoF pfF
             let hp = model.MatrixHoverPair.GetValue t
             if MeshVisibility.shown focus sel.Pair isoF hp pfF mesh then Some 1.0
@@ -128,7 +134,7 @@ module ScanPinScene =
             let sel = model.Sel.GetValue t
             let iso, pf =
                 MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t) None
-                    (model.TileIsolateHover.GetValue t) (model.TileIsolate.GetValue t) sel.Point
+                    (model.TileIsolateHover.GetValue t) (isoLockAt t) sel.Point
             let iso, pf = peekSwapAt t sel.Pair iso pf
             match iso with Some _ -> iso | None -> pf
 
@@ -407,40 +413,88 @@ module ScanPinScene =
                     | _ -> [||])
             linesNode notFullscreen segs
 
-        // Brushed diagram samples in 3D: transient WHITE glyphs (ink under-
-        // stroke for readability) at the sample world positions, gid-addressed
-        // into the canonical CellError concatenation; the 3D-hovered one turns
-        // amber — the diagram cross-highlights the same gid. ≤200 (reducer cap).
+        // Brushed diagram samples in 3D: flat camera-facing DISCS — a pure
+        // locator + colour channel, no 3D relief to occlude the surface they
+        // measure. Screen-constant radius inside a metric clamp, so zooming in
+        // reveals the true coordinate instead of inflating the mark.
+        // gid-addressed into the canonical CellError concatenation; ≤4000
+        // (reducer cap), hence the strict buffer discipline — the geometry
+        // depends on the brush ALONE (the hovered dot rides a separate node, so
+        // a hover never re-uploads the dot buffers, and the camera only moves
+        // uniforms).
+        let discRadii =
+            datasetScale |> AVal.map (fun s ->
+                ScanPin.renderLength s 0.005, ScanPin.renderLength s 0.5)
+        // The samples are anchored to the pair's MOV surface, so the dots follow
+        // ITS solid visibility (the A10 marker rule): full, faded, or gone with
+        // the mesh — no dot floats over absent geometry.
+        let brushAlphaAt (t : AdaptiveToken) =
+            match MeshView.brushFrameAt model t with
+            | Some (_, mov) -> markerAlphaAt t mov
+            | None -> None
+        let brushedDots =
+            AVal.custom (fun t ->
+                let brush = model.BrushedSamples.GetValue t
+                if Set.isEmpty brush then [||]
+                else
+                    match model.CellError.GetValue t, brushAlphaAt t with
+                    | Some cells, Some vis ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let s = datasetScale.GetValue t
+                        // The dots ARE samples of the surface field: same ramp,
+                        // same cell range as the false-colour map and the legend.
+                        let lo, hi = MeshView.cellRange (Some cells) (model.CellDist.GetValue t)
+                        let out = ResizeArray<V3d * V4d>()
+                        let mutable gid = 0
+                        for (_, r) in cells do
+                            for i in 0 .. r.Samples.Length - 1 do
+                                if Set.contains gid brush && i < r.Positions.Length then
+                                    let c = Primitives.Diff.colorSignedV3 lo hi r.Samples.[i]
+                                    out.Add(ScanPin.renderCentre cc s r.Positions.[i], V4d(c, vis))
+                                gid <- gid + 1
+                        out.ToArray()
+                    | _ -> [||])
         let brushedSampleNode =
+            sg {
+                Sg.Active notFullscreen
+                Sg.View view
+                Sg.Proj proj
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                Discs.render view (discRadii |> AVal.map fst) (discRadii |> AVal.map snd) brushedDots
+            }
+
+        // The 3D-hovered dot's mark: a duplex ring around it (the diagram
+        // cross-highlights the same gid). ONE glyph — the sanctioned
+        // camera-dependent rebuild.
+        let hoverRingNode =
             let segs =
                 AVal.custom (fun t ->
-                    let brush = model.BrushedSamples.GetValue t
-                    if Set.isEmpty brush then [||]
-                    else
-                        match model.CellError.GetValue t with
-                        | None -> [||]
-                        | Some cells ->
-                            let cc = model.CommonCentroid.GetValue t
-                            let s = datasetScale.GetValue t
-                            let hov = model.HoverSample.GetValue t
+                    match model.HoverSample.GetValue t, model.CellError.GetValue t, brushAlphaAt t with
+                    | Some hov, Some cells, Some vis ->
+                        let cc = model.CommonCentroid.GetValue t
+                        let s = datasetScale.GetValue t
+                        let vb = (view.GetValue t).Backward
+                        let eye = vb.TransformPos V3d.Zero
+                        let right = vb.TransformDir V3d.IOO
+                        let up = vb.TransformDir V3d.OIO
+                        let minR, maxR = discRadii.GetValue t
+                        let mutable pos = None
+                        let mutable gid = 0
+                        for (_, r) in cells do
+                            for i in 0 .. r.Samples.Length - 1 do
+                                if gid = hov && i < r.Positions.Length then
+                                    pos <- Some (ScanPin.renderCentre cc s r.Positions.[i])
+                                gid <- gid + 1
+                        match pos with
+                        | Some c ->
                             let out = ResizeArray<V3d * V3d * V4d * float>()
-                            let mutable gid = 0
-                            for (_, r) in cells do
-                                for i in 0 .. r.Samples.Length - 1 do
-                                    if Set.contains gid brush && i < r.Positions.Length then
-                                        let pR = ScanPin.renderCentre cc s r.Positions.[i]
-                                        let isHov = hov = Some gid
-                                        let col =
-                                            if isHov then V4d(0.85, 0.46, 0.02, 1.0)
-                                            else V4d(1.0, 1.0, 1.0, 0.95)
-                                        let sz = if isHov then 0.055 else 0.04
-                                        let ink = V4d(Primitives.pinInkV3d, 0.9)
-                                        addWireSphere out pR sz ink 3.0 12
-                                        addCross out pR (sz * 1.3) ink 3.0
-                                        addWireSphere out pR sz col 1.4 12
-                                        addCross out pR (sz * 1.3) col 1.4
-                                    gid <- gid + 1
-                            out.ToArray())
+                            let rad = 2.2 * clamp minR maxR (float Discs.screenFrac * Vec.length (eye - c))
+                            duplex (fun col w -> addRing out c right up rad col w 32) (0.95 * vis) 1.4
+                            out.ToArray()
+                        | None -> [||]
+                    | _ -> [||])
             linesNodeTop notFullscreen segs
 
         // The armed pick's cursor preview: what is ABOUT to be placed, at the
@@ -569,4 +623,4 @@ module ScanPinScene =
                     }
                 | None -> sg { Sg.NoEvents })
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointReveals; ASet.ofList [draftAreaNode; draftReveal; crosshairNode; brushedSampleNode; armPreviewMarks]; pinFlags; pinLabels])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointReveals; ASet.ofList [draftAreaNode; draftReveal; crosshairNode; brushedSampleNode; hoverRingNode; armPreviewMarks]; pinFlags; pinLabels])

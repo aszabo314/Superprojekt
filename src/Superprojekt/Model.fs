@@ -127,6 +127,16 @@ module MeshVisibility =
                 | Some m -> Some m, Some m
                 | None -> isoLock, point
 
+    // The brush's colour-isolation frame isolates the mesh the samples are
+    // anchored to (the pair's MOV) — a DEFAULT isolate only: an explicit tile
+    // lock (and through it every transient preview and the vis peek) still
+    // wins, so the mode composes with the isolation state instead of overriding
+    // it.
+    let withBrushIsolate (brushMov : string option) (isoLock : string option) =
+        match isoLock with
+        | Some _ -> isoLock
+        | None -> brushMov
+
     let shown (focus : FocusLevel) (selPair : (string * string) option)
               (isolate : string option) (hoverPair : (string * string) option)
               (pinFocus : string option) (name : string) =

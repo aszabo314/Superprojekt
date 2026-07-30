@@ -196,6 +196,18 @@ module MeshView =
             | Some d -> ErrorRange.ofDistances d
             | None -> ErrorRange.ofSamples Seq.empty
 
+    // THE brush colour-isolation frame: (REF, MOV) of the selected pair while
+    // brushed dots exist, else None. MOV owns the samples — it is the one solid
+    // (whitened) surface and the dots' anchor; REF becomes the gold footprint.
+    // Token form (never build this aval inside another aval's compute).
+    let brushFrameAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) : (string * string) option =
+        if Set.isEmpty (model.BrushedSamples.GetValue t) then None
+        else
+            match model.Focus.GetValue t, (model.Sel.GetValue t).Pair with
+            | (FocusPair | FocusPin), Some (a, b) ->
+                Some (MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b)
+            | _ -> None
+
     // Per-vertex shape-quality buffer of a loaded mesh (recomputed once on load).
     let private shapeBufOf (loaded : LoadedMesh) =
         loaded.pos |> AVal.map (fun _ ->
@@ -352,6 +364,11 @@ module MeshView =
         // false-colour read is comparable.
         let cellRangeA =
             (model.CellError, model.CellDist) ||> AVal.map2 cellRange
+        // Brushing is the sole focus: while dots exist the whole scene whitens
+        // so only they carry colour (one flag for every mesh — the frame that
+        // decides WHICH mesh stays solid rides the isolate).
+        let colorIsolate =
+            AVal.custom (fun t -> if (brushFrameAt model t).IsSome then 1.0f else 0.0f)
         // The shown rule's shared inputs (the ONE effective narrowing) — ONE
         // context aval, N cheap per-mesh bool projections.
         let shownCtx =
@@ -359,10 +376,13 @@ module MeshView =
                 let focus = model.Focus.GetValue t
                 let sel = model.Sel.GetValue t
                 let hp = model.MatrixHoverPair.GetValue t
+                let isoLock =
+                    MeshVisibility.withBrushIsolate
+                        (brushFrameAt model t |> Option.map snd) (model.TileIsolate.GetValue t)
                 let isoRaw, pfRaw =
                     MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t)
                         (model.ArmedPick.GetValue t) (model.TileIsolateHover.GetValue t)
-                        (model.TileIsolate.GetValue t) sel.Point
+                        isoLock sel.Point
                 // The vis peek swaps a pair-mesh isolate to the OTHER pair
                 // mesh while held (same spot, other epoch) — derived only,
                 // release reverts because the lock itself never moves. The
@@ -516,8 +536,12 @@ module MeshView =
                     Sg.Uniform("RangeMax",             rangeMax)
                     Sg.Uniform("ShapeThreshold",       model.ShapeThreshold |> AVal.map float32)
                     // The painted mesh swaps its base to plain near-white — no
-                    // photo texture competes under the false colour.
-                    Sg.Uniform("InspectPlain", distEncoding |> AVal.map (fun e -> if e = 1 then 1.0f else 0.0f))
+                    // photo texture competes under the false colour; the brush's
+                    // colour isolation whitens EVERY mesh the same way.
+                    Sg.Uniform("InspectPlain",
+                        (distEncoding, colorIsolate) ||> AVal.map2 (fun e ci ->
+                            if e = 1 || ci > 0.5f then 1.0f else 0.0f))
+                    Sg.Uniform("ColorIsolate", colorIsolate)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
@@ -533,11 +557,38 @@ module MeshView =
             surface
         ) |> AList.toASet
 
-    // The composite's per-mesh line gate, indexed like MeshId ((index+1)/255).
-    // 1 = silhouette + isolines for every mesh (per-pair gating returns with the
-    // P8 inspect tool).
-    let outlineMask (_model : AdaptiveModel) : aval<V4f[]> =
-        AVal.constant (Array.create 32 (V4f(1.0f, 0.0f, 0.0f, 0.0f)))
+    // Per-mesh slot gate of the outline composites, indexed like MeshId
+    // ((index+1)/255) and — same numbering — like the coverage channels.
+    // `slots` = the display indices left on; None = every mesh.
+    let private maskOf (slots : Set<int> option) =
+        let on = V4f(1.0f, 0.0f, 0.0f, 0.0f)
+        match slots with
+        | None -> Array.create 32 on
+        | Some s -> Array.init 32 (fun i -> if Set.contains i s then on else V4f.Zero)
+
+    // The G-buffer composite's gate (silhouettes + elevation isolines). The
+    // G-buffer holds every mesh regardless of visibility, so under brush colour
+    // isolation only the solid MOV may keep its lines — a ghosted mesh's
+    // palette silhouette would be colour competing with the dots.
+    let outlineMask (model : AdaptiveModel) : aval<V4f[]> =
+        let idxA = meshIndicesA model
+        AVal.custom (fun t ->
+            match brushFrameAt model t with
+            | Some (_, mov) ->
+                maskOf (Some (Map.tryFind mov (idxA.GetValue t) |> Option.toList |> Set.ofList))
+            | None -> maskOf None)
+
+    // The FOOTPRINT composite's gate: under colour isolation the pair alone —
+    // MOV's own contour plus the reference's, which the colours below repaint
+    // gold (the REF's whole contribution: context, no competing surface).
+    let footprintMask (model : AdaptiveModel) : aval<V4f[]> =
+        let idxA = meshIndicesA model
+        AVal.custom (fun t ->
+            match brushFrameAt model t with
+            | Some (refM, mov) ->
+                let idx = idxA.GetValue t
+                maskOf (Some ([refM; mov] |> List.choose (fun m -> Map.tryFind m idx) |> Set.ofList))
+            | None -> maskOf None)
 
     // Outline G-buffer: every mesh rendered solid with OutlineGBuffer.shade,
     // consumed by OutlineView's offscreen pass.
@@ -661,6 +712,22 @@ module MeshView =
     // Palette colours for the footprint composite, indexed like the coverage channels.
     let coverageColors : V4f[] =
         Array.init 8 (fun i -> V4f Primitives.meshPaletteV4d.[i % Primitives.meshPaletteV4d.Length])
+
+    // …with the brush frame's REFERENCE repainted gold: under colour isolation
+    // the reference surface is gone and its footprint contour IS the spatial
+    // frame, so it reads in the reference gold like the strip's root overlay.
+    let coverageColorsA (model : AdaptiveModel) : aval<V4f[]> =
+        let idxA = meshIndicesA model
+        AVal.custom (fun t ->
+            match brushFrameAt model t with
+            | Some (refM, _) ->
+                match Map.tryFind refM (idxA.GetValue t) with
+                | Some i when i < 8 ->
+                    let cs = Array.copy coverageColors
+                    cs.[i] <- V4f(V3f Primitives.refGoldV3d, 1.0f)
+                    cs
+                | _ -> coverageColors
+            | None -> coverageColors)
 
     // The reference root ALONE into coverage channel 0, from a tile's own
     // camera — every ortho tile/pane overlays this footprint as the gold
@@ -844,6 +911,9 @@ module MeshView =
             Sg.Uniform("RangeMax",        rangeMax)
             Sg.Uniform("ShapeThreshold",  model.ShapeThreshold |> AVal.map float32)
             Sg.Uniform("InspectPlain",    AVal.constant 0.0f)
+            // The strip keeps its own colours — the brush's colour isolation is
+            // the main view's mode.
+            Sg.Uniform("ColorIsolate",    AVal.constant 0.0f)
             Sg.VertexAttributes(
                 HashMap.ofList [
                     string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)

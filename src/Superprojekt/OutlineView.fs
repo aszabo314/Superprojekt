@@ -130,6 +130,7 @@ module OutlineView =
     let private buildCoverage
         (widthA : aval<float32>)
         (mask : aval<V4f[]>)
+        (colors : aval<V4f[]>)
         (cov0 : aval<IBackendTexture>)
         (cov1 : aval<IBackendTexture>)
         (texel : aval<V2f>) : aset<ISceneNode> =
@@ -149,7 +150,7 @@ module OutlineView =
                 Sg.Uniform("OutlineTexel", texel)
                 Sg.Uniform("OutlineWidthPx", widthA)
                 Sg.Uniform("OutlineMask", mask)
-                Sg.Uniform("CoverageColors", AVal.constant MeshView.coverageColors)
+                Sg.Uniform("CoverageColors", colors)
                 Sg.VertexAttributes quadAttrs
                 Sg.Index quadIdxView
                 Sg.Render (AVal.constant quadIdx.Length)
@@ -211,5 +212,6 @@ module OutlineView =
                 (model.IsolineOpacity |> AVal.map float32)
                 mask (MeshView.buildOutlineNode model view proj)
         let footprints =
-            buildCoverage widthA mask cov0 cov1 covTexel
+            buildCoverage widthA (MeshView.footprintMask model) (MeshView.coverageColorsA model)
+                cov0 cov1 covTexel
         ASet.union combined footprints

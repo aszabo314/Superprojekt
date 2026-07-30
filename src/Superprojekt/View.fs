@@ -458,6 +458,14 @@ module View =
                 | _ -> ()
             )
 
+            // Armed-pick quasi-mode hook: an empty element the CSS scrim
+            // rules key off (body:has(.arm-flag.on) — the body's own class is
+            // boot-managed, so the flag rides a mounted child instead).
+            div {
+                Class "arm-flag"
+                Primitives.classWhen "on" (model.ArmedPick |> AVal.map Option.isSome)
+            }
+
             GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
             // Left column: the navigator rail with the docked inspection
             // toolbox directly below it (one fixed flex column, so the dock

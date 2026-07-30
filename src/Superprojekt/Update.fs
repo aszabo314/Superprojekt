@@ -89,7 +89,7 @@ module Update =
                     | PlacementActive d ->
                         d.Area |> Option.map (fun (m, local) ->
                             (ModelTransforms.displayedWorld model m).Forward.TransformPos local,
-                            max 0.5 (model.QuickPinRadius * 3.0))
+                            max 0.5 (d.Radius * 3.0))
                     | PlacementIdle -> None
             match subject with
             | Some (c, hw) -> frameTiles [a; b] c hw model
@@ -196,6 +196,13 @@ module Update =
             { model with QuickPinRadius = max 0.01 v }
         | SetFlagScale v ->
             { model with FlagScale = clamp 0.1 10.0 v }
+        | SetRevealRadius v ->
+            let v = clamp 0.01 10.0 v
+            if v = model.RevealRadius then model
+            else
+                { model with
+                    RevealRadius = v
+                    ScanPins = ScanPinModel.invalidateReveals model.ScanPins }
         | SetRegRoot mesh when model.RegGraph.Root = Some mesh ->
             model    // idempotent: re-designating the same root must not touch the graph
         | SetRegRoot mesh ->
@@ -337,7 +344,12 @@ module Update =
             if not valid then model
             elif model.ArmedPick = Some target then
                 { model with ArmedPick = None; ArmPreview = None; ProbeReadout = None }
-            else { model with ArmedPick = Some target; ArmPreview = None; ProbeReadout = None }
+            else
+                // Arming enters the scrimmed quasi-mode: the top-bar menus
+                // close (an open one would float dead over the scrim).
+                { model with
+                    ArmedPick = Some target; ArmPreview = None; ProbeReadout = None
+                    GearPopoverOpen = false; MeshMenuOpen = false; SensorMenuOpen = false }
         | SetArmPreview p ->
             if model.ArmedPick.IsNone then
                 if model.ArmPreview.IsSome then { model with ArmPreview = None } else model

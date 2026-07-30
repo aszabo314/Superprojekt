@@ -23,6 +23,9 @@ type LsqPairsRequest = { MovingName: string; Pairs: LsqPairDto[] }
 
 [<CLIMutable>]
 type ContactRingsRequest = { Name: string; Centre: float[]; Radius: float; MaxPoints: int }
+// Point + plane normals in the mesh's server frame (the caller bakes the
+// displayed pose into the normals — verticality is a pose-time property).
+type PointRevealRequest = { Name: string; Point: float[]; Radii: float[]; Planes: float[][]; MaxPoints: int }
 
 // World pose (Forward): mesh-local + centroid → world. The server is stateless
 // w.r.t. registration — callers compose and send the poses explicitly.
@@ -193,6 +196,20 @@ let contactRingsHandler : HttpHandler =
         log.LogInformation("contact-rings {Name} r={Radius:F2}: {Rings} rings, {Points} pts",
             req.Name, radius, rings.Length, (rings |> Array.sumBy Array.length))
         return json {| rings = out |}
+    })
+
+let pointRevealHandler : HttpHandler =
+    tryQuery "point-reveal" (fun ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        let! req = ctx.BindJsonAsync<PointRevealRequest>()
+        let lm = loadMesh req.Name 0
+        let radii = req.Radii |> Array.filter (fun r -> r > 0.0)
+        let planes = req.Planes |> Array.map toV3d
+        let maxPoints = if req.MaxPoints <= 0 then 2048 else min req.MaxPoints 65536
+        let lines = MeshAnalysis.pointReveal lm (toV3d req.Point) radii planes maxPoints
+        log.LogInformation("point-reveal {Name}: {Lines} lines, {Points} pts",
+            req.Name, lines.Length, (lines |> Array.sumBy Array.length))
+        return json {| lines = lines |> Array.map (Array.map fromV3d) |}
     })
 
 let private pairMesh (dto : PairMeshDto) : PairError.PairMesh =

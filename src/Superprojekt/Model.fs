@@ -169,6 +169,9 @@ type Model =
         // Gear multiplier on the screen-constant 3D pin-flag size AND its
         // world-metre clamp bounds (ScanPin.flagHeightRender).
         FlagScale            : float
+        // Outermost metric radius of the correspondence markers' local-
+        // geometry reveal (rings at ×0.2/×0.6/×1.0, cuts fade over it).
+        RevealRadius         : float
 
         SceneBounds    : Box3d
         MeshBounds     : Map<string, Box3d>
@@ -385,6 +388,7 @@ module Model =
             AnchorGhostMode     = true
             QuickPinRadius      = 0.5
             FlagScale           = 1.0
+            RevealRadius        = 0.5
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             LoadTransforms        = Map.empty

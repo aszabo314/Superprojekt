@@ -572,3 +572,34 @@ body.loaded { background: #f4f6f8; }
 .lm-buttons { display: flex; justify-content: flex-end; gap: 8px; padding-top: 4px; }
 .lm-confirm { border-color: #15803d; color: #15803d; font-weight: 600; }
 .lm-danger { border-color: #b91c1c; color: #b91c1c; font-weight: 600; }
+
+/* ── Armed-pick quasi-mode: scrim + lit cancel button ──────────────── */
+/* While a pick is armed the View mounts .arm-flag.on (the body's own
+   class list is boot-managed, so the flag rides a child; descendant
+   :has — Aardvark wraps mounted nodes). Everything except the pick
+   surfaces (main 3D + pair tiles) and the arming button is veiled AND
+   inert. */
+.arm-flag { display: none; }
+body:has(.arm-flag.on) .top-bar,
+body:has(.arm-flag.on) .left-col > *,
+body:has(.arm-flag.on) .tiles-handle { pointer-events: none; }
+/* The veils sit on the non-scrolling containers (the rail scrolls
+   internally — a veil on it would scroll away with the content). */
+body:has(.arm-flag.on) .top-bar::after,
+body:has(.arm-flag.on) .left-col::after {
+    content: ""; position: absolute; inset: 0;
+    background: rgba(15, 23, 42, 0.5); z-index: 500;
+}
+/* Passive furniture (never interactive) stands down without dark boxes. */
+body:has(.arm-flag.on) .app-toast,
+body:has(.arm-flag.on) .scale-bar,
+body:has(.arm-flag.on) .color-legend,
+body:has(.arm-flag.on) .orient-indicator { opacity: 0.35; }
+/* The control that armed the pick doubles as its cancel: lit above the
+   scrim (z 501 > the veils' 500, same .left-col stacking context) and
+   the one element that keeps pointer events. */
+.arm-lit {
+    position: relative; z-index: 501;
+    pointer-events: auto;
+    box-shadow: 0 0 0 2px #ffffff, 0 0 14px 5px rgba(26, 86, 219, 0.85);
+}

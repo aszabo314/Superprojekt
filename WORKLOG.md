@@ -6,6 +6,126 @@
 > end, reconstruct the net documentation updates from this file.
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
 > *(A4–A7 amendment instance completed 2026-07-29 — docs reconstructed.)*
+> *(A8–A10 amendment instance completed 2026-07-30 — docs reconstructed.)*
+
+## A10 — correspondence marker rework: crosshair + intersection reveal (2026-07-30)
+
+- **Ball marker DELETED (main 3D)**: the mesh-colour icosphere + white
+  wire-sphere correspondence marker (`markerNodes`/`pointMarkers`/
+  `draftMarkers`, incl. A8's unified builders) is gone. The TILES keep
+  their dot fills — a 2D top-down small multiple doesn't occlude and
+  needs its point mark; A10's target is the occluding 3D body. Area
+  rings, centre jack, flags unchanged.
+- **Crosshair locator** (`crosshairNode`): camera-aligned (view
+  right/up basis), screen-constant (outer radius 0.025 × eye distance),
+  OPEN centre — the centre IS the pick point and stays bare; mesh-
+  identity colour over an ink under-stroke; DepthTest.None. EXEMPT from
+  the mesh-solid visibility rule (it is the locator) — only the pair
+  scope (`pinShown`) and the global armed ×0.15 fade apply. One segs
+  pass covers committed pins AND the draft's placed points.
+- **Intersection reveal** (`pointReveals`/`draftReveal` + `revealSegs`):
+  the point's OWN mesh's local geometry — 3 concentric sphere∩surface
+  rings (metric radii ×0.2/×0.6/×1.0 of `Model.RevealRadius`, default
+  0.5 m) + 2 world-vertical axis-aligned plane∩surface relief cuts (an
+  X in plan) — white fading to transparent with metric distance
+  (outermost ring keeps ~0.2, cut overshoot runs out linearly past
+  rMax). Follows `markerAlphaAt` (hide/fade) + armed fade; normal depth
+  testing. Gear ("Debug & settings") slider "Marker reveal radius (m)"
+  = `SetRevealRadius` → invalidates every reveal.
+- **Server**: `MeshAnalysis` refactored into shared `sphereCut` +
+  `planeCut` level-set cuts (the existing tracer, exact roots;
+  contactRings now = sphereCut over the BVH candidate set); NEW
+  `pointReveal` = one candidate query at the outermost radius serving
+  all 5 cuts (plane cuts may overshoot by a triangle — the client fade
+  handles it). NEW endpoint `POST /api/query/point-reveal`
+  { name, point, radii, planes, maxPoints } → { lines } — point/normals
+  in the mesh's server frame, the CALLER bakes the displayed pose into
+  the vertical normals. Smoke-tested live (JOB dataset: 20 lines/809
+  pts, distances 0.003–0.536 m for rMax 0.5).
+- **Client cache**: `RevealState` (None/Running/Ready of V3d[][]) per
+  point side on `ScanPin` (RevealA/B) AND `PinDraft` — polylines stored
+  MESH-LOCAL (ride the pose); pose changes still invalidate
+  (verticality bakes the pose; `invalidateRings` now also resets
+  reveals), as do point re-picks (`EditPointAt`/`DraftPointAt`) and the
+  radius slider (`ScanPinModel.invalidateReveals`). `ensureRings`
+  extended: per-figure debounce CTS (`revealCts` keyed pin×side,
+  `draftCts` keyed side/area), `fetchReveal` shares the postlude;
+  `landDraft` carries Ready reveals into the newborn. Messages:
+  `PointRevealComputed`/`DraftRevealComputed` with the same
+  Running-only stale guard.
+- DOC DEBT: CLAUDE.md Style (committed point marker = crosshair, not
+  fill+outline), Pins marker bullet (crosshair exempt / reveal follows),
+  API endpoint list (+point-reveal), server compile-order note
+  unchanged; README pin passage (crosshair + reveal, debug slider).
+- Green: server build, client type-check, Supertests 97/97, live
+  endpoint smoke test.
+
+## A9 — modal armed-picking scrim + lit cancel button (2026-07-30)
+
+- **Armed = an unmissable, click-safe quasi-mode**: while ANY pick is
+  armed, every non-pick surface is scrimmed AND inert; only the main 3D
+  view, the pair tiles and the arming button stay live.
+- **CSS hook**: View mounts an empty `.arm-flag` div, adaptively classed
+  `on` while `ArmedPick.IsSome`; all rules key off
+  `body:has(.arm-flag.on)` (descendant :has — Aardvark wraps mounted
+  nodes; body's own class list is boot-managed, so no root class).
+- **Inert**: `pointer-events: none` on `.top-bar`, `.left-col > *`, and
+  the strip's `.tiles-handle` (strict scope — resize is not picking).
+  **Veils**: `::after` (rgba(15,23,42,.5), z 500) on the two
+  NON-SCROLLING containers `.top-bar` + `.left-col` (a veil on the
+  scrolling rail would scroll away with its content; the left column's
+  veil spans rail + dock + gap). Passive furniture (toast, scale bar,
+  legend, orientation indicator) dims to opacity 0.35 — no floating
+  dark boxes over the 3D view.
+- **Lit cancel** (`.arm-lit`, set with `rail-btn-active` on the arm
+  buttons + the probe button): `position:relative; z-index:501` (above
+  the 500 veil in the same `.left-col` stacking context),
+  `pointer-events:auto` (the ONE re-enabled element), white ring +
+  accent-blue glow. Clicking it, Esc, or a landed pick disarms → scrim
+  clears (all derived, zero bookkeeping).
+- **Reducer**: arming closes the top-bar popovers (gear / mesh / sensor
+  menus) — an open one would float dead outside the bar's veil box.
+- The in-scene ×0.15 armed fade of existing marks is RETAINED (the
+  scene-level focus cue; scrim + lit button are the UI-level signature).
+- DOC DEBT: CLAUDE.md Pins/arming bullet + Misc (menus close on arm);
+  README picking passage (scrim + lit cancel).
+- Green: client type-check.
+
+## A8 — draft = committed pin appearance (2026-07-30)
+
+- **Principle (spec A8)**: a pin renders identically whether being placed
+  or committed — a draft is a pin with parts missing; each part snaps to
+  its final appearance the instant it lands. The all-white pre-commit
+  visual mode is DELETED (all-white now = aim previews only).
+- **PinDraft owns `Radius` + `Rings`** (`ContactRingState`): radius seeded
+  from `QuickPinRadius` at `BeginPinTransaction`; the ⌀ Radius edit +
+  slider serve the draft too (`SetDraftRadius`); centre re-pick / radius
+  change / pose change (`invalidateRings`) reset the draft's rings.
+- **Draft contact rings**: `ensureRings` covers the draft via the shared
+  `fetchRings` fan-out (own CTS, `DraftRingsComputed`, same
+  RingsRunning stale guard); `landDraft`/`makePin` carry RingsReady into
+  the newborn (no refetch flash), in-flight downgrades to RingsNone.
+- **ScanPinScene**: `addAreaFigure` = ONE area builder (duplex equator +
+  anchorage cue + axis + white contact rings) for `pinRings` AND the new
+  `draftAreaNode`; the centre jack loop covers the draft's centre;
+  `markerNodes` = ONE committed-style marker builder (mesh-colour fill +
+  white wire outline) for `pointMarkers` AND `draftMarkers`; `draftMarks`
+  (white sphere outline + wire+cross glyphs) DELETED. ArmCentre preview
+  radius = the radius the landing commits (draft's, else the selected
+  pin's — was QuickPinRadius even for committed re-picks).
+- **Tiles (GuiPanes)**: draft point = mesh-colour fill (`fillNode`,
+  subject size 0.05) + white 0.065 wire outline (cross deleted); draft
+  area sphere = the subject-pin `areaSphere` incl. the dashed anchorage
+  ring on the anchor tile; radius = draft radius.
+- **Blob mask + tile framing** read the draft's own radius (MeshView
+  `pinBlobUniforms`, Update `framePinTiles`).
+- Kept draft-specific: the completeness flag + exit guard + panel
+  progress cue; no flag/label for the draft (identity arrives at mint).
+- DOC DEBT: CLAUDE.md Style "all-white = uncommitted layer" now means aim
+  previews only; Pins section (draft renders as pin, PinDraft fields,
+  DraftRingsComputed); README placement passage ("draft renders
+  all-white" gone; radius editable during placement).
+- Green: client type-check; adaptify no-op (PinDraft is not a ModelType).
 
 ## Marker visibility rides the mesh + 3D anchorage cue (2026-07-30)
 

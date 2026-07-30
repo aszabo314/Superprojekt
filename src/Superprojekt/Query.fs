@@ -83,6 +83,26 @@ module Query =
                 |> Seq.toArray
         }
 
+    // Correspondence-point reveal: concentric contact rings + plane∩surface
+    // relief cuts around a point, one flat polyline list. Point, plane normals
+    // and result all live in the mesh's own (untransformed) world frame.
+    let pointReveal (serverUrl : string) (name : string) (point : V3d)
+                    (radii : float[]) (planes : V3d[]) (maxPoints : int) : Async<V3d[][]> =
+        async {
+            let arr (vs : string seq) = "[" + String.concat "," vs + "]"
+            let json =
+                sprintf """{"name":"%s","point":%s,"radii":%s,"planes":%s,"maxPoints":%d}"""
+                    name (v3 point)
+                    (arr (radii |> Seq.map (sprintf "%.17g")))
+                    (arr (planes |> Seq.map v3))
+                    maxPoints
+            let! r = post serverUrl "/query/point-reveal" json
+            return
+                r.GetProperty("lines").EnumerateArray()
+                |> Seq.map (fun line -> line.EnumerateArray() |> Seq.map readV3 |> Seq.toArray)
+                |> Seq.toArray
+        }
+
     // One pin's pairwise error distribution (see the server PairError module
     // for the measure): pooled signed samples of meshB relative to meshA with
     // world positions aligned 1:1, plus median and the LoD half-width.

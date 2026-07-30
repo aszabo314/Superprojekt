@@ -16,6 +16,16 @@ type ContactRingState =
     | RingsRunning
     | RingsReady of Map<string, V3d[][]>
 
+// A correspondence point's local-geometry reveal (concentric contact rings +
+// vertical relief cuts), stored in ITS MESH'S OWN frame so it rides the pose —
+// but the cuts' world-verticality is baked at fetch time, so pose changes
+// still invalidate (→ RevealNone, lazy recompute), as do point re-picks and
+// the reveal-radius setting.
+type RevealState =
+    | RevealNone
+    | RevealRunning
+    | RevealReady of V3d[][]
+
 // ATOMIC pin: {area marker + one point on each pair mesh} — it exists only
 // complete; there is no partial pin. Geometry is stored mesh-local:
 //  • the area marker in its placement mesh's frame — the pin RIDES that mesh
@@ -39,22 +49,33 @@ type ScanPin = {
     PointB       : V3d
     CreatedAt    : DateTime
     ContactRings : ContactRingState
+    RevealA      : RevealState
+    RevealB      : RevealState
 }
 
 // The in-flight placement transaction: modal, FREE ORDER (centre and the two
 // points in any sequence via the arm buttons, re-picking allowed), nothing
-// persists until commit — abort rolls the whole draft back.
+// persists until commit — abort rolls the whole draft back. A draft is a pin
+// with parts missing: each placed part renders through the committed-pin
+// vocabulary (own radius + contact rings included); only the completeness
+// flag distinguishes it.
 type PinDraft = {
-    Pair   : string * string
+    Pair    : string * string
     // (placement mesh, own-frame centre) once dropped.
-    Area   : (string * V3d) option
-    PointA : V3d option
-    PointB : V3d option
+    Area    : (string * V3d) option
+    PointA  : V3d option
+    PointB  : V3d option
+    Radius  : float
+    Rings   : ContactRingState
+    RevealA : RevealState
+    RevealB : RevealState
 }
 
 module PinDraft =
-    let empty (pair : string * string) =
-        { Pair = pair; Area = None; PointA = None; PointB = None }
+    let empty (pair : string * string) (radius : float) =
+        { Pair = pair; Area = None; PointA = None; PointB = None
+          Radius = radius; Rings = RingsNone
+          RevealA = RevealNone; RevealB = RevealNone }
     let complete (d : PinDraft) = d.Area.IsSome && d.PointA.IsSome && d.PointB.IsSome
     let pointCount (d : PinDraft) =
         (if d.PointA.IsSome then 1 else 0) + (if d.PointB.IsSome then 1 else 0)
@@ -80,13 +101,32 @@ module ScanPinModel =
         Placement   = PlacementIdle
     }
 
+    // Pose change: every derived intersection figure — area rings AND point
+    // reveals (their cuts' verticality bakes the pose) — recomputes lazily.
     let invalidateRings (sp : ScanPinModel) =
         let pins =
             sp.Pins |> HashMap.map (fun _ p ->
-                match p.ContactRings with
-                | RingsNone -> p
-                | _ -> { p with ContactRings = RingsNone })
-        { sp with Pins = pins }
+                if p.ContactRings = RingsNone && p.RevealA = RevealNone && p.RevealB = RevealNone then p
+                else { p with ContactRings = RingsNone; RevealA = RevealNone; RevealB = RevealNone })
+        let placement =
+            match sp.Placement with
+            | PlacementActive d when d.Rings <> RingsNone || d.RevealA <> RevealNone || d.RevealB <> RevealNone ->
+                PlacementActive { d with Rings = RingsNone; RevealA = RevealNone; RevealB = RevealNone }
+            | p -> p
+        { sp with Pins = pins; Placement = placement }
+
+    // The reveal-radius setting changed: only the point reveals recompute.
+    let invalidateReveals (sp : ScanPinModel) =
+        let pins =
+            sp.Pins |> HashMap.map (fun _ p ->
+                if p.RevealA = RevealNone && p.RevealB = RevealNone then p
+                else { p with RevealA = RevealNone; RevealB = RevealNone })
+        let placement =
+            match sp.Placement with
+            | PlacementActive d when d.RevealA <> RevealNone || d.RevealB <> RevealNone ->
+                PlacementActive { d with RevealA = RevealNone; RevealB = RevealNone }
+            | p -> p
+        { sp with Pins = pins; Placement = placement }
 
 module ScanPin =
     // World-space (metric) → render-space (post centroid translate, post scale).

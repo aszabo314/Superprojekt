@@ -371,40 +371,48 @@ module GuiPanes =
                 let rc0, rc1, rtexel = OutlineView.rootCoverageOffscreen info model shownA view proj
                 OutlineView.buildRootOutline shownA (model.OutlineWidthPx |> AVal.map float32) rc0 rc1 rtexel
 
-                // Committed point fills on this mesh: mesh-colour icospheres
-                // (the white outlines ride in the line node below); the
-                // selected pin's marker is larger.
+                // Point fills on this mesh — committed pins AND the draft's
+                // placed point (one appearance): mesh-colour icospheres (the
+                // white outlines ride in the line node below); the selected
+                // pin's marker — the draft is always the subject — is larger.
                 let meshColV4 =
                     // Fades with the committed marks while a pick is armed.
                     (idxVal, model.ArmedPick) ||> AVal.map2 (fun i armed ->
                         let c = meshColor i
                         V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0,
                             (if armed.IsSome then 0.15 else 1.0)))
+                let fillNode (st : aval<(V3d * float) option>) =
+                    let trafo =
+                        st |> AVal.map (function
+                            | Some (c, sz) -> Trafo3d.Scale sz * Trafo3d.Translation c
+                            | None -> Trafo3d.Scale 0.0)
+                    sg {
+                        Sg.Pass RenderPass.passOne
+                        ScanPinScene.sphereShell view proj marksOn trafo meshColV4
+                    }
                 let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
                 let pointFills =
                     pinIdSet |> ASet.map (fun id ->
-                        let st =
-                            AVal.custom (fun t ->
-                                match HashMap.tryFind id (pinsVal.GetValue t) with
-                                | Some p when (model.Sel.GetValue t).Pair = Some p.Pair
-                                              && (name = fst p.Pair || name = snd p.Pair) ->
-                                    let local = if name = fst p.Pair then p.PointA else p.PointB
-                                    let sz = if (model.Sel.GetValue t).Pin = Some id then 0.05 else 0.038
-                                    Some (renderOf t local, sz)
-                                | _ -> None)
-                        let trafo =
-                            st |> AVal.map (function
-                                | Some (c, sz) -> Trafo3d.Scale sz * Trafo3d.Translation c
-                                | None -> Trafo3d.Scale 0.0)
-                        sg {
-                            Sg.Pass RenderPass.passOne
-                            ScanPinScene.sphereShell view proj marksOn trafo meshColV4
-                        })
+                        fillNode (AVal.custom (fun t ->
+                            match HashMap.tryFind id (pinsVal.GetValue t) with
+                            | Some p when (model.Sel.GetValue t).Pair = Some p.Pair
+                                          && (name = fst p.Pair || name = snd p.Pair) ->
+                                let local = if name = fst p.Pair then p.PointA else p.PointB
+                                let sz = if (model.Sel.GetValue t).Pin = Some id then 0.05 else 0.038
+                                Some (renderOf t local, sz)
+                            | _ -> None)))
                 pointFills
+                fillNode (AVal.custom (fun t ->
+                    match model.ScanPins.Placement.GetValue t with
+                    | PlacementActive d when name = fst d.Pair || name = snd d.Pair ->
+                        (if name = fst d.Pair then d.PointA else d.PointB)
+                        |> Option.map (fun local -> renderOf t local, 0.05)
+                    | _ -> None))
 
-                // Every line mark of the tile: white outlines of the committed
-                // points, the selected pin's area sphere, and the ALL-WHITE
-                // in-flight draft (uncommitted layer).
+                // Every line mark of the tile: white outlines of the points
+                // (committed + the draft's — one appearance) and the subject
+                // pin's area sphere (the selected pin, or the draft from the
+                // moment its centre lands).
                 let segs =
                     AVal.custom (fun t ->
                         let sel = model.Sel.GetValue t
@@ -412,9 +420,9 @@ module GuiPanes =
                         | Some (pa, pb) when name = pa || name = pb ->
                             let pair = (pa, pb)
                             let pins = pinsVal.GetValue t
-                            // While a pick is armed the COMMITTED marks fade to
+                            // While a pick is armed the placed marks fade to
                             // near-invisible so they can't hide the pick spot;
-                            // the draft + the armed preview stay full.
+                            // only the armed preview stays full.
                             let armDim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             for (id, p) in HashMap.toSeq pins do
@@ -423,36 +431,28 @@ module GuiPanes =
                                     let c = renderOf t local
                                     let sz = if sel.Pin = Some id then 0.065 else 0.05
                                     addWireSphere out c sz (V4d(1.0, 1.0, 1.0, 0.95 * armDim)) 1.6 16
-                            // The selected pin's area sphere in BOTH pair tiles
+                            // The subject pin's area sphere in BOTH pair tiles
                             // (its centre rides the anchor mesh's pose); the
                             // anchor tile alone adds a dashed outer ring — the
                             // anchorage cue.
-                            (match sel.Pin |> Option.bind (fun id -> HashMap.tryFind id pins) with
-                             | Some p ->
-                                let cR = renderOn t p.AnchorMesh p.CentreLocal
-                                let rR = ScanPin.renderLength (datasetScale.GetValue t) p.InnerRadius
+                            let areaSphere (anchorMesh : string) (centreLocal : V3d) (radius : float) =
+                                let cR = renderOn t anchorMesh centreLocal
+                                let rR = ScanPin.renderLength (datasetScale.GetValue t) radius
                                 for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.85 * armDim)) 1.5 do
                                     out.Add seg
-                                if p.AnchorMesh = name then
+                                if anchorMesh = name then
                                     addDashedRing out cR V3d.IOO V3d.OIO (rR * 1.08) (V4d(1.0, 1.0, 1.0, 0.85 * armDim)) 1.5 64
+                            (match sel.Pin |> Option.bind (fun id -> HashMap.tryFind id pins) with
+                             | Some p -> areaSphere p.AnchorMesh p.CentreLocal p.InnerRadius
                              | _ -> ())
                             (match model.ScanPins.Placement.GetValue t with
                              | PlacementActive d ->
-                                // Placed draft marks fade with the committed
-                                // ones while armed; only the preview stays full.
-                                let white = V4d(1.0, 1.0, 1.0, 0.95 * armDim)
                                 (match d.Area with
-                                 | Some (m, local) ->
-                                    let cR = renderOn t m local
-                                    let rR = ScanPin.renderLength (datasetScale.GetValue t) (model.QuickPinRadius.GetValue t)
-                                    for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.8 * armDim)) 1.5 do
-                                        out.Add seg
+                                 | Some (m, local) -> areaSphere m local d.Radius
                                  | None -> ())
                                 (match (if name = fst d.Pair then d.PointA else d.PointB) with
                                  | Some local ->
-                                    let cR = renderOf t local
-                                    addWireSphere out cR 0.06 white 1.8 20
-                                    addCross out cR 0.075 white 1.8
+                                    addWireSphere out (renderOf t local) 0.065 (V4d(1.0, 1.0, 1.0, 0.95 * armDim)) 1.6 16
                                  | None -> ())
                              | PlacementIdle -> ())
                             // The armed pick's cursor preview (metric world —
@@ -466,7 +466,16 @@ module GuiPanes =
                                 let white = V4d(1.0, 1.0, 1.0, 0.9)
                                 (match target with
                                  | ArmCentre ->
-                                    let rR = ScanPin.renderLength s (model.QuickPinRadius.GetValue t)
+                                    // The radius the landing will commit (the
+                                    // draft's, else the re-picked pin's).
+                                    let r =
+                                        match model.ScanPins.Placement.GetValue t with
+                                        | PlacementActive d -> d.Radius
+                                        | PlacementIdle ->
+                                            match sel.Pin |> Option.bind (fun id -> HashMap.tryFind id pins) with
+                                            | Some p -> p.InnerRadius
+                                            | None -> model.QuickPinRadius.GetValue t
+                                    let rR = ScanPin.renderLength s r
                                     for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.7)) 1.4 do
                                         out.Add seg
                                     addCross out cR (rR * 0.15) white 1.6

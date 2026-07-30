@@ -21,6 +21,9 @@ type Message =
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
     | SetFlagScale of float
+    // The correspondence markers' reveal extent (gear debug slider) —
+    // outermost metric radius; a change invalidates every reveal.
+    | SetRevealRadius of float
     // Designate the registration-graph root (★, the navigator's overview
     // step). A tree member re-roots in place (registration kept, path edges
     // reversed); a mesh outside the registered tree clears the graph.
@@ -132,6 +135,8 @@ and ScanPinMessage =
     | BeginPinTransaction of pair:(string * string)
     | DraftAreaAt of mesh:string * local:V3d
     | DraftPointAt of mesh:string * local:V3d
+    | SetDraftRadius of float
+    | DraftRingsComputed of Map<string, V3d[][]>
     // ── committed-pin edits (each invalidates the pair's solve). Point and
     // centre re-picks go through the armed pick like every placement pick;
     // the centre re-pick re-anchors the pin onto the hit mesh.
@@ -140,3 +145,6 @@ and ScanPinMessage =
     | EditCentreAt of ScanPinId * mesh:string * local:V3d
     | DeletePin of ScanPinId
     | ContactRingsComputed of ScanPinId * Map<string, V3d[][]>
+    // side 0 = fst Pair, 1 = snd Pair; polylines in the point's mesh's own frame.
+    | PointRevealComputed of ScanPinId * side:int * V3d[][]
+    | DraftRevealComputed of side:int * V3d[][]

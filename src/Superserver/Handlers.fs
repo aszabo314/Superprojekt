@@ -110,6 +110,7 @@ let webApp : HttpHandler =
         route  "/api/query/ray"                                 >=> rayHandler
         route  "/api/query/closest"                             >=> closestHandler
         route  "/api/query/contact-rings"                       >=> contactRingsHandler
+        route  "/api/query/point-reveal"                        >=> pointRevealHandler
         route  "/api/query/lsq-pairs"                           >=> lsqPairsHandler
         route  "/api/query/pair-error"                          >=> pairErrorHandler
         route  "/api/query/pair-error-at"                       >=> pairErrorAtHandler

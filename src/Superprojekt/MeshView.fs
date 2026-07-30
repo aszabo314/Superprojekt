@@ -300,7 +300,7 @@ module MeshView =
                             let world = (displayedWorldAt model t m).Forward.TransformPos local
                             let cr = ScanPin.renderCentre cc scale world
                             yield V4f(float32 cr.X, float32 cr.Y, float32 cr.Z,
-                                      float32 (ScanPin.renderLength scale (model.QuickPinRadius.GetValue t)))
+                                      float32 (ScanPin.renderLength scale d.Radius))
                         | _ -> ()
                    | PlacementIdle -> () |])
         let blobsArr =

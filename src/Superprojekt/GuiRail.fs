@@ -218,7 +218,7 @@ module GuiRail =
                 }
                 button {
                     Class "rail-btn cw-probe"
-                    classWhen "rail-btn-active" (model.ArmedPick |> AVal.map ((=) (Some ArmProbe)))
+                    classWhen "rail-btn-active arm-lit" (model.ArmedPick |> AVal.map ((=) (Some ArmProbe)))
                     Attribute("title", "Arm the point probe: click any view for the exact error value at that point (a landed pick disarms; Esc disarms). Transient — the next arm or jump wipes it.")
                     Dom.OnClick(fun _ -> env.Emit [ToggleArmPick ArmProbe])
                     "⊕ Probe"
@@ -616,7 +616,9 @@ module GuiRail =
                        (withChip : string option) (label : string) =
                 button {
                     Class "rail-btn pin-arm-btn"
-                    classWhen "rail-btn-active" (model.ArmedPick |> AVal.map ((=) (Some target)))
+                    // arm-lit = the armed quasi-mode's cancel affordance,
+                    // raised above the scrim.
+                    classWhen "rail-btn-active arm-lit" (model.ArmedPick |> AVal.map ((=) (Some target)))
                     Attribute("title", title)
                     Dom.OnMouseEnter(fun _ -> env.Emit [SetPinFocusHover (Some hover)])
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetPinFocusHover None])
@@ -652,7 +654,8 @@ module GuiRail =
                         button {
                             Class "rail-btn pin-arm-btn"
                             classWhen "rail-btn-active" model.PinRadiusEditOpen
-                            hasPin |> AVal.map (fun p -> if p then None else Some (Attribute("disabled", "disabled")))
+                            (hasPin, placing) ||> AVal.map2 (fun p pl ->
+                                if p || pl then None else Some (Attribute("disabled", "disabled")))
                             Attribute("title", "Edit the pin radius (reveals the slider; the radius scopes error analysis)")
                             Dom.OnClick(fun _ -> env.Emit [ToggleRadiusEdit])
                             "⌀ Radius"
@@ -661,16 +664,24 @@ module GuiRail =
                     focusBtn None HoverBoth
                         "Focus the whole pin: the isolation releases, both meshes show, the camera and tiles fly to the pin" None "◉ Pin"
                 }
+            // The SAME radius edit serves the draft and a committed pin.
             let radiusRow =
                 div {
                     Class "cw-tools"
-                    showWhen ((model.PinRadiusEditOpen, hasPin) ||> AVal.map2 (fun o p -> o && p))
+                    showWhen ((model.PinRadiusEditOpen, (hasPin, placing) ||> AVal.map2 (||))
+                              ||> AVal.map2 (&&))
                     inlineLogSlider "r" 0.01 100.0 (sprintf "%.2f m")
-                        (selPin |> AVal.map (function Some p -> p.InnerRadius | None -> 0.5))
+                        ((placement, selPin) ||> AVal.map2 (fun pl p ->
+                            match pl with
+                            | PlacementActive d -> d.Radius
+                            | PlacementIdle -> match p with Some p -> p.InnerRadius | None -> 0.5))
                         (fun v ->
-                            match (AVal.force model.Sel).Pin with
-                            | Some id -> env.Emit [ScanPinMsg (SetInnerRadius(id, v))]
-                            | None -> ())
+                            match AVal.force placement with
+                            | PlacementActive _ -> env.Emit [ScanPinMsg (SetDraftRadius v)]
+                            | PlacementIdle ->
+                                match (AVal.force model.Sel).Pin with
+                                | Some id -> env.Emit [ScanPinMsg (SetInnerRadius(id, v))]
+                                | None -> ())
                 }
             // Placement progress cue (draft only — a committed pin needs none).
             let draftCue =

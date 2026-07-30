@@ -9,6 +9,96 @@
 > *(A8–A10 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## A12 — global inspect at Matrix scope (2026-07-30)
+
+Spec: `ScanPin_v14_A12_matrix_global_inspect.md`. Client only. Principle:
+inspect is the top rung of the scope ladder — the same toolbox at Matrix, every
+instrument resolved against the whole tree, every quantity **parent-relative**
+(a child vs the neighbour one hop toward the root). Only established edges
+contribute; a zero-edge graph is legitimately empty.
+
+- **T1 — the inspect toolbox at Matrix.** `GuiRail.inspectPanel` is visible
+  whenever `focus = Matrix || Sel.Pair.IsSome` (was: a selected pair at
+  Pair/Pin), same dock, same collapsible header, same `InspectOpen`
+  preference. Its content branches on the level: the existing `inspectBody`
+  (pair) or a new `graphBody` (Matrix) — error-map toggle (T3) + the pooled
+  diagram + brush bridge + hover readout (T4). The graph body deliberately
+  carries NO probe and no isolate-pins toggle: `ArmProbe` is reducer-guarded
+  to Pair/Pin, and the spec scopes the Matrix instruments to T2–T4.
+- **T2 — the pose peek goes global.** `MeshView.peekMovAt` → `peekPoseAt`: at
+  Matrix EVERY mesh blinks to its as-loaded baseline (there is no REF/MOV at
+  graph scope), inside the workspace only the pair's MOV as before. Still a
+  trafo-uniform swap only, so both states stay GPU-resident, the camera never
+  moves and nothing reflows. New reducer guard `Update.peekPoseOk` — Matrix
+  needs ≥1 edge and every edge-participating mesh resident; the pair branch is
+  the old rule (loaded + registered). The VIS peek is unchanged (its
+  `peekPairLoaded` scope already excluded Matrix) and its top-bar button is now
+  HIDDEN at Matrix (`peekBtn` gained a `showA` gate) — the one deliberate
+  exception to "disabled, never hidden", since a REF/MOV flip has no meaning at
+  graph scope at all.
+- **T3 — the parent-relative error map (union).** New `Model.GraphDist :
+  Map<string, float32[]>` (per registered CHILD, its per-vertex signed distance
+  vs its PARENT) + `GraphDistComputed`; filled by `Update.ensureGraphDist` —
+  one `region-distance` per edge at the displayed poses, fanned out with
+  `Async.Parallel`, lazy/single-flight on the SHARED inspection generation
+  (`invalidateCellError` clears both scopes' caches: they outlive nothing a
+  pair cache outlives).
+  - `MeshView.cellPaint` now branches on focus: at Matrix a mesh paints
+    `GraphDist[name]` (so every registered child paints at once), the pair
+    branch is unchanged. `InspectPlain` follows for free (it keys on
+    `DistanceEncoding = 1`).
+  - ONE shared scale: new `MeshView.inspectRangeAt` (pair cell inside the
+    workspace; at Matrix the pooled edge samples, else the pooled per-vertex
+    distributions) replaces the `cellRange` reads in the map uniforms, the
+    legend and the dots. `GuiOverlays.diffOn` lights at Matrix on
+    (map ∧ GraphDist) ∨ brush, titled "Difference vs parents" — the same one
+    legend, never a second.
+  - Excluded meshes: `MeshVisibility.shown` gained a `matrixScope :
+    Set<string> option` narrowing, fed from `MeshView.graphMapScopeAt` (the
+    tree's meshes while the Matrix map paints, else None) at all three shown
+    sites (`buildScene` shownCtx, `View.shownNow`, `ScanPinScene.markerAlphaAt`).
+    An unregistered mesh drops to the ghost floor, so what remains is its
+    outline (G-buffer silhouette + footprint contour, both visibility-blind) —
+    never a white surface that would read as "registered and fine".
+  - `anchorGhostOn` (Isolate pins) now ALSO suspends while the graph map paints
+    — same derived-suspension pattern as the armed centre pick. Without it the
+    default-on pin isolation would confine the global map to pin patches and
+    T3 could not be seen at all.
+- **T4 — the pooled graph histogram + brushing.** New `InspectBlock` record
+  (Model.fs: `Mov`/`Ref`/`Pin`/`Err`) and `Model.GraphError : InspectBlock[]
+  option` + `GraphErrorComputed`, filled by `Update.ensureGraphError`: one
+  `pair-error` batch per established edge over that edge's pins, requested
+  PARENT-first (the endpoint returns meshB-relative-to-meshA, so
+  child-relative-to-parent needs no flip), fanned out in parallel — order is
+  preserved, so the canonical edge×pin gid stream is deterministic.
+  - THE unifying piece: `MeshView.inspectBlocksAt` = the canonical gid stream
+    of the CURRENT scope (the pair's pins projected into blocks, or
+    `GraphError`). Every gid consumer now walks it — the 3D dots, the hover
+    ring, `View`'s 12 px hover search + exact-value fetch (which takes the
+    hovered block's own Ref/Mov, so a graph dot measures against ITS parent),
+    the tooltip and the legend tick.
+  - The chart: ONE monochrome series, pooled SAMPLES (not bin-added counts),
+    current state only — no `hb` before-outline (N ghosts would be
+    unreadable), no per-edge colour key. Pooled median tick + mean LoD band,
+    same 48 bins, same furniture/placeholder discipline.
+  - Dots: `brushedDots` walks the blocks and takes each block's OWN
+    `markerAlphaAt b.Mov` (the A10 marker rule per owner — at graph scope the
+    owners are many); colours from `inspectRangeAt`. `MeshView.brushActiveAt`
+    (brush ∧ a non-empty stream) replaces `brushFrameAt.IsSome` as the
+    `ColorIsolate` gate, so the whitening mode lights at Matrix too.
+    `brushFrameAt` stays pair-only: at graph scope nothing is isolated and no
+    footprint goes gold (many owners, and the root keeps its own gold).
+  - Cross-scope hygiene: `Update.clearBrushAcross` wipes brush+hover when a
+    jump crosses Matrix ⇄ pair-workspace (the same gids address a different
+    stream); Pair⇄Pin keeps it. Applied in `jumpFocus` AND `normalizeFocus`
+    (the demotion path bypasses jumpFocus). The brush cap went 4000 → 12000:
+    the widest scope is now the whole graph, and the old cap would have
+    silently truncated a graph-wide brush.
+
+Green after every task: client type-check 52 warnings / 0 errors; Supertests
+97/97. NOT verified in a browser (no shader source changed in A12, but the
+Matrix paths themselves are unexercised outside a run).
+
 ## A11 — brush-point rendering: disc locators + colour isolation (2026-07-30)
 
 Spec: `ScanPin_v14_A11_brush_point_rendering.md`. Client only.

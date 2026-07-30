@@ -14,12 +14,20 @@ module Update =
     // the spring-loaded peeks, the armed probe and the armed pick are
     // level-scoped and die on any jump; leaving Pin mid-placement (Esc or a
     // rail jump) aborts the transaction — full rollback.
+    // The brush addresses ONE scope's gid stream — the graph's at Matrix, the
+    // selected pair's inside the workspace — so crossing between them would
+    // reinterpret the same gids against a different stream. Pair⇄Pin keeps the
+    // brush (one stream, the Pin level only narrows the diagram).
+    let private clearBrushAcross (from_ : FocusLevel) (f : FocusLevel) (model : Model) =
+        if (from_ = FocusMatrix) = (f = FocusMatrix) then model
+        else { model with BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None }
+
     let private jumpFocus (f : FocusLevel) (model : Model) =
         let sp =
             if model.Focus = FocusPin && f <> FocusPin
             then { model.ScanPins with Placement = PlacementIdle }
             else model.ScanPins
-        { model with
+        { clearBrushAcross model.Focus f model with
             Focus = f; ScanPins = sp
             // Point focus rides the tile isolate (ONE state) — both reset on a
             // jump; the pair/pin memory itself survives.
@@ -37,14 +45,33 @@ module Update =
         | PlacementActive d -> d.Area.IsSome
         | PlacementIdle -> false
 
-    // The peeks' shared scope: the pair workspace (Pair AND Pin) with both
-    // pair meshes GPU-resident and no blocking modal.
+    // The VIS peek's scope: the pair workspace (Pair AND Pin) with both pair
+    // meshes GPU-resident and no blocking modal. It has no meaning at Matrix —
+    // there is no REF/MOV pair to flip between at graph scope.
     let private peekPairLoaded (model : Model) =
         model.LoopPending.IsNone &&
         (match model.Focus, model.Sel.Pair with
          | (FocusPair | FocusPin), Some (a, b) ->
             HashSet.contains a model.MeshesLoaded && HashSet.contains b model.MeshesLoaded
          | _ -> false)
+
+    // The POSE peek's scope: the pair workspace's registered pair, or — at
+    // Matrix — the WHOLE graph at once (≥1 edge; as-loaded vs as-loaded blinks
+    // nothing). Every blinking mesh must be GPU-resident: the swap is a trafo
+    // uniform, so both states are resident by construction, but a mesh still
+    // loading would pop in mid-blink.
+    let private peekPoseOk (model : Model) =
+        model.LoopPending.IsNone &&
+        (match model.Focus with
+         | FocusMatrix ->
+            RegGraph.hasEdges model.RegGraph &&
+            model.RegGraph.Edges |> Map.forall (fun child e ->
+                HashSet.contains child model.MeshesLoaded && HashSet.contains e.Parent model.MeshesLoaded)
+         | FocusPair | FocusPin ->
+            peekPairLoaded model &&
+            (match model.Sel.Pair with
+             | Some (a, b) -> (RegGraph.pairEdge a b model.RegGraph).IsSome
+             | None -> false))
 
     // A step may retract what the current focus level depends on (pin deleted,
     // placement aborted, selection cleared) — demote to the nearest enabled
@@ -55,7 +82,9 @@ module Update =
         let rec fix f = if FocusLevel.enabled model.Sel placing f then f else fix (FocusLevel.parent f)
         let f = fix model.Focus
         if f = model.Focus then model
-        else { model with Focus = f; ArmedPick = None; ArmPreview = None; PinFocusHover = None }
+        else
+            { clearBrushAcross model.Focus f model with
+                Focus = f; ArmedPick = None; ArmPreview = None; PinFocusHover = None }
 
     // ── Tile refocus (the camera rule: the MAIN 3D never moves on a GUI
     // action without an explicit prompt — the ortho tiles are EXEMPT and
@@ -377,11 +406,20 @@ module Update =
         | CellDistComputed(gen, dist) ->
             if gen <> cellErrorGen then model
             else { model with CellDist = Some dist }
+        | GraphErrorComputed(gen, blocks) ->
+            if gen <> cellErrorGen then model
+            else { model with GraphError = Some blocks }
+        | GraphDistComputed(gen, dist) ->
+            if gen <> cellErrorGen then model
+            else { model with GraphDist = Map.ofArray dist }
         | SetBrushedSamples ids ->
             // Cap the brushed set so a runaway brush can't flood the 3D marker
-            // node — generous enough to span every pin of a cell (≤300
-            // samples/pin), so a wide brush never silently drops whole pins.
-            let st = ids |> List.truncate 4000 |> Set.ofList
+            // node — generous enough to span every pin of the WIDEST scope (the
+            // graph: every edge's pins at ≤300 samples each), so a wide brush
+            // never silently drops whole pins. The dots cost one static buffer
+            // billboarded in the vertex stage, so the cap is about sanity, not
+            // frame time.
+            let st = ids |> List.truncate 12000 |> Set.ofList
             if model.BrushedSamples = st then model
             else { model with BrushedSamples = st; HoverSample = None; HoverReadout = None }
         | SetHoverSample gid ->
@@ -410,14 +448,7 @@ module Update =
             if model.PeekVis = held || (held && not (peekPairLoaded model && isoOk)) then model
             else { model with PeekVis = held }
         | SetPeekPose held ->
-            // Same scope as the vis peek, plus the pair must be REGISTERED —
-            // as-loaded vs as-loaded blinks nothing.
-            let ok =
-                peekPairLoaded model &&
-                (match model.Sel.Pair with
-                 | Some (a, b) -> (RegGraph.pairEdge a b model.RegGraph).IsSome
-                 | None -> false)
-            if model.PeekPose = held || (held && not ok) then model
+            if model.PeekPose = held || (held && not (peekPoseOk model)) then model
             else { model with PeekPose = held }
         | SelectLoopEdge sel ->
             (match model.LoopPending with
@@ -501,6 +532,8 @@ module Update =
                     CellError = None
                     CellErrorBefore = None
                     CellDist = None
+                    GraphError = None
+                    GraphDist = Map.empty
                     BrushedSamples = Set.empty
                     HoverSample = None
                     HoverReadout = None
@@ -825,11 +858,96 @@ module Update =
                 } |> ignore
                 model
 
+    // The graph-scope error stream (Matrix): one pin batch per established
+    // edge, measured child-relative-to-parent (pass the PARENT first — the
+    // endpoint returns meshB relative to meshA, so the parent-relative
+    // orientation needs no flip), fanned out in parallel. Async.Parallel keeps
+    // the request order, so the canonical edge×pin gid stream is deterministic.
+    let private ensureGraphError (env : Env<Message>) (model : Model) : Model =
+        let edges = model.RegGraph.Edges |> Map.toList |> List.sortBy fst
+        if model.Focus <> FocusMatrix || List.isEmpty edges
+           || model.GraphError.IsSome || graphErrorReqGen = cellErrorGen then model
+        else
+            graphErrorReqGen <- cellErrorGen
+            let gen = cellErrorGen
+            let tOf (m : string) = ModelTransforms.displayedWorld model m
+            let reqs =
+                edges |> List.choose (fun (child, e) ->
+                    let pins =
+                        model.ScanPins.Pins |> HashMap.toList |> List.map snd
+                        |> List.filter (fun p -> p.Pair = PairCell.key child e.Parent)
+                        |> List.sortBy (fun p -> p.CreatedAt, p.ShortName)
+                    if List.isEmpty pins then None
+                    else
+                        let rois =
+                            pins |> List.map (fun p ->
+                                let (ScanPinId.ScanPinId g) = p.Id
+                                g.ToString "N", (tOf p.AnchorMesh).Forward.TransformPos p.CentreLocal, p.InnerRadius)
+                        Some (child, e.Parent, pins |> List.map (fun p -> p.Id), rois))
+            if List.isEmpty reqs then model
+            else
+                task {
+                    try
+                        let! results =
+                            reqs
+                            |> List.map (fun (child, parent, ids, rois) ->
+                                async {
+                                    try
+                                        let! r =
+                                            Query.pairError ApiConfig.apiBase.Value
+                                                parent (tOf parent).Forward child (tOf child).Forward rois
+                                        return
+                                            Seq.zip ids r
+                                            |> Seq.map (fun (id, e) -> { Mov = child; Ref = parent; Pin = id; Err = e })
+                                            |> Seq.toArray
+                                    with _ -> return [||]
+                                })
+                            |> Async.Parallel |> Async.StartAsTask
+                        env.Emit [GraphErrorComputed(gen, Array.concat results)]
+                    with _ -> ()
+                } |> ignore
+                model
+
+    // The graph-scope false-colour buffers (Matrix): every established edge's
+    // CHILD against its PARENT at the displayed poses — the union of the
+    // per-edge moving-side maps, fanned out in parallel (independent queries;
+    // one sequential sweep would stall the whole map on the slowest edge).
+    // Unregistered meshes are simply absent — nothing fabricates error for a
+    // mesh that has no parent.
+    let private ensureGraphDist (env : Env<Message>) (model : Model) : Model =
+        let edges = model.RegGraph.Edges |> Map.toList
+        if model.Focus <> FocusMatrix || not model.CellMapOn || List.isEmpty edges
+           || not (Map.isEmpty model.GraphDist) || graphDistReqGen = cellErrorGen then model
+        else
+            graphDistReqGen <- cellErrorGen
+            let gen = cellErrorGen
+            let tOf (m : string) = (ModelTransforms.displayedWorld model m).Forward
+            let reqs = edges |> List.map (fun (child, e) -> child, e.Parent, tOf child, tOf e.Parent)
+            task {
+                try
+                    let! results =
+                        reqs
+                        |> List.map (fun (child, parent, tc, tp) ->
+                            async {
+                                try
+                                    let! d = Query.regionDistance ApiConfig.apiBase.Value child parent tc tp
+                                    return Some (child, d)
+                                with _ -> return None
+                            })
+                        |> Async.Parallel |> Async.StartAsTask
+                    let landed = results |> Array.choose id
+                    if landed.Length > 0 then env.Emit [GraphDistComputed(gen, landed)]
+                with _ -> ()
+            } |> ignore
+            model
+
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
         |> normalizeFocus
         |> ScanPinUpdate.ensureRings env
         |> ensureCellError env
         |> ensureCellDist env
+        |> ensureGraphError env
+        |> ensureGraphDist env
         |> ensurePairOverlaps env
 

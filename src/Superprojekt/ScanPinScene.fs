@@ -115,14 +115,15 @@ module ScanPinScene =
         let markerAlphaAt (t : AdaptiveToken) (mesh : string) : float option =
             let focus = model.Focus.GetValue t
             let sel = model.Sel.GetValue t
+            let gs = MeshView.graphMapScopeAt model t
             let isoC, pfC = peekSwapAt t sel.Pair (isoLockAt t) sel.Point
-            let committed = MeshVisibility.shown focus sel.Pair isoC None pfC mesh
+            let committed = MeshVisibility.shown focus sel.Pair isoC None gs pfC mesh
             let isoF, pfF =
                 MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t) None
                     (model.TileIsolateHover.GetValue t) (isoLockAt t) sel.Point
             let isoF, pfF = peekSwapAt t sel.Pair isoF pfF
             let hp = model.MatrixHoverPair.GetValue t
-            if MeshVisibility.shown focus sel.Pair isoF hp pfF mesh then Some 1.0
+            if MeshVisibility.shown focus sel.Pair isoF hp gs pfF mesh then Some 1.0
             elif committed then Some 0.15
             else None
 
@@ -417,43 +418,43 @@ module ScanPinScene =
         // locator + colour channel, no 3D relief to occlude the surface they
         // measure. Screen-constant radius inside a metric clamp, so zooming in
         // reveals the true coordinate instead of inflating the mark.
-        // gid-addressed into the canonical CellError concatenation; ≤4000
-        // (reducer cap), hence the strict buffer discipline — the geometry
-        // depends on the brush ALONE (the hovered dot rides a separate node, so
-        // a hover never re-uploads the dot buffers, and the camera only moves
-        // uniforms).
+        // gid-addressed into the canonical inspect stream (MeshView.
+        // inspectBlocksAt — the pair's pins, or every edge's pins at Matrix);
+        // ≤12000 (reducer cap), hence the strict buffer discipline — the
+        // geometry depends on the brush ALONE (the hovered dot rides a separate
+        // node, so a hover never re-uploads the dot buffers, and the camera
+        // only moves uniforms).
         let discRadii =
             datasetScale |> AVal.map (fun s ->
                 ScanPin.renderLength s 0.005, ScanPin.renderLength s 0.5)
-        // The samples are anchored to the pair's MOV surface, so the dots follow
-        // ITS solid visibility (the A10 marker rule): full, faded, or gone with
-        // the mesh — no dot floats over absent geometry.
-        let brushAlphaAt (t : AdaptiveToken) =
-            match MeshView.brushFrameAt model t with
-            | Some (_, mov) -> markerAlphaAt t mov
-            | None -> None
+        // Each block's samples sit on ITS OWN moving mesh, so its dots follow
+        // that mesh's solid visibility (the A10 marker rule): full, faded, or
+        // gone with the mesh — no dot floats over absent geometry. At graph
+        // scope every edge contributes its own owner.
         let brushedDots =
             AVal.custom (fun t ->
                 let brush = model.BrushedSamples.GetValue t
-                if Set.isEmpty brush then [||]
+                let blocks = MeshView.inspectBlocksAt model t
+                if Set.isEmpty brush || blocks.Length = 0 then [||]
                 else
-                    match model.CellError.GetValue t, brushAlphaAt t with
-                    | Some cells, Some vis ->
-                        let cc = model.CommonCentroid.GetValue t
-                        let s = datasetScale.GetValue t
-                        // The dots ARE samples of the surface field: same ramp,
-                        // same cell range as the false-colour map and the legend.
-                        let lo, hi = MeshView.cellRange (Some cells) (model.CellDist.GetValue t)
-                        let out = ResizeArray<V3d * V4d>()
-                        let mutable gid = 0
-                        for (_, r) in cells do
-                            for i in 0 .. r.Samples.Length - 1 do
-                                if Set.contains gid brush && i < r.Positions.Length then
-                                    let c = Primitives.Diff.colorSignedV3 lo hi r.Samples.[i]
-                                    out.Add(ScanPin.renderCentre cc s r.Positions.[i], V4d(c, vis))
-                                gid <- gid + 1
-                        out.ToArray()
-                    | _ -> [||])
+                    let cc = model.CommonCentroid.GetValue t
+                    let s = datasetScale.GetValue t
+                    // The dots ARE samples of the surface field: same ramp,
+                    // same range as the false-colour map and the legend.
+                    let lo, hi = MeshView.inspectRangeAt model t
+                    let out = ResizeArray<V3d * V4d>()
+                    let mutable gid = 0
+                    for b in blocks do
+                        let vis = markerAlphaAt t b.Mov
+                        let r = b.Err
+                        for i in 0 .. r.Samples.Length - 1 do
+                            match vis with
+                            | Some v when Set.contains gid brush && i < r.Positions.Length ->
+                                let c = Primitives.Diff.colorSignedV3 lo hi r.Samples.[i]
+                                out.Add(ScanPin.renderCentre cc s r.Positions.[i], V4d(c, v))
+                            | _ -> ()
+                            gid <- gid + 1
+                    out.ToArray())
         let brushedSampleNode =
             sg {
                 Sg.Active notFullscreen
@@ -471,8 +472,8 @@ module ScanPinScene =
         let hoverRingNode =
             let segs =
                 AVal.custom (fun t ->
-                    match model.HoverSample.GetValue t, model.CellError.GetValue t, brushAlphaAt t with
-                    | Some hov, Some cells, Some vis ->
+                    match model.HoverSample.GetValue t with
+                    | Some hov ->
                         let cc = model.CommonCentroid.GetValue t
                         let s = datasetScale.GetValue t
                         let vb = (view.GetValue t).Backward
@@ -480,21 +481,24 @@ module ScanPinScene =
                         let right = vb.TransformDir V3d.IOO
                         let up = vb.TransformDir V3d.OIO
                         let minR, maxR = discRadii.GetValue t
-                        let mutable pos = None
+                        let mutable found = None
                         let mutable gid = 0
-                        for (_, r) in cells do
+                        for b in MeshView.inspectBlocksAt model t do
+                            let r = b.Err
                             for i in 0 .. r.Samples.Length - 1 do
                                 if gid = hov && i < r.Positions.Length then
-                                    pos <- Some (ScanPin.renderCentre cc s r.Positions.[i])
+                                    found <-
+                                        markerAlphaAt t b.Mov
+                                        |> Option.map (fun vis -> ScanPin.renderCentre cc s r.Positions.[i], vis)
                                 gid <- gid + 1
-                        match pos with
-                        | Some c ->
+                        match found with
+                        | Some (c, vis) ->
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             let rad = 2.2 * clamp minR maxR (float Discs.screenFrac * Vec.length (eye - c))
                             duplex (fun col w -> addRing out c right up rad col w 32) (0.95 * vis) 1.4
                             out.ToArray()
                         | None -> [||]
-                    | _ -> [||])
+                    | None -> [||])
             linesNodeTop notFullscreen segs
 
         // The armed pick's cursor preview: what is ABOUT to be placed, at the

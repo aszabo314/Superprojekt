@@ -58,13 +58,14 @@ module GuiTopBar =
             }
 
             // Spring-loaded peek buttons: press-and-hold twins of the V/B keys
-            // (pair-workspace scope — Pair AND Pin; the reducer re-guards,
-            // releases always land). Pointer capture keeps the release landing
-            // even when the cursor slides off the button mid-hold. Always
-            // visible, DISABLED when a peek couldn't land — hidden buttons are
-            // undiscoverable chrome. Mirrors the reducer's guards: V = the
-            // pair loaded + a pair-mesh isolate lock (the peek swaps it),
-            // B = the pair loaded + registered.
+            // (the reducer re-guards, releases always land). Pointer capture
+            // keeps the release landing even when the cursor slides off the
+            // button mid-hold. DISABLED when a peek couldn't land — hidden
+            // buttons are undiscoverable chrome; the ONE omission is V at
+            // Matrix, where a REF/MOV flip has no meaning at all. Mirrors the
+            // reducer's guards: V = the pair loaded + a pair-mesh isolate lock
+            // (the peek swaps it), B = the pair loaded + registered, or the
+            // whole graph at Matrix once an edge exists.
             let pairLoaded =
                 AVal.custom (fun t ->
                     (match model.Focus.GetValue t with FocusPair | FocusPin -> true | FocusMatrix -> false) &&
@@ -73,20 +74,31 @@ module GuiTopBar =
                         let loaded = model.MeshesLoaded.Content.GetValue t
                         HashSet.contains a loaded && HashSet.contains b loaded
                      | None -> false))
+            let atMatrix = model.Focus |> AVal.map (fun f -> f = FocusMatrix)
             let canVis =
                 (pairLoaded, model.TileIsolate, model.Sel) |||> AVal.map3 (fun ok iso s ->
                     ok && (match iso, s.Pair with
                            | Some m, Some (a, b) -> m = a || m = b
                            | _ -> false))
             let canPose =
-                (pairLoaded, model.RegGraph, model.Sel) |||> AVal.map3 (fun ok g s ->
-                    ok && (match s.Pair with
-                           | Some (a, b) -> (RegGraph.pairEdge a b g).IsSome
-                           | None -> false))
+                AVal.custom (fun t ->
+                    let g = model.RegGraph.GetValue t
+                    match model.Focus.GetValue t with
+                    | FocusMatrix ->
+                        let loaded = model.MeshesLoaded.Content.GetValue t
+                        RegGraph.hasEdges g &&
+                        g.Edges |> Map.forall (fun child e ->
+                            HashSet.contains child loaded && HashSet.contains e.Parent loaded)
+                    | FocusPair | FocusPin ->
+                        pairLoaded.GetValue t &&
+                        (match (model.Sel.GetValue t).Pair with
+                         | Some (a, b) -> (RegGraph.pairEdge a b g).IsSome
+                         | None -> false))
             let peekBtn (label : string) (title : string) (offHint : string)
-                        (canA : aval<bool>) (heldA : aval<bool>) (set : bool -> unit) =
+                        (showA : aval<bool>) (canA : aval<bool>) (heldA : aval<bool>) (set : bool -> unit) =
                 button {
                     Class "tb-btn-tiny tb-peek"
+                    Primitives.showWhen showA
                     classWhen "tb-btn-active" heldA
                     canA |> AVal.map (fun ok ->
                         if ok then Some (Attribute("title", title))
@@ -102,10 +114,10 @@ module GuiTopBar =
                 span { Class "lp-sublabel"; "Peek" }
                 peekBtn "◌ V" "Hold: flip the isolation to the pair's other mesh — same spot, other epoch (same as holding V)"
                     " — available at the Pair/Pin level while one of the pair meshes is isolated"
-                    canVis model.PeekVis (fun h -> env.Emit [SetPeekVis h])
-                peekBtn "↺ B" "Hold: the moving mesh snaps to its as-loaded pose — did registration help? (same as holding B)"
-                    " — available at the Pair/Pin level once the pair is registered"
-                    canPose model.PeekPose (fun h -> env.Emit [SetPeekPose h])
+                    (atMatrix |> AVal.map not) canVis model.PeekVis (fun h -> env.Emit [SetPeekVis h])
+                peekBtn "↺ B" "Hold: the registered meshes snap to their as-loaded poses — did registration help? (same as holding B); at Matrix the whole graph blinks at once"
+                    " — available once the pair (at Matrix: the graph) is registered"
+                    (AVal.constant true) canPose model.PeekPose (fun h -> env.Emit [SetPeekPose h])
             }
 
             div {

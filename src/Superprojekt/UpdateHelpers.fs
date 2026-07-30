@@ -41,12 +41,15 @@ module UpdateHelpers =
     let mutable toastCts : System.Threading.CancellationTokenSource =
         new System.Threading.CancellationTokenSource()
 
-    // In-cell inspection guards: one generation shared by the cell-error /
-    // cell-dist / readout fetches — any invalidation bumps it so stale results
-    // land dead; the req markers give each fetch single-flight semantics.
+    // Inspection guards: ONE generation shared by every scope's error / map /
+    // readout fetch (cell AND graph) — any invalidation bumps it so stale
+    // results land dead; the req markers give each fetch single-flight
+    // semantics.
     let mutable cellErrorGen = 0
     let mutable cellErrorReqGen = -1
     let mutable cellDistReqGen = -1
+    let mutable graphErrorReqGen = -1
+    let mutable graphDistReqGen = -1
     let bumpCellError () = cellErrorGen <- cellErrorGen + 1
 
     // Pair-solve landing guard: PairSolved carries the generation it was
@@ -65,12 +68,15 @@ module UpdateHelpers =
     let invalidateRings (model : Model) =
         { model with ScanPins = ScanPinModel.invalidateRings model.ScanPins }
 
-    // Drop every in-cell inspection cache (error distributions, the map buffer,
-    // brush/hover/probe readouts) — on nav, pin and pose changes alike.
+    // Drop every inspection cache at BOTH scopes (error distributions, the map
+    // buffers, brush/hover/probe readouts) — on nav, pin and pose changes
+    // alike. The graph caches ride the same generation: they outlive nothing a
+    // pair cache outlives.
     let invalidateCellError (model : Model) =
         bumpCellError ()
         { model with
             CellError = None; CellErrorBefore = None; CellDist = None
+            GraphError = None; GraphDist = Map.empty
             BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None
             ProbeReadout = None }
 

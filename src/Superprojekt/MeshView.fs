@@ -120,25 +120,31 @@ module MeshView =
     let private scaleFor (model : AdaptiveModel) (name : string) =
         model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
 
-    // The selected pair's MOV while the POSE peek holds — REF/MOV derived from
-    // the tree (nearer-root = REF). The vis peek doesn't use this: it swaps
-    // the effective isolate instead (see the shown-rule contexts).
-    let private peekMovAt (held : bool) (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
+    // Does `name` blink to its as-loaded pose while the POSE peek holds? At
+    // Matrix the subject is the WHOLE graph (there is no REF/MOV at graph
+    // scope — every mesh drops to as-loaded at once); inside the pair
+    // workspace only the pair's MOV does (REF/MOV from the tree, nearer-root =
+    // REF). The vis peek doesn't use this: it swaps the effective isolate
+    // instead (see the shown-rule contexts).
+    let private peekPoseAt (held : bool) (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
         held &&
-        (match (model.Sel.GetValue t).Pair with
-         | Some (a, b) -> snd (MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b) = name
-         | None -> false)
+        (match model.Focus.GetValue t with
+         | FocusMatrix -> true
+         | FocusPair | FocusPin ->
+            match (model.Sel.GetValue t).Pair with
+            | Some (a, b) -> snd (MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b) = name
+            | None -> false)
 
     // The pose the mesh currently SHOWS: the composed graph pose — flipped to
-    // the AS-LOADED baseline while the pose peek holds the cell's MOV (visual
-    // layer only; ModelTransforms stays committed for reducer-side queries).
+    // the AS-LOADED baseline while the pose peek holds this mesh (visual layer
+    // only; ModelTransforms stays committed for reducer-side queries).
     // Same geometry, different trafo uniform ⇒ the swap is instant and both
     // states are GPU-resident by construction.
     let displayedMeshT (model : AdaptiveModel) (name : string) =
         AVal.custom (fun t ->
             let load () =
                 Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
-            if peekMovAt (model.PeekPose.GetValue t) model t name then load ()
+            if peekPoseAt (model.PeekPose.GetValue t) model t name then load ()
             else
                 match Map.tryFind name (model.ComposedPoses.GetValue t) with
                 | Some tr -> tr
@@ -155,7 +161,7 @@ module MeshView =
         let load () =
             Map.tryFind mesh (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
         let disp =
-            if peekMovAt (model.PeekPose.GetValue t) model t mesh then load ()
+            if peekPoseAt (model.PeekPose.GetValue t) model t mesh then load ()
             else
                 match Map.tryFind mesh (model.ComposedPoses.GetValue t) with
                 | Some s -> s
@@ -196,9 +202,65 @@ module MeshView =
             | Some d -> ErrorRange.ofDistances d
             | None -> ErrorRange.ofSamples Seq.empty
 
+    // THE canonical inspect sample stream of the current scope, in gid order:
+    // the selected pair's pins (all MOV-vs-REF) inside the workspace, every
+    // established edge's pins (each child vs ITS parent) at Matrix. Every
+    // gid-addressed consumer — the 3D dots, the hover search, the readouts —
+    // walks this one stream, so the brush means the same thing at both scopes.
+    let inspectBlocksAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) : InspectBlock[] =
+        match model.Focus.GetValue t with
+        | FocusMatrix -> model.GraphError.GetValue t |> Option.defaultValue [||]
+        | FocusPair | FocusPin ->
+            match (model.Sel.GetValue t).Pair, model.CellError.GetValue t with
+            | Some (a, b), Some cells ->
+                let refM, movM = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
+                cells |> Array.map (fun (pid, r) -> { Mov = movM; Ref = refM; Pin = pid; Err = r })
+            | _ -> [||]
+
+    // THE inspect scale at the CURRENT scope, shared by that scope's map
+    // uniforms, diagram and legend: the pair cell inside the workspace, the
+    // whole graph at Matrix (the pooled edge samples, else the pooled
+    // per-vertex distributions of every registered child).
+    let inspectRangeAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
+        match model.Focus.GetValue t with
+        | FocusPair | FocusPin ->
+            cellRange (model.CellError.GetValue t) (model.CellDist.GetValue t)
+        | FocusMatrix ->
+            let blocks = inspectBlocksAt model t
+            if blocks |> Array.exists (fun b -> b.Err.Samples.Length > 0) then
+                ErrorRange.ofSamples (blocks |> Seq.collect (fun b -> b.Err.Samples))
+            else
+                let dists = model.GraphDist.GetValue t
+                if Map.isEmpty dists then ErrorRange.ofSamples Seq.empty
+                else ErrorRange.ofDistances (dists |> Map.toArray |> Array.collect snd)
+
+    // Brushing is a whole render MODE (colour isolation) wherever dots can
+    // exist — the pair cell, or the whole graph at Matrix.
+    let brushActiveAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
+        not (Set.isEmpty (model.BrushedSamples.GetValue t)) && (inspectBlocksAt model t).Length > 0
+
+    // The graph error map's participants: while it paints (Matrix, map on,
+    // ≥1 edge) the registered tree ALONE stays solid — an unregistered mesh
+    // must never read as "registered and fine", so it keeps only its outline.
+    // None = no narrowing (every other state).
+    let graphMapScopeAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) : Set<string> option =
+        match model.Focus.GetValue t with
+        | FocusPair | FocusPin -> None
+        | FocusMatrix ->
+            let g = model.RegGraph.GetValue t
+            if not (model.CellMapOn.GetValue t) || not (RegGraph.hasEdges g) then None
+            else
+                g.Edges
+                |> Map.toSeq
+                |> Seq.collect (fun (child, e) -> [child; e.Parent])
+                |> Set.ofSeq
+                |> Some
+
     // THE brush colour-isolation frame: (REF, MOV) of the selected pair while
     // brushed dots exist, else None. MOV owns the samples — it is the one solid
     // (whitened) surface and the dots' anchor; REF becomes the gold footprint.
+    // There is no such frame at graph scope: many meshes own dots at once, so
+    // nothing is isolated and the reference root keeps its own gold.
     // Token form (never build this aval inside another aval's compute).
     let brushFrameAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) : (string * string) option =
         if Set.isEmpty (model.BrushedSamples.GetValue t) then None
@@ -353,22 +415,25 @@ module MeshView =
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
         // Pin isolation = the persistent per-mode default (AnchorGhostMode) —
         // SUSPENDED while the centre pick is armed (aiming a whole-pin move
-        // needs the full terrain); derived, so the stored toggle restores
-        // itself on disarm.
+        // needs the full terrain) and while the graph map paints (it measures
+        // whole meshes, not patches); derived, so the stored toggle restores
+        // itself the moment the suspension ends.
         let anchorGhostOn =
-            (model.AnchorGhostMode, model.ArmedPick) ||> AVal.map2 (fun on armed ->
-                on && armed <> Some ArmCentre)
+            AVal.custom (fun t ->
+                model.AnchorGhostMode.GetValue t
+                && model.ArmedPick.GetValue t <> Some ArmCentre
+                && (graphMapScopeAt model t).IsNone)
         let anchorGhost = anchorGhostOn |> AVal.map (fun on -> if on then 1 else 0)
-        // The ONE in-cell error range (metres, spanning 0, capped ±0.5) —
-        // shared by the map uniforms, the diagram and the legend so every
-        // false-colour read is comparable.
-        let cellRangeA =
-            (model.CellError, model.CellDist) ||> AVal.map2 cellRange
+        // The ONE error range of the current scope (metres, spanning 0, capped
+        // ±0.5) — shared by the map uniforms, the diagram and the legend so
+        // every false-colour read is comparable.
+        let cellRangeA = AVal.custom (inspectRangeAt model)
         // Brushing is the sole focus: while dots exist the whole scene whitens
-        // so only they carry colour (one flag for every mesh — the frame that
-        // decides WHICH mesh stays solid rides the isolate).
+        // so only they carry colour (one flag for every mesh — inside the pair
+        // workspace the frame that decides WHICH mesh stays solid rides the
+        // isolate; at graph scope the dots' owners are many, so none is).
         let colorIsolate =
-            AVal.custom (fun t -> if (brushFrameAt model t).IsSome then 1.0f else 0.0f)
+            AVal.custom (fun t -> if brushActiveAt model t then 1.0f else 0.0f)
         // The shown rule's shared inputs (the ONE effective narrowing) — ONE
         // context aval, N cheap per-mesh bool projections.
         let shownCtx =
@@ -394,7 +459,7 @@ module MeshView =
                         let other = if m = a then b else a
                         Some other, (pfRaw |> Option.map (fun x -> if x = m then other else x))
                     | _ -> isoRaw, pfRaw
-                focus, sel.Pair, iso, hp, pf)
+                focus, sel.Pair, iso, hp, graphMapScopeAt model t, pf)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
             // The ONE shown rule: Matrix shows every mesh (tile isolate /
@@ -402,8 +467,8 @@ module MeshView =
             // narrows further to the effective focus mesh (the rest drop to
             // the ghost floor).
             let isActive =
-                shownCtx |> AVal.map (fun (focus, selPair, iso, hp, pf) ->
-                    MeshVisibility.shown focus selPair iso hp pf name)
+                shownCtx |> AVal.map (fun (focus, selPair, iso, hp, gs, pf) ->
+                    MeshVisibility.shown focus selPair iso hp gs pf name)
             let scale = scaleFor model name
             let meshT = displayedMeshT model name
             // Sensor origin = the mesh origin (the radial-scan pipeline centres
@@ -424,47 +489,52 @@ module MeshView =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
-            // In-cell false-colour: THE MOV mesh paints its signed distance vs
-            // the REF — never the reference against itself, and nothing is
-            // isolated (both pair meshes render as-is). Brushing = sole focus:
-            // a non-empty brush suppresses the map (the dots carry the values).
+            // False-colour: the MOVING mesh paints its signed distance vs its
+            // reference — never the reference against itself, and nothing is
+            // isolated. In the pair workspace that is the cell's MOV vs REF; at
+            // Matrix every registered CHILD paints against its PARENT at once
+            // (the union of the per-edge moving-side maps, all on the one
+            // shared ramp). Brushing = sole focus: a non-empty brush suppresses
+            // the map (the dots carry the values).
             let cellPaint : aval<float32[] option> =
                 AVal.custom (fun t ->
-                    let inPairScope =
-                        match model.Focus.GetValue t with
-                        | FocusPair | FocusPin -> true
-                        | FocusMatrix -> false
-                    match (model.Sel.GetValue t).Pair with
-                    | Some (a, b) when inPairScope && model.CellMapOn.GetValue t ->
-                        let _, mov = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
-                        if mov = name && Set.isEmpty (model.BrushedSamples.GetValue t) then
-                            match model.CellDist.GetValue t with
-                            | Some dist ->
-                                // The Pin level narrows the map to the selected
-                                // pin's ROI sphere: outside vertices get the
-                                // 3e30 keep-base sentinel (1e30 stays the
-                                // server's no-data grey). Distances compare in
-                                // MOV's own frame — rigid poses preserve them.
-                                let roi =
-                                    match model.Focus.GetValue t, (model.Sel.GetValue t).Pin with
-                                    | FocusPin, Some id ->
-                                        HashMap.tryFind id (model.ScanPins.Pins.Content.GetValue t)
-                                        |> Option.map (fun p ->
-                                            let w = (displayedWorldAt model t p.AnchorMesh).Forward.TransformPos p.CentreLocal
-                                            (displayedWorldAt model t name).Backward.TransformPos w, p.InnerRadius)
-                                    | _ -> None
-                                match roi, loaded.mesh.Value with
-                                | Some (centreOwn, r), Some md ->
-                                    // Served positions are centroid-subtracted.
-                                    let c = V3f (centreOwn - md.centroid)
-                                    let r2 = float32 (r * r)
-                                    Some (Array.init dist.Length (fun i ->
-                                        if i < md.positions.Length && (md.positions.[i] - c).LengthSquared <= r2
-                                        then dist.[i] else 3.0e30f))
-                                | _ -> Some dist
-                            | None -> None
-                        else None
-                    | _ -> None)
+                    let painting =
+                        model.CellMapOn.GetValue t && Set.isEmpty (model.BrushedSamples.GetValue t)
+                    match model.Focus.GetValue t with
+                    | FocusMatrix ->
+                        if painting then Map.tryFind name (model.GraphDist.GetValue t) else None
+                    | FocusPair | FocusPin ->
+                        match (model.Sel.GetValue t).Pair with
+                        | Some (a, b) when painting ->
+                            let _, mov = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
+                            if mov <> name then None
+                            else
+                                match model.CellDist.GetValue t with
+                                | Some dist ->
+                                    // The Pin level narrows the map to the selected
+                                    // pin's ROI sphere: outside vertices get the
+                                    // 3e30 keep-base sentinel (1e30 stays the
+                                    // server's no-data grey). Distances compare in
+                                    // MOV's own frame — rigid poses preserve them.
+                                    let roi =
+                                        match model.Focus.GetValue t, (model.Sel.GetValue t).Pin with
+                                        | FocusPin, Some id ->
+                                            HashMap.tryFind id (model.ScanPins.Pins.Content.GetValue t)
+                                            |> Option.map (fun p ->
+                                                let w = (displayedWorldAt model t p.AnchorMesh).Forward.TransformPos p.CentreLocal
+                                                (displayedWorldAt model t name).Backward.TransformPos w, p.InnerRadius)
+                                        | _ -> None
+                                    match roi, loaded.mesh.Value with
+                                    | Some (centreOwn, r), Some md ->
+                                        // Served positions are centroid-subtracted.
+                                        let c = V3f (centreOwn - md.centroid)
+                                        let r2 = float32 (r * r)
+                                        Some (Array.init dist.Length (fun i ->
+                                            if i < md.positions.Length && (md.positions.[i] - c).LengthSquared <= r2
+                                            then dist.[i] else 3.0e30f))
+                                    | _ -> Some dist
+                                | None -> None
+                        | _ -> None)
             let distBuf =
                 (cellPaint, loaded.pos) ||> AVal.map2 (fun d _ ->
                     match d with

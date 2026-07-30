@@ -37,6 +37,18 @@ module RigidTransform =
         * Trafo3d.Scale(1.0 / scale)
         * Trafo3d.Translation(cc)
 
+// One block of the canonical inspect sample stream: ONE pin's pooled error,
+// always measured MOV-relative-to-REF. gid = an index into the concatenation of
+// the blocks' Samples in stream order — the selected pair's pins inside the
+// workspace, every established edge's pins (child vs parent) at Matrix; the
+// brush addresses those gids, so both scopes read one stream shape.
+type InspectBlock = {
+    Mov : string
+    Ref : string
+    Pin : ScanPinId
+    Err : Query.PairPinError
+}
+
 // The three-level focus rail: Matrix · Pair · Pin — each a strictly smaller
 // scope of WHAT IS LOOKED AT, never a tool mode (tools stay a toolkit inside
 // their level). Free navigation among enabled stops; Escape ascends one level.
@@ -137,12 +149,18 @@ module MeshVisibility =
         | Some _ -> isoLock
         | None -> brushMov
 
+    // `matrixScope` narrows the Matrix level to a named set (None = every
+    // mesh): while the graph error map paints, only the registered tree stays
+    // solid — an unregistered mesh painted white would read as "registered and
+    // fine", so it drops to its outline instead.
     let shown (focus : FocusLevel) (selPair : (string * string) option)
               (isolate : string option) (hoverPair : (string * string) option)
-              (pinFocus : string option) (name : string) =
+              (matrixScope : Set<string> option) (pinFocus : string option) (name : string) =
         let inScope =
             match focus with
-            | FocusMatrix -> (match hoverPair with Some (a, b) -> name = a || name = b | None -> true)
+            | FocusMatrix ->
+                (match hoverPair with Some (a, b) -> name = a || name = b | None -> true)
+                && (match matrixScope with Some s -> Set.contains name s | None -> true)
             | FocusPair ->
                 match selPair with
                 | Some (a, b) -> name = a || name = b
@@ -249,10 +267,20 @@ type Model =
         CellErrorBefore     : (ScanPinId * Query.PairPinError)[] option
         // MOV's per-vertex signed distance vs REF (the false-colour buffer).
         CellDist            : float32[] option
+        // The GRAPH-scope error stream (Matrix): every established edge's pins,
+        // child-relative-to-parent, in canonical edge×pin order — the pooled
+        // union the graph histogram and its brush read.
+        GraphError          : InspectBlock[] option
+        // The GRAPH-scope twin (Matrix): per registered CHILD mesh, its
+        // per-vertex signed distance vs its PARENT — every established edge's
+        // moving-side buffer at once. Empty ⇔ nothing to paint (a zero-edge
+        // graph is legitimately blank).
+        GraphDist           : Map<string, float32[]>
         // False-colour error map toggle (in-cell inspect tool; MOV only).
         CellMapOn           : bool
-        // Diagram brush: sample gids = indices into the canonical CellError
-        // sample concatenation, capped at 4000.
+        // Diagram brush: sample gids = indices into the canonical inspect
+        // sample stream of the CURRENT scope (MeshView.inspectBlocksAt),
+        // capped at 12000; it clears when a jump crosses between scopes.
         BrushedSamples      : Set<int>
         // 3D-hovered brushed sample (diagram cross-highlight) + its exact
         // value from the exact-point endpoint.
@@ -282,10 +310,11 @@ type Model =
         // swap, release to return; zero config):
         //   PeekVis  — the isolation flips to the pair's OTHER mesh (same spot,
         //              other epoch); derived in the shown rule, the isolate
-        //              lock itself never moves. Needs a pair-mesh isolate.
-        //   PeekPose — the MOV (REF/MOV from the tree) displays AS-LOADED
-        //              instead of composed (REF static — "did registration
-        //              help?"). Purely visual.
+        //              lock itself never moves. Needs a pair-mesh isolate, so
+        //              it exists in the pair workspace ALONE.
+        //   PeekPose — as-loaded instead of composed: the pair's MOV inside the
+        //              workspace (REF static — "did registration help?"), the
+        //              WHOLE graph at Matrix. Purely visual.
         PeekVis             : bool
         PeekPose            : bool
         // The transient loop awaiting FORCED resolution — the blocking modal is
@@ -427,6 +456,8 @@ module Model =
             CellError           = None
             CellErrorBefore     = None
             CellDist            = None
+            GraphError          = None
+            GraphDist           = Map.empty
             CellMapOn           = false
             BrushedSamples      = Set.empty
             HoverSample         = None

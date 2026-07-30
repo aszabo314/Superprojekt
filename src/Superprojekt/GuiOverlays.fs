@@ -84,13 +84,14 @@ module GuiOverlays =
         // second legend).
         let diffOn =
             AVal.custom (fun t ->
-                let inPairScope =
-                    match model.Focus.GetValue t with
-                    | FocusPair | FocusPin -> true
-                    | FocusMatrix -> false
-                inPairScope && (model.Sel.GetValue t).Pair.IsSome
-                && ((model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome)
-                    || not (Set.isEmpty (model.BrushedSamples.GetValue t))))
+                match model.Focus.GetValue t with
+                | FocusPair | FocusPin ->
+                    (model.Sel.GetValue t).Pair.IsSome
+                    && ((model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome)
+                        || not (Set.isEmpty (model.BrushedSamples.GetValue t)))
+                | FocusMatrix ->
+                    (model.CellMapOn.GetValue t && not (Map.isEmpty (model.GraphDist.GetValue t)))
+                    || not (Set.isEmpty (model.BrushedSamples.GetValue t)))
         // The 3D-hovered dot's value, connecting "this value" to the scale: the
         // exact probed number the tooltip shows, or the dot's own sample value
         // until that fetch lands.
@@ -102,30 +103,27 @@ module GuiOverlays =
                     match model.HoverReadout.GetValue t with
                     | Some (g, v) when g = gid -> Some v
                     | _ ->
-                        match model.CellError.GetValue t with
-                        | None -> None
-                        | Some cells ->
-                            let rec find (i : int) (cs : (ScanPinId * Query.PairPinError) list) =
-                                match cs with
-                                | [] -> None
-                                | (_, r) :: rest ->
-                                    if i < r.Samples.Length then Some r.Samples.[i]
-                                    else find (i - r.Samples.Length) rest
-                            find gid (Array.toList cells))
+                        let rec find (i : int) (bs : InspectBlock list) =
+                            match bs with
+                            | [] -> None
+                            | b :: rest ->
+                                if i < b.Err.Samples.Length then Some b.Err.Samples.[i]
+                                else find (i - b.Err.Samples.Length) rest
+                        find gid (Array.toList (MeshView.inspectBlocksAt model t)))
         let legendJson =
             AVal.custom (fun t ->
                 let title, vLo, vHi, colorAt =
                     if diffOn.GetValue t then
-                        let lo, hi =
-                            MeshView.cellRange (model.CellError.GetValue t) (model.CellDist.GetValue t)
+                        let lo, hi = MeshView.inspectRangeAt model t
                         let name =
-                            match (model.Sel.GetValue t).Pair with
-                            | Some (a, b) ->
+                            match model.Focus.GetValue t, (model.Sel.GetValue t).Pair with
+                            | FocusMatrix, _ -> "Difference vs parents"
+                            | _, Some (a, b) ->
                                 let order = model.MeshOrder.Content.GetValue t
                                 let num m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
                                 let refM, movM = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
                                 sprintf "Difference %d vs %d" (num movM) (num refM)
-                            | None -> "Difference"
+                            | _, None -> "Difference"
                         name, lo, hi, Primitives.Diff.colorSignedV3 lo hi
                     else
                         let m = max 1e-6 (heatRangeMaxA.GetValue t)

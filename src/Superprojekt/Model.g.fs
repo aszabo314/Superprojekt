@@ -1,5 +1,5 @@
-//8ea7dc7e-19a3-6ca1-08e2-b63314df22f9
-//644925a4-2c7e-a159-1762-15f9a14ee96a
+//451d8688-d8b1-b3f5-c4f0-27c9664ec09a
+//1bdcc7d5-5f37-1580-504a-ed84f78c8945
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -49,6 +49,8 @@ type AdaptiveModel(value : Model) =
     let _CellError_ = FSharp.Data.Adaptive.cval(value.CellError)
     let _CellErrorBefore_ = FSharp.Data.Adaptive.cval(value.CellErrorBefore)
     let _CellDist_ = FSharp.Data.Adaptive.cval(value.CellDist)
+    let _GraphError_ = FSharp.Data.Adaptive.cval(value.GraphError)
+    let _GraphDist_ = FSharp.Data.Adaptive.cval(value.GraphDist)
     let _CellMapOn_ = FSharp.Data.Adaptive.cval(value.CellMapOn)
     let _BrushedSamples_ = FSharp.Data.Adaptive.cval(value.BrushedSamples)
     let _HoverSample_ = FSharp.Data.Adaptive.cval(value.HoverSample)
@@ -119,6 +121,8 @@ type AdaptiveModel(value : Model) =
             _CellError_.Value <- value.CellError
             _CellErrorBefore_.Value <- value.CellErrorBefore
             _CellDist_.Value <- value.CellDist
+            _GraphError_.Value <- value.GraphError
+            _GraphDist_.Value <- value.GraphDist
             _CellMapOn_.Value <- value.CellMapOn
             _BrushedSamples_.Value <- value.BrushedSamples
             _HoverSample_.Value <- value.HoverSample
@@ -182,6 +186,8 @@ type AdaptiveModel(value : Model) =
     member __.CellError = _CellError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellErrorBefore = _CellErrorBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellDist = _CellDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.float32)[]>>
+    member __.GraphError = _GraphError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(InspectBlock)[]>>
+    member __.GraphDist = _GraphDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.CellMapOn = _CellMapOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.BrushedSamples = _BrushedSamples_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Set<Microsoft.FSharp.Core.int>>
     member __.HoverSample = _HoverSample_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.int>>

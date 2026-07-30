@@ -276,20 +276,109 @@ module GuiRail =
             }
         }
 
-    // ── The docked inspection toolbox: top-left below the navigator,
-    // present at Pair AND Pin (it escapes individual workflow steps; the Pin
-    // level shows the selected pin only), collapsible to its thin header
-    // edge — the header IS the top-left toggle. Keyed to the pair.
+    // ── The inspection toolbox's GRAPH body (Matrix scope): the same
+    // instruments resolved against the WHOLE registration tree instead of one
+    // edge — every error here is parent-relative (a child measured against the
+    // neighbour one hop toward the root), so only established edges
+    // contribute and an edgeless graph is legitimately empty.
+    let private graphBody (env : Env<Message>) (model : AdaptiveModel) =
+        // ONE pooled monochrome series: every established edge's samples
+        // concatenated into a single distribution (pooled SAMPLES, not bin-wise
+        // added counts) at the CURRENT registration state — N overlaid
+        // before-outlines would be unreadable, and colouring by edge would put
+        // a second key on the diagram. The brush is what identifies a source:
+        // its dots resolve to their own meshes in 3D.
+        let chartData =
+            AVal.custom (fun t ->
+                let inv = System.Globalization.CultureInfo.InvariantCulture
+                let gf (v : float) =
+                    if System.Double.IsNaN v || System.Double.IsInfinity v then "0" else v.ToString("0.###", inv)
+                let title = "Graph error vs parents — all registered edges"
+                let blocks = MeshView.inspectBlocksAt model t
+                let samples = blocks |> Array.collect (fun b -> b.Err.Samples)
+                if samples.Length = 0 then
+                    sprintf "{\"title\":\"%s\",\"ph\":\"register pairs to measure\",\"lo\":-10,\"hi\":10,\"bins\":48,\"series\":[]}" title
+                else
+                    let lo0, hi0 = ErrorRange.ofSamples samples
+                    let lo, hi = lo0 * 1000.0, hi0 * 1000.0
+                    let pad = max 1.0 (hi - lo) * 0.08
+                    let lo, hi = lo - pad, hi + pad
+                    let bins = 48
+                    let binW = (hi - lo) / float bins
+                    let hist : int[] = Array.zeroCreate bins
+                    for v in samples do
+                        let idx = max 0 (min (bins - 1) (int ((v * 1000.0 - lo) / binW)))
+                        hist.[idx] <- hist.[idx] + 1
+                    let med =
+                        let s = Array.sort samples
+                        gf (s.[s.Length / 2] * 1000.0)
+                    let lods = blocks |> Array.choose (fun b -> if b.Err.Count > 0 then Some b.Err.LodHalfWidth else None)
+                    let lod = if lods.Length = 0 then 0.0 else (Array.average lods) * 1000.0
+                    let series =
+                        sprintf "{\"name\":\"graph\",\"color\":\"%s\",\"med\":%s,\"g\":[%s],\"s\":[%s],\"h\":[%s],\"hb\":[]}"
+                            (c4bToHex (C4b(120uy, 120uy, 120uy))) med
+                            (Array.init samples.Length string |> String.concat ",")
+                            (samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
+                            (hist |> Array.map string |> String.concat ",")
+                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"series\":[%s]}"
+                        title (gf lo) (gf hi) bins (gf lod) series)
+        let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
+        let hoverData = model.HoverSample |> AVal.map (function Some g -> string g | None -> "")
+        div {
+            Class "cw-inspect"
+            div {
+                Class "cw-tools"
+                div {
+                    Class "rail-isolate"
+                    Attribute("title", "False-colour error map: paints every registered mesh with its own parent-relative error at once, on the shared scale. Unregistered meshes stay excluded outlines.")
+                    compactToggle "Error map" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
+                }
+            }
+            div {
+                Class "cw-readout"
+                span {
+                    Class "cw-readout-hover"
+                    model.HoverReadout |> AVal.map (function
+                        | Some (_, v) -> sprintf "sample %+.1f mm" (v * 1000.0)
+                        | None -> "")
+                }
+            }
+            div {
+                Class "cw-chart"
+                chartData |> AVal.map (fun j -> Some (Attribute("data-chart", j)))
+                brushedData |> AVal.map (fun bd -> Some (Attribute("data-brushed", bd)))
+                hoverData |> AVal.map (fun h -> Some (Attribute("data-hover", h)))
+                OnBoot chartJs
+            }
+            // The JS→Elm brush bridge (hidden; the chart dispatches input).
+            input {
+                Class "cw-brush-bridge"
+                Dom.OnInput(fun e ->
+                    let ids =
+                        (e.Value : string).Split(',')
+                        |> Array.choose (fun sSeg ->
+                            match System.Int32.TryParse sSeg with
+                            | true, v -> Some v
+                            | _ -> None)
+                        |> Array.toList
+                    env.Emit [SetBrushedSamples ids])
+            }
+        }
+
+    // ── The docked inspection toolbox: top-left below the navigator, present
+    // at EVERY level — Matrix reads the whole graph, Pair one edge, Pin the
+    // selected pin — collapsible to its thin header edge (the header IS the
+    // top-left toggle).
     let inspectPanel (env : Env<Message>) (model : AdaptiveModel) =
         let visible =
             (model.Focus, model.Sel) ||> AVal.map2 (fun f s ->
-                s.Pair.IsSome && (f = FocusPair || f = FocusPin))
+                f = FocusMatrix || s.Pair.IsSome)
         let content =
-            model.Sel
-            |> AVal.map (fun s -> s.Pair)
-            |> AVal.map (function
-                | Some (a, b) -> IndexList.ofList [ inspectBody env model a b ]
-                | None -> IndexList.empty)
+            (model.Focus, model.Sel) ||> AVal.map2 (fun f s ->
+                match f, s.Pair with
+                | FocusMatrix, _ -> IndexList.ofList [ graphBody env model ]
+                | _, Some (a, b) -> IndexList.ofList [ inspectBody env model a b ]
+                | _, None -> IndexList.empty)
             |> AList.ofAVal
         div {
             Class "inspect-dock"

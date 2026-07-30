@@ -65,6 +65,10 @@ type Message =
     // ── In-cell error inspection. Results are gen-guarded (UpdateHelpers).
     | CellErrorComputed of gen:int * after:(ScanPinId * Query.PairPinError)[] * before:(ScanPinId * Query.PairPinError)[] option
     | CellDistComputed of gen:int * dist:float32[]
+    // The graph-scope caches: the pooled per-edge sample stream and one map
+    // buffer per registered child, each vs its parent.
+    | GraphErrorComputed of gen:int * blocks:InspectBlock[]
+    | GraphDistComputed of gen:int * dist:(string * float32[])[]
     // Diagram x-range brush → the brushed sample gid set (replaces wholesale).
     | SetBrushedSamples of int list
     // 3D hover over a brushed sample (diagram cross-highlight + exact readout).

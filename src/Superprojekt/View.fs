@@ -94,7 +94,8 @@ module View =
                     let other = if m = a then b else a
                     Some other, (pfRaw |> Option.map (fun x -> if x = m then other else x))
                 | _ -> isoRaw, pfRaw
-            fun (name : string) -> MeshVisibility.shown focus sel.Pair iso hp pf name
+            let gs = MeshView.graphMapScopeAt model AdaptiveToken.Top
+            fun (name : string) -> MeshVisibility.shown focus sel.Pair iso hp gs pf name
 
         body {
             OnBoot [
@@ -240,25 +241,22 @@ module View =
 
                 // Exact pairwise error at a metric-world point (the P0
                 // exact-point endpoint), oriented MOV-relative-to-REF like every
-                // stored sample; k runs on the landed value.
-                let exactPairValueAt (world : V3d) (radius : float) (k : float -> unit) =
-                    match (AVal.force model.Sel).Pair with
-                    | None -> ()
-                    | Some (a, b) ->
-                        let g = AVal.force model.RegGraph
-                        let ka, kb = PairCell.key a b
-                        let _, mov = MatrixNav.pairRefMov g ka kb
-                        let flip = mov = ka
-                        let tOf (m : string) =
-                            let cc = AVal.force model.CommonCentroid
-                            let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) m
-                            (RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model m))).Forward
-                        async {
-                            let! v = Query.pairErrorAt ApiConfig.apiBase.Value ka (tOf ka) kb (tOf kb) world radius
-                            match v with
-                            | Some v -> k (if flip then -v else v)
-                            | None -> ()
-                        } |> Async.Start
+                // stored sample; k runs on the landed value. The pair comes from
+                // the hovered sample's own block, so a graph-scope dot measures
+                // against ITS parent.
+                let exactPairValueAt (refM : string) (mov : string) (world : V3d) (radius : float) (k : float -> unit) =
+                    let ka, kb = PairCell.key refM mov
+                    let flip = mov = ka
+                    let tOf (m : string) =
+                        let cc = AVal.force model.CommonCentroid
+                        let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) m
+                        (RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model m))).Forward
+                    async {
+                        let! v = Query.pairErrorAt ApiConfig.apiBase.Value ka (tOf ka) kb (tOf kb) world radius
+                        match v with
+                        | Some v -> k (if flip then -v else v)
+                        | None -> ()
+                    } |> Async.Start
 
                 Sg.OnTap(fun _ ->
                     // No pick without an arm (A5): the armed pick captures the
@@ -309,8 +307,8 @@ module View =
                         let now = nowMs ()
                         if now - sampleHoverMs > 80.0 then
                             sampleHoverMs <- now
-                            match AVal.force model.CellError, cursorScreen.Value with
-                            | Some cells, Some cur ->
+                            match cursorScreen.Value, MeshView.inspectBlocksAt model AdaptiveToken.Top with
+                            | Some cur, blocks when blocks.Length > 0 ->
                                 let cc = AVal.force model.CommonCentroid
                                 let scale = DatasetScale.active (AVal.force model.ActiveDataset) (AVal.force model.DatasetScales)
                                 let vp = (AVal.force view) * (AVal.force proj)
@@ -320,29 +318,30 @@ module View =
                                     V2d(0.5 * (ndc.X + 1.0) * float sizePx.X, 0.5 * (1.0 - ndc.Y) * float sizePx.Y)
                                 let mutable best = -1
                                 let mutable bestD = 12.0
-                                let mutable bestPin = None
+                                let mutable bestHit = None
                                 let mutable gid = 0
-                                for (pid, r) in cells do
+                                for b in blocks do
+                                    let r = b.Err
                                     for i in 0 .. r.Samples.Length - 1 do
                                         if Set.contains gid brush && i < r.Positions.Length then
                                             let d = Vec.distance (toScreen r.Positions.[i]) cur
                                             if d < bestD then
                                                 bestD <- d
                                                 best <- gid
-                                                bestPin <- Some (pid, r.Positions.[i])
+                                                bestHit <- Some (b, r.Positions.[i])
                                         gid <- gid + 1
                                 let cur = AVal.force model.HoverSample
                                 if best >= 0 then
                                     if cur <> Some best then
                                         env.Emit [SetHoverSample (Some best)]
-                                        match bestPin with
-                                        | Some (pid, pos) ->
+                                        match bestHit with
+                                        | Some (b, pos) ->
                                             let radius =
-                                                HashMap.tryFind pid (AVal.force (model.ScanPins.Pins |> AMap.toAVal))
+                                                HashMap.tryFind b.Pin (AVal.force (model.ScanPins.Pins |> AMap.toAVal))
                                                 |> Option.map (fun p -> p.InnerRadius)
                                                 |> Option.defaultValue (AVal.force model.QuickPinRadius)
                                             let gen = UpdateHelpers.cellErrorGen
-                                            exactPairValueAt pos radius (fun v ->
+                                            exactPairValueAt b.Ref b.Mov pos radius (fun v ->
                                                 env.Emit [HoverReadoutComputed(gen, best, v)])
                                         | None -> ()
                                 elif cur.IsSome then
@@ -388,17 +387,17 @@ module View =
                     | None -> None)
             let hoverTip =
                 AVal.custom (fun t ->
-                    match model.HoverReadout.GetValue t, model.CellError.GetValue t with
-                    | Some (gid, v), Some cells when model.HoverSample.GetValue t = Some gid ->
-                        // gid indexes the canonical CellError sample concatenation.
-                        let rec find (i : int) (cs : (ScanPinId * Query.PairPinError) list) =
-                            match cs with
+                    match model.HoverReadout.GetValue t with
+                    | Some (gid, v) when model.HoverSample.GetValue t = Some gid ->
+                        // gid indexes the canonical inspect sample stream.
+                        let rec find (i : int) (bs : InspectBlock list) =
+                            match bs with
                             | [] -> None
-                            | (_, r) :: rest ->
-                                if i < r.Samples.Length then
-                                    (if i < r.Positions.Length then Some r.Positions.[i] else None)
-                                else find (i - r.Samples.Length) rest
-                        match find gid (Array.toList cells) with
+                            | b :: rest ->
+                                if i < b.Err.Samples.Length then
+                                    (if i < b.Err.Positions.Length then Some b.Err.Positions.[i] else None)
+                                else find (i - b.Err.Samples.Length) rest
+                        match find gid (Array.toList (MeshView.inspectBlocksAt model t)) with
                         | Some w -> screenOf t w |> Option.map (fun p -> p, sprintf "%+.1f mm" (v * 1000.0))
                         | None -> None
                     | _ -> None)
@@ -418,9 +417,10 @@ module View =
                 match e.Key with
                 | " " ->
                     transact (fun () -> spaceHeld.Value <- true)
-                // The two spring-loaded blink keys (cell scope; the reducer
-                // refuses a press unless both pair meshes are resident). Key
-                // repeat is absorbed by the reducer's idempotence guard.
+                // The two spring-loaded blink keys — V in the pair workspace
+                // alone, B there and over the whole graph at Matrix; the
+                // reducer refuses a press whose subject isn't resident and
+                // registered. Key repeat is absorbed by its idempotence guard.
                 | "v" | "V" -> env.Emit [SetPeekVis true]
                 | "b" | "B" -> env.Emit [SetPeekPose true]
                 | "Escape" ->

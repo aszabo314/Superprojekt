@@ -89,6 +89,64 @@ module ScanPinScene =
             let c = Primitives.meshColor i
             V3d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0)
 
+        // The vis peek's isolate swap, mirrored from the shown-rule contexts.
+        let peekSwapAt (t : AdaptiveToken) (pair : (string * string) option)
+                       (iso : string option) (pf : string option) =
+            match iso, pair with
+            | Some m, Some (a, b) when model.PeekVis.GetValue t && (m = a || m = b) ->
+                let other = if m = a then b else a
+                Some other, (pf |> Option.map (fun x -> if x = m then other else x))
+            | _ -> iso, pf
+
+        // A point marker follows its MESH's solid visibility: a COMMITTED
+        // narrowing (tile-isolate lock / Sel.Point, peek-swapped) HIDES a
+        // marker whose mesh isn't solid (it would float in the air); a hover
+        // preview (tile hover, ◎-side hover, matrix hover) only FADES it to
+        // 0.15. The armed transient is excluded — the global armed fade
+        // already covers it. None = hidden, Some f = alpha factor.
+        let markerAlphaAt (t : AdaptiveToken) (mesh : string) : float option =
+            let focus = model.Focus.GetValue t
+            let sel = model.Sel.GetValue t
+            let isoC, pfC = peekSwapAt t sel.Pair (model.TileIsolate.GetValue t) sel.Point
+            if not (MeshVisibility.shown focus sel.Pair isoC None pfC mesh) then None
+            else
+                let isoF =
+                    match model.TileIsolateHover.GetValue t with
+                    | Some _ as h -> h
+                    | None -> model.TileIsolate.GetValue t
+                let pfF = MeshVisibility.pinFocusMesh (model.PinFocusHover.GetValue t) None sel.Point
+                let isoF, pfF = peekSwapAt t sel.Pair isoF pfF
+                let hp = model.MatrixHoverPair.GetValue t
+                if MeshVisibility.shown focus sel.Pair isoF hp pfF mesh then Some 1.0 else Some 0.15
+
+        // The mesh whose isolation is in effect or being previewed (◎-side
+        // hover > tile hover > tile lock > Sel.Point, peek-swapped) — drives
+        // the anchorage cue (dashed second ring) and the ◎-hover pin fade.
+        let isoCueMeshAt (t : AdaptiveToken) =
+            let sel = model.Sel.GetValue t
+            let raw =
+                match model.PinFocusHover.GetValue t with
+                | Some (HoverSide m) -> Some m
+                | Some HoverBoth -> None
+                | None ->
+                    match model.TileIsolateHover.GetValue t with
+                    | Some _ as h -> h
+                    | None ->
+                        match model.TileIsolate.GetValue t with
+                        | Some _ as l -> l
+                        | None -> sel.Point
+            match raw, sel.Pair with
+            | Some m, Some (a, b) when model.PeekVis.GetValue t && (m = a || m = b) ->
+                Some (if m = a then b else a)
+            | _ -> raw
+
+        // ◎-side hover: pin marks of pins NOT anchored to the hovered mesh
+        // fade (the anchored ones are the isolation's own pins).
+        let anchorHoverDimAt (t : AdaptiveToken) (anchorMesh : string) =
+            match model.PinFocusHover.GetValue t with
+            | Some (HoverSide hm) -> if anchorMesh = hm then 1.0 else 0.15
+            | _ -> 1.0
+
         // Pin centre pick proxies: small invisible spheres carrying the
         // double-tap zoom. Alpha 0 → invisible in colour but still present in
         // the depth/id pick pass.
@@ -145,6 +203,7 @@ module ScanPinScene =
                     let dim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
                     for (_, p) in HashMap.toSeq pins do
                         if pinShownAt t p.Pair then
+                            let dim = dim * anchorHoverDimAt t p.AnchorMesh
                             let col = V4d(0.45, 0.48, 0.53, 0.4 * dim)
                             let w = 1.0
                             let cR = ScanPin.renderCentre cc scale (pinCentreWorldAt t p)
@@ -176,7 +235,9 @@ module ScanPinScene =
                             let scale = datasetScale.GetValue t
                             // Committed marks fade to near-invisible while a
                             // pick is armed — they must not hide the pick spot.
-                            let dim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
+                            let dim =
+                                (if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0)
+                                * anchorHoverDimAt t anchorMesh
                             let a = 0.65 * dim
                             let coreW = 1.4
                             let out = ResizeArray<V3d * V3d * V4d * float>()
@@ -186,6 +247,13 @@ module ScanPinScene =
                             let axis = match upNormalA.GetValue t with Some u -> u | None -> V3d.OOI
                             let nN, u, v = basisFromNormal axis
                             duplex (fun c w -> addRing out cR u v rR c w 64) a coreW
+                            // Anchorage cue while the anchor mesh is isolated
+                            // (or its isolation previewed) — the tiles' dashed
+                            // second ring, adopted in 3D.
+                            (match isoCueMeshAt t with
+                             | Some m when m = anchorMesh ->
+                                addDashedRing out cR u v (rR * 1.08) (V4d(1.0, 1.0, 1.0, 0.85 * dim)) 1.5 64
+                             | _ -> ())
                             // 1 m direction indicator along the display axis — thin
                             // + semitransparent (orientation, not geometry).
                             let axisCol = V4d(Primitives.pinInkV3d, 0.35 * dim)
@@ -210,21 +278,27 @@ module ScanPinScene =
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
                 let ptVal = pinVal |> AVal.map (Option.map (fun p -> p.Pair, p.PointA, p.PointB))
                 let markerOn (side : int) =
-                    // side 0 = fst Pair, 1 = snd Pair
+                    // side 0 = fst Pair, 1 = snd Pair. The marker follows its
+                    // MESH's solid visibility (markerAlphaAt): hidden under a
+                    // committed isolation of the other mesh, faded during a
+                    // hover preview of one.
                     let world =
                         AVal.custom (fun t ->
                             match ptVal.GetValue t with
                             | Some (pair, pa, pb) when pinShownAt t pair ->
                                 let mesh = if side = 0 then fst pair else snd pair
-                                let local = if side = 0 then pa else pb
-                                let cc = model.CommonCentroid.GetValue t
-                                let s = datasetScale.GetValue t
-                                let w = (dispWorldAt t mesh).Forward.TransformPos local
-                                Some (ScanPin.renderCentre cc s w, meshColAt t mesh)
+                                match markerAlphaAt t mesh with
+                                | None -> None
+                                | Some f ->
+                                    let local = if side = 0 then pa else pb
+                                    let cc = model.CommonCentroid.GetValue t
+                                    let s = datasetScale.GetValue t
+                                    let w = (dispWorldAt t mesh).Forward.TransformPos local
+                                    Some (ScanPin.renderCentre cc s w, meshColAt t mesh, f)
                             | _ -> None)
                     let trafo =
                         world |> AVal.map (function
-                            | Some (c, _) -> Trafo3d.Scale 0.05 * Trafo3d.Translation c
+                            | Some (c, _, _) -> Trafo3d.Scale 0.05 * Trafo3d.Translation c
                             | None -> Trafo3d.Scale 0.0)
                     // Committed markers fade while a pick is armed (they must
                     // not hide the pick spot); sphereShell blends, so the
@@ -234,14 +308,14 @@ module ScanPinScene =
                     let fill =
                         (world, armDim) ||> AVal.map2 (fun w d ->
                             match w with
-                            | Some (_, col) -> V4d(col, d)
+                            | Some (_, col, f) -> V4d(col, d * f)
                             | None -> V4d.Zero)
                     let outline =
                         (world, armDim) ||> AVal.map2 (fun w d ->
                             match w with
-                            | Some (c, _) ->
+                            | Some (c, _, f) ->
                                 let out = ResizeArray<V3d * V3d * V4d * float>()
-                                addWireSphere out c 0.065 (V4d(1.0, 1.0, 1.0, 0.95 * d)) 1.6 16
+                                addWireSphere out c 0.065 (V4d(1.0, 1.0, 1.0, 0.95 * d * f)) 1.6 16
                                 out.ToArray()
                             | None -> [||])
                     [ sphereShell view proj notFullscreen trafo fill
@@ -309,12 +383,13 @@ module ScanPinScene =
                                 out.Add seg
                          | None -> ())
                         let pt (mesh : string) (lp : V3d option) =
-                            match lp with
-                            | Some local ->
+                            match lp, markerAlphaAt t mesh with
+                            | Some local, Some f ->
+                                let c = V4d(white.XYZ, white.W * f)
                                 let cR = ScanPin.renderCentre cc s ((dispWorldAt t mesh).Forward.TransformPos local)
-                                addWireSphere out cR 0.06 white 1.8 20
-                                addCross out cR 0.075 white 1.8
-                            | None -> ()
+                                addWireSphere out cR 0.06 c 1.8 20
+                                addCross out cR 0.075 c 1.8
+                            | _ -> ()
                         pt (fst d.Pair) d.PointA
                         pt (snd d.Pair) d.PointB
                         out.ToArray()

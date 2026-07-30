@@ -120,18 +120,14 @@ module MeshView =
     let private scaleFor (model : AdaptiveModel) (name : string) =
         model.DatasetScales |> AVal.map (fun m -> DatasetScale.forMesh m name)
 
-    // The selected pair's MOV while the given peek key holds — the blink keys
-    // are pair-scope only, REF/MOV derived from the tree (nearer-root = REF).
+    // The selected pair's MOV while the POSE peek holds — REF/MOV derived from
+    // the tree (nearer-root = REF). The vis peek doesn't use this: it swaps
+    // the effective isolate instead (see the shown-rule contexts).
     let private peekMovAt (held : bool) (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
         held &&
         (match (model.Sel.GetValue t).Pair with
          | Some (a, b) -> snd (MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b) = name
          | None -> false)
-
-    // The visibility peek hides the MOV outright (REF alone — never a ghost:
-    // the blink needs a clean swap, not a fade).
-    let peekVisHiddenAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (name : string) =
-        peekMovAt (model.PeekVis.GetValue t) model t name
 
     // The pose the mesh currently SHOWS: the composed graph pose — flipped to
     // the AS-LOADED baseline while the pose peek holds the cell's MOV (visual
@@ -362,14 +358,25 @@ module MeshView =
             AVal.custom (fun t ->
                 let focus = model.Focus.GetValue t
                 let sel = model.Sel.GetValue t
-                let iso =
+                let isoRaw =
                     match model.TileIsolateHover.GetValue t with
                     | Some _ as h -> h
                     | None -> model.TileIsolate.GetValue t
                 let hp = model.MatrixHoverPair.GetValue t
-                let pf =
+                let pfRaw =
                     MeshVisibility.pinFocusMesh (model.PinFocusHover.GetValue t)
                         (model.ArmedPick.GetValue t) sel.Point
+                // The vis peek swaps a pair-mesh isolate to the OTHER pair
+                // mesh while held (same spot, other epoch) — derived only,
+                // release reverts because the lock itself never moves. The
+                // Pin level's point narrowing swaps with it (Sel.Point rides
+                // the same lock — scope ∩ iso would go empty otherwise).
+                let iso, pf =
+                    match isoRaw, sel.Pair with
+                    | Some m, Some (a, b) when model.PeekVis.GetValue t && (m = a || m = b) ->
+                        let other = if m = a then b else a
+                        Some other, (pfRaw |> Option.map (fun x -> if x = m then other else x))
+                    | _ -> isoRaw, pfRaw
                 focus, sel.Pair, iso, hp, pf)
         model.MeshNames |> AList.map (fun name ->
             let loaded = loadMeshAsync (fun () -> loadFinished name) name
@@ -394,11 +401,8 @@ module MeshView =
             let rangeMax =
                 (rangeWorldA, scale, loaded.localMaxR) |||> AVal.map3 (fun g s lr ->
                     float32 (max 1e-6 ((if g > 0.0 then g else lr) * s)))
-            // Inactive meshes still render (as ghost); gate on load state and
-            // the visibility blink (the MOV vanishes outright while held).
-            let renderEnabled =
-                AVal.custom (fun t ->
-                    loaded.fvc.GetValue t > 3 && not (peekVisHiddenAt model t name))
+            // Inactive meshes still render (as ghost); gate on load state only.
+            let renderEnabled = loaded.fvc |> AVal.map (fun n -> n > 3)
             let meshColor =
                 meshIndices |> AVal.map (fun m ->
                     let i = Map.tryFind name m |> Option.defaultValue 0
@@ -575,9 +579,7 @@ module MeshView =
                 let loaded, trafo = offscreenMesh model name
                 // Every loaded mesh renders into the G-buffer (visibility gates the
                 // main pass only).
-                let active =
-                    AVal.custom (fun t ->
-                        loaded.fvc.GetValue t > 3 && not (peekVisHiddenAt model t name))
+                let active = loaded.fvc |> AVal.map (fun n -> n > 3)
                 let meshColor =
                     meshIndices |> AVal.map (fun m ->
                         let i = Map.tryFind name m |> Option.defaultValue 0
@@ -635,8 +637,7 @@ module MeshView =
                 let active =
                     AVal.custom (fun t ->
                         activeA.GetValue t
-                        && loaded.fvc.GetValue t > 3 && (channel.GetValue t) < 8
-                        && not (peekVisHiddenAt model t name))
+                        && loaded.fvc.GetValue t > 3 && (channel.GetValue t) < 8)
                 sg {
                     Sg.Active active
                     Sg.Trafo trafo

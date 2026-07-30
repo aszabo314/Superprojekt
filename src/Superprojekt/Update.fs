@@ -384,10 +384,14 @@ module Update =
             { model with CellMapOn = not model.CellMapOn }
         | SetPeekVis held ->
             // Pair-workspace scope (Pair AND Pin) + both pair meshes
-            // GPU-resident — otherwise the press does NOT peek (an unloaded
-            // state would blink a blank). An active isolate never disables a
-            // peek. Releases always land.
-            if model.PeekVis = held || (held && not (peekPairLoaded model)) then model
+            // GPU-resident + a pair-mesh isolate LOCK — the peek swaps the
+            // isolation to the pair's other mesh while held; without an
+            // isolate there is nothing to swap. Releases always land.
+            let isoOk =
+                match model.TileIsolate, model.Sel.Pair with
+                | Some m, Some (a, b) -> m = a || m = b
+                | _ -> false
+            if model.PeekVis = held || (held && not (peekPairLoaded model && isoOk)) then model
             else { model with PeekVis = held }
         | SetPeekPose held ->
             // Same scope as the vis peek, plus the pair must be REGISTERED —

@@ -63,9 +63,9 @@ module GuiTopBar =
             // even when the cursor slides off the button mid-hold. Always
             // visible, DISABLED when a peek couldn't land — hidden buttons are
             // undiscoverable chrome. Mirrors the reducer's guards: V = the
-            // pair loaded (isolation never disables it), B = additionally
-            // registered.
-            let canVis =
+            // pair loaded + a pair-mesh isolate lock (the peek swaps it),
+            // B = the pair loaded + registered.
+            let pairLoaded =
                 AVal.custom (fun t ->
                     (match model.Focus.GetValue t with FocusPair | FocusPin -> true | FocusMatrix -> false) &&
                     (match (model.Sel.GetValue t).Pair with
@@ -73,8 +73,13 @@ module GuiTopBar =
                         let loaded = model.MeshesLoaded.Content.GetValue t
                         HashSet.contains a loaded && HashSet.contains b loaded
                      | None -> false))
+            let canVis =
+                (pairLoaded, model.TileIsolate, model.Sel) |||> AVal.map3 (fun ok iso s ->
+                    ok && (match iso, s.Pair with
+                           | Some m, Some (a, b) -> m = a || m = b
+                           | _ -> false))
             let canPose =
-                (canVis, model.RegGraph, model.Sel) |||> AVal.map3 (fun ok g s ->
+                (pairLoaded, model.RegGraph, model.Sel) |||> AVal.map3 (fun ok g s ->
                     ok && (match s.Pair with
                            | Some (a, b) -> (RegGraph.pairEdge a b g).IsSome
                            | None -> false))
@@ -95,8 +100,8 @@ module GuiTopBar =
             div {
                 Class "tb-peeks"
                 span { Class "lp-sublabel"; "Peek" }
-                peekBtn "◌ V" "Hold: the moving mesh blinks off — is this the same rock? (same as holding V)"
-                    " — available at the Pair/Pin level once both pair meshes are loaded"
+                peekBtn "◌ V" "Hold: flip the isolation to the pair's other mesh — same spot, other epoch (same as holding V)"
+                    " — available at the Pair/Pin level while one of the pair meshes is isolated"
                     canVis model.PeekVis (fun h -> env.Emit [SetPeekVis h])
                 peekBtn "↺ B" "Hold: the moving mesh snaps to its as-loaded pose — did registration help? (same as holding B)"
                     " — available at the Pair/Pin level once the pair is registered"

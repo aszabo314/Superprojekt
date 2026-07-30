@@ -256,11 +256,14 @@ type Model =
         // The Pin panel's radius disclosure: the slider stays hidden until its
         // edit is clicked. Transient — collapses on pin change and focus jump.
         PinRadiusEditOpen   : bool
-        // The two spring-loaded blink-comparator keys (cell scope only, REF/MOV
-        // from the tree; hold to swap, release to return; zero config):
-        //   PeekVis  — the MOV mesh blinks OFF (the REF alone answers "same rock?");
-        //   PeekPose — the MOV displays AS-LOADED instead of composed (REF
-        //              static — "did registration help?"). Purely visual.
+        // The two spring-loaded blink-comparator keys (pair scope; hold to
+        // swap, release to return; zero config):
+        //   PeekVis  — the isolation flips to the pair's OTHER mesh (same spot,
+        //              other epoch); derived in the shown rule, the isolate
+        //              lock itself never moves. Needs a pair-mesh isolate.
+        //   PeekPose — the MOV (REF/MOV from the tree) displays AS-LOADED
+        //              instead of composed (REF static — "did registration
+        //              help?"). Purely visual.
         PeekVis             : bool
         PeekPose            : bool
         // The transient loop awaiting FORCED resolution — the blocking modal is

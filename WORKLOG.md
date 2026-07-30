@@ -7,6 +7,56 @@
 > *(A1–A3 amendment instance completed 2026-07-28 — docs reconstructed.)*
 > *(A4–A7 amendment instance completed 2026-07-29 — docs reconstructed.)*
 
+## Marker visibility rides the mesh + 3D anchorage cue (2026-07-30)
+
+- **General rule (user spec)**: a correspondence point marker — committed
+  or a draft's placed point — shows only while its mesh renders solid.
+  `ScanPinScene.markerAlphaAt` evaluates the ONE shown rule twice: with
+  committed inputs (tile-isolate lock / `Sel.Point`, peek-swapped; no
+  hovers, no armed) → not shown = HIDDEN (floating marker); with preview
+  inputs (+ tile hover, ◎-side hover via `pinFocusMesh`, matrix hover) →
+  not shown = FADED 0.15 (transparent preview, not a pop). The armed
+  transient stays excluded — the global armed fade covers it. Applied to
+  `pointMarkers` (fill + outline) and the draft's placed side points.
+- **Pin areas never hide with isolation** (per the tiles' rule): every
+  pair pin's rings render at their original locations; pins ANCHORED to
+  the effective/previewed isolated mesh (`isoCueMeshAt`: ◎-side hover >
+  tile hover > lock > Sel.Point, peek-swapped) add the tiles' dashed
+  anchorage ring in 3D (r×1.08, white dashed, `addDashedRing`).
+- **◎-side hover fade** (`anchorHoverDimAt`): pin marks (equator ring +
+  axis + contact rings + centre jack) of pins NOT anchored to the
+  hovered mesh fade to 0.15; flags/labels stay (navigation furniture).
+- Docs: CLAUDE.md Pins bullet, README pin-panel passage.
+- Green: client type-check.
+
+## Vis peek redesigned: isolate swap instead of MOV blink-off (2026-07-29)
+
+- **Was broken**: V always blinked the same mesh — `peekMovAt` derives
+  MOV via `MatrixNav.pairRefMov`, which for an unregistered pair falls
+  through to key order, so the "moving" mesh never depended on what the
+  user was looking at.
+- **New semantics (user spec)**: V depends on the isolate state — with a
+  pair mesh isolated, holding V flips the isolation to the pair's OTHER
+  mesh (only it visible, same spot other epoch); release reverts to the
+  previous isolate. No isolate ⇒ the peek does nothing (button greyed).
+- **Implementation — derived, not stored**: the swap happens in the two
+  effective-isolate sites of the shown rule (`MeshView.buildScene`
+  shownCtx + `View.shownNow`, so shown = clickable holds during the
+  blink); the Pin level's point narrowing (`pinFocusMesh`) swaps WITH
+  the isolate — `Sel.Point` rides the same lock, so scope ∩ iso would
+  otherwise go empty and the blink would show nothing solid; the
+  `TileIsolate` lock never moves, so revert is automatic.
+  The old MOV-hide (`peekVisHiddenAt` + gates on the three node
+  families: main surface, G-buffer, coverage) is DELETED — the blink now
+  renders exactly like clicking the other tile. `peekMovAt` stays for
+  the pose peek alone.
+- **Guards**: reducer `SetPeekVis` now also requires `TileIsolate` ∈ the
+  selected pair; GuiTopBar splits a shared `pairLoaded` into `canVis`
+  (+ isolate lock) and `canPose` (+ registered — NOT isolate-gated).
+  Tooltips updated.
+- Docs: CLAUDE.md peek section rewritten; README peek bullet.
+- Green: client type-check.
+
 ## Fix: peeks permanently dead — mesh-load completions were dropped (2026-07-29)
 
 - **Root cause**: `MeshView.loadMeshAsync` fired the completion callback

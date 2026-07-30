@@ -77,14 +77,11 @@ module View =
         let shownNow () =
             let focus = AVal.force model.Focus
             let sel = AVal.force model.Sel
-            let isoRaw =
-                match AVal.force model.TileIsolateHover with
-                | Some _ as h -> h
-                | None -> AVal.force model.TileIsolate
             let hp = AVal.force model.MatrixHoverPair
-            let pfRaw =
-                MeshVisibility.pinFocusMesh (AVal.force model.PinFocusHover)
-                    (AVal.force model.ArmedPick) sel.Point
+            let isoRaw, pfRaw =
+                MeshVisibility.effectiveNarrowing (AVal.force model.PinFocusHover)
+                    (AVal.force model.ArmedPick) (AVal.force model.TileIsolateHover)
+                    (AVal.force model.TileIsolate) sel.Point
             // Mirror the vis peek's isolate (+ point-narrowing) swap — shown =
             // clickable holds during the blink too.
             let iso, pf =

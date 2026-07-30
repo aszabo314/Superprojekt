@@ -8,6 +8,34 @@
 > *(A4–A7 amendment instance completed 2026-07-29 — docs reconstructed.)*
 > *(A8–A10 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## Post-A10: hover previews REPLACE the isolation; crosshairs mute (2026-07-30)
+
+- **Was inconsistent (user report)**: with a mesh isolated, hovering a
+  DIFFERENT mesh (its tile, or the other side's ◎ button) previewed
+  nothing — the hover narrowing intersected the stale lock, so the mesh
+  being pointed at was exactly the invisible one.
+- **ONE narrowing helper** `MeshVisibility.effectiveNarrowing hover armed
+  isoHover isoLock point` (Model.fs) replaces `pinFocusMesh`: a transient
+  target (◎-side hover > armed A/B pick > tile hover) now REPLACES the
+  committed `TileIsolate`+`Sel.Point` pair on **both** components, so the
+  hovered mesh becomes the isolated one; ◉-Pin hover previews the release
+  (no narrowing); an armed centre/probe keeps the lock but lifts the
+  point narrowing (aiming needs both meshes); un-hover falls back to the
+  committed pair — restore is free, no state is written. All four
+  consumers go through it (`MeshView.buildScene` shownCtx,
+  `View.shownNow`, `ScanPinScene.markerAlphaAt`/`isoCueMeshAt`), so
+  shown = clickable and the marks follow the same preview.
+- **Crosshairs MUTE, never vanish (user spec)**: `markerAlphaAt` now
+  returns three states — solid under the effective narrowing = 1.0,
+  solid only under the committed state = 0.15, neither = None (hidden).
+  The reveal hides on None (it would float in the air); the crosshair
+  takes the same factor but floors at 0.15 instead of hiding, so a point
+  whose mesh is hidden by isolation reads as a faint ghost locator.
+- Docs: CLAUDE.md shown-rule bullet (effectiveNarrowing), crosshair
+  bullet (mutes, not exempt), reveal-visibility bullet (three states),
+  peek bullet; README pin passage (hover preview + muting).
+- Green: client type-check.
+
 ## A10 — correspondence marker rework: crosshair + intersection reveal (2026-07-30)
 
 - **Ball marker DELETED (main 3D)**: the mesh-colour icosphere + white

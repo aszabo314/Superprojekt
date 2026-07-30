@@ -99,24 +99,33 @@ module FocusLevel =
 
 // The ONE shown/clickable rule per focus level: Matrix shows all meshes
 // (narrowed transiently by the matrix hover preview); Pair isolates the
-// selected pair's two meshes; Pin narrows further to the effective focus mesh
-// (pinFocusMesh — focus buttons / armed pick / hover). The tile isolate
-// intersects EVERY level's scope (a transient lens, tile-click/hover-driven).
-// Every consumer — render MeshActive, raycast candidate sets, coverage
-// gating — goes through it.
+// selected pair's two meshes; Pin narrows further to the effective focus mesh.
+// The tile isolate intersects EVERY level's scope. Every consumer — render
+// MeshActive, raycast candidate sets, coverage gating — goes through it.
 module MeshVisibility =
-    // The Pin level's effective mesh isolation: the button-hover preview wins,
-    // else an armed correspondence pick isolates its mesh, else the focused
-    // side (Sel.Point). None = both pair meshes.
-    let pinFocusMesh (hover : PinHover option) (armed : ArmTarget option) (point : string option) =
+    // The ONE effective (isolate, pinFocus) narrowing pair fed to `shown`: a
+    // transient target — ◎-side hover > armed A/B pick > tile hover —
+    // REPLACES the committed lock+point pair on BOTH components (hovering
+    // another mesh while one is isolated must preview THAT mesh isolated;
+    // intersecting with the stale lock would show nothing), and un-hover
+    // falls back, so the committed state restores with zero bookkeeping.
+    // ◉-Pin hover previews the release (no narrowing). An armed centre/probe
+    // keeps the lock but lifts the point narrowing (aiming needs both
+    // meshes).
+    let effectiveNarrowing (hover : PinHover option) (armed : ArmTarget option)
+                           (isoHover : string option) (isoLock : string option)
+                           (point : string option) =
         match hover with
-        | Some (HoverSide m) -> Some m
-        | Some HoverBoth -> None
+        | Some (HoverSide m) -> Some m, Some m
+        | Some HoverBoth -> None, None
         | None ->
             match armed with
-            | Some (ArmPoint m) -> Some m
-            | Some ArmCentre | Some ArmProbe -> None
-            | None -> point
+            | Some (ArmPoint m) -> Some m, Some m
+            | Some ArmCentre | Some ArmProbe -> isoLock, None
+            | None ->
+                match isoHover with
+                | Some m -> Some m, Some m
+                | None -> isoLock, point
 
     let shown (focus : FocusLevel) (selPair : (string * string) option)
               (isolate : string option) (hoverPair : (string * string) option)

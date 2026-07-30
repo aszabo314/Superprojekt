@@ -352,20 +352,17 @@ module MeshView =
         // false-colour read is comparable.
         let cellRangeA =
             (model.CellError, model.CellDist) ||> AVal.map2 cellRange
-        // The shown rule's shared inputs (tile isolate: hover wins over the
-        // click lock) — ONE context aval, N cheap per-mesh bool projections.
+        // The shown rule's shared inputs (the ONE effective narrowing) — ONE
+        // context aval, N cheap per-mesh bool projections.
         let shownCtx =
             AVal.custom (fun t ->
                 let focus = model.Focus.GetValue t
                 let sel = model.Sel.GetValue t
-                let isoRaw =
-                    match model.TileIsolateHover.GetValue t with
-                    | Some _ as h -> h
-                    | None -> model.TileIsolate.GetValue t
                 let hp = model.MatrixHoverPair.GetValue t
-                let pfRaw =
-                    MeshVisibility.pinFocusMesh (model.PinFocusHover.GetValue t)
-                        (model.ArmedPick.GetValue t) sel.Point
+                let isoRaw, pfRaw =
+                    MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t)
+                        (model.ArmedPick.GetValue t) (model.TileIsolateHover.GetValue t)
+                        (model.TileIsolate.GetValue t) sel.Point
                 // The vis peek swaps a pair-mesh isolate to the OTHER pair
                 // mesh while held (same spot, other epoch) — derived only,
                 // release reverts because the lock itself never moves. The

@@ -99,47 +99,38 @@ module ScanPinScene =
             | _ -> iso, pf
 
         // A correspondence point's mesh-bound marks (the intersection reveal)
-        // follow their MESH's solid visibility: a COMMITTED narrowing
-        // (tile-isolate lock / Sel.Point, peek-swapped) HIDES them (they would
-        // float in the air); a hover preview (tile hover, ◎-side hover,
-        // matrix hover) only FADES them to 0.15. The armed transient is
-        // excluded — the global armed fade already covers it. The crosshair
-        // locator is EXEMPT. None = hidden, Some f = alpha factor.
+        // follow their MESH's solid visibility: solid under the EFFECTIVE
+        // narrowing (hover previews replace the lock — a previewed-solid mesh
+        // shows its marks) = full; solid only under the COMMITTED state
+        // (lock / Sel.Point, peek-swapped) = faded 0.15 (the preview dims it,
+        // never pops it away); solid under neither = HIDDEN (it would float
+        // in the air). The armed transient is excluded — the global armed
+        // fade already covers it. None = hidden, Some f = alpha factor.
         let markerAlphaAt (t : AdaptiveToken) (mesh : string) : float option =
             let focus = model.Focus.GetValue t
             let sel = model.Sel.GetValue t
             let isoC, pfC = peekSwapAt t sel.Pair (model.TileIsolate.GetValue t) sel.Point
-            if not (MeshVisibility.shown focus sel.Pair isoC None pfC mesh) then None
-            else
-                let isoF =
-                    match model.TileIsolateHover.GetValue t with
-                    | Some _ as h -> h
-                    | None -> model.TileIsolate.GetValue t
-                let pfF = MeshVisibility.pinFocusMesh (model.PinFocusHover.GetValue t) None sel.Point
-                let isoF, pfF = peekSwapAt t sel.Pair isoF pfF
-                let hp = model.MatrixHoverPair.GetValue t
-                if MeshVisibility.shown focus sel.Pair isoF hp pfF mesh then Some 1.0 else Some 0.15
+            let committed = MeshVisibility.shown focus sel.Pair isoC None pfC mesh
+            let isoF, pfF =
+                MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t) None
+                    (model.TileIsolateHover.GetValue t) (model.TileIsolate.GetValue t) sel.Point
+            let isoF, pfF = peekSwapAt t sel.Pair isoF pfF
+            let hp = model.MatrixHoverPair.GetValue t
+            if MeshVisibility.shown focus sel.Pair isoF hp pfF mesh then Some 1.0
+            elif committed then Some 0.15
+            else None
 
-        // The mesh whose isolation is in effect or being previewed (◎-side
-        // hover > tile hover > tile lock > Sel.Point, peek-swapped) — drives
-        // the anchorage cue (dashed second ring) and the ◎-hover pin fade.
+        // The mesh whose isolation is in effect or being previewed (the ONE
+        // effective narrowing, peek-swapped; iso wins over the point) —
+        // drives the anchorage cue (dashed second ring) and the ◎-hover pin
+        // fade.
         let isoCueMeshAt (t : AdaptiveToken) =
             let sel = model.Sel.GetValue t
-            let raw =
-                match model.PinFocusHover.GetValue t with
-                | Some (HoverSide m) -> Some m
-                | Some HoverBoth -> None
-                | None ->
-                    match model.TileIsolateHover.GetValue t with
-                    | Some _ as h -> h
-                    | None ->
-                        match model.TileIsolate.GetValue t with
-                        | Some _ as l -> l
-                        | None -> sel.Point
-            match raw, sel.Pair with
-            | Some m, Some (a, b) when model.PeekVis.GetValue t && (m = a || m = b) ->
-                Some (if m = a then b else a)
-            | _ -> raw
+            let iso, pf =
+                MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t) None
+                    (model.TileIsolateHover.GetValue t) (model.TileIsolate.GetValue t) sel.Point
+            let iso, pf = peekSwapAt t sel.Pair iso pf
+            match iso with Some _ -> iso | None -> pf
 
         // ◎-side hover: pin marks of pins NOT anchored to the hovered mesh
         // fade (the anchored ones are the isolation's own pins).
@@ -305,12 +296,12 @@ module ScanPinScene =
         // Correspondence LOCATOR: a camera-aligned, screen-constant crosshair
         // whose centre IS the pick point — no 3D body, nothing occluded, an
         // open centre so the point itself stays bare. Mesh-identity colour
-        // over an ink under-stroke; ALWAYS view-visible (deliberately exempt
-        // from the mesh-solid visibility rule — it is the locator); only the
-        // pair scope and the global armed fade apply. One segs pass for
-        // committed pins AND the draft's placed points (view-dependent by
-        // design — recomputes per camera move; a handful of pins keeps it
-        // cheap).
+        // over an ink under-stroke. NEVER hides (it is the locator) — but a
+        // point whose mesh isn't solid (isolation/preview) MUTES to the fade
+        // level instead of floating at full strength; the pair scope and the
+        // global armed fade apply on top. One segs pass for committed pins
+        // AND the draft's placed points (view-dependent by design —
+        // recomputes per camera move; a handful of pins keeps it cheap).
         let crosshairNode =
             let segs =
                 AVal.custom (fun t ->
@@ -323,19 +314,20 @@ module ScanPinScene =
                     let up = vb.TransformDir V3d.OIO
                     let armDim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
                     let out = ResizeArray<V3d * V3d * V4d * float>()
-                    let addCrosshair (cR : V3d) (col : V3d) =
+                    let addCrosshair (cR : V3d) (col : V3d) (dim : float) =
                         let h = 0.025 * Vec.length (eye - cR)
-                        let ink = V4d(Primitives.pinInkV3d, 0.9 * armDim)
-                        let core = V4d(col, 0.95 * armDim)
+                        let ink = V4d(Primitives.pinInkV3d, 0.9 * dim)
+                        let core = V4d(col, 0.95 * dim)
                         for d in [| right; -right; up; -up |] do
                             let p0 = cR + d * (0.3 * h)
                             let p1 = cR + d * h
                             out.Add(p0, p1, ink, 3.4)
                             out.Add(p0, p1, core, 1.7)
                     let pt (mesh : string) (local : V3d) =
+                        let vis = match markerAlphaAt t mesh with Some f -> f | None -> 0.15
                         addCrosshair
                             (ScanPin.renderCentre cc s ((dispWorldAt t mesh).Forward.TransformPos local))
-                            (meshColAt t mesh)
+                            (meshColAt t mesh) (armDim * vis)
                     for (_, p) in HashMap.toSeq pins do
                         if pinShownAt t p.Pair then
                             pt (fst p.Pair) p.PointA
@@ -352,8 +344,8 @@ module ScanPinScene =
         // point's own mesh (concentric contact rings + vertical relief cuts,
         // mesh-local from the server) — white fading to transparent with
         // metric distance from the point. Follows the mesh-solid visibility
-        // rule (markerAlphaAt) and normal depth testing, the crosshair stays
-        // regardless.
+        // rule (markerAlphaAt) and normal depth testing; the crosshair takes
+        // the same factor but mutes instead of hiding.
         let revealSegs (t : AdaptiveToken) (out : ResizeArray<V3d * V3d * V4d * float>)
                        (mesh : string) (localPt : V3d) (lines : V3d[][]) =
             match markerAlphaAt t mesh with

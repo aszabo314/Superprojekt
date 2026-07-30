@@ -90,7 +90,11 @@ module GuiOverlays =
                     && ((model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome)
                         || not (Set.isEmpty (model.BrushedSamples.GetValue t)))
                 | FocusMatrix ->
-                    (model.CellMapOn.GetValue t && not (Map.isEmpty (model.GraphDist.GetValue t)))
+                    let dists =
+                        match MeshView.graphSideAt model t with
+                        | EdgeBefore -> model.GraphDistBefore.GetValue t
+                        | EdgeAfter -> model.GraphDist.GetValue t
+                    (model.CellMapOn.GetValue t && not (Map.isEmpty dists))
                     || not (Set.isEmpty (model.BrushedSamples.GetValue t)))
         // The 3D-hovered dot's value, connecting "this value" to the scale: the
         // exact probed number the tooltip shows, or the dot's own sample value

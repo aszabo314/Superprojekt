@@ -1,5 +1,5 @@
-//451d8688-d8b1-b3f5-c4f0-27c9664ec09a
-//1bdcc7d5-5f37-1580-504a-ed84f78c8945
+//21fba5fd-575a-87d4-eeea-2c897e982300
+//e5540569-d690-8944-5928-e0230da12dff
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -50,7 +50,9 @@ type AdaptiveModel(value : Model) =
     let _CellErrorBefore_ = FSharp.Data.Adaptive.cval(value.CellErrorBefore)
     let _CellDist_ = FSharp.Data.Adaptive.cval(value.CellDist)
     let _GraphError_ = FSharp.Data.Adaptive.cval(value.GraphError)
+    let _GraphErrorBefore_ = FSharp.Data.Adaptive.cval(value.GraphErrorBefore)
     let _GraphDist_ = FSharp.Data.Adaptive.cval(value.GraphDist)
+    let _GraphDistBefore_ = FSharp.Data.Adaptive.cval(value.GraphDistBefore)
     let _CellMapOn_ = FSharp.Data.Adaptive.cval(value.CellMapOn)
     let _BrushedSamples_ = FSharp.Data.Adaptive.cval(value.BrushedSamples)
     let _HoverSample_ = FSharp.Data.Adaptive.cval(value.HoverSample)
@@ -122,7 +124,9 @@ type AdaptiveModel(value : Model) =
             _CellErrorBefore_.Value <- value.CellErrorBefore
             _CellDist_.Value <- value.CellDist
             _GraphError_.Value <- value.GraphError
+            _GraphErrorBefore_.Value <- value.GraphErrorBefore
             _GraphDist_.Value <- value.GraphDist
+            _GraphDistBefore_.Value <- value.GraphDistBefore
             _CellMapOn_.Value <- value.CellMapOn
             _BrushedSamples_.Value <- value.BrushedSamples
             _HoverSample_.Value <- value.HoverSample
@@ -187,7 +191,9 @@ type AdaptiveModel(value : Model) =
     member __.CellErrorBefore = _CellErrorBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellDist = _CellDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.float32)[]>>
     member __.GraphError = _GraphError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(InspectBlock)[]>>
+    member __.GraphErrorBefore = _GraphErrorBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(InspectBlock)[]>>
     member __.GraphDist = _GraphDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
+    member __.GraphDistBefore = _GraphDistBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.CellMapOn = _CellMapOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.BrushedSamples = _BrushedSamples_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Set<Microsoft.FSharp.Core.int>>
     member __.HoverSample = _HoverSample_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.int>>

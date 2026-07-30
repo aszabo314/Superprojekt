@@ -76,7 +76,8 @@ module UpdateHelpers =
         bumpCellError ()
         { model with
             CellError = None; CellErrorBefore = None; CellDist = None
-            GraphError = None; GraphDist = Map.empty
+            GraphError = None; GraphErrorBefore = None
+            GraphDist = Map.empty; GraphDistBefore = Map.empty
             BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None
             ProbeReadout = None }
 

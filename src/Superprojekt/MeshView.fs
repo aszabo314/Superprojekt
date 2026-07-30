@@ -202,14 +202,30 @@ module MeshView =
             | Some d -> ErrorRange.ofDistances d
             | None -> ErrorRange.ofSamples Seq.empty
 
+    // At Matrix the pose peek is a STATE toggle, not a geometry blink: it flips
+    // the error field in lockstep with the poses, so the colours always
+    // describe what is on screen. Before = every edge measured with BOTH
+    // endpoints at their as-loaded baselines, After = the composed residual.
+    // The pair workspace is untouched — it pairs before/after per EDGE, and no
+    // peek reaches its error at all.
+    let graphSideAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
+        if model.PeekPose.GetValue t then EdgeBefore else EdgeAfter
+
+    let private graphBlocks (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (side : EdgeSide) =
+        (match side with
+         | EdgeBefore -> model.GraphErrorBefore.GetValue t
+         | EdgeAfter -> model.GraphError.GetValue t)
+        |> Option.defaultValue [||]
+
     // THE canonical inspect sample stream of the current scope, in gid order:
     // the selected pair's pins (all MOV-vs-REF) inside the workspace, every
-    // established edge's pins (each child vs ITS parent) at Matrix. Every
-    // gid-addressed consumer — the 3D dots, the hover search, the readouts —
-    // walks this one stream, so the brush means the same thing at both scopes.
+    // established edge's pins (each child vs ITS parent) at Matrix, in the
+    // peeked state. Every gid-addressed consumer — the 3D dots, the hover
+    // search, the readouts — walks this one stream, so the brush means the same
+    // thing at both scopes.
     let inspectBlocksAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) : InspectBlock[] =
         match model.Focus.GetValue t with
-        | FocusMatrix -> model.GraphError.GetValue t |> Option.defaultValue [||]
+        | FocusMatrix -> graphBlocks model t (graphSideAt model t)
         | FocusPair | FocusPin ->
             match (model.Sel.GetValue t).Pair, model.CellError.GetValue t with
             | Some (a, b), Some cells ->
@@ -221,16 +237,25 @@ module MeshView =
     // uniforms, diagram and legend: the pair cell inside the workspace, the
     // whole graph at Matrix (the pooled edge samples, else the pooled
     // per-vertex distributions of every registered child).
+    // At Matrix it is deliberately peek-BLIND — read from the BEFORE (larger)
+    // state and held across the flip. Renormalizing per state would recolour
+    // the residual to full range and the flip would show no improvement at all.
     let inspectRangeAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
         match model.Focus.GetValue t with
         | FocusPair | FocusPin ->
             cellRange (model.CellError.GetValue t) (model.CellDist.GetValue t)
         | FocusMatrix ->
-            let blocks = inspectBlocksAt model t
+            let blocks =
+                match graphBlocks model t EdgeBefore with
+                | [||] -> graphBlocks model t EdgeAfter
+                | b -> b
             if blocks |> Array.exists (fun b -> b.Err.Samples.Length > 0) then
                 ErrorRange.ofSamples (blocks |> Seq.collect (fun b -> b.Err.Samples))
             else
-                let dists = model.GraphDist.GetValue t
+                let dists =
+                    match model.GraphDistBefore.GetValue t with
+                    | d when Map.isEmpty d -> model.GraphDist.GetValue t
+                    | d -> d
                 if Map.isEmpty dists then ErrorRange.ofSamples Seq.empty
                 else ErrorRange.ofDistances (dists |> Map.toArray |> Array.collect snd)
 
@@ -240,8 +265,10 @@ module MeshView =
         not (Set.isEmpty (model.BrushedSamples.GetValue t)) && (inspectBlocksAt model t).Length > 0
 
     // The graph error map's participants: while it paints (Matrix, map on,
-    // ≥1 edge) the registered tree ALONE stays solid — an unregistered mesh
-    // must never read as "registered and fine", so it keeps only its outline.
+    // ≥1 edge) the edge CHILDREN alone stay solid — exactly the meshes that
+    // carry a parent-relative error, i.e. the painted set. Everything else
+    // (the reference root, unregistered meshes) keeps only its outline: a
+    // white surface there would read as "registered and fine".
     // None = no narrowing (every other state).
     let graphMapScopeAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) : Set<string> option =
         match model.Focus.GetValue t with
@@ -249,12 +276,7 @@ module MeshView =
         | FocusMatrix ->
             let g = model.RegGraph.GetValue t
             if not (model.CellMapOn.GetValue t) || not (RegGraph.hasEdges g) then None
-            else
-                g.Edges
-                |> Map.toSeq
-                |> Seq.collect (fun (child, e) -> [child; e.Parent])
-                |> Set.ofSeq
-                |> Some
+            else g.Edges |> Map.toSeq |> Seq.map fst |> Set.ofSeq |> Some
 
     // THE brush colour-isolation frame: (REF, MOV) of the selected pair while
     // brushed dots exist, else None. MOV owns the samples — it is the one solid
@@ -415,14 +437,12 @@ module MeshView =
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
         // Pin isolation = the persistent per-mode default (AnchorGhostMode) —
         // SUSPENDED while the centre pick is armed (aiming a whole-pin move
-        // needs the full terrain) and while the graph map paints (it measures
-        // whole meshes, not patches); derived, so the stored toggle restores
+        // needs the full terrain); derived, so the stored toggle restores
         // itself the moment the suspension ends.
         let anchorGhostOn =
             AVal.custom (fun t ->
                 model.AnchorGhostMode.GetValue t
-                && model.ArmedPick.GetValue t <> Some ArmCentre
-                && (graphMapScopeAt model t).IsNone)
+                && model.ArmedPick.GetValue t <> Some ArmCentre)
         let anchorGhost = anchorGhostOn |> AVal.map (fun on -> if on then 1 else 0)
         // The ONE error range of the current scope (metres, spanning 0, capped
         // ±0.5) — shared by the map uniforms, the diagram and the legend so
@@ -502,7 +522,13 @@ module MeshView =
                         model.CellMapOn.GetValue t && Set.isEmpty (model.BrushedSamples.GetValue t)
                     match model.Focus.GetValue t with
                     | FocusMatrix ->
-                        if painting then Map.tryFind name (model.GraphDist.GetValue t) else None
+                        // The peeked state's buffer: both are resident, so the
+                        // key costs one attribute upload, never a refetch.
+                        let dists =
+                            match graphSideAt model t with
+                            | EdgeBefore -> model.GraphDistBefore.GetValue t
+                            | EdgeAfter -> model.GraphDist.GetValue t
+                        if painting then Map.tryFind name dists else None
                     | FocusPair | FocusPin ->
                         match (model.Sel.GetValue t).Pair with
                         | Some (a, b) when painting ->

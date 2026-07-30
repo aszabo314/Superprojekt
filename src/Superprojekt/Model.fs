@@ -150,9 +150,10 @@ module MeshVisibility =
         | None -> brushMov
 
     // `matrixScope` narrows the Matrix level to a named set (None = every
-    // mesh): while the graph error map paints, only the registered tree stays
-    // solid — an unregistered mesh painted white would read as "registered and
-    // fine", so it drops to its outline instead.
+    // mesh): while the graph error map paints, only the meshes that CARRY a
+    // parent-relative error stay solid — the reference root and unregistered
+    // meshes drop to their outlines, since a white surface there would read as
+    // "registered and fine".
     let shown (focus : FocusLevel) (selPair : (string * string) option)
               (isolate : string option) (hoverPair : (string * string) option)
               (matrixScope : Set<string> option) (pinFocus : string option) (name : string) =
@@ -269,13 +270,19 @@ type Model =
         CellDist            : float32[] option
         // The GRAPH-scope error stream (Matrix): every established edge's pins,
         // child-relative-to-parent, in canonical edge×pin order — the pooled
-        // union the graph histogram and its brush read.
+        // union the graph histogram and its brush read. Held in BOTH states so
+        // the Matrix pose peek flips the error field with the geometry:
+        // After = both endpoints at their composed poses (the residual),
+        // Before = both at their as-loaded baselines (the raw disagreement).
+        // They land in one message, so the two are never out of step.
         GraphError          : InspectBlock[] option
+        GraphErrorBefore    : InspectBlock[] option
         // The GRAPH-scope twin (Matrix): per registered CHILD mesh, its
         // per-vertex signed distance vs its PARENT — every established edge's
-        // moving-side buffer at once. Empty ⇔ nothing to paint (a zero-edge
-        // graph is legitimately blank).
+        // moving-side buffer at once, in the same two states. Empty ⇔ nothing
+        // to paint (a zero-edge graph is legitimately blank).
         GraphDist           : Map<string, float32[]>
+        GraphDistBefore     : Map<string, float32[]>
         // False-colour error map toggle (in-cell inspect tool; MOV only).
         CellMapOn           : bool
         // Diagram brush: sample gids = indices into the canonical inspect
@@ -457,7 +464,9 @@ module Model =
             CellErrorBefore     = None
             CellDist            = None
             GraphError          = None
+            GraphErrorBefore    = None
             GraphDist           = Map.empty
+            GraphDistBefore     = Map.empty
             CellMapOn           = false
             BrushedSamples      = Set.empty
             HoverSample         = None

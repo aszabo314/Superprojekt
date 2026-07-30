@@ -406,12 +406,12 @@ module Update =
         | CellDistComputed(gen, dist) ->
             if gen <> cellErrorGen then model
             else { model with CellDist = Some dist }
-        | GraphErrorComputed(gen, blocks) ->
+        | GraphErrorComputed(gen, after, before) ->
             if gen <> cellErrorGen then model
-            else { model with GraphError = Some blocks }
-        | GraphDistComputed(gen, dist) ->
+            else { model with GraphError = Some after; GraphErrorBefore = Some before }
+        | GraphDistComputed(gen, after, before) ->
             if gen <> cellErrorGen then model
-            else { model with GraphDist = Map.ofArray dist }
+            else { model with GraphDist = Map.ofArray after; GraphDistBefore = Map.ofArray before }
         | SetBrushedSamples ids ->
             // Cap the brushed set so a runaway brush can't flood the 3D marker
             // node — generous enough to span every pin of the WIDEST scope (the
@@ -533,7 +533,9 @@ module Update =
                     CellErrorBefore = None
                     CellDist = None
                     GraphError = None
+                    GraphErrorBefore = None
                     GraphDist = Map.empty
+                    GraphDistBefore = Map.empty
                     BrushedSamples = Set.empty
                     HoverSample = None
                     HoverReadout = None
@@ -863,6 +865,10 @@ module Update =
     // endpoint returns meshB relative to meshA, so the parent-relative
     // orientation needs no flip), fanned out in parallel. Async.Parallel keeps
     // the request order, so the canonical edge×pin gid stream is deterministic.
+    // Both states are fetched together — AFTER at the composed poses (the
+    // residual), BEFORE with both endpoints at their as-loaded baselines (the
+    // raw pre-registration disagreement) — and land in one message, so the
+    // Matrix pose peek only ever swaps two complete streams.
     let private ensureGraphError (env : Env<Message>) (model : Model) : Model =
         let edges = model.RegGraph.Edges |> Map.toList |> List.sortBy fst
         if model.Focus <> FocusMatrix || List.isEmpty edges
@@ -870,7 +876,10 @@ module Update =
         else
             graphErrorReqGen <- cellErrorGen
             let gen = cellErrorGen
-            let tOf (m : string) = ModelTransforms.displayedWorld model m
+            let roisAt (world : string -> Trafo3d) (pins : ScanPin list) =
+                pins |> List.map (fun p ->
+                    let (ScanPinId.ScanPinId g) = p.Id
+                    g.ToString "N", (world p.AnchorMesh).Forward.TransformPos p.CentreLocal, p.InnerRadius)
             let reqs =
                 edges |> List.choose (fun (child, e) ->
                     let pins =
@@ -878,42 +887,44 @@ module Update =
                         |> List.filter (fun p -> p.Pair = PairCell.key child e.Parent)
                         |> List.sortBy (fun p -> p.CreatedAt, p.ShortName)
                     if List.isEmpty pins then None
-                    else
-                        let rois =
-                            pins |> List.map (fun p ->
-                                let (ScanPinId.ScanPinId g) = p.Id
-                                g.ToString "N", (tOf p.AnchorMesh).Forward.TransformPos p.CentreLocal, p.InnerRadius)
-                        Some (child, e.Parent, pins |> List.map (fun p -> p.Id), rois))
+                    else Some (child, e.Parent, pins |> List.map (fun p -> p.Id), pins))
             if List.isEmpty reqs then model
             else
+                // A pin's ROI centre rides its anchor mesh, so the before state
+                // has to re-place it at the baseline too — the sphere must sit
+                // on the surface it measures.
+                let batch (world : string -> Trafo3d) =
+                    reqs
+                    |> List.map (fun (child, parent, ids, pins) ->
+                        async {
+                            try
+                                let! r =
+                                    Query.pairError ApiConfig.apiBase.Value
+                                        parent (world parent).Forward child (world child).Forward (roisAt world pins)
+                                return
+                                    Seq.zip ids r
+                                    |> Seq.map (fun (id, e) -> { Mov = child; Ref = parent; Pin = id; Err = e })
+                                    |> Seq.toArray
+                            with _ -> return [||]
+                        })
+                    |> Async.Parallel
                 task {
                     try
-                        let! results =
-                            reqs
-                            |> List.map (fun (child, parent, ids, rois) ->
-                                async {
-                                    try
-                                        let! r =
-                                            Query.pairError ApiConfig.apiBase.Value
-                                                parent (tOf parent).Forward child (tOf child).Forward rois
-                                        return
-                                            Seq.zip ids r
-                                            |> Seq.map (fun (id, e) -> { Mov = child; Ref = parent; Pin = id; Err = e })
-                                            |> Seq.toArray
-                                    with _ -> return [||]
-                                })
-                            |> Async.Parallel |> Async.StartAsTask
-                        env.Emit [GraphErrorComputed(gen, Array.concat results)]
+                        let afterT = batch (ModelTransforms.displayedWorld model) |> Async.StartAsTask
+                        let beforeT = batch (ModelTransforms.loadWorld model) |> Async.StartAsTask
+                        let! after = afterT
+                        let! before = beforeT
+                        env.Emit [GraphErrorComputed(gen, Array.concat after, Array.concat before)]
                     with _ -> ()
                 } |> ignore
                 model
 
     // The graph-scope false-colour buffers (Matrix): every established edge's
-    // CHILD against its PARENT at the displayed poses — the union of the
-    // per-edge moving-side maps, fanned out in parallel (independent queries;
-    // one sequential sweep would stall the whole map on the slowest edge).
-    // Unregistered meshes are simply absent — nothing fabricates error for a
-    // mesh that has no parent.
+    // CHILD against its PARENT — the union of the per-edge moving-side maps,
+    // fanned out in parallel (independent queries; one sequential sweep would
+    // stall the whole map on the slowest edge). Both states again, so the pose
+    // peek repaints from resident buffers. Unregistered meshes are simply
+    // absent — nothing fabricates error for a mesh that has no parent.
     let private ensureGraphDist (env : Env<Message>) (model : Model) : Model =
         let edges = model.RegGraph.Edges |> Map.toList
         if model.Focus <> FocusMatrix || not model.CellMapOn || List.isEmpty edges
@@ -921,22 +932,27 @@ module Update =
         else
             graphDistReqGen <- cellErrorGen
             let gen = cellErrorGen
-            let tOf (m : string) = (ModelTransforms.displayedWorld model m).Forward
-            let reqs = edges |> List.map (fun (child, e) -> child, e.Parent, tOf child, tOf e.Parent)
+            let sweep (world : string -> Trafo3d) =
+                edges
+                |> List.map (fun (child, e) ->
+                    async {
+                        try
+                            let! d =
+                                Query.regionDistance ApiConfig.apiBase.Value child e.Parent
+                                    (world child).Forward (world e.Parent).Forward
+                            return Some (child, d)
+                        with _ -> return None
+                    })
+                |> Async.Parallel
             task {
                 try
-                    let! results =
-                        reqs
-                        |> List.map (fun (child, parent, tc, tp) ->
-                            async {
-                                try
-                                    let! d = Query.regionDistance ApiConfig.apiBase.Value child parent tc tp
-                                    return Some (child, d)
-                                with _ -> return None
-                            })
-                        |> Async.Parallel |> Async.StartAsTask
-                    let landed = results |> Array.choose id
-                    if landed.Length > 0 then env.Emit [GraphDistComputed(gen, landed)]
+                    let afterT = sweep (ModelTransforms.displayedWorld model) |> Async.StartAsTask
+                    let beforeT = sweep (ModelTransforms.loadWorld model) |> Async.StartAsTask
+                    let! after = afterT
+                    let! before = beforeT
+                    let landed = after |> Array.choose id
+                    if landed.Length > 0 then
+                        env.Emit [GraphDistComputed(gen, landed, before |> Array.choose id)]
                 with _ -> ()
             } |> ignore
             model

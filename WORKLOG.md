@@ -8,6 +8,82 @@
 > *(A4–A7 amendment instance completed 2026-07-29 — docs reconstructed.)*
 > *(A8–A10 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
+> *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
+
+## A13 — the Matrix peek flips the error state (2026-07-30)
+
+Spec: `ScanPin_v14_A13_matrix_peek_flips_error.md`. Client only. Principle: at
+Matrix the pose peek stops being a geometry blink and becomes a **state**
+toggle — the error field flips in lockstep with the poses, so the colours
+always describe what is on screen. **Before** = every edge measured with BOTH
+endpoints at their as-loaded baselines (the raw pre-registration
+disagreement); **After** = the composed residual. Pair/Pin are untouched: they
+pair before/after per EDGE, and no peek reaches their error.
+
+- **T1 — the two-state global map.** `Model.GraphDistBefore` joins `GraphDist`
+  (and `GraphErrorBefore` joins `GraphError`), filled by the SAME postludes:
+  `ensureGraphDist`/`ensureGraphError` now run two sweeps — one at
+  `ModelTransforms.displayedWorld`, one at `loadWorld` — started together and
+  awaited together, so the extra state costs latency-nothing beyond the server's
+  parallelism. Both states land in ONE message (`GraphDistComputed(gen, after,
+  before)` / `GraphErrorComputed(gen, after, before)`), mirroring
+  `CellErrorComputed`, so a peek can never catch a half-landed flip. The before
+  pin ROIs are re-placed at the baseline too (`roisAt world`) — a pin's centre
+  rides its anchor mesh, so the measuring sphere has to move with it.
+  - The swap: new `MeshView.graphSideAt` = `PeekPose ? EdgeBefore : EdgeAfter`
+    (reusing the existing `EdgeSide` vocabulary), read ONLY inside Matrix
+    branches. `cellPaint`'s Matrix arm picks the peeked buffer — both are
+    resident, so the key costs one vertex-attribute upload and never a refetch.
+    `GuiOverlays.diffOn` follows.
+  - `graphMapScopeAt` is untouched and peek-blind (it keys on registration,
+    not pose), so the excluded meshes are the same outlines in both states.
+- **T2 — the scale is fixed across the flip.** `MeshView.inspectRangeAt`'s
+  Matrix arm is deliberately peek-BLIND: it reads the **before** blocks (else
+  the before per-vertex maps), falling back to the after twins only while the
+  before state is absent. Renormalizing per state would recolour the residual
+  to full range and the flip would show no improvement at all — the whole point
+  is that "after" **collapses toward neutral** on one stable ruler. The legend
+  reads the same helper, so it holds too.
+- **T3 — the two-state pooled histogram.** `MeshView.inspectBlocksAt`'s Matrix
+  arm returns the peeked stream, so the flip reaches the chart, the 3D dots,
+  the hover search and the readouts through the ONE stream abstraction — no new
+  per-consumer branching. `graphBody`'s axis and binning now come from
+  `inspectRangeAt` (the fixed before-state range) instead of the displayed
+  samples, and the title names the state ("— as loaded" / "— all registered
+  edges") so a silent distribution swap can't be misread.
+  - **Known limit, deliberate:** gids are running offsets into the displayed
+    stream, and the two states are NOT sample-aligned — the server re-estimates
+    the pin normal and re-samples per pose, so "sample k" is a different
+    physical point in each state (and a pin with no overlap before registration
+    contributes none). A brush held across the flip therefore highlights the
+    corresponding *region* of the distribution, not the same physical samples.
+    No mapping could be faithful here, so none is fabricated; the brush is not
+    cleared either (the peek must stay zero-bookkeeping).
+- **T4 — scope + trigger guards.** Audited: every `graphSideAt` /
+  `Graph*Before` read sits inside a `FocusMatrix` arm (`inspectBlocksAt`,
+  `inspectRangeAt`, `cellPaint`, `diffOn`, and `graphBody`, which mounts only
+  at Matrix). `inspectBody` and every pair branch are byte-identical.
+  `PeekVis`'s only consumers remain the three isolate-swap sites
+  (`MeshView.buildScene`, `ScanPinScene.isoLockAt`, `View.shownNow`) — it
+  touches no error field at any scope.
+
+Green after every task: client type-check 52 warnings / 0 errors; Supertests
+97/97. Browser-unverified (no shader source changed; the flip is a buffer +
+uniform swap).
+
+**Docs reconstructed** at the close of this instance, covering A12 + the A12
+follow-ups + A13: CLAUDE.md — "In-cell inspection caches" rewritten as
+"Inspection caches — two scopes, one shape" (the graph caches, the two states,
+`InspectBlock`/`inspectBlocksAt`, `inspectRangeAt`, the brush cap + cross-scope
+clear + the not-sample-aligned limit, the map's excluded-outline rule, the
+brush's pair-only spatial frame, the toolbox at every level); "Peek keys"
+(V pair-only and hidden at Matrix, B whole-graph, the Matrix state toggle);
+the shown-rule signature (`matrixScope`); "One in-cell error range" →
+"One error range per scope"; the legend's two titles; "The cell chart" split
+into the pair body and the pooled graph body; the ≤4000 → ≤12000 marker note;
+the top-bar peek clause; the Model.fs compile-order line. README.md — the
+inspection toolbox now docks at every stop, a new **Inspect the whole graph**
+bullet, and the peek-keys bullet rewritten for the two scopes and the flip.
 
 ## A12 — global inspect at Matrix scope (2026-07-30)
 
@@ -98,6 +174,29 @@ contribute; a zero-edge graph is legitimately empty.
 Green after every task: client type-check 52 warnings / 0 errors; Supertests
 97/97. NOT verified in a browser (no shader source changed in A12, but the
 Matrix paths themselves are unexercised outside a run).
+
+### A12 follow-ups (2026-07-30)
+
+Two review fixes on the landed A12. Both touch the Matrix scope only.
+
+- **Isolate pins at Matrix** — `graphBody` now carries the same "Isolate pins"
+  toggle as `inspectBody`, on the same `AnchorGhostMode` state. *Supersedes the
+  T1 bullet's "no isolate-pins toggle" and the T3 bullet's graph-map
+  suspension:* `MeshView.anchorGhostOn` no longer stands down while the graph
+  map paints (only the armed centre pick still suspends it). The suspension
+  existed **because** Matrix had no control — with the toggle present it would
+  have made that control dead on arrival, and the default-on isolation is now
+  the same first-look Matrix as Pair.
+- **The reference is outline-only under the graph map** —
+  `MeshView.graphMapScopeAt` narrows to the edge CHILDREN alone (was: children
+  ∪ parents, i.e. the whole tree). The solid set is now exactly the PAINTED set
+  — every mesh that carries a parent-relative error — so the reference root
+  joins the unregistered meshes as an excluded outline. Only the moving side is
+  relevant while the map is on, and an unpainted white surface in the middle of
+  the map read as "registered and fine". Intermediate nodes are unaffected:
+  they are children of their own edge, so they stay solid and painted.
+
+Client type-check green: 52 warnings / 0 errors. Still browser-unverified.
 
 ## A11 — brush-point rendering: disc locators + colour isolation (2026-07-30)
 

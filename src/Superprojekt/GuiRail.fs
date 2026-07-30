@@ -284,22 +284,29 @@ module GuiRail =
     let private graphBody (env : Env<Message>) (model : AdaptiveModel) =
         // ONE pooled monochrome series: every established edge's samples
         // concatenated into a single distribution (pooled SAMPLES, not bin-wise
-        // added counts) at the CURRENT registration state — N overlaid
-        // before-outlines would be unreadable, and colouring by edge would put
-        // a second key on the diagram. The brush is what identifies a source:
-        // its dots resolve to their own meshes in 3D.
+        // added counts) in the PEEKED state — N overlaid before-outlines would
+        // be unreadable, and colouring by edge would put a second key on the
+        // diagram. The brush is what identifies a source: its dots resolve to
+        // their own meshes in 3D. The pose peek swaps the whole distribution
+        // (as-loaded ⇄ residual) on the FIXED axis below, so the mass visibly
+        // collapses toward zero instead of rescaling to look identical.
         let chartData =
             AVal.custom (fun t ->
                 let inv = System.Globalization.CultureInfo.InvariantCulture
                 let gf (v : float) =
                     if System.Double.IsNaN v || System.Double.IsInfinity v then "0" else v.ToString("0.###", inv)
-                let title = "Graph error vs parents — all registered edges"
+                let peeked = MeshView.graphSideAt model t = EdgeBefore
+                let title =
+                    if peeked then "Graph error vs parents — as loaded"
+                    else "Graph error vs parents — all registered edges"
                 let blocks = MeshView.inspectBlocksAt model t
                 let samples = blocks |> Array.collect (fun b -> b.Err.Samples)
                 if samples.Length = 0 then
                     sprintf "{\"title\":\"%s\",\"ph\":\"register pairs to measure\",\"lo\":-10,\"hi\":10,\"bins\":48,\"series\":[]}" title
                 else
-                    let lo0, hi0 = ErrorRange.ofSamples samples
+                    // Axis + binning from the SHARED (before-state) range, so
+                    // both states are read against one ruler.
+                    let lo0, hi0 = MeshView.inspectRangeAt model t
                     let lo, hi = lo0 * 1000.0, hi0 * 1000.0
                     let pad = max 1.0 (hi - lo) * 0.08
                     let lo, hi = lo - pad, hi + pad
@@ -330,8 +337,14 @@ module GuiRail =
                 Class "cw-tools"
                 div {
                     Class "rail-isolate"
-                    Attribute("title", "False-colour error map: paints every registered mesh with its own parent-relative error at once, on the shared scale. Unregistered meshes stay excluded outlines.")
+                    Attribute("title", "False-colour error map: paints every registered mesh with its own parent-relative error at once, on the shared scale. The reference root and unregistered meshes stay excluded outlines.")
                     compactToggle "Error map" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
+                }
+                div {
+                    Class "rail-isolate"
+                    Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes")
+                    compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
+                        env.Emit [ToggleAnchorGhostMode])
                 }
             }
             div {

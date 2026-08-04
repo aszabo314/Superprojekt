@@ -102,6 +102,14 @@ module View =
                 "const l = document.getElementById('loader');"
                 "if(l) l.remove();"
                 "document.body.classList.add('loaded');"
+                // Data-URL download helper (the session-log export); returns a
+                // value so JSRuntime.Invoke<bool> has something to unmarshal.
+                "window.spDownloadText = function(name, text){"
+                "  var a = document.createElement('a');"
+                "  a.href = 'data:application/json;charset=utf-8,' + encodeURIComponent(text);"
+                "  a.download = name; document.body.appendChild(a); a.click(); a.remove();"
+                "  return true;"
+                "};"
             ]
 
             renderControl {
@@ -473,10 +481,17 @@ module View =
             // rides the rail's height).
             div {
                 Class "left-col"
+                // The home level seats TWO navigators side by side — the
+                // column widens there and returns to the narrow rail inside
+                // the pair workspace.
+                Primitives.classWhen "left-col-home" (model.Focus |> AVal.map ((=) FocusMatrix))
                 GuiRail.rail env model
+                GuiRail.rosterPanel env model
                 GuiRail.inspectPanel env model
+                GuiRail.logPanel env model
             }
             GuiOverlays.toast model
+            GuiOverlays.spannedBanner env model
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model

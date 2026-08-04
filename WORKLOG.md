@@ -10,6 +10,114 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## N4 — home two-navigator stage + shared selection + reaching-log (2026-08-03)
+
+Spec: `ScanPin_v14_N4_home_stage_logging.md`. The home level grew from "the
+matrix" into a navigation workspace; the reaching-log is the primary workshop
+deliverable.
+
+- **Stage**: matrix ‖ tree split landed with N3's `homeStage` (equal flex,
+  identical chrome — a SPLIT, so there is no active-view toggle to log).
+- **Persistence**: the roster (N1) and the spanned notice (N2) are their own
+  surfaces — the roster a left-col sibling panel, the banner a fixed overlay —
+  present at home regardless of which navigator is used.
+- **One shared selection, three entry points**: mesh subject =
+  `HomeMeshSel` (roster row ∧ tree node → roster `.ros-sel`, matrix
+  `.pmx-head-homesel`, tree node ring); pair subject = `Sel.Pair` (matrix
+  cell ∧ tree edge → `SelectPair`, the existing descend path → matrix
+  `.pmx-sel`, tree edge highlight, roster `.ros-in-pair` tint on both member
+  rows). SelectPair clears the mesh subject — one subject at a time.
+- **Reaching-log** (first-class): NEW `ReachEvent {At; Source; Action;
+  Subject}` + `Model.ReachLog` (newest first, never trimmed, survives dataset
+  switches) + `LogReach` — views emit it ALONGSIDE their action message
+  (source-attributed at the click site; the reducer never logs an action
+  itself, so nothing double-counts). Sites: matrix cell `open-pair`, tree
+  node/edge `mark-mesh`/`open-pair`, roster row `mark-mesh`, rail stops
+  `jump`, banner `assess-global`/`dismiss-notice`; `trackSpanned` logs the
+  `spanned`/`unspanned` transitions reducer-side. **`GuiRail.logPanel`**
+  (home level, collapsible, `ReachLogOpen`): 14-entry tail + "⤓ export" →
+  full JSON download via the `spDownloadText` boot helper (data-URL anchor).
+- adaptify re-run; client quick build, FULL native client-via-server build and
+  Supertests (97/97) all green.
+
+## N3 — rooted registration tree (workshop) (2026-08-03)
+
+Spec: `ScanPin_v14_N3_rooted_tree.md`. ROUGH by design — static SVG re-render
+per state change, no animation/pan/zoom; a co-equal PEER of the matrix, never
+a subpanel.
+
+- **`GuiRail.treePanel`**: root at top, edges = established registrations,
+  depth (y) = `MatrixNav.hopDepth` (provenance-path length), tidy-tree x
+  (leaves take slots in mesh order, parents centre over first+last child).
+  Disconnected meshes float as a dashed-outline island row below a dashed
+  separator ("not connected yet"). Node = white circle, mesh-colour ring +
+  number (thin identity marks); root adds a `var(--ref-gold)` halo (CSS var
+  via style.stroke — no literal gold hex). Data rides ONE `data-tree` JSON
+  attribute through `observedRender` (MutationObserver re-render = live
+  growth); nodes/edges carry `sel` flags so the selection highlights re-render
+  with the state.
+- **Clicks through a hidden `.tree-bridge` input** (observedRender rebuilds
+  the SVG wholesale, so handlers cannot live on Aardvark-managed nodes; value
+  `n|mesh|seq` / `e|child|seq`, seq forces a change): node → `SelectHomeMesh`
+  (the SAME subject a roster row marks), edge → `SelectPair(child, parent)` —
+  the existing cell-selection/descend path, no new detail panel. Invisible
+  fat hit strokes widen the targets; `<title>` tooltips name the subjects.
+- **`homeStage`** (rail body at Matrix): matrix ‖ tree in two `.home-nav`
+  panels — equal flex, identical chrome; `.left-col-home` widens the left
+  column to seat both (600px, capped against the tile strip).
+- Build green after each task.
+
+## N2 — spanned-state event (workshop) (2026-08-03)
+
+Spec: `ScanPin_v14_N2_spanned_event.md`. Completion is purely topological —
+no quality gate anywhere.
+
+- **NEW `MacroState`/`Workflow`** (RegistrationModel.fs, WASM-free):
+  `spanned names g` = names nonempty ∧ hasEdges ∧ every mesh inTree (≥1 edge,
+  so a single-mesh dataset never reads spanned); `macroState` =
+  MacroDisconnected → MacroSpanned (notice open) → MacroRefining (notice put
+  away; optional, never announced as required). Chip in the roster head
+  (`.ros-state-*`).
+- **NEW `Model.SpannedNoticeOpen`** + `Update.trackSpanned` (post-step, against
+  the pre-step model): the notice opens exactly on the disconnected→spanned
+  TRANSITION and closes the moment the graph disconnects again (edge drop /
+  root-clear / dataset switch) — re-spanning re-fires. Explicit reset on
+  SetActiveDataset too.
+- **`GuiOverlays.spannedBanner`** (fixed top-centre, `.spanned-banner`, brief
+  pulse): "All meshes registered — you can now assess global quality." with
+  ✕ (`DismissSpannedNotice` → refining) and **Assess global quality →**
+  (`AssessGlobalQuality`): jumps to Matrix (through the Pin exit-guard if a
+  centred draft is in flight — the notice then stays for a retry), opens the
+  inspect dock and turns the graph error map on — the EXISTING A12
+  instruments; no global scalar exists.
+- adaptify re-run; client + Supertests builds green after each task.
+
+## N1 — mesh roster + spanning progress (workshop) (2026-08-03)
+
+Spec: `ScanPin_v14_N1_mesh_roster.md`. Workshop build — ADDITIVE, parallel to
+the matrix (no consolidation, no winner), topology only: no quality number
+anywhere in navigation.
+
+- **`GuiRail.rosterPanel`** (View.fs left-col, between the rail and the
+  inspect dock; shown at the home/Matrix level only): one row per mesh
+  (swatch · number · friendly name) + a topological badge — `connected` (in
+  the registration tree; filled achromatic) / `not yet` (outlined vessel) /
+  `no overlap` (pale no-data grey; only when EVERY pair of the mesh reads
+  known-insufficient `= Some false` in PairOverlaps — an unfetched pair must
+  not read "no overlap" mid-sweep) / `root ★` (gold tokens). Explicitly NO
+  reachability/components traversal — a per-mesh cache read.
+- **Spanning-progress line**: "N of M meshes connected; X, Y not yet." /
+  "All M meshes connected." — live off RegGraph.inTree.
+- **Shared selection hook**: NEW `Model.HomeMeshSel : string option` +
+  `SelectHomeMesh` (toggle; guarded on mesh existence). Roster row click sets
+  it; the matrix row/col heads mark it (`.pmx-head-homesel`). Cleared by
+  SelectPair (the pair takes over as the home subject), SetRegRoot and the
+  dataset switch. A cross-surface highlight ONLY — never enters
+  MeshVisibility.
+- CSS `.roster-dock`/`.ros-*`: badges reuse the matrix's achromatic state
+  grammar (filled / outlined vessel / pale hole).
+- adaptify re-run; build green after each task.
+
 ## A13 — the Matrix peek flips the error state (2026-07-30)
 
 Spec: `ScanPin_v14_A13_matrix_peek_flips_error.md`. Client only. Principle: at

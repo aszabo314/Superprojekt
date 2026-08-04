@@ -444,6 +444,291 @@ module GuiRail =
             }
         }
 
+    // ── The rooted registration tree: the matrix's co-equal PEER navigator —
+    // root at top, edges = the established registrations, depth = hops from
+    // the root (the provenance-path length), tidy-tree x layout (leaves in
+    // mesh order, parents centred over their children). Disconnected meshes
+    // float as a dashed island row below. Deliberately ROUGH: a static SVG
+    // re-render per state change — no animation, no pan/zoom. Clicks go
+    // through the hidden bridge input (observedRender rebuilds the SVG
+    // wholesale, so handlers cannot live on Aardvark-managed nodes).
+    let private treePanel (env : Env<Message>) (model : AdaptiveModel) =
+        let esc (s : string) = s.Replace("\\", "\\\\").Replace("\"", "\\\"")
+        let treeData =
+            AVal.custom (fun t ->
+                let g = model.RegGraph.GetValue t
+                let names = IndexList.toList (model.MeshNames.Content.GetValue t)
+                let order = model.MeshOrder.Content.GetValue t
+                let sel = model.HomeMeshSel.GetValue t
+                let selPair = (model.Sel.GetValue t).Pair
+                let fmap = friendlyMap names
+                let nodes =
+                    names |> List.map (fun n ->
+                        let i = HashMap.tryFind n order |> Option.defaultValue 0
+                        let d = match MatrixNav.hopDepth g n with Some d -> d | None -> -1
+                        sprintf "{\"id\":\"%s\",\"num\":%d,\"name\":\"%s\",\"c\":\"%s\",\"d\":%d,\"root\":%b,\"sel\":%b}"
+                            (esc n) (i + 1) (esc (Map.tryFind n fmap |> Option.defaultValue n))
+                            (c4bToHex (meshColor i)) d (g.Root = Some n) (sel = Some n))
+                let edges =
+                    g.Edges |> Map.toList |> List.map (fun (c, e) ->
+                        sprintf "{\"c\":\"%s\",\"p\":\"%s\",\"sel\":%b}"
+                            (esc c) (esc e.Parent) (selPair = Some (PairCell.key c e.Parent)))
+                sprintf "{\"nodes\":[%s],\"edges\":[%s]}"
+                    (String.concat "," nodes) (String.concat "," edges))
+        div {
+            Class "tree-nav"
+            div {
+                Class "tree-canvas"
+                treeData |> AVal.map (fun j -> Some (Attribute("data-tree", j)))
+                observedRender "data-tree" "{}" [
+                    "  if(!d.nodes || !d.nodes.length){ return; }"
+                    "  var NR=11, rowH=46, colW=40, padX=16, padY=16;"
+                    "  var byId={}; d.nodes.forEach(function(n){ byId[n.id]=n; });"
+                    "  var kids={}; d.edges.forEach(function(e){ (kids[e.p]=kids[e.p]||[]).push(e.c); });"
+                    "  Object.keys(kids).forEach(function(k){ kids[k].sort(function(a,b){ return byId[a].num-byId[b].num; }); });"
+                    // Tidy layout: leaves take slots in order, a parent centres
+                    // over its first and last child.
+                    "  var X={}, cnt=0;"
+                    "  var root=null; d.nodes.forEach(function(n){ if(n.root) root=n; });"
+                    "  function lay(id){ var ks=kids[id]||[];"
+                    "    if(!ks.length){ X[id]=cnt++; return; }"
+                    "    ks.forEach(lay); X[id]=(X[ks[0]]+X[ks[ks.length-1]])/2; }"
+                    "  if(root) lay(root.id);"
+                    "  var isl=d.nodes.filter(function(n){ return n.d<0; });"
+                    "  isl.forEach(function(n,i){ n._ix=i; });"
+                    "  var maxD=0; d.nodes.forEach(function(n){ if(n.d>maxD) maxD=n.d; });"
+                    "  var cols=Math.max(cnt, isl.length, 1);"
+                    "  var W=padX*2+NR*2+(cols-1)*colW;"
+                    "  var islY=padY+NR+(maxD+1)*rowH+18;"
+                    "  var H=(isl.length? islY : padY+NR+maxD*rowH)+NR+padY;"
+                    "  var svg=document.createElementNS(ns,'svg');"
+                    "  svg.setAttribute('width',W); svg.setAttribute('height',H);"
+                    "  svg.setAttribute('viewBox','0 0 '+W+' '+H); svg.style.display='block';"
+                    "  function px(id){ var n=byId[id]; return padX+NR+(n.d<0 ? n._ix : (X[id]||0))*colW; }"
+                    "  function py(id){ var n=byId[id]; return n.d<0 ? islY : padY+NR+n.d*rowH; }"
+                    "  function pk(kind,id){ var b=el.parentElement.querySelector('.tree-bridge'); if(!b) return;"
+                    "    el._seq=(el._seq||0)+1; b.value=kind+'|'+id+'|'+el._seq;"
+                    "    b.dispatchEvent(new Event('input',{bubbles:true})); }"
+                    "  d.edges.forEach(function(e){"
+                    "    var x1=px(e.p), y1=py(e.p)+NR, x2=px(e.c), y2=py(e.c)-NR;"
+                    "    var ln=document.createElementNS(ns,'line');"
+                    "    ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2);"
+                    "    ln.setAttribute('stroke', e.sel?'#1a56db':'#64748b'); ln.setAttribute('stroke-width', e.sel?3:1.5);"
+                    "    svg.appendChild(ln);"
+                    "    var ht=document.createElementNS(ns,'line');"
+                    "    ht.setAttribute('x1',x1); ht.setAttribute('y1',y1); ht.setAttribute('x2',x2); ht.setAttribute('y2',y2);"
+                    "    ht.setAttribute('stroke','rgba(0,0,0,0)'); ht.setAttribute('stroke-width',12); ht.style.cursor='pointer';"
+                    "    var tt=document.createElementNS(ns,'title');"
+                    "    tt.textContent=byId[e.c].name+' \\u2192 '+byId[e.p].name+' \\u2014 click to open this pair';"
+                    "    ht.appendChild(tt);"
+                    "    ht.addEventListener('click',function(){ pk('e',e.c); });"
+                    "    svg.appendChild(ht);"
+                    "  });"
+                    "  if(isl.length){"
+                    "    var sep=document.createElementNS(ns,'line');"
+                    "    sep.setAttribute('x1',4); sep.setAttribute('y1',islY-NR-12); sep.setAttribute('x2',W-4); sep.setAttribute('y2',islY-NR-12);"
+                    "    sep.setAttribute('stroke','#cbd5e1'); sep.setAttribute('stroke-dasharray','4 3');"
+                    "    svg.appendChild(sep);"
+                    "    var lb=document.createElementNS(ns,'text');"
+                    "    lb.setAttribute('x',4); lb.setAttribute('y',islY-NR-16); lb.setAttribute('fill','#94a3b8'); lb.setAttribute('font-size','9');"
+                    "    lb.textContent='not connected yet';"
+                    "    svg.appendChild(lb);"
+                    "  }"
+                    "  d.nodes.forEach(function(n){"
+                    "    var cx=px(n.id), cy=py(n.id);"
+                    "    if(n.sel){ var sr=document.createElementNS(ns,'circle');"
+                    "      sr.setAttribute('cx',cx); sr.setAttribute('cy',cy); sr.setAttribute('r',NR+6);"
+                    "      sr.setAttribute('fill','none'); sr.setAttribute('stroke','#1a56db'); sr.setAttribute('stroke-width',2.5);"
+                    "      svg.appendChild(sr); }"
+                    "    if(n.root){ var gr=document.createElementNS(ns,'circle');"
+                    "      gr.setAttribute('cx',cx); gr.setAttribute('cy',cy); gr.setAttribute('r',NR+3);"
+                    "      gr.setAttribute('fill','none'); gr.style.stroke='var(--ref-gold)'; gr.setAttribute('stroke-width',2);"
+                    "      svg.appendChild(gr); }"
+                    "    var c=document.createElementNS(ns,'circle');"
+                    "    c.setAttribute('cx',cx); c.setAttribute('cy',cy); c.setAttribute('r',NR); c.setAttribute('fill','#ffffff');"
+                    "    if(n.d<0){ c.setAttribute('stroke','#94a3b8'); c.setAttribute('stroke-dasharray','3 2.5'); c.setAttribute('stroke-width',1.5); }"
+                    "    else { c.setAttribute('stroke',n.c); c.setAttribute('stroke-width',2.5); }"
+                    "    svg.appendChild(c);"
+                    "    var tx=document.createElementNS(ns,'text');"
+                    "    tx.setAttribute('x',cx); tx.setAttribute('y',cy+3.5); tx.setAttribute('text-anchor','middle');"
+                    "    tx.setAttribute('font-size','10'); tx.setAttribute('font-weight','700');"
+                    "    tx.setAttribute('fill', n.d<0?'#64748b':'#0f172a'); tx.setAttribute('font-family','Inter,sans-serif');"
+                    "    tx.textContent=n.num;"
+                    "    svg.appendChild(tx);"
+                    "    var ht=document.createElementNS(ns,'circle');"
+                    "    ht.setAttribute('cx',cx); ht.setAttribute('cy',cy); ht.setAttribute('r',NR+6); ht.setAttribute('fill','rgba(0,0,0,0)');"
+                    "    ht.style.cursor='pointer';"
+                    "    var tt=document.createElementNS(ns,'title');"
+                    "    tt.textContent=n.name+(n.root?' \\u2014 the reference root':'')+(n.d<0?' \\u2014 not connected yet':'')+' \\u2014 click to mark this mesh';"
+                    "    ht.appendChild(tt);"
+                    "    ht.addEventListener('click',function(){ pk('n',n.id); });"
+                    "    svg.appendChild(ht);"
+                    "  });"
+                    "  el.appendChild(svg);"
+                ]
+            }
+            // The JS→Elm click bridge: "n|mesh|seq" marks the mesh (the same
+            // subject a roster row marks), "e|child|seq" opens the edge's pair
+            // through the existing cell-selection/descend path.
+            input {
+                Class "tree-bridge"
+                Dom.OnInput(fun e ->
+                    match (e.Value : string).Split('|') with
+                    | [| "n"; mesh; _ |] ->
+                        env.Emit [LogReach("tree", "mark-mesh", mesh); SelectHomeMesh mesh]
+                    | [| "e"; child; _ |] ->
+                        (match Map.tryFind child (AVal.force model.RegGraph).Edges with
+                         | Some edge ->
+                            env.Emit [LogReach("tree", "open-pair", child + " | " + edge.Parent)
+                                      SelectPair(child, edge.Parent)]
+                         | None -> ())
+                    | _ -> ())
+            }
+        }
+
+    // ── The mesh roster: the representation-independent completeness readout
+    // of the home level — one row per mesh with its topological connectivity
+    // (in the registration tree / not yet), plus the spanning-progress line.
+    // A sibling panel of the navigators and the inspection dock, deliberately
+    // docked to NEITHER the matrix nor the tree.
+    let rosterPanel (env : Env<Message>) (model : AdaptiveModel) =
+        let namesA = model.MeshNames.Content |> AVal.map IndexList.toList
+        let rosterRow (all : string list) (name : string) =
+            let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+            // The badge is TOPOLOGY only (in the tree / not), never a quality.
+            // "no overlap" needs every pair of this mesh KNOWN insufficient
+            // (`= Some false` — an unfetched pair is indistinguishable from
+            // insufficient in PairCell.state, but must not read "no overlap"
+            // while the sweep is still in flight); a per-mesh cache read, no
+            // connectivity traversal.
+            let badge =
+                (model.RegGraph, model.PairOverlaps) ||> AVal.map2 (fun g po ->
+                    if RegGraph.inTree g name then
+                        if g.Root = Some name then "ros-badge-root", "root ★"
+                        else "ros-badge-on", "connected"
+                    else
+                        let others = all |> List.filter ((<>) name)
+                        let allNo =
+                            not others.IsEmpty
+                            && others |> List.forall (fun o -> Map.tryFind (PairCell.key name o) po = Some false)
+                        if allNo then "ros-badge-no", "no overlap" else "ros-badge-off", "not yet")
+            div {
+                Class "ros-row"
+                classWhen "ros-sel" (model.HomeMeshSel |> AVal.map ((=) (Some name)))
+                // The pair subject (matrix cell / tree edge) shows here too —
+                // its two member rows tint.
+                classWhen "ros-in-pair" (model.Sel |> AVal.map (fun s ->
+                    match s.Pair with Some (a, b) -> name = a || name = b | None -> false))
+                Attribute("title", name + " — click to mark this mesh across the matrix and the tree")
+                Dom.OnClick(fun _ -> env.Emit [LogReach("roster", "mark-mesh", name); SelectHomeMesh name])
+                span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
+                span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+                span { Class "ros-name"; friendlyName all name }
+                span {
+                    badge |> AVal.map (fun (cls, _) -> Some (Class ("ros-badge " + cls)))
+                    badge |> AVal.map snd
+                }
+            }
+        let rows =
+            namesA
+            |> AVal.map (fun ns -> IndexList.ofList (ns |> List.map (rosterRow ns)))
+            |> AList.ofAVal
+        let progress =
+            (namesA, model.RegGraph) ||> AVal.map2 (fun ns g ->
+                if List.isEmpty ns then "no meshes loaded"
+                else
+                    let missing = ns |> List.filter (fun n -> not (RegGraph.inTree g n))
+                    if List.isEmpty missing then
+                        sprintf "All %d meshes connected." ns.Length
+                    else
+                        sprintf "%d of %d meshes connected; %s not yet."
+                            (ns.Length - missing.Length) ns.Length
+                            (missing |> List.map (friendlyName ns) |> String.concat ", "))
+        let macroA =
+            (namesA, model.RegGraph, model.SpannedNoticeOpen) |||> AVal.map3 (fun ns g no ->
+                match Workflow.macroState ns g no with
+                | MacroDisconnected -> "ros-state-disc", "disconnected"
+                | MacroSpanned -> "ros-state-span", "spanned"
+                | MacroRefining -> "ros-state-ref", "refining")
+        div {
+            Class "roster-dock"
+            Primitives.showWhen (model.Focus |> AVal.map ((=) FocusMatrix))
+            div {
+                Class "ros-head"
+                span { Class "lp-sublabel"; "Mesh roster" }
+                span {
+                    Attribute("title", "Workflow state, topological only: disconnected (islands remain) → spanned (every mesh connected to the root) → refining (optional further improvement — never required)")
+                    macroA |> AVal.map (fun (cls, _) -> Some (Class ("ros-state " + cls)))
+                    macroA |> AVal.map snd
+                }
+            }
+            div { Class "ros-progress"; progress }
+            div { Class "ros-rows"; rows }
+        }
+
+    // ── The reaching-behaviour session log: every navigation/selection
+    // action with its originating surface and timestamp — the workshop's
+    // primary data. The panel shows a tail; export downloads the whole log
+    // as JSON.
+    let logPanel (env : Env<Message>) (model : AdaptiveModel) =
+        let rows =
+            model.ReachLog
+            |> AVal.map (fun log ->
+                log |> List.truncate 14 |> List.map (fun ev ->
+                    div {
+                        Class "log-row"
+                        span { Class "log-time"; ev.At.ToLocalTime().ToString("HH:mm:ss") }
+                        span { Class "log-src"; ev.Source }
+                        span {
+                            Class "log-act"
+                            Attribute("title", ev.Action + (if ev.Subject = "" then "" else " — " + ev.Subject))
+                            ev.Action + (if ev.Subject = "" then "" else " · " + ev.Subject)
+                        }
+                    })
+                |> IndexList.ofList)
+            |> AList.ofAVal
+        div {
+            Class "log-dock"
+            Primitives.showWhen (model.Focus |> AVal.map ((=) FocusMatrix))
+            div {
+                Class "log-head"
+                div {
+                    Class "log-head-toggle"
+                    Attribute("title", "Session log — every navigation action with the surface it came from; click to expand")
+                    Dom.OnClick(fun _ -> env.Emit [ToggleReachLog])
+                    span {
+                        Class "inspect-dock-caret"
+                        model.ReachLogOpen |> AVal.map (fun o -> if o then "▾" else "▸")
+                    }
+                    span {
+                        Class "lp-sublabel"
+                        model.ReachLog |> AVal.map (fun l -> sprintf "Session log (%d)" (List.length l))
+                    }
+                }
+                button {
+                    Class "mb log-export"
+                    Attribute("title", "Download the full session log as JSON")
+                    Dom.OnClick(fun _ ->
+                        let esc (s : string) = s.Replace("\\", "\\\\").Replace("\"", "\\\"")
+                        let json =
+                            AVal.force model.ReachLog
+                            |> List.rev
+                            |> List.map (fun ev ->
+                                sprintf "  {\"t\":\"%s\",\"source\":\"%s\",\"action\":\"%s\",\"subject\":\"%s\"}"
+                                    (ev.At.ToString("o")) (esc ev.Source) (esc ev.Action) (esc ev.Subject))
+                            |> String.concat ",\n"
+                        try JSRuntime.Instance.Invoke<bool>("spDownloadText", "reach-log.json", "[\n" + json + "\n]") |> ignore
+                        with _ -> ())
+                    "⤓ export"
+                }
+            }
+            div {
+                Class "log-rows"
+                Primitives.showWhen model.ReachLogOpen
+                rows
+            }
+        }
+
     let rail (env : Env<Message>) (model : AdaptiveModel) =
 
         // ── Mesh × mesh navigator: rows/cols = meshes in sensor (acquisition)
@@ -487,7 +772,8 @@ module GuiRail =
                 // and enters its Pair level (impossible cells are inert holes).
                 Dom.OnClick(fun _ ->
                     match AVal.force st with
-                    | PairPossible | PairRegistered _ -> env.Emit [SelectPair(a, b)]
+                    | PairPossible | PairRegistered _ ->
+                        env.Emit [LogReach("matrix", "open-pair", a + " | " + b); SelectPair(a, b)]
                     | PairImpossible -> ())
             }
         let numSwatch (name : string) =
@@ -500,6 +786,10 @@ module GuiRail =
         // from the matrix without a trip back to Setup.
         let headRoot (name : string) =
             model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
+        // The home mesh-subject (roster row / tree node) marks its matrix
+        // row + column heads.
+        let headHomeSel (name : string) =
+            model.HomeMeshSel |> AVal.map ((=) (Some name))
         // Rebuilt wholesale on an order change — a ≤ palette-sized grid that
         // changes rarely (the sanctioned simple AList form).
         let pairMatrixView () =
@@ -522,6 +812,7 @@ module GuiRail =
                                         div {
                                             Class "pmx-colhead"
                                             classWhen "pmx-head-root" (headRoot arr.[j])
+                                            classWhen "pmx-head-homesel" (headHomeSel arr.[j])
                                             (headRoot arr.[j]) |> AVal.map (fun r ->
                                                 Some (Attribute("title", if r then arr.[j] + " — the reference root ★" else arr.[j])))
                                             numSwatch arr.[j]
@@ -533,6 +824,7 @@ module GuiRail =
                                     div {
                                         Class "pmx-rowhead"
                                         classWhen "pmx-head-root" (headRoot arr.[i])
+                                        classWhen "pmx-head-homesel" (headHomeSel arr.[i])
                                         (headRoot arr.[i]) |> AVal.map (fun r ->
                                             Some (Attribute("title", if r then arr.[i] + " — the reference root ★" else arr.[i])))
                                         numSwatch arr.[i]
@@ -550,6 +842,25 @@ module GuiRail =
                 rowsA |> AList.ofAVal
             }
 
+        // ── The home stage: TWO co-equal navigators over the one registration
+        // state — the pair matrix and the rooted tree, side by side with
+        // visual parity (equal flex, identical chrome; neither dominant, so
+        // reaching behaviour is not a layout artifact).
+        let homeStage () =
+            div {
+                Class "home-stage"
+                div {
+                    Class "home-nav"
+                    div { Class "home-nav-head"; span { Class "lp-sublabel"; "Pair matrix" } }
+                    div { Class "home-nav-body"; pairMatrixView () }
+                }
+                div {
+                    Class "home-nav"
+                    div { Class "home-nav-head"; span { Class "lp-sublabel"; "Registration tree" } }
+                    div { Class "home-nav-body"; treePanel env model }
+                }
+            }
+
         // ── The focus rail: three stops, strictly narrowing scope. Enablement
         // is selection-derived; the reducer re-guards every jump.
         let railLevels =
@@ -563,7 +874,7 @@ module GuiRail =
                     classWhen "rail-btn-active" active
                     enabled |> AVal.map (fun e -> if e then None else Some (Attribute("disabled", "disabled")))
                     Attribute("title", title)
-                    Dom.OnClick(fun _ -> env.Emit [SetFocus level])
+                    Dom.OnClick(fun _ -> env.Emit [LogReach("rail", "jump", label); SetFocus level])
                     label
                 }
             div {
@@ -842,11 +1153,11 @@ module GuiRail =
                     (model.Focus, selPairA) ||> AVal.map2 (fun focus selPair ->
                         let node =
                             match focus, selPair with
-                            | FocusMatrix, _ -> pairMatrixView ()
+                            | FocusMatrix, _ -> homeStage ()
                             | FocusPair, Some (a, b) -> cellWorkspace a b
                             | FocusPin, Some (a, b) -> pinLevelView a b
                             // Unreachable — the reducer keeps Focus enabled.
-                            | (FocusPair | FocusPin), None -> pairMatrixView ()
+                            | (FocusPair | FocusPin), None -> homeStage ()
                         IndexList.ofList [ node ])
                     |> AList.ofAVal
                 levelNode

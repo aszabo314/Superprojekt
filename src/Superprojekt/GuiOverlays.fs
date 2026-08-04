@@ -38,6 +38,29 @@ module GuiOverlays =
             model.Toast |> AVal.map (Option.defaultValue "")
         }
 
+    // The spanned completion notice: fixed top-centre, tied to NEITHER
+    // navigator (representation-independent), opened by the reducer on the
+    // topological completion transition. Purely an entry point into the
+    // existing global instruments — it carries no quality number.
+    let spannedBanner (env : Env<Message>) (model : AdaptiveModel) =
+        div {
+            Class "spanned-banner"
+            Primitives.showWhen model.SpannedNoticeOpen
+            span { Class "spb-msg"; "All meshes registered — you can now assess global quality." }
+            button {
+                Class "rail-btn spb-assess"
+                Attribute("title", "Open the global inspection instruments: the graph error map, the pooled histogram and the pose peek at the Matrix level")
+                Dom.OnClick(fun _ -> env.Emit [LogReach("event", "assess-global", ""); AssessGlobalQuality])
+                "Assess global quality →"
+            }
+            button {
+                Class "mb spb-close"
+                Attribute("title", "Put the notice away")
+                Dom.OnClick(fun _ -> env.Emit [LogReach("event", "dismiss-notice", ""); DismissSpannedNotice])
+                "✕"
+            }
+        }
+
     let scaleBar (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let targetPx = 100.0
         let barInfo =

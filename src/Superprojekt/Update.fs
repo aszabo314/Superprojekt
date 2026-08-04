@@ -241,6 +241,7 @@ module Update =
             let model =
                 { model with
                     Sel = FocusSelection.empty
+                    HomeMeshSel = None
                     ScanPins = { model.ScanPins with Placement = PlacementIdle } }
             let recomposeWith (g' : RegGraph) (m : Model) =
                 invalidateCellError (invalidateRings (ModelTransforms.recomposePoses { m with RegGraph = g' }))
@@ -295,6 +296,8 @@ module Update =
             if model.PinExitPending.IsNone then model else { model with PinExitPending = None }
         | SelectPair(a, b) ->
             let key = PairCell.key a b
+            // The pair becomes the home subject — the mesh selection yields.
+            let model = { model with HomeMeshSel = None }
             if model.Sel.Pair = Some key then
                 // The remembered pair: the selection (incl. its pin memory)
                 // stands — re-entering restores the last workspace state.
@@ -307,6 +310,25 @@ module Update =
                     { jumpFocus FocusPair model with
                         Sel = { Pair = Some key; Pin = None; Point = None }
                         ScanPins = { model.ScanPins with Placement = PlacementIdle } }
+        | SelectHomeMesh mesh ->
+            if not (HashMap.containsKey mesh model.MeshOrder) then model
+            else
+                let sel = if model.HomeMeshSel = Some mesh then None else Some mesh
+                { model with HomeMeshSel = sel }
+        | DismissSpannedNotice ->
+            if model.SpannedNoticeOpen then { model with SpannedNoticeOpen = false } else model
+        | AssessGlobalQuality ->
+            // Leaving Pin with a centred draft goes through the exit-guard
+            // like every jump — the notice stays for a retry after resolving.
+            if model.Focus = FocusPin && placingWithCentre model then
+                { model with PinExitPending = Some FocusMatrix }
+            else
+                let m = if model.Focus = FocusMatrix then model else jumpFocus FocusMatrix model
+                { m with SpannedNoticeOpen = false; InspectOpen = true; CellMapOn = true }
+        | LogReach(source, action, subject) ->
+            logReach source action subject model
+        | ToggleReachLog ->
+            { model with ReachLogOpen = not model.ReachLogOpen }
         | SelectPin id ->
             let valid =
                 match HashMap.tryFind id model.ScanPins.Pins with
@@ -528,6 +550,8 @@ module Update =
                     PairOverlaps = Map.empty
                     Focus = FocusMatrix
                     Sel = FocusSelection.empty
+                    HomeMeshSel = None
+                    SpannedNoticeOpen = false
                     TileCams = Map.empty
                     CellError = None
                     CellErrorBefore = None
@@ -957,8 +981,24 @@ module Update =
             } |> ignore
             model
 
+    // The spanned event is a TRANSITION, not a state read: the notice opens
+    // exactly when the last mesh joins the tree and closes the moment an edge
+    // drop / root change / dataset switch disconnects the graph again —
+    // re-spanning re-fires it. Runs after every reducer step against the
+    // pre-step model.
+    let private trackSpanned (model0 : Model) (model : Model) =
+        let names (m : Model) = m.MeshNames |> IndexList.toList
+        let was = Workflow.spanned (names model0) model0.RegGraph
+        let now = Workflow.spanned (names model) model.RegGraph
+        if now && not was then
+            logReach "event" "spanned" "" { model with SpannedNoticeOpen = true }
+        elif not now && model.SpannedNoticeOpen then
+            logReach "event" "unspanned" "" { model with SpannedNoticeOpen = false }
+        else model
+
     let update (env : Env<Message>) (model : Model) (msg : Message) =
         updateCore env model msg
+        |> trackSpanned model
         |> normalizeFocus
         |> ScanPinUpdate.ensureRings env
         |> ensureCellError env

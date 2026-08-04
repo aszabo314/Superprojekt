@@ -40,6 +40,22 @@ type Message =
     // Matrix cell click: select the pair (a NEW pair cascade-clears pin/point)
     // and enter its Pair level.
     | SelectPair of a:string * b:string
+    // Roster row / tree node click: toggle the home level's mesh-subject
+    // selection (a cross-surface highlight; pair subjects ride Sel.Pair).
+    | SelectHomeMesh of string
+    // Put the spanned completion notice away (the same topology then reads
+    // "refining").
+    | DismissSpannedNotice
+    // Act on the spanned notice: turn to the EXISTING global instruments
+    // (Matrix focus, inspect dock open, graph error map on) — never a score.
+    | AssessGlobalQuality
+    // One reaching-behaviour log entry: an action + the SURFACE it came from
+    // (matrix / tree / roster / rail / event); the reducer stamps the time.
+    // Views emit it ALONGSIDE the action message — the reducer never logs an
+    // action itself, so a subject-message can't double-count.
+    | LogReach of source:string * action:string * subject:string
+    // The session-log panel's disclosure.
+    | ToggleReachLog
     // Pair-level pin list: choose the pin (enables the Pin stop).
     | SelectPin of ScanPinId
     // Pin-level focus buttons: Some mesh = focus that correspondence side

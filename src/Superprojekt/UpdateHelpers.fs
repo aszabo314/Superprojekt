@@ -81,6 +81,12 @@ module UpdateHelpers =
             BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None
             ProbeReadout = None }
 
+    let logReach (source : string) (action : string) (subject : string) (model : Model) =
+        { model with
+            ReachLog =
+                { At = System.DateTime.UtcNow; Source = source; Action = action; Subject = subject }
+                :: model.ReachLog }
+
     let showToast (env : Env<Message>) (text : string) (model : Model) =
         toastCts.Cancel()
         toastCts <- new System.Threading.CancellationTokenSource()

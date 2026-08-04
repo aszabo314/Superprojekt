@@ -1,5 +1,5 @@
-//15f99dbc-8497-0d43-77fa-a9e363937901
-//38318239-278b-8cfd-045f-cb93bb8464ab
+//27182e07-3f8e-fb0c-2fe1-372826fe0235
+//cee6140c-9bda-0d0e-ce28-0a4ae736b94f
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -46,10 +46,11 @@ type AdaptiveModel(value : Model) =
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _Focus_ = FSharp.Data.Adaptive.cval(value.Focus)
     let _Sel_ = FSharp.Data.Adaptive.cval(value.Sel)
-    let _HomeMeshSel_ = FSharp.Data.Adaptive.cval(value.HomeMeshSel)
     let _SpannedNoticeOpen_ = FSharp.Data.Adaptive.cval(value.SpannedNoticeOpen)
     let _ReachLog_ = FSharp.Data.Adaptive.cval(value.ReachLog)
     let _ReachLogOpen_ = FSharp.Data.Adaptive.cval(value.ReachLogOpen)
+    let _Checkpoints_ = FSharp.Data.Adaptive.cval(value.Checkpoints)
+    let _CheckpointName_ = FSharp.Data.Adaptive.cval(value.CheckpointName)
     let _CellError_ = FSharp.Data.Adaptive.cval(value.CellError)
     let _CellErrorBefore_ = FSharp.Data.Adaptive.cval(value.CellErrorBefore)
     let _CellDist_ = FSharp.Data.Adaptive.cval(value.CellDist)
@@ -124,10 +125,11 @@ type AdaptiveModel(value : Model) =
             _RenderingMode_.Value <- value.RenderingMode
             _Focus_.Value <- value.Focus
             _Sel_.Value <- value.Sel
-            _HomeMeshSel_.Value <- value.HomeMeshSel
             _SpannedNoticeOpen_.Value <- value.SpannedNoticeOpen
             _ReachLog_.Value <- value.ReachLog
             _ReachLogOpen_.Value <- value.ReachLogOpen
+            _Checkpoints_.Value <- value.Checkpoints
+            _CheckpointName_.Value <- value.CheckpointName
             _CellError_.Value <- value.CellError
             _CellErrorBefore_.Value <- value.CellErrorBefore
             _CellDist_.Value <- value.CellDist
@@ -195,10 +197,11 @@ type AdaptiveModel(value : Model) =
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.Focus = _Focus_ :> FSharp.Data.Adaptive.aval<FocusLevel>
     member __.Sel = _Sel_ :> FSharp.Data.Adaptive.aval<FocusSelection>
-    member __.HomeMeshSel = _HomeMeshSel_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
     member __.SpannedNoticeOpen = _SpannedNoticeOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ReachLog = _ReachLog_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<ReachEvent>>
     member __.ReachLogOpen = _ReachLogOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.Checkpoints = _Checkpoints_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
+    member __.CheckpointName = _CheckpointName_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.string>
     member __.CellError = _CellError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellErrorBefore = _CellErrorBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellDist = _CellDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.float32)[]>>

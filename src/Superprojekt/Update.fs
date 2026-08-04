@@ -241,7 +241,6 @@ module Update =
             let model =
                 { model with
                     Sel = FocusSelection.empty
-                    HomeMeshSel = None
                     ScanPins = { model.ScanPins with Placement = PlacementIdle } }
             let recomposeWith (g' : RegGraph) (m : Model) =
                 invalidateCellError (invalidateRings (ModelTransforms.recomposePoses { m with RegGraph = g' }))
@@ -296,8 +295,6 @@ module Update =
             if model.PinExitPending.IsNone then model else { model with PinExitPending = None }
         | SelectPair(a, b) ->
             let key = PairCell.key a b
-            // The pair becomes the home subject — the mesh selection yields.
-            let model = { model with HomeMeshSel = None }
             if model.Sel.Pair = Some key then
                 // The remembered pair: the selection (incl. its pin memory)
                 // stands — re-entering restores the last workspace state.
@@ -310,11 +307,6 @@ module Update =
                     { jumpFocus FocusPair model with
                         Sel = { Pair = Some key; Pin = None; Point = None }
                         ScanPins = { model.ScanPins with Placement = PlacementIdle } }
-        | SelectHomeMesh mesh ->
-            if not (HashMap.containsKey mesh model.MeshOrder) then model
-            else
-                let sel = if model.HomeMeshSel = Some mesh then None else Some mesh
-                { model with HomeMeshSel = sel }
         | DismissSpannedNotice ->
             if model.SpannedNoticeOpen then { model with SpannedNoticeOpen = false } else model
         | AssessGlobalQuality ->
@@ -329,6 +321,28 @@ module Update =
             logReach source action subject model
         | ToggleReachLog ->
             { model with ReachLogOpen = not model.ReachLogOpen }
+        | SetCheckpointName n ->
+            if model.CheckpointName = n then model else { model with CheckpointName = n }
+        | SetCheckpoints names ->
+            if model.Checkpoints = names then model else { model with Checkpoints = names }
+        | ApplyCheckpoint(name, ds, g, pins) ->
+            // The view pre-switches the dataset (a SetActiveDataset rides in
+            // front of this message when needed), so a mismatch here means
+            // that switch was rejected — never apply cross-dataset data.
+            if model.ActiveDataset <> Some ds then
+                showToast env "Checkpoint belongs to another dataset — not applied" model
+            else
+                bumpPairSolve ()
+                let model =
+                    { jumpFocus FocusMatrix model with
+                        Sel = FocusSelection.empty
+                        ScanPins =
+                            { Pins = pins |> List.map (fun p -> p.Id, p) |> HashMap.ofList
+                              Placement = PlacementIdle }
+                        LoopPending = None
+                        SpannedNoticeOpen = false }
+                showToast env (sprintf "Checkpoint '%s' loaded" name)
+                    (invalidateCellError (ModelTransforms.recomposePoses { model with RegGraph = g }))
         | SelectPin id ->
             let valid =
                 match HashMap.tryFind id model.ScanPins.Pins with
@@ -404,7 +418,8 @@ module Update =
                 // close (an open one would float dead over the scrim).
                 { model with
                     ArmedPick = Some target; ArmPreview = None; ProbeReadout = None
-                    GearPopoverOpen = false; MeshMenuOpen = false; SensorMenuOpen = false }
+                    GearPopoverOpen = false; MeshMenuOpen = false; SensorMenuOpen = false
+                    ReachLogOpen = false }
         | SetArmPreview p ->
             if model.ArmedPick.IsNone then
                 if model.ArmPreview.IsSome then { model with ArmPreview = None } else model
@@ -460,11 +475,16 @@ module Update =
             { model with CellMapOn = not model.CellMapOn }
         | SetPeekVis held ->
             // Pair-workspace scope (Pair AND Pin) + both pair meshes
-            // GPU-resident + a pair-mesh isolate LOCK — the peek swaps the
-            // isolation to the pair's other mesh while held; without an
-            // isolate there is nothing to swap. Releases always land.
+            // GPU-resident + ANY effective isolation on a pair mesh — the
+            // committed lock or a transient (tile / ◎-side hover, armed A/B
+            // pick): the peek swaps whatever isolate is in effect to the
+            // pair's other mesh while held; without one there is nothing to
+            // swap. Releases always land.
             let isoOk =
-                match model.TileIsolate, model.Sel.Pair with
+                let eff, _ =
+                    MeshVisibility.effectiveNarrowing model.PinFocusHover model.ArmedPick
+                        model.TileIsolateHover model.TileIsolate model.Sel.Point
+                match eff, model.Sel.Pair with
                 | Some m, Some (a, b) -> m = a || m = b
                 | _ -> false
             if model.PeekVis = held || (held && not (peekPairLoaded model && isoOk)) then model
@@ -550,7 +570,6 @@ module Update =
                     PairOverlaps = Map.empty
                     Focus = FocusMatrix
                     Sel = FocusSelection.empty
-                    HomeMeshSel = None
                     SpannedNoticeOpen = false
                     TileCams = Map.empty
                     CellError = None

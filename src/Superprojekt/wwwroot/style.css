@@ -104,7 +104,6 @@ body.loaded { background: #f4f6f8; }
     border-radius: 4px; padding: 3px 8px; font-size: 12px; font-weight: 600;
     pointer-events: none;
 }
-.pane-chip-name { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Pick-value tooltips (probe / hovered sample) riding their 3D points. */
 .pick-tip {
@@ -122,7 +121,6 @@ body.loaded { background: #f4f6f8; }
 }
 .tiles-handle:hover { background: rgba(26, 86, 219, 0.35); }
 .mesh-tile .pane-chip { max-width: calc(100% - 16px); }
-.mesh-tile .pane-chip-name { max-width: 110px; }
 .tile-rc { width: 100%; height: 100%; display: block; background: rgb(244, 246, 248); }
 
 /* ── Top bar ────────────────────────────────────────────────────────── */
@@ -166,17 +164,25 @@ body.loaded { background: #f4f6f8; }
 .tb-btn-tiny:disabled { opacity: 0.45; cursor: default; }
 .tb-btn-tiny:disabled:hover { background: transparent; color: #475569; }
 
-/* ── Left column: the navigator rail + the floating inspection panel ── */
+/* ── Left column: the navigator rail + the floating inspection panel.
+   ONE right-edge handle resizes the whole column (--leftw; the home level
+   keeps its own width in --lefthomew) — the left-side mirror of the tile
+   strip's handle. ── */
 .left-col {
     position: fixed;
     top: 32px; left: 0;
-    width: 256px;
+    width: var(--leftw, 256px);
     max-height: calc(100vh - 44px);
     display: flex; flex-direction: column; gap: 8px;
     z-index: 998;
     pointer-events: none;
 }
 .left-col > * { pointer-events: auto; }
+.left-handle {
+    position: absolute; right: 0; top: 0; bottom: 0; width: 6px;
+    cursor: ew-resize; z-index: 3; touch-action: none;
+}
+.left-handle:hover { background: rgba(26, 86, 219, 0.35); }
 .workflow-rail {
     position: relative;
     width: 100%;
@@ -191,11 +197,12 @@ body.loaded { background: #f4f6f8; }
     font-size: 12px;
 }
 /* The docked inspection toolbox (Pair + Pin): below the rail, collapsible
-   to its thin header edge. The right-edge handle writes --dockw/--charth
-   (chart grows aspect-true, clamps at the viewport bottom). */
+   to its thin header edge. Width rides the column (the shared left handle);
+   the handle keeps --charth on the dock (chart grows aspect-true, clamps at
+   the viewport bottom). */
 .inspect-dock {
     position: relative;
-    width: var(--dockw, 100%);
+    width: 100%;
     flex: none;
     background: #ffffff;
     border-right: 1px solid #d7dce4;
@@ -216,93 +223,21 @@ body.loaded { background: #f4f6f8; }
 .inspect-dock-head:hover { background: #eef2f6; }
 .inspect-dock-caret { color: #64748b; font-size: 10px; width: 10px; }
 .inspect-dock-body { padding: 8px 10px; overflow-y: auto; min-height: 0; }
-.inspect-handle {
-    position: absolute; right: 0; top: 0; bottom: 0; width: 6px;
-    cursor: ew-resize; z-index: 3; touch-action: none;
-}
-.inspect-handle:hover { background: rgba(26, 86, 219, 0.35); }
-/* The mesh roster: the home level's completeness readout — its own panel,
-   independent of both navigators. Badges are TOPOLOGY only and reuse the
-   matrix's achromatic grammar: filled = in the tree, outlined vessel = not
-   yet, pale grey = no overlap anywhere (the no-data grey). */
-.roster-dock {
-    position: relative;
-    width: 100%;
-    flex: none;
-    background: #ffffff;
-    border-right: 1px solid #d7dce4;
-    border-bottom: 1px solid #d7dce4;
-    box-shadow: 2px 2px 8px rgba(0,0,0,0.06);
-    font-size: 12px;
-}
-.ros-head {
-    display: flex; align-items: center; gap: 6px;
-    padding: 4px 8px;
-    background: #f8fafc;
-    border-bottom: 1px solid #e6eaf0;
-}
-.ros-rows { padding: 5px 8px 7px; display: flex; flex-direction: column; gap: 2px; }
-.ros-row {
-    display: flex; align-items: center; gap: 6px;
-    padding: 3px 6px; border-radius: 4px; cursor: pointer;
-}
-.ros-row:hover { background: #eef2f6; }
-.ros-row.ros-sel { outline: 2px solid #1a56db; outline-offset: -1px; }
-.ros-row.ros-in-pair { background: #eff6ff; }
-.ros-name {
-    flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    font-weight: 600; color: #0f172a;
-}
-.ros-badge { font-size: 10px; padding: 1px 8px; border-radius: 8px; flex: none; white-space: nowrap; }
-.ros-badge-on { background: #0f172a; color: #ffffff; }
-.ros-badge-off { background: #ffffff; border: 1.5px solid #94a3b8; color: #334155; }
-.ros-badge-no { background: #eef1f4; color: #94a3b8; }
-.ros-badge-root {
-    background: var(--ref-gold-pale);
-    box-shadow: inset 0 0 0 1px var(--ref-gold-dark);
-    color: var(--ref-gold-dark);
-}
-.ros-progress { padding: 2px 10px 7px; color: #334155; }
-/* The workflow macro-state chip — topology only, never a score. */
-.ros-state {
-    margin-left: auto; font-size: 10px; font-weight: 700;
-    padding: 1px 8px; border-radius: 8px;
-    text-transform: uppercase; letter-spacing: 0.04em;
-}
-.ros-state-disc { background: #ffffff; border: 1.5px solid #94a3b8; color: #475569; }
-.ros-state-span { background: #1a56db; color: #ffffff; }
-.ros-state-ref  { background: #eff6ff; border: 1px solid #1a56db; color: #1a56db; }
-
-/* The reaching-behaviour session log. */
-.log-dock {
-    position: relative; width: 100%; flex: none;
-    background: #ffffff;
-    border-right: 1px solid #d7dce4; border-bottom: 1px solid #d7dce4;
-    box-shadow: 2px 2px 8px rgba(0,0,0,0.06);
-    font-size: 12px;
-}
-.log-head {
-    display: flex; align-items: center; gap: 6px;
-    padding: 2px 8px 2px 0;
-    background: #f8fafc; border-bottom: 1px solid #e6eaf0;
-}
-.log-head-toggle {
-    display: flex; align-items: center; gap: 6px;
-    padding: 2px 8px; flex: 1 1 auto;
-    cursor: pointer; user-select: none;
-}
-.log-head-toggle:hover { background: #eef2f6; }
-.log-export { flex: none; }
+/* The reaching-behaviour session log — a top-right popover beside the
+   debug menu (dark tb-gear-popover chrome). */
+.tb-log-popover { width: 360px; }
+.log-head { display: flex; align-items: center; gap: 6px; width: 100%; }
+.log-export { flex: none; margin-left: auto; }
 .log-rows {
     padding: 4px 8px 8px;
     display: flex; flex-direction: column; gap: 1px;
-    max-height: 180px; overflow-y: auto;
+    max-height: 320px; overflow-y: auto;
     font-size: 11px;
 }
 .log-row { display: flex; gap: 6px; align-items: baseline; min-width: 0; }
-.log-time { font-family: 'SF Mono', Monaco, monospace; color: #64748b; flex: none; }
-.log-src { font-weight: 700; color: #334155; flex: none; width: 42px; }
-.log-act { color: #0f172a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-time { font-family: 'SF Mono', Monaco, monospace; color: #94a3b8; flex: none; }
+.log-src { font-weight: 700; color: #cbd5e1; flex: none; width: 42px; }
+.log-act { color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* The spanned completion notice — fixed top-centre, unmistakable (brief
    pulse on appear), independent of both navigators. */
@@ -327,7 +262,7 @@ body.loaded { background: #f4f6f8; }
 
 /* ── The home stage: matrix ‖ tree, co-equal navigators (equal flex,
    identical chrome — parity is the experiment, keep neither dominant). ── */
-.left-col.left-col-home { width: 600px; max-width: calc(100vw - 500px); }
+.left-col.left-col-home { width: var(--lefthomew, 600px); max-width: calc(100vw - 500px); }
 .home-stage { display: flex; gap: 8px; align-items: stretch; }
 .home-nav {
     flex: 1 1 0; min-width: 0;
@@ -507,6 +442,17 @@ body.loaded { background: #f4f6f8; }
     font-family: 'SF Mono', 'Monaco', monospace;
     font-size: 10px; color: #cbd5e1;
 }
+/* Data-state checkpoints (the ⚙ menu). */
+.tb-ck-input {
+    flex: 1 1 auto; min-width: 0;
+    background: #1e293b; color: #e2e8f0; border: 1px solid #334155;
+    border-radius: 2px; padding: 2px 6px; font-size: 11px;
+}
+.tb-ck-row { margin-bottom: 2px; }
+.tb-ck-name {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .tb-gear-mesh-info {
     border-top: 1px solid #334155; padding: 4px 0; margin-bottom: 4px;
     max-height: 120px; overflow-y: auto;
@@ -519,13 +465,8 @@ body.loaded { background: #f4f6f8; }
 .tb-gear-mesh-coord { color: #cbd5e1; }
 
 /* The hidden mesh menu (reference root + per-mesh render toggles). */
-.tb-mesh-popover { width: 460px; }
+.tb-mesh-popover { width: 340px; }
 .tb-gear-popover .pmx-num { color: #e2e8f0; }
-.tb-mesh-menu-name {
-    flex: 1; min-width: 0;
-    font-size: 11px; color: #e2e8f0;
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
 .tb-ref-btn { white-space: nowrap; flex: none; }
 
 /* The jump-to-sensor dropdown (left top cluster — anchors left, not right). */
@@ -625,7 +566,8 @@ body.loaded { background: #f4f6f8; }
 .pmx-sel { outline: 2px solid #1a56db; outline-offset: -1px; box-shadow: 0 0 0 2px rgba(26, 86, 219, 0.35); }
 /* Gold = the reference root, readable straight off the matrix heads. */
 .pmx-head-root { background: var(--ref-gold-pale); box-shadow: inset 0 0 0 1px var(--ref-gold-dark); border-radius: 3px; }
-.pmx-head-homesel { outline: 2px solid #1a56db; outline-offset: -1px; border-radius: 3px; }
+.pmx-head-hover { outline: 2px solid #1a56db; outline-offset: -1px; border-radius: 3px; }
+.pmx-cell.pmx-cellhover { outline: 2px solid #60a5fa; outline-offset: -1px; }
 .setup-ref-on { background: var(--ref-gold-pale); border-color: var(--ref-gold-dark); color: var(--ref-gold-dark); font-weight: 600; }
 .setup-ref-on:hover { background: var(--ref-gold-pale); }
 .pmx-root-star { color: var(--ref-gold-dark); font-size: 12px; width: 14px; text-align: center; }
@@ -634,7 +576,6 @@ body.loaded { background: #f4f6f8; }
 .cw { display: flex; flex-direction: column; gap: 6px; }
 .cw-head { display: flex; align-items: center; gap: 6px; padding: 2px 0; }
 .cw-chip { display: flex; align-items: center; gap: 4px; border: 1px solid #cbd5e1; border-radius: 4px; padding: 2px 6px; background: #ffffff; min-width: 0; }
-.cw-chip-name { font-size: 11px; color: #0f172a; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cw-link { color: #64748b; font-weight: 700; flex: none; }
 .cw-state { font-size: 10px; color: #64748b; padding: 0 2px; }
 .cw-tools { display: flex; align-items: center; gap: 8px; padding: 4px 0; }

@@ -284,12 +284,14 @@ module GuiRail =
     let private graphBody (env : Env<Message>) (model : AdaptiveModel) =
         // ONE pooled monochrome series: every established edge's samples
         // concatenated into a single distribution (pooled SAMPLES, not bin-wise
-        // added counts) in the PEEKED state — N overlaid before-outlines would
-        // be unreadable, and colouring by edge would put a second key on the
-        // diagram. The brush is what identifies a source: its dots resolve to
-        // their own meshes in 3D. The pose peek swaps the whole distribution
-        // (as-loaded ⇄ residual) on the FIXED axis below, so the mass visibly
-        // collapses toward zero instead of rescaling to look identical.
+        // added counts) in the PEEKED state, plus ONE pooled before-outline
+        // (the same union) — a single step line stays readable where N
+        // per-edge ghosts would not, and colouring by edge would put a second
+        // key on the diagram. The brush is what identifies a source: its dots
+        // resolve to their own meshes in 3D. The pose peek swaps the whole
+        // distribution (as-loaded ⇄ residual) on the FIXED axis below, so the
+        // mass visibly collapses toward zero instead of rescaling to look
+        // identical.
         let chartData =
             AVal.custom (fun t ->
                 let inv = System.Globalization.CultureInfo.InvariantCulture
@@ -312,21 +314,36 @@ module GuiRail =
                     let lo, hi = lo - pad, hi + pad
                     let bins = 48
                     let binW = (hi - lo) / float bins
-                    let hist : int[] = Array.zeroCreate bins
-                    for v in samples do
-                        let idx = max 0 (min (bins - 1) (int ((v * 1000.0 - lo) / binW)))
-                        hist.[idx] <- hist.[idx] + 1
+                    let histOf (vs : float[]) =
+                        let c : int[] = Array.zeroCreate bins
+                        for v in vs do
+                            let idx = max 0 (min (bins - 1) (int ((v * 1000.0 - lo) / binW)))
+                            c.[idx] <- c.[idx] + 1
+                        c
                     let med =
                         let s = Array.sort samples
                         gf (s.[s.Length / 2] * 1000.0)
                     let lods = blocks |> Array.choose (fun b -> if b.Err.Count > 0 then Some b.Err.LodHalfWidth else None)
                     let lod = if lods.Length = 0 then 0.0 else (Array.average lods) * 1000.0
+                    // The pooled BEFORE outline (the same union of every edge's
+                    // samples the before-state cache holds), on the shared fixed
+                    // axis — the one step line stays readable where N per-edge
+                    // ghosts would not. While the pose peek shows the before
+                    // state, fill and line coincide by construction.
+                    let beforeSamples =
+                        model.GraphErrorBefore.GetValue t
+                        |> Option.defaultValue [||]
+                        |> Array.collect (fun b -> b.Err.Samples)
+                    let hbj =
+                        if beforeSamples.Length = 0 then ""
+                        else histOf beforeSamples |> Array.map string |> String.concat ","
                     let series =
-                        sprintf "{\"name\":\"graph\",\"color\":\"%s\",\"med\":%s,\"g\":[%s],\"s\":[%s],\"h\":[%s],\"hb\":[]}"
+                        sprintf "{\"name\":\"graph\",\"color\":\"%s\",\"med\":%s,\"g\":[%s],\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
                             (c4bToHex (C4b(120uy, 120uy, 120uy))) med
                             (Array.init samples.Length string |> String.concat ",")
                             (samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
-                            (hist |> Array.map string |> String.concat ",")
+                            (histOf samples |> Array.map string |> String.concat ",")
+                            hbj
                     sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"series\":[%s]}"
                         title (gf lo) (gf hi) bins (gf lod) series)
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
@@ -411,37 +428,6 @@ module GuiRail =
                 Primitives.showWhen model.InspectOpen
                 content
             }
-            // Right-edge width-resize handle — pure DOM like the tile strip's.
-            // Writes --dockw/--charth custom properties on the dock (it
-            // persists across pair swaps; the chart re-mounts, the vars
-            // don't). The chart grows with a FIXED aspect until it would pass
-            // the viewport bottom (minus whatever dock rows sit below it),
-            // then the height clamps and only the width keeps growing.
-            div {
-                Class "inspect-handle"
-                Attribute("title", "Drag to resize the inspection toolbox")
-                OnBoot [
-                    "(function(){"
-                    "var h=__THIS__; var d=h.parentElement;"
-                    "function apply(w){"
-                    "  w=Math.max(256,Math.min(Math.max(320,window.innerWidth*0.9),w));"
-                    "  d.style.setProperty('--dockw',w+'px');"
-                    "  var c=d.querySelector('.cw-chart');"
-                    "  if(c){ var r=c.getBoundingClientRect(), dr=d.getBoundingClientRect();"
-                    "    var reserve=Math.max(0,dr.bottom-r.bottom);"
-                    "    var hMax=window.innerHeight-r.top-reserve-10;"
-                    "    var hT=(w-20)*160/236;"
-                    "    d.style.setProperty('--charth',Math.max(160,Math.min(hMax,hT))+'px'); } }"
-                    "h.addEventListener('pointerdown',function(e){"
-                    "  e.preventDefault(); h.setPointerCapture(e.pointerId);"
-                    "  function mv(ev){ apply(ev.clientX); }"
-                    "  function up(){ h.removeEventListener('pointermove',mv); h.removeEventListener('pointerup',up); }"
-                    "  h.addEventListener('pointermove',mv); h.addEventListener('pointerup',up); });"
-                    "window.addEventListener('resize',function(){"
-                    "  var w=parseFloat(d.style.getPropertyValue('--dockw')); if(w) apply(w); });"
-                    "})();"
-                ]
-            }
         }
 
     // ── The rooted registration tree: the matrix's co-equal PEER navigator —
@@ -459,16 +445,14 @@ module GuiRail =
                 let g = model.RegGraph.GetValue t
                 let names = IndexList.toList (model.MeshNames.Content.GetValue t)
                 let order = model.MeshOrder.Content.GetValue t
-                let sel = model.HomeMeshSel.GetValue t
                 let selPair = (model.Sel.GetValue t).Pair
-                let fmap = friendlyMap names
                 let nodes =
                     names |> List.map (fun n ->
                         let i = HashMap.tryFind n order |> Option.defaultValue 0
                         let d = match MatrixNav.hopDepth g n with Some d -> d | None -> -1
-                        sprintf "{\"id\":\"%s\",\"num\":%d,\"name\":\"%s\",\"c\":\"%s\",\"d\":%d,\"root\":%b,\"sel\":%b}"
-                            (esc n) (i + 1) (esc (Map.tryFind n fmap |> Option.defaultValue n))
-                            (c4bToHex (meshColor i)) d (g.Root = Some n) (sel = Some n))
+                        sprintf "{\"id\":\"%s\",\"num\":%d,\"c\":\"%s\",\"d\":%d,\"root\":%b}"
+                            (esc n) (i + 1)
+                            (c4bToHex (meshColor i)) d (g.Root = Some n))
                 let edges =
                     g.Edges |> Map.toList |> List.map (fun (c, e) ->
                         sprintf "{\"c\":\"%s\",\"p\":\"%s\",\"sel\":%b}"
@@ -479,6 +463,9 @@ module GuiRail =
             Class "tree-nav"
             div {
                 Class "tree-canvas"
+                // Stale-hover guard: an SVG rebuild under the cursor swallows
+                // the JS mouseleave — the container's leave always fires.
+                Dom.OnMouseLeave(fun _ -> env.Emit [SetTileIsolateHover None; SetMatrixHoverPair None])
                 treeData |> AVal.map (fun j -> Some (Attribute("data-tree", j)))
                 observedRender "data-tree" "{}" [
                     "  if(!d.nodes || !d.nodes.length){ return; }"
@@ -519,9 +506,11 @@ module GuiRail =
                     "    ht.setAttribute('x1',x1); ht.setAttribute('y1',y1); ht.setAttribute('x2',x2); ht.setAttribute('y2',y2);"
                     "    ht.setAttribute('stroke','rgba(0,0,0,0)'); ht.setAttribute('stroke-width',12); ht.style.cursor='pointer';"
                     "    var tt=document.createElementNS(ns,'title');"
-                    "    tt.textContent=byId[e.c].name+' \\u2192 '+byId[e.p].name+' \\u2014 click to open this pair';"
+                    "    tt.textContent='mesh '+byId[e.c].num+' \\u2192 mesh '+byId[e.p].num+' \\u2014 click to open this pair';"
                     "    ht.appendChild(tt);"
                     "    ht.addEventListener('click',function(){ pk('e',e.c); });"
+                    "    ht.addEventListener('mouseenter',function(){ ln.setAttribute('stroke','#1a56db'); ln.setAttribute('stroke-width',3); pk('he',e.c); });"
+                    "    ht.addEventListener('mouseleave',function(){ ln.setAttribute('stroke', e.sel?'#1a56db':'#64748b'); ln.setAttribute('stroke-width', e.sel?3:1.5); pk('hx',''); });"
                     "    svg.appendChild(ht);"
                     "  });"
                     "  if(isl.length){"
@@ -536,10 +525,6 @@ module GuiRail =
                     "  }"
                     "  d.nodes.forEach(function(n){"
                     "    var cx=px(n.id), cy=py(n.id);"
-                    "    if(n.sel){ var sr=document.createElementNS(ns,'circle');"
-                    "      sr.setAttribute('cx',cx); sr.setAttribute('cy',cy); sr.setAttribute('r',NR+6);"
-                    "      sr.setAttribute('fill','none'); sr.setAttribute('stroke','#1a56db'); sr.setAttribute('stroke-width',2.5);"
-                    "      svg.appendChild(sr); }"
                     "    if(n.root){ var gr=document.createElementNS(ns,'circle');"
                     "      gr.setAttribute('cx',cx); gr.setAttribute('cy',cy); gr.setAttribute('r',NR+3);"
                     "      gr.setAttribute('fill','none'); gr.style.stroke='var(--ref-gold)'; gr.setAttribute('stroke-width',2);"
@@ -557,175 +542,46 @@ module GuiRail =
                     "    svg.appendChild(tx);"
                     "    var ht=document.createElementNS(ns,'circle');"
                     "    ht.setAttribute('cx',cx); ht.setAttribute('cy',cy); ht.setAttribute('r',NR+6); ht.setAttribute('fill','rgba(0,0,0,0)');"
-                    "    ht.style.cursor='pointer';"
                     "    var tt=document.createElementNS(ns,'title');"
-                    "    tt.textContent=n.name+(n.root?' \\u2014 the reference root':'')+(n.d<0?' \\u2014 not connected yet':'')+' \\u2014 click to mark this mesh';"
+                    "    tt.textContent='mesh '+n.num+(n.root?' \\u2014 the reference root':'')+(n.d<0?' \\u2014 not connected yet':'')+' \\u2014 hover previews it in 3D';"
                     "    ht.appendChild(tt);"
-                    "    ht.addEventListener('click',function(){ pk('n',n.id); });"
+                    "    ht.addEventListener('mouseenter',function(){"
+                    "      var hr=document.createElementNS(ns,'circle');"
+                    "      hr.setAttribute('cx',cx); hr.setAttribute('cy',cy); hr.setAttribute('r',NR+5);"
+                    "      hr.setAttribute('fill','none'); hr.setAttribute('stroke','#1a56db'); hr.setAttribute('stroke-width',2.5);"
+                    "      hr.setAttribute('pointer-events','none');"
+                    "      svg.insertBefore(hr,ht); ht._hr=hr; pk('hn',n.id); });"
+                    "    ht.addEventListener('mouseleave',function(){ if(ht._hr){ ht._hr.remove(); ht._hr=null; } pk('hx',''); });"
                     "    svg.appendChild(ht);"
                     "  });"
                     "  el.appendChild(svg);"
                 ]
             }
-            // The JS→Elm click bridge: "n|mesh|seq" marks the mesh (the same
-            // subject a roster row marks), "e|child|seq" opens the edge's pair
-            // through the existing cell-selection/descend path.
+            // The JS→Elm bridge: "e|child|seq" (click) opens the edge's pair
+            // through the existing cell-selection/descend path; "hn|mesh|seq" /
+            // "he|child|seq" / "hx||seq" are the HOVER previews — a node hover
+            // rides the tile-hover isolation preview, an edge hover the matrix
+            // cell-hover overlap preview, so the tree previews exactly what the
+            // tiles and the matrix already preview.
             input {
                 Class "tree-bridge"
                 Dom.OnInput(fun e ->
                     match (e.Value : string).Split('|') with
-                    | [| "n"; mesh; _ |] ->
-                        env.Emit [LogReach("tree", "mark-mesh", mesh); SelectHomeMesh mesh]
                     | [| "e"; child; _ |] ->
                         (match Map.tryFind child (AVal.force model.RegGraph).Edges with
                          | Some edge ->
                             env.Emit [LogReach("tree", "open-pair", child + " | " + edge.Parent)
                                       SelectPair(child, edge.Parent)]
                          | None -> ())
+                    | [| "hn"; mesh; _ |] ->
+                        env.Emit [SetTileIsolateHover (Some mesh)]
+                    | [| "he"; child; _ |] ->
+                        (match Map.tryFind child (AVal.force model.RegGraph).Edges with
+                         | Some edge -> env.Emit [SetMatrixHoverPair (Some (child, edge.Parent))]
+                         | None -> ())
+                    | [| "hx"; _; _ |] ->
+                        env.Emit [SetTileIsolateHover None; SetMatrixHoverPair None]
                     | _ -> ())
-            }
-        }
-
-    // ── The mesh roster: the representation-independent completeness readout
-    // of the home level — one row per mesh with its topological connectivity
-    // (in the registration tree / not yet), plus the spanning-progress line.
-    // A sibling panel of the navigators and the inspection dock, deliberately
-    // docked to NEITHER the matrix nor the tree.
-    let rosterPanel (env : Env<Message>) (model : AdaptiveModel) =
-        let namesA = model.MeshNames.Content |> AVal.map IndexList.toList
-        let rosterRow (all : string list) (name : string) =
-            let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-            // The badge is TOPOLOGY only (in the tree / not), never a quality.
-            // "no overlap" needs every pair of this mesh KNOWN insufficient
-            // (`= Some false` — an unfetched pair is indistinguishable from
-            // insufficient in PairCell.state, but must not read "no overlap"
-            // while the sweep is still in flight); a per-mesh cache read, no
-            // connectivity traversal.
-            let badge =
-                (model.RegGraph, model.PairOverlaps) ||> AVal.map2 (fun g po ->
-                    if RegGraph.inTree g name then
-                        if g.Root = Some name then "ros-badge-root", "root ★"
-                        else "ros-badge-on", "connected"
-                    else
-                        let others = all |> List.filter ((<>) name)
-                        let allNo =
-                            not others.IsEmpty
-                            && others |> List.forall (fun o -> Map.tryFind (PairCell.key name o) po = Some false)
-                        if allNo then "ros-badge-no", "no overlap" else "ros-badge-off", "not yet")
-            div {
-                Class "ros-row"
-                classWhen "ros-sel" (model.HomeMeshSel |> AVal.map ((=) (Some name)))
-                // The pair subject (matrix cell / tree edge) shows here too —
-                // its two member rows tint.
-                classWhen "ros-in-pair" (model.Sel |> AVal.map (fun s ->
-                    match s.Pair with Some (a, b) -> name = a || name = b | None -> false))
-                Attribute("title", name + " — click to mark this mesh across the matrix and the tree")
-                Dom.OnClick(fun _ -> env.Emit [LogReach("roster", "mark-mesh", name); SelectHomeMesh name])
-                span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
-                span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                span { Class "ros-name"; friendlyName all name }
-                span {
-                    badge |> AVal.map (fun (cls, _) -> Some (Class ("ros-badge " + cls)))
-                    badge |> AVal.map snd
-                }
-            }
-        let rows =
-            namesA
-            |> AVal.map (fun ns -> IndexList.ofList (ns |> List.map (rosterRow ns)))
-            |> AList.ofAVal
-        let progress =
-            (namesA, model.RegGraph) ||> AVal.map2 (fun ns g ->
-                if List.isEmpty ns then "no meshes loaded"
-                else
-                    let missing = ns |> List.filter (fun n -> not (RegGraph.inTree g n))
-                    if List.isEmpty missing then
-                        sprintf "All %d meshes connected." ns.Length
-                    else
-                        sprintf "%d of %d meshes connected; %s not yet."
-                            (ns.Length - missing.Length) ns.Length
-                            (missing |> List.map (friendlyName ns) |> String.concat ", "))
-        let macroA =
-            (namesA, model.RegGraph, model.SpannedNoticeOpen) |||> AVal.map3 (fun ns g no ->
-                match Workflow.macroState ns g no with
-                | MacroDisconnected -> "ros-state-disc", "disconnected"
-                | MacroSpanned -> "ros-state-span", "spanned"
-                | MacroRefining -> "ros-state-ref", "refining")
-        div {
-            Class "roster-dock"
-            Primitives.showWhen (model.Focus |> AVal.map ((=) FocusMatrix))
-            div {
-                Class "ros-head"
-                span { Class "lp-sublabel"; "Mesh roster" }
-                span {
-                    Attribute("title", "Workflow state, topological only: disconnected (islands remain) → spanned (every mesh connected to the root) → refining (optional further improvement — never required)")
-                    macroA |> AVal.map (fun (cls, _) -> Some (Class ("ros-state " + cls)))
-                    macroA |> AVal.map snd
-                }
-            }
-            div { Class "ros-progress"; progress }
-            div { Class "ros-rows"; rows }
-        }
-
-    // ── The reaching-behaviour session log: every navigation/selection
-    // action with its originating surface and timestamp — the workshop's
-    // primary data. The panel shows a tail; export downloads the whole log
-    // as JSON.
-    let logPanel (env : Env<Message>) (model : AdaptiveModel) =
-        let rows =
-            model.ReachLog
-            |> AVal.map (fun log ->
-                log |> List.truncate 14 |> List.map (fun ev ->
-                    div {
-                        Class "log-row"
-                        span { Class "log-time"; ev.At.ToLocalTime().ToString("HH:mm:ss") }
-                        span { Class "log-src"; ev.Source }
-                        span {
-                            Class "log-act"
-                            Attribute("title", ev.Action + (if ev.Subject = "" then "" else " — " + ev.Subject))
-                            ev.Action + (if ev.Subject = "" then "" else " · " + ev.Subject)
-                        }
-                    })
-                |> IndexList.ofList)
-            |> AList.ofAVal
-        div {
-            Class "log-dock"
-            Primitives.showWhen (model.Focus |> AVal.map ((=) FocusMatrix))
-            div {
-                Class "log-head"
-                div {
-                    Class "log-head-toggle"
-                    Attribute("title", "Session log — every navigation action with the surface it came from; click to expand")
-                    Dom.OnClick(fun _ -> env.Emit [ToggleReachLog])
-                    span {
-                        Class "inspect-dock-caret"
-                        model.ReachLogOpen |> AVal.map (fun o -> if o then "▾" else "▸")
-                    }
-                    span {
-                        Class "lp-sublabel"
-                        model.ReachLog |> AVal.map (fun l -> sprintf "Session log (%d)" (List.length l))
-                    }
-                }
-                button {
-                    Class "mb log-export"
-                    Attribute("title", "Download the full session log as JSON")
-                    Dom.OnClick(fun _ ->
-                        let esc (s : string) = s.Replace("\\", "\\\\").Replace("\"", "\\\"")
-                        let json =
-                            AVal.force model.ReachLog
-                            |> List.rev
-                            |> List.map (fun ev ->
-                                sprintf "  {\"t\":\"%s\",\"source\":\"%s\",\"action\":\"%s\",\"subject\":\"%s\"}"
-                                    (ev.At.ToString("o")) (esc ev.Source) (esc ev.Action) (esc ev.Subject))
-                            |> String.concat ",\n"
-                        try JSRuntime.Instance.Invoke<bool>("spDownloadText", "reach-log.json", "[\n" + json + "\n]") |> ignore
-                        with _ -> ())
-                    "⤓ export"
-                }
-            }
-            div {
-                Class "log-rows"
-                Primitives.showWhen model.ReachLogOpen
-                rows
             }
         }
 
@@ -744,6 +600,12 @@ module GuiRail =
             let st =
                 (model.PairOverlaps, model.RegGraph) ||> AVal.map2 (fun po g -> PairCell.state po g a b)
             let isSel = model.Sel |> AVal.map (fun s -> s.Pair = Some (PairCell.key a b))
+            // Lights from the cell's own hover AND from a tree-edge hover —
+            // both feed the one MatrixHoverPair transient (key order varies).
+            let isHov =
+                model.MatrixHoverPair |> AVal.map (function
+                    | Some (x, y) -> PairCell.key x y = PairCell.key a b
+                    | None -> false)
             let title =
                 (st, model.MeshOrder.Content) ||> AVal.map2 (fun s order ->
                     let num m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
@@ -755,6 +617,7 @@ module GuiRail =
             div {
                 Class "pmx-cell"
                 classWhen "pmx-sel" isSel
+                classWhen "pmx-cellhover" isHov
                 st |> AVal.map (function
                     | PairImpossible -> Some (Class "pmx-imp")
                     | PairPossible -> Some (Class "pmx-pos")
@@ -786,10 +649,16 @@ module GuiRail =
         // from the matrix without a trip back to Setup.
         let headRoot (name : string) =
             model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
-        // The home mesh-subject (roster row / tree node) marks its matrix
-        // row + column heads.
-        let headHomeSel (name : string) =
-            model.HomeMeshSel |> AVal.map ((=) (Some name))
+        // The hovered mesh subject (a tree node or a strip tile) marks its
+        // matrix row + column heads — the same transient the 3D isolation
+        // preview rides.
+        let headHover (name : string) =
+            model.TileIsolateHover |> AVal.map ((=) (Some name))
+        let headTitle (name : string) =
+            (headRoot name, model.MeshOrder |> AMap.tryFind name) ||> AVal.map2 (fun r o ->
+                Some (Attribute("title",
+                        sprintf "mesh %d%s" ((Option.defaultValue 0 o) + 1)
+                            (if r then " — the reference root ★" else ""))))
         // Rebuilt wholesale on an order change — a ≤ palette-sized grid that
         // changes rarely (the sanctioned simple AList form).
         let pairMatrixView () =
@@ -812,9 +681,8 @@ module GuiRail =
                                         div {
                                             Class "pmx-colhead"
                                             classWhen "pmx-head-root" (headRoot arr.[j])
-                                            classWhen "pmx-head-homesel" (headHomeSel arr.[j])
-                                            (headRoot arr.[j]) |> AVal.map (fun r ->
-                                                Some (Attribute("title", if r then arr.[j] + " — the reference root ★" else arr.[j])))
+                                            classWhen "pmx-head-hover" (headHover arr.[j])
+                                            headTitle arr.[j]
                                             numSwatch arr.[j]
                                         } ]
                             }
@@ -824,9 +692,8 @@ module GuiRail =
                                     div {
                                         Class "pmx-rowhead"
                                         classWhen "pmx-head-root" (headRoot arr.[i])
-                                        classWhen "pmx-head-homesel" (headHomeSel arr.[i])
-                                        (headRoot arr.[i]) |> AVal.map (fun r ->
-                                            Some (Attribute("title", if r then arr.[i] + " — the reference root ★" else arr.[i])))
+                                        classWhen "pmx-head-hover" (headHover arr.[i])
+                                        headTitle arr.[i]
                                         numSwatch arr.[i]
                                     }
                                     AList.ofList [
@@ -892,13 +759,9 @@ module GuiRail =
                 let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                 div {
                     Class "cw-chip"
-                    Attribute("title", name)
+                    idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
                     span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
                     span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                    span {
-                        Class "cw-chip-name"
-                        model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
-                    }
                 }
             let pairState =
                 (model.PairOverlaps, model.RegGraph) ||> AVal.map2 (fun po g ->

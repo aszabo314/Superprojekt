@@ -24,6 +24,7 @@
     <Compile Include="RegistrationModel.fs" />
     <Compile Include="ScanPinModel.fs" />
     <Compile Include="ScanPinModel.g.fs" />
+    <Compile Include="CheckpointStore.fs" />
     <Compile Include="PinGeometry.fs" />
     <Compile Include="Model.fs" />
     <Compile Include="Model.g.fs" />

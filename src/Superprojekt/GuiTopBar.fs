@@ -45,14 +45,11 @@ module GuiTopBar =
                         let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
                         div {
                             Class "tb-gear-row tb-sensor-row"
-                            Attribute("title", sprintf "%s — fly to its sensor viewpoint" name)
+                            idxVal |> AVal.map (fun i ->
+                                Some (Attribute("title", sprintf "mesh %d — fly to its sensor viewpoint" (i + 1))))
                             Dom.OnClick(fun _ -> env.Emit [FlyToSensor name; ToggleSensorMenu])
                             span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (c4bToRgbCss (meshColor i))])) }
                             span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                            span {
-                                Class "tb-mesh-menu-name"
-                                model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
-                            }
                         })
                 }
             }
@@ -75,11 +72,19 @@ module GuiTopBar =
                         HashSet.contains a loaded && HashSet.contains b loaded
                      | None -> false))
             let atMatrix = model.Focus |> AVal.map (fun f -> f = FocusMatrix)
+            // Mirrors the reducer's guard: ANY effective isolation on a pair
+            // mesh arms the flip — the committed lock or a transient (tile /
+            // ◎-side hover, armed A/B pick).
             let canVis =
-                (pairLoaded, model.TileIsolate, model.Sel) |||> AVal.map3 (fun ok iso s ->
-                    ok && (match iso, s.Pair with
-                           | Some m, Some (a, b) -> m = a || m = b
-                           | _ -> false))
+                AVal.custom (fun t ->
+                    pairLoaded.GetValue t &&
+                    (let eff, _ =
+                        MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t)
+                            (model.ArmedPick.GetValue t) (model.TileIsolateHover.GetValue t)
+                            (model.TileIsolate.GetValue t) ((model.Sel.GetValue t).Point)
+                     match eff, (model.Sel.GetValue t).Pair with
+                     | Some m, Some (a, b) -> m = a || m = b
+                     | _ -> false))
             let canPose =
                 AVal.custom (fun t ->
                     let g = model.RegGraph.GetValue t
@@ -113,7 +118,7 @@ module GuiTopBar =
                 Class "tb-peeks"
                 span { Class "lp-sublabel"; "Peek" }
                 peekBtn "◌ V" "Hold: flip the isolation to the pair's other mesh — same spot, other epoch (same as holding V)"
-                    " — available at the Pair/Pin level while one of the pair meshes is isolated"
+                    " — available at the Pair/Pin level while a pair mesh is isolated (lock or hover)"
                     (atMatrix |> AVal.map not) canVis model.PeekVis (fun h -> env.Emit [SetPeekVis h])
                 peekBtn "↺ B" "Hold: the registered meshes snap to their as-loaded poses — did registration help? (same as holding B); at Matrix the whole graph blinks at once"
                     " — available once the pair (at Matrix: the graph) is registered"
@@ -155,13 +160,9 @@ module GuiTopBar =
                             let hm = model.MeshHeatmap |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue HeatOff)
                             div {
                                 Class "tb-gear-row tb-mesh-setup-row"
-                                Attribute("title", name)
+                                idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
                                 span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (c4bToRgbCss (meshColor i))])) }
                                 span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                                span {
-                                    Class "tb-mesh-menu-name"
-                                    model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
-                                }
                                 button {
                                     Class "tb-gear-btn tb-ref-btn"
                                     classWhen "setup-ref-on" isRoot
@@ -192,11 +193,50 @@ module GuiTopBar =
                 }
                 div {
                     Class "tb-gear-wrap"
+                    // Data-state checkpoints (browser localStorage): the view
+                    // owns the storage IO — the reducer only ever receives the
+                    // refreshed name list and a LOADED checkpoint's parsed
+                    // data (ApplyCheckpoint; a dataset switch rides in front
+                    // when the checkpoint belongs to another dataset).
+                    let ckRefresh () =
+                        let names =
+                            try
+                                (JSRuntime.Instance.Invoke<string>("spCkList") : string).Split('\n')
+                                |> Array.filter (fun s -> s <> "")
+                                |> Array.toList
+                            with _ -> []
+                        env.Emit [SetCheckpoints names]
+                    let ckSave (name : string) =
+                        match AVal.force model.ActiveDataset with
+                        | None -> env.Emit [ShowToast "No dataset loaded — nothing to save"]
+                        | Some ds ->
+                            let pins =
+                                model.ScanPins.Pins.Content |> AVal.force |> HashMap.toList
+                                |> List.map snd
+                                |> List.sortBy (fun p -> p.CreatedAt, p.ShortName)
+                            let json = CheckpointStore.serialize ds (AVal.force model.RegGraph) pins
+                            let ok = try JSRuntime.Instance.Invoke<bool>("spCkSave", name, json) with _ -> false
+                            env.Emit [ShowToast (if ok then sprintf "Checkpoint '%s' saved" name
+                                                 else "Checkpoint could not be stored")]
+                            ckRefresh ()
+                    let ckLoad (name : string) =
+                        let json = try JSRuntime.Instance.Invoke<string>("spCkLoad", name) with _ -> ""
+                        match CheckpointStore.tryDeserialize json with
+                        | None -> env.Emit [ShowToast (sprintf "Checkpoint '%s' could not be read" name)]
+                        | Some (ds, g, pins) ->
+                            if AVal.force model.ActiveDataset <> Some ds then
+                                env.Emit [SetActiveDataset ds]
+                                ServerActions.loadDataset env ds
+                            env.Emit [ApplyCheckpoint(name, ds, g, pins)]
+                    let ckDelete (name : string) =
+                        (try JSRuntime.Instance.Invoke<bool>("spCkDel", name) |> ignore with _ -> ())
+                        env.Emit [ShowToast (sprintf "Checkpoint '%s' deleted" name)]
+                        ckRefresh ()
                     button {
                         Class "tb-btn-tiny"
                         classWhen "tb-btn-active" model.GearPopoverOpen
                         Attribute("title", "Debug & settings")
-                        Dom.OnClick(fun _ -> env.Emit [ToggleGearPopover])
+                        Dom.OnClick(fun _ -> ckRefresh (); env.Emit [ToggleGearPopover])
                         "⚙"
                     }
                     let gearSlider label lo hi step fmt v (msg : float -> Message) =
@@ -223,6 +263,56 @@ module GuiTopBar =
                                         dataset
                                     })
                             }
+                        }
+                        // ── Checkpoints: the DATA state of one registration
+                        // scenario (dataset + graph + pins) in localStorage.
+                        div {
+                            Class "tb-gear-row"
+                            span { Class "lp-sublabel"; "Checkpoints" }
+                            input {
+                                Class "tb-ck-input"
+                                Attribute("placeholder", "checkpoint name")
+                                Dom.OnInput(fun e -> env.Emit [SetCheckpointName e.Value])
+                            }
+                            button {
+                                Class "tb-gear-btn"
+                                Attribute("title", "Save the current data state (dataset, registration graph, pins) under this name — an existing name is overwritten")
+                                Dom.OnClick(fun _ ->
+                                    let n = (AVal.force model.CheckpointName).Trim()
+                                    if n = "" then env.Emit [ShowToast "Name the checkpoint first"]
+                                    else ckSave n)
+                                "Save"
+                            }
+                        }
+                        div {
+                            Class "tb-ck-rows"
+                            let ckRows =
+                                model.Checkpoints
+                                |> AVal.map IndexList.ofList |> AList.ofAVal
+                                |> AList.map (fun name ->
+                                    div {
+                                        Class "tb-gear-row tb-ck-row"
+                                        span { Class "tb-ck-name"; Attribute("title", name); name }
+                                        button {
+                                            Class "tb-gear-btn"
+                                            Attribute("title", "Load this checkpoint — replaces the current registration + pins (switches the dataset first when needed)")
+                                            Dom.OnClick(fun _ -> ckLoad name)
+                                            "Load"
+                                        }
+                                        button {
+                                            Class "tb-gear-btn"
+                                            Attribute("title", "Overwrite this checkpoint with the CURRENT data state")
+                                            Dom.OnClick(fun _ -> ckSave name)
+                                            "⟳"
+                                        }
+                                        button {
+                                            Class "tb-gear-btn"
+                                            Attribute("title", "Delete this checkpoint")
+                                            Dom.OnClick(fun _ -> ckDelete name)
+                                            "✕"
+                                        }
+                                    })
+                            ckRows
                         }
                         div {
                             Class "tb-gear-row"
@@ -286,6 +376,63 @@ module GuiTopBar =
                                     }
                                 })
                         }
+                    }
+                }
+                // The reaching-behaviour session log — the workshop's primary
+                // data, tucked into a top-right button beside the debug menu.
+                // The popover shows a tail; export downloads the whole log.
+                div {
+                    Class "tb-gear-wrap"
+                    button {
+                        Class "tb-btn-tiny"
+                        classWhen "tb-btn-active" model.ReachLogOpen
+                        Attribute("title", "Session log — every navigation action with the surface it came from")
+                        Dom.OnClick(fun _ -> env.Emit [ToggleReachLog])
+                        "≣"
+                    }
+                    div {
+                        Class "tb-gear-popover tb-log-popover"
+                        showWhen model.ReachLogOpen
+                        div {
+                            Class "tb-gear-row log-head"
+                            span {
+                                Class "lp-sublabel"
+                                model.ReachLog |> AVal.map (fun l -> sprintf "Session log (%d)" (List.length l))
+                            }
+                            button {
+                                Class "tb-gear-btn log-export"
+                                Attribute("title", "Download the full session log as JSON")
+                                Dom.OnClick(fun _ ->
+                                    let esc (s : string) = s.Replace("\\", "\\\\").Replace("\"", "\\\"")
+                                    let json =
+                                        AVal.force model.ReachLog
+                                        |> List.rev
+                                        |> List.map (fun ev ->
+                                            sprintf "  {\"t\":\"%s\",\"source\":\"%s\",\"action\":\"%s\",\"subject\":\"%s\"}"
+                                                (ev.At.ToString("o")) (esc ev.Source) (esc ev.Action) (esc ev.Subject))
+                                        |> String.concat ",\n"
+                                    try JSRuntime.Instance.Invoke<bool>("spDownloadText", "reach-log.json", "[\n" + json + "\n]") |> ignore
+                                    with _ -> ())
+                                "⤓ export"
+                            }
+                        }
+                        let rows =
+                            model.ReachLog
+                            |> AVal.map (fun log ->
+                                log |> List.truncate 40 |> List.map (fun ev ->
+                                    div {
+                                        Class "log-row"
+                                        span { Class "log-time"; ev.At.ToLocalTime().ToString("HH:mm:ss") }
+                                        span { Class "log-src"; ev.Source }
+                                        span {
+                                            Class "log-act"
+                                            Attribute("title", ev.Action + (if ev.Subject = "" then "" else " — " + ev.Subject))
+                                            ev.Action + (if ev.Subject = "" then "" else " · " + ev.Subject)
+                                        }
+                                    })
+                                |> IndexList.ofList)
+                            |> AList.ofAVal
+                        div { Class "log-rows"; rows }
                     }
                 }
             }

@@ -50,7 +50,7 @@ type InspectBlock = {
 }
 
 // One reaching-behaviour event — the workshop's primary data: WHICH surface
-// an action came from (matrix / tree / roster / rail / event), not just what
+// an action came from (matrix / tree / rail / event), not just what
 // happened. The reducer stamps the time; the session-log panel shows a tail
 // and exports the whole list as JSON.
 type ReachEvent = {
@@ -267,23 +267,23 @@ type Model =
         // The focus rail's current stop + the per-level selection it navigates.
         Focus               : FocusLevel
         Sel                 : FocusSelection
-        // The home level's MESH-subject selection (roster row / tree node): a
-        // cross-surface highlight only, never a visibility narrowing. The
-        // PAIR subject rides Sel.Pair — choosing a pair clears this, so the
-        // home surfaces mark one subject at a time.
-        HomeMeshSel         : string option
         // The spanned completion notice: opened by the reducer exactly on the
         // disconnected→spanned TRANSITION (the last mesh joined the rooted
         // tree), closed by dismissing/acting on it or by the graph
-        // disconnecting again. Open ⇒ the macro-state reads "spanned"; put
-        // away, the same topology reads "refining".
+        // disconnecting again.
         SpannedNoticeOpen   : bool
         // The reaching-behaviour session log, newest first — never trimmed
         // and deliberately kept across dataset switches (session data, not
-        // dataset state); the panel shows a tail, export dumps everything.
+        // dataset state); the popover shows a tail, export dumps everything.
         ReachLog            : ReachEvent list
-        // The session-log panel's disclosure (collapsed by default).
+        // The top-bar session-log popover (closed by default; arming closes it
+        // with the other top-bar popovers).
         ReachLogOpen        : bool
+        // The ⚙ debug menu's data-state checkpoints (browser localStorage):
+        // the stored names, refreshed by the view around every store
+        // operation, and the save-as name being typed.
+        Checkpoints         : string list
+        CheckpointName      : string
 
         // ── In-cell error inspection (transient per cell — every cache clears
         // on nav/pin/pose changes via invalidateCellError). Sample values are
@@ -488,10 +488,11 @@ module Model =
             RenderingMode       = Textured
             Focus               = FocusMatrix
             Sel                 = FocusSelection.empty
-            HomeMeshSel         = None
             SpannedNoticeOpen   = false
             ReachLog            = []
             ReachLogOpen        = false
+            Checkpoints         = []
+            CheckpointName      = ""
             CellError           = None
             CellErrorBefore     = None
             CellDist            = None

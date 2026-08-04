@@ -10,6 +10,91 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## GUI touch-ups OUTSIDE the specs, round 2 (2026-08-04)
+
+Same standing: user-directed polish, no governing spec.
+
+- **V peek arms on ANY effective isolation**, not just the committed lock:
+  the reducer guard and the top-bar `canVis` now run the same
+  `MeshVisibility.effectiveNarrowing` the shown rule uses — tile hover,
+  ◎-side hover and an armed A/B pick all enable the flip (the swap itself
+  always operated on the effective isolate; only the guards were lock-bound).
+  Brush-default isolation alone still doesn't arm it (view-side state the
+  reducer can't see).
+- **Tree selection → hover.** `HomeMeshSel`/`SelectHomeMesh` (and the
+  "mark-mesh" log action) are GONE. Tree node hover now emits
+  `SetTileIsolateHover` — exactly the tile-hover 3D isolation preview — and
+  the matrix heads light from that same transient (renamed
+  `.pmx-head-hover`; a strip-tile hover therefore also lights them —
+  deliberate unification). Tree EDGE hover emits `SetMatrixHoverPair` — the
+  matrix cell-hover overlap preview — and the corresponding cell lights via
+  new `.pmx-cellhover` (fed by cell-own hover and tree-edge hover alike,
+  key-order-insensitively via `PairCell.key`). Hover rings/edge highlights in
+  the SVG are JS-local (hover stays OUT of the tree JSON — a mid-hover
+  rebuild would swallow the mouseleave); a `.tree-canvas` container
+  OnMouseLeave clears both transients as the stale-hover guard. Edge CLICK
+  (open-pair) stays.
+- **Graph histogram gains the pooled before-outline**: `graphBody` now bins
+  the union of every edge's `GraphErrorBefore` samples on the same fixed
+  axis into the chart's existing `hb` slot ("fill now · line before" at
+  Matrix too). Present whenever the before cache holds samples; during the
+  pose peek fill and line coincide by construction.
+- **Data-state checkpoints in the ⚙ debug menu**: NEW `CheckpointStore.fs`
+  (fsproj: after ScanPinModel.g) — sprintf-out / System.Text.Json-in of the
+  SCENARIO data only: dataset name, `RegGraph` (root + edges as 16-cell
+  Forward matrices + quality), pins (id/name/pair/anchor/centre/radius/
+  points/created; rings + reveals restore as not-fetched). Browser
+  localStorage under `spCk:` via View-boot helpers (`spCkSave/Load/Del/List`).
+  The ⚙ panel: name input + Save, and per-checkpoint Load / ⟳ overwrite / ✕
+  delete rows (`Model.Checkpoints`/`CheckpointName`; list refreshed by the
+  view around every store op and on ⚙ open). The VIEW owns storage IO;
+  `ApplyCheckpoint` (reducer) applies parsed data only — jumps home, clears
+  selection/caches (`invalidateCellError`), recomposes poses; a checkpoint
+  from another dataset rides a `SetActiveDataset` + load in front, and the
+  reducer refuses a mismatch. Loading a spanned graph fires the spanned
+  notice (a real disconnected→spanned transition — accepted).
+- adaptify re-run (HomeMeshSel out, Checkpoints/CheckpointName in); quick
+  client build 0 errors (no FS0049/25/26), Supertests 97/97, full native
+  build green. Browser pass still owed.
+
+## GUI touch-ups OUTSIDE the specs (2026-08-04)
+
+Post-N1–N4 polish requested directly by the user — no spec documents govern
+these; this entry is the record.
+
+- **Mesh roster removed entirely** (redundant with the registration tree):
+  `GuiRail.rosterPanel` + its View mount + all `.roster-dock`/`.ros-*` CSS.
+  With it went its spanning-progress line and the macro-state chip — and the
+  chip's only backing, `MacroState`/`Workflow.macroState`
+  (RegistrationModel.fs), is deleted as dead code (`Workflow.spanned` stays —
+  it drives the notice transition; grep confirmed no `Macro*` pattern
+  survives, so no catch-all hazard). `HomeMeshSel` lives on — the tree node
+  is now its only entry point; the `"roster"` log source is gone.
+- **Mesh names out of the main GUI** — the arbitrary job strings carry no
+  information; the mesh NUMBER (display order, swatch-paired) is the identity
+  everywhere: pair-workspace chips, tile chips, Sensor ▾ rows, ▦ mesh-menu
+  rows (its popover narrowed 460→340), matrix head tooltips ("mesh N"), tree
+  tooltips. Names survive ONLY in the ⚙ debug menu's per-mesh info rows and
+  in the session log's subjects. Dead CSS (`.cw-chip-name`,
+  `.pane-chip-name`, `.tb-mesh-menu-name`) removed; the tree JSON dropped its
+  `name` field. (Legend + loop modal already spoke numbers.)
+- **Session log → top-right button** (`≣`, beside ⚙): `GuiRail.logPanel`
+  became a `tb-gear-popover` in GuiTopBar (dark chrome, 40-entry tail,
+  scrolling, same ⤓ export), available at EVERY level now, not just home.
+  `ReachLogOpen` = the popover; arming closes it with the other top-bar
+  popovers.
+- **Left column resizable as ONE unit**: the inspect dock's private handle
+  (--dockw) is gone; a single full-height `.left-handle` on `.left-col`'s
+  right edge — the mirror of the tile strip's — resizes rail + dock together.
+  It writes `--leftw` (narrow levels, clamp [220, 50 vw]) or `--lefthomew`
+  (home, clamp [380, 100 vw − 500]) so the two modes keep independent widths,
+  and re-derives the chart's aspect-true `--charth` on the dock. The handle
+  sits on the column, NOT the scrolling rail (the veil/scroll gotcha), and
+  the armed veil disables it via the existing `.left-col > *` rule.
+- Quick client build 0 errors (no FS0049/25/26), Supertests 97/97, full
+  native client-via-server build green. Browser pass still owed alongside the
+  earlier batches.
+
 ## N4 — home two-navigator stage + shared selection + reaching-log (2026-08-03)
 
 Spec: `ScanPin_v14_N4_home_stage_logging.md`. The home level grew from "the

@@ -98,7 +98,7 @@ module Primitives =
             (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
 
     // Friendly display names: drop the dataset prefix, then strip the longest common
-    // prefix + suffix shared across the whole roster, so e.g. {job_0789, job_0791, …}
+    // prefix + suffix shared across the whole mesh set, so e.g. {job_0789, job_0791, …}
     // reads {0789, 0791, …}. Trailing digits of the common prefix (and leading digits
     // of the common suffix) are kept, so a shared numeric id is never cut mid-number.
     let private meshLocal (name : string) =

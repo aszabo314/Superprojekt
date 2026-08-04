@@ -311,28 +311,14 @@ module MatrixNav =
             let depth m = match hopDepth g m with Some d -> d | None -> System.Int32.MaxValue
             if depth kb < depth ka then kb, ka else ka, kb
 
-// The registration workflow's macro-state, derived purely from topology — no
-// quality threshold ever gates a transition: disconnected (islands remain) →
-// spanned (every mesh in the ONE rooted tree; registration topologically
-// complete) → refining (still spanned; the completion notice has been put
-// away — any further work is optional improvement, never required).
-type MacroState =
-    | MacroDisconnected
-    | MacroSpanned
-    | MacroRefining
-
 module Workflow =
-    // ≥1 edge required, so a single-mesh dataset (its root trivially in the
-    // tree) never reads spanned.
+    // Spanned = every mesh in the ONE rooted tree — purely topological, no
+    // quality threshold ever gates it. ≥1 edge required, so a single-mesh
+    // dataset (its root trivially in the tree) never reads spanned.
     let spanned (names : string list) (g : RegGraph) =
         not (List.isEmpty names)
         && RegGraph.hasEdges g
         && names |> List.forall (RegGraph.inTree g)
-
-    let macroState (names : string list) (g : RegGraph) (noticeOpen : bool) =
-        if not (spanned names g) then MacroDisconnected
-        elif noticeOpen then MacroSpanned
-        else MacroRefining
 
 // The ONE in-cell error range: signed (lo, hi) in metres spanning 0 over the
 // pair's pin-ROI samples, hard-capped at ±0.5 m — the shared scale of the

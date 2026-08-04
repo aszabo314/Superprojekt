@@ -110,6 +110,14 @@ module View =
                 "  a.download = name; document.body.appendChild(a); a.click(); a.remove();"
                 "  return true;"
                 "};"
+                // Data-state checkpoints (the ⚙ debug menu) — namespaced
+                // localStorage; list returns \n-joined names (JSRuntime
+                // marshals plain strings only).
+                "window.spCkSave = function(n, j){ try{ localStorage.setItem('spCk:'+n, j); return true; }catch(e){ return false; } };"
+                "window.spCkLoad = function(n){ return localStorage.getItem('spCk:'+n)||''; };"
+                "window.spCkDel = function(n){ localStorage.removeItem('spCk:'+n); return true; };"
+                "window.spCkList = function(){ var r=[]; for(var i=0;i<localStorage.length;i++){ var k=localStorage.key(i);"
+                "  if(k&&k.indexOf('spCk:')===0) r.push(k.substring(5)); } r.sort(); return r.join('\\n'); };"
             ]
 
             renderControl {
@@ -486,9 +494,42 @@ module View =
                 // the pair workspace.
                 Primitives.classWhen "left-col-home" (model.Focus |> AVal.map ((=) FocusMatrix))
                 GuiRail.rail env model
-                GuiRail.rosterPanel env model
                 GuiRail.inspectPanel env model
-                GuiRail.logPanel env model
+                // ONE right-edge width-resize handle for the whole column
+                // (rail + inspection dock together — the left-side mirror of
+                // the tile strip's handle). Pure DOM; writes --leftw or
+                // --lefthomew on the column (home keeps its own width) and
+                // re-derives the chart's aspect-true --charth on the dock.
+                div {
+                    Class "left-handle"
+                    Attribute("title", "Drag to resize the left panels")
+                    OnBoot [
+                        "(function(){"
+                        "var h=__THIS__; var col=h.parentElement;"
+                        "function vname(){ return col.classList.contains('left-col-home') ? '--lefthomew' : '--leftw'; }"
+                        "function apply(w){"
+                        "  var home=col.classList.contains('left-col-home');"
+                        "  var min=home?380:220;"
+                        "  var max=Math.max(min,home?window.innerWidth-500:window.innerWidth*0.5);"
+                        "  w=Math.max(min,Math.min(max,w));"
+                        "  col.style.setProperty(vname(),w+'px');"
+                        "  var c=col.querySelector('.cw-chart');"
+                        "  if(c){ var d=c.closest('.inspect-dock');"
+                        "    var r=c.getBoundingClientRect(), dr=d.getBoundingClientRect();"
+                        "    var reserve=Math.max(0,dr.bottom-r.bottom);"
+                        "    var hMax=window.innerHeight-r.top-reserve-10;"
+                        "    var hT=(w-20)*160/236;"
+                        "    d.style.setProperty('--charth',Math.max(160,Math.min(hMax,hT))+'px'); } }"
+                        "h.addEventListener('pointerdown',function(e){"
+                        "  e.preventDefault(); h.setPointerCapture(e.pointerId);"
+                        "  function mv(ev){ apply(ev.clientX); }"
+                        "  function up(){ h.removeEventListener('pointermove',mv); h.removeEventListener('pointerup',up); }"
+                        "  h.addEventListener('pointermove',mv); h.addEventListener('pointerup',up); });"
+                        "window.addEventListener('resize',function(){"
+                        "  var w=parseFloat(col.style.getPropertyValue(vname())); if(w) apply(w); });"
+                        "})();"
+                    ]
+                }
             }
             GuiOverlays.toast model
             GuiOverlays.spannedBanner env model

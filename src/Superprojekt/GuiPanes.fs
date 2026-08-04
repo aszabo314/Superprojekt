@@ -310,13 +310,9 @@ module GuiPanes =
             classWhen "tile-armed" (model.ArmedPick |> AVal.map Option.isSome)
             div {
                 Class "pane-chip"
-                Attribute("title", name)
+                idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
                 span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (c4bToRgbCss (meshColor i))])) }
                 span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                span {
-                    Class "pane-chip-name"
-                    model.MeshNames.Content |> AVal.map (fun ns -> friendlyName (IndexList.toList ns) name)
-                }
                 span { Class "pmx-root-star"; isRoot |> AVal.map (fun r -> if r then "★" else "") }
             }
             renderControl {

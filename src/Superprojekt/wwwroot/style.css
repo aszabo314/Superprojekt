@@ -258,6 +258,21 @@ body.loaded { background: #f4f6f8; }
 .spb-assess { background: #1a56db; border-color: #1a56db; color: #ffffff; }
 .spb-assess:hover { background: #1447ba; }
 .spb-close { flex: none; }
+
+/* The guided-placement step alert — fixed top-centre like the spanned notice,
+   accent-filled so it reads as THE instruction; sits above the armed veil and
+   is deliberately not dimmed by it. */
+.place-banner {
+    position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
+    z-index: 1200;
+    display: flex; flex-direction: column; align-items: center; gap: 2px;
+    background: #1a56db; border-radius: 6px;
+    padding: 8px 18px;
+    box-shadow: 0 6px 24px rgba(15, 23, 42, 0.4);
+    pointer-events: none;
+}
+.pb-title { font-size: 14px; font-weight: 700; color: #ffffff; }
+.pb-hint { font-size: 11px; color: #dbe6fb; }
 .rail-body { padding: 8px 10px; border-bottom: 1px solid #e6eaf0; background: #fff; }
 
 /* ── The home stage: matrix ‖ tree, co-equal navigators (equal flex,
@@ -592,22 +607,42 @@ body.loaded { background: #f4f6f8; }
 .cw-pin-name { font-size: 11px; font-weight: 700; color: #292524; width: 22px; flex: none; }
 .cw-edit { font-size: 10px; }
 .cw-del { color: #b91c1c; }
-/* Pin-level focus/arm buttons: identity chips ride inside the buttons. */
-.pin-focus-btn, .pin-arm-btn {
+/* Pin-level arm buttons: identity chips ride inside the buttons. */
+.pin-arm-btn {
     display: inline-flex; align-items: center; gap: 4px;
     padding: 3px 8px; font-size: 11px;
 }
-/* The Pin control panel: rows = subjects, columns = the two verbs. */
+/* The Pin control panel: the Edit verbs alone (points, centre, radius). */
 .pin-panel {
     display: grid; grid-template-columns: 1fr 1fr;
     gap: 4px 10px; align-items: stretch; padding: 4px 0;
 }
 .pin-panel-head {
+    grid-column: 1 / -1;
     font-size: 10px; color: #64748b;
     text-transform: uppercase; letter-spacing: 0.04em;
     padding-bottom: 2px; border-bottom: 1px solid #e6eaf0;
 }
-.pin-panel-pin-edit { display: flex; gap: 4px; min-width: 0; }
+/* The workflow-exit footer (Pair: Finish pair · Pin: Cancel/Finish pin) —
+   bottom-right, the finish reads as the high-impact confirmation. */
+.cw-finish {
+    display: flex; justify-content: flex-end; align-items: center; gap: 8px;
+    padding-top: 10px; margin-top: 4px; border-top: 1px solid #e2e8f0;
+}
+.cw-finish-btn {
+    background: #1a56db; border: 1px solid #1a56db; color: #ffffff;
+    border-radius: 5px; padding: 6px 16px;
+    font-size: 12px; font-weight: 700; cursor: pointer;
+    box-shadow: 0 2px 6px rgba(26, 86, 219, 0.3);
+}
+.cw-finish-btn:hover:not([disabled]) { background: #1447ba; }
+.cw-finish-btn[disabled] {
+    background: #eef1f4; border-color: #cbd5e1; color: #94a3b8;
+    cursor: default; box-shadow: none;
+}
+.pin-cancel-btn { color: #b91c1c; }
+.pin-cancel-btn[disabled] { color: #94a3b8; }
+
 .cw-inspect { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid #e2e8f0; }
 .cw-readout { display: flex; gap: 10px; font-size: 10px; font-family: 'SF Mono', Monaco, monospace; color: #334155; min-height: 13px; }
 .cw-readout-probe { color: #b45309; }

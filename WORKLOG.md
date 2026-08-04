@@ -10,6 +10,60 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## GUI touch-ups OUTSIDE the specs, round 3 (2026-08-04)
+
+Same standing: user-directed polish, no governing spec.
+
+- **Per-level view flags.** New plain record `LevelFlags { AtMatrix; AtPair;
+  AtPin }` (Model.fs, + `LevelFlags.get/set`); `AnchorGhostMode` and
+  `InspectOpen` are now `LevelFlags` instead of `bool` — each rail stop keeps
+  its own toggle state. Defaults: Isolate pins off/off/ON (Pin), inspect dock
+  collapsed/OPEN/OPEN. `ToggleAnchorGhostMode`/`ToggleInspectPanel` flip the
+  CURRENT level's flag; `AssessGlobalQuality` opens the MATRIX flag
+  explicitly. `MeshView.buildScene`'s anchor-ghost suspension and both
+  inspect bodies' toggles read `LevelFlags.get focus`. Adaptify re-run.
+- **Error-map isolation** (a render mode like the brush's). New
+  `MeshView.mapFrameAt` = the (REF, MOV) frame while the pair map paints
+  (map on, no brush) — MOV folds in as a DEFAULT isolate exactly like the
+  brush frame's, so the REF drops out of the scene entirely and an explicit
+  lock / hover preview / peek still wins. New `MeshView.committedIsoLockAt`
+  is the ONE lock+defaults composition, now read by all three
+  effective-narrowing sites (buildScene shownCtx, View.shownNow,
+  ScanPinScene isoLockAt). `mapIsolationAt` (either scope's map painting)
+  additionally zeroes every mesh's ghost floor (non-painted meshes vanish
+  outright, Matrix root/unregistered included) and greys every outline: new
+  `OutlineGrey` uniform in `OutlineEdge.fragment` (silhouettes → luminance)
+  + `coverageColorsA` greyscale branch (footprints). Tiles and the root
+  gold overlays are untouched (tile strips keep identity; the map owns the
+  MAIN view's colour). V-peek guards deliberately DON'T see the map default
+  (same reducer-can't-see-view-state rule as the brush default).
+- **Finish pair** (`.cw-finish` footer, bottom-right accent-filled
+  `.cw-finish-btn`): enabled while the pair's edge exists (Solve committed
+  it; a pin edit drops it and re-disables), click = `SetFocus FocusMatrix`.
+- **Pin panel: focus column REMOVED.** The ◎ point A/B and ◉ Pin buttons,
+  `SelectPoint` (message + reducer case) and `framePointTiles` are gone —
+  view steering at Pin is tile clicks alone (`ToggleTileIsolate` still keeps
+  `Sel.Point` in step; `ZoomToPin` survives on the 3D double-tap). The panel
+  is now a single "Edit" header over a 2×2 grid: ✚ point A · ✚ point B ·
+  ◯ Centre · ⌀ Radius. Grepped for the deleted DU case; no FS0049/25/26.
+- **Finish pin / Cancel** (Pin-level `.cw-finish` footer): Finish enabled
+  exactly when placement is idle (a pin is atomic — complete ⇔ minted),
+  Cancel enabled while placing and both points are NOT yet placed; both
+  emit `SetFocus FocusPair` — the ONE navigation path, so the exit-guard
+  still confirms a centred draft (Cancel of a centreless draft exits
+  silently). Corner accepted: a draft holding A+B but no centre (manual
+  re-arm order) disables both buttons — Esc still exits.
+- **Guided placement.** After `DraftAreaAt`/`DraftPointAt` the reducer
+  re-arms the next missing part (centre → point A → point B; free order
+  converges) instead of leaving the pick disarmed — ○ New pin now walks all
+  three steps hands-free. New `GuiOverlays.placementBanner` (top-centre,
+  accent-filled `.place-banner`, z above the armed veil, pointer-events
+  none): "Step k of 3 — place the pin centre / place the correspondence
+  point on mesh N", purely derived from (PlacementActive, ArmedPick) — no
+  step state. Committed-pin edits show no banner.
+- Verified: client type-check build green; Supertests 97/97. Browser pass
+  still owed (banner layering, map isolation visuals, guided flow feel).
+
 ## GUI touch-ups OUTSIDE the specs, round 2 (2026-08-04)
 
 Same standing: user-directed polish, no governing spec.

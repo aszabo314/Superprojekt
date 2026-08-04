@@ -430,6 +430,9 @@ module OutlineEdge =
         // .X = 1 → silhouette + isolines, 0.5 → silhouette only (Inspect pair
         // view context), 0 → no lines (the mesh still occludes in the G-buffer).
         member x.OutlineMask : Arr<N<32>, V4f> = x?OutlineMask
+        // 1 → silhouettes drop their palette colour to luminance grey (the
+        // error-map isolation: the map owns every colour on screen).
+        member x.OutlineGrey : float32 = x?OutlineGrey
 
     let private gNormal =
         sampler2d {
@@ -508,7 +511,11 @@ module OutlineEdge =
                 // (No local helper — FShade bodies must stay lambda-free.)
                 if depthEdge && flag > 0.25f then
                     let colP = gColor.Sample(v.tc)
-                    return V4f(colP.X, colP.Y, colP.Z, 1.0f)
+                    if uniform.OutlineGrey > 0.5f then
+                        let grey = 0.299f * colP.X + 0.587f * colP.Y + 0.114f * colP.Z
+                        return V4f(grey, grey, grey, 1.0f)
+                    else
+                        return V4f(colP.X, colP.Y, colP.Z, 1.0f)
                 elif isoEdge && flag > 0.75f then
                     return V4f(0.55f, 0.57f, 0.60f, uniform.IsolineOpacity)
                 else

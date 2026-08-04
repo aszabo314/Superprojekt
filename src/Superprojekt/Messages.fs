@@ -60,11 +60,7 @@ type Message =
     | ApplyCheckpoint of name:string * dataset:string * graph:RegGraph * pins:ScanPin list
     // Pair-level pin list: choose the pin (enables the Pin stop).
     | SelectPin of ScanPinId
-    // Pin-level focus buttons: Some mesh = focus that correspondence side
-    // (that mesh alone in 3D, tiles tight on the point); None = the whole pin
-    // (both meshes, tiles tight on the pin). Writes Sel.Point.
-    | SelectPoint of string option
-    // Transient hover preview of the Pin-level focus/arm buttons.
+    // Transient hover preview of the Pin-level arm buttons.
     | SetPinFocusHover of PinHover option
     // Pin-row hover: preview-frame the tile cameras onto this pin.
     | SetTilePinHover of ScanPinId option

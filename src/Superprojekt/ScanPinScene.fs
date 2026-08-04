@@ -98,11 +98,10 @@ module ScanPinScene =
                 Some other, (pf |> Option.map (fun x -> if x = m then other else x))
             | _ -> iso, pf
 
-        // The brush's colour-isolation frame, folded into the committed lock the
-        // same way the shown rule does it (default isolate, an explicit lock wins).
+        // The brush/error-map default isolates folded into the committed lock
+        // the same way the shown rule does it (an explicit lock wins).
         let isoLockAt (t : AdaptiveToken) =
-            MeshVisibility.withBrushIsolate
-                (MeshView.brushFrameAt model t |> Option.map snd) (model.TileIsolate.GetValue t)
+            MeshView.committedIsoLockAt model t
 
         // A correspondence point's mesh-bound marks (the intersection reveal)
         // follow their MESH's solid visibility: solid under the EFFECTIVE

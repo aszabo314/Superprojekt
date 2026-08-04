@@ -168,6 +168,7 @@ module OutlineView =
         (widthA : aval<float32>)
         (isoOpacityA : aval<float32>)
         (mask : aval<V4f[]>)
+        (greyA : aval<float32>)
         (node : ISceneNode) : aset<ISceneNode> =
 
         let gNormal, gColor, texel = renderOffscreen info outline1 true node
@@ -191,6 +192,7 @@ module OutlineView =
                 Sg.Uniform("OutlineWidthPx", widthA)
                 Sg.Uniform("IsolineOpacity", isoOpacityA)
                 Sg.Uniform("OutlineMask", mask)
+                Sg.Uniform("OutlineGrey", greyA)
                 Sg.VertexAttributes quadAttrs
                 Sg.Index quadIdxView
                 Sg.Render (AVal.constant quadIdx.Length)
@@ -206,11 +208,14 @@ module OutlineView =
         (cov0 : aval<IBackendTexture>, cov1 : aval<IBackendTexture>, covTexel : aval<V2f>) : aset<ISceneNode> =
         let mask = MeshView.outlineMask model
         let widthA = model.OutlineWidthPx |> AVal.map float32
+        // Error-map isolation: silhouettes drop to luminance grey.
+        let greyA =
+            AVal.custom (fun t -> if MeshView.mapIsolationAt model t then 1.0f else 0.0f)
         let combined =
             buildFromNode info (model.OutlineThreshold |> AVal.map float32)
                 widthA
                 (model.IsolineOpacity |> AVal.map float32)
-                mask (MeshView.buildOutlineNode model view proj)
+                mask greyA (MeshView.buildOutlineNode model view proj)
         let footprints =
             buildCoverage widthA (MeshView.footprintMask model) (MeshView.coverageColorsA model)
                 cov0 cov1 covTexel

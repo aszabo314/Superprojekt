@@ -292,6 +292,38 @@ module MeshView =
                 Some (MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b)
             | _ -> None
 
+    // The error map's (REF, MOV) frame inside the pair workspace: while the
+    // map paints (map on, no brush — the brush mode suppresses it) the REF
+    // carries no colour and drops out of the scene entirely; MOV enters as a
+    // DEFAULT isolate exactly like the brush frame's, so an explicit lock and
+    // every transient preview still win and the mode composes. No frame at
+    // Matrix — graphMapScopeAt narrows that level instead.
+    let mapFrameAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) : (string * string) option =
+        if not (model.CellMapOn.GetValue t) then None
+        elif not (Set.isEmpty (model.BrushedSamples.GetValue t)) then None
+        else
+            match model.Focus.GetValue t, (model.Sel.GetValue t).Pair with
+            | (FocusPair | FocusPin), Some (a, b) ->
+                Some (MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b)
+            | _ -> None
+
+    // Error-map isolation = a render MODE like the brush's: while ANY scope's
+    // map paints, meshes carrying no error colour vanish outright (their ghost
+    // floor drops to 0) and every mesh outline goes greyscale — the map is the
+    // only colour on screen.
+    let mapIsolationAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
+        Set.isEmpty (model.BrushedSamples.GetValue t) &&
+        ((graphMapScopeAt model t).IsSome || (mapFrameAt model t).IsSome)
+
+    // The committed isolate lock with both render-mode DEFAULT isolates folded
+    // in (an explicit tile lock always wins; brush wins over map — the brush
+    // suppresses the map anyway). The ONE composition every effective-
+    // narrowing site reads (buildScene, View.shownNow, the pin marker rule).
+    let committedIsoLockAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
+        MeshVisibility.withBrushIsolate (brushFrameAt model t |> Option.map snd)
+            (model.TileIsolate.GetValue t)
+        |> MeshVisibility.withBrushIsolate (mapFrameAt model t |> Option.map snd)
+
     // Per-vertex shape-quality buffer of a loaded mesh (recomputed once on load).
     let private shapeBufOf (loaded : LoadedMesh) =
         loaded.pos |> AVal.map (fun _ ->
@@ -435,13 +467,13 @@ module MeshView =
         let clipCount  = clip |> AVal.map (fun (c, _, _) -> c)
         let clipPlane0 = clip |> AVal.map (fun (_, p, _) -> p)
         let clipPlane1 = clip |> AVal.map (fun (_, _, p) -> p)
-        // Pin isolation = the persistent per-mode default (AnchorGhostMode) —
-        // SUSPENDED while the centre pick is armed (aiming a whole-pin move
-        // needs the full terrain); derived, so the stored toggle restores
-        // itself the moment the suspension ends.
+        // Pin isolation = the persistent per-LEVEL default (AnchorGhostMode
+        // holds one flag per rail stop) — SUSPENDED while the centre pick is
+        // armed (aiming a whole-pin move needs the full terrain); derived, so
+        // the stored toggle restores itself the moment the suspension ends.
         let anchorGhostOn =
             AVal.custom (fun t ->
-                model.AnchorGhostMode.GetValue t
+                LevelFlags.get (model.Focus.GetValue t) (model.AnchorGhostMode.GetValue t)
                 && model.ArmedPick.GetValue t <> Some ArmCentre)
         let anchorGhost = anchorGhostOn |> AVal.map (fun on -> if on then 1 else 0)
         // The ONE error range of the current scope (metres, spanning 0, capped
@@ -454,6 +486,9 @@ module MeshView =
         // isolate; at graph scope the dots' owners are many, so none is).
         let colorIsolate =
             AVal.custom (fun t -> if brushActiveAt model t then 1.0f else 0.0f)
+        // Error-map isolation: the map's colours stand alone — every mesh
+        // without error colour loses even its ghost.
+        let mapIsoA = AVal.custom (mapIsolationAt model)
         // The shown rule's shared inputs (the ONE effective narrowing) — ONE
         // context aval, N cheap per-mesh bool projections.
         let shownCtx =
@@ -461,9 +496,7 @@ module MeshView =
                 let focus = model.Focus.GetValue t
                 let sel = model.Sel.GetValue t
                 let hp = model.MatrixHoverPair.GetValue t
-                let isoLock =
-                    MeshVisibility.withBrushIsolate
-                        (brushFrameAt model t |> Option.map snd) (model.TileIsolate.GetValue t)
+                let isoLock = committedIsoLockAt model t
                 let isoRaw, pfRaw =
                     MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t)
                         (model.ArmedPick.GetValue t) (model.TileIsolateHover.GetValue t)
@@ -596,10 +629,11 @@ module MeshView =
                     Sg.Uniform("GhostOpacity",
                         AVal.custom (fun t ->
                             let floorOn = model.GhostSilhouette.GetValue t
-                            // "Isolate pins" (armed-centre suspension included):
-                            // while effectively on, the context floor is 0 —
-                            // only the pin blobs read.
+                            // "Isolate pins" (armed-centre suspension included)
+                            // and the error-map isolation both zero the context
+                            // floor — only the coloured signal reads.
                             if anchorGhostOn.GetValue t then 0.0f
+                            elif mapIsoA.GetValue t then 0.0f
                             elif floorOn then float32 (model.GhostOpacity.GetValue t)
                             else 0.0f))
                     Sg.Uniform("RenderingMode",   renderingModeInt)
@@ -812,6 +846,8 @@ module MeshView =
     // …with the brush frame's REFERENCE repainted gold: under colour isolation
     // the reference surface is gone and its footprint contour IS the spatial
     // frame, so it reads in the reference gold like the strip's root overlay.
+    // Under error-map isolation instead, every footprint drops to its
+    // luminance grey — identity colour would compete with the map.
     let coverageColorsA (model : AdaptiveModel) : aval<V4f[]> =
         let idxA = meshIndicesA model
         AVal.custom (fun t ->
@@ -823,7 +859,12 @@ module MeshView =
                     cs.[i] <- V4f(V3f Primitives.refGoldV3d, 1.0f)
                     cs
                 | _ -> coverageColors
-            | None -> coverageColors)
+            | None ->
+                if mapIsolationAt model t then
+                    coverageColors |> Array.map (fun c ->
+                        let g = 0.299f * c.X + 0.587f * c.Y + 0.114f * c.Z
+                        V4f(g, g, g, c.W))
+                else coverageColors)
 
     // The reference root ALONE into coverage channel 0, from a tile's own
     // camera — every ortho tile/pane overlays this footprint as the gold

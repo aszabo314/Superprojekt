@@ -78,10 +78,7 @@ module View =
             let focus = AVal.force model.Focus
             let sel = AVal.force model.Sel
             let hp = AVal.force model.MatrixHoverPair
-            let isoLock =
-                MeshVisibility.withBrushIsolate
-                    (MeshView.brushFrameAt model AdaptiveToken.Top |> Option.map snd)
-                    (AVal.force model.TileIsolate)
+            let isoLock = MeshView.committedIsoLockAt model AdaptiveToken.Top
             let isoRaw, pfRaw =
                 MeshVisibility.effectiveNarrowing (AVal.force model.PinFocusHover)
                     (AVal.force model.ArmedPick) (AVal.force model.TileIsolateHover)
@@ -533,6 +530,7 @@ module View =
             }
             GuiOverlays.toast model
             GuiOverlays.spannedBanner env model
+            GuiOverlays.placementBanner model
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model

@@ -61,6 +61,39 @@ module GuiOverlays =
             }
         }
 
+    // The guided-placement alert: while the pin transaction has a pick armed,
+    // one prominent top-centre banner names the current step (the reducer
+    // chains centre → point A → point B by re-arming after each landing).
+    // Purely derived — no step state exists; a committed pin's edits show no
+    // banner (the transaction is over).
+    let placementBanner (model : AdaptiveModel) =
+        let step =
+            AVal.custom (fun t ->
+                match model.ScanPins.Placement.GetValue t with
+                | PlacementIdle -> None
+                | PlacementActive d ->
+                    let stepNo =
+                        1 + (if d.Area.IsSome then 1 else 0)
+                          + (if d.PointA.IsSome then 1 else 0)
+                          + (if d.PointB.IsSome then 1 else 0)
+                    match model.ArmedPick.GetValue t with
+                    | Some ArmCentre ->
+                        Some (sprintf "Step %d of 3 — place the pin centre" stepNo,
+                              "click the highlighted overlap area in any view")
+                    | Some (ArmPoint m) ->
+                        let num =
+                            model.MeshOrder.Content.GetValue t
+                            |> HashMap.tryFind m |> Option.defaultValue 0 |> (+) 1
+                        Some (sprintf "Step %d of 3 — place the correspondence point on mesh %d" stepNo num,
+                              "click the same terrain feature on this mesh (it renders alone while armed)")
+                    | _ -> None)
+        div {
+            Class "place-banner"
+            Primitives.showWhen (step |> AVal.map Option.isSome)
+            span { Class "pb-title"; step |> AVal.map (function Some (tt, _) -> tt | None -> "") }
+            span { Class "pb-hint"; step |> AVal.map (function Some (_, h) -> h | None -> "") }
+        }
+
     let scaleBar (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let targetPx = 100.0
         let barInfo =

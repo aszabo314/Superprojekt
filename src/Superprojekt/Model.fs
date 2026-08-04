@@ -120,6 +120,22 @@ module FocusLevel =
         | FocusPair -> sel.Pair.IsSome
         | FocusPin -> sel.Pair.IsSome && (sel.Pin.IsSome || placing)
 
+// A per-focus-level view preference: one independent flag per rail stop
+// (toggling at a level writes that level's flag alone). Plain record → ONE aval.
+type LevelFlags = { AtMatrix : bool; AtPair : bool; AtPin : bool }
+
+module LevelFlags =
+    let get (f : FocusLevel) (lf : LevelFlags) =
+        match f with
+        | FocusMatrix -> lf.AtMatrix
+        | FocusPair -> lf.AtPair
+        | FocusPin -> lf.AtPin
+    let set (f : FocusLevel) (v : bool) (lf : LevelFlags) =
+        match f with
+        | FocusMatrix -> { lf with AtMatrix = v }
+        | FocusPair -> { lf with AtPair = v }
+        | FocusPin -> { lf with AtPin = v }
+
 // The ONE shown/clickable rule per focus level: Matrix shows all meshes
 // (narrowed transiently by the matrix hover preview); Pair isolates the
 // selected pair's two meshes; Pin narrows further to the effective focus mesh.
@@ -213,7 +229,9 @@ type Model =
         GhostOpacity         : float
         ShadingStrength      : float
         SlopeThresholdDeg    : float
-        AnchorGhostMode      : bool
+        // "Isolate pins" (only the pin patches render) — an independent flag
+        // per focus level (Pin defaults on, the survey levels off).
+        AnchorGhostMode      : LevelFlags
         QuickPinRadius       : float
         // Gear multiplier on the screen-constant 3D pin-flag size AND its
         // world-metre clamp bounds (ScanPin.flagHeightRender).
@@ -367,8 +385,9 @@ type Model =
         // The top-bar jump-to-sensor dropdown (per-mesh main-camera jumps).
         SensorMenuOpen      : bool
         // The docked inspection toolbox's expand state (collapsed = the thin
-        // header edge alone) — a view preference, survives level jumps.
-        InspectOpen         : bool
+        // header edge alone) — an independent flag per focus level (Matrix
+        // defaults collapsed, the pair workspace open); survives level jumps.
+        InspectOpen         : LevelFlags
 
         // Outline edge-detect threshold (depth Laplacian) + isoline band count over
         // the scene Z range + isoline alpha. Tunable from the gear menu; see
@@ -468,7 +487,7 @@ module Model =
             GhostOpacity        = 0.12
             ShadingStrength     = 0.15
             SlopeThresholdDeg   = 15.0
-            AnchorGhostMode     = true
+            AnchorGhostMode     = { AtMatrix = false; AtPair = false; AtPin = true }
             QuickPinRadius      = 0.5
             FlagScale           = 1.0
             RevealRadius        = 0.5
@@ -518,7 +537,7 @@ module Model =
             GearPopoverOpen     = false
             MeshMenuOpen        = false
             SensorMenuOpen      = false
-            InspectOpen         = true
+            InspectOpen         = { AtMatrix = false; AtPair = true; AtPin = true }
             OutlineThreshold    = 0.004
             OutlineWidthPx      = 3.0
             IsolineBands        = 700.0

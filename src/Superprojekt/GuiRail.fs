@@ -232,9 +232,10 @@ module GuiRail =
                 }
                 div {
                     Class "rail-isolate"
-                    Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes")
-                    compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
-                        env.Emit [ToggleAnchorGhostMode])
+                    Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes. Remembered per workflow level.")
+                    compactToggle "Isolate pins"
+                        ((model.Focus, model.AnchorGhostMode) ||> AVal.map2 LevelFlags.get)
+                        (fun () -> env.Emit [ToggleAnchorGhostMode])
                 }
             }
             div {
@@ -359,9 +360,10 @@ module GuiRail =
                 }
                 div {
                     Class "rail-isolate"
-                    Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes")
-                    compactToggle "Isolate pins" model.AnchorGhostMode (fun () ->
-                        env.Emit [ToggleAnchorGhostMode])
+                    Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes. Remembered per workflow level.")
+                    compactToggle "Isolate pins"
+                        ((model.Focus, model.AnchorGhostMode) ||> AVal.map2 LevelFlags.get)
+                        (fun () -> env.Emit [ToggleAnchorGhostMode])
                 }
             }
             div {
@@ -410,22 +412,25 @@ module GuiRail =
                 | _, Some (a, b) -> IndexList.ofList [ inspectBody env model a b ]
                 | _, None -> IndexList.empty)
             |> AList.ofAVal
+        // The collapse flag is per level (Matrix defaults collapsed, the pair
+        // workspace open) — the header toggles the CURRENT level's flag.
+        let openHere = (model.Focus, model.InspectOpen) ||> AVal.map2 LevelFlags.get
         div {
             Class "inspect-dock"
             Primitives.showWhen visible
             div {
                 Class "inspect-dock-head"
-                Attribute("title", "Inspection toolbox — click to collapse/expand")
+                Attribute("title", "Inspection toolbox — click to collapse/expand (remembered per workflow level)")
                 Dom.OnClick(fun _ -> env.Emit [ToggleInspectPanel])
                 span {
                     Class "inspect-dock-caret"
-                    model.InspectOpen |> AVal.map (fun o -> if o then "▾" else "▸")
+                    openHere |> AVal.map (fun o -> if o then "▾" else "▸")
                 }
                 span { Class "lp-sublabel"; "Inspect" }
             }
             div {
                 Class "inspect-dock-body"
-                Primitives.showWhen model.InspectOpen
+                Primitives.showWhen openHere
                 content
             }
         }
@@ -830,7 +835,7 @@ module GuiRail =
                     Class "cw-tools"
                     button {
                         Class "rail-btn rail-pin-add"
-                        Attribute("title", "Place a pin on this pair: enters the Pin level with the centre pick armed — click any view to place the centre and both correspondence points (free order); the pin exists once all three are placed. Only the highlighted overlap region is a valid pin location")
+                        Attribute("title", "Place a pin on this pair: a guided three-step placement — the centre, then one correspondence point per mesh; each landed click arms the next step and the pin exists once all three are placed. Only the highlighted overlap region is a valid pin location")
                         // Hover lights the pair's overlap-region gate (only the
                         // overlap is a valid pin location); the click's focus
                         // jump wipes the hover, and the pre-armed centre pick
@@ -850,13 +855,29 @@ module GuiRail =
                     }
                 }
                 pinList
+                // The workflow exit: back to the matrix once this pair is
+                // solved (the committed edge is the "Solve was clicked" state —
+                // a pin edit drops it and re-disables the button).
+                let registered =
+                    model.RegGraph |> AVal.map (fun g -> (RegGraph.pairEdge a b g).IsSome)
+                div {
+                    Class "cw-finish"
+                    button {
+                        Class "cw-finish-btn"
+                        registered |> AVal.map (fun r ->
+                            if r then None else Some (Attribute("disabled", "disabled")))
+                        Attribute("title", "Done with this pair — back to the matrix (enabled once the pair has been solved)")
+                        Dom.OnClick(fun _ ->
+                            env.Emit [LogReach("pair", "finish", a + " | " + b); SetFocus FocusMatrix])
+                        "✓ Finish pair"
+                    }
+                }
             }
 
-        // ── Pin level: configure ONE scanpin through the two-column control
-        // panel — SAME subjects (correspondence A · correspondence B · the
-        // pin), TWO verbs: Edit (change geometry, arm-driven — placement and
-        // committed re-picks are the same arms) | Isolate & focus (change
-        // view). An armed pick lands in ANY view.
+        // ── Pin level: configure ONE scanpin through the Edit panel — every
+        // verb is arm-driven (placement and committed re-picks are the same
+        // arms) and an armed pick lands in ANY view. View steering lives in
+        // the tiles (a tile click isolates), not in panel buttons.
         let pinLevelView (a : string) (b : string) =
             let placement = model.ScanPins.Placement
             let placing = placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
@@ -869,27 +890,6 @@ module GuiRail =
                     span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
                     span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                 ]
-            // Isolate & focus buttons: what the Pin level LOOKS AT — the whole
-            // pin (both meshes) or one correspondence side. A side click
-            // TOGGLES the tile-strip isolate (ONE shared state — the tiles'
-            // lock and this highlight read the same TileIsolate) and flies
-            // the camera onto the correspondence; hover previews the
-            // narrowing; every click re-frames the tiles.
-            let focusBtn (target : string option) (hover : PinHover) (title : string)
-                         (withChip : string option) (label : string) =
-                button {
-                    Class "rail-btn pin-focus-btn"
-                    classWhen "rail-btn-active"
-                        ((model.Sel, model.TileIsolate) ||> AVal.map2 (fun s iso ->
-                            iso = target && s.Point = target))
-                    Attribute("title", title)
-                    Dom.OnMouseEnter(fun _ -> env.Emit [SetPinFocusHover (Some hover)])
-                    Dom.OnMouseLeave(fun _ -> env.Emit [SetPinFocusHover None])
-                    Dom.OnClick(fun _ -> env.Emit [SelectPoint target])
-                    let chipList = match withChip with Some m -> chip m | None -> AList.empty
-                    chipList
-                    label
-                }
             // Arm buttons: the ONE way picking engages. While armed the left
             // button picks (never orbits) in every view; a landed pick, Esc or
             // a re-click disarms. Arming a correspondence pick isolates its
@@ -911,41 +911,31 @@ module GuiRail =
                     label
                 }
             let hasPin = selPin |> AVal.map Option.isSome
-            // ── The control panel: rows = subjects (corr A / corr B / the
-            // pin), columns = the two verbs. Radius stays hidden until its
-            // edit is clicked.
+            // ── The Edit panel: one correspondence pick per mesh, then the
+            // pin's centre + radius. Radius stays hidden until its edit is
+            // clicked.
             let controlPanel =
                 div {
                     Class "pin-panel"
                     div { Class "pin-panel-head"; "Edit" }
-                    div { Class "pin-panel-head"; "Isolate & focus" }
                     armBtn (ArmPoint a) (HoverSide a)
                         "Arm the correspondence pick on this mesh — it renders alone while armed; click any view (a re-pick replaces the point and unregisters the pair)"
                         (Some a) "✚ point"
-                    focusBtn (Some a) (HoverSide a)
-                        "Isolate this mesh (the SAME lock as clicking its tile) and fly the camera onto its correspondence point; click again to release" (Some a) "◎ point"
                     armBtn (ArmPoint b) (HoverSide b)
                         "Arm the correspondence pick on this mesh — it renders alone while armed; click any view (a re-pick replaces the point and unregisters the pair)"
                         (Some b) "✚ point"
-                    focusBtn (Some b) (HoverSide b)
-                        "Isolate this mesh (the SAME lock as clicking its tile) and fly the camera onto its correspondence point; click again to release" (Some b) "◎ point"
-                    div {
-                        Class "pin-panel-pin-edit"
-                        armBtn ArmCentre HoverBoth
-                            "Arm the centre pick: click any view — during placement it drops the area marker, on a committed pin it moves the centre (the hit mesh anchors the pin; unregisters the pair)"
-                            None "◯ Centre"
-                        button {
-                            Class "rail-btn pin-arm-btn"
-                            classWhen "rail-btn-active" model.PinRadiusEditOpen
-                            (hasPin, placing) ||> AVal.map2 (fun p pl ->
-                                if p || pl then None else Some (Attribute("disabled", "disabled")))
-                            Attribute("title", "Edit the pin radius (reveals the slider; the radius scopes error analysis)")
-                            Dom.OnClick(fun _ -> env.Emit [ToggleRadiusEdit])
-                            "⌀ Radius"
-                        }
+                    armBtn ArmCentre HoverBoth
+                        "Arm the centre pick: click any view — during placement it drops the area marker, on a committed pin it moves the centre (the hit mesh anchors the pin; unregisters the pair)"
+                        None "◯ Centre"
+                    button {
+                        Class "rail-btn pin-arm-btn"
+                        classWhen "rail-btn-active" model.PinRadiusEditOpen
+                        (hasPin, placing) ||> AVal.map2 (fun p pl ->
+                            if p || pl then None else Some (Attribute("disabled", "disabled")))
+                        Attribute("title", "Edit the pin radius (reveals the slider; the radius scopes error analysis)")
+                        Dom.OnClick(fun _ -> env.Emit [ToggleRadiusEdit])
+                        "⌀ Radius"
                     }
-                    focusBtn None HoverBoth
-                        "Focus the whole pin: the isolation releases, both meshes show, the camera and tiles fly to the pin" None "◉ Pin"
                 }
             // The SAME radius edit serves the draft and a committed pin.
             let radiusRow =
@@ -993,15 +983,44 @@ module GuiRail =
                 div {
                     Class "cw-state"
                     (placing, selPin) ||> AVal.map2 (fun pl p ->
-                        if pl then "arm an edit · click any view · a landed pick disarms"
+                        if pl then "guided placement: each landed click arms the next step"
                         else
                             match p with
-                            | Some _ -> "arm an edit to change geometry · focus to steer the view"
+                            | Some _ -> "arm an edit to change geometry · tile clicks steer the view"
                             | None -> "")
                 }
                 controlPanel
                 radiusRow
                 draftCue
+                // The workflow exits: Cancel aborts an unfinished placement
+                // (the navigation guard still asks once a centre exists),
+                // Finish leaves a complete pin — both land back at Pair
+                // through the ONE navigation path.
+                let bothPoints =
+                    placement |> AVal.map (function
+                        | PlacementActive d -> d.PointA.IsSome && d.PointB.IsSome
+                        | PlacementIdle -> false)
+                let cancelDisabled =
+                    (placing, bothPoints) ||> AVal.map2 (fun pl bp ->
+                        if pl && not bp then None else Some (Attribute("disabled", "disabled")))
+                div {
+                    Class "cw-finish"
+                    button {
+                        Class "rail-btn pin-cancel-btn"
+                        cancelDisabled
+                        Attribute("title", "Abort this pin placement and return to the pair (a placed centre asks for one confirmation)")
+                        Dom.OnClick(fun _ -> env.Emit [LogReach("pin", "cancel", ""); SetFocus FocusPair])
+                        "✕ Cancel"
+                    }
+                    button {
+                        Class "cw-finish-btn"
+                        placing |> AVal.map (fun pl ->
+                            if pl then Some (Attribute("disabled", "disabled")) else None)
+                        Attribute("title", "Done with this pin — back to the pair (enabled once the pin is complete)")
+                        Dom.OnClick(fun _ -> env.Emit [LogReach("pin", "finish", ""); SetFocus FocusPair])
+                        "✓ Finish pin"
+                    }
+                }
             }
 
         div {

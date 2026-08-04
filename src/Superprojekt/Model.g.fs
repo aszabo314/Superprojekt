@@ -1,5 +1,5 @@
-//27182e07-3f8e-fb0c-2fe1-372826fe0235
-//cee6140c-9bda-0d0e-ce28-0a4ae736b94f
+//c787aa6a-c0e9-ec16-6bda-1343dd9dcb47
+//48e4ff1f-de12-a1ed-af04-8f069669ae99
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -177,7 +177,7 @@ type AdaptiveModel(value : Model) =
     member __.GhostOpacity = _GhostOpacity_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.ShadingStrength = _ShadingStrength_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.SlopeThresholdDeg = _SlopeThresholdDeg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
-    member __.AnchorGhostMode = _AnchorGhostMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.AnchorGhostMode = _AnchorGhostMode_ :> FSharp.Data.Adaptive.aval<LevelFlags>
     member __.QuickPinRadius = _QuickPinRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.FlagScale = _FlagScale_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.RevealRadius = _RevealRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
@@ -227,7 +227,7 @@ type AdaptiveModel(value : Model) =
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshMenuOpen = _MeshMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SensorMenuOpen = _SensorMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.InspectOpen = _InspectOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.InspectOpen = _InspectOpen_ :> FSharp.Data.Adaptive.aval<LevelFlags>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.OutlineWidthPx = _OutlineWidthPx_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>

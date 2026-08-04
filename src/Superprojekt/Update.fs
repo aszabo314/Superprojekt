@@ -124,15 +124,6 @@ module Update =
             | Some (c, hw) -> frameTiles [a; b] c hw model
             | None -> model
 
-    // Tight on one correspondence point (the focused side's stored point).
-    let private framePointTiles (mesh : string) (model : Model) =
-        match model.Sel.Pair, model.Sel.Pin |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins) with
-        | Some (a, b), Some p ->
-            let local = if mesh = fst p.Pair then p.PointA else p.PointB
-            let w = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos local
-            frameTiles [a; b] w (max 0.25 (p.InnerRadius * 1.5)) model
-        | _ -> model
-
     // The pair's overlap area (as-loaded world bbox intersection in XY; the
     // union when they don't meet) — the new-transaction framing.
     let private frameOverlapTiles (a : string) (b : string) (model : Model) =
@@ -220,7 +211,8 @@ module Update =
         | SetIsolineOpacity v ->
             { model with IsolineOpacity = clamp 0.0 1.0 v }
         | ToggleAnchorGhostMode ->
-            { model with AnchorGhostMode = not model.AnchorGhostMode }
+            let lf = model.AnchorGhostMode
+            { model with AnchorGhostMode = LevelFlags.set model.Focus (not (LevelFlags.get model.Focus lf)) lf }
         | SetQuickPinRadius v ->
             { model with QuickPinRadius = max 0.01 v }
         | SetFlagScale v ->
@@ -316,7 +308,10 @@ module Update =
                 { model with PinExitPending = Some FocusMatrix }
             else
                 let m = if model.Focus = FocusMatrix then model else jumpFocus FocusMatrix model
-                { m with SpannedNoticeOpen = false; InspectOpen = true; CellMapOn = true }
+                { m with
+                    SpannedNoticeOpen = false
+                    InspectOpen = LevelFlags.set FocusMatrix true m.InspectOpen
+                    CellMapOn = true }
         | LogReach(source, action, subject) ->
             logReach source action subject model
         | ToggleReachLog ->
@@ -354,38 +349,6 @@ module Update =
                     { model with
                         Sel = { model.Sel with Pin = Some id; Point = None }
                         PinRadiusEditOpen = false }
-        | SelectPoint p ->
-            let valid =
-                model.Focus = FocusPin &&
-                (match p, model.Sel.Pair with
-                 | Some m, Some (a, b) -> m = a || m = b
-                 | None, Some _ -> true
-                 | _, None -> false)
-            if not valid then model
-            else
-                // Isolate & focus: the button's isolation IS the tile-strip
-                // isolate (ONE state — the tiles' lock highlight, the shown
-                // rule and this button all read TileIsolate). First click
-                // isolates + flies the camera onto the correspondence
-                // (an explicit prompt — the fly-to grammar); the second click
-                // releases the isolation.
-                let selPin = model.Sel.Pin |> Option.bind (fun id -> HashMap.tryFind id model.ScanPins.Pins)
-                match p with
-                | Some mesh when model.TileIsolate = Some mesh ->
-                    framePinTiles { model with Sel = { model.Sel with Point = None }; TileIsolate = None }
-                | Some mesh ->
-                    (match selPin with
-                     | Some pin ->
-                        let local = if mesh = fst pin.Pair then pin.PointA else pin.PointB
-                        let w = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos local
-                        env.Emit [FlyToPoint(w, max 0.5 (pin.InnerRadius * 2.0))]
-                     | None -> ())
-                    framePointTiles mesh { model with Sel = { model.Sel with Point = Some mesh }; TileIsolate = Some mesh }
-                | None ->
-                    (match model.Sel.Pin with
-                     | Some id -> env.Emit [ZoomToPin id]
-                     | None -> ())
-                    framePinTiles { model with Sel = { model.Sel with Point = None }; TileIsolate = None }
         | SetPinFocusHover h ->
             if model.PinFocusHover = h then model else { model with PinFocusHover = h }
         | SetTilePinHover h ->
@@ -603,7 +566,8 @@ module Update =
         | ToggleSensorMenu ->
             { model with SensorMenuOpen = not model.SensorMenuOpen }
         | ToggleInspectPanel ->
-            { model with InspectOpen = not model.InspectOpen }
+            let lf = model.InspectOpen
+            { model with InspectOpen = LevelFlags.set model.Focus (not (LevelFlags.get model.Focus lf)) lf }
         | ScanPinMsg msg ->
             let m = ScanPinUpdate.handleMsg env model msg
             // New pin → enter Pin in placement with the CENTRE pick pre-armed
@@ -624,6 +588,24 @@ module Update =
                 match msg with
                 | DraftAreaAt _ | DraftPointAt _ | EditPointAt _ | EditCentreAt _ ->
                     { m with ArmedPick = None; ArmPreview = None }
+                | _ -> m
+            // Guided placement: while the draft lives, every landed part arms
+            // the next missing one (centre → point A → point B — free order
+            // still converges), so ○ New pin walks all three steps without a
+            // manual re-arm; the last landing minted the pin (placement idle),
+            // which ends the chain. The placement banner names the armed step.
+            let m =
+                match msg with
+                | DraftAreaAt _ | DraftPointAt _ ->
+                    (match m.ScanPins.Placement with
+                     | PlacementActive d ->
+                        let next =
+                            if d.Area.IsNone then Some ArmCentre
+                            elif d.PointA.IsNone then Some (ArmPoint (fst d.Pair))
+                            elif d.PointB.IsNone then Some (ArmPoint (snd d.Pair))
+                            else None
+                        { m with ArmedPick = next }
+                     | PlacementIdle -> m)
                 | _ -> m
             let m =
                 match msg with

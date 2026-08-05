@@ -440,6 +440,33 @@ module MeshView =
         blobsArr |> AVal.map fst,
         blobsArr |> AVal.map snd
 
+    // The radius an armed-centre landing would COMMIT: the draft's during
+    // placement, else the selected pin's (a centre re-pick keeps it), else the
+    // quick default. ONE rule for the wire previews (main + tiles) and the
+    // shader's intersection band.
+    let armCommitRadiusAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
+        match model.ScanPins.Placement.GetValue t with
+        | PlacementActive d -> d.Radius
+        | PlacementIdle ->
+            let pins = model.ScanPins.Pins.Content.GetValue t
+            match (model.Sel.GetValue t).Pin |> Option.bind (fun id -> HashMap.tryFind id pins) with
+            | Some p -> p.InnerRadius
+            | None -> model.QuickPinRadius.GetValue t
+
+    // The armed-centre commit sphere as the mesh shader's ArmSphere uniform
+    // (render space; W <= 0 = off) — non-zero only while the centre pick is
+    // armed AND the cursor preview has a surface point.
+    let armSphereUniform (model : AdaptiveModel) =
+        AVal.custom (fun t ->
+            match model.ArmedPick.GetValue t, model.ArmPreview.GetValue t with
+            | Some ArmCentre, Some world ->
+                let cc = model.CommonCentroid.GetValue t
+                let s = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
+                let c = ScanPin.renderCentre cc s world
+                V4f(float32 c.X, float32 c.Y, float32 c.Z,
+                    float32 (ScanPin.renderLength s (armCommitRadiusAt model t)))
+            | _ -> V4f.Zero)
+
     // name → display index, shared by the main pass and the offscreen outline passes.
     let private meshIndicesA (model : AdaptiveModel) =
         model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
@@ -461,6 +488,7 @@ module MeshView =
         let palette = Primitives.meshPaletteV4d
 
         let blobCount, blobs = pinBlobUniforms model
+        let armSphereU = armSphereUniform model
         let cutFwdU, cutDistU, cutBandU = nearCutUniforms model
         let farCutDistU, farCutBandU = farCutUniforms model
         let rangeWorldA = rangeMaxWorld model
@@ -645,6 +673,7 @@ module MeshView =
                     Sg.Uniform("BlobCount",       blobCount)
                     Sg.Uniform("Blobs",           blobs)
                     Sg.Uniform("AnchorGhost",     anchorGhost)
+                    Sg.Uniform("ArmSphere",       armSphereU)
                     Sg.Uniform("ClipPlaneCount",       clipCount)
                     Sg.Uniform("ClipPlane0",           clipPlane0)
                     Sg.Uniform("ClipPlane1",           clipPlane1)
@@ -1028,6 +1057,9 @@ module MeshView =
             Sg.Uniform("BlobCount",       AVal.constant 0)
             Sg.Uniform("Blobs",           AVal.constant (Array.zeroCreate<V4f> MeshShader.MaxBlobs))
             Sg.Uniform("AnchorGhost",     AVal.constant 0)
+            // The armed-centre intersection band paints in the tiles too — the
+            // same model state previews in every view.
+            Sg.Uniform("ArmSphere",       armSphereUniform model)
             Sg.Uniform("ClipPlaneCount",  AVal.constant 0)
             Sg.Uniform("ClipPlane0",      AVal.constant V4f.Zero)
             Sg.Uniform("ClipPlane1",      AVal.constant V4f.Zero)

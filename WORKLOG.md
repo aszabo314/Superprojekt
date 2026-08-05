@@ -36,6 +36,43 @@ Same standing: user-directed polish, no governing spec.
   on (`.ct-on` on the row), hover tints the border. Same control everywhere
   it's used, so the gear popover's Ghost-silhouette toggle inherits the
   look for free.
+- **Armed previews depth-compose** (user: the correspondence hover circles
+  and the centre sphere outline floated over the meshes with no depth
+  composition). `ScanPinScene.armPreviewMarks` switches `linesNodeTop`
+  (DepthTest.None) → `linesNode` (LessOrEqual) — the same depth-tested
+  blended-lines chrome the committed rings/reveals use, so terrain now
+  occludes the far side of the wire glyphs. Safe for aiming: the preview
+  centre always sits on the frontmost solid surface (it IS the GPU pick),
+  so the marker can never fully hide. Tiles deliberately keep
+  DepthTest.None (top-down navigation marks). CLAUDE.md's "armed aim
+  previews" paragraph will need the depth note at reconstruction.
+- **Live sphere∩surface intersection for the centre placement** (user
+  asked for the mesh–sphere intersection line strip during the hover
+  preview). Implemented as a SHADER band, not a server fetch: new
+  `ArmSphere` uniform (V4f render-space centre + commit radius, W<=0 off)
+  in `MeshShader.shade` — a derivative-antialiased ~2 px white band where
+  |dist(wp, centre) − r| ≈ 0, painted on above-ghost fragments only,
+  before the cut-line ink (which still wins). Chosen over a per-hover
+  `/query/contact-rings` round-trip: zero latency, zero server load, and
+  inherently depth-correct (the band lives on the surface being shaded);
+  the real traced rings still land with the commit. Wired in `buildScene`
+  AND `buildPaneScene` (tiles preview it too — one model state, every
+  view). The overlap gate composes for free: outside the valid both-cover
+  region fragments drop to ghost, so the band vanishes with the surface.
+  New `MeshView.armCommitRadiusAt` = the ONE "radius the landing would
+  commit" rule (draft's / selected pin's / quick default), now shared by
+  the shader uniform and both wire-preview builders (was duplicated).
+  FShade pitfalls honoured (float32 literals, no local lambdas, ddx/ddy);
+  browser validation still owed — dotnet build can't catch shader faults.
+- **Crosshair white rim** (user: the camera-aligned correspondence
+  crosshairs were poorly visible against the dark grey background — the
+  ink under-stroke vanishes there). `ScanPinScene.addCrosshair` arms go
+  triplex: a white rim (width 5.4, α 0.85) UNDER the ink (3.4) under the
+  mesh-colour core (1.7) — on terrain the ink still separates the colour,
+  over the void the rim carries the glyph. Same painter's-order layering
+  the ink→core pair already used (one Lines draw, DepthTest.None); dim
+  factors apply to all three layers, so muted/armed fades keep working.
+  Serves committed pins and the draft alike (one shared builder).
 
 ## GUI touch-ups OUTSIDE the specs, round 3 (2026-08-04)
 

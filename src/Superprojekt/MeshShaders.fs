@@ -95,6 +95,11 @@ module MeshShader =
         // the ghost floor. The Sel vectors dot-select each pair mesh's channel
         // out of the two coverage targets.
         member x.OverlapPreview   : int = x?OverlapPreview
+        // Armed-centre aim: (cx,cy,cz,r) of the commit sphere in render space,
+        // W <= 0 = off. The fragment stage paints the sphere∩surface
+        // intersection as a white band — the live preview of the contact rings
+        // a landing would trace, with no geometry and no server round-trip.
+        member x.ArmSphere        : V4f = x?ArmSphere
         member x.OverlapSelA0     : V4f = x?OverlapSelA0
         member x.OverlapSelA1     : V4f = x?OverlapSelA1
         member x.OverlapSelB0     : V4f = x?OverlapSelB0
@@ -315,6 +320,20 @@ module MeshShader =
             // opaque data ink over every painter (opaque ⇒ natural depth below,
             // so the line is pickable surface like any solid fragment).
             let mutable outRgb = baseRgb * shade
+            // Armed-centre sphere∩surface band: derivative-antialiased (~2 px
+            // screen-constant), white per the uncommitted convention, solid
+            // fragments only — so it never paints on ghosts and vanishes with
+            // the surface outside the overlap gate.
+            let hs = uniform.ArmSphere
+            if hs.W > 0.0f && aboveGhost then
+                let dx = wp.X - hs.X
+                let dy = wp.Y - hs.Y
+                let dz = wp.Z - hs.Z
+                let d = sqrt (dx*dx + dy*dy + dz*dz) - hs.W
+                let aa = max (abs (ddx d) + abs (ddy d)) 1e-6f
+                let tb = abs d / (aa * 1.8f)
+                if tb < 1.0f then
+                    outRgb <- outRgb + (V3f(1.0f, 1.0f, 1.0f) - outRgb) * (0.95f * (1.0f - tb))
             if cutLine then
                 outRgb <- V3f(0.06f, 0.07f, 0.08f)
                 alpha <- 1.0f

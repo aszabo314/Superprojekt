@@ -301,13 +301,16 @@ module ScanPinScene =
 
         // Correspondence LOCATOR: a camera-aligned, screen-constant crosshair
         // whose centre IS the pick point — no 3D body, nothing occluded, an
-        // open centre so the point itself stays bare. Mesh-identity colour
-        // over an ink under-stroke. NEVER hides (it is the locator) — but a
-        // point whose mesh isn't solid (isolation/preview) MUTES to the fade
-        // level instead of floating at full strength; the pair scope and the
-        // global armed fade apply on top. One segs pass for committed pins
-        // AND the draft's placed points (view-dependent by design —
-        // recomputes per camera move; a handful of pins keeps it cheap).
+        // open centre so the point itself stays bare. Triplex arms: a white
+        // rim under an ink under-stroke under the mesh-identity core — the
+        // ink separates the colour on terrain, the rim keeps the glyph
+        // readable where the ink vanishes (the dark void background). NEVER
+        // hides (it is the locator) — but a point whose mesh isn't solid
+        // (isolation/preview) MUTES to the fade level instead of floating at
+        // full strength; the pair scope and the global armed fade apply on
+        // top. One segs pass for committed pins AND the draft's placed
+        // points (view-dependent by design — recomputes per camera move; a
+        // handful of pins keeps it cheap).
         let crosshairNode =
             let segs =
                 AVal.custom (fun t ->
@@ -322,11 +325,13 @@ module ScanPinScene =
                     let out = ResizeArray<V3d * V3d * V4d * float>()
                     let addCrosshair (cR : V3d) (col : V3d) (dim : float) =
                         let h = 0.025 * Vec.length (eye - cR)
+                        let rim = V4d(1.0, 1.0, 1.0, 0.85 * dim)
                         let ink = V4d(Primitives.pinInkV3d, 0.9 * dim)
                         let core = V4d(col, 0.95 * dim)
                         for d in [| right; -right; up; -up |] do
                             let p0 = cR + d * (0.3 * h)
                             let p1 = cR + d * h
+                            out.Add(p0, p1, rim, 5.4)
                             out.Add(p0, p1, ink, 3.4)
                             out.Add(p0, p1, core, 1.7)
                     let pt (mesh : string) (local : V3d) =
@@ -502,8 +507,13 @@ module ScanPinScene =
 
         // The armed pick's cursor preview: what is ABOUT to be placed, at the
         // hovered surface point — single-stroke pure white (the uncommitted
-        // convention). The same model state renders in the Pin tiles, so the
-        // preview is synchronized across every view.
+        // convention), DEPTH-COMPOSED with the meshes (linesNode) so the far
+        // side of the wire sphere reads behind terrain; the centre itself
+        // always sits on the frontmost solid surface (the GPU pick), so the
+        // marker never fully hides. The shader's ArmSphere band paints the
+        // live sphere∩surface intersection alongside. The same model state
+        // renders in the Pin tiles, so the preview is synchronized across
+        // every view.
         let armPreviewMarks =
             let segs =
                 AVal.custom (fun t ->
@@ -516,17 +526,7 @@ module ScanPinScene =
                         let out = ResizeArray<V3d * V3d * V4d * float>()
                         (match target with
                          | ArmCentre ->
-                            // The radius the landing will commit: the draft's
-                            // during placement, else the selected pin's (a
-                            // centre re-pick keeps it).
-                            let r =
-                                match model.ScanPins.Placement.GetValue t with
-                                | PlacementActive d -> d.Radius
-                                | PlacementIdle ->
-                                    match (model.Sel.GetValue t).Pin
-                                          |> Option.bind (fun id -> HashMap.tryFind id (pinsVal.GetValue t)) with
-                                    | Some p -> p.InnerRadius
-                                    | None -> model.QuickPinRadius.GetValue t
+                            let r = MeshView.armCommitRadiusAt model t
                             let rR = ScanPin.renderLength s r
                             for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.7)) 1.4 do
                                 out.Add seg
@@ -536,7 +536,7 @@ module ScanPinScene =
                             addCross out cR 0.075 white 1.6)
                         out.ToArray()
                     | _ -> [||])
-            linesNodeTop notFullscreen segs
+            linesNode notFullscreen segs
 
         // Pin flag pole (far view): a neutral pole + top ring along the display
         // axis per committed pin, screen-constant size (ScanPin.flagHeightRender:

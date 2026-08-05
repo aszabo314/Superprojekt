@@ -434,15 +434,7 @@ module GuiPanes =
                                 let white = V4d(1.0, 1.0, 1.0, 0.9)
                                 (match target with
                                  | ArmCentre ->
-                                    // The radius the landing will commit (the
-                                    // draft's, else the re-picked pin's).
-                                    let r =
-                                        match model.ScanPins.Placement.GetValue t with
-                                        | PlacementActive d -> d.Radius
-                                        | PlacementIdle ->
-                                            match sel.Pin |> Option.bind (fun id -> HashMap.tryFind id pins) with
-                                            | Some p -> p.InnerRadius
-                                            | None -> model.QuickPinRadius.GetValue t
+                                    let r = MeshView.armCommitRadiusAt model t
                                     let rR = ScanPin.renderLength s r
                                     for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.7)) 1.4 do
                                         out.Add seg

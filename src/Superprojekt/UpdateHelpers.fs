@@ -69,17 +69,16 @@ module UpdateHelpers =
         { model with ScanPins = ScanPinModel.invalidateRings model.ScanPins }
 
     // Drop every inspection cache at BOTH scopes (error distributions, the map
-    // buffers, brush/hover/probe readouts) — on nav, pin and pose changes
-    // alike. The graph caches ride the same generation: they outlive nothing a
-    // pair cache outlives.
+    // buffers, brush/hover readouts) — on nav, pin and pose changes alike. The
+    // graph caches ride the same generation: they outlive nothing a pair cache
+    // outlives.
     let invalidateCellError (model : Model) =
         bumpCellError ()
         { model with
             CellError = None; CellErrorBefore = None; CellDist = None
             GraphError = None; GraphErrorBefore = None
             GraphDist = Map.empty; GraphDistBefore = Map.empty
-            BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None
-            ProbeReadout = None }
+            BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None }
 
     let logReach (source : string) (action : string) (subject : string) (model : Model) =
         { model with

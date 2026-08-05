@@ -157,12 +157,13 @@ module Primitives =
     let compactToggle (labelText : string) (value : aval<bool>) (onToggle : unit -> unit) =
         div {
             Class "ct"
+            classWhen "ct-on" value
             Dom.OnClick(fun _ -> onToggle ())
             span {
                 Class "ct-box"
-                value |> AVal.map (fun v -> if v then "■" else "□")
+                value |> AVal.map (fun v -> if v then "✓" else "")
             }
-            " " + labelText
+            labelText
         }
 
     let inlineSlider

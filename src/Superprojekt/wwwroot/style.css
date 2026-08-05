@@ -105,7 +105,7 @@ body.loaded { background: #f4f6f8; }
     pointer-events: none;
 }
 
-/* Pick-value tooltips (probe / hovered sample) riding their 3D points. */
+/* Pick-value tooltip (the hovered sample's exact value) riding its 3D point. */
 .pick-tip {
     position: fixed; z-index: 940;
     transform: translate(10px, -50%);
@@ -346,18 +346,25 @@ body.loaded { background: #f4f6f8; }
 /* ── Primitives: CompactToggle ─────────────────────────────────────── */
 
 .ct {
-    display: flex; align-items: center; gap: 4px;
-    padding: 1px 2px;
+    display: flex; align-items: center; gap: 6px;
+    padding: 2px 3px;
     cursor: pointer;
     font-size: 12px;
     user-select: none;
     line-height: 18px;
+    border-radius: 3px;
 }
 .ct:hover { background: #f8fafc; }
+.ct:hover .ct-box { border-color: #1a56db; }
 .ct-box {
-    display: inline-block; width: 12px; text-align: center;
-    color: #1a56db; font-family: monospace; font-weight: bold;
+    flex: none; box-sizing: border-box;
+    width: 14px; height: 14px;
+    display: flex; align-items: center; justify-content: center;
+    border: 1.5px solid #94a3b8; border-radius: 3px;
+    background: #ffffff;
+    color: #ffffff; font-size: 11px; font-weight: 700; line-height: 1;
 }
+.ct-on .ct-box { background: #1a56db; border-color: #1a56db; }
 /* ── Primitives: InlineSlider ──────────────────────────────────────── */
 
 .is {
@@ -645,10 +652,6 @@ body.loaded { background: #f4f6f8; }
 
 .cw-inspect { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid #e2e8f0; }
 .cw-readout { display: flex; gap: 10px; font-size: 10px; font-family: 'SF Mono', Monaco, monospace; color: #334155; min-height: 13px; }
-.cw-readout-probe { color: #b45309; }
-/* Probe button holding a reading — the readout's own amber, not the armed blue. */
-.cw-probe-held { background: #fff7ed; border-color: #b45309; color: #b45309; font-weight: 600; }
-.cw-probe-held:hover { background: #ffedd5; }
 .cw-readout-hover { color: #0891b2; }
 .cw-chart { width: 100%; height: var(--charth, 160px); cursor: crosshair; touch-action: none; }
 .cw-brush-bridge { display: none; }

@@ -153,8 +153,8 @@ module GuiOverlays =
                     (model.CellMapOn.GetValue t && not (Map.isEmpty dists))
                     || not (Set.isEmpty (model.BrushedSamples.GetValue t)))
         // The 3D-hovered dot's value, connecting "this value" to the scale: the
-        // exact probed number the tooltip shows, or the dot's own sample value
-        // until that fetch lands.
+        // exact number the tooltip shows, or the dot's own sample value until
+        // that fetch lands.
         let hoveredValue =
             AVal.custom (fun t ->
                 match model.HoverSample.GetValue t with

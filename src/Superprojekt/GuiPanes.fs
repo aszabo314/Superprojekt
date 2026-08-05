@@ -32,14 +32,14 @@ module GuiPanes =
 
     // ── The armed pick, shared by EVERY view (main 3D and any tile; ray in
     // RENDER space): the arm target picks the raycast candidates — ArmPoint
-    // its own mesh alone, ArmCentre/ArmProbe both pair meshes (nearest hit
-    // lands). Returns (mesh, own-frame local, metric world).
+    // its own mesh alone, ArmCentre both pair meshes (nearest hit lands).
+    // Returns (mesh, own-frame local, metric world).
     let private armedResolve (model : AdaptiveModel) (target : ArmTarget) (ray : Ray3d)
         : Async<(string * V3d * V3d) option> =
         match (AVal.force model.Sel).Pair with
         | None -> async.Return None
         | Some (a, b) ->
-            let candidates = match target with ArmPoint m -> [m] | ArmCentre | ArmProbe -> [a; b]
+            let candidates = match target with ArmPoint m -> [m] | ArmCentre -> [a; b]
             async {
                 let! hits =
                     candidates
@@ -62,32 +62,8 @@ module GuiPanes =
                     |> Array.tryHead |> Option.map (fun (_, n, local, world) -> n, local, world)
             }
 
-    // A landed ArmProbe pick: exact pairwise error at the picked metric-world
-    // point, oriented MOV-relative-to-REF like every stored sample; the
-    // reducer disarms when the readout lands.
-    let private probeValueAt (env : Env<Message>) (model : AdaptiveModel) (world : V3d) =
-        match (AVal.force model.Sel).Pair with
-        | None -> ()
-        | Some (a, b) ->
-            let ka, kb = PairCell.key a b
-            let _, mov = MatrixNav.pairRefMov (AVal.force model.RegGraph) ka kb
-            let flip = mov = ka
-            let tOf (m : string) =
-                let cc = AVal.force model.CommonCentroid
-                let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) m
-                (RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model m))).Forward
-            let gen = UpdateHelpers.cellErrorGen
-            let radius = max 0.01 (AVal.force model.QuickPinRadius)
-            async {
-                let! v = Query.pairErrorAt ApiConfig.apiBase.Value ka (tOf ka) kb (tOf kb) world radius
-                match v with
-                | Some v -> env.Emit [ProbeReadoutComputed(gen, world, (if flip then -v else v))]
-                | None -> ()
-            } |> Async.Start
-
-    // A landed armed pick: route into the draft (centre/point), a committed
-    // pin's point re-pick, or the probe readout; the reducer disarms on
-    // landing.
+    // A landed armed pick: route into the draft (centre/point) or a committed
+    // pin's point re-pick; the reducer disarms on landing.
     let armedPick (env : Env<Message>) (model : AdaptiveModel) (ray : Ray3d) =
         match AVal.force model.ArmedPick with
         | None -> ()
@@ -95,23 +71,19 @@ module GuiPanes =
             async {
                 let! hit = armedResolve model target ray
                 match hit with
-                | Some (mesh, local, world) ->
-                    match target with
-                    | ArmProbe -> probeValueAt env model world
-                    | ArmCentre | ArmPoint _ ->
-                        let msgs =
-                            match AVal.force model.ScanPins.Placement with
-                            | PlacementActive _ ->
-                                match target with
-                                | ArmCentre -> [ScanPinMsg (DraftAreaAt(mesh, local))]
-                                | ArmPoint m -> [ScanPinMsg (DraftPointAt(m, local))]
-                                | ArmProbe -> []
-                            | PlacementIdle ->
-                                match target, (AVal.force model.Sel).Pin with
-                                | ArmPoint m, Some id -> [ScanPinMsg (EditPointAt(id, m, local))]
-                                | ArmCentre, Some id -> [ScanPinMsg (EditCentreAt(id, mesh, local))]
-                                | _ -> []
-                        if not (List.isEmpty msgs) then env.Emit msgs
+                | Some (mesh, local, _world) ->
+                    let msgs =
+                        match AVal.force model.ScanPins.Placement with
+                        | PlacementActive _ ->
+                            match target with
+                            | ArmCentre -> [ScanPinMsg (DraftAreaAt(mesh, local))]
+                            | ArmPoint m -> [ScanPinMsg (DraftPointAt(m, local))]
+                        | PlacementIdle ->
+                            match target, (AVal.force model.Sel).Pin with
+                            | ArmPoint m, Some id -> [ScanPinMsg (EditPointAt(id, m, local))]
+                            | ArmCentre, Some id -> [ScanPinMsg (EditCentreAt(id, mesh, local))]
+                            | _ -> []
+                    if not (List.isEmpty msgs) then env.Emit msgs
                 | None -> ()
             } |> Async.Start
 
@@ -477,8 +449,6 @@ module GuiPanes =
                                     addCross out cR (rR * 0.15) white 1.6
                                  | ArmPoint _ ->
                                     addWireSphere out cR 0.06 white 1.6 20
-                                    addCross out cR 0.075 white 1.6
-                                 | ArmProbe ->
                                     addCross out cR 0.075 white 1.6)
                              | _ -> ())
                             out.ToArray()

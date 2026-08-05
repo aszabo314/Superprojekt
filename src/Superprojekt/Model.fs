@@ -78,13 +78,11 @@ type TileCam = { Centre : V3d; Radius : float }
 // moves are exempt): while armed, a click in ANY view (main 3D or any tile)
 // places this pick and the left button no longer orbits; the ARM TARGET is
 // the attribution (an ArmPoint pick raycasts its own mesh alone, ArmCentre
-// and ArmProbe raycast both pair meshes — nearest hit lands). Disarm = a
-// landed pick, Esc, or clicking the arm control again. ArmProbe = the
-// inspection point probe (Pair + Pin); the rest are Pin-level pin picks.
+// raycasts both pair meshes — nearest hit lands). Disarm = a landed pick,
+// Esc, or clicking the arm control again.
 type ArmTarget =
     | ArmCentre
     | ArmPoint of string
-    | ArmProbe
 
 // Transient hover preview of the Pin-level focus/arm buttons: what the 3D
 // visibility WOULD narrow to on click (one side, or the whole pin).
@@ -148,7 +146,7 @@ module MeshVisibility =
     // another mesh while one is isolated must preview THAT mesh isolated;
     // intersecting with the stale lock would show nothing), and un-hover
     // falls back, so the committed state restores with zero bookkeeping.
-    // ◉-Pin hover previews the release (no narrowing). An armed centre/probe
+    // ◉-Pin hover previews the release (no narrowing). An armed centre
     // keeps the lock but lifts the point narrowing (aiming needs both
     // meshes).
     let effectiveNarrowing (hover : PinHover option) (armed : ArmTarget option)
@@ -160,7 +158,7 @@ module MeshVisibility =
         | None ->
             match armed with
             | Some (ArmPoint m) -> Some m, Some m
-            | Some ArmCentre | Some ArmProbe -> isoLock, None
+            | Some ArmCentre -> isoLock, None
             | None ->
                 match isoHover with
                 | Some m -> Some m, Some m
@@ -339,10 +337,6 @@ type Model =
         // value from the exact-point endpoint.
         HoverSample         : int option
         HoverReadout        : (int * float) option
-        // The landed probe readout (ArmProbe): transient — survives the
-        // landing's auto-disarm so the value stays readable, wiped by the next
-        // arm, any focus jump and every cell invalidation.
-        ProbeReadout        : (V3d * float) option
         // The armed pick + its cursor preview (metric world, on the armed
         // surface) — the preview renders in EVERY view at once. Both
         // transient: wiped on disarm, any focus jump, dataset switch.
@@ -523,7 +517,6 @@ module Model =
             BrushedSamples      = Set.empty
             HoverSample         = None
             HoverReadout        = None
-            ProbeReadout        = None
             ArmedPick           = None
             ArmPreview          = None
             PinFocusHover       = None

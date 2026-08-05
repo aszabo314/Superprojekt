@@ -11,9 +11,9 @@ open UpdateHelpers
 module Update =
 
     // The ONE focus-jump path: transient lenses (tile isolate, matrix hover),
-    // the spring-loaded peeks, the armed probe and the armed pick are
-    // level-scoped and die on any jump; leaving Pin mid-placement (Esc or a
-    // rail jump) aborts the transaction — full rollback.
+    // the spring-loaded peeks and the armed pick are level-scoped and die on
+    // any jump; leaving Pin mid-placement (Esc or a rail jump) aborts the
+    // transaction — full rollback.
     // The brush addresses ONE scope's gid stream — the graph's at Matrix, the
     // selected pair's inside the workspace — so crossing between them would
     // reinterpret the same gids against a different stream. Pair⇄Pin keeps the
@@ -33,7 +33,7 @@ module Update =
             // jump; the pair/pin memory itself survives.
             Sel = { model.Sel with Point = None }
             TileIsolate = None; TileIsolateHover = None; MatrixHoverPair = None
-            PeekVis = false; PeekPose = false; ProbeReadout = None
+            PeekVis = false; PeekPose = false
             ArmedPick = None; ArmPreview = None; PinFocusHover = None
             TilePinHover = None; NewPinHover = false
             PinRadiusEditOpen = false; PinExitPending = None }
@@ -366,21 +366,15 @@ module Update =
                 | ArmCentre, Some _ -> model.Focus = FocusPin && (placing || model.Sel.Pin.IsSome)
                 | ArmPoint m, Some (a, b) ->
                     model.Focus = FocusPin && (m = a || m = b) && (placing || model.Sel.Pin.IsSome)
-                // The probe rides the inspect panel's scope: Pair and Pin.
-                | ArmProbe, Some _ -> model.Focus = FocusPair || model.Focus = FocusPin
                 | _, None -> false
             if not valid then model
             elif model.ArmedPick = Some target then
-                { model with ArmedPick = None; ArmPreview = None; ProbeReadout = None }
-            elif target = ArmProbe && model.ProbeReadout.IsSome then
-                // A landed reading holds the probe button in its own state: the
-                // click drops the reading, it does not re-arm.
-                { model with ProbeReadout = None }
+                { model with ArmedPick = None; ArmPreview = None }
             else
                 // Arming enters the scrimmed quasi-mode: the top-bar menus
                 // close (an open one would float dead over the scrim).
                 { model with
-                    ArmedPick = Some target; ArmPreview = None; ProbeReadout = None
+                    ArmedPick = Some target; ArmPreview = None
                     GearPopoverOpen = false; MeshMenuOpen = false; SensorMenuOpen = false
                     ReachLogOpen = false }
         | SetArmPreview p ->
@@ -428,12 +422,6 @@ module Update =
         | HoverReadoutComputed(gen, gid, v) ->
             if gen <> cellErrorGen || model.HoverSample <> Some gid then model
             else { model with HoverReadout = Some (gid, v) }
-        | ProbeReadoutComputed(gen, w, v) ->
-            // Lands only while the probe is still armed (Esc between click and
-            // landing kills it); the landing disarms — the universal
-            // landed-pick-disarms rule — but the readout survives to be read.
-            if gen <> cellErrorGen || model.ArmedPick <> Some ArmProbe then model
-            else { model with ProbeReadout = Some (w, v); ArmedPick = None; ArmPreview = None }
         | ToggleCellMap ->
             { model with CellMapOn = not model.CellMapOn }
         | SetPeekVis held ->
@@ -545,7 +533,6 @@ module Update =
                     BrushedSamples = Set.empty
                     HoverSample = None
                     HoverReadout = None
-                    ProbeReadout = None
                     ArmedPick = None
                     ArmPreview = None
                     PinFocusHover = None

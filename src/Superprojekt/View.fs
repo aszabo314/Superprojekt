@@ -273,7 +273,7 @@ module View =
 
                 Sg.OnTap(fun _ ->
                     // No pick without an arm (A5): the armed pick captures the
-                    // click — centre/point/probe all route through it; an
+                    // click — centre and point both route through it; an
                     // unarmed tap does nothing here.
                     if (AVal.force model.ArmedPick).IsSome then
                         (match cursorScreen.Value with
@@ -368,9 +368,9 @@ module View =
 
             GuiPanes.tileStrip env model
 
-            // Pick-value tooltips riding their 3D points (the armed probe's
-            // readout + the hovered brushed sample), projected with the same
-            // camera the main view renders with.
+            // Pick-value tooltip riding its 3D point (the hovered brushed
+            // sample's exact readout), projected with the same camera the main
+            // view renders with.
             let viewTOut = model.Camera.view |> AVal.map CameraView.viewTrafo
             // Same frustum as the main render control (near 1 cm / far 1000 m
             // metric) or the tooltips drift off their 3D points.
@@ -390,14 +390,6 @@ module View =
                     let ndc = (vT * projTOut.GetValue t).Forward.TransformPosProj rp
                     let s = (viewportSize :> aval<V2i>).GetValue t
                     Some (V2d(0.5 * (ndc.X + 1.0) * float s.X, 0.5 * (1.0 - ndc.Y) * float s.Y))
-            let probeTip =
-                AVal.custom (fun t ->
-                    // The readout survives the landing's auto-disarm; the next
-                    // arm / jump / invalidation clears it.
-                    match model.ProbeReadout.GetValue t with
-                    | Some (w, v) ->
-                        screenOf t w |> Option.map (fun p -> p, sprintf "%+.1f mm" (v * 1000.0))
-                    | None -> None)
             let hoverTip =
                 AVal.custom (fun t ->
                     match model.HoverReadout.GetValue t with
@@ -423,7 +415,6 @@ module View =
                         | None -> None)
                     dataA |> AVal.map (function Some (_, s) -> s | None -> "")
                 }
-            pickTip "pick-tip-probe" probeTip
             pickTip "pick-tip-hover" hoverTip
 
             Dom.OnKeyDown(fun e ->
@@ -442,11 +433,10 @@ module View =
                     // loop modal (cancel = discard the redundant edge) > a
                     // CENTRELESS placement aborts straight to Pair (nothing
                     // worth guarding yet — skips the disarm step on purpose) >
-                    // armed-pick disarm (probe included — every pick is an
-                    // arm) > ascend one focus level. Ascending out of Pin with
-                    // a centred draft raises the exit-guard (the reducer's
-                    // gate); rail jumps go through the same gate, so Esc and
-                    // jumps stay consistent.
+                    // armed-pick disarm > ascend one focus level. Ascending out
+                    // of Pin with a centred draft raises the exit-guard (the
+                    // reducer's gate); rail jumps go through the same gate, so
+                    // Esc and jumps stay consistent.
                     if (AVal.force model.PinExitPending).IsSome then
                         env.Emit [CancelPinExit]
                     elif (AVal.force model.LoopPending).IsSome then

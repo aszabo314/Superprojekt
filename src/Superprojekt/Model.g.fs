@@ -1,5 +1,5 @@
-//c787aa6a-c0e9-ec16-6bda-1343dd9dcb47
-//48e4ff1f-de12-a1ed-af04-8f069669ae99
+//e19e9165-b08a-ad02-2df9-fb5d8a394a7d
+//61c9e8e1-9971-4525-84fc-dcc87db025e4
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -62,7 +62,6 @@ type AdaptiveModel(value : Model) =
     let _BrushedSamples_ = FSharp.Data.Adaptive.cval(value.BrushedSamples)
     let _HoverSample_ = FSharp.Data.Adaptive.cval(value.HoverSample)
     let _HoverReadout_ = FSharp.Data.Adaptive.cval(value.HoverReadout)
-    let _ProbeReadout_ = FSharp.Data.Adaptive.cval(value.ProbeReadout)
     let _ArmedPick_ = FSharp.Data.Adaptive.cval(value.ArmedPick)
     let _ArmPreview_ = FSharp.Data.Adaptive.cval(value.ArmPreview)
     let _PinFocusHover_ = FSharp.Data.Adaptive.cval(value.PinFocusHover)
@@ -141,7 +140,6 @@ type AdaptiveModel(value : Model) =
             _BrushedSamples_.Value <- value.BrushedSamples
             _HoverSample_.Value <- value.HoverSample
             _HoverReadout_.Value <- value.HoverReadout
-            _ProbeReadout_.Value <- value.ProbeReadout
             _ArmedPick_.Value <- value.ArmedPick
             _ArmPreview_.Value <- value.ArmPreview
             _PinFocusHover_.Value <- value.PinFocusHover
@@ -213,7 +211,6 @@ type AdaptiveModel(value : Model) =
     member __.BrushedSamples = _BrushedSamples_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Set<Microsoft.FSharp.Core.int>>
     member __.HoverSample = _HoverSample_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.int>>
     member __.HoverReadout = _HoverReadout_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.int * Microsoft.FSharp.Core.float)>>
-    member __.ProbeReadout = _ProbeReadout_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Aardvark.Base.V3d * Microsoft.FSharp.Core.float)>>
     member __.ArmedPick = _ArmedPick_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<ArmTarget>>
     member __.ArmPreview = _ArmPreview_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Aardvark.Base.V3d>>
     member __.PinFocusHover = _PinFocusHover_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<PinHover>>

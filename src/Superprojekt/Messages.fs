@@ -69,7 +69,7 @@ type Message =
     // The Pin panel's radius disclosure (slider hidden until clicked).
     | ToggleRadiusEdit
     // Arm/disarm a pick (same target again = disarm; the reducer guards level
-    // + validity — ArmCentre only during placement, ArmProbe at Pair/Pin).
+    // + validity).
     | ToggleArmPick of ArmTarget
     // The armed pick's cursor preview point (metric world; view-side hover
     // raycasts, throttled). Ignored while nothing is armed.
@@ -89,8 +89,6 @@ type Message =
     // 3D hover over a brushed sample (diagram cross-highlight + exact readout).
     | SetHoverSample of int option
     | HoverReadoutComputed of gen:int * gid:int * value:float
-    // A landed ArmProbe pick's exact value (the landing auto-disarms).
-    | ProbeReadoutComputed of gen:int * world:V3d * value:float
     // The in-cell false-colour error map toggle.
     | ToggleCellMap
     // The spring-loaded blink keys (view key down/up; cell scope enforced in

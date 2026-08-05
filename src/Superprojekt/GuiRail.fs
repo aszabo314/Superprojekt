@@ -118,11 +118,10 @@ module GuiRail =
     ]
 
     // ── The inspection toolbox's body, keyed to ONE pair: the diagram, the
-    // false-colour map toggle, the armed probe, the isolate-pins view mode
-    // and the readouts. The Pin level narrows the diagram to the selected
-    // pin — gids stay CANONICAL (indices into the full CellError sample
-    // concatenation), so the brush keeps addressing the same 3D samples at
-    // either level.
+    // false-colour map toggle, the isolate-pins view mode and the hover
+    // readout. The Pin level narrows the diagram to the selected pin — gids
+    // stay CANONICAL (indices into the full CellError sample concatenation),
+    // so the brush keeps addressing the same 3D samples at either level.
     let private inspectBody (env : Env<Message>) (model : AdaptiveModel) (a : string) (b : string) =
         let chartData =
             AVal.custom (fun t ->
@@ -216,20 +215,6 @@ module GuiRail =
                     Attribute("title", "False-colour error map: paints the MOV mesh's signed distance vs the reference (the reference is never error-coloured). At the Pin level the map narrows to the pin's area.")
                     compactToggle "Error map" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
                 }
-                let probeHeld =
-                    (model.ArmedPick, model.ProbeReadout) ||> AVal.map2 (fun a r ->
-                        a <> Some ArmProbe && r.IsSome)
-                button {
-                    Class "rail-btn cw-probe"
-                    classWhen "rail-btn-active arm-lit" (model.ArmedPick |> AVal.map ((=) (Some ArmProbe)))
-                    classWhen "cw-probe-held" probeHeld
-                    probeHeld |> AVal.map (fun held ->
-                        Some (Attribute("title",
-                                if held then "Clear the probe reading (click again afterwards to probe a new point)."
-                                else "Arm the point probe: click any view for the exact error value at that point (a landed pick disarms; Esc disarms). Transient — the next arm or jump wipes it.")))
-                    Dom.OnClick(fun _ -> env.Emit [ToggleArmPick ArmProbe])
-                    probeHeld |> AVal.map (fun held -> if held then "⊗ Clear probe" else "⊕ Probe")
-                }
                 div {
                     Class "rail-isolate"
                     Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes. Remembered per workflow level.")
@@ -240,14 +225,6 @@ module GuiRail =
             }
             div {
                 Class "cw-readout"
-                span {
-                    Class "cw-readout-probe"
-                    showWhen ((model.ArmedPick, model.ProbeReadout) ||> AVal.map2 (fun a r ->
-                        a = Some ArmProbe || r.IsSome))
-                    model.ProbeReadout |> AVal.map (function
-                        | Some (_, v) -> sprintf "probe %+.1f mm" (v * 1000.0)
-                        | None -> "probe: pick a point in any view")
-                }
                 span {
                     Class "cw-readout-hover"
                     model.HoverReadout |> AVal.map (function

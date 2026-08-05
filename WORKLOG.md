@@ -10,6 +10,33 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## GUI touch-ups OUTSIDE the specs, round 4 (2026-08-05)
+
+Same standing: user-directed polish, no governing spec.
+
+- **Probe removed entirely** (user: never used, and the control confused
+  users). Deleted the `ArmProbe` DU case (Model.fs `ArmTarget`), the
+  `ProbeReadout` model field (+ adaptify re-run), the
+  `ProbeReadoutComputed` message, the reducer's probe validity/held-reading
+  branches (`ToggleArmPick` simplifies to the pin arms), the
+  `GuiPanes.probeValueAt` fetch + `armedPick`'s probe route, the probe
+  cross glyph in both armed-preview builders (ScanPinScene + tiles), the
+  probe tooltip (`pick-tip-probe`) in View.fs, the ⊕ Probe button + probe
+  readout row in the pair inspect body, and the `.cw-probe*`/
+  `.cw-readout-probe` CSS. `/api/query/pair-error-at` KEEPS its consumer —
+  the hovered brushed dot's exact-value fetch (View.fs) — so the endpoint
+  stays. DU-deletion check done: repo grep clean (remaining "probe" hits
+  are the unrelated `residualAt` probe point and the pin "probe axis"
+  comment), build free of FS0049/FS0025/FS0026. The Esc chain loses its
+  probe clause by construction (probe arming no longer exists).
+- **Compact toggles read as real checkboxes** (user: the Isolate pins /
+  Error map controls didn't read as toggle-able properties). Reworked
+  `Primitives.compactToggle`: the `■/□` glyph becomes a proper checkbox —
+  a bordered 14 px box (`.ct-box`), accent-blue filled with a white ✓ when
+  on (`.ct-on` on the row), hover tints the border. Same control everywhere
+  it's used, so the gear popover's Ghost-silhouette toggle inherits the
+  look for free.
+
 ## GUI touch-ups OUTSIDE the specs, round 3 (2026-08-04)
 
 Same standing: user-directed polish, no governing spec.

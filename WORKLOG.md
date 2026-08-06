@@ -10,6 +10,32 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## Fix: tile-strip growth loop on fractional-dpr displays (2026-08-06)
+
+- Windows-only bug (Chrome, 125%/150% display scale): the ortho tiles
+  grew ~1px per frame indefinitely. Root cause — a layout feedback
+  loop: the Aardworx swapchain rewrites the tile canvas's
+  width/height ATTRIBUTES every rendered frame
+  (`round(devicePixelRatio × getBoundingClientRect)`); the canvas is
+  `display:inline` with style 100%/100%, and `.mesh-tile` (flex item,
+  `aspect-ratio: 3/2`) had no `min-height: 0`, so its automatic flex
+  minimum read the canvas's intrinsic size + the inline baseline gap
+  and grew past the aspect height — feeding a bigger rect into the
+  next frame's attribute write. Integer dpr (macOS Retina = 2) makes
+  the attribute write round-trip losslessly, so layout reaches a
+  fixed point and the loop never advances — hence invisible on Mac;
+  fractional dpr keeps re-dirtying layout and ratchets forever.
+- Fix (style.css only): `min-height: 0` on `.mesh-tile` (mirror of
+  the existing `min-width: 0` — closes the feedback channel; the tile
+  can never exceed its aspect height) + `.tile-rc canvas
+  { display: block; }` (kills the baseline-gap increment).
+- Verified by standalone repro (exact tile DOM + the framework's
+  per-frame attribute write) in headless Chromium at dpr 1.0 / 1.25 /
+  1.5 / 2.0: unfixed ratchets unbounded; each fix line alone AND both
+  together give 0.000 px drift over 120 frames.
+- No CLAUDE.md supersessions (bug fix; no behaviour/architecture
+  change).
+
 ## Measured sensor stations: *sensor.txt + /sensors endpoint (2026-08-06)
 
 - The user estimated the four JOB scan stations in-app (⚙ camera

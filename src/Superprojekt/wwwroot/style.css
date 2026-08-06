@@ -87,7 +87,11 @@ body.loaded { background: #f4f6f8; }
     border-left: 1px solid #d7dce4;
     z-index: 900;
 }
-.mesh-tile { position: relative; flex: none; aspect-ratio: 3 / 2; min-width: 0; cursor: pointer; }
+/* min-height 0: the flex automatic minimum would read the canvas's intrinsic
+   size (its width/height attributes, rewritten every rendered frame) and feed
+   the tile's height back into the next frame's attribute write — an unbounded
+   +1px/frame growth loop on fractional-dpr displays (Windows 125%/150%). */
+.mesh-tile { position: relative; flex: none; aspect-ratio: 3 / 2; min-width: 0; min-height: 0; cursor: pointer; }
 /* Off-scope tiles leave the flow but keep their size: visibility, NOT
    display — a collapsed render control loses its viewport. */
 .mesh-tile.tile-off {
@@ -123,6 +127,9 @@ body.loaded { background: #f4f6f8; }
 .tiles-handle:hover { background: rgba(26, 86, 219, 0.35); }
 .mesh-tile .pane-chip { max-width: calc(100% - 16px); }
 .tile-rc { width: 100%; height: 100%; display: block; background: rgb(244, 246, 248); }
+/* The framework-inserted canvas is display:inline by default — the baseline
+   gap under it is the growth loop's increment (see .mesh-tile). */
+.tile-rc canvas { display: block; }
 
 /* ── Top bar ────────────────────────────────────────────────────────── */
 

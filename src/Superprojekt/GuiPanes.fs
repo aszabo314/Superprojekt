@@ -320,6 +320,10 @@ module GuiPanes =
             classWhen "tile-off" (shownA |> AVal.map not)
             classWhen "tile-iso" isolated
             classWhen "tile-armed" (model.ArmedPick |> AVal.map Option.isSome)
+            // Wheel over a tile ZOOMS — the strip's overflow scroll must not
+            // also fire; framework wheel listeners are passive, so the
+            // default needs its own non-passive preventDefault.
+            OnBoot ["__THIS__.addEventListener('wheel',function(e){e.preventDefault();},{passive:false});"]
             div {
                 Class "pane-chip"
                 idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
@@ -379,53 +383,14 @@ module GuiPanes =
                 let rc0, rc1, rtexel = OutlineView.rootCoverageOffscreen info model shownA view proj
                 OutlineView.buildRootOutline shownA (model.OutlineWidthPx |> AVal.map float32) rc0 rc1 rtexel
 
-                // Point fills on this mesh — committed pins AND the draft's
-                // placed point (one appearance): mesh-colour icospheres (the
-                // white outlines ride in the line node below); the selected
-                // pin's marker — the draft is always the subject — is larger.
-                let meshColV4 =
-                    // Fades with the committed marks while a pick is armed.
-                    (idxVal, isRoot, model.ArmedPick) |||> AVal.map3 (fun i r armed ->
-                        let c = meshColorRoot r i
-                        V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0,
-                            (if armed.IsSome then 0.15 else 1.0)))
-                let fillNode (col : aval<V4d>) (st : aval<(V3d * float) option>) =
-                    let trafo =
-                        st |> AVal.map (function
-                            | Some (c, sz) -> Trafo3d.Scale sz * Trafo3d.Translation c
-                            | None -> Trafo3d.Scale 0.0)
-                    sg {
-                        Sg.Pass RenderPass.passOne
-                        ScanPinScene.sphereShell view proj marksOn trafo col
-                    }
-                let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
-                let pointFills =
-                    pinIdSet |> ASet.map (fun id ->
-                        // Pin-scope isolation mirrors into the tile glyphs.
-                        let col =
-                            AVal.custom (fun t ->
-                                let c = meshColV4.GetValue t
-                                V4d(c.XYZ, c.W * ScanPinScene.pinScopeDim model t id))
-                        fillNode col (AVal.custom (fun t ->
-                            match HashMap.tryFind id (pinsVal.GetValue t) with
-                            | Some p when (model.Sel.GetValue t).Pair = Some p.Pair
-                                          && (name = fst p.Pair || name = snd p.Pair) ->
-                                let local = if name = fst p.Pair then p.PointA else p.PointB
-                                let sz = if (model.Sel.GetValue t).Pin = Some id then 0.05 else 0.038
-                                Some (renderOf t local, sz)
-                            | _ -> None)))
-                pointFills
-                fillNode meshColV4 (AVal.custom (fun t ->
-                    match model.ScanPins.Placement.GetValue t with
-                    | PlacementActive d when name = fst d.Pair || name = snd d.Pair ->
-                        (if name = fst d.Pair then d.PointA else d.PointB)
-                        |> Option.map (fun local -> renderOf t local, 0.05)
-                    | _ -> None))
-
-                // Every line mark of the tile: white outlines of the points
-                // (committed + the draft's — one appearance) and the subject
-                // pin's area sphere (the selected pin, or the draft from the
-                // moment its centre lands).
+                // ── Pin marks: the SAME committed glyphs as the main 3D
+                // (the ScanPinScene module builders — the two views must not
+                // drift): every pair pin's area figure (duplex equator ring +
+                // white contact rings; the anchor tile adds the dashed
+                // anchorage ring) + its own point's reveal, the highlight
+                // ring, the draft and the armed cursor preview.
+                let upA = MeshView.projectUpNormal model
+                let armDimA = model.ArmedPick |> AVal.map (fun a -> if a.IsSome then 0.15 else 1.0)
                 let segs =
                     AVal.custom (fun t ->
                         let sel = model.Sel.GetValue t
@@ -436,52 +401,70 @@ module GuiPanes =
                             // While a pick is armed the placed marks fade to
                             // near-invisible so they can't hide the pick spot;
                             // only the armed preview stays full.
-                            let armDim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
+                            let armDim = armDimA.GetValue t
+                            let cc = model.CommonCentroid.GetValue t
+                            let scale = datasetScale.GetValue t
+                            let toRender = ScanPin.renderCentre cc scale
+                            let axis = match upA.GetValue t with Some u -> u | None -> V3d.OOI
+                            let _, u, v = basisFromNormal axis
+                            let rMax = max 0.01 (model.RevealRadius.GetValue t)
                             let out = ResizeArray<V3d * V3d * V4d * float>()
+                            // The area figure in BOTH pair tiles (the centre
+                            // rides the ANCHOR mesh's pose); the anchor tile
+                            // alone adds the dashed anchorage ring.
+                            let areaFigure (dim : float) (anchorMesh : string)
+                                           (centreLocal : V3d) (radius : float) rings =
+                                let cR = renderOn t anchorMesh centreLocal
+                                let rR = ScanPin.renderLength scale radius
+                                ScanPinScene.addAreaRing out cR u v rR dim
+                                ScanPinScene.addContactRings out toRender rings dim
+                                if anchorMesh = name then
+                                    addDashedRing out cR u v (rR * 1.08) (V4d(1.0, 1.0, 1.0, 0.85 * dim)) 1.5 64
+                            // The tile's OWN point's intersection reveal (the
+                            // other side's relief belongs to the other tile).
+                            let reveal (dim : float) (localPt : V3d) (rv : RevealState) =
+                                match rv with
+                                | RevealReady lines ->
+                                    ScanPinScene.addRevealLines out (renderOf t) localPt rMax dim lines
+                                | _ -> ()
                             for (id, p) in HashMap.toSeq pins do
                                 if p.Pair = pair then
-                                    let local = if name = fst pair then p.PointA else p.PointB
-                                    let c = renderOf t local
-                                    let sz = if sel.Pin = Some id then 0.065 else 0.05
-                                    let sd = ScanPinScene.pinScopeDim model t id
-                                    addWireSphere out c sz (V4d(1.0, 1.0, 1.0, 0.95 * armDim * sd)) 1.6 16
-                            // The subject pin's area sphere in BOTH pair tiles
-                            // (its centre rides the anchor mesh's pose); the
-                            // anchor tile alone adds a dashed outer ring — the
-                            // anchorage cue.
-                            let areaSphere (anchorMesh : string) (centreLocal : V3d) (radius : float) =
-                                let cR = renderOn t anchorMesh centreLocal
-                                let rR = ScanPin.renderLength (datasetScale.GetValue t) radius
-                                for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.85 * armDim)) 1.5 do
-                                    out.Add seg
-                                if anchorMesh = name then
-                                    addDashedRing out cR V3d.IOO V3d.OIO (rR * 1.08) (V4d(1.0, 1.0, 1.0, 0.85 * armDim)) 1.5 64
-                            (match sel.Pin |> Option.bind (fun id -> HashMap.tryFind id pins) with
-                             | Some p -> areaSphere p.AnchorMesh p.CentreLocal p.InnerRadius
-                             | _ -> ())
+                                    let dim = armDim * ScanPinScene.pinScopeDim model t id
+                                    let rings = match p.ContactRings with RingsReady m -> m | _ -> Map.empty
+                                    areaFigure dim p.AnchorMesh p.CentreLocal p.InnerRadius rings
+                                    reveal dim (if name = fst pair then p.PointA else p.PointB)
+                                               (if name = fst pair then p.RevealA else p.RevealB)
+                            (match ScanPinScene.highlightPin model t with
+                             | Some id ->
+                                (match HashMap.tryFind id pins with
+                                 | Some p when p.Pair = pair ->
+                                    ScanPinScene.addHighlightRing out
+                                        (renderOn t p.AnchorMesh p.CentreLocal) u v
+                                        (ScanPin.renderLength scale p.InnerRadius)
+                                 | _ -> ())
+                             | None -> ())
                             (match model.ScanPins.Placement.GetValue t with
-                             | PlacementActive d ->
+                             | PlacementActive d when name = fst d.Pair || name = snd d.Pair ->
                                 (match d.Area with
-                                 | Some (m, local) -> areaSphere m local d.Radius
+                                 | Some (m, local) ->
+                                    let rings = match d.Rings with RingsReady r -> r | _ -> Map.empty
+                                    areaFigure armDim m local d.Radius rings
                                  | None -> ())
                                 (match (if name = fst d.Pair then d.PointA else d.PointB) with
-                                 | Some local ->
-                                    addWireSphere out (renderOf t local) 0.065 (V4d(1.0, 1.0, 1.0, 0.95 * armDim)) 1.6 16
+                                 | Some local -> reveal armDim local (if name = fst d.Pair then d.RevealA else d.RevealB)
                                  | None -> ())
-                             | PlacementIdle -> ())
+                             | _ -> ())
                             // The armed pick's cursor preview (metric world —
                             // no mesh pose re-apply), synchronized with the
                             // main 3D: the same model state draws everywhere.
                             (match model.ArmedPick.GetValue t, model.ArmPreview.GetValue t with
                              | Some target, Some world ->
-                                let cc = model.CommonCentroid.GetValue t
-                                let s = datasetScale.GetValue t
-                                let cR = ScanPin.renderCentre cc s world
+                                let cR = toRender world
                                 let white = V4d(1.0, 1.0, 1.0, 0.9)
                                 (match target with
                                  | ArmCentre ->
                                     let r = MeshView.armCommitRadiusAt model t
-                                    let rR = ScanPin.renderLength s r
+                                    let rR = ScanPin.renderLength scale r
                                     for seg in PinGeometry.buildSphereOutline cR rR (V4d(1.0, 1.0, 1.0, 0.7)) 1.4 do
                                         out.Add seg
                                     addCross out cR (rR * 0.15) white 1.6
@@ -498,6 +481,46 @@ module GuiPanes =
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Sg.NoEvents
                     Lines.render segs
+                }
+
+                // Correspondence crosshairs — the 3D's screen-constant
+                // triplex locator; 0.025 × the camera radius is the ortho
+                // analogue of the eye distance. Reads the radius alone, so a
+                // pan never rebuilds the glyphs; passTwo puts them
+                // deterministically over the area/reveal lines.
+                let camRadius = camA |> AVal.map (fun c -> c.Radius)
+                let meshColV3 = (idxVal, isRoot) ||> AVal.map2 (fun i r -> c4bToV3d (meshColorRoot r i))
+                let crossSegs =
+                    AVal.custom (fun t ->
+                        let sel = model.Sel.GetValue t
+                        match sel.Pair with
+                        | Some (pa, pb) when name = pa || name = pb ->
+                            let pair = (pa, pb)
+                            let pins = pinsVal.GetValue t
+                            let armDim = armDimA.GetValue t
+                            let h = 0.025 * camRadius.GetValue t
+                            let col = meshColV3.GetValue t
+                            let out = ResizeArray<V3d * V3d * V4d * float>()
+                            let pt (dim : float) (local : V3d) =
+                                ScanPinScene.addCrosshairGlyph out (renderOf t local) V3d.IOO V3d.OIO h col dim
+                            for (id, p) in HashMap.toSeq pins do
+                                if p.Pair = pair then
+                                    pt (armDim * ScanPinScene.pinScopeDim model t id)
+                                       (if name = fst pair then p.PointA else p.PointB)
+                            (match model.ScanPins.Placement.GetValue t with
+                             | PlacementActive d when name = fst d.Pair || name = snd d.Pair ->
+                                (if name = fst d.Pair then d.PointA else d.PointB)
+                                |> Option.iter (pt armDim)
+                             | _ -> ())
+                            out.ToArray()
+                        | _ -> [||])
+                sg {
+                    Sg.Active marksOn
+                    Sg.Pass RenderPass.passTwo
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render crossSegs
                 }
             }
         }

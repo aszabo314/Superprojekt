@@ -15,26 +15,6 @@ module ScanPinScene =
     let private sphereIdxBuf = AVal.constant (ArrayBuffer sphereIdx :> IBuffer)
     let private sphereIdxCnt = AVal.constant sphereIdx.Length
 
-    // Small flat-colour icosphere (point-marker fill; the Pin panes reuse it).
-    let sphereShell
-            (view : aval<Trafo3d>) (proj : aval<Trafo3d>)
-            (active : aval<bool>) (trafo : aval<Trafo3d>) (color : aval<V4d>) =
-        sg {
-            Sg.Active active
-            Sg.View view
-            Sg.Proj proj
-            Sg.Trafo trafo
-            Sg.Shader { DefaultSurfaces.trafo; Shader.flatColor }
-            Sg.Uniform("FlatColor", color |> AVal.map V4f)
-            Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
-            Sg.BlendMode (AVal.constant BlendMode.Blend)
-            Sg.NoEvents
-            Sg.VertexAttributes(
-                HashMap.ofList [ string DefaultSemantic.Positions, BufferView(spherePosBuf, typeof<V3f>) ])
-            Sg.Index(BufferView(sphereIdxBuf, typeof<int>))
-            Sg.Render sphereIdxCnt
-        }
-
     // Pin-scope isolation (Isolate pins ON at the Pin level): every pin but
     // the in-scope one drops to near-transparent — the 3D marks AND the tile
     // glyphs read this ONE rule. The subject = the selected pin (an active
@@ -46,6 +26,79 @@ module ScanPinScene =
         && model.ArmedPick.GetValue t <> Some ArmCentre
     let pinScopeDim (model : AdaptiveModel) (t : AdaptiveToken) (id : ScanPinId) =
         if pinScopeIsoOn model t && (model.Sel.GetValue t).Pin <> Some id then 0.08 else 1.0
+
+    // ── The committed-pin glyphs, module-level: the ortho tiles render the
+    // SAME marks as the main 3D through these, so the two views cannot drift.
+
+    // The correspondence locator's triplex arms (white rim / ink / identity
+    // core), open-centred; `h` = the outer radius in render units — the
+    // caller supplies the view's screen-constant conversion.
+    let addCrosshairGlyph (out : ResizeArray<V3d * V3d * V4d * float>)
+                          (cR : V3d) (right : V3d) (up : V3d) (h : float)
+                          (col : V3d) (dim : float) =
+        let rim = V4d(1.0, 1.0, 1.0, 0.85 * dim)
+        let ink = V4d(Primitives.pinInkV3d, 0.9 * dim)
+        let core = V4d(col, 0.95 * dim)
+        for d in [| right; -right; up; -up |] do
+            let p0 = cR + d * (0.3 * h)
+            let p1 = cR + d * h
+            out.Add(p0, p1, rim, 5.4)
+            out.Add(p0, p1, ink, 3.4)
+            out.Add(p0, p1, core, 1.7)
+
+    // The area figure's thin duplex equator ring.
+    let addAreaRing (out : ResizeArray<V3d * V3d * V4d * float>)
+                    (cR : V3d) (u : V3d) (v : V3d) (rR : float) (dim : float) =
+        duplex (fun c w -> addRing out cR u v rR c w 64) (0.65 * dim) 1.4
+
+    // The sphere∩surface contact rings — PURE WHITE single-stroke (the
+    // committed exception to duplex); ring points are metric world.
+    let addContactRings (out : ResizeArray<V3d * V3d * V4d * float>)
+                        (toRender : V3d -> V3d) (rings : Map<string, V3d[][]>) (dim : float) =
+        let ringWhite = V4d(1.0, 1.0, 1.0, 0.85 * dim)
+        for KeyValue(_mesh, meshRings) in rings do
+            for ring in meshRings do
+                if ring.Length >= 2 then
+                    let rp = ring |> Array.map toRender
+                    for i in 0 .. rp.Length - 2 do
+                        out.Add(rp.[i], rp.[i + 1], ringWhite, 1.6)
+
+    // The loud-highlight mark: a bold dashed double ring (ink under white)
+    // at ×1.18 of the area ring.
+    let addHighlightRing (out : ResizeArray<V3d * V3d * V4d * float>)
+                         (cR : V3d) (u : V3d) (v : V3d) (rR : float) =
+        addDashedRing out cR u v (rR * 1.18) (V4d(Primitives.pinInkV3d, 0.9)) 5.0 72
+        addDashedRing out cR u v (rR * 1.18) (V4d(1.0, 1.0, 1.0, 0.95)) 3.0 72
+
+    // The intersection reveal's white distance fade (`lines` in the point's
+    // mesh's own frame; `toRender` bakes pose + dataset transform).
+    let addRevealLines (out : ResizeArray<V3d * V3d * V4d * float>)
+                       (toRender : V3d -> V3d) (localPt : V3d) (rMax : float)
+                       (dim : float) (lines : V3d[][]) =
+        for line in lines do
+            for i in 0 .. line.Length - 2 do
+                let a = line.[i]
+                let b = line.[i + 1]
+                let dMid = ((a + b) * 0.5 - localPt).Length
+                // Outermost ring keeps ~0.2 alpha; the cuts' slight
+                // overshoot past rMax runs out linearly.
+                let fade =
+                    if dMid <= rMax then 1.0 - 0.8 * ((dMid / rMax) ** 1.5)
+                    else max 0.0 (0.2 * (1.0 - (dMid - rMax) / (0.15 * rMax)))
+                if fade > 0.01 then
+                    out.Add(toRender a, toRender b, V4d(1.0, 1.0, 1.0, 0.9 * fade * dim), 1.4)
+
+    // The loud-highlight subject (pin-scope isolation OFF): the hovered pin
+    // row's pin, else the focused pin inside the pair scopes.
+    let highlightPin (model : AdaptiveModel) (t : AdaptiveToken) : ScanPinId option =
+        if pinScopeIsoOn model t then None
+        else
+            match model.TilePinHover.GetValue t with
+            | Some id -> Some id
+            | None ->
+                match model.Focus.GetValue t with
+                | FocusPair | FocusPin -> (model.Sel.GetValue t).Pin
+                | FocusMatrix -> None
 
     let build
             (env : Env<Message>)
@@ -158,20 +211,7 @@ module ScanPinScene =
             | Some (HoverSide hm) -> if anchorMesh = hm then 1.0 else 0.15
             | _ -> 1.0
 
-        let pinScopeIsoOnAt (t : AdaptiveToken) = pinScopeIsoOn model t
         let pinScopeDimAt (t : AdaptiveToken) (id : ScanPinId) = pinScopeDim model t id
-
-        // The loud-highlight subject (isolation OFF): the hovered pin row's
-        // pin, else the focused pin inside the pair scopes.
-        let highlightPinAt (t : AdaptiveToken) : ScanPinId option =
-            if pinScopeIsoOnAt t then None
-            else
-                match model.TilePinHover.GetValue t with
-                | Some id -> Some id
-                | None ->
-                    match model.Focus.GetValue t with
-                    | FocusPair | FocusPin -> (model.Sel.GetValue t).Pin
-                    | FocusMatrix -> None
 
         // Pin centre pick proxies: small invisible spheres carrying the
         // double-tap zoom. Alpha 0 → invisible in colour but still present in
@@ -269,14 +309,12 @@ module ScanPinScene =
                 (if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0)
                 * anchorHoverDimAt t anchorMesh
                 * scopeDim
-            let a = 0.65 * dim
-            let coreW = 1.4
             let centre = (dispWorldAt t anchorMesh).Forward.TransformPos centreLocal
             let cR = ScanPin.renderCentre cc scale centre
             let rR = ScanPin.renderLength scale radius
             let axis = match upNormalA.GetValue t with Some u -> u | None -> V3d.OOI
             let nN, u, v = basisFromNormal axis
-            duplex (fun c w -> addRing out cR u v rR c w 64) a coreW
+            addAreaRing out cR u v rR dim
             // Anchorage cue while the anchor mesh is isolated (or its
             // isolation previewed) — the tiles' dashed second ring, in 3D.
             (match isoCueMeshAt t with
@@ -287,13 +325,7 @@ module ScanPinScene =
             // + semitransparent (orientation, not geometry).
             let axisCol = V4d(Primitives.pinInkV3d, 0.35 * dim)
             out.Add(cR, cR + nN * ScanPin.renderLength scale 1.0, axisCol, 1.0)
-            let ringWhite = V4d(1.0, 1.0, 1.0, 0.85 * dim)
-            for KeyValue(_mesh, meshRings) in rings do
-                for ring in meshRings do
-                    if ring.Length >= 2 then
-                        let rp = ring |> Array.map (ScanPin.renderCentre cc scale)
-                        for i in 0 .. rp.Length - 2 do
-                            out.Add(rp.[i], rp.[i + 1], ringWhite, 1.6)
+            addContactRings out (ScanPin.renderCentre cc scale) rings dim
 
         let pinRings =
             pinIdSet |> ASet.collect (fun id ->
@@ -354,16 +386,7 @@ module ScanPinScene =
                     let armDim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
                     let out = ResizeArray<V3d * V3d * V4d * float>()
                     let addCrosshair (cR : V3d) (col : V3d) (dim : float) =
-                        let h = 0.025 * Vec.length (eye - cR)
-                        let rim = V4d(1.0, 1.0, 1.0, 0.85 * dim)
-                        let ink = V4d(Primitives.pinInkV3d, 0.9 * dim)
-                        let core = V4d(col, 0.95 * dim)
-                        for d in [| right; -right; up; -up |] do
-                            let p0 = cR + d * (0.3 * h)
-                            let p1 = cR + d * h
-                            out.Add(p0, p1, rim, 5.4)
-                            out.Add(p0, p1, ink, 3.4)
-                            out.Add(p0, p1, core, 1.7)
+                        addCrosshairGlyph out cR right up (0.025 * Vec.length (eye - cR)) col dim
                     let pt (scopeDim : float) (mesh : string) (local : V3d) =
                         let vis = match markerAlphaAt t mesh with Some f -> f | None -> 0.15
                         addCrosshair
@@ -398,21 +421,8 @@ module ScanPinScene =
                 let dim = (if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0) * f * scopeDim
                 let tw = dispWorldAt t mesh
                 let rMax = max 0.01 (model.RevealRadius.GetValue t)
-                for line in lines do
-                    for i in 0 .. line.Length - 2 do
-                        let a = line.[i]
-                        let b = line.[i + 1]
-                        let dMid = ((a + b) * 0.5 - localPt).Length
-                        // Outermost ring keeps ~0.2 alpha; the cuts' slight
-                        // overshoot past rMax runs out linearly.
-                        let fade =
-                            if dMid <= rMax then 1.0 - 0.8 * ((dMid / rMax) ** 1.5)
-                            else max 0.0 (0.2 * (1.0 - (dMid - rMax) / (0.15 * rMax)))
-                        if fade > 0.01 then
-                            out.Add(
-                                ScanPin.renderCentre cc s (tw.Forward.TransformPos a),
-                                ScanPin.renderCentre cc s (tw.Forward.TransformPos b),
-                                V4d(1.0, 1.0, 1.0, 0.9 * fade * dim), 1.4)
+                addRevealLines out (fun p -> ScanPin.renderCentre cc s (tw.Forward.TransformPos p))
+                    localPt rMax dim lines
 
         let pointReveals =
             pinIdSet |> ASet.collect (fun id ->
@@ -458,7 +468,7 @@ module ScanPinScene =
         let highlightNode =
             let segs =
                 AVal.custom (fun t ->
-                    match highlightPinAt t with
+                    match highlightPin model t with
                     | Some id ->
                         match HashMap.tryFind id (pinsVal.GetValue t) with
                         | Some p when pinShownAt t p.Pair ->
@@ -469,8 +479,7 @@ module ScanPinScene =
                             let axis = match upNormalA.GetValue t with Some u -> u | None -> V3d.OOI
                             let aN, u, v = basisFromNormal axis
                             let out = ResizeArray<V3d * V3d * V4d * float>()
-                            addDashedRing out cR u v (rR * 1.18) (V4d(Primitives.pinInkV3d, 0.9)) 5.0 72
-                            addDashedRing out cR u v (rR * 1.18) (V4d(1.0, 1.0, 1.0, 0.95)) 3.0 72
+                            addHighlightRing out cR u v rR
                             // The label box, in the label's own billboard frame
                             // (mirrors the pinLabels placement math).
                             let eye = (view.GetValue t).Backward.TransformPos V3d.Zero

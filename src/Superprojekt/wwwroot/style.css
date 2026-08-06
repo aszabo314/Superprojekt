@@ -497,13 +497,20 @@ body.loaded { background: #f4f6f8; }
 .tb-sensor { margin-right: 10px; }
 .tb-sensor-btn { height: 24px; padding: 0 8px; font-size: 11px; }
 
-/* near-cut slider in the top bar */
-.tb-cut { display: inline-flex; align-items: center; margin-right: 10px; }
+/* The near/far cut sliders: each ONE bordered group (label · slider ·
+   value box) matching the tb-btn chrome, without the loose inner gaps. */
+.tb-cut {
+    display: inline-flex; align-items: center;
+    border: 1px solid #c5cdd8; border-radius: 3px;
+    background: #ffffff; padding: 0 5px; margin-right: 4px;
+}
+.tb-cut .is { gap: 4px; padding: 0; }
+.tb-cut .is-label { min-width: 0; }
+.tb-cut .is-range { width: 90px; }
+.tb-cut .is-value { width: 34px; }
 /* The hold-to-peek button pair (Pair level only). */
 .tb-peeks { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; }
 .tb-peek { user-select: none; -webkit-user-select: none; touch-action: none; }
-.tb-cut .is-range { width: 100px; }
-.tb-cut .is-value { width: 34px; }
 
 /* ── Scale bar ────────────────────────────────────────────────────── */
 
@@ -630,6 +637,10 @@ body.loaded { background: #f4f6f8; }
 .cw-edit { font-size: 10px; }
 .cw-del { border: 1px solid #fca5a5; border-radius: 4px; background: #fef2f2; color: #b91c1c; padding: 1px 6px; }
 .cw-del:hover { background: #fee2e2; border-color: #b91c1c; }
+/* The open-at-Pin-level button: the blue clickable scheme (the row's
+   primary navigation), last in the row. */
+.cw-goto { border-color: #1a56db; background: #e8effc; color: #1a56db; font-weight: 700; }
+.cw-goto:hover { background: #1a56db; border-color: #1447ba; color: #ffffff; }
 /* The workflow line of its own + the linked Solve→Finish two-step: the lit
    step is the next one to take. */
 .cw-remaining { font-size: 11px; color: #475569; padding: 2px 2px; }

@@ -15,14 +15,14 @@ module GuiTopBar =
             div {
                 Class "tb-cut"
                 Attribute("title", "Near cut: slice the scene in place — the plane sits at this fraction of the distance to the orbit centre, a thick line marks the intersection; 0 = off")
-                inlineSlider "▤ Cut" 0.0 1.25 0.01
+                inlineSlider "▤ Near cut" 0.0 1.25 0.01
                     (fun v -> if v <= 0.005 then "off" else sprintf "%.2f" v)
                     model.NearCutFrac (fun v -> env.Emit [SetNearCut v])
             }
             div {
                 Class "tb-cut"
                 Attribute("title", "Far cut: hide everything beyond the plane at this fraction of the distance to the orbit centre, a thick line marks the intersection; right end = off")
-                inlineSlider "▤ Far" 0.05 2.5 0.01
+                inlineSlider "▤ Far cut" 0.05 2.5 0.01
                     (fun v -> if v >= 2.495 then "off" else sprintf "%.2f" v)
                     model.FarCutFrac (fun v -> env.Emit [SetFarCut v])
             }

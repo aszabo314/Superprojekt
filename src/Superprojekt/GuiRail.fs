@@ -79,9 +79,12 @@ module GuiRail =
         "  var k=(axY-axT-4)/maxC;"
         "  if(d.lod>0){ g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-d.lod),axT,Math.max(1,X(d.lod)-X(-d.lod)),axY-axT); }"
         // Filled stack: the CURRENT side; the hovered pin row's slice (hilite
-        // by series name) lights amber inside the uniform grey.
+        // by series name) lights amber AND restacks to the BOTTOM, so the
+        // highlighted portion always reads from the shared baseline instead
+        // of floating mid-stack.
         "  var prev=new Array(B).fill(0);"
-        "  S.forEach(function(sn){ var a=histC(sn,'h'); if(!a) return;"
+        "  var stackOrd=hl?S.filter(function(sn){return sn.name===hl;}).concat(S.filter(function(sn){return sn.name!==hl;})):S;"
+        "  stackOrd.forEach(function(sn){ var a=histC(sn,'h'); if(!a) return;"
         "    g.globalAlpha=0.85; g.fillStyle=(hl&&sn.name===hl)?'#d97706':sn.color;"
         "    for(var b=0;b<B;b++){ var c=a[b]; if(c>0){ var x0=X(lo+b*bw); var wd=Math.max(1,X(lo+(b+1)*bw)-x0);"
         "      g.fillRect(x0,axY-(prev[b]+c)*k,wd,c*k); } prev[b]+=c; } });"
@@ -393,13 +396,21 @@ module GuiRail =
                 }
             }
             // The chart's peer row: the SPATIAL view toggle beside the
-            // always-on distribution (both live at once).
+            // always-on distribution (both live at once) plus the brush clear.
             div {
                 Class "cw-chart-tools"
                 div {
                     Class "rail-isolate"
                     Attribute("title", "False-colour error map in 3D: paints every registered mesh with its own parent-relative error at once, on the same scale as this histogram. The reference root and unregistered meshes stay excluded outlines. The map and the histogram stay live together.")
                     compactToggle "Error map (3D)" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
+                }
+                button {
+                    Class "rail-btn cw-clearbrush"
+                    model.BrushedSamples |> AVal.map (fun s ->
+                        if Set.isEmpty s then Some (Attribute("disabled", "disabled")) else None)
+                    Attribute("title", "Clear the histogram brush selection (and its 3D dots)")
+                    Dom.OnClick(fun _ -> env.Emit [SetBrushedSamples []])
+                    "⊗ Clear brush"
                 }
             }
             div {
@@ -871,8 +882,8 @@ module GuiRail =
             // ── Committed-pin rows: the row BODY is inert — hovering
             // highlights the pin in 3D (the loud highlight + the tile
             // preview-framing ride TilePinHover) and its histogram portion;
-            // the three buttons are the only actions: fly-to, open at the Pin
-            // level, delete. Radius editing lives in the Pin panel; point
+            // the three buttons are the only actions: fly-to, delete, open at
+            // the Pin level. Radius editing lives in the Pin panel; point
             // re-picks at the Pin level via the armed pick.
             let pinRow (p : ScanPin) =
                 let isSel = model.Sel |> AVal.map (fun s -> s.Pin = Some p.Id)
@@ -889,19 +900,19 @@ module GuiRail =
                         "⌖"
                     }
                     button {
-                        Class "mb cw-pin-btn"
-                        Attribute("title", "Open this pin at the Pin level")
-                        Dom.OnClick(fun _ ->
-                            env.Emit [LogReach("pair", "open-pin", p.ShortName); SelectPin p.Id; SetFocus FocusPin])
-                        "▸"
-                    }
-                    button {
                         Class "mb cw-del"
                         Attribute("title", "Delete pin")
                         Dom.OnClick(fun _ ->
                             let ok = try JSRuntime.Instance.Invoke<bool>("confirm", sprintf "Delete pin %s? This cannot be undone." p.ShortName) with _ -> false
                             if ok then env.Emit [ScanPinMsg (DeletePin p.Id)])
                         "✕"
+                    }
+                    button {
+                        Class "mb cw-pin-btn cw-goto"
+                        Attribute("title", "Open this pin at the Pin level")
+                        Dom.OnClick(fun _ ->
+                            env.Emit [LogReach("pair", "open-pin", p.ShortName); SelectPin p.Id; SetFocus FocusPin])
+                        "▸"
                     }
                 }
             let pinList =

@@ -10,6 +10,62 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## GUI touch-ups round 5 (2026-08-06)
+
+- **Histogram hover restacks to the baseline**: the hovered pin row's
+  amber slice (data-hilite) no longer floats mid-stack — the chart JS
+  reorders the fill stack so the hilited series draws FIRST (bottom,
+  shared baseline) with the rest stacked above; a pure rendering
+  rearrangement (same bins, same totals, medians/dots untouched).
+- **Clear brush at Matrix**: graphBody's `.cw-chart-tools` row gained the
+  same "⊗ Clear brush" button the pair body has (the brush is global
+  state, so the wiring is identical).
+- **Cut sliders**: labels renamed "▤ Cut"/"▤ Far" → "▤ Near cut" /
+  "▤ Far cut"; each `.tb-cut` is now ONE bordered group (tb-btn chrome:
+  border + white bg + radius) enclosing label · slider · value box, with
+  the loose inner gaps removed (`is-label min-width 0`, gap 6→4, range
+  100→90 px, group margin 10→4 px).
+- **Pin-row buttons rearranged**: ⌖ fly-to · ✕ delete · ▸ open-at-Pin
+  (was ⌖ · ▸ · ✕); the ▸ goto button now wears the blue clickable
+  scheme (`.cw-goto`: accent border/text on `#e8effc`, inverting to
+  solid accent on hover) as the row's primary navigation.
+- Build green (0 errors).
+
+## Tile strip: wheel containment + 3D mark parity (2026-08-06)
+
+- **Wheel containment**: wheel over a tile now zooms the tile ONLY — a
+  non-passive `wheel` listener on each `.mesh-tile` (OnBoot) calls
+  `preventDefault`, so the strip's `overflow-y` scroll no longer fires
+  alongside the zoom. The strip chrome (gaps, resize handle, background)
+  still scrolls normally.
+- **Pin-mark parity with the main 3D** (the 3D always wins; the tiles had
+  kept outdated marks): the committed glyph builders are hoisted to
+  ScanPinScene MODULE level — `addCrosshairGlyph`, `addAreaRing`,
+  `addContactRings`, `addHighlightRing`, `addRevealLines`, plus the
+  shared highlight-subject rule `highlightPin` — and BOTH views render
+  through them (the 3D `build` now delegates to the same functions), so
+  the views cannot drift again. The tiles draw:
+  - EVERY pair pin's area figure (thin duplex equator ring + pure-white
+    contact rings + the dashed anchorage ring in the anchor tile) instead
+    of the previous subject-only wire-sphere outline;
+  - the point's intersection reveal (own point only — the other side's
+    relief belongs to the other tile);
+  - the ×1.18 bold dashed highlight double ring for the hovered/selected
+    pin (`highlightPin`, pin-scope isolation suppresses it);
+  - triplex CROSSHAIR correspondence locators (mesh-identity colour over
+    ink under a white rim, open centre), screen-constant at 0.025 × the
+    tile camera radius — the ortho analogue of the 3D's eye distance —
+    REPLACING the icosphere dot fills + white wire-sphere point outlines.
+    The crosshairs live in their own node reading the tile RADIUS alone
+    (a pan never rebuilds them) and render in passTwo, deterministically
+    over the area/reveal lines.
+  armDim and pinScopeDim carry over unchanged; the armed cursor preview
+  was already synchronized and stays as-was. `ScanPinScene.sphereShell`
+  deleted (its last consumer was the tile fills). CLAUDE.md's "the TILES
+  keep mesh-colour dot fills + white outlines" clause is superseded —
+  reconstruct at doc-freeze end.
+- Build green (0 errors).
+
 ## F1–F8 test-session fix package (started 2026-08-05)
 
 Eight specs from the test session: ScanPin_v14_F1_palette …

@@ -6,17 +6,17 @@ open Aardvark.Dom
 
 module Primitives =
 
-    // Mesh identity — distinct vivid hues (teal · orange · purple · green ·
-    // magenta · brown · sky · pink · olive), maximally separable at a glance.
-    // Slot 7 is a bright SKY blue (#0ea5e9), deliberately far in lightness from
-    // the dark teal — the old dark cyan #0e7490 was near-indistinguishable from
-    // it. The hues stay clear of the diverging difference map's ends (#2151DB
-    // blue / #C00206 red) and its near-white centre; gold stays the reference
-    // accent. Identity rides on thin marks only.
+    // Mesh identity — the Okabe-Ito colour-blind-safe palette: blue · bluish
+    // green · vermillion · reddish purple · sky blue · yellow. The first six
+    // slots are FIXED; slots past 6 extend with distinct off-palette hues.
+    // Okabe-Ito orange #E69F00 is deliberately EXCLUDED — it is the reference
+    // gold (refGold below). The hues stay clear of the diverging difference
+    // map's ends (#2151DB blue / #C00206 red) and its near-white centre.
+    // Identity rides on thin marks only.
     let meshPalette =
-        [| C4b( 13uy,148uy,136uy); C4b(234uy, 88uy, 12uy); C4b(147uy, 51uy,234uy)
-           C4b( 22uy,163uy, 74uy); C4b(192uy, 38uy,211uy); C4b(146uy, 64uy, 14uy)
-           C4b( 14uy,165uy,233uy); C4b(219uy, 39uy,119uy); C4b( 77uy,124uy, 15uy) |]
+        [| C4b(  0uy,114uy,178uy); C4b(  0uy,158uy,115uy); C4b(213uy, 94uy,  0uy)
+           C4b(204uy,121uy,167uy); C4b( 86uy,180uy,233uy); C4b(240uy,228uy, 66uy)
+           C4b(147uy, 51uy,234uy); C4b(146uy, 64uy, 14uy); C4b( 77uy,124uy, 15uy) |]
 
     let c4bToV3d (c : C4b) = V3d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0)
     let c4bToRgbCss (c : C4b) = sprintf "rgb(%d,%d,%d)" (int c.R) (int c.G) (int c.B)
@@ -27,16 +27,23 @@ module Primitives =
 
     let meshColor (idx : int) = meshPalette.[((idx % meshPalette.Length) + meshPalette.Length) % meshPalette.Length]
 
+    // Reference gold #E69F00 (the Okabe-Ito orange, excluded from the palette):
+    // the --ref-gold CSS token's F# mirror — every render-side root marker
+    // reads THIS, never a re-derived gold.
+    let refGold = C4b(230uy, 159uy, 0uy)
+
+    // Gold is DYNAMIC: the mesh currently root renders in refGold INSTEAD of
+    // its slot colour (its slot returns on re-root) — every identity-colour
+    // resolution goes through this.
+    let meshColorRoot (isRoot : bool) (idx : int) = if isRoot then refGold else meshColor idx
+
     // Pin identity is NAME-ONLY: no pin colours, no glyphs. Every pin
     // mark and label uses this ONE near-black dark warm grey — deliberately not
     // pure #000 (the slice cells' data ink) and warmer than the slate UI text,
     // so pin marks stay recognisable without owning a hue family.
     let pinInk    = C4b(41uy, 37uy, 36uy)          // #292524
     let pinInkV3d = V3d(41.0 / 255.0, 37.0 / 255.0, 36.0 / 255.0)
-    // The --ref-gold CSS token's F# mirror (#d4a106) — every render-side root
-    // marker (3D bbox outline, tile footprint overlay) reads THIS, never a
-    // re-derived gold.
-    let refGoldV3d = V3d(212.0 / 255.0, 161.0 / 255.0, 6.0 / 255.0)
+    let refGoldV3d = c4bToV3d refGold
     // Pronounceable 2-char pin code = consonant + vowel, collision-checked against
     // names already taken (other pins' short names + the mesh numbers). Seeded by the
     // pin's guid hash, so it is effectively random yet deterministic per pin.

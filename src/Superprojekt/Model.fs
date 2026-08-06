@@ -283,11 +283,6 @@ type Model =
         // The focus rail's current stop + the per-level selection it navigates.
         Focus               : FocusLevel
         Sel                 : FocusSelection
-        // The spanned completion notice: opened by the reducer exactly on the
-        // disconnected→spanned TRANSITION (the last mesh joined the rooted
-        // tree), closed by dismissing/acting on it or by the graph
-        // disconnecting again.
-        SpannedNoticeOpen   : bool
         // The reaching-behaviour session log, newest first — never trimmed
         // and deliberately kept across dataset switches (session data, not
         // dataset state); the popover shows a tail, export dumps everything.
@@ -372,6 +367,16 @@ type Model =
         // confirm-delete popup — confirm jumps (the jump rolls the draft
         // back), cancel stays. Esc and rail jumps share this one path.
         PinExitPending      : FocusLevel option
+        // Pre-warning on a redundant pair: opening a cell whose meshes are
+        // already connected THROUGH the tree (no direct edge) parks the pair
+        // here behind a blocking confirm — registering it can only close a
+        // loop. Confirm enters the pair, cancel/Esc stays at the matrix.
+        PairConnectWarn     : (string * string) option
+        // Re-solve cascade: (child, parent) pairs whose edges a pin-edit
+        // cascade dropped (their pins survive), parent-first — each solve
+        // commit drains the head; an entry that can no longer solve is
+        // flagged and skipped, never silent.
+        PendingResolves     : (string * string) list
         GearPopoverOpen     : bool
         // The hidden top-bar mesh menu: reference-root designation + per-mesh
         // render toggles (deliberately out of the workflow rail).
@@ -501,7 +506,6 @@ module Model =
             RenderingMode       = Textured
             Focus               = FocusMatrix
             Sel                 = FocusSelection.empty
-            SpannedNoticeOpen   = false
             ReachLog            = []
             ReachLogOpen        = false
             Checkpoints         = []
@@ -527,6 +531,8 @@ module Model =
             PeekPose            = false
             LoopPending         = None
             PinExitPending      = None
+            PairConnectWarn     = None
+            PendingResolves     = []
             GearPopoverOpen     = false
             MeshMenuOpen        = false
             SensorMenuOpen      = false

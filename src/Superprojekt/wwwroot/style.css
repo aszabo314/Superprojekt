@@ -59,11 +59,12 @@ body.loaded { background: #f4f6f8; }
 /* ── Render canvas ──────────────────────────────────────────────────── */
 
 /* Gold = the reference root — ONE token family for every root marker so the
-   hue can't fork again. */
+   hue can't fork again. #E69F00 = the Okabe-Ito orange, excluded from the
+   mesh palette (Primitives.refGold is the F# mirror). */
 :root {
-    --ref-gold: #d4a106;
-    --ref-gold-dark: #b45309;
-    --ref-gold-pale: #fde68a;
+    --ref-gold: #e69f00;
+    --ref-gold-dark: #a16207;
+    --ref-gold-pale: #f9e4bb;
 }
 
 .render-control {
@@ -239,29 +240,9 @@ body.loaded { background: #f4f6f8; }
 .log-src { font-weight: 700; color: #cbd5e1; flex: none; width: 42px; }
 .log-act { color: #e2e8f0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The spanned completion notice — fixed top-centre, unmistakable (brief
-   pulse on appear), independent of both navigators. */
-.spanned-banner {
-    position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
-    z-index: 1200;
-    display: flex; align-items: center; gap: 12px;
-    background: #ffffff; border: 2px solid #1a56db; border-radius: 6px;
-    padding: 10px 16px;
-    box-shadow: 0 6px 24px rgba(26, 86, 219, 0.35);
-    font-size: 13px; font-weight: 600; color: #0f172a;
-    animation: spanned-pulse 1.1s ease-in-out 3;
-}
-@keyframes spanned-pulse {
-    0%, 100% { box-shadow: 0 6px 24px rgba(26, 86, 219, 0.35); }
-    50%      { box-shadow: 0 0 0 10px rgba(26, 86, 219, 0.22); }
-}
-.spb-assess { background: #1a56db; border-color: #1a56db; color: #ffffff; }
-.spb-assess:hover { background: #1447ba; }
-.spb-close { flex: none; }
-
-/* The guided-placement step alert — fixed top-centre like the spanned notice,
-   accent-filled so it reads as THE instruction; sits above the armed veil and
-   is deliberately not dimmed by it. */
+/* The guided-placement step alert — fixed top-centre, accent-filled so it
+   reads as THE instruction; sits above the armed veil and is deliberately
+   not dimmed by it. */
 .place-banner {
     position: fixed; top: 40px; left: 50%; transform: translateX(-50%);
     z-index: 1200;
@@ -288,6 +269,23 @@ body.loaded { background: #f4f6f8; }
 .home-nav-body { padding: 4px; overflow: auto; min-height: 0; }
 .tree-canvas { overflow: auto; }
 .tree-bridge { display: none; }
+/* The finished ribbon — a mark ON the tree, derived from the spanned state
+   (disconnecting clears it by itself). */
+.tree-ribbon {
+    display: flex; align-items: center; gap: 8px;
+    background: #ecfdf5; border: 1px solid #15803d; border-radius: 4px;
+    padding: 4px 8px; margin-bottom: 4px;
+}
+.tree-ribbon-text { font-size: 11px; font-weight: 700; color: #15803d; }
+.tree-ribbon-btn { background: #1a56db; border-color: #1a56db; color: #ffffff; }
+.tree-ribbon-btn:hover { background: #1447ba; }
+/* The loop modal's specifics: the named pair, the embedded tree preview. */
+.lm-meshes { display: flex; align-items: center; justify-content: center; gap: 6px; }
+.loop-tree {
+    background: #f8fafc; border: 1px solid #e6eaf0; border-radius: 4px;
+    padding: 4px; max-height: 220px; overflow: auto;
+}
+.lm-treehint { font-size: 9px; color: #64748b; text-align: center; }
 /* Per-mesh intrinsic error-viz switches (the top-bar mesh menu) — compact, right-aligned. */
 .rail-mesh-modes { margin-left: auto; flex-shrink: 0; }
 .rail-mesh-modes .cbb-btn { padding: 1px 5px; font-size: 10px; line-height: 13px; }
@@ -582,6 +580,9 @@ body.loaded { background: #f4f6f8; }
 }
 .pmx-imp { background: #eef1f4; }
 .pmx-pos { background: #ffffff; border: 1.5px solid #94a3b8; cursor: pointer; }
+/* Tree-redundant possible cell: the tree already connects both meshes — a
+   borderless faint hint, so the tree-COMPLETING cells stand out. */
+.pmx-redundant { border: none; background: #f2f5f8; opacity: 0.55; }
 .pmx-reg { border: 1px solid #0f172a; cursor: pointer; }
 .pmx-imp:hover, .pmx-pos:hover, .pmx-reg:hover { outline: 2px solid #1a56db; outline-offset: -1px; }
 /* The remembered pair selection — persists while surveying other levels. */
@@ -605,15 +606,39 @@ body.loaded { background: #f4f6f8; }
 .cw-cue { font-size: 10px; color: #64748b; font-family: 'SF Mono', Monaco, monospace; }
 .cw-commit:not([disabled]) { border-color: #15803d; color: #15803d; }
 .cw-abort { color: #b91c1c; }
-.cw-pins { display: flex; flex-direction: column; gap: 2px; padding-top: 4px; }
-.cw-pin-row { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 4px; cursor: pointer; }
-.cw-pin-row:hover { background: #eef2f6; }
+/* The pair panel reads as its sequence: New pin → list → remaining → steps. */
+.cw-newpin {
+    background: #1a56db; border: 1px solid #1a56db; color: #ffffff;
+    font-weight: 700; padding: 6px 10px;
+    box-shadow: 0 2px 6px rgba(26, 86, 219, 0.3);
+}
+.cw-newpin:hover { background: #1447ba; }
+.cw-pins { display: flex; flex-direction: column; gap: 3px; padding-top: 4px; }
+/* Bordered rows; the BODY is inert (hover highlights the pin in 3D and the
+   histogram) — only the three buttons act. */
+.cw-pin-row {
+    display: flex; align-items: center; gap: 6px; padding: 3px 6px;
+    border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff;
+}
+.cw-pin-row:hover { background: #eef2f6; border-color: #94a3b8; }
 /* The chosen pin (enables the Pin stop; remembered on re-entry). */
 .cw-pin-sel { background: #e8effc; box-shadow: inset 2px 0 0 #1a56db; }
 .cw-pin-sel:hover { background: #e0eafa; }
-.cw-pin-name { font-size: 11px; font-weight: 700; color: #292524; width: 22px; flex: none; }
+.cw-pin-name { font-size: 11px; font-weight: 700; color: #292524; flex: 1; }
+.cw-pin-btn { border: 1px solid #cbd5e1; border-radius: 4px; background: #f8fafc; padding: 1px 6px; }
+.cw-pin-btn:hover { background: #e8effc; border-color: #1a56db; }
 .cw-edit { font-size: 10px; }
-.cw-del { color: #b91c1c; }
+.cw-del { border: 1px solid #fca5a5; border-radius: 4px; background: #fef2f2; color: #b91c1c; padding: 1px 6px; }
+.cw-del:hover { background: #fee2e2; border-color: #b91c1c; }
+/* The workflow line of its own + the linked Solve→Finish two-step: the lit
+   step is the next one to take. */
+.cw-remaining { font-size: 11px; color: #475569; padding: 2px 2px; }
+.cw-steps { display: flex; align-items: center; gap: 6px; padding-top: 6px; border-top: 1px solid #e2e8f0; }
+.cw-step-arrow { color: #94a3b8; font-weight: 700; flex: none; }
+.cw-step-lit {
+    background: #1a56db !important; border-color: #1a56db !important; color: #ffffff !important;
+    box-shadow: 0 2px 6px rgba(26, 86, 219, 0.35);
+}
 /* Pin-level arm buttons: identity chips ride inside the buttons. */
 .pin-arm-btn {
     display: inline-flex; align-items: center; gap: 4px;
@@ -651,6 +676,13 @@ body.loaded { background: #f4f6f8; }
 .pin-cancel-btn[disabled] { color: #94a3b8; }
 
 .cw-inspect { display: flex; flex-direction: column; gap: 4px; padding-top: 6px; border-top: 1px solid #e2e8f0; }
+/* The chart's peer row: the spatial-view toggle + brush clear ride directly
+   above the canvas — map and histogram are complementary, both stay live. */
+.cw-chart-tools { display: flex; align-items: center; gap: 10px; }
+/* Clear-brush (the ex-probe slot): amber like the brush readouts it clears. */
+.cw-clearbrush:not([disabled]) { border-color: #d97706; color: #b45309; }
+.cw-clearbrush:not([disabled]):hover { background: #fef3c7; }
+.cw-clearbrush[disabled] { color: #94a3b8; cursor: default; }
 .cw-readout { display: flex; gap: 10px; font-size: 10px; font-family: 'SF Mono', Monaco, monospace; color: #334155; min-height: 13px; }
 .cw-readout-hover { color: #0891b2; }
 .cw-chart { width: 100%; height: var(--charth, 160px); cursor: crosshair; touch-action: none; }

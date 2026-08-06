@@ -241,6 +241,23 @@ const run = async () => {
   check("pair-overlap: disjoint → insufficient",
         ovFar.sufficient === false && ovFar.fracAB === 0 && ovFar.fracBA === 0);
 
+  // 8 · roi-fit: adaptive ROI radius against the other pair mesh.
+  const rfReq = (centre, radius, tOther) => ({
+    otherName: movMesh, otherTransform: tOther ?? identity,
+    centre, radius, minVerts: 20, maxFactor: 4,
+  });
+  const rf = await postJson("/query/roi-fit", rfReq(probeAt, 20));
+  check("roi-fit: co-located surfaces fit at the default radius",
+        rf.ok === true && rf.radius >= 20 && rf.radius <= 80,
+        `r=${rf.radius.toFixed(2)} (${rf.count} verts)`);
+  const rfTiny = await postJson("/query/roi-fit", rfReq(probeAt, 0.001));
+  check("roi-fit: a tiny radius grows toward the other mesh",
+        rfTiny.ok === false || rfTiny.radius > 0.001,
+        rfTiny.ok ? `grew to ${rfTiny.radius.toFixed(4)}` : "refused past cap");
+  const rfFar = await postJson("/query/roi-fit",
+    rfReq([probeAt[0] + 1e5, probeAt[1], probeAt[2]], 20));
+  check("roi-fit: unreachable other mesh refused", rfFar.ok === false && rfFar.count < 20);
+
   console.log("");
   console.log(`${total - failures}/${total} passed${failures ? ` — ${failures} FAILED` : ""}`);
   process.exit(failures);

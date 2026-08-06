@@ -40,10 +40,13 @@ type Message =
     // Matrix cell click: select the pair (a NEW pair cascade-clears pin/point)
     // and enter its Pair level.
     | SelectPair of a:string * b:string
-    // Put the spanned completion notice away.
-    | DismissSpannedNotice
-    // Act on the spanned notice: turn to the EXISTING global instruments
-    // (Matrix focus, inspect dock open, graph error map on) — never a score.
+    // The already-connected pre-warning popup: confirm = enter the parked
+    // pair anyway (solving may close a loop); cancel = stay at the matrix.
+    | ConfirmPairConnectWarn
+    | CancelPairConnectWarn
+    // Act on the tree's finished ribbon: turn to the EXISTING global
+    // instruments (Matrix focus, inspect dock open, graph error map on) —
+    // never a score.
     | AssessGlobalQuality
     // One reaching-behaviour log entry: an action + the SURFACE it came from
     // (matrix / tree / rail / event); the reducer stamps the time.
@@ -99,6 +102,9 @@ type Message =
     // remove (None = the just-added edge itself); confirm commits, cancel
     // discards the redundant edge and the prior tree stands.
     | SelectLoopEdge of string option
+    // Transient row-hover preview of a resolution choice (same encoding as
+    // SelectLoopEdge's payload; outer None = no hover).
+    | HoverLoopChoice of string option option
     | ConfirmLoopResolution
     | CancelLoopResolution
     // Solve landing: the world transform mapping the child's baseline points

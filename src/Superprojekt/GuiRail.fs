@@ -16,19 +16,22 @@ module GuiRail =
 
     let private rgb = Primitives.c4bToRgbCss
 
-    // ── The ONE in-cell error diagram: the MOV mesh's error across the pair's
-    // pins, pin-source-STACKED (48-bin histogram, achromatic pin ramp), with
-    // the per-edge before/after diff (fill = current, near-black step outline =
-    // the edge-before total, registered pairs only). Full furniture always; an
-    // empty payload renders a centred placeholder. Brushing = an x-range drag
-    // over the conceptual samples (el._dots) → gid csv through the hidden
-    // bridge input; a plain click clears. data-brushed echoes the model back;
-    // data-hover (the 3D-hovered gid) draws the amber cross-highlight.
+    // ── The ONE in-cell error diagram: uniform-grey histogram (48 bins) of
+    // the scope's samples, with the before/after diff (fill = current state,
+    // DASHED near-black step outline = the before total) and a real legend
+    // (payload legF/legL name the fill and the outline). Full furniture
+    // always; an empty payload renders a centred placeholder. Brushing is
+    // BIN-QUANTIZED: the drag snaps to whole bins, a drag-free click selects
+    // the single bin under the cursor (an empty bin clears), hover outlines
+    // the bin; gids flow as csv through the hidden bridge input.
+    // data-brushed echoes the model back; data-hover (the 3D-hovered gid)
+    // draws the amber cross-highlight; data-hilite (the hovered pin row's
+    // name) repaints that pin's stack slice amber.
     let private chartJs = [
         "(function(){"
         "var el=__THIS__;"
         "function findBridge(){ return (el.parentElement&&el.parentElement.querySelector('.cw-brush-bridge'))||document.querySelector('.cw-brush-bridge'); }"
-        "el._dots=[]; var dragging=false, range=null, anchorV=0;"
+        "el._dots=[]; el._hb=-1; var dragging=false, range=null, anchorV=0;"
         "function emit(){ var b=findBridge(); if(!b) return; var ids=[];"
         "  if(range){ for(var i=0;i<el._dots.length;i++){ var dt=el._dots[i]; if(dt.v>=range[0]&&dt.v<=range[1]) ids.push(dt.gid); } }"
         "  b.value=ids.join(','); b.dispatchEvent(new Event('input',{bubbles:true})); }"
@@ -37,6 +40,7 @@ module GuiRail =
         "  var raw=el.getAttribute('data-chart')||'{}'; var d; try{d=JSON.parse(raw);}catch(e){return;}"
         "  var braw=el.getAttribute('data-brushed')||''; var bset=new Set(braw.length?braw.split(',').map(Number):[]);"
         "  var hraw=el.getAttribute('data-hover')||''; var hgid=hraw.length?parseInt(hraw):-1;"
+        "  var hl=el.getAttribute('data-hilite')||'';"
         "  el.innerHTML=''; el._dots=[];"
         "  var W=el.clientWidth||280, H=el.clientHeight||150; var dpr=window.devicePixelRatio||1;"
         "  var cv=document.createElement('canvas'); cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);"
@@ -48,6 +52,10 @@ module GuiRail =
         "  function X(v){ return padL+(v-lo)/span*(W-padL-padR); }"
         "  el._XV=function(x){ return lo+(x-padL)/Math.max(1,W-padL-padR)*span; };"
         "  var axY=H-padB, axT=padT;"
+        "  var B=d.bins||48; var bw=span/B;"
+        // Bin geometry for the quantized brush + hover (handlers live outside).
+        "  el._bin={lo:lo,hi:hi,bw:bw,B:B};"
+        "  el._inPlot=function(x,y){ return x>=padL&&x<=W-padR&&y>=axT&&y<=axY; };"
         "  g.fillStyle='#0f172a'; g.font='700 11px Inter,\\'Segoe UI\\',sans-serif'; g.textAlign='left';"
         "  g.fillText(d.title||'',4,12);"
         "  g.strokeStyle='#94a3b8'; g.lineWidth=1;"
@@ -65,32 +73,43 @@ module GuiRail =
         "  var S=d.series||[];"
         "  if(S.length===0){ g.fillStyle='#94a3b8'; g.font='12px Inter,sans-serif'; g.textAlign='center';"
         "    g.fillText(d.ph||'\\u2014',(padL+W-padR)/2,(axT+axY)/2+4); el.appendChild(cv); return; }"
-        "  var B=d.bins||48; var bw=span/B;"
         "  function histC(sn,k){ var a=sn[k]; return (a&&a.length===B)?a:null; }"
         // One count→height scale over BOTH sides; y = counts.
         "  var maxC=1; ['h','hb'].forEach(function(k){ for(var b=0;b<B;b++){ var s=0; S.forEach(function(sn){ var a=histC(sn,k); if(a) s+=a[b]; }); if(s>maxC)maxC=s; } });"
         "  var k=(axY-axT-4)/maxC;"
         "  if(d.lod>0){ g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-d.lod),axT,Math.max(1,X(d.lod)-X(-d.lod)),axY-axT); }"
-        // Filled stack: the CURRENT side, series bottom-up in payload order.
+        // Filled stack: the CURRENT side; the hovered pin row's slice (hilite
+        // by series name) lights amber inside the uniform grey.
         "  var prev=new Array(B).fill(0);"
         "  S.forEach(function(sn){ var a=histC(sn,'h'); if(!a) return;"
-        "    g.globalAlpha=0.85; g.fillStyle=sn.color;"
+        "    g.globalAlpha=0.85; g.fillStyle=(hl&&sn.name===hl)?'#d97706':sn.color;"
         "    for(var b=0;b<B;b++){ var c=a[b]; if(c>0){ var x0=X(lo+b*bw); var wd=Math.max(1,X(lo+(b+1)*bw)-x0);"
         "      g.fillRect(x0,axY-(prev[b]+c)*k,wd,c*k); } prev[b]+=c; } });"
-        // Edge-BEFORE: near-black step outline of the total (shape only).
+        // BEFORE: dashed near-black step outline of the total (shape only).
         "  var anyO=false; var tot=new Array(B).fill(0);"
         "  S.forEach(function(sn){ var a=histC(sn,'hb'); if(!a) return; anyO=true; for(var b=0;b<B;b++) tot[b]+=a[b]; });"
-        "  if(anyO){ g.globalAlpha=0.9; g.strokeStyle='#0f172a'; g.lineWidth=1;"
+        "  if(anyO){ g.globalAlpha=0.9; g.strokeStyle='#0f172a'; g.lineWidth=1; g.setLineDash([4,3]);"
         "    g.beginPath(); g.moveTo(X(lo),axY);"
         "    for(var b=0;b<B;b++){ var yT=axY-tot[b]*k; g.lineTo(X(lo+b*bw),yT); g.lineTo(X(lo+(b+1)*bw),yT); }"
-        "    g.lineTo(X(hi),axY); g.stroke();"
-        "    g.fillStyle='#64748b'; g.font='9px Inter,sans-serif'; g.textAlign='left';"
-        "    g.fillText('fill now \\u00b7 line before',padL+3,axT+9); }"
-        "  S.forEach(function(sn){ if(sn.med==null) return; g.globalAlpha=0.9; g.strokeStyle=sn.color; g.lineWidth=1.6;"
+        "    g.lineTo(X(hi),axY); g.stroke(); g.setLineDash([]); }"
+        // The REAL legend: a fill swatch + a dashed-line sample, named by the
+        // payload (legF/legL) — the title is not a legend.
+        "  g.globalAlpha=1; g.font='9px Inter,sans-serif'; g.textAlign='left';"
+        "  var lx=padL+4, ly=axT+8;"
+        "  if(d.legF){ g.fillStyle='rgba(120,120,120,0.85)'; g.fillRect(lx,ly-6,8,7);"
+        "    g.fillStyle='#475569'; g.fillText(d.legF,lx+11,ly); lx+=11+g.measureText(d.legF).width+12; }"
+        "  if(d.legL&&anyO){ g.strokeStyle='#0f172a'; g.lineWidth=1; g.setLineDash([4,3]);"
+        "    g.beginPath(); g.moveTo(lx,ly-3); g.lineTo(lx+14,ly-3); g.stroke(); g.setLineDash([]);"
+        "    g.fillStyle='#475569'; g.fillText(d.legL,lx+17,ly); }"
+        "  S.forEach(function(sn){ if(sn.med==null) return; g.globalAlpha=0.9; g.strokeStyle=(hl&&sn.name===hl)?'#d97706':sn.color; g.lineWidth=1.6;"
         "    g.beginPath(); g.moveTo(X(sn.med),axY); g.lineTo(X(sn.med),axY-9); g.stroke(); g.lineWidth=1; });"
         // Conceptual samples: never painted, but they ARE the brush targets.
         "  g.globalAlpha=1;"
         "  S.forEach(function(sn){ if(sn.g) for(var q=0;q<sn.g.length;q++) el._dots.push({gid:sn.g[q],v:sn.s[q]}); });"
+        // Hovered bin: a thin outline column (the single-bin select preview).
+        "  if(el._hb>=0&&el._hb<B&&!dragging){ var hbx=X(lo+el._hb*bw);"
+        "    g.fillStyle='rgba(8,145,178,0.07)'; g.fillRect(hbx,axT,Math.max(1,X(lo+(el._hb+1)*bw)-hbx),axY-axT);"
+        "    g.strokeStyle='#0891b2'; g.lineWidth=1; g.strokeRect(hbx+0.5,axT+0.5,Math.max(1,X(lo+(el._hb+1)*bw)-hbx)-1,axY-axT-1); }"
         // 3D-hovered sample: amber cross-highlight at its value.
         "  if(hgid>=0){ for(var q2=0;q2<el._dots.length;q2++){ if(el._dots[q2].gid===hgid){"
         "    var hx=X(Math.max(lo,Math.min(hi,el._dots[q2].v)));"
@@ -104,13 +123,22 @@ module GuiRail =
         "  el.appendChild(cv);"
         "}"
         "function cursorV(e){ var r=el.getBoundingClientRect(); return el._XV?el._XV(e.clientX-r.left):0; }"
+        "function binOf(v){ var bn=el._bin; if(!bn) return -1; return Math.max(0,Math.min(bn.B-1,Math.floor((v-bn.lo)/bn.bw))); }"
+        // Bin-quantized brush: the drag snaps to whole bins; a drag-free click
+        // is a SINGLE-BIN select (an empty bin yields no gids = clear).
+        "function snapRange(vA,vB){ var bn=el._bin; if(!bn) return [Math.min(vA,vB),Math.max(vA,vB)];"
+        "  var b0=binOf(vA), b1=binOf(vB); var mn=Math.min(b0,b1), mx=Math.max(b0,b1);"
+        "  return [bn.lo+mn*bn.bw, bn.lo+(mx+1)*bn.bw]; }"
         "el.addEventListener('pointerdown',function(e){ dragging=true; anchorV=cursorV(e); range=null; el.setPointerCapture(e.pointerId); });"
-        "el.addEventListener('pointermove',function(e){ if(!dragging) return; var v=cursorV(e);"
-        "  range=[Math.min(anchorV,v),Math.max(anchorV,v)]; render(); });"
+        "el.addEventListener('pointermove',function(e){ var v=cursorV(e);"
+        "  if(dragging){ range=snapRange(anchorV,v); render(); }"
+        "  else { var r=el.getBoundingClientRect(); var nb=(el._inPlot&&el._inPlot(e.clientX-r.left,e.clientY-r.top))?binOf(v):-1;"
+        "    if(nb!==el._hb){ el._hb=nb; render(); } } });"
+        "el.addEventListener('pointerleave',function(){ if(el._hb!==-1){ el._hb=-1; render(); } });"
         "el.addEventListener('pointerup',function(e){ if(!dragging) return; dragging=false;"
-        "  var v=cursorV(e); if(Math.abs(v-anchorV)<1e-9) range=null; emit(); render(); });"
+        "  range=snapRange(anchorV,cursorV(e)); emit(); render(); });"
         "render();"
-        "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-chart','data-brushed','data-hover']});"
+        "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-chart','data-brushed','data-hover','data-hilite']});"
         // Re-render on size changes — including display:none → shown (the
         // floating panel hides wholesale), where boot painted at width 0.
         "new ResizeObserver(function(){ render(); }).observe(el);"
@@ -136,15 +164,22 @@ module GuiRail =
                     match model.Focus.GetValue t, (model.Sel.GetValue t).Pin with
                     | FocusPin, Some id -> Some id
                     | _ -> None
-                let title =
+                // The pose peek flips the visible distribution to the edge-
+                // before state (both resident — zero refetch); gids/values stay
+                // the CANONICAL now-stream, so a brush held across the peek
+                // highlights the corresponding region, matrix-style.
+                let before0 = model.CellErrorBefore.GetValue t
+                let peeked = model.PeekPose.GetValue t && before0.IsSome
+                let title0 =
                     match onlyPin |> Option.bind (fun id -> HashMap.tryFind id pins) with
                     | Some p -> sprintf "Pin %s — mesh %d error vs %d" p.ShortName (numOfN movM) (numOfN refM)
                     | None -> sprintf "Mesh %d error vs %d — across pins" (numOfN movM) (numOfN refM)
+                let title = if peeked then title0 + " — as loaded" else title0
                 match model.CellError.GetValue t with
                 | None ->
                     sprintf "{\"title\":\"%s\",\"ph\":\"place pins to measure\",\"lo\":-10,\"hi\":10,\"bins\":48,\"series\":[]}" title
                 | Some cells ->
-                    let before = model.CellErrorBefore.GetValue t
+                    let before = before0
                     // The x-range stays the FULL cell's (the shared-scale rule),
                     // so a pin-narrowed diagram is comparable across pins.
                     let allSamples =
@@ -166,15 +201,18 @@ module GuiRail =
                             let idx = max 0 (min (bins - 1) (int ((v * 1000.0 - lo) / binW)))
                             c.[idx] <- c.[idx] + 1
                         c
-                    let greyOf (i : int) (n : int) =
-                        let tt = if n <= 1 then 0.5 else float i / float (n - 1)
-                        let v = 190 - int (tt * 140.0)
-                        c4bToHex (C4b(byte v, byte v, byte v))
-                    let lods = cells |> Array.choose (fun (_, r) -> if r.Count > 0 then Some r.LodHalfWidth else None)
+                    let beforeOf pid =
+                        before |> Option.bind (fun bs ->
+                            bs |> Array.tryFind (fun (bid, _) -> bid = pid) |> Option.map snd)
+                    let lods =
+                        if peeked then
+                            (before |> Option.defaultValue [||])
+                            |> Array.choose (fun (_, r) -> if r.Count > 0 then Some r.LodHalfWidth else None)
+                        else cells |> Array.choose (fun (_, r) -> if r.Count > 0 then Some r.LodHalfWidth else None)
                     let lod = if lods.Length = 0 then 0.0 else (Array.average lods) * 1000.0
                     let mutable gid = 0
                     let series =
-                        cells |> Array.mapi (fun i (pid, r) ->
+                        cells |> Array.map (fun (pid, r) ->
                             let g0 = gid
                             gid <- gid + r.Samples.Length
                             match onlyPin with
@@ -184,45 +222,41 @@ module GuiRail =
                                     match HashMap.tryFind pid pins with
                                     | Some p -> p.ShortName
                                     | None -> "?"
-                                let hb =
-                                    match before with
-                                    | Some bs ->
-                                        bs |> Array.tryFind (fun (bid, _) -> bid = pid)
-                                        |> Option.map (fun (_, br) -> histOf br.Samples)
-                                    | None -> None
+                                let hb = beforeOf pid |> Option.map (fun br -> histOf br.Samples)
+                                // The VISIBLE distribution (fill + median): the
+                                // peeked state's when held, else the current.
+                                let fill =
+                                    if peeked then
+                                        beforeOf pid |> Option.map (fun br -> br.Samples) |> Option.defaultValue [||]
+                                    else r.Samples
+                                let medOf (vs : float[]) =
+                                    if vs.Length = 0 then "null"
+                                    else gf ((Array.sort vs).[vs.Length / 2] * 1000.0)
+                                let med = if peeked then medOf fill elif r.Count > 0 then gf (r.Median * 1000.0) else "null"
                                 let gids = Array.init r.Samples.Length (fun k -> g0 + k)
-                                let med = if r.Count > 0 then gf (r.Median * 1000.0) else "null"
-                                let hj = histOf r.Samples |> Array.map string |> String.concat ","
+                                let hj = histOf fill |> Array.map string |> String.concat ","
                                 let hbj = hb |> Option.map (fun c -> c |> Array.map string |> String.concat ",") |> Option.defaultValue ""
                                 Some (
-                                    sprintf "{\"name\":\"%s\",\"color\":\"%s\",\"med\":%s,\"g\":[%s],\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
-                                        name (greyOf i cells.Length) med
+                                    sprintf "{\"name\":\"%s\",\"color\":\"#787878\",\"med\":%s,\"g\":[%s],\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
+                                        name med
                                         (gids |> Array.map string |> String.concat ",")
                                         (r.Samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
                                         hj hbj))
                         |> Array.choose id
                         |> String.concat ","
-                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"series\":[%s]}"
-                        title (gf lo) (gf hi) bins (gf lod) series)
+                    let legF = if peeked then "as loaded" else "error now"
+                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
+                        title (gf lo) (gf hi) bins (gf lod) legF series)
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
         let hoverData = model.HoverSample |> AVal.map (function Some g -> string g | None -> "")
+        // The hovered pin row's name — its stack slice lights amber (F4↔F5).
+        let hiliteData =
+            (model.TilePinHover, model.ScanPins.Pins |> AMap.toAVal) ||> AVal.map2 (fun h pins ->
+                match h |> Option.bind (fun id -> HashMap.tryFind id pins) with
+                | Some p -> p.ShortName
+                | None -> "")
         div {
             Class "cw-inspect"
-            div {
-                Class "cw-tools"
-                div {
-                    Class "rail-isolate"
-                    Attribute("title", "False-colour error map: paints the MOV mesh's signed distance vs the reference (the reference is never error-coloured). At the Pin level the map narrows to the pin's area.")
-                    compactToggle "Error map" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
-                }
-                div {
-                    Class "rail-isolate"
-                    Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes. Remembered per workflow level.")
-                    compactToggle "Isolate pins"
-                        ((model.Focus, model.AnchorGhostMode) ||> AVal.map2 LevelFlags.get)
-                        (fun () -> env.Emit [ToggleAnchorGhostMode])
-                }
-            }
             div {
                 Class "cw-readout"
                 span {
@@ -232,11 +266,31 @@ module GuiRail =
                         | None -> "")
                 }
             }
+            // The chart's peer row: the SPATIAL view toggle (the error map)
+            // beside the always-on distribution — complementary views, both
+            // live at once — plus the brush clear (the ex-probe slot).
+            div {
+                Class "cw-chart-tools"
+                div {
+                    Class "rail-isolate"
+                    Attribute("title", "False-colour error map in 3D: paints the MOV mesh's signed distance vs the reference on the same scale as this histogram (the reference is never error-coloured). At the Pin level the map narrows to the pin's area. The map and the histogram stay live together.")
+                    compactToggle "Error map (3D)" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
+                }
+                button {
+                    Class "rail-btn cw-clearbrush"
+                    model.BrushedSamples |> AVal.map (fun s ->
+                        if Set.isEmpty s then Some (Attribute("disabled", "disabled")) else None)
+                    Attribute("title", "Clear the histogram brush selection (and its 3D dots)")
+                    Dom.OnClick(fun _ -> env.Emit [SetBrushedSamples []])
+                    "⊗ Clear brush"
+                }
+            }
             div {
                 Class "cw-chart"
                 chartData |> AVal.map (fun j -> Some (Attribute("data-chart", j)))
                 brushedData |> AVal.map (fun bd -> Some (Attribute("data-brushed", bd)))
                 hoverData |> AVal.map (fun h -> Some (Attribute("data-hover", h)))
+                hiliteData |> AVal.map (fun h -> Some (Attribute("data-hilite", h)))
                 OnBoot chartJs
             }
             // The JS→Elm brush bridge (hidden; the chart dispatches input).
@@ -322,27 +376,13 @@ module GuiRail =
                             (samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
                             (histOf samples |> Array.map string |> String.concat ",")
                             hbj
-                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"series\":[%s]}"
-                        title (gf lo) (gf hi) bins (gf lod) series)
+                    let legF = if peeked then "as loaded" else "error vs parents"
+                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
+                        title (gf lo) (gf hi) bins (gf lod) legF series)
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
         let hoverData = model.HoverSample |> AVal.map (function Some g -> string g | None -> "")
         div {
             Class "cw-inspect"
-            div {
-                Class "cw-tools"
-                div {
-                    Class "rail-isolate"
-                    Attribute("title", "False-colour error map: paints every registered mesh with its own parent-relative error at once, on the shared scale. The reference root and unregistered meshes stay excluded outlines.")
-                    compactToggle "Error map" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
-                }
-                div {
-                    Class "rail-isolate"
-                    Attribute("title", "Isolate pins: show only the pin patches; unchecked shows the full textured meshes. Remembered per workflow level.")
-                    compactToggle "Isolate pins"
-                        ((model.Focus, model.AnchorGhostMode) ||> AVal.map2 LevelFlags.get)
-                        (fun () -> env.Emit [ToggleAnchorGhostMode])
-                }
-            }
             div {
                 Class "cw-readout"
                 span {
@@ -350,6 +390,16 @@ module GuiRail =
                     model.HoverReadout |> AVal.map (function
                         | Some (_, v) -> sprintf "sample %+.1f mm" (v * 1000.0)
                         | None -> "")
+                }
+            }
+            // The chart's peer row: the SPATIAL view toggle beside the
+            // always-on distribution (both live at once).
+            div {
+                Class "cw-chart-tools"
+                div {
+                    Class "rail-isolate"
+                    Attribute("title", "False-colour error map in 3D: paints every registered mesh with its own parent-relative error at once, on the same scale as this histogram. The reference root and unregistered meshes stay excluded outlines. The map and the histogram stay live together.")
+                    compactToggle "Error map (3D)" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
                 }
             }
             div {
@@ -428,21 +478,52 @@ module GuiRail =
                 let names = IndexList.toList (model.MeshNames.Content.GetValue t)
                 let order = model.MeshOrder.Content.GetValue t
                 let selPair = (model.Sel.GetValue t).Pair
+                // The matrix cell hover mirrors into the tree: a registered
+                // pair lights its edge, an unregistered one draws a dashed
+                // preview of the edge a solve would insert.
+                let hov = model.MatrixHoverPair.GetValue t
+                let hovEdge =
+                    hov |> Option.bind (fun (x, y) ->
+                        g.Edges |> Map.toList
+                        |> List.tryPick (fun (c, e) ->
+                            if PairCell.key c e.Parent = PairCell.key x y then Some c else None))
+                let hovPreview =
+                    match hov, hovEdge with
+                    | Some (x, y), None -> sprintf ",\"hovP\":[\"%s\",\"%s\"]" (esc x) (esc y)
+                    | _ -> ""
                 let nodes =
                     names |> List.map (fun n ->
                         let i = HashMap.tryFind n order |> Option.defaultValue 0
                         let d = match MatrixNav.hopDepth g n with Some d -> d | None -> -1
                         sprintf "{\"id\":\"%s\",\"num\":%d,\"c\":\"%s\",\"d\":%d,\"root\":%b}"
                             (esc n) (i + 1)
-                            (c4bToHex (meshColor i)) d (g.Root = Some n))
+                            (c4bToHex (meshColorRoot (g.Root = Some n) i)) d (g.Root = Some n))
                 let edges =
                     g.Edges |> Map.toList |> List.map (fun (c, e) ->
-                        sprintf "{\"c\":\"%s\",\"p\":\"%s\",\"sel\":%b}"
-                            (esc c) (esc e.Parent) (selPair = Some (PairCell.key c e.Parent)))
-                sprintf "{\"nodes\":[%s],\"edges\":[%s]}"
-                    (String.concat "," nodes) (String.concat "," edges))
+                        sprintf "{\"c\":\"%s\",\"p\":\"%s\",\"sel\":%b,\"hov\":%b}"
+                            (esc c) (esc e.Parent) (selPair = Some (PairCell.key c e.Parent))
+                            (hovEdge = Some c))
+                sprintf "{\"nodes\":[%s],\"edges\":[%s]%s}"
+                    (String.concat "," nodes) (String.concat "," edges) hovPreview)
+        // The finished ribbon: purely DERIVED from the spanned state, so
+        // disconnecting clears it by itself. The one entry point into the
+        // global instruments lives here (the old centre notice is gone).
+        let spannedA =
+            (model.MeshNames.Content, model.RegGraph) ||> AVal.map2 (fun ns g ->
+                Workflow.spanned (IndexList.toList ns) g)
         div {
             Class "tree-nav"
+            div {
+                Class "tree-ribbon"
+                showWhen spannedA
+                span { Class "tree-ribbon-text"; "✓ all meshes connected" }
+                button {
+                    Class "rail-btn tree-ribbon-btn"
+                    Attribute("title", "Open the global inspection instruments: the graph error map, the pooled histogram and the pose peek at the Matrix level")
+                    Dom.OnClick(fun _ -> env.Emit [LogReach("tree", "assess-global", ""); AssessGlobalQuality])
+                    "Assess global quality →"
+                }
+            }
             div {
                 Class "tree-canvas"
                 // Stale-hover guard: an SVG rebuild under the cursor swallows
@@ -482,7 +563,7 @@ module GuiRail =
                     "    var x1=px(e.p), y1=py(e.p)+NR, x2=px(e.c), y2=py(e.c)-NR;"
                     "    var ln=document.createElementNS(ns,'line');"
                     "    ln.setAttribute('x1',x1); ln.setAttribute('y1',y1); ln.setAttribute('x2',x2); ln.setAttribute('y2',y2);"
-                    "    ln.setAttribute('stroke', e.sel?'#1a56db':'#64748b'); ln.setAttribute('stroke-width', e.sel?3:1.5);"
+                    "    ln.setAttribute('stroke', (e.sel||e.hov)?'#1a56db':'#64748b'); ln.setAttribute('stroke-width', (e.sel||e.hov)?3:1.5);"
                     "    svg.appendChild(ln);"
                     "    var ht=document.createElementNS(ns,'line');"
                     "    ht.setAttribute('x1',x1); ht.setAttribute('y1',y1); ht.setAttribute('x2',x2); ht.setAttribute('y2',y2);"
@@ -492,9 +573,20 @@ module GuiRail =
                     "    ht.appendChild(tt);"
                     "    ht.addEventListener('click',function(){ pk('e',e.c); });"
                     "    ht.addEventListener('mouseenter',function(){ ln.setAttribute('stroke','#1a56db'); ln.setAttribute('stroke-width',3); pk('he',e.c); });"
-                    "    ht.addEventListener('mouseleave',function(){ ln.setAttribute('stroke', e.sel?'#1a56db':'#64748b'); ln.setAttribute('stroke-width', e.sel?3:1.5); pk('hx',''); });"
+                    "    ht.addEventListener('mouseleave',function(){ ln.setAttribute('stroke', (e.sel||e.hov)?'#1a56db':'#64748b'); ln.setAttribute('stroke-width', (e.sel||e.hov)?3:1.5); pk('hx',''); });"
                     "    svg.appendChild(ht);"
                     "  });"
+                    // Hovered UNREGISTERED pair: a dashed preview of the edge a
+                    // solve would insert (drawn under the nodes, inert).
+                    "  if(d.hovP && byId[d.hovP[0]] && byId[d.hovP[1]]){"
+                    "    var pv=document.createElementNS(ns,'line');"
+                    "    pv.setAttribute('x1',px(d.hovP[0])); pv.setAttribute('y1',py(d.hovP[0]));"
+                    "    pv.setAttribute('x2',px(d.hovP[1])); pv.setAttribute('y2',py(d.hovP[1]));"
+                    "    pv.setAttribute('stroke','#1a56db'); pv.setAttribute('stroke-width',2);"
+                    "    pv.setAttribute('stroke-dasharray','5 4'); pv.setAttribute('opacity','0.75');"
+                    "    pv.setAttribute('pointer-events','none');"
+                    "    svg.appendChild(pv);"
+                    "  }"
                     "  if(isl.length){"
                     "    var sep=document.createElementNS(ns,'line');"
                     "    sep.setAttribute('x1',4); sep.setAttribute('y1',islY-NR-12); sep.setAttribute('x2',W-4); sep.setAttribute('y2',islY-NR-12);"
@@ -588,18 +680,31 @@ module GuiRail =
                 model.MatrixHoverPair |> AVal.map (function
                     | Some (x, y) -> PairCell.key x y = PairCell.key a b
                     | None -> false)
+            // Tree-redundant: the tree already connects both meshes with no
+            // direct edge — registering here can only add a loop, so the cell
+            // recedes to a faint borderless hint and the tree-completing
+            // cells stand out.
+            let isRedundant =
+                (st, model.RegGraph) ||> AVal.map2 (fun s g ->
+                    match s with
+                    | PairPossible ->
+                        MatrixNav.hopDepth g a |> Option.isSome
+                        && MatrixNav.hopDepth g b |> Option.isSome
+                    | _ -> false)
             let title =
-                (st, model.MeshOrder.Content) ||> AVal.map2 (fun s order ->
+                (st, model.MeshOrder.Content, isRedundant) |||> AVal.map3 (fun s order red ->
                     let num m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
                     let pair = sprintf "%d × %d" (num a) (num b)
                     match s with
                     | PairImpossible -> sprintf "%s — insufficient overlap" pair
+                    | PairPossible when red -> sprintf "%s — already connected through the tree (a direct link would only add a loop)" pair
                     | PairPossible -> sprintf "%s — can be registered (not yet)" pair
                     | PairRegistered q -> sprintf "%s — registered, quality %.2f" pair q)
             div {
                 Class "pmx-cell"
                 classWhen "pmx-sel" isSel
                 classWhen "pmx-cellhover" isHov
+                classWhen "pmx-redundant" isRedundant
                 st |> AVal.map (function
                     | PairImpossible -> Some (Class "pmx-imp")
                     | PairPossible -> Some (Class "pmx-pos")
@@ -623,8 +728,9 @@ module GuiRail =
             }
         let numSwatch (name : string) =
             let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+            let rootVal = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
             AList.ofList [
-                span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
+                span { Class "pmx-sw"; (idxVal, rootVal) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (rgb (meshColorRoot r i))])) }
                 span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
             ]
         // Gold marks the reference root in the matrix heads — the tree reads
@@ -739,10 +845,11 @@ module GuiRail =
         let cellWorkspace (a : string) (b : string) =
             let meshChip (name : string) =
                 let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                let rootVal = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
                 div {
                     Class "cw-chip"
                     idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
-                    span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
+                    span { Class "pmx-sw"; (idxVal, rootVal) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (rgb (meshColorRoot r i))])) }
                     span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                 }
             let pairState =
@@ -761,23 +868,33 @@ module GuiRail =
                     |> List.sortBy (fun p -> p.CreatedAt, p.ShortName))
             let pinCount = pairPins |> AVal.map List.length
 
-            // ── Committed-pin rows: select (single click), descend to the
-            // Pin level (double click), delete. Radius editing lives in the
-            // Pin panel; point re-picks at the Pin level via the armed pick.
-            // Hovering a row preview-frames the tile cameras onto the pin.
+            // ── Committed-pin rows: the row BODY is inert — hovering
+            // highlights the pin in 3D (the loud highlight + the tile
+            // preview-framing ride TilePinHover) and its histogram portion;
+            // the three buttons are the only actions: fly-to, open at the Pin
+            // level, delete. Radius editing lives in the Pin panel; point
+            // re-picks at the Pin level via the armed pick.
             let pinRow (p : ScanPin) =
                 let isSel = model.Sel |> AVal.map (fun s -> s.Pin = Some p.Id)
                 div {
                     Class "cw-pin-row"
                     classWhen "cw-pin-sel" isSel
-                    Attribute("title", "Click: choose this pin (enables the Pin stop; the tiles frame it) · double-click: open it at the Pin level")
-                    // Any row click chooses the pin (enables the Pin stop);
-                    // the buttons inside keep their own actions on top.
-                    Dom.OnClick(fun _ -> env.Emit [SelectPin p.Id])
-                    Dom.OnDoubleClick(fun _ -> env.Emit [SelectPin p.Id; SetFocus FocusPin])
                     Dom.OnMouseEnter(fun _ -> env.Emit [SetTilePinHover (Some p.Id)])
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetTilePinHover None])
                     span { Class "cw-pin-name"; p.ShortName }
+                    button {
+                        Class "mb cw-pin-btn"
+                        Attribute("title", "Fly the camera to this pin")
+                        Dom.OnClick(fun _ -> env.Emit [ZoomToPin p.Id])
+                        "⌖"
+                    }
+                    button {
+                        Class "mb cw-pin-btn"
+                        Attribute("title", "Open this pin at the Pin level")
+                        Dom.OnClick(fun _ ->
+                            env.Emit [LogReach("pair", "open-pin", p.ShortName); SelectPin p.Id; SetFocus FocusPin])
+                        "▸"
+                    }
                     button {
                         Class "mb cw-del"
                         Attribute("title", "Delete pin")
@@ -797,6 +914,18 @@ module GuiRail =
                     rows
                 }
 
+            // The panel READS as its sequence, top to bottom: [+ New pin] →
+            // the pin list → the "N remaining" workflow line → the linked
+            // Solve→Finish two-step (the lit step is the next one to take).
+            let registered =
+                model.RegGraph |> AVal.map (fun g -> (RegGraph.pairEdge a b g).IsSome)
+            let remainingLine =
+                (pinCount, registered) ||> AVal.map2 (fun n r ->
+                    if n < 3 then
+                        sprintf "%d more pin%s needed to solve" (3 - n) (if 3 - n = 1 then "" else "s")
+                    elif r then sprintf "%d pins placed — solved" n
+                    else sprintf "%d pins placed — ready to solve" n)
+            let solveLit  = (pinCount, registered) ||> AVal.map2 (fun n r -> n >= 3 && not r)
             div {
                 Class "cw"
                 div {
@@ -806,41 +935,35 @@ module GuiRail =
                     meshChip b
                 }
                 div { Class "cw-state"; pairState }
-                // The per-pair toolkit — every tool operates on THIS pair only
-                // (scoping flows through the nav visibility rule).
+                button {
+                    Class "rail-btn cw-newpin"
+                    Attribute("title", "Place a pin on this pair: a guided three-step placement — the centre, then one correspondence point per mesh; each landed click arms the next step and the pin exists once all three are placed. Only the highlighted overlap region is a valid pin location")
+                    // Hover lights the pair's overlap-region gate (only the
+                    // overlap is a valid pin location); the click's focus
+                    // jump wipes the hover, and the pre-armed centre pick
+                    // carries the gate seamlessly.
+                    Dom.OnMouseEnter(fun _ -> env.Emit [SetNewPinHover true])
+                    Dom.OnMouseLeave(fun _ -> env.Emit [SetNewPinHover false])
+                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (BeginPinTransaction pairKey)])
+                    "＋ New pin"
+                }
+                pinList
+                div { Class "cw-remaining"; remainingLine }
                 div {
-                    Class "cw-tools"
-                    button {
-                        Class "rail-btn rail-pin-add"
-                        Attribute("title", "Place a pin on this pair: a guided three-step placement — the centre, then one correspondence point per mesh; each landed click arms the next step and the pin exists once all three are placed. Only the highlighted overlap region is a valid pin location")
-                        // Hover lights the pair's overlap-region gate (only the
-                        // overlap is a valid pin location); the click's focus
-                        // jump wipes the hover, and the pre-armed centre pick
-                        // carries the gate seamlessly.
-                        Dom.OnMouseEnter(fun _ -> env.Emit [SetNewPinHover true])
-                        Dom.OnMouseLeave(fun _ -> env.Emit [SetNewPinHover false])
-                        Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (BeginPinTransaction pairKey)])
-                        "○ New pin"
-                    }
+                    Class "cw-steps"
                     button {
                         Class "rail-btn cw-solve"
+                        classWhen "cw-step-lit" solveLit
                         pinCount |> AVal.map (fun n -> if n >= 3 then None else Some (Attribute("disabled", "disabled")))
                         Attribute("title", "Solve this pair's edge from its pins (needs ≥3)")
                         Dom.OnClick(fun _ ->
                             if AVal.force pinCount >= 3 then env.Emit [SolvePair(a, b)])
-                        pinCount |> AVal.map (fun n -> sprintf "⌖ Solve (%d/3)" (min n 3))
+                        "⌖ Solve"
                     }
-                }
-                pinList
-                // The workflow exit: back to the matrix once this pair is
-                // solved (the committed edge is the "Solve was clicked" state —
-                // a pin edit drops it and re-disables the button).
-                let registered =
-                    model.RegGraph |> AVal.map (fun g -> (RegGraph.pairEdge a b g).IsSome)
-                div {
-                    Class "cw-finish"
+                    span { Class "cw-step-arrow"; "→" }
                     button {
-                        Class "cw-finish-btn"
+                        Class "rail-btn cw-finish-btn"
+                        classWhen "cw-step-lit" registered
                         registered |> AVal.map (fun r ->
                             if r then None else Some (Attribute("disabled", "disabled")))
                         Attribute("title", "Done with this pair — back to the matrix (enabled once the pair has been solved)")
@@ -863,8 +986,9 @@ module GuiRail =
                     s.Pin |> Option.bind (fun id -> HashMap.tryFind id pins))
             let chip (name : string) =
                 let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                let rootVal = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
                 AList.ofList [
-                    span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (rgb (meshColor i))])) }
+                    span { Class "pmx-sw"; (idxVal, rootVal) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (rgb (meshColorRoot r i))])) }
                     span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                 ]
             // Arm buttons: the ONE way picking engages. While armed the left

@@ -38,29 +38,6 @@ module GuiOverlays =
             model.Toast |> AVal.map (Option.defaultValue "")
         }
 
-    // The spanned completion notice: fixed top-centre, tied to NEITHER
-    // navigator (representation-independent), opened by the reducer on the
-    // topological completion transition. Purely an entry point into the
-    // existing global instruments — it carries no quality number.
-    let spannedBanner (env : Env<Message>) (model : AdaptiveModel) =
-        div {
-            Class "spanned-banner"
-            Primitives.showWhen model.SpannedNoticeOpen
-            span { Class "spb-msg"; "All meshes registered — you can now assess global quality." }
-            button {
-                Class "rail-btn spb-assess"
-                Attribute("title", "Open the global inspection instruments: the graph error map, the pooled histogram and the pose peek at the Matrix level")
-                Dom.OnClick(fun _ -> env.Emit [LogReach("event", "assess-global", ""); AssessGlobalQuality])
-                "Assess global quality →"
-            }
-            button {
-                Class "mb spb-close"
-                Attribute("title", "Put the notice away")
-                Dom.OnClick(fun _ -> env.Emit [LogReach("event", "dismiss-notice", ""); DismissSpannedNotice])
-                "✕"
-            }
-        }
-
     // The guided-placement alert: while the pin transaction has a pick armed,
     // one prominent top-centre banner names the current step (the reducer
     // chains centre → point A → point B by re-arming after each landing).
@@ -191,6 +168,51 @@ module GuiOverlays =
                         (fun (v : float) ->
                             let tt = clamp 0.0 1.0 (v / m)
                             V3d(0.13, 0.40, 0.85) * (1.0 - tt) + V3d(0.86, 0.20, 0.15) * tt)
+                // While the difference map paints, pointing at a mesh (tile/
+                // tree hover or the isolate lock) CROPS the displayed range to
+                // that mesh's own error extent (5th–95th pct of its resident
+                // per-vertex buffer). The colour MAPPING stays the shared
+                // scale — the bar shows the segment of the ramp the mesh
+                // actually uses, labelled with its extent; un-pointing
+                // restores the full scope range.
+                let title, vLo, vHi =
+                    if not (diffOn.GetValue t) then title, vLo, vHi
+                    else
+                        let target =
+                            match model.TileIsolateHover.GetValue t with
+                            | Some m -> Some m
+                            | None -> model.TileIsolate.GetValue t
+                        let distsOf (m : string) =
+                            match model.Focus.GetValue t with
+                            | FocusMatrix ->
+                                let dm =
+                                    match MeshView.graphSideAt model t with
+                                    | EdgeBefore -> model.GraphDistBefore.GetValue t
+                                    | EdgeAfter -> model.GraphDist.GetValue t
+                                Map.tryFind m dm
+                            | FocusPair | FocusPin ->
+                                match (model.Sel.GetValue t).Pair with
+                                | Some (a, b) ->
+                                    let _, movM = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
+                                    if m = movM then model.CellDist.GetValue t else None
+                                | None -> None
+                        match target |> Option.bind (fun m -> distsOf m |> Option.map (fun d -> m, d)) with
+                        | Some (m, arr) ->
+                            let valid =
+                                arr |> Array.choose (fun v ->
+                                    if abs v < 1e20f then Some (float v) else None)
+                            if valid.Length < 8 then title, vLo, vHi
+                            else
+                                Array.sortInPlace valid
+                                let q p = valid.[min (valid.Length - 1) (int (p * float valid.Length))]
+                                let cl = max vLo (q 0.05)
+                                let ch = min vHi (q 0.95)
+                                if ch - cl < 1e-6 then title, vLo, vHi
+                                else
+                                    let order = model.MeshOrder.Content.GetValue t
+                                    let num = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
+                                    sprintf "%s · mesh %d" title num, cl, ch
+                        | None -> title, vLo, vHi
                 let span = vHi - vLo
                 let hexAt (v : float) =
                     let c = colorAt v
@@ -288,22 +310,72 @@ module GuiOverlays =
             ]
         }
 
-    // The FORCED loop-resolution modal (P9): blocking, minimal, self-
-    // announcing — the whole interaction for a transient loop (no 3D
-    // choreography, no standing overlay). It states the residual, lists every
-    // cycle edge with its single-scalar quality (weakest pre-selected), and
-    // the user removes exactly ONE edge; Confirm commits, Cancel/Esc discards
-    // the redundant edge and the prior tree stands.
+    // The FORCED loop-resolution modal (P9): blocking, self-announcing — the
+    // whole interaction for a transient loop. It NAMES the two meshes the
+    // redundant edge connects (number + swatch), defines the residual and the
+    // per-edge quality numbers, embeds the registration tree, and previews
+    // every choice on it (hover-else-selection: the to-be-removed edge reads
+    // red dashed, the new edge green dashed while kept). The user removes
+    // exactly ONE edge; Confirm commits, Cancel/Esc discards the redundant
+    // edge and the prior tree stands.
     let loopModal (env : Env<Message>) (model : AdaptiveModel) =
         let pending = model.LoopPending
+        let esc (s : string) = s.Replace("\\", "\\\\").Replace("\"", "\\\"")
         let residualLine =
             pending |> AVal.map (function
                 | Some lp ->
                     let trans =
                         if lp.ResidualTransM < 1.0 then sprintf "%.1f cm" (lp.ResidualTransM * 100.0)
                         else sprintf "%.2f m" lp.ResidualTransM
-                    sprintf "These paths disagree by %.1f° and %s." lp.ResidualRotDeg trans
+                    sprintf "Loop residual: the two paths disagree by %.1f° and %s." lp.ResidualRotDeg trans
                 | None -> "")
+        // The specific meshes the redundant edge connects — number + swatch.
+        let meshChips =
+            (pending, model.MeshOrder.Content, model.RegGraph) |||> AVal.map3 (fun lp order g ->
+                match lp with
+                | None -> IndexList.empty
+                | Some lp ->
+                    let chip (m : string) =
+                        let i = HashMap.tryFind m order |> Option.defaultValue 0
+                        let col = Primitives.c4bToRgbCss (Primitives.meshColorRoot (g.Root = Some m) i)
+                        div {
+                            Class "cw-chip"
+                            span { Class "pmx-sw"; Style [Css.Background col] }
+                            span { Class "pmx-num"; string (i + 1) }
+                        }
+                    IndexList.ofList [
+                        chip lp.Mov
+                        span { Class "cw-link"; "↔" }
+                        chip lp.Ref
+                    ])
+            |> AList.ofAVal
+        // The embedded tree + per-choice preview: hover-else-selection marks
+        // the edge a confirm would REMOVE; the new edge renders dashed —
+        // green while kept, red when it is the one to discard.
+        let treeData =
+            AVal.custom (fun t ->
+                match model.LoopPending.GetValue t with
+                | None -> "{}"
+                | Some lp ->
+                    let g = model.RegGraph.GetValue t
+                    let names = IndexList.toList (model.MeshNames.Content.GetValue t)
+                    let order = model.MeshOrder.Content.GetValue t
+                    let choice = lp.Hover |> Option.defaultValue lp.Selected
+                    let nodes =
+                        names |> List.map (fun n ->
+                            let i = HashMap.tryFind n order |> Option.defaultValue 0
+                            let d = match MatrixNav.hopDepth g n with Some d -> d | None -> -1
+                            sprintf "{\"id\":\"%s\",\"num\":%d,\"c\":\"%s\",\"d\":%d,\"root\":%b}"
+                                (esc n) (i + 1)
+                                (Primitives.c4bToHex (Primitives.meshColorRoot (g.Root = Some n) i))
+                                d (g.Root = Some n))
+                    let edges =
+                        g.Edges |> Map.toList |> List.map (fun (c, e) ->
+                            sprintf "{\"c\":\"%s\",\"p\":\"%s\",\"drop\":%b}"
+                                (esc c) (esc e.Parent) (choice = Some c))
+                    sprintf "{\"nodes\":[%s],\"edges\":[%s],\"nMov\":\"%s\",\"nRef\":\"%s\",\"dropNew\":%b}"
+                        (String.concat "," nodes) (String.concat "," edges)
+                        (esc lp.Mov) (esc lp.Ref) choice.IsNone)
         let rows =
             (pending, model.MeshOrder.Content) ||> AVal.map2 (fun lp order ->
                 match lp with
@@ -318,8 +390,16 @@ module GuiOverlays =
                                     | Some p -> p.Selected = sel
                                     | None -> false))
                             Dom.OnClick(fun _ -> env.Emit [SelectLoopEdge sel])
+                            // Hovering a choice previews its effect on the
+                            // embedded tree above.
+                            Dom.OnMouseEnter(fun _ -> env.Emit [HoverLoopChoice (Some sel)])
+                            Dom.OnMouseLeave(fun _ -> env.Emit [HoverLoopChoice None])
                             span { Class "lm-edge"; label }
-                            span { Class "lm-q"; sprintf "quality %.2f" q }
+                            span {
+                                Class "lm-q"
+                                Attribute("title", "Solve quality of this edge = 1 / (1 + rms / 5 cm) over its pin residuals: 1.00 is a perfect fit, 0.50 ≈ 5 cm rms. Removing the lowest-quality edge keeps the best-fitting paths.")
+                                sprintf "quality %.2f" q
+                            }
                         }
                     IndexList.ofList [
                         yield row (sprintf "new edge %d ↔ %d" (numOf lp.Mov) (numOf lp.Ref)) lp.Quality None
@@ -332,9 +412,77 @@ module GuiOverlays =
             Primitives.showWhen (pending |> AVal.map Option.isSome)
             div {
                 Class "loop-modal"
-                div { Class "lm-title"; "Two paths now connect these meshes" }
-                div { Class "lm-residual"; residualLine }
-                div { Class "lm-hint"; "Remove one edge on the loop to keep a single registration path (the weakest link is pre-selected):" }
+                div { Class "lm-title"; "Two paths now connect" }
+                div { Class "lm-meshes"; meshChips }
+                div {
+                    Class "lm-residual"
+                    Attribute("title", "How far the loop is from closing: going around it one way vs the other differs by this rotation and by this displacement at the moving mesh's data.")
+                    residualLine
+                }
+                div {
+                    Class "loop-tree"
+                    treeData |> AVal.map (fun j -> Some (Attribute("data-looptree", j)))
+                    Primitives.observedRender "data-looptree" "{}" [
+                        "  if(!d.nodes || !d.nodes.length){ return; }"
+                        "  var NR=10, rowH=40, colW=34, padX=12, padY=12;"
+                        "  var byId={}; d.nodes.forEach(function(n){ byId[n.id]=n; });"
+                        "  var kids={}; d.edges.forEach(function(e){ (kids[e.p]=kids[e.p]||[]).push(e.c); });"
+                        "  Object.keys(kids).forEach(function(k){ kids[k].sort(function(a,b){ return byId[a].num-byId[b].num; }); });"
+                        "  var X={}, cnt=0;"
+                        "  var root=null; d.nodes.forEach(function(n){ if(n.root) root=n; });"
+                        "  function lay(id){ var ks=kids[id]||[];"
+                        "    if(!ks.length){ X[id]=cnt++; return; }"
+                        "    ks.forEach(lay); X[id]=(X[ks[0]]+X[ks[ks.length-1]])/2; }"
+                        "  if(root) lay(root.id);"
+                        "  var isl=d.nodes.filter(function(n){ return n.d<0; });"
+                        "  isl.forEach(function(n,i){ n._ix=i; });"
+                        "  var maxD=0; d.nodes.forEach(function(n){ if(n.d>maxD) maxD=n.d; });"
+                        "  var cols=Math.max(cnt, isl.length, 1);"
+                        "  var W=padX*2+NR*2+(cols-1)*colW;"
+                        "  var islY=padY+NR+(maxD+1)*rowH+14;"
+                        "  var H=(isl.length? islY : padY+NR+maxD*rowH)+NR+padY;"
+                        "  var svg=document.createElementNS(ns,'svg');"
+                        "  svg.setAttribute('width',W); svg.setAttribute('height',H);"
+                        "  svg.setAttribute('viewBox','0 0 '+W+' '+H); svg.style.display='block'; svg.style.margin='0 auto';"
+                        "  function px(id){ var n=byId[id]; return padX+NR+(n.d<0 ? n._ix : (X[id]||0))*colW; }"
+                        "  function py(id){ var n=byId[id]; return n.d<0 ? islY : padY+NR+n.d*rowH; }"
+                        "  d.edges.forEach(function(e){"
+                        "    var ln=document.createElementNS(ns,'line');"
+                        "    ln.setAttribute('x1',px(e.p)); ln.setAttribute('y1',py(e.p)+NR); ln.setAttribute('x2',px(e.c)); ln.setAttribute('y2',py(e.c)-NR);"
+                        "    if(e.drop){ ln.setAttribute('stroke','#dc2626'); ln.setAttribute('stroke-width',3); ln.setAttribute('stroke-dasharray','4 3'); }"
+                        "    else { ln.setAttribute('stroke','#64748b'); ln.setAttribute('stroke-width',1.5); }"
+                        "    svg.appendChild(ln);"
+                        "  });"
+                        "  if(d.nMov && byId[d.nMov] && byId[d.nRef]){"
+                        "    var nv=document.createElementNS(ns,'line');"
+                        "    nv.setAttribute('x1',px(d.nMov)); nv.setAttribute('y1',py(d.nMov)); nv.setAttribute('x2',px(d.nRef)); nv.setAttribute('y2',py(d.nRef));"
+                        "    nv.setAttribute('stroke', d.dropNew?'#dc2626':'#15803d'); nv.setAttribute('stroke-width',2.5); nv.setAttribute('stroke-dasharray','5 4');"
+                        "    nv.setAttribute('opacity','0.9');"
+                        "    svg.appendChild(nv);"
+                        "  }"
+                        "  d.nodes.forEach(function(n){"
+                        "    var cx=px(n.id), cy=py(n.id);"
+                        "    if(n.root){ var gr=document.createElementNS(ns,'circle');"
+                        "      gr.setAttribute('cx',cx); gr.setAttribute('cy',cy); gr.setAttribute('r',NR+3);"
+                        "      gr.setAttribute('fill','none'); gr.style.stroke='var(--ref-gold)'; gr.setAttribute('stroke-width',2);"
+                        "      svg.appendChild(gr); }"
+                        "    var c=document.createElementNS(ns,'circle');"
+                        "    c.setAttribute('cx',cx); c.setAttribute('cy',cy); c.setAttribute('r',NR); c.setAttribute('fill','#ffffff');"
+                        "    if(n.d<0){ c.setAttribute('stroke','#94a3b8'); c.setAttribute('stroke-dasharray','3 2.5'); c.setAttribute('stroke-width',1.5); }"
+                        "    else { c.setAttribute('stroke',n.c); c.setAttribute('stroke-width',2.5); }"
+                        "    svg.appendChild(c);"
+                        "    var tx=document.createElementNS(ns,'text');"
+                        "    tx.setAttribute('x',cx); tx.setAttribute('y',cy+3.5); tx.setAttribute('text-anchor','middle');"
+                        "    tx.setAttribute('font-size','10'); tx.setAttribute('font-weight','700');"
+                        "    tx.setAttribute('fill','#0f172a'); tx.setAttribute('font-family','Inter,sans-serif');"
+                        "    tx.textContent=n.num;"
+                        "    svg.appendChild(tx);"
+                        "  });"
+                        "  el.appendChild(svg);"
+                    ]
+                }
+                div { Class "lm-treehint"; "green dashed = the new connection · red dashed = removed by the highlighted choice" }
+                div { Class "lm-hint"; "Remove one edge on the loop to keep a single registration path (the weakest link is pre-selected; hover a choice to preview it above):" }
                 div { Class "lm-rows"; rows }
                 div {
                     Class "lm-buttons"
@@ -380,6 +528,43 @@ module GuiOverlays =
                         Attribute("title", "Delete the incomplete pin and leave")
                         Dom.OnClick(fun _ -> env.Emit [ConfirmPinExit])
                         "Delete & leave"
+                    }
+                }
+            }
+        }
+
+    // The already-connected pre-warning: front-half of the loop flow — opening
+    // a cell whose meshes the tree already connects (indirectly) warns BEFORE
+    // any placement; proceeding still leads to the loop-resolution modal on
+    // solve. Esc cancels.
+    let pairConnectModal (env : Env<Message>) (model : AdaptiveModel) =
+        let bodyLine =
+            (model.PairConnectWarn, model.MeshOrder.Content) ||> AVal.map2 (fun w order ->
+                match w with
+                | Some (a, b) ->
+                    let numOf m = (HashMap.tryFind m order |> Option.defaultValue 0) + 1
+                    sprintf "Mesh %d and mesh %d are already registered to each other through the tree. Registering them directly adds a second, redundant connection — a loop you will then have to resolve." (numOf a) (numOf b)
+                | None -> "")
+        div {
+            Class "modal-scrim"
+            Primitives.showWhen (model.PairConnectWarn |> AVal.map Option.isSome)
+            div {
+                Class "loop-modal"
+                div { Class "lm-title"; "These meshes are already connected" }
+                div { Class "lm-hint"; bodyLine }
+                div {
+                    Class "lm-buttons"
+                    button {
+                        Class "rail-btn lm-cancel"
+                        Attribute("title", "Stay at the matrix (Esc)")
+                        Dom.OnClick(fun _ -> env.Emit [CancelPairConnectWarn])
+                        "Cancel"
+                    }
+                    button {
+                        Class "rail-btn lm-confirm"
+                        Attribute("title", "Open the pair anyway — a solve here will raise the loop-resolution dialog")
+                        Dom.OnClick(fun _ -> env.Emit [ConfirmPairConnectWarn])
+                        "Proceed anyway"
                     }
                 }
             }

@@ -116,4 +116,5 @@ let webApp : HttpHandler =
         route  "/api/query/pair-error-at"                       >=> pairErrorAtHandler
         route  "/api/query/pair-overlap"                        >=> pairOverlapHandler
         route  "/api/query/region-distance"                     >=> regionDistanceHandler
+        route  "/api/query/roi-fit"                             >=> roiFitHandler
     ]

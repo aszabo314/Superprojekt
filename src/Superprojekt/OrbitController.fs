@@ -135,7 +135,10 @@ module OrbitController =
             | 1 ->
                 match MapExt.tryFind id model.dragStarts with
                 | Some(start, button) ->
-                    let left   = button = model.rotateButton
+                    // RIGHT is the always-available camera hand (left is the
+                    // pick while armed): right-drag orbits, Shift+right pans
+                    // (remapped to the pan button at the event edge).
+                    let left   = button = model.rotateButton || button = Button.Right
                     let middle = button = model.panButton
                     if isTouch || left then
                         let delta  = p - start
@@ -285,11 +288,14 @@ module OrbitController =
         att {
             Dom.OnPointerDown((fun e ->
                 if e.PointerType = PointerType.Mouse then
-                    // Shift + left drag = XY pan, for when no middle button is
-                    // available: remap to the pan (middle) button so the whole drag
-                    // path treats it as a pan. (Shift, not Ctrl — Ctrl+click is the
-                    // secondary click on macOS.)
-                    let btn = if e.Button = Button.Left && e.Shift then Button.Middle else e.Button
+                    // Shift + left/right drag = XY pan: remap to the pan
+                    // (middle) button so the whole drag path treats it as a
+                    // pan. (Shift, not Ctrl — Ctrl+click is the secondary
+                    // click on macOS.) Right is the always-available camera
+                    // hand — it orbits bare and pans with Shift.
+                    let btn =
+                        if (e.Button = Button.Left || e.Button = Button.Right) && e.Shift
+                        then Button.Middle else e.Button
                     env.Emit [PointerDown(e.PointerId, btn, false, e.OffsetPosition)]
             ), pointerCapture = true)
             Dom.OnPointerUp((fun e ->

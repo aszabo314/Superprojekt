@@ -313,6 +313,51 @@ let pairOverlapHandler : HttpHandler =
         |}
     })
 
+[<CLIMutable>]
+type RoiFitRequest = {
+    OtherName      : string
+    OtherTransform : float[]
+    Centre         : float[]
+    Radius         : float
+    MinVerts       : int
+    MaxFactor      : float
+}
+
+// Adaptive ROI fit: the smallest radius ≥ Radius whose sphere at Centre
+// captures ≥ MinVerts vertices of the OTHER pair mesh, capped at
+// Radius×MaxFactor — a correspondence ROI needs both surfaces present.
+// ok=false when even the cap captures fewer than MinVerts.
+let roiFitHandler : HttpHandler =
+    tryQuery "roi-fit" (fun ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        let! req = ctx.BindJsonAsync<RoiFitRequest>()
+        let lm  = loadMesh req.OtherName 0
+        let inv = (mat16 req.OtherTransform).Inverse
+        let local = inv.TransformPos (toV3d req.Centre) - lm.parsed.centroid
+        let r0 = if req.Radius <= 0.0 then 1.0 else req.Radius
+        let minVerts = if req.MinVerts <= 0 then 20 else req.MinVerts
+        let cap = r0 * (if req.MaxFactor <= 1.0 then 4.0 else req.MaxFactor)
+        let cap2 = cap * cap
+        let pos = lm.parsed.positions
+        // One pass collecting the squared distances within the cap: the
+        // MinVerts-th smallest IS the minimal radius.
+        let within = System.Collections.Generic.List<float>()
+        for i in 0 .. pos.Length - 1 do
+            let d2 = (V3d pos.[i] - local).LengthSquared
+            if d2 <= cap2 then within.Add d2
+        if within.Count < minVerts then
+            log.LogInformation("roi-fit {Name}: refused ({Count} < {Min} verts within cap {Cap:F2})",
+                req.OtherName, within.Count, minVerts, cap)
+            return json {| ok = false; radius = cap; count = within.Count |}
+        else
+            within.Sort()
+            let rN = sqrt within.[minVerts - 1] * 1.001
+            let r = max r0 (min cap rN)
+            log.LogInformation("roi-fit {Name}: r {R0:F2} → {R:F2} ({Count} verts within cap)",
+                req.OtherName, r0, r, within.Count)
+            return json {| ok = true; radius = r; count = within.Count |}
+    })
+
 // Points arrive in world space at current poses; the returned transform is a
 // delta mapping them onto the reference.
 let lsqPairsHandler : HttpHandler =

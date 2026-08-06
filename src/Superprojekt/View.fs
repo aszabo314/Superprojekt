@@ -64,6 +64,9 @@ module View =
         let mutable sampleHoverMs = 0.0
         // Armed-pick preview throttle (GPU-pick hover → SetArmPreview).
         let mutable armPreviewMs = 0.0
+        // Right-double-click detector (right = the always-available camera
+        // hand; its double-click repicks the orbit centre even while armed).
+        let mutable lastRightDown : (float * V2d) option = None
 
         let fullscreenActive = spaceHeld :> aval<bool>
 
@@ -252,6 +255,31 @@ module View =
                     false
                 )
 
+                // Right DOUBLE-click = the same orbit-centre repick, on the
+                // always-available camera hand (works while a pick is armed —
+                // left picks, right moves; browsers fire no dblclick for the
+                // right button, hence the manual two-click detector).
+                Sg.OnPointerDown(fun e ->
+                    if e.Original.Button = Button.Right then
+                        let now = nowMs ()
+                        let pos = V2d(e.Original.OffsetX, e.Original.OffsetY)
+                        let isDouble =
+                            match lastRightDown with
+                            | Some (t0, p0) -> now - t0 < 400.0 && Vec.length (pos - p0) < 8.0
+                            | None -> false
+                        lastRightDown <- if isDouble then None else Some (now, pos)
+                        if isDouble then
+                            let frontmost =
+                                if e.Location.Depth < 0.9999 then Some e.WorldPosition else None
+                            async {
+                                let! resolved = resolvePick frontmost
+                                match resolved with
+                                | Some renderPos ->
+                                    env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, renderPos))]
+                                | None -> ()
+                            } |> Async.Start
+                )
+
                 // Exact pairwise error at a metric-world point (the P0
                 // exact-point endpoint), oriented MOV-relative-to-REF like every
                 // stored sample; k runs on the landed value. The pair comes from
@@ -430,8 +458,9 @@ module View =
                 | "Escape" ->
                     // ONE Esc: the innermost in-progress action cancels first —
                     // the pin exit-guard popup (cancel = stay) > the blocking
-                    // loop modal (cancel = discard the redundant edge) > a
-                    // CENTRELESS placement aborts straight to Pair (nothing
+                    // loop modal (cancel = discard the redundant edge) > the
+                    // already-connected pre-warning (cancel = stay at the
+                    // matrix) > a CENTRELESS placement aborts straight to Pair (nothing
                     // worth guarding yet — skips the disarm step on purpose) >
                     // armed-pick disarm > ascend one focus level. Ascending out
                     // of Pin with a centred draft raises the exit-guard (the
@@ -441,6 +470,8 @@ module View =
                         env.Emit [CancelPinExit]
                     elif (AVal.force model.LoopPending).IsSome then
                         env.Emit [CancelLoopResolution]
+                    elif (AVal.force model.PairConnectWarn).IsSome then
+                        env.Emit [CancelPairConnectWarn]
                     else
                         let centrelessDraft =
                             AVal.force model.Focus = FocusPin &&
@@ -519,13 +550,13 @@ module View =
                 }
             }
             GuiOverlays.toast model
-            GuiOverlays.spannedBanner env model
             GuiOverlays.placementBanner model
             GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
             GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model
             GuiOverlays.loopModal env model
             GuiOverlays.pinExitModal env model
+            GuiOverlays.pairConnectModal env model
         }
 
 module App =

@@ -10,6 +10,276 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## F1–F8 test-session fix package (started 2026-08-05)
+
+Eight specs from the test session: ScanPin_v14_F1_palette …
+ScanPin_v14_F8_conflict_dialog. Implementing in order, build green after
+each task; entries below record each spec's changes as they land.
+
+### F8 — conflict (loop-resolution) dialog rework (2026-08-05)
+
+- **T1 specifics instead of vagueness**: the modal title is now "Two
+  paths now connect" + a `.lm-meshes` chip row naming the redundant
+  edge's two meshes (number + root-aware F1 swatch). The residual line
+  reads "Loop residual: the two paths disagree by X° and Y" and carries
+  a tooltip defining it (going around the loop one way vs the other,
+  displacement read at the moving mesh's data); every row's
+  "quality N.NN" carries a tooltip defining the number (1/(1+rms/5 cm)
+  over the edge's pin residuals, remove-the-lowest guidance).
+- **T2 embedded interactive tree**: `LoopPending` gained a transient
+  `Hover : string option option` (same encoding as `Selected`; NEW
+  message `HoverLoopChoice`, row mouseenter/leave). The modal embeds the
+  registration tree (`data-looptree` + observedRender — the treePanel
+  layout JS reduced to a static preview): hover-else-selection drives
+  the per-choice preview — the edge a confirm would REMOVE renders red
+  dashed, the NEW edge renders dashed green while kept and red when it
+  is the one discarded; a one-line hint explains the encoding. Confirm
+  applies exactly the highlighted choice (unchanged reducer path).
+- Build green; Supertests 97/97 (LoopPending is in the shared
+  RegistrationModel — no test constructs it).
+
+### F1–F8 package status
+
+All eight specs implemented, every task DONE (checklists below); client
++ server builds green throughout, Supertests 97/97, integration suite
+32/32 (incl. 3 new roi-fit checks). OWED: the in-browser verify pass —
+dotnet build cannot validate FShade→ESSL3, and this package changed two
+shaders (the OutlineEdge/OutlineCoverageEdge ink under-strokes) plus
+substantial GUI (palette/gold sweep, panel + histogram reworks, tree
+ribbon/preview SVGs, RMB camera, both new modals' flows). Checklists:
+
+- F1: T1 ✔ (Primitives.fs meshPalette) · T2 ✔ (refGold/meshColorRoot +
+  every identity site + CSS tokens) · T3 ✔ (both edge composites' ink
+  under-stroke)
+- F2: T1 ✔ (roi-fit endpoint + armedPick validation) · T2 ✔
+  (PairConnectWarn modal)
+- F3: T1 ✔ (pinScopeDim, 3D + tiles) · T2 ✔ (highlightNode ring +
+  label box) · T3 ✔ (orbitCue = camera-moving)
+- F4: T1 ✔ (sequence panel + stepper) · T2 ✔ (bordered rows,
+  fly/open/delete, inert body) · T3 ✔ (PendingResolves cascade)
+- F5: T1 ✔ (legend + dashed outline) · T2 ✔ (peek in pair/pin chart) ·
+  T3 ✔ (uniform grey + data-hilite) · T4 ✔ (bin-quantized + single-bin)
+  · T5 ✔ (clear-brush in the ex-probe slot)
+- F6: T1 ✔ (hover edge + dashed preview) · T2 ✔ (.pmx-redundant) ·
+  T3 ✔ (tree ribbon, toast deleted) · T4 ✔ (RMB orbit/pan/repick)
+- F7: T1 ✔ (legend crops to the pointed mesh) · T2 ✔ (scope re-admits
+  the pointed mesh) · T3 ✔ (Isolate pins → top bar) · T4 ✔ (map toggle
+  beside the chart, both live)
+- F8: T1 ✔ (named meshes + defined numbers) · T2 ✔ (embedded tree +
+  hover preview)
+
+### F7 — error-map/false-colour polish + toolbox placement (2026-08-05)
+
+- **T1 legend follows the pointed mesh**: `GuiOverlays.colorLegend` —
+  while the difference map paints, a tile/tree hover (`TileIsolateHover`)
+  or the isolate lock CROPS the legend's displayed range to that mesh's
+  own error extent (5th–95th pct of its resident per-vertex buffer:
+  `GraphDist[Before]` per peeked side at Matrix, `CellDist` for the MOV
+  inside the workspace), title gains "· mesh N". The colour MAPPING
+  stays the shared scale — the bar shows the ramp segment the mesh
+  actually uses, so nothing renormalizes; un-pointing restores the full
+  scope range.
+- **T2 reference visible when pointed at**: `MeshView.graphMapScopeAt`
+  now re-admits the hovered/locked mesh into the painted set. This fixes
+  the real defect: the hover narrowing INTERSECTS with the map scope, so
+  hovering the root (or an unregistered mesh) in matrix false-colour
+  blanked the scene (empty intersection) instead of showing the mesh.
+- **T3 Isolate-pins moved to the top bar**: the compactToggle left both
+  inspect bodies; the top-bar view-control cluster (after Sensor ▾)
+  gained the "◍ Isolate pins" `tb-btn` (`tb-btn-active` state) —
+  a render mode among render controls; the per-level `AnchorGhostMode`
+  LevelFlags semantics unchanged.
+- **T4 error-map toggle = the histogram's peer**: both inspect bodies
+  restructured — the old cw-tools row is gone; a `.cw-chart-tools` row
+  DIRECTLY above the chart canvas holds the "Error map (3D)" toggle
+  (labelled as the spatial twin of the distribution; tooltip says both
+  stay live — no either/or was introduced) and, in the pair body, the
+  F5 clear-brush button.
+- Build green.
+
+### F6 — matrix↔tree coupling + finished ribbon + right-mouse camera (2026-08-05)
+
+- **T1 cell hover → tree edge**: `treePanel`'s treeData now folds in
+  `MatrixHoverPair` — a hovered REGISTERED pair marks its edge
+  (`"hov":true` → the selected-edge styling), an unregistered pair emits
+  `"hovP":[a,b]` and the SVG draws a dashed blue preview of the edge a
+  solve would insert (inert, under the nodes). Works from the cell's own
+  hover and every other MatrixHoverPair source.
+- **T2 tree-redundant cells fade**: `pairCellView` gained `isRedundant`
+  (PairPossible ∧ both meshes `hopDepth`-connected — same predicate as
+  the F2 pre-warning) → `.pmx-redundant`: borderless faint hint
+  (opacity 0.55) so tree-COMPLETING cells stand out; the tooltip explains
+  ("already connected through the tree — a direct link would only add a
+  loop").
+- **T3 finished ribbon replaces the centre toast**: `GuiOverlays.
+  spannedBanner`, its View mount, the `.spanned-banner`/`.spb-*` CSS,
+  `Model.SpannedNoticeOpen` (+ adaptify) and `DismissSpannedNotice` are
+  DELETED. The tree panel now carries `.tree-ribbon` ("✓ all meshes
+  connected" + the "Assess global quality →" button, LogReach source
+  "tree") — purely DERIVED from `Workflow.spanned`, so disconnecting
+  clears it with zero bookkeeping. `trackSpanned` keeps logging the
+  spanned/unspanned transitions (reaching record) but owns no notice
+  state; `AssessGlobalQuality` survives unchanged minus the notice flag.
+- **T4 right mouse = camera, always**: OrbitController PointerMove treats
+  `Button.Right` as rotate (left stays when unarmed; the armed swallow
+  only eats the LEFT rotate-begin, so RMB orbits while a pick is armed);
+  the event edge remaps Shift+LEFT AND Shift+RIGHT to the pan button
+  (`Dom.OnContextMenu preventDefault` was already in place). NEW right
+  DOUBLE-click = orbit-centre repick: a manual two-click detector
+  (browsers fire no dblclick for the right button) on `Sg.OnPointerDown`
+  (`e.Original.Button`), through the same `resolvePick` ghost-fallback
+  path as the left double-tap. Left picks, right moves.
+- Build green, no FS0049/25/26 (message case deleted → grep + warning
+  check done).
+
+### F5 — histogram system pass (2026-08-05)
+
+All in GuiRail (`chartJs` + the two bodies) unless noted.
+
+- **T1 legend + dashed outline**: the before/after step outline is now
+  DASHED (`setLineDash([4,3])`); the old inline "fill now · line before"
+  caption is deleted in favour of a REAL legend — payload fields
+  `legF`/`legL` render a grey fill swatch + a dashed-line sample with
+  their names ("error now"/"as loaded" + "before registration" in the
+  workspace, "error vs parents" at Matrix). Both bodies send them.
+- **T2 peek in every histogram**: the pair/pin body's chartData is now
+  pose-peek-aware — while B is held (and the before cache is resident)
+  the FILL, per-pin medians and LoD band swap to the edge-before state
+  ("— as loaded" in the title), on the same fixed axis; gids/values stay
+  the canonical now-stream, so a brush held across the peek highlights
+  the corresponding region, exactly the Matrix convention. Matrix
+  already flipped (graphSideAt) — unchanged.
+- **T3 pair-mode grey + pin-linked**: the achromatic per-pin ramp
+  (`greyOf`) is deleted — every series renders ONE uniform grey #787878
+  (the matrix pooled grey); the stack survives only as data. NEW
+  `data-hilite` attribute (the hovered pin row's ShortName via
+  `TilePinHover`) repaints that pin's stack slice + median tick amber in
+  place — the F4 row hover lights its contribution.
+- **T4 bin-quantized brushing**: the drag snaps to whole bins
+  (`snapRange` over `el._bin`), a drag-free click SELECTS the single bin
+  under the cursor (an empty bin yields no gids = clear — the old
+  click-clears behaviour lives on through empty space), and hovering
+  outlines the bin under the cursor (`el._hb`, cleared on pointerleave).
+- **T5 clear-brush button**: the ex-probe slot in the pair inspect body
+  is now "⊗ Clear brush" (`.cw-clearbrush`, amber when armed with a
+  selection, disabled when the brush is empty) → `SetBrushedSamples []`.
+- Build green.
+
+### F4 — pin panel sequence + pin-row controls + re-solve cascade (2026-08-05)
+
+- **T1 the panel reads as its sequence** (GuiRail `cellWorkspace`): the old
+  cw-tools row (New pin beside Solve) + separate cw-finish footer deleted;
+  the panel is now top-to-bottom ① `＋ New pin` as the PRIMARY button
+  (`.cw-newpin`, accent-filled; same overlap-gate hover) ② the pin list
+  ③ the "N remaining" workflow line of its own (`.cw-remaining`: "2 more
+  pins needed to solve" / "4 pins placed — ready to solve" / "— solved")
+  ④ the linked two-step `.cw-steps`: [⌖ Solve] → [✓ Finish pair] with an
+  arrow connector; `.cw-step-lit` marks the NEXT step (Solve lit while
+  ≥3 pins ∧ unsolved, Finish lit once solved). The count no longer hides
+  inside the Solve button label.
+- **T2 pin rows with real controls**: rows are bordered cards; the row
+  BODY is inert (OnClick/OnDoubleClick deleted) — hover still sets
+  `TilePinHover`, which now drives the F3 loud highlight + tile framing
+  (and the F5 histogram link). Three real buttons per row: ⌖ fly-to
+  (`ZoomToPin`), ▸ open at the Pin level (`SelectPin` + `SetFocus
+  FocusPin`, LogReach "open-pin"), ✕ delete (bordered red, confirm kept).
+- **T3 re-solve cascade**: NEW `Model.PendingResolves : (string*string)
+  list` (+ adaptify). The pin-edit edge drop records the dropped edge's
+  SUBTREE as (child, parent) pairs parent-first (`subtreeDependents`,
+  BFS) — merged distinct-by-child into the queue; the toast names the
+  dependent count. Every solve COMMIT drains the queue
+  (`continuePendingResolves`): the first entry whose parent is back in
+  the tree, child free and pair still ≥3 pins launches `SolvePair`
+  (its own commit re-enters for the rest); an entry that cannot solve
+  is SKIPPED WITH A TOAST naming the reason (too few pins / ref left the
+  tree) — placed after the "registered" toast so the notice stays
+  visible. Queue clears on dataset switch, checkpoint apply and re-root
+  (stale orientations). Supertests 97/97.
+- Build green, no FS0049/25/26.
+
+### F3 — pin focus/isolation/highlight + orbit-centre visibility (2026-08-05)
+
+- **T1 pin-scope isolation**: NEW shared rule `ScanPinScene.pinScopeIsoOn`/
+  `pinScopeDim` (module level — the tiles read it too): at FocusPin with
+  Isolate-pins ON (same armed-centre suspension as the mesh-side anchor
+  ghost) every pin whose id ≠ `Sel.Pin` drops to 0.08 alpha — the subject
+  is the selected pin, and an active draft is always the subject
+  (placement clears the pin selection). Threaded through the 3D centre
+  jacks, `addAreaFigure` (new `scopeDim` param; draft passes 1.0), the
+  crosshairs (muted, never hidden — factor composes with `markerAlphaAt`)
+  and the reveals, plus the tile glyphs (per-pin `fillNode` colour — the
+  fill helper gained a colour param — and the white wire outlines). Flags/
+  labels stay (navigation furniture).
+- **T2 loud highlight (isolation OFF)**: NEW `highlightNode` in
+  ScanPinScene — subject = the hovered pin row's pin (`TilePinHover`),
+  else `Sel.Pin` at Pair/Pin; suppressed while pin-scope isolation is on.
+  Draws a BOLD dashed second ring (r×1.18, white 3.0 over ink 5.0,
+  DepthTest.None — reads through terrain) in the ground-ring plane, plus
+  a white-over-ink box around the flag label (mirrors the pinLabels
+  billboard math: same flag height, yaw and 1.25 h lift).
+- **T3 orbit-centre cue**: `SceneGraph.orbitCue` visibility extended from
+  "rotate drag with easing lead" to CAMERA IS MOVING — rotate easing OR a
+  held pan drag OR a radius easing (wheel zoom) OR a centre/location
+  fly-to animation; hidden when still.
+- Build green, no FS0049/25/26.
+
+### F2 — adaptive ROI radius + already-connected pre-warning (2026-08-05)
+
+- **T1 adaptive ROI**: NEW endpoint `POST /api/query/roi-fit`
+  (QueryHandlers `RoiFitRequest`/`roiFitHandler` + Handlers route +
+  `Query.roiFit`): the smallest radius ≥ the requested one whose sphere
+  captures ≥ MinVerts vertices of the OTHER pair mesh (one pass collecting
+  d² ≤ cap², the N-th smallest IS the minimal radius), capped at
+  radius×MaxFactor; ok=false past the cap. Client: `GuiPanes.armedPick`
+  validates every CENTRE landing (draft and committed re-pick alike)
+  against the non-anchor pair mesh at N=20, cap ×4 — grown radius emits
+  `SetDraftRadius`/`SetInnerRadius` BEFORE the centre message (the centre
+  landing can mint the pin) + an explanatory toast; a refused location
+  emits only a warn toast and the arm stays lit for another try.
+  Integration: 3 new roi-fit checks, suite 32/32 green.
+- **T2 already-connected pre-warning**: NEW model field
+  `Model.PairConnectWarn : (string*string) option` (+ adaptify) + messages
+  `ConfirmPairConnectWarn`/`CancelPairConnectWarn`. The `SelectPair`
+  reducer branch parks a NEW pair behind the blocking confirm when the
+  tree already connects both meshes with NO direct edge
+  (`RegGraph.pairEdge` none ∧ both `MatrixNav.hopDepth` Some — the
+  spanning tree makes membership = connectivity); the remembered same-pair
+  re-entry never warns. Confirm = the normal new-pair entry (cascade clear
+  + `jumpFocus FocusPair`), cancel = stay. `GuiOverlays.pairConnectModal`
+  (loop-modal chrome, meshes named by number), mounted in View; Esc chain
+  slot after the loop modal; dataset switch clears the parked pair.
+- Build green (server + full wasm client), no FS0049/25/26.
+
+### F1 — Okabe-Ito palette + dynamic reference gold (2026-08-05)
+
+- **T1 palette replaced** (Primitives.fs `meshPalette`): the old vivid-hue
+  set (teal/orange/purple/… — mesh-1 green vs mesh-4 blue collided) is
+  deleted; the first six slots are the Okabe-Ito colour-blind-safe six —
+  1 #0072B2 blue · 2 #009E73 bluish green · 3 #D55E00 vermillion ·
+  4 #CC79A7 reddish purple · 5 #56B4E9 sky · 6 #F0E442 yellow — with
+  three off-palette extension hues (purple #9333EA, brown #92400E, olive
+  #4D7C0F) for slots 7–9. Okabe-Ito orange #E69F00 is deliberately absent.
+- **T2 dynamic reference gold**: `Primitives.refGold` = #E69F00 (the
+  excluded Okabe-Ito orange); `refGoldV3d` now derives from it; the CSS
+  token family updated (`--ref-gold: #e69f00`, dark #a16207, pale
+  #f9e4bb). NEW rule `Primitives.meshColorRoot isRoot idx`: the mesh
+  currently root renders gold INSTEAD of its slot colour, the slot
+  returns on re-root. Threaded through every identity-colour site:
+  MeshView `buildScene`/`buildOutlineNode`/`buildPaneScene` MeshColor
+  uniforms (rootA = RegGraph.Root), `coverageColorsA` (root slot gold
+  before the brush/map-iso rules), ScanPinScene `meshColAt` (crosshairs,
+  centre jacks, tile marks), GuiPanes tile chip + tile pin fills,
+  GuiTopBar sensor + mesh-menu swatches, GuiRail `numSwatch`/`meshChip`/
+  pin-level `chip` + the tree node stroke (treePanel JSON `c`).
+- **T3 pale-slot legibility**: both image-space line composites gained an
+  ink under-stroke (the duplex rule for lines) — `OutlineEdge` paints a
+  pinInk rim where the depth-break test hits at ±(width+1.5) texels but
+  not at the core; `OutlineCoverageEdge` same for footprint contours
+  (8 extra halo taps, `col.W < 0.5f && halo → ink`). Slot-6 yellow reads
+  on light terrain; every palette line gets the same subtle rim.
+- Build green (0 errors, no FS0049/25/26). Shader changes need the
+  in-browser verify pass (dotnet build can't validate FShade→ESSL3).
+
 ## GUI touch-ups OUTSIDE the specs, round 4 (2026-08-05)
 
 Same standing: user-directed polish, no governing spec.

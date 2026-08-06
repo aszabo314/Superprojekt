@@ -217,20 +217,29 @@ module SceneGraph =
         let refOutline    = referenceOutline view proj notFullscreen model
 
         // Orbit-centre cue: a small ring+cross at the rotation centre, shown
-        // only while a rotate drag is actively turning the camera (a rotate
-        // button/touch is held AND the easing target leads the pose) — a plain
-        // click or an idle hold shows nothing. Screen-constant: eye distance =
+        // whenever the camera is MOVING — an orbiting drag (easing target
+        // leads the pose), a held pan, a zoom easing, or a fly-to animation —
+        // and hidden the moment it is still. Screen-constant: eye distance =
         // the orbit radius, so size ∝ radius reads constant.
         let orbitCue =
             let active =
                 AVal.custom (fun t ->
-                    let drags = model.Camera.dragStarts.GetValue t
+                    let cam = model.Camera
+                    let drags = cam.dragStarts.GetValue t
                     let rotating =
-                        drags |> MapExt.toSeq
-                        |> Seq.exists (fun (_, (_, b)) -> b = model.Camera.rotateButton || b = Button.None)
-                    rotating
-                    && (abs (model.Camera.targetPhi.GetValue t - model.Camera.phi.GetValue t) > 1e-4
-                        || abs (model.Camera.targetTheta.GetValue t - model.Camera.theta.GetValue t) > 1e-4))
+                        (drags |> MapExt.toSeq
+                         |> Seq.exists (fun (_, (_, b)) -> b = cam.rotateButton || b = Button.None))
+                        && (abs (cam.targetPhi.GetValue t - cam.phi.GetValue t) > 1e-4
+                            || abs (cam.targetTheta.GetValue t - cam.theta.GetValue t) > 1e-4)
+                    let panning =
+                        drags |> MapExt.toSeq |> Seq.exists (fun (_, (_, b)) -> b = cam.panButton)
+                    let zooming =
+                        let r = cam.radius.GetValue t
+                        abs (cam.targetRadius.GetValue t - r) > 1e-3 * max 1e-6 r
+                    let flying =
+                        (cam.centerAnimation.GetValue t).IsSome
+                        || (cam.locationAnimation.GetValue t).IsSome
+                    rotating || panning || zooming || flying)
             let segs =
                 AVal.custom (fun t ->
                     let c = model.Camera.center.GetValue t

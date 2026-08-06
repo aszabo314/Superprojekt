@@ -169,6 +169,22 @@ module Query =
             else return None
         }
 
+    // Adaptive ROI fit: the smallest radius ≥ radius whose sphere captures
+    // ≥ minVerts vertices of the OTHER pair mesh, capped at radius×maxFactor.
+    // ok=false = the location cannot host a correspondence ROI at all.
+    let roiFit
+            (serverUrl : string)
+            (otherName : string) (otherT : M44d)
+            (centre : V3d) (radius : float) (minVerts : int) (maxFactor : float)
+            : Async<bool * float> =
+        async {
+            let json =
+                sprintf """{"otherName":"%s","otherTransform":[%s],"centre":%s,"radius":%.17g,"minVerts":%d,"maxFactor":%.17g}"""
+                    otherName (m44json otherT) (v3 centre) radius minVerts maxFactor
+            let! r = post serverUrl "/query/roi-fit" json
+            return r.GetProperty("ok").GetBoolean(), r.GetProperty("radius").GetDouble()
+        }
+
     // Per-vertex signed distance of the MOV mesh to the REF at explicit poses,
     // in MOV's served vertex order (the in-cell false-colour map's buffer).
     // The measure is opaque — the endpoint has exactly one metric.

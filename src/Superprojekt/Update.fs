@@ -73,6 +73,49 @@ module Update =
              | Some (a, b) -> (RegGraph.pairEdge a b model.RegGraph).IsSome
              | None -> false))
 
+    // The (child, parent) pairs of every edge STRICTLY BELOW `top` in the
+    // tree, parent-first — the pin-edit cascade drops them alongside top's
+    // own edge, and the re-solve queue wants them in launchable order.
+    let private subtreeDependents (g : RegGraph) (top : string) : (string * string) list =
+        let rec collect queue acc =
+            match queue with
+            | [] -> List.rev acc
+            | m :: rest ->
+                let kids =
+                    g.Edges |> Map.toList
+                    |> List.choose (fun (c, e) -> if e.Parent = m then Some c else None)
+                collect (rest @ kids) ((kids |> List.map (fun c -> c, m) |> List.rev) @ acc)
+        collect [top] []
+
+    // Drain the re-solve cascade: launch the FIRST pending dependent that can
+    // still solve (its parent back in the tree, the child free, ≥3 pins) —
+    // that solve's own commit re-enters here for the rest. An entry that can
+    // no longer solve is flagged with a toast and skipped, never silent.
+    let rec private continuePendingResolves (env : Env<Message>) (model : Model) : Model =
+        match model.PendingResolves with
+        | [] -> model
+        | (child, parent) :: rest ->
+            let model = { model with PendingResolves = rest }
+            let key = PairCell.key child parent
+            let pinCount =
+                model.ScanPins.Pins |> HashMap.toList
+                |> List.filter (fun (_, p) -> p.Pair = key) |> List.length
+            if RegGraph.pairEdge child parent model.RegGraph |> Option.isSome then
+                continuePendingResolves env model
+            elif pinCount >= 3 && RegGraph.inTree model.RegGraph parent
+                 && not (RegGraph.inTree model.RegGraph child) then
+                env.Emit [SolvePair(child, parent)]
+                model
+            else
+                let numOf m = (HashMap.tryFind m model.MeshOrder |> Option.defaultValue 0) + 1
+                let why =
+                    if pinCount < 3 then sprintf "only %d pin%s left" pinCount (if pinCount = 1 then "" else "s")
+                    else "its reference is no longer in the tree"
+                showToast env
+                    (sprintf "Pair %d ↔ %d could not be re-solved (%s) — left unregistered"
+                        (numOf child) (numOf parent) why)
+                    (continuePendingResolves env model)
+
     // A step may retract what the current focus level depends on (pin deleted,
     // placement aborted, selection cleared) — demote to the nearest enabled
     // ancestor. Runs after every reducer step. A demotion out of Pin takes the
@@ -233,7 +276,10 @@ module Update =
             let model =
                 { model with
                     Sel = FocusSelection.empty
-                    ScanPins = { model.ScanPins with Placement = PlacementIdle } }
+                    ScanPins = { model.ScanPins with Placement = PlacementIdle }
+                    // Parent relations shift under a re-root — the queued
+                    // dependents' orientations would be stale.
+                    PendingResolves = [] }
             let recomposeWith (g' : RegGraph) (m : Model) =
                 invalidateCellError (invalidateRings (ModelTransforms.recomposePoses { m with RegGraph = g' }))
             let model =
@@ -291,6 +337,13 @@ module Update =
                 // The remembered pair: the selection (incl. its pin memory)
                 // stands — re-entering restores the last workspace state.
                 jumpFocus FocusPair model
+            // Pre-warning: both meshes already connected THROUGH the tree with
+            // no direct edge — a solve here can only add a redundant edge (a
+            // loop). Park the entry behind the blocking confirm.
+            elif RegGraph.pairEdge a b model.RegGraph |> Option.isNone
+                 && MatrixNav.hopDepth model.RegGraph a |> Option.isSome
+                 && MatrixNav.hopDepth model.RegGraph b |> Option.isSome then
+                { model with PairConnectWarn = Some key }
             else
                 // A NEW pair cascade-clears its descendants and every in-cell
                 // cache; a placement bound to the old pair rolls back. The Pin
@@ -299,17 +352,24 @@ module Update =
                     { jumpFocus FocusPair model with
                         Sel = { Pair = Some key; Pin = None; Point = None }
                         ScanPins = { model.ScanPins with Placement = PlacementIdle } }
-        | DismissSpannedNotice ->
-            if model.SpannedNoticeOpen then { model with SpannedNoticeOpen = false } else model
+        | ConfirmPairConnectWarn ->
+            (match model.PairConnectWarn with
+             | Some (a, b) ->
+                invalidateCellError
+                    { jumpFocus FocusPair { model with PairConnectWarn = None } with
+                        Sel = { Pair = Some (PairCell.key a b); Pin = None; Point = None }
+                        ScanPins = { model.ScanPins with Placement = PlacementIdle } }
+             | None -> model)
+        | CancelPairConnectWarn ->
+            if model.PairConnectWarn.IsNone then model else { model with PairConnectWarn = None }
         | AssessGlobalQuality ->
             // Leaving Pin with a centred draft goes through the exit-guard
-            // like every jump — the notice stays for a retry after resolving.
+            // like every jump — the ribbon stays for a retry after resolving.
             if model.Focus = FocusPin && placingWithCentre model then
                 { model with PinExitPending = Some FocusMatrix }
             else
                 let m = if model.Focus = FocusMatrix then model else jumpFocus FocusMatrix model
                 { m with
-                    SpannedNoticeOpen = false
                     InspectOpen = LevelFlags.set FocusMatrix true m.InspectOpen
                     CellMapOn = true }
         | LogReach(source, action, subject) ->
@@ -335,7 +395,7 @@ module Update =
                             { Pins = pins |> List.map (fun p -> p.Id, p) |> HashMap.ofList
                               Placement = PlacementIdle }
                         LoopPending = None
-                        SpannedNoticeOpen = false }
+                        PendingResolves = [] }
                 showToast env (sprintf "Checkpoint '%s' loaded" name)
                     (invalidateCellError (ModelTransforms.recomposePoses { model with RegGraph = g }))
         | SelectPin id ->
@@ -447,6 +507,10 @@ module Update =
             (match model.LoopPending with
              | Some lp -> { model with LoopPending = Some { lp with Selected = sel } }
              | None -> model)
+        | HoverLoopChoice h ->
+            (match model.LoopPending with
+             | Some lp when lp.Hover <> h -> { model with LoopPending = Some { lp with Hover = h } }
+             | _ -> model)
         | ConfirmLoopResolution ->
             (match model.LoopPending with
              | None -> model
@@ -521,7 +585,6 @@ module Update =
                     PairOverlaps = Map.empty
                     Focus = FocusMatrix
                     Sel = FocusSelection.empty
-                    SpannedNoticeOpen = false
                     TileCams = Map.empty
                     CellError = None
                     CellErrorBefore = None
@@ -543,6 +606,8 @@ module Update =
                     PeekPose = false
                     LoopPending = None
                     PinExitPending = None
+                    PairConnectWarn = None
+                    PendingResolves = []
                     Toast = None }
         | SetRenderingMode m ->
             { model with RenderingMode = m }
@@ -639,11 +704,23 @@ module Update =
                 match RegGraph.pairEdge a b m.RegGraph with
                 | Some e ->
                     bumpPairSolve ()
-                    showToast env "Pair unregistered — a pin changed"
+                    // The cascade's collateral — every edge BELOW the dropped
+                    // one — queues for the automatic re-solve after THIS pair
+                    // solves again (its own edge re-solves by the user's click).
+                    let dependents = subtreeDependents m.RegGraph e.Child
+                    let toastMsg =
+                        if List.isEmpty dependents then "Pair unregistered — a pin changed"
+                        else
+                            sprintf "Pair unregistered — a pin changed (%d dependent pair%s will re-solve with it)"
+                                (List.length dependents) (if List.length dependents = 1 then "" else "s")
+                    showToast env toastMsg
                         (invalidateCellError
                             (invalidateRings
                                 (ModelTransforms.recomposePoses
-                                    { m with RegGraph = RegGraph.removeEdgeCascading e.Child m.RegGraph })))
+                                    { m with
+                                        RegGraph = RegGraph.removeEdgeCascading e.Child m.RegGraph
+                                        PendingResolves =
+                                            (m.PendingResolves @ dependents) |> List.distinctBy fst })))
                 | None -> m
             | None -> m
         | SolvePair(a, b) ->
@@ -703,9 +780,12 @@ module Update =
                 let q = RegGraph.solveQuality residuals
                 let g = model.RegGraph
                 let commit g2 =
-                    showToast env (sprintf "Pair registered — quality %.2f" q)
-                        (invalidateCellError
-                            (invalidateRings (ModelTransforms.recomposePoses { model with RegGraph = g2 })))
+                    // The re-solve cascade drains AFTER the registered toast so
+                    // a degradation notice stays visible over it.
+                    continuePendingResolves env
+                        (showToast env (sprintf "Pair registered — quality %.2f" q)
+                            (invalidateCellError
+                                (invalidateRings (ModelTransforms.recomposePoses { model with RegGraph = g2 }))))
                 // A re-solve of THIS pair's edge replaces it in place; child
                 // keying an edge to a DIFFERENT parent is the redundant case.
                 let existingSamePair =
@@ -737,7 +817,8 @@ module Update =
                                 CycleEdges = cycle
                                 ResidualRotDeg = RegGraph.residualRotationDeg residual
                                 ResidualTransM = RegGraph.residualAt residual probePt
-                                Selected = weakest } }
+                                Selected = weakest
+                                Hover = None } }
         | SetNearCut v ->
             { model with NearCutFrac = clamp 0.0 1.25 v }
         | SetFarCut v ->
@@ -969,19 +1050,17 @@ module Update =
             } |> ignore
             model
 
-    // The spanned event is a TRANSITION, not a state read: the notice opens
-    // exactly when the last mesh joins the tree and closes the moment an edge
-    // drop / root change / dataset switch disconnects the graph again —
-    // re-spanning re-fires it. Runs after every reducer step against the
-    // pre-step model.
+    // The spanned event is a TRANSITION, not a state read — logged for the
+    // reaching record; the visible mark (the tree's finished ribbon) is
+    // purely DERIVED from the spanned state, so disconnecting clears it with
+    // zero bookkeeping. Runs after every reducer step against the pre-step
+    // model.
     let private trackSpanned (model0 : Model) (model : Model) =
         let names (m : Model) = m.MeshNames |> IndexList.toList
         let was = Workflow.spanned (names model0) model0.RegGraph
         let now = Workflow.spanned (names model) model.RegGraph
-        if now && not was then
-            logReach "event" "spanned" "" { model with SpannedNoticeOpen = true }
-        elif not now && model.SpannedNoticeOpen then
-            logReach "event" "unspanned" "" { model with SpannedNoticeOpen = false }
+        if now && not was then logReach "event" "spanned" "" model
+        elif was && not now then logReach "event" "unspanned" "" model
         else model
 
     let update (env : Env<Message>) (model : Model) (msg : Message) =

@@ -494,6 +494,14 @@ module OutlineEdge =
             let rw = gNormal.Sample(v.tc + V2f( ts.X * wpx, 0.0f))
             let uw = gNormal.Sample(v.tc + V2f(0.0f,  ts.Y * wpx))
             let dw = gNormal.Sample(v.tc + V2f(0.0f, -ts.Y * wpx))
+            // Ink under-stroke: the same break test ~1.5 texels wider paints a
+            // dark rim around the colour core (the duplex rule for image-space
+            // lines) — pale palette slots stay legible on light terrain.
+            let wpx2 = wpx + 1.5f
+            let lw2 = gNormal.Sample(v.tc + V2f(-ts.X * wpx2, 0.0f))
+            let rw2 = gNormal.Sample(v.tc + V2f( ts.X * wpx2, 0.0f))
+            let uw2 = gNormal.Sample(v.tc + V2f(0.0f,  ts.Y * wpx2))
+            let dw2 = gNormal.Sample(v.tc + V2f(0.0f, -ts.Y * wpx2))
             let m0 = gColor.Sample(v.tc).W
             let dc = c.W
             let dl = lw.W
@@ -514,12 +522,16 @@ module OutlineEdge =
             let dEdge =
                 max (abs (dl + dr - 2.0f * dc))
                     (abs (du + dd - 2.0f * dc))
+            let dEdge2 =
+                max (abs (lw2.W + rw2.W - 2.0f * dc))
+                    (abs (uw2.W + dw2.W - 2.0f * dc))
             let iEdge =
                 max (max (abs (c.X - l.X)) (abs (c.X - r.X)))
                     (max (abs (c.X - u.X)) (abs (c.X - d.X)))
             let depthEdge = dEdge > uniform.OutlineThreshold
+            let depthHalo = dEdge2 > uniform.OutlineThreshold
             let isoEdge   = iEdge > 0.5f
-            if (depthEdge || isoEdge) && m0 > 0.5f then
+            if (depthEdge || depthHalo || isoEdge) && m0 > 0.5f then
                 // Per-mesh gate: the centre pixel's mesh id selects its mask slot.
                 let slot = min 31 (max 0 (int (c.Y * 255.0f + 0.5f) - 1))
                 let flag = uniform.OutlineMask.[slot].X
@@ -535,6 +547,9 @@ module OutlineEdge =
                         return V4f(grey, grey, grey, 1.0f)
                     else
                         return V4f(colP.X, colP.Y, colP.Z, 1.0f)
+                elif depthHalo && flag > 0.25f then
+                    // The pinInk rim of the duplex under-stroke.
+                    return V4f(0.161f, 0.145f, 0.141f, 1.0f)
                 elif isoEdge && flag > 0.75f then
                     return V4f(0.55f, 0.57f, 0.60f, uniform.IsolineOpacity)
                 else
@@ -577,6 +592,9 @@ module OutlineCoverageEdge =
             // Same px dilation as the silhouettes: the covered↔uncovered test at
             // ±width texels makes the footprint contour OutlineWidthPx wide.
             let ts = uniform.OutlineTexel * max 1.0f uniform.OutlineWidthPx
+            // Ink under-stroke ring ~1.5 texels beyond the colour core (the
+            // duplex rule for image-space lines — pale slots stay legible).
+            let t2 = uniform.OutlineTexel * (max 1.0f uniform.OutlineWidthPx + 1.5f)
             let th = 0.12f
             let cA = cov0.Sample(v.tc)
             let lA = cov0.Sample(v.tc + V2f(-ts.X, 0.0f))
@@ -588,7 +606,24 @@ module OutlineCoverageEdge =
             let rB = cov1.Sample(v.tc + V2f( ts.X, 0.0f))
             let uB = cov1.Sample(v.tc + V2f(0.0f,  ts.Y))
             let dB = cov1.Sample(v.tc + V2f(0.0f, -ts.Y))
+            let l2A = cov0.Sample(v.tc + V2f(-t2.X, 0.0f))
+            let r2A = cov0.Sample(v.tc + V2f( t2.X, 0.0f))
+            let u2A = cov0.Sample(v.tc + V2f(0.0f,  t2.Y))
+            let d2A = cov0.Sample(v.tc + V2f(0.0f, -t2.Y))
+            let l2B = cov1.Sample(v.tc + V2f(-t2.X, 0.0f))
+            let r2B = cov1.Sample(v.tc + V2f( t2.X, 0.0f))
+            let u2B = cov1.Sample(v.tc + V2f(0.0f,  t2.Y))
+            let d2B = cov1.Sample(v.tc + V2f(0.0f, -t2.Y))
             let mutable col = V4f(0.0f, 0.0f, 0.0f, 0.0f)
+            let mutable halo = false
+            if cA.X > th && (l2A.X < th || r2A.X < th || u2A.X < th || d2A.X < th) && uniform.OutlineMask.[0].X > 0.25f then halo <- true
+            if cA.Y > th && (l2A.Y < th || r2A.Y < th || u2A.Y < th || d2A.Y < th) && uniform.OutlineMask.[1].X > 0.25f then halo <- true
+            if cA.Z > th && (l2A.Z < th || r2A.Z < th || u2A.Z < th || d2A.Z < th) && uniform.OutlineMask.[2].X > 0.25f then halo <- true
+            if cA.W > th && (l2A.W < th || r2A.W < th || u2A.W < th || d2A.W < th) && uniform.OutlineMask.[3].X > 0.25f then halo <- true
+            if cB.X > th && (l2B.X < th || r2B.X < th || u2B.X < th || d2B.X < th) && uniform.OutlineMask.[4].X > 0.25f then halo <- true
+            if cB.Y > th && (l2B.Y < th || r2B.Y < th || u2B.Y < th || d2B.Y < th) && uniform.OutlineMask.[5].X > 0.25f then halo <- true
+            if cB.Z > th && (l2B.Z < th || r2B.Z < th || u2B.Z < th || d2B.Z < th) && uniform.OutlineMask.[6].X > 0.25f then halo <- true
+            if cB.W > th && (l2B.W < th || r2B.W < th || u2B.W < th || d2B.W < th) && uniform.OutlineMask.[7].X > 0.25f then halo <- true
             if cA.X > th && (lA.X < th || rA.X < th || uA.X < th || dA.X < th) && uniform.OutlineMask.[0].X > 0.25f then col <- uniform.CoverageColors.[0]
             if cA.Y > th && (lA.Y < th || rA.Y < th || uA.Y < th || dA.Y < th) && uniform.OutlineMask.[1].X > 0.25f then col <- uniform.CoverageColors.[1]
             if cA.Z > th && (lA.Z < th || rA.Z < th || uA.Z < th || dA.Z < th) && uniform.OutlineMask.[2].X > 0.25f then col <- uniform.CoverageColors.[2]
@@ -597,5 +632,6 @@ module OutlineCoverageEdge =
             if cB.Y > th && (lB.Y < th || rB.Y < th || uB.Y < th || dB.Y < th) && uniform.OutlineMask.[5].X > 0.25f then col <- uniform.CoverageColors.[5]
             if cB.Z > th && (lB.Z < th || rB.Z < th || uB.Z < th || dB.Z < th) && uniform.OutlineMask.[6].X > 0.25f then col <- uniform.CoverageColors.[6]
             if cB.W > th && (lB.W < th || rB.W < th || uB.W < th || dB.W < th) && uniform.OutlineMask.[7].X > 0.25f then col <- uniform.CoverageColors.[7]
+            if col.W < 0.5f && halo then col <- V4f(0.161f, 0.145f, 0.141f, 1.0f)
             return col
         }

@@ -43,15 +43,28 @@ module GuiTopBar =
                     showWhen model.SensorMenuOpen
                     model.MeshNames |> AList.map (fun name ->
                         let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+                        let isRoot = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
                         div {
                             Class "tb-gear-row tb-sensor-row"
                             idxVal |> AVal.map (fun i ->
                                 Some (Attribute("title", sprintf "mesh %d — fly to its sensor viewpoint" (i + 1))))
                             Dom.OnClick(fun _ -> env.Emit [FlyToSensor name; ToggleSensorMenu])
-                            span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (c4bToRgbCss (meshColor i))])) }
+                            span { Class "pmx-sw"; (idxVal, isRoot) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (c4bToRgbCss (meshColorRoot r i))])) }
                             span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                         })
                 }
+            }
+
+            // Isolate pins: a view/render mode, so it lives with the other
+            // render controls, not among the inspection instruments. The flag
+            // stays per workflow level (LevelFlags) — the button reads and
+            // toggles the CURRENT level's.
+            button {
+                Class "tb-btn"
+                classWhen "tb-btn-active" ((model.Focus, model.AnchorGhostMode) ||> AVal.map2 LevelFlags.get)
+                Attribute("title", "Isolate pins: show only the pin patches; off shows the full textured meshes. Remembered per workflow level.")
+                Dom.OnClick(fun _ -> env.Emit [ToggleAnchorGhostMode])
+                "◍ Isolate pins"
             }
 
             // Spring-loaded peek buttons: press-and-hold twins of the V/B keys
@@ -161,7 +174,7 @@ module GuiTopBar =
                             div {
                                 Class "tb-gear-row tb-mesh-setup-row"
                                 idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
-                                span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (c4bToRgbCss (meshColor i))])) }
+                                span { Class "pmx-sw"; (idxVal, isRoot) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (c4bToRgbCss (meshColorRoot r i))])) }
                                 span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                                 button {
                                     Class "tb-gear-btn tb-ref-btn"

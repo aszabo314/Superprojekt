@@ -276,7 +276,17 @@ module MeshView =
         | FocusMatrix ->
             let g = model.RegGraph.GetValue t
             if not (model.CellMapOn.GetValue t) || not (RegGraph.hasEdges g) then None
-            else g.Edges |> Map.toSeq |> Seq.map fst |> Set.ofSeq |> Some
+            else
+                let painted = g.Edges |> Map.toSeq |> Seq.map fst |> Set.ofSeq
+                // Pointing at an EXCLUDED mesh (the reference root, an
+                // unregistered mesh) re-admits it: the hover/lock narrowing
+                // intersects with this scope, so without the re-admission the
+                // intersection would be empty and hovering the reference
+                // would blank the scene instead of showing it.
+                let admitted =
+                    [ model.TileIsolateHover.GetValue t; model.TileIsolate.GetValue t ]
+                    |> List.choose id |> Set.ofList
+                Some (Set.union painted admitted)
 
     // THE brush colour-isolation frame: (REF, MOV) of the selected pair while
     // brushed dots exist, else None. MOV owns the samples — it is the one solid
@@ -486,6 +496,7 @@ module MeshView =
                 | SlopeColor   -> 2)
         let meshIndices = meshIndicesA model
         let palette = Primitives.meshPaletteV4d
+        let rootA = model.RegGraph |> AVal.map (fun g -> g.Root)
 
         let blobCount, blobs = pinBlobUniforms model
         let armSphereU = armSphereUniform model
@@ -567,9 +578,11 @@ module MeshView =
             // Inactive meshes still render (as ghost); gate on load state only.
             let renderEnabled = loaded.fvc |> AVal.map (fun n -> n > 3)
             let meshColor =
-                meshIndices |> AVal.map (fun m ->
-                    let i = Map.tryFind name m |> Option.defaultValue 0
-                    V4f palette.[i % palette.Length])
+                (meshIndices, rootA) ||> AVal.map2 (fun m root ->
+                    if root = Some name then V4f(V3f Primitives.refGoldV3d, 1.0f)
+                    else
+                        let i = Map.tryFind name m |> Option.defaultValue 0
+                        V4f palette.[i % palette.Length])
             // False-colour: the MOVING mesh paints its signed distance vs its
             // reference — never the reference against itself, and nothing is
             // isolated. In the pair workspace that is the cell's MOV vs REF; at
@@ -788,9 +801,11 @@ module MeshView =
                 // main pass only).
                 let active = loaded.fvc |> AVal.map (fun n -> n > 3)
                 let meshColor =
-                    meshIndices |> AVal.map (fun m ->
-                        let i = Map.tryFind name m |> Option.defaultValue 0
-                        V4f palette.[i % palette.Length])
+                    (meshIndices, model.RegGraph) ||> AVal.map2 (fun m g ->
+                        if g.Root = Some name then V4f(V3f Primitives.refGoldV3d, 1.0f)
+                        else
+                            let i = Map.tryFind name m |> Option.defaultValue 0
+                            V4f palette.[i % palette.Length])
                 let meshId =
                     meshIndices |> AVal.map (fun m ->
                         float32 ((Map.tryFind name m |> Option.defaultValue 0) + 1) / 255.0f)
@@ -880,20 +895,30 @@ module MeshView =
     let coverageColorsA (model : AdaptiveModel) : aval<V4f[]> =
         let idxA = meshIndicesA model
         AVal.custom (fun t ->
-            match brushFrameAt model t with
-            | Some (refM, _) ->
-                match Map.tryFind refM (idxA.GetValue t) with
+            // Dynamic reference gold: the root's slot renders gold instead of
+            // its palette colour, whatever else the state does below.
+            let baseCs =
+                match (model.RegGraph.GetValue t).Root
+                      |> Option.bind (fun r -> Map.tryFind r (idxA.GetValue t)) with
                 | Some i when i < 8 ->
                     let cs = Array.copy coverageColors
                     cs.[i] <- V4f(V3f Primitives.refGoldV3d, 1.0f)
                     cs
                 | _ -> coverageColors
+            match brushFrameAt model t with
+            | Some (refM, _) ->
+                match Map.tryFind refM (idxA.GetValue t) with
+                | Some i when i < 8 ->
+                    let cs = Array.copy baseCs
+                    cs.[i] <- V4f(V3f Primitives.refGoldV3d, 1.0f)
+                    cs
+                | _ -> baseCs
             | None ->
                 if mapIsolationAt model t then
-                    coverageColors |> Array.map (fun c ->
+                    baseCs |> Array.map (fun c ->
                         let g = 0.299f * c.X + 0.587f * c.Y + 0.114f * c.Z
                         V4f(g, g, g, c.W))
-                else coverageColors)
+                else baseCs)
 
     // The reference root ALONE into coverage channel 0, from a tile's own
     // camera — every ortho tile/pane overlays this footprint as the gold
@@ -987,9 +1012,11 @@ module MeshView =
         let meshIndices = meshIndicesA model
         let palette = Primitives.meshPaletteV4d
         let meshColor =
-            meshIndices |> AVal.map (fun m ->
-                let i = Map.tryFind name m |> Option.defaultValue 0
-                V4f palette.[i % palette.Length])
+            (meshIndices, model.RegGraph) ||> AVal.map2 (fun m g ->
+                if g.Root = Some name then V4f(V3f Primitives.refGoldV3d, 1.0f)
+                else
+                    let i = Map.tryFind name m |> Option.defaultValue 0
+                    V4f palette.[i % palette.Length])
         let placing =
             model.ScanPins.Placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
         let otherA, cov0, cov1 = overlap

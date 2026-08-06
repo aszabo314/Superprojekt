@@ -63,7 +63,10 @@ module GuiPanes =
             }
 
     // A landed armed pick: route into the draft (centre/point) or a committed
-    // pin's point re-pick; the reducer disarms on landing.
+    // pin's point re-pick; the reducer disarms on landing. A CENTRE landing
+    // first validates the ROI against the OTHER pair mesh (adaptive radius:
+    // grow until ≥20 of its vertices fall inside, capped at ×4 — past the cap
+    // the location is refused and the arm stays lit for another try).
     let armedPick (env : Env<Message>) (model : AdaptiveModel) (ray : Ray3d) =
         match AVal.force model.ArmedPick with
         | None -> ()
@@ -71,19 +74,56 @@ module GuiPanes =
             async {
                 let! hit = armedResolve model target ray
                 match hit with
-                | Some (mesh, local, _world) ->
+                | Some (mesh, local, world) ->
+                    let sel = AVal.force model.Sel
+                    let placement = AVal.force model.ScanPins.Placement
                     let msgs =
-                        match AVal.force model.ScanPins.Placement with
+                        match placement with
                         | PlacementActive _ ->
                             match target with
                             | ArmCentre -> [ScanPinMsg (DraftAreaAt(mesh, local))]
                             | ArmPoint m -> [ScanPinMsg (DraftPointAt(m, local))]
                         | PlacementIdle ->
-                            match target, (AVal.force model.Sel).Pin with
+                            match target, sel.Pin with
                             | ArmPoint m, Some id -> [ScanPinMsg (EditPointAt(id, m, local))]
                             | ArmCentre, Some id -> [ScanPinMsg (EditCentreAt(id, mesh, local))]
                             | _ -> []
-                    if not (List.isEmpty msgs) then env.Emit msgs
+                    if not (List.isEmpty msgs) then
+                        match target, sel.Pair with
+                        | ArmCentre, Some (a, b) ->
+                            let other = if mesh = a then b else a
+                            // The radius this landing will commit: the draft's,
+                            // else the selected pin's.
+                            let curRadius =
+                                match placement with
+                                | PlacementActive d -> d.Radius
+                                | PlacementIdle ->
+                                    sel.Pin
+                                    |> Option.bind (fun id -> HashMap.tryFind id (AVal.force model.ScanPins.Pins.Content))
+                                    |> Option.map (fun p -> p.InnerRadius)
+                                    |> Option.defaultValue (AVal.force model.QuickPinRadius)
+                            let cc = AVal.force model.CommonCentroid
+                            let scale = DatasetScale.forMesh (AVal.force model.DatasetScales) other
+                            let otherT =
+                                (RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model other))).Forward
+                            let otherNum =
+                                (AVal.force (model.MeshOrder |> AMap.tryFind other) |> Option.defaultValue 0) + 1
+                            let! ok, r = Query.roiFit ApiConfig.apiBase.Value other otherT world curRadius 20 4.0
+                            if not ok then
+                                env.Emit [ShowToast (sprintf "No centre here — mesh %d has no surface within reach (the region would have to grow past ×4)." otherNum)]
+                            elif r > curRadius * 1.0001 then
+                                // Radius BEFORE centre: the centre landing may
+                                // complete the draft (landDraft mints on it).
+                                let radiusMsg =
+                                    match placement, sel.Pin with
+                                    | PlacementActive _, _ -> ScanPinMsg (SetDraftRadius r)
+                                    | PlacementIdle, Some id -> ScanPinMsg (SetInnerRadius(id, r))
+                                    | PlacementIdle, None -> ScanPinMsg (SetDraftRadius r)
+                                env.Emit (radiusMsg :: msgs)
+                                env.Emit [ShowToast (sprintf "Region grew to %.2f m to include mesh %d." r otherNum)]
+                            else
+                                env.Emit msgs
+                        | _ -> env.Emit msgs
                 | None -> ()
             } |> Async.Start
 
@@ -283,7 +323,7 @@ module GuiPanes =
             div {
                 Class "pane-chip"
                 idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
-                span { Class "pmx-sw"; idxVal |> AVal.map (fun i -> Some (Style [Css.Background (c4bToRgbCss (meshColor i))])) }
+                span { Class "pmx-sw"; (idxVal, isRoot) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (c4bToRgbCss (meshColorRoot r i))])) }
                 span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
                 span { Class "pmx-root-star"; isRoot |> AVal.map (fun r -> if r then "★" else "") }
             }
@@ -345,23 +385,28 @@ module GuiPanes =
                 // pin's marker — the draft is always the subject — is larger.
                 let meshColV4 =
                     // Fades with the committed marks while a pick is armed.
-                    (idxVal, model.ArmedPick) ||> AVal.map2 (fun i armed ->
-                        let c = meshColor i
+                    (idxVal, isRoot, model.ArmedPick) |||> AVal.map3 (fun i r armed ->
+                        let c = meshColorRoot r i
                         V4d(float c.R / 255.0, float c.G / 255.0, float c.B / 255.0,
                             (if armed.IsSome then 0.15 else 1.0)))
-                let fillNode (st : aval<(V3d * float) option>) =
+                let fillNode (col : aval<V4d>) (st : aval<(V3d * float) option>) =
                     let trafo =
                         st |> AVal.map (function
                             | Some (c, sz) -> Trafo3d.Scale sz * Trafo3d.Translation c
                             | None -> Trafo3d.Scale 0.0)
                     sg {
                         Sg.Pass RenderPass.passOne
-                        ScanPinScene.sphereShell view proj marksOn trafo meshColV4
+                        ScanPinScene.sphereShell view proj marksOn trafo col
                     }
                 let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
                 let pointFills =
                     pinIdSet |> ASet.map (fun id ->
-                        fillNode (AVal.custom (fun t ->
+                        // Pin-scope isolation mirrors into the tile glyphs.
+                        let col =
+                            AVal.custom (fun t ->
+                                let c = meshColV4.GetValue t
+                                V4d(c.XYZ, c.W * ScanPinScene.pinScopeDim model t id))
+                        fillNode col (AVal.custom (fun t ->
                             match HashMap.tryFind id (pinsVal.GetValue t) with
                             | Some p when (model.Sel.GetValue t).Pair = Some p.Pair
                                           && (name = fst p.Pair || name = snd p.Pair) ->
@@ -370,7 +415,7 @@ module GuiPanes =
                                 Some (renderOf t local, sz)
                             | _ -> None)))
                 pointFills
-                fillNode (AVal.custom (fun t ->
+                fillNode meshColV4 (AVal.custom (fun t ->
                     match model.ScanPins.Placement.GetValue t with
                     | PlacementActive d when name = fst d.Pair || name = snd d.Pair ->
                         (if name = fst d.Pair then d.PointA else d.PointB)
@@ -398,7 +443,8 @@ module GuiPanes =
                                     let local = if name = fst pair then p.PointA else p.PointB
                                     let c = renderOf t local
                                     let sz = if sel.Pin = Some id then 0.065 else 0.05
-                                    addWireSphere out c sz (V4d(1.0, 1.0, 1.0, 0.95 * armDim)) 1.6 16
+                                    let sd = ScanPinScene.pinScopeDim model t id
+                                    addWireSphere out c sz (V4d(1.0, 1.0, 1.0, 0.95 * armDim * sd)) 1.6 16
                             // The subject pin's area sphere in BOTH pair tiles
                             // (its centre rides the anchor mesh's pose); the
                             // anchor tile alone adds a dashed outer ring — the

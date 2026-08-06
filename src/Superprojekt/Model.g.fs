@@ -1,5 +1,5 @@
-//e19e9165-b08a-ad02-2df9-fb5d8a394a7d
-//61c9e8e1-9971-4525-84fc-dcc87db025e4
+//59de5879-8d21-dba6-c02f-3ab4f911e4e3
+//58f75556-4db5-9420-72b8-36636da70f77
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -46,7 +46,6 @@ type AdaptiveModel(value : Model) =
     let _RenderingMode_ = FSharp.Data.Adaptive.cval(value.RenderingMode)
     let _Focus_ = FSharp.Data.Adaptive.cval(value.Focus)
     let _Sel_ = FSharp.Data.Adaptive.cval(value.Sel)
-    let _SpannedNoticeOpen_ = FSharp.Data.Adaptive.cval(value.SpannedNoticeOpen)
     let _ReachLog_ = FSharp.Data.Adaptive.cval(value.ReachLog)
     let _ReachLogOpen_ = FSharp.Data.Adaptive.cval(value.ReachLogOpen)
     let _Checkpoints_ = FSharp.Data.Adaptive.cval(value.Checkpoints)
@@ -72,6 +71,8 @@ type AdaptiveModel(value : Model) =
     let _PeekPose_ = FSharp.Data.Adaptive.cval(value.PeekPose)
     let _LoopPending_ = FSharp.Data.Adaptive.cval(value.LoopPending)
     let _PinExitPending_ = FSharp.Data.Adaptive.cval(value.PinExitPending)
+    let _PairConnectWarn_ = FSharp.Data.Adaptive.cval(value.PairConnectWarn)
+    let _PendingResolves_ = FSharp.Data.Adaptive.cval(value.PendingResolves)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let _MeshMenuOpen_ = FSharp.Data.Adaptive.cval(value.MeshMenuOpen)
     let _SensorMenuOpen_ = FSharp.Data.Adaptive.cval(value.SensorMenuOpen)
@@ -124,7 +125,6 @@ type AdaptiveModel(value : Model) =
             _RenderingMode_.Value <- value.RenderingMode
             _Focus_.Value <- value.Focus
             _Sel_.Value <- value.Sel
-            _SpannedNoticeOpen_.Value <- value.SpannedNoticeOpen
             _ReachLog_.Value <- value.ReachLog
             _ReachLogOpen_.Value <- value.ReachLogOpen
             _Checkpoints_.Value <- value.Checkpoints
@@ -150,6 +150,8 @@ type AdaptiveModel(value : Model) =
             _PeekPose_.Value <- value.PeekPose
             _LoopPending_.Value <- value.LoopPending
             _PinExitPending_.Value <- value.PinExitPending
+            _PairConnectWarn_.Value <- value.PairConnectWarn
+            _PendingResolves_.Value <- value.PendingResolves
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
             _MeshMenuOpen_.Value <- value.MeshMenuOpen
             _SensorMenuOpen_.Value <- value.SensorMenuOpen
@@ -195,7 +197,6 @@ type AdaptiveModel(value : Model) =
     member __.RenderingMode = _RenderingMode_ :> FSharp.Data.Adaptive.aval<RenderingMode>
     member __.Focus = _Focus_ :> FSharp.Data.Adaptive.aval<FocusLevel>
     member __.Sel = _Sel_ :> FSharp.Data.Adaptive.aval<FocusSelection>
-    member __.SpannedNoticeOpen = _SpannedNoticeOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.ReachLog = _ReachLog_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<ReachEvent>>
     member __.ReachLogOpen = _ReachLogOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.Checkpoints = _Checkpoints_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
@@ -221,6 +222,8 @@ type AdaptiveModel(value : Model) =
     member __.PeekPose = _PeekPose_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.LoopPending = _LoopPending_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<LoopPending>>
     member __.PinExitPending = _PinExitPending_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<FocusLevel>>
+    member __.PairConnectWarn = _PairConnectWarn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.string * Microsoft.FSharp.Core.string)>>
+    member __.PendingResolves = _PendingResolves_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<(Microsoft.FSharp.Core.string * Microsoft.FSharp.Core.string)>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshMenuOpen = _MeshMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.SensorMenuOpen = _SensorMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>

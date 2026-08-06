@@ -263,6 +263,10 @@ type LoopPending = {
     ResidualRotDeg : float
     ResidualTransM : float
     Selected       : string option
+    // Transient row-hover preview of a choice, same encoding as Selected
+    // (inner None = the new edge); the embedded tree highlights
+    // Hover-else-Selected, so the binary choice is visible before commit.
+    Hover          : string option option
 }
 
 // Cell state of the mesh×mesh navigator: the (unordered) pair either cannot be

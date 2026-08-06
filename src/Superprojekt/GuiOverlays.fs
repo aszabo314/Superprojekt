@@ -120,7 +120,7 @@ module GuiOverlays =
                 match model.Focus.GetValue t with
                 | FocusPair | FocusPin ->
                     (model.Sel.GetValue t).Pair.IsSome
-                    && ((model.CellMapOn.GetValue t && (model.CellDist.GetValue t).IsSome)
+                    && ((model.CellMapOn.GetValue t && (MeshView.cellDistAt model t).IsSome)
                         || not (Set.isEmpty (model.BrushedSamples.GetValue t)))
                 | FocusMatrix ->
                     let dists =
@@ -194,7 +194,7 @@ module GuiOverlays =
                                 match (model.Sel.GetValue t).Pair with
                                 | Some (a, b) ->
                                     let _, movM = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
-                                    if m = movM then model.CellDist.GetValue t else None
+                                    if m = movM then MeshView.cellDistAt model t else None
                                 | None -> None
                         match target |> Option.bind (fun m -> distsOf m |> Option.map (fun d -> m, d)) with
                         | Some (m, arr) ->

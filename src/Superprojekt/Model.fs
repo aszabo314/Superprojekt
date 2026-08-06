@@ -311,6 +311,12 @@ type Model =
         CellErrorBefore     : (ScanPinId * Query.PairPinError)[] option
         // MOV's per-vertex signed distance vs REF (the false-colour buffer).
         CellDist            : float32[] option
+        // The same buffer at the workspace pose peek's geometry — MOV at its
+        // as-loaded baseline, REF as displayed; registered pairs only (the
+        // peek is guarded to them). The held peek paints this one, so the
+        // colours describe the blinked pose. Lands with CellDist in ONE
+        // message, so a peek never reads a half-landed flip.
+        CellDistBefore      : float32[] option
         // The GRAPH-scope error stream (Matrix): every established edge's pins,
         // child-relative-to-parent, in canonical edge×pin order — the pooled
         // union the graph histogram and its brush read. Held in BOTH states so
@@ -360,7 +366,9 @@ type Model =
         //              it exists in the pair workspace ALONE.
         //   PeekPose — as-loaded instead of composed: the pair's MOV inside the
         //              workspace (REF static — "did registration help?"), the
-        //              WHOLE graph at Matrix. Purely visual.
+        //              WHOLE graph at Matrix. Visual layer only, but the error
+        //              field flips in lockstep at every scope (resident
+        //              before-buffers: GraphDistBefore / CellDistBefore).
         PeekVis             : bool
         PeekPose            : bool
         // The transient loop awaiting FORCED resolution — the blocking modal is
@@ -523,6 +531,7 @@ module Model =
             CellError           = None
             CellErrorBefore     = None
             CellDist            = None
+            CellDistBefore      = None
             GraphError          = None
             GraphErrorBefore    = None
             GraphDist           = Map.empty

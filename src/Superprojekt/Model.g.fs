@@ -1,5 +1,5 @@
-//ba542e36-c19e-5922-4aa1-3ea400aeabc6
-//49d7c88e-10ba-2e70-421d-344072183c90
+//04ac538f-43e6-0174-7f42-70b3054ec3fb
+//08ea9edd-891e-86fb-18fd-a2150fee2896
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -54,6 +54,7 @@ type AdaptiveModel(value : Model) =
     let _CellError_ = FSharp.Data.Adaptive.cval(value.CellError)
     let _CellErrorBefore_ = FSharp.Data.Adaptive.cval(value.CellErrorBefore)
     let _CellDist_ = FSharp.Data.Adaptive.cval(value.CellDist)
+    let _CellDistBefore_ = FSharp.Data.Adaptive.cval(value.CellDistBefore)
     let _GraphError_ = FSharp.Data.Adaptive.cval(value.GraphError)
     let _GraphErrorBefore_ = FSharp.Data.Adaptive.cval(value.GraphErrorBefore)
     let _GraphDist_ = FSharp.Data.Adaptive.cval(value.GraphDist)
@@ -134,6 +135,7 @@ type AdaptiveModel(value : Model) =
             _CellError_.Value <- value.CellError
             _CellErrorBefore_.Value <- value.CellErrorBefore
             _CellDist_.Value <- value.CellDist
+            _CellDistBefore_.Value <- value.CellDistBefore
             _GraphError_.Value <- value.GraphError
             _GraphErrorBefore_.Value <- value.GraphErrorBefore
             _GraphDist_.Value <- value.GraphDist
@@ -207,6 +209,7 @@ type AdaptiveModel(value : Model) =
     member __.CellError = _CellError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellErrorBefore = _CellErrorBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellDist = _CellDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.float32)[]>>
+    member __.CellDistBefore = _CellDistBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.float32)[]>>
     member __.GraphError = _GraphError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(InspectBlock)[]>>
     member __.GraphErrorBefore = _GraphErrorBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(InspectBlock)[]>>
     member __.GraphDist = _GraphDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>

@@ -460,9 +460,9 @@ module Update =
         | CellErrorComputed(gen, after, before) ->
             if gen <> cellErrorGen then model
             else { model with CellError = Some after; CellErrorBefore = before }
-        | CellDistComputed(gen, dist) ->
+        | CellDistComputed(gen, after, before) ->
             if gen <> cellErrorGen then model
-            else { model with CellDist = Some dist }
+            else { model with CellDist = Some after; CellDistBefore = before }
         | GraphErrorComputed(gen, after, before) ->
             if gen <> cellErrorGen then model
             else { model with GraphError = Some after; GraphErrorBefore = Some before }
@@ -592,6 +592,7 @@ module Update =
                     CellError = None
                     CellErrorBefore = None
                     CellDist = None
+                    CellDistBefore = None
                     GraphError = None
                     GraphErrorBefore = None
                     GraphDist = Map.empty
@@ -942,7 +943,10 @@ module Update =
                 model
 
     // The in-cell false-colour buffer: MOV's per-vertex signed distance vs REF
-    // at the displayed poses — never the reference against itself.
+    // at the displayed poses — never the reference against itself. Registered
+    // pairs fetch the BEFORE buffer alongside, at the workspace pose peek's
+    // exact geometry (MOV at its as-loaded baseline, REF as displayed), so the
+    // held peek repaints from a resident buffer; one message carries both.
     let private ensureCellDist (env : Env<Message>) (model : Model) : Model =
         match model.Focus, model.Sel.Pair with
         | FocusMatrix, _ | _, None -> model
@@ -953,10 +957,26 @@ module Update =
                 let gen = cellErrorGen
                 let refMesh, movMesh = MatrixNav.pairRefMov model.RegGraph a b
                 let tOf (m : string) = (ModelTransforms.displayedWorld model m).Forward
+                let movLoad = (ModelTransforms.loadWorld model movMesh).Forward
+                let registered = (RegGraph.pairEdge a b model.RegGraph).IsSome
                 task {
                     try
-                        let! d = Query.regionDistance ApiConfig.apiBase.Value movMesh refMesh (tOf movMesh) (tOf refMesh) |> Async.StartAsTask
-                        env.Emit [CellDistComputed(gen, d)]
+                        let afterT =
+                            Query.regionDistance ApiConfig.apiBase.Value movMesh refMesh (tOf movMesh) (tOf refMesh)
+                            |> Async.StartAsTask
+                        let! before =
+                            if registered then
+                                task {
+                                    try
+                                        let! d =
+                                            Query.regionDistance ApiConfig.apiBase.Value movMesh refMesh movLoad (tOf refMesh)
+                                            |> Async.StartAsTask
+                                        return Some d
+                                    with _ -> return None
+                                }
+                            else task { return None }
+                        let! after = afterT
+                        env.Emit [CellDistComputed(gen, after, before)]
                     with _ -> ()
                 } |> ignore
                 model

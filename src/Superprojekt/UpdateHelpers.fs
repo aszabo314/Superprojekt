@@ -80,7 +80,7 @@ module UpdateHelpers =
     let invalidateCellError (model : Model) =
         bumpCellError ()
         { model with
-            CellError = None; CellErrorBefore = None; CellDist = None
+            CellError = None; CellErrorBefore = None; CellDist = None; CellDistBefore = None
             GraphError = None; GraphErrorBefore = None
             GraphDist = Map.empty; GraphDistBefore = Map.empty
             BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None }

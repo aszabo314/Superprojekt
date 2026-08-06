@@ -82,7 +82,7 @@ type Message =
     | SolvePair of a:string * b:string
     // ── In-cell error inspection. Results are gen-guarded (UpdateHelpers).
     | CellErrorComputed of gen:int * after:(ScanPinId * Query.PairPinError)[] * before:(ScanPinId * Query.PairPinError)[] option
-    | CellDistComputed of gen:int * dist:float32[]
+    | CellDistComputed of gen:int * after:float32[] * before:float32[] option
     // The graph-scope caches: the pooled per-edge sample stream and one map
     // buffer per registered child, each vs its parent — both states in ONE
     // message, so the Matrix pose peek can never show a half-landed flip.

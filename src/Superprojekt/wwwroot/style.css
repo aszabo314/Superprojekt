@@ -524,9 +524,23 @@ body.loaded { background: #f4f6f8; }
 .tb-cut .is-label { min-width: 0; }
 .tb-cut .is-range { width: 90px; }
 .tb-cut .is-value { width: 34px; }
-/* The hold-to-peek button pair (Pair level only). */
+/* The hold-to-peek button pair. */
 .tb-peeks { display: inline-flex; align-items: center; gap: 4px; margin-right: 10px; }
-.tb-peek { user-select: none; -webkit-user-select: none; touch-action: none; }
+.tb-peek { position: relative; user-select: none; -webkit-user-select: none; touch-action: none; }
+/* Held feedback: highlight ring + a "peeking" chip below the button — the
+   chip is out of layout so the hold never shifts the bar. */
+.tb-peek.tb-btn-active {
+    box-shadow: inset 0 1px 2px rgba(0,0,0,0.15), 0 0 0 2px #8ab0f8;
+}
+.tb-peek.tb-btn-active::after {
+    content: "peeking";
+    position: absolute; top: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%);
+    background: #1a56db; color: #ffffff;
+    font-size: 10px; font-weight: 600; line-height: 1;
+    padding: 3px 7px; border-radius: 3px;
+    white-space: nowrap; pointer-events: none; z-index: 1500;
+}
 
 /* ── Scale bar ────────────────────────────────────────────────────── */
 

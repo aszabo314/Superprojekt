@@ -10,6 +10,53 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## Peek-hold feedback + workspace error map flips with the pose peek (2026-08-06)
+
+- **Peek-hold visual feedback** (style.css only): while a peek button is
+  held (`.tb-peek.tb-btn-active` — pointer hold or the V/B keys, same
+  aval) it gains a light-blue highlight ring and a small "peeking" chip
+  attached below the button. The chip is absolutely positioned (out of
+  layout), so the hold never shifts the top bar.
+- **Pair/Pin false-colour map now flips with the pose peek**, matching
+  the Matrix convention (colours always describe the on-screen
+  geometry). Previously the workspace map kept the registered-pose
+  values while the peek blinked MOV to its as-loaded baseline
+  (documented as an accepted approximation — now revoked by the user).
+  - New `Model.CellDistBefore : float32[] option`: MOV's per-vertex
+    region-distance at the workspace peek's exact geometry — MOV at its
+    as-loaded baseline (`ModelTransforms.loadWorld`), REF as displayed.
+    NOT the per-edge `composeEdge` convention: the peek drops MOV all
+    the way to baseline, so the buffer matches what is rendered.
+  - `ensureCellDist` fetches both states in one flight (before only for
+    registered pairs — `RegGraph.pairEdge`; the peek is guarded to
+    them) and lands them in ONE message —
+    `CellDistComputed(gen, after, before)` — so a held peek can never
+    read a half-landed flip. Cleared together everywhere
+    (`invalidateCellError`, dataset switch).
+  - New `MeshView.cellDistAt` — `graphSideAt`'s pair-scope twin: the
+    peeked state's buffer, read by `cellPaint` (Pair/Pin branch) AND
+    both legend sites in `GuiOverlays.colorLegend` (the map-on gate and
+    the crop-to-mesh range, whose Matrix branches were already
+    peek-aware). Peeked + before missing paints NOTHING (like Matrix's
+    `Map.tryFind` miss) — never stale after-values on before poses.
+    The Pin ROI mask already rides the peek (`displayedWorldAt` is
+    peek-aware), so the pin-local mask follows the blinked anchor for
+    free.
+  - Deliberately NOT flipped: the workspace scale/legend/chart. The
+    range stays the after-state cell range (peek-blind, held across the
+    flip — no per-state renormalization, so the flip truthfully shows
+    the before state saturating toward the ramp ends), and the chart
+    keeps its permanent per-edge before outline; the brush/dot stream
+    stays the after samples. Matrix behaviour is unchanged.
+- CLAUDE.md supersessions: **Peek keys** "Inside the workspace the pose
+  peek stays zero-refetch: the error map rides MOV's surface with
+  registered-pose values (accepted approximation)" → superseded (the
+  workspace map now flips via the resident `CellDistBefore` buffer;
+  still zero-refetch at peek time). **Inspection caches** "The two
+  states exist only at graph scope" → superseded for the DIST buffer
+  (`CellDistBefore` joins; the error/sample caches remain
+  graph-scope-only two-state).
+
 ## Fix: tile-strip growth loop on fractional-dpr displays (2026-08-06)
 
 - Windows-only bug (Chrome, 125%/150% display scale): the ortho tiles

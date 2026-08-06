@@ -206,10 +206,20 @@ module MeshView =
     // the error field in lockstep with the poses, so the colours always
     // describe what is on screen. Before = every edge measured with BOTH
     // endpoints at their as-loaded baselines, After = the composed residual.
-    // The pair workspace is untouched — it pairs before/after per EDGE, and no
-    // peek reaches its error at all.
+    // The workspace SAMPLE stream stays untouched — it pairs before/after per
+    // EDGE (the chart's before outline); only its false-colour MAP flips with
+    // the peek (cellPaint reads CellDistBefore directly).
     let graphSideAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
         if model.PeekPose.GetValue t then EdgeBefore else EdgeAfter
+
+    // The workspace map buffer in the PEEKED state — graphSideAt's pair-scope
+    // twin: the held pose peek reads the resident before buffer (MOV at its
+    // as-loaded baseline), so map, legend gate and legend crop all describe
+    // the blinked geometry. A missing before yields None, never stale
+    // after-values on before poses.
+    let cellDistAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
+        if model.PeekPose.GetValue t then model.CellDistBefore.GetValue t
+        else model.CellDist.GetValue t
 
     let private graphBlocks (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) (side : EdgeSide) =
         (match side with
@@ -609,7 +619,7 @@ module MeshView =
                             let _, mov = MatrixNav.pairRefMov (model.RegGraph.GetValue t) a b
                             if mov <> name then None
                             else
-                                match model.CellDist.GetValue t with
+                                match cellDistAt model t with
                                 | Some dist ->
                                     // The Pin level narrows the map to the selected
                                     // pin's ROI sphere: outside vertices get the

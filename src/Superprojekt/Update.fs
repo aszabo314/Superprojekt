@@ -219,7 +219,10 @@ module Update =
                 DatasetCentroids =
                     // Fresh map — entries never accumulate across dataset switches.
                     let perMesh = centroids |> Array.fold (fun m (n, c) -> Map.add n c m) Map.empty
-                    if dataset <> "" then Map.add dataset common perMesh else perMesh }
+                    if dataset <> "" then Map.add dataset common perMesh else perMesh
+                DatasetSensors   = Map.empty }
+        | SensorsLoaded sensors ->
+            { model with DatasetSensors = Map.ofArray sensors }
         | LoadFinished name ->
             // Cached-mesh revisits re-emit completions — only a FIRST landing
             // may append the loading-done marker (no duplicate divs).
@@ -839,12 +842,17 @@ module Update =
              | None -> ())
             model
         | FlyToSensor mesh ->
-            // A sensor-VIEWPOINT jump, not an overview framing: a close orbit
-            // around where the scanner actually stood — the sensor rides the
-            // mesh's displayed pose (server frame == metric world at load).
+            // A FIRST-PERSON sensor jump: the eye lands ON the station (the
+            // sensor rides the mesh's displayed pose; server frame == metric
+            // world at load). Radius 0 clamps to the orbit floor, where
+            // withView snaps the eye exactly onto the centre — zooming out
+            // backs the orbit away from the station.
             let world = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos
                             (ModelTransforms.sensorWorld model mesh)
-            env.Emit [FlyToPoint(world, 10.0)]
+            let scale = DatasetScale.forMesh model.DatasetScales mesh
+            let centreR = ScanPin.renderCentre model.CommonCentroid scale world
+            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, centreR))
+                      CameraMessage (OrbitMessage.SetTargetRadius 0.0)]
             model
 
     // Lazy pairwise-overlap sweep: every unordered mesh pair missing from the

@@ -9,6 +9,7 @@ type Message =
     // view-side.
     | SetTileCam         of mesh : string * TileCam
     | CentroidsLoaded    of (string * V3d)[]
+    | SensorsLoaded      of (string * V3d)[]
     | LoadFinished       of string
     | ToggleGhostSilhouette
     | SetGhostOpacity of float

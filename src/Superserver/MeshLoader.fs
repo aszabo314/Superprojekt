@@ -76,6 +76,17 @@ let getCentroid (dataset : string) (name : string) : V3d option =
         | None   -> Some V3d.Zero
         | Some f -> Some (parseCentroidFile f)
 
+// Measured scan-station position (*sensor.txt, absolute world). None when the
+// mesh has no sensor file — absence is meaningful (the client falls back to
+// the mesh origin), unlike getCentroid's zero default.
+let getSensor (dataset : string) (name : string) : V3d option =
+    let folder = Path.Combine(dataRoot.Value, dataset, name)
+    if not (Directory.Exists folder) then None
+    else
+        Directory.GetFiles(folder, "*sensor.txt")
+        |> Array.tryHead
+        |> Option.map parseCentroidFile
+
 let parseMesh (dataset : string) (name : string) (index : int) : ParsedMesh =
     let folder = Path.Combine(dataRoot.Value, dataset, name)
     // Typed exceptions: the query error shell maps these to 404 (vs 500).

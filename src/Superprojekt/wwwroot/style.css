@@ -484,6 +484,15 @@ body.loaded { background: #f4f6f8; }
 .tb-gear-mesh-name { flex: 0 0 140px; color: #60a5fa; }
 .tb-gear-mesh-coord { color: #cbd5e1; }
 
+/* The camera readout (⚙ menu, sensor-centre reconstruction). */
+.tb-cam-row { margin-bottom: 2px; }
+.tb-cam-lab {
+    flex: 0 0 auto; max-width: 150px; color: #60a5fa; font-size: 10px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tb-cam-val { flex: 1 1 auto; user-select: text; white-space: nowrap; }
+.tb-cam-copy { flex: none; padding: 0 5px; }
+
 /* The hidden mesh menu (reference root + per-mesh render toggles). */
 .tb-mesh-popover { width: 340px; }
 .tb-gear-popover .pmx-num { color: #e2e8f0; }

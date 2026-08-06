@@ -96,6 +96,7 @@ module MeshData =
         }
 
     let fetchCentroids = fetchVecMap "centroids"
+    let fetchSensors   = fetchVecMap "sensors"
 
     let fetchBboxes (serverUrl : string) (dataset : string) : Async<(string * Box3d)[]> =
         async {

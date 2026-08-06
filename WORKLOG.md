@@ -10,6 +10,96 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## Measured sensor stations: *sensor.txt + /sensors endpoint (2026-08-06)
+
+- The user estimated the four JOB scan stations in-app (⚙ camera
+  readout, no registrations) and supplied them for storage in TRUE world
+  space. **Transformation-chain check**: the readout emits
+  `render/scale + CommonCentroid`; at identity poses and JOB scale 1
+  that IS the server frame = stored + per-mesh centroid = original true
+  world — the CommonCentroid shift cancels (subtracted into render
+  space, added back by the readout) and the per-mesh centroid never
+  enters. The supplied values were therefore stored VERBATIM.
+- **Data**: new `model_sensor.txt` next to each JOB mesh (all three
+  variants JOB / JOB_lowpoly / JOB_lowpoly2), same format as
+  centroid.txt (# comment + one `x y z` line, absolute world):
+  0789 (18.8467 −3.6765 3393768.6686) · 0791 (19.6485 −3.6826
+  3393770.6629) · 0792 (19.0767 −1.0301 3393770.5086) · 0805 (20.9098
+  −1.2670 3393770.2529). Notably 0792's measured station sits WITH the
+  others — overriding the earlier "its origin 190 m away is its
+  station" belief (its exported frame origin is arbitrary after all).
+- **Server**: `MeshLoader.getSensor` (`*sensor.txt` glob; None when
+  absent — meaningful, unlike getCentroid's zero default) +
+  `GET /api/datasets/{ds}/sensors` → `{ meshName: [x,y,z] }`, only
+  meshes WITH a file (verified live: JOB returns all 4, Hessigheim {}).
+- **Client**: `MeshData.fetchSensors`; `SensorsLoaded` message;
+  `Model.DatasetSensors : Map<string, V3d>` (adaptify rerun);
+  `CentroidsLoaded` resets it, `loadDataset` fetches sensors after
+  centroids. `ModelTransforms.sensorWorld` now PREFERS the measured
+  station and falls back to the mesh origin (centroid.txt) — so the
+  Sensor ▾ first-person jump, the dataset-load framing and the
+  coordinate cross all ride the measured stations automatically. The
+  incidence/range heatmap still uses the posed mesh origin (untouched —
+  separate semantics, would change analysis output).
+- CLAUDE.md supersessions (docs frozen; for reconstruction): the API
+  list gains `/api/datasets/{ds}/sensors`; the "Sensor positions"
+  section's "there is no separate sensor file or endpoint" clause is
+  now false — measured `*sensor.txt` overrides exist for JOB.
+- Builds green (server + client, 0 errors).
+
+## Camera readout in the ⚙ debug menu (2026-08-06)
+
+- User confirmed there is NO separate sensor file (the earlier "noted in
+  a text file" was misspoken); they will reconstruct the sensor centres
+  by hand. The ⚙ popover gained a **Camera readout** section below the
+  per-mesh centroid info: live **Eye** and **Orbit centre** rows in
+  absolute world coordinates (the `*centroid.txt` frame, `%.4f`,
+  monospace, selectable) each with a ⧉ copy-to-clipboard button
+  (`window.spCopy`, View.fs OnBoot). Workflow: Sensor ▾ lands
+  first-person; navigate to where the scanner stood (fully zoomed in the
+  eye sits ON the orbit centre); copy.
+- **Registered meshes add a third row kind**: "Eye in *n mesh*" — the eye
+  un-posed into that mesh's own file frame via
+  `MeshView.displayedWorldAt(...).Backward` (only shown while the mesh
+  has a composed pose, where file frame ≠ world; at baseline the world
+  row IS the file value).
+- Perf: row values gate on `GearPopoverOpen` (`AVal.bind` →
+  constant when closed), so the closed menu adds zero per-camera-move
+  work; per-row `AVal.custom` reads the stable `eyeWorldA` (sanctioned
+  form). CSS: `.tb-cam-*` matching the gear popover's dark chrome.
+- Build green (0 errors).
+
+## Sensor jump goes first-person (2026-08-06)
+
+- **Data discovery** (the user reported the jump landing "at the origin of
+  a mesh" instead of the sensor): next to each mesh only two text files
+  exist — `*centroid.txt` (ONE world point) and `model_bbox.txt` (world
+  min/max of the ORIGINAL uncropped scan; consumed by NOTHING, server
+  bboxes recompute from vertices). The centroid value IS the stored-frame
+  origin's world coordinate, and the radial-OPC stored frame is
+  station-centred, so origin ≡ centroid.txt ≡ the sensor — the flown-to
+  POINT was already correct. Verified numerically: Job_0792's origin sits
+  165–213 m off its scanned face (a genuine across-the-valley station);
+  all four JOB meshes' world vertex means coincide (world = stored +
+  centroid holds). Data wart found: Job_0791 was re-exported RE-CENTRED
+  (stored vertex mean exactly 0, bbox.txt = crop bbox) — its true station
+  is lost, its "sensor" is the crop mean (noted at
+  `ModelTransforms.sensorWorld`).
+- **The actual wiring bug**: `FlyToSensor` set the orbit CENTRE to the
+  station but parked the EYE 10 m away looking at it (`FlyToPoint(world,
+  10)`) — reading as "camera inspects a spot on the mesh", never a sensor
+  viewpoint.
+- **Fix**: the jump now lands the eye ON the station — SetTargetCenter
+  (Tanh) at the posed sensor + `SetTargetRadius 0.0`, which clamps to the
+  orbit floor (0.1 render units) where `OrbitState.withView` snaps the
+  eye exactly onto the centre. First-person view, current bearing kept;
+  wheel-out zooms the orbit back away from the station.
+- CLAUDE.md supersession (docs frozen; for reconstruction): "Sensor
+  positions" consumer list — `FlyToSensor` is no longer "a close
+  sensor-viewpoint orbit via FlyToPoint at 10 m" but a first-person
+  landing at zero orbit distance.
+- Build green (0 errors).
+
 ## GUI touch-ups round 5 (2026-08-06)
 
 - **Histogram hover restacks to the baseline**: the hovered pin row's

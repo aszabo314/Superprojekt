@@ -222,6 +222,10 @@ type Model =
         ActiveDataset    : string option
         DatasetScales    : Map<string, float>
         DatasetCentroids : Map<string, V3d>
+        // Measured scan-station positions (*sensor.txt, absolute world) —
+        // only meshes that have one; overrides the mesh-origin fallback in
+        // ModelTransforms.sensorWorld.
+        DatasetSensors   : Map<string, V3d>
 
         GhostSilhouette      : bool
         GhostOpacity         : float
@@ -451,11 +455,16 @@ module ModelTransforms =
                 RigidTransform.worldToRender (DatasetScale.forMesh model.DatasetScales mesh) model.CommonCentroid w)
         { model with ComposedPoses = render }
 
-    // A mesh's sensor position: the mesh origin, whose world coordinate is the
-    // *centroid.txt value (the radial-scan pipeline centres each OPC on its scan
-    // station — data-verified, not an assumption). Metric world at load pose:
+    // A mesh's sensor position, metric world at load pose: the measured
+    // station (*sensor.txt) when the dataset provides one, else the mesh
+    // origin, whose world coordinate is the *centroid.txt value (the
+    // radial-scan pipeline centres each OPC on its scan station — but a
+    // re-centred re-export loses that, e.g. Job_0791's stored mean is exactly
+    // 0, so its origin is the crop mean; hence the measured override).
     let sensorWorld (model : Model) (mesh : string) =
-        Map.tryFind mesh model.DatasetCentroids |> Option.defaultValue model.CommonCentroid
+        match Map.tryFind mesh model.DatasetSensors with
+        | Some s -> s
+        | None -> Map.tryFind mesh model.DatasetCentroids |> Option.defaultValue model.CommonCentroid
 
     // …and in render space (load pose): (world − common)·scale.
     let sensorRender (model : Model) (mesh : string) =
@@ -482,6 +491,7 @@ module Model =
             ActiveDataset    = None
             DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
             DatasetCentroids = Map.empty
+            DatasetSensors   = Map.empty
             GhostSilhouette     = true
             GhostOpacity        = 0.12
             ShadingStrength     = 0.15

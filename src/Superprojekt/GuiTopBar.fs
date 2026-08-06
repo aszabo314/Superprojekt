@@ -389,6 +389,69 @@ module GuiTopBar =
                                     }
                                 })
                         }
+                        // ── Camera readout (sensor-centre reconstruction):
+                        // live eye + orbit centre in absolute world (the
+                        // *centroid.txt frame); a REGISTERED mesh adds the eye
+                        // un-posed into its own file frame, where the two
+                        // differ. Values gate on the popover flag, so a closed
+                        // menu costs nothing per camera move.
+                        let fmtP (p : V3d) = sprintf "%.4f %.4f %.4f" p.X p.Y p.Z
+                        let scaleA = (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
+                        let eyeWorldA =
+                            (model.Camera.view, model.CommonCentroid, scaleA) |||> AVal.map3 (fun v common scale ->
+                                ScanPin.worldCentre common scale v.Location)
+                        let centreWorldA =
+                            (model.Camera.center, model.CommonCentroid, scaleA) |||> AVal.map3 (fun c common scale ->
+                                ScanPin.worldCentre common scale c)
+                        let live (a : aval<V3d>) =
+                            model.GearPopoverOpen |> AVal.bind (fun o ->
+                                if o then a |> AVal.map fmtP else AVal.constant "")
+                        let copyBtn (get : unit -> string) =
+                            button {
+                                Class "tb-gear-btn tb-cam-copy"
+                                Attribute("title", "Copy these coordinates")
+                                Dom.OnClick(fun _ -> (try JSRuntime.Instance.Invoke<bool>("spCopy", get ()) |> ignore with _ -> ()))
+                                "⧉"
+                            }
+                        div {
+                            Class "tb-gear-row"
+                            span {
+                                Class "lp-sublabel"
+                                Attribute("title", "Live camera position in absolute world coordinates — the frame the *centroid.txt values live in. Park the eye where the scanner stood (Sensor ▾ jumps first-person; fully zoomed in, the eye sits ON the orbit centre) and copy.")
+                                "Camera readout (world)"
+                            }
+                        }
+                        div {
+                            Class "tb-gear-row tb-cam-row"
+                            span { Class "tb-cam-lab"; "Eye" }
+                            span { Class "tb-gear-val tb-cam-val"; live eyeWorldA }
+                            copyBtn (fun () -> fmtP (AVal.force eyeWorldA))
+                        }
+                        div {
+                            Class "tb-gear-row tb-cam-row"
+                            span { Class "tb-cam-lab"; "Orbit centre" }
+                            span { Class "tb-gear-val tb-cam-val"; live centreWorldA }
+                            copyBtn (fun () -> fmtP (AVal.force centreWorldA))
+                        }
+                        div {
+                            model.MeshNames |> AList.map (fun name ->
+                                // Stable per-row aval; reading the stable outer
+                                // eyeWorldA via GetValue t is the sanctioned form.
+                                let inFrameA =
+                                    AVal.custom (fun t ->
+                                        (MeshView.displayedWorldAt model t name).Backward.TransformPos (eyeWorldA.GetValue t))
+                                let registered = model.ComposedPoses |> AVal.map (Map.containsKey name)
+                                let lab =
+                                    (model.MeshOrder |> AMap.tryFind name, model.MeshNames.Content) ||> AVal.map2 (fun o ns ->
+                                        sprintf "Eye in %d %s" ((Option.defaultValue 0 o) + 1) (Primitives.friendlyName (IndexList.toList ns) name))
+                                div {
+                                    Class "tb-gear-row tb-cam-row"
+                                    showWhen registered
+                                    span { Class "tb-cam-lab"; lab }
+                                    span { Class "tb-gear-val tb-cam-val"; live inFrameA }
+                                    copyBtn (fun () -> fmtP (AVal.force inFrameA))
+                                })
+                        }
                     }
                 }
                 // The reaching-behaviour session log — the workshop's primary

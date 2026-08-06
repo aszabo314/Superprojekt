@@ -1,0 +1,2 @@
+# scan-station (sensor) position, absolute world space — user-estimated in-app, 2026-08-06
+19.6485 -3.6826 3393770.6629

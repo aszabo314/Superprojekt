@@ -16,6 +16,11 @@ module ServerActions =
                 env.Emit [CentroidsLoaded cs]
             with _ -> ()
             try
+                // After CentroidsLoaded — its reset must not wipe these.
+                let! ss = MeshData.fetchSensors ApiConfig.apiBase.Value dataset
+                if ss.Length > 0 then env.Emit [SensorsLoaded ss]
+            with _ -> ()
+            try
                 let! bboxes = MeshData.fetchBboxes ApiConfig.apiBase.Value dataset
                 env.Emit [SceneBoundsLoaded bboxes]
             with _ -> ()

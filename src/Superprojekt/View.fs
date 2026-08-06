@@ -118,6 +118,8 @@ module View =
                 "window.spCkDel = function(n){ localStorage.removeItem('spCk:'+n); return true; };"
                 "window.spCkList = function(){ var r=[]; for(var i=0;i<localStorage.length;i++){ var k=localStorage.key(i);"
                 "  if(k&&k.indexOf('spCk:')===0) r.push(k.substring(5)); } r.sort(); return r.join('\\n'); };"
+                // Clipboard helper (the ⚙ camera readout's copy buttons).
+                "window.spCopy = function(t){ try{ navigator.clipboard.writeText(t); }catch(e){} return true; };"
             ]
 
             renderControl {

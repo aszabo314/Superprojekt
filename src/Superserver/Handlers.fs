@@ -35,6 +35,13 @@ let centroidsHandler (dataset : string) : HttpHandler =
         MeshLoader.meshNames dataset
         |> Seq.choose (fun n -> MeshLoader.getCentroid dataset n |> Option.map (fun c -> n, c)))
 
+// Only meshes WITH a *sensor.txt appear — an empty map is the "no measured
+// stations" signal.
+let sensorsHandler (dataset : string) : HttpHandler =
+    pointMapHandler "sensors" dataset (fun () ->
+        MeshLoader.meshNames dataset
+        |> Seq.choose (fun n -> MeshLoader.getSensor dataset n |> Option.map (fun s -> n, s)))
+
 // This is the CACHE WARMER: it loads every mesh, in parallel (the Lazy cache
 // makes concurrent loads safe), so cold start pays the slowest mesh, not the sum.
 let bboxesHandler (dataset : string) : HttpHandler =
@@ -104,6 +111,7 @@ let webApp : HttpHandler =
         route  "/api/datasets"                                  >=> datasetsHandler
         route  "/api/datasets/default"                          >=> defaultDatasetHandler
         routef "/api/datasets/%s/centroids"                     centroidsHandler
+        routef "/api/datasets/%s/sensors"                       sensorsHandler
         routef "/api/datasets/%s/bboxes"                        bboxesHandler
         routef "/api/datasets/%s/mesh/%s/%i/atlas"              (fun (d,n,i) -> atlasHandler(d,n,i))
         routef "/api/datasets/%s/mesh/%s/%i"                    (fun (d,n,i) -> meshHandler(d,n,i))

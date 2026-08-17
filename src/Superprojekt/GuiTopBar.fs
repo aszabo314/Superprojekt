@@ -27,34 +27,6 @@ module GuiTopBar =
                     model.FarCutFrac (fun v -> env.Emit [SetFarCut v])
             }
 
-            // Jump-to-sensor: the ONE explicit per-mesh main-camera jump
-            // (the double-click/fly-to grammar's menu form).
-            div {
-                Class "tb-gear-wrap tb-sensor"
-                button {
-                    Class "tb-btn tb-sensor-btn"
-                    classWhen "tb-btn-active" model.SensorMenuOpen
-                    Attribute("title", "Fly the main camera to a mesh's scan-sensor viewpoint")
-                    Dom.OnClick(fun _ -> env.Emit [ToggleSensorMenu])
-                    "Sensor ▾"
-                }
-                div {
-                    Class "tb-gear-popover tb-menu-left tb-sensor-popover"
-                    showWhen model.SensorMenuOpen
-                    model.MeshNames |> AList.map (fun name ->
-                        let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-                        let isRoot = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
-                        div {
-                            Class "tb-gear-row tb-sensor-row"
-                            idxVal |> AVal.map (fun i ->
-                                Some (Attribute("title", sprintf "mesh %d — fly to its sensor viewpoint" (i + 1))))
-                            Dom.OnClick(fun _ -> env.Emit [FlyToSensor name; ToggleSensorMenu])
-                            span { Class "pmx-sw"; (idxVal, isRoot) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (c4bToRgbCss (meshColorRoot r i))])) }
-                            span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                        })
-                }
-            }
-
             // Isolate pins: a view/render mode, so it lives with the other
             // render controls, not among the inspection instruments. The flag
             // stays per workflow level (LevelFlags) — the button reads and

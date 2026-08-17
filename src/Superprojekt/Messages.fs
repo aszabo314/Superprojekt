@@ -135,8 +135,6 @@ type Message =
     | ToggleGearPopover
     // The hidden top-bar mesh menu (reference root + per-mesh render toggles).
     | ToggleMeshMenu
-    // The top-bar jump-to-sensor dropdown.
-    | ToggleSensorMenu
     // Collapse/expand the docked inspection toolbox.
     | ToggleInspectPanel
     // In-view near-plane slice: cut-plane fraction of the eye→centre distance (0 = off).
@@ -147,9 +145,6 @@ type Message =
     // the 3D radius conventions.
     | FlyToPoint of world:V3d * radius:float
     | ZoomToPin of ScanPinId
-    // Fly the main 3D to a mesh's sensor/scan-camera viewpoint (the top-bar
-    // Sensor menu) — the same framing the dataset load rests on.
-    | FlyToSensor of string
 
 and ScanPinMessage =
     // ── the placement transaction: modal, FREE ORDER (the arm buttons pick

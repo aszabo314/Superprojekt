@@ -439,7 +439,7 @@ module Update =
                 // close (an open one would float dead over the scrim).
                 { model with
                     ArmedPick = Some target; ArmPreview = None
-                    GearPopoverOpen = false; MeshMenuOpen = false; SensorMenuOpen = false
+                    GearPopoverOpen = false; MeshMenuOpen = false
                     ReachLogOpen = false }
         | SetArmPreview p ->
             if model.ArmedPick.IsNone then
@@ -621,8 +621,6 @@ module Update =
             { model with GearPopoverOpen = not model.GearPopoverOpen }
         | ToggleMeshMenu ->
             { model with MeshMenuOpen = not model.MeshMenuOpen }
-        | ToggleSensorMenu ->
-            { model with SensorMenuOpen = not model.SensorMenuOpen }
         | ToggleInspectPanel ->
             let lf = model.InspectOpen
             { model with InspectOpen = LevelFlags.set model.Focus (not (LevelFlags.get model.Focus lf)) lf }
@@ -843,19 +841,6 @@ module Update =
                 let centre = ScanPin.centreWorldWith (ModelTransforms.displayedWorld model p.AnchorMesh) p
                 env.Emit [FlyToPoint(centre, max 0.5 (p.InnerRadius * 4.0))]
              | None -> ())
-            model
-        | FlyToSensor mesh ->
-            // A FIRST-PERSON sensor jump: the eye lands ON the station (the
-            // sensor rides the mesh's displayed pose; server frame == metric
-            // world at load). Radius 0 clamps to the orbit floor, where
-            // withView snaps the eye exactly onto the centre — zooming out
-            // backs the orbit away from the station.
-            let world = (ModelTransforms.displayedWorld model mesh).Forward.TransformPos
-                            (ModelTransforms.sensorWorld model mesh)
-            let scale = DatasetScale.forMesh model.DatasetScales mesh
-            let centreR = ScanPin.renderCentre model.CommonCentroid scale world
-            env.Emit [CameraMessage (OrbitMessage.SetTargetCenter(AnimationKind.Tanh, centreR))
-                      CameraMessage (OrbitMessage.SetTargetRadius 0.0)]
             model
 
     // Lazy pairwise-overlap sweep: every unordered mesh pair missing from the

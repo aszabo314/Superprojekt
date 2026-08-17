@@ -1,5 +1,5 @@
-//04ac538f-43e6-0174-7f42-70b3054ec3fb
-//08ea9edd-891e-86fb-18fd-a2150fee2896
+//0be3bd6d-1082-9117-c93f-d3a5e6614e56
+//9bbd7f12-abff-b7a3-e7c3-30d822ef92c7
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -77,7 +77,6 @@ type AdaptiveModel(value : Model) =
     let _PendingResolves_ = FSharp.Data.Adaptive.cval(value.PendingResolves)
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let _MeshMenuOpen_ = FSharp.Data.Adaptive.cval(value.MeshMenuOpen)
-    let _SensorMenuOpen_ = FSharp.Data.Adaptive.cval(value.SensorMenuOpen)
     let _InspectOpen_ = FSharp.Data.Adaptive.cval(value.InspectOpen)
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
     let _OutlineWidthPx_ = FSharp.Data.Adaptive.cval(value.OutlineWidthPx)
@@ -158,7 +157,6 @@ type AdaptiveModel(value : Model) =
             _PendingResolves_.Value <- value.PendingResolves
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
             _MeshMenuOpen_.Value <- value.MeshMenuOpen
-            _SensorMenuOpen_.Value <- value.SensorMenuOpen
             _InspectOpen_.Value <- value.InspectOpen
             _OutlineThreshold_.Value <- value.OutlineThreshold
             _OutlineWidthPx_.Value <- value.OutlineWidthPx
@@ -232,7 +230,6 @@ type AdaptiveModel(value : Model) =
     member __.PendingResolves = _PendingResolves_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<(Microsoft.FSharp.Core.string * Microsoft.FSharp.Core.string)>>
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshMenuOpen = _MeshMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
-    member __.SensorMenuOpen = _SensorMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.InspectOpen = _InspectOpen_ :> FSharp.Data.Adaptive.aval<LevelFlags>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.OutlineWidthPx = _OutlineWidthPx_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>

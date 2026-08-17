@@ -10,6 +10,31 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## Study preparation (2026-08-17)
+
+- **Study dataset bbox files fixed** (`src/Superserver/data/study/*/model_bbox.txt`) —
+  meshA/C/D carried the *source scans'* uncropped world bboxes (meshA byte-identical
+  to Job_0789's, meshC ~2.3 km wide); regenerated all four as
+  `minX minY minZ maxX maxY maxZ` absolute world = OBJ vertex bounds + centroid
+  (meshB agreed with the recompute to ~1 µm, confirming the convention). Nothing in
+  the app reads these files (the server recomputes from the parsed mesh) — the fix
+  is for external tooling only.
+- **Sensor ▾ button removed** (never worked properly; study GUI must be clean):
+  the top-bar jump-to-sensor dropdown (GuiTopBar.fs block + `.tb-sensor*` /
+  `.tb-menu-left` CSS), `ToggleSensorMenu` + `FlyToSensor` messages, the
+  `SensorMenuOpen` model flag (adaptify rerun), their reducer cases, and the
+  arm-quasi-mode popover-close site. KEPT: the measured-stations layer
+  (`*sensor.txt` → `/sensors` → `DatasetSensors` → `ModelTransforms.sensorWorld`) —
+  still consumed by the dataset-load camera framing — and the heatmap sensor
+  origin (the posed mesh origin, independent of the button). CLAUDE.md sensor
+  section updated (it also predated the measured-stations layer; `/sensors` added
+  to the endpoint list).
+- **`global.json` SDK pin reverted to `8.0.0`** — the study-dataset commit bumped
+  it to `8.0.424` (that machine's SDK); with `rollForward: latestFeature` the
+  `8.0.0` floor resolves on every machine, the exact pin only where 8.0.424+ is
+  installed (roll-forward never selects a lower patch — dotnet was dead on this
+  machine repo-wide).
+
 ## Performance improvements (2026-08-17)
 
 Session-degradation audit implemented per `performance-audit-spec.md` (WP-1…WP-12;

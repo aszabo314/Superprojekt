@@ -393,8 +393,6 @@ type Model =
         // The hidden top-bar mesh menu: reference-root designation + per-mesh
         // render toggles (deliberately out of the workflow rail).
         MeshMenuOpen        : bool
-        // The top-bar jump-to-sensor dropdown (per-mesh main-camera jumps).
-        SensorMenuOpen      : bool
         // The docked inspection toolbox's expand state (collapsed = the thin
         // header edge alone) — an independent flag per focus level (Matrix
         // defaults collapsed, the pair workspace open); survives level jumps.
@@ -554,7 +552,6 @@ module Model =
             PendingResolves     = []
             GearPopoverOpen     = false
             MeshMenuOpen        = false
-            SensorMenuOpen      = false
             InspectOpen         = { AtMatrix = false; AtPair = true; AtPin = true }
             OutlineThreshold    = 0.004
             OutlineWidthPx      = 3.0

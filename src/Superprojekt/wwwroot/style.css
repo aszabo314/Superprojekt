@@ -505,14 +505,6 @@ body.loaded { background: #f4f6f8; }
 .tb-gear-popover .pmx-num { color: #e2e8f0; }
 .tb-ref-btn { white-space: nowrap; flex: none; }
 
-/* The jump-to-sensor dropdown (left top cluster — anchors left, not right). */
-.tb-menu-left { left: 0; right: auto; }
-.tb-sensor-popover { width: 240px; }
-.tb-sensor-row { cursor: pointer; border-radius: 3px; padding: 2px 4px; }
-.tb-sensor-row:hover { background: #334155; }
-.tb-sensor { margin-right: 10px; }
-.tb-sensor-btn { height: 24px; padding: 0 8px; font-size: 11px; }
-
 /* The near/far cut sliders: each ONE bordered group (label · slider ·
    value box) matching the tb-btn chrome, without the loose inner gaps. */
 .tb-cut {

@@ -22,8 +22,9 @@ module GuiRail =
     // (payload legF/legL name the fill and the outline). Full furniture
     // always; an empty payload renders a centred placeholder. Brushing is
     // BIN-QUANTIZED: the drag snaps to whole bins, a drag-free click selects
-    // the single bin under the cursor (an empty bin clears), hover outlines
-    // the bin; gids flow as csv through the hidden bridge input.
+    // the single bin under the cursor (an empty bin clears), a RIGHT-click
+    // clears the brush outright, hover outlines the bin; gids flow as csv
+    // through the hidden bridge input.
     // data-brushed echoes the model back; data-hover (the 3D-hovered gid)
     // draws the amber cross-highlight; data-hilite (the hovered pin row's
     // name) repaints that pin's stack slice amber.
@@ -82,8 +83,12 @@ module GuiRail =
         "  if(S.length===0){ g.fillStyle='#94a3b8'; g.font='12px Inter,sans-serif'; g.textAlign='center';"
         "    g.fillText(d.ph||'\\u2014',(padL+W-padR)/2,(axT+axY)/2+4); el.appendChild(cv); return; }"
         "  function histC(sn,k){ var a=sn[k]; return (a&&a.length===B)?a:null; }"
-        // One count→height scale over BOTH sides; y = counts.
+        // One count→height scale over BOTH sides; y = counts. d.ymax carries
+        // BOTH states' stacked-total maxima from the payload — while the pose
+        // peek shows the before state the after counts are absent from h/hb,
+        // so without it the y-scale would rescale on the flip.
         "  var maxC=1; ['h','hb'].forEach(function(k){ for(var b=0;b<B;b++){ var s=0; S.forEach(function(sn){ var a=histC(sn,k); if(a) s+=a[b]; }); if(s>maxC)maxC=s; } });"
+        "  if(d.ymax>maxC) maxC=d.ymax;"
         "  var k=(axY-axT-4)/maxC;"
         "  if(d.lod>0){ g.fillStyle='rgba(148,163,184,0.18)'; g.fillRect(X(-d.lod),axT,Math.max(1,X(d.lod)-X(-d.lod)),axY-axT); }"
         // Filled stack: the CURRENT side; the hovered pin row's slice (hilite
@@ -112,8 +117,6 @@ module GuiRail =
         "  if(d.legL&&anyO){ g.strokeStyle='#0f172a'; g.lineWidth=1; g.setLineDash([4,3]);"
         "    g.beginPath(); g.moveTo(lx,ly-3); g.lineTo(lx+14,ly-3); g.stroke(); g.setLineDash([]);"
         "    g.fillStyle='#475569'; g.fillText(d.legL,lx+17,ly); }"
-        "  S.forEach(function(sn){ if(sn.med==null) return; g.globalAlpha=0.9; g.strokeStyle=(hl&&sn.name===hl)?'#d97706':sn.color; g.lineWidth=1.6;"
-        "    g.beginPath(); g.moveTo(X(sn.med),axY); g.lineTo(X(sn.med),axY-9); g.stroke(); g.lineWidth=1; });"
         // Conceptual samples: never painted, but they ARE the brush targets.
         // gids are the contiguous block [g0, g0+len) by construction, so the
         // payload carries one offset instead of an explicit gid array.
@@ -143,7 +146,7 @@ module GuiRail =
         "function snapRange(vA,vB){ var bn=el._bin; if(!bn) return [Math.min(vA,vB),Math.max(vA,vB)];"
         "  var b0=binOf(vA), b1=binOf(vB); var mn=Math.min(b0,b1), mx=Math.max(b0,b1);"
         "  return [bn.lo+mn*bn.bw, bn.lo+(mx+1)*bn.bw]; }"
-        "el.addEventListener('pointerdown',function(e){ dragging=true; anchorV=cursorV(e); range=null; el.setPointerCapture(e.pointerId); });"
+        "el.addEventListener('pointerdown',function(e){ if(e.button!==0) return; dragging=true; anchorV=cursorV(e); range=null; el.setPointerCapture(e.pointerId); });"
         "el.addEventListener('pointermove',function(e){ var v=cursorV(e);"
         "  if(dragging){ range=snapRange(anchorV,v); render(); }"
         "  else { var r=el.getBoundingClientRect(); var nb=(el._inPlot&&el._inPlot(e.clientX-r.left,e.clientY-r.top))?binOf(v):-1;"
@@ -151,6 +154,8 @@ module GuiRail =
         "el.addEventListener('pointerleave',function(){ if(el._hb!==-1){ el._hb=-1; render(); } });"
         "el.addEventListener('pointerup',function(e){ if(!dragging) return; dragging=false;"
         "  range=snapRange(anchorV,cursorV(e)); emit(); render(); });"
+        // Right-click = clear the brush (emit() with no range sends no gids).
+        "el.addEventListener('contextmenu',function(e){ e.preventDefault(); dragging=false; range=null; emit(); render(); });"
         "render();"
         "new MutationObserver(render).observe(el,{attributes:true,attributeFilter:['data-chart','data-brushed','data-hover','data-hilite']});"
         // Re-render on size changes — including display:none → shown (the
@@ -224,6 +229,16 @@ module GuiRail =
                             |> Array.choose (fun (_, r) -> if r.Count > 0 then Some r.LodHalfWidth else None)
                         else cells |> Array.choose (fun (_, r) -> if r.Count > 0 then Some r.LodHalfWidth else None)
                     let lod = if lods.Length = 0 then 0.0 else (Array.average lods) * 1000.0
+                    // The y-scale spans BOTH states' stacked totals so the pose
+                    // peek flips the distribution on a fixed ruler — while
+                    // peeked the after counts leave h/hb, so JS cannot derive
+                    // this itself.
+                    let included pid = match onlyPin with Some id -> id = pid | None -> true
+                    let stackMax (rows : (ScanPinId * Query.PairPinError)[]) =
+                        rows |> Array.filter (fst >> included)
+                             |> Array.collect (fun (_, r) -> r.Samples)
+                             |> histOf |> Array.max
+                    let ymax = max (stackMax cells) (before |> Option.map stackMax |> Option.defaultValue 0)
                     let mutable gid = 0
                     let series =
                         cells |> Array.map (fun (pid, r) ->
@@ -243,25 +258,21 @@ module GuiRail =
                                     if peeked then
                                         beforeOf pid |> Option.map (fun br -> br.Samples) |> Option.defaultValue [||]
                                     else r.Samples
-                                let medOf (vs : float[]) =
-                                    if vs.Length = 0 then "null"
-                                    else gf ((Array.sort vs).[vs.Length / 2] * 1000.0)
-                                let med = if peeked then medOf fill elif r.Count > 0 then gf (r.Median * 1000.0) else "null"
                                 let hj = histOf fill |> Array.map string |> String.concat ","
                                 let hbj = hb |> Option.map (fun c -> c |> Array.map string |> String.concat ",") |> Option.defaultValue ""
                                 // gids are the contiguous canonical block [g0, g0+len)
                                 // — one offset instead of an explicit array (~40 % of
                                 // the payload).
                                 Some (
-                                    sprintf "{\"name\":\"%s\",\"color\":\"#787878\",\"med\":%s,\"g0\":%d,\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
-                                        name med g0
+                                    sprintf "{\"name\":\"%s\",\"color\":\"#787878\",\"g0\":%d,\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
+                                        name g0
                                         (r.Samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
                                         hj hbj))
                         |> Array.choose id
                         |> String.concat ","
                     let legF = if peeked then "as loaded" else "error now"
-                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
-                        title (gf lo) (gf hi) bins (gf lod) legF series)
+                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"ymax\":%d,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
+                        title (gf lo) (gf hi) bins (gf lod) ymax legF series)
         // Collapsed dock ⇒ no payload compute or marshal at all (AVal.bind
         // genuinely drops the data dependencies — the GuiTopBar `live` gate
         // pattern); expanding recomputes once and the ResizeObserver repaints.
@@ -371,9 +382,6 @@ module GuiRail =
                             let idx = max 0 (min (bins - 1) (int ((v * 1000.0 - lo) / binW)))
                             c.[idx] <- c.[idx] + 1
                         c
-                    let med =
-                        let s = Array.sort samples
-                        gf (s.[s.Length / 2] * 1000.0)
                     let lods = blocks |> Array.choose (fun b -> if b.Err.Count > 0 then Some b.Err.LodHalfWidth else None)
                     let lod = if lods.Length = 0 then 0.0 else (Array.average lods) * 1000.0
                     // The pooled BEFORE outline (the same union of every edge's
@@ -388,15 +396,23 @@ module GuiRail =
                     let hbj =
                         if beforeSamples.Length = 0 then ""
                         else histOf beforeSamples |> Array.map string |> String.concat ","
+                    // Both states' bin maxima pin the y-scale across the pose
+                    // peek (blocks already hold the PEEKED side — the after
+                    // cache must be read explicitly for the other one).
+                    let afterSamples =
+                        model.GraphError.GetValue t
+                        |> Option.defaultValue [||]
+                        |> Array.collect (fun b -> b.Err.Samples)
+                    let ymax = max (histOf afterSamples |> Array.max) (histOf beforeSamples |> Array.max)
                     let series =
-                        sprintf "{\"name\":\"graph\",\"color\":\"%s\",\"med\":%s,\"g0\":0,\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
-                            (c4bToHex (C4b(120uy, 120uy, 120uy))) med
+                        sprintf "{\"name\":\"graph\",\"color\":\"%s\",\"g0\":0,\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
+                            (c4bToHex (C4b(120uy, 120uy, 120uy)))
                             (samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
                             (histOf samples |> Array.map string |> String.concat ",")
                             hbj
                     let legF = if peeked then "as loaded" else "error vs parents"
-                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
-                        title (gf lo) (gf hi) bins (gf lod) legF series)
+                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"ymax\":%d,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
+                        title (gf lo) (gf hi) bins (gf lod) ymax legF series)
         // Collapsed dock ⇒ no payload compute or marshal — see inspectBody.
         let chartData = openA |> AVal.bind (fun o -> if o then chartDataCore else AVal.constant "{}")
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
@@ -595,8 +611,11 @@ module GuiRail =
                     "  var islY=padY+NR+(maxD+1)*rowH+18;"
                     "  var H=(isl.length? islY : padY+NR+maxD*rowH)+NR+padY;"
                     "  var svg=document.createElementNS(ns,'svg');"
-                    "  svg.setAttribute('width',W); svg.setAttribute('height',H);"
                     "  svg.setAttribute('viewBox','0 0 '+W+' '+H); svg.style.display='block';"
+                    // viewBox-driven scaling: the diagram grows with the panel
+                    // width (aspect held by the viewBox) and never shrinks
+                    // below its natural size (min-width ⇒ the panel scrolls).
+                    "  svg.style.width='100%'; svg.style.minWidth=W+'px'; svg.style.height='auto';"
                     "  function px(id){ var n=byId[id]; return padX+NR+(n.d<0 ? n._ix : (X[id]||0))*colW; }"
                     "  function py(id){ var n=byId[id]; return n.d<0 ? islY : padY+NR+n.d*rowH; }"
                     "  function pk(kind,id){ var b=el.parentElement.querySelector('.tree-bridge'); if(!b) return;"
@@ -837,6 +856,21 @@ module GuiRail =
                         ])
             div {
                 Class "pmx"
+                // Scale-to-fit: the matrix zooms UP (never down) to fill the
+                // panel width, aspect-preserving — css zoom scales layout AND
+                // hit-testing, unlike transform. Reset-before-measure keeps the
+                // fit idempotent so the ResizeObserver settles; parentElement
+                // capture at boot is the safe ancestor case.
+                OnBoot [
+                    "(function(){"
+                    "var el=__THIS__; var p=el.parentElement;"
+                    "function fit(){ if(!p) return; el.style.zoom='';"
+                    "  var cs=getComputedStyle(p); var avail=p.clientWidth-parseFloat(cs.paddingLeft)-parseFloat(cs.paddingRight);"
+                    "  var nat=el.offsetWidth; if(nat>0&&avail>nat) el.style.zoom=((avail-1)/nat).toFixed(3); }"
+                    "new ResizeObserver(fit).observe(p);"
+                    "fit();"
+                    "})();"
+                ]
                 rowsA |> AList.ofAVal
             }
 
@@ -1072,7 +1106,7 @@ module GuiRail =
                         "Arm the correspondence pick on this mesh — it renders alone while armed; click any view (a re-pick replaces the point and unregisters the pair)"
                         (Some b) "✚ point"
                     armBtn ArmCentre HoverBoth
-                        "Arm the centre pick: click any view — during placement it drops the area marker, on a committed pin it moves the centre (the hit mesh anchors the pin; unregisters the pair)"
+                        "Arm the centre pick: click any view — during placement it drops the area marker, on a committed pin it moves the centre (the hit mesh anchors the pin; the registration keeps)"
                         None "◯ Centre"
                     button {
                         Class "rail-btn pin-arm-btn"

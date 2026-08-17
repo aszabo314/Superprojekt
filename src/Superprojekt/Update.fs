@@ -694,13 +694,16 @@ module Update =
                 match msg with
                 | SetInnerRadius _ | EditPointAt _ | EditCentreAt _ | DeletePin _ -> invalidateCellError m
                 | _ -> m
-            // ANY committed-pin edit invalidates its pair's solve: the pair's
-            // edge (and every edge hanging beneath it — the subtree would
-            // strand) drops and the poses recompose. The pair is read from the
+            // Only edits that change the solve's INPUTS invalidate the
+            // registration — a correspondence-point re-pick or a pin delete.
+            // Centre/radius edits re-scope analysis (the ROI) but leave the
+            // point pairs, and so the solved edge, untouched. The pair's edge
+            // (and every edge hanging beneath it — the subtree would strand)
+            // drops and the poses recompose. The pair is read from the
             // PRE-edit model so a delete still resolves it.
             let editedPair =
                 match msg with
-                | SetInnerRadius(id, _) | EditPointAt(id, _, _) | EditCentreAt(id, _, _) | DeletePin id ->
+                | EditPointAt(id, _, _) | DeletePin id ->
                     HashMap.tryFind id model.ScanPins.Pins |> Option.map (fun p -> p.Pair)
                 | _ -> None
             match editedPair with

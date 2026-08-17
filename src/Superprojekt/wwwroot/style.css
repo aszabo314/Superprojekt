@@ -593,7 +593,9 @@ body.loaded { background: #f4f6f8; }
     .tb-gear-popover { width: calc(100vw - 16px); }
     .tb-coord { font-size: 10px; }
 }
-.pmx { display: flex; flex-direction: column; gap: 3px; padding: 4px 2px; }
+/* fit-content: the boot fit-zoom measures the natural width (a block flex
+   column would report the panel width instead). */
+.pmx { display: flex; flex-direction: column; gap: 3px; padding: 4px 2px; width: fit-content; }
 .pmx-row { display: flex; gap: 3px; align-items: center; }
 .pmx-rowhead { width: 36px; display: flex; align-items: center; gap: 3px; flex: none; }
 .pmx-colhead { width: 22px; display: flex; align-items: center; justify-content: center; gap: 2px; flex: none; }

@@ -10,6 +10,43 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## Test-session feedback round (2026-08-17)
+
+Five small fixes from a user session:
+
+- **Histogram y-axis pinned across the pose peek** — confirmed real: the JS
+  count→height scale (`maxC`) was derived from the payload's `h`/`hb` arrays, and
+  while peeked the fill IS the before distribution, so the after state's counts
+  left the payload entirely and the axis rescaled on the flip (visible whenever
+  the post-registration spike tops the before histogram — i.e. almost always).
+  Both chart bodies now ship `ymax` = max stacked-bin count over BOTH states
+  (pair body respects the Pin-level narrowing; graph body reads the after cache
+  `GraphError` explicitly since `inspectBlocksAt` already returns the peeked
+  side), and `chartJs` pins `maxC` to it. Unpeeked rendering is unchanged (the
+  old max over h+hb equals `ymax` there).
+- **Distribution-average ticks removed** — the per-pin median ticks (pair body)
+  and the pooled median tick (graph body), the short strokes rising from the
+  axis: relics of an older iteration. JS drawing block dropped, `med` removed
+  from both payloads (`medOf` computations gone with it).
+- **Matrix + registration tree scale with the sidebar** (aspect-preserving,
+  scale-up only — below natural size both keep their scroll behaviour): the
+  tree's SVG now sizes via its viewBox (`width:100%`, `min-width` = natural,
+  `height:auto`); the pair matrix gets a boot-time fit via CSS `zoom` (scales
+  layout AND hit-testing, unlike `transform`) driven by a ResizeObserver on the
+  panel body, with `.pmx { width: fit-content }` so the natural width is
+  measurable (reset-measure-set keeps it idempotent).
+- **Right-click on the histogram clears the brush** — `contextmenu` handler
+  (preventDefault + empty emit); left-button gate added to `pointerdown` so a
+  right-click never starts a drag.
+- **Centre/radius edits no longer unregister the pair** — the edge-drop match in
+  Update.fs narrowed from {`SetInnerRadius`, `EditPointAt`, `EditCentreAt`,
+  `DeletePin`} to {`EditPointAt`, `DeletePin`}: a solve's inputs are exactly the
+  correspondence point pairs (centre/radius only scope analysis, `lsq-pairs`
+  never sees them). Centre/radius edits still `invalidateCellError` (the ROI
+  moved) via the untouched preceding match; the centre-pick tooltip's
+  "unregisters the pair" corrected. CLAUDE.md pin-edit rule + chart bullets
+  updated.
+
 ## Study preparation (2026-08-17)
 
 - **Study dataset bbox files fixed** (`src/Superserver/data/study/*/model_bbox.txt`) —

@@ -22,25 +22,29 @@ module Query =
                m.M30; m.M31; m.M32; m.M33 |]
             |> Array.map (sprintf "%.17g"))
 
-    let private post (serverUrl : string) (path : string) (json : string) : Async<JsonElement> =
+    // The parser runs inside the document's scope so the JsonDocument (whose
+    // backing buffer is an ArrayPool rental) can be disposed — parsers must
+    // fully materialise their result, nothing lazy may escape the callback.
+    let private post (serverUrl : string) (path : string) (json : string)
+                     (parse : JsonElement -> 'T) : Async<'T> =
         async {
             use content = new StringContent(json, Encoding.UTF8, "application/json")
             let! resp = Http.client.PostAsync(serverUrl.TrimEnd('/') + path, content) |> Async.AwaitTask
             resp.EnsureSuccessStatusCode() |> ignore
             let! text = resp.Content.ReadAsStringAsync() |> Async.AwaitTask
-            return JsonDocument.Parse(text).RootElement
+            use doc = JsonDocument.Parse text
+            return parse doc.RootElement
         }
 
     let rayHit (serverUrl : string) (name : string) (index : int) (origin : V3d) (direction : V3d) =
         async {
             let json = sprintf """{"name":"%s","index":%d,"origin":%s,"direction":%s}""" name index (v3 origin) (v3 direction)
-            let! r = post serverUrl "/query/ray" json
-            if r.GetProperty("hit").GetBoolean() then
-                return Some {| t = float32 (r.GetProperty("t").GetDouble())
-                               point = readV3 (r.GetProperty "point")
-                               triangleId = r.GetProperty("triangleId").GetInt32() |}
-            else
-                return None
+            return! post serverUrl "/query/ray" json (fun r ->
+                if r.GetProperty("hit").GetBoolean() then
+                    Some {| t = float32 (r.GetProperty("t").GetDouble())
+                            point = readV3 (r.GetProperty "point")
+                            triangleId = r.GetProperty("triangleId").GetInt32() |}
+                else None)
         }
 
     // Weighted rigid landmark solve for one pair edge: pairs = (parentPoint,
@@ -56,18 +60,17 @@ module Query =
                     sprintf """{"refPoint":%s,"movingPoint":%s,"weight":%.17g}""" (v3 r) (v3 m) w)
                 |> String.concat ","
             let json = sprintf """{"movingName":"%s","pairs":[%s]}""" movingName pairJson
-            let! r = post serverUrl "/query/lsq-pairs" json
-            let tf =
-                r.GetProperty("transform").EnumerateArray()
-                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-            let residuals =
-                r.GetProperty("perPairResiduals").EnumerateArray()
-                |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
-            return
+            return! post serverUrl "/query/lsq-pairs" json (fun r ->
+                let tf =
+                    r.GetProperty("transform").EnumerateArray()
+                    |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
+                let residuals =
+                    r.GetProperty("perPairResiduals").EnumerateArray()
+                    |> Seq.map (fun e -> e.GetDouble()) |> Seq.toArray
                 M44d(tf.[0],  tf.[1],  tf.[2],  tf.[3],
                      tf.[4],  tf.[5],  tf.[6],  tf.[7],
                      tf.[8],  tf.[9],  tf.[10], tf.[11],
-                     tf.[12], tf.[13], tf.[14], tf.[15]), residuals
+                     tf.[12], tf.[13], tf.[14], tf.[15]), residuals)
         }
 
     // Sphere–surface contact rings; centre is in the mesh's own (untransformed)
@@ -76,11 +79,10 @@ module Query =
         async {
             let json = sprintf """{"name":"%s","centre":%s,"radius":%.17g,"maxPoints":%d}"""
                         name (v3 centre) radius maxPoints
-            let! r = post serverUrl "/query/contact-rings" json
-            return
+            return! post serverUrl "/query/contact-rings" json (fun r ->
                 r.GetProperty("rings").EnumerateArray()
                 |> Seq.map (fun ring -> ring.EnumerateArray() |> Seq.map readV3 |> Seq.toArray)
-                |> Seq.toArray
+                |> Seq.toArray)
         }
 
     // Correspondence-point reveal: concentric contact rings + plane∩surface
@@ -96,11 +98,10 @@ module Query =
                     (arr (radii |> Seq.map (sprintf "%.17g")))
                     (arr (planes |> Seq.map v3))
                     maxPoints
-            let! r = post serverUrl "/query/point-reveal" json
-            return
+            return! post serverUrl "/query/point-reveal" json (fun r ->
                 r.GetProperty("lines").EnumerateArray()
                 |> Seq.map (fun line -> line.EnumerateArray() |> Seq.map readV3 |> Seq.toArray)
-                |> Seq.toArray
+                |> Seq.toArray)
         }
 
     // One pin's pairwise error distribution (see the server PairError module
@@ -131,8 +132,7 @@ module Query =
             let json =
                 sprintf """{"meshA":{"name":"%s","transform":[%s]},"meshB":{"name":"%s","transform":[%s]},"pins":[%s],"length":0,"maxPointsPerMesh":8192}"""
                     meshA (m44json tA) meshB (m44json tB) pinsJson
-            let! r = post serverUrl "/query/pair-error" json
-            return
+            return! post serverUrl "/query/pair-error" json (fun r ->
                 r.GetProperty("pins").EnumerateArray()
                 |> Seq.map (fun p ->
                     let samples =
@@ -149,7 +149,7 @@ module Query =
                         Samples      = samples
                         Positions    = Array.init (flat.Length / 3) (fun i -> V3d(flat.[i*3], flat.[i*3+1], flat.[i*3+2]))
                     })
-                |> Seq.toArray
+                |> Seq.toArray)
         }
 
     // Exact pairwise error at one picked world point (meshB relative to meshA).
@@ -163,10 +163,10 @@ module Query =
             let json =
                 sprintf """{"meshA":{"name":"%s","transform":[%s]},"meshB":{"name":"%s","transform":[%s]},"point":%s,"radius":%.17g,"maxDist":100}"""
                     meshA (m44json tA) meshB (m44json tB) (v3 point) radius
-            let! r = post serverUrl "/query/pair-error-at" json
-            if r.GetProperty("ok").GetBoolean()
-            then return Some (r.GetProperty("value").GetDouble())
-            else return None
+            return! post serverUrl "/query/pair-error-at" json (fun r ->
+                if r.GetProperty("ok").GetBoolean()
+                then Some (r.GetProperty("value").GetDouble())
+                else None)
         }
 
     // Adaptive ROI fit: the smallest radius ≥ radius whose sphere captures
@@ -181,8 +181,8 @@ module Query =
             let json =
                 sprintf """{"otherName":"%s","otherTransform":[%s],"centre":%s,"radius":%.17g,"minVerts":%d,"maxFactor":%.17g}"""
                     otherName (m44json otherT) (v3 centre) radius minVerts maxFactor
-            let! r = post serverUrl "/query/roi-fit" json
-            return r.GetProperty("ok").GetBoolean(), r.GetProperty("radius").GetDouble()
+            return! post serverUrl "/query/roi-fit" json (fun r ->
+                r.GetProperty("ok").GetBoolean(), r.GetProperty("radius").GetDouble())
         }
 
     // Per-vertex signed distance of the MOV mesh to the REF at explicit poses,
@@ -197,11 +197,16 @@ module Query =
             let json =
                 sprintf """{"targetName":"%s","targetIndex":0,"refName":"%s","refIndex":0,"targetTransform":[%s],"refTransform":[%s]}"""
                     targetName refName (m44json targetTransform) (m44json refTransform)
-            let! r = post serverUrl "/query/region-distance" json
-            return
-                r.GetProperty("dist").EnumerateArray()
-                |> Seq.map (fun e -> float32 (e.GetDouble()))
-                |> Seq.toArray
+            return! post serverUrl "/query/region-distance" json (fun r ->
+                // Multi-million-element response: preallocate instead of
+                // Seq.toArray's ResizeArray doubling.
+                let dist = r.GetProperty "dist"
+                let arr = Array.zeroCreate<float32> (dist.GetArrayLength())
+                let mutable i = 0
+                for e in dist.EnumerateArray() do
+                    arr.[i] <- float32 (e.GetDouble())
+                    i <- i + 1
+                arr)
         }
 
     // Pairwise overlap sufficiency at explicit poses (server defaults for the
@@ -215,6 +220,6 @@ module Query =
             let json =
                 sprintf """{"meshA":{"name":"%s","transform":[%s]},"meshB":{"name":"%s","transform":[%s]},"maxDist":0,"minFraction":0,"maxSamples":0}"""
                     meshA (m44json tA) meshB (m44json tB)
-            let! r = post serverUrl "/query/pair-overlap" json
-            return r.GetProperty("sufficient").GetBoolean()
+            return! post serverUrl "/query/pair-overlap" json (fun r ->
+                r.GetProperty("sufficient").GetBoolean())
         }

@@ -34,8 +34,29 @@ module MeshView =
     // but only the FIRST call starts the fetch — dropping a later caller's
     // callback loses the main pass's MeshesLoaded report (dead peeks).
     let private pendingFinished = System.Collections.Generic.Dictionary<string, ResizeArray<unit -> unit>>()
+    // Memoized displayed-pose avals (displayedMeshT), same lifecycle as the
+    // mesh cache.
+    let private displayedTCache = System.Collections.Generic.Dictionary<string, aval<Trafo3d>>()
+    // The active dataset's prefix: switching evicts the previous dataset's
+    // entries — the full vertex arrays, cvals and textures would otherwise
+    // accumulate for every dataset ever visited, and the WASM linear heap
+    // never shrinks (GC pauses ratchet with the high-water mark). Switching
+    // back re-fetches: memory-bounded beats cached-forever.
+    let mutable private cachedDataset : string option = None
+    let private evictOtherDatasets (ds : string) =
+        if cachedDataset <> Some ds then
+            let prefix = ds + "/"
+            let stale =
+                meshes.Keys |> Seq.filter (fun k -> not (k.StartsWith prefix)) |> Seq.toArray
+            for k in stale do
+                meshes.Remove k |> ignore
+                pendingFinished.Remove k |> ignore
+                displayedTCache.Remove k |> ignore
+            cachedDataset <- Some ds
 
     let loadMeshAsync (finished : unit -> unit) (name : string) : LoadedMesh =
+        let slash = name.IndexOf '/'
+        if slash > 0 then evictOtherDatasets (name.[.. slash - 1])
         match meshes.TryGetValue(name) with
         | true, m ->
             // Cache hit: the callback must still fire — Model.MeshesLoaded
@@ -99,6 +120,12 @@ module MeshView =
                     pending.Clear()
                 with e ->
                     Log.error "failed to load mesh %s: %A" name e
+                    // Drop the placeholder so the next scene rebuild RETRIES the
+                    // fetch — a permanent None entry would queue a dead callback
+                    // per later request forever (and the peeks would never gate).
+                    pending.Clear()
+                    meshes.Remove name |> ignore
+                    pendingFinished.Remove name |> ignore
             } |> ignore
             m
 
@@ -140,15 +167,24 @@ module MeshView =
     // only; ModelTransforms stays committed for reducer-side queries).
     // Same geometry, different trafo uniform ⇒ the swap is instant and both
     // states are GPU-resident by construction.
+    // Memoized per mesh name (ONE AdaptiveModel exists per app): event
+    // handlers force this per pick/hover, and a fresh custom per call would
+    // register transient weak edges on ~6 model cvals each time.
     let displayedMeshT (model : AdaptiveModel) (name : string) =
-        AVal.custom (fun t ->
-            let load () =
-                Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
-            if peekPoseAt (model.PeekPose.GetValue t) model t name then load ()
-            else
-                match Map.tryFind name (model.ComposedPoses.GetValue t) with
-                | Some tr -> tr
-                | None -> load ())
+        match displayedTCache.TryGetValue name with
+        | true, a -> a
+        | _ ->
+            let a =
+                AVal.custom (fun t ->
+                    let load () =
+                        Map.tryFind name (model.LoadTransforms.GetValue t) |> Option.defaultValue Trafo3d.Identity
+                    if peekPoseAt (model.PeekPose.GetValue t) model t name then load ()
+                    else
+                        match Map.tryFind name (model.ComposedPoses.GetValue t) with
+                        | Some tr -> tr
+                        | None -> load ())
+            displayedTCache.[name] <- a
+            a
 
     // Token-based sibling of displayedMeshT in metric world, for AVal.custom
     // computes that place mesh-local data (pin anchors, markers). Reads hit the
@@ -250,6 +286,12 @@ module MeshView =
     // At Matrix it is deliberately peek-BLIND — read from the BEFORE (larger)
     // state and held across the flip. Renormalizing per state would recolour
     // the residual to full range and the flip would show no improvement at all.
+    // Pooled-distance range memo: ofDistances concatenates EVERY registered
+    // child's per-vertex buffer (E × V floats) and sorts — and inspectRangeAt
+    // is reached from four independent avals. The Map instance is
+    // reference-stable between refetches, so one entry suffices.
+    let mutable private graphDistRangeCache : (Map<string, float32[]> * (float * float)) option = None
+
     let inspectRangeAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) =
         match model.Focus.GetValue t with
         | FocusPair | FocusPin ->
@@ -267,7 +309,13 @@ module MeshView =
                     | d when Map.isEmpty d -> model.GraphDist.GetValue t
                     | d -> d
                 if Map.isEmpty dists then ErrorRange.ofSamples Seq.empty
-                else ErrorRange.ofDistances (dists |> Map.toArray |> Array.collect snd)
+                else
+                    match graphDistRangeCache with
+                    | Some (key, r) when System.Object.ReferenceEquals(key, dists) -> r
+                    | _ ->
+                        let r = ErrorRange.ofDistances (dists |> Map.toArray |> Array.collect snd)
+                        graphDistRangeCache <- Some (dists, r)
+                        r
 
     // Brushing is a whole render MODE (colour isolation) wherever dots can
     // exist — the pair cell, or the whole graph at Matrix.
@@ -280,6 +328,11 @@ module MeshView =
     // (the reference root, unregistered meshes) keeps only its outline: a
     // white surface there would read as "registered and fine".
     // None = no narrowing (every other state).
+    // Painted-set memo: this helper runs per pin per marker-rule recompute —
+    // keyed on the RegGraph instance (a record, reference-stable between
+    // registration actions).
+    let mutable private paintedScopeCache : (RegGraph * Set<string>) option = None
+
     let graphMapScopeAt (model : AdaptiveModel) (t : FSharp.Data.Adaptive.AdaptiveToken) : Set<string> option =
         match model.Focus.GetValue t with
         | FocusPair | FocusPin -> None
@@ -287,7 +340,13 @@ module MeshView =
             let g = model.RegGraph.GetValue t
             if not (model.CellMapOn.GetValue t) || not (RegGraph.hasEdges g) then None
             else
-                let painted = g.Edges |> Map.toSeq |> Seq.map fst |> Set.ofSeq
+                let painted =
+                    match paintedScopeCache with
+                    | Some (gc, s) when System.Object.ReferenceEquals(gc, g) -> s
+                    | _ ->
+                        let s = g.Edges |> Map.toSeq |> Seq.map fst |> Set.ofSeq
+                        paintedScopeCache <- Some (g, s)
+                        s
                 // Pointing at an EXCLUDED mesh (the reference root, an
                 // unregistered mesh) re-admits it: the hover/lock narrowing
                 // intersects with this scope, so without the re-admission the
@@ -600,6 +659,11 @@ module MeshView =
             // (the union of the per-edge moving-side maps, all on the one
             // shared ramp). Brushing = sole focus: a non-empty brush suppresses
             // the map (the dots carry the values).
+            // Pin-ROI mask memo: rings/reveal landings invalidate cellPaint
+            // (Pins.Content) without changing the mask inputs — a stable array
+            // reference also keeps distBuf's ArrayBuffer equal (no re-upload).
+            // ref cell: closures cannot capture a local `let mutable`.
+            let roiMaskCache : (float32[] * V3f * float32 * float32[]) option ref = ref None
             let cellPaint : aval<float32[] option> =
                 AVal.custom (fun t ->
                     let painting =
@@ -639,20 +703,33 @@ module MeshView =
                                         // Served positions are centroid-subtracted.
                                         let c = V3f (centreOwn - md.centroid)
                                         let r2 = float32 (r * r)
-                                        Some (Array.init dist.Length (fun i ->
-                                            if i < md.positions.Length && (md.positions.[i] - c).LengthSquared <= r2
-                                            then dist.[i] else 3.0e30f))
+                                        (match roiMaskCache.Value with
+                                         | Some (dc, cc0, rc, masked) when
+                                            System.Object.ReferenceEquals(dc, dist) && cc0 = c && rc = r2 ->
+                                            Some masked
+                                         | _ ->
+                                            let masked =
+                                                Array.init dist.Length (fun i ->
+                                                    if i < md.positions.Length && (md.positions.[i] - c).LengthSquared <= r2
+                                                    then dist.[i] else 3.0e30f)
+                                            roiMaskCache.Value <- Some (dist, c, r2, masked)
+                                            Some masked)
                                     | _ -> Some dist
                                 | None -> None
                         | _ -> None)
+            // One zero buffer per mesh load (the pane path's shape) — the None
+            // branch must NOT allocate a fresh V-sized array per cellPaint
+            // invalidation (every brush-drag event hits it for every mesh).
+            let zeroBuf =
+                loaded.pos |> AVal.map (fun _ ->
+                    match loaded.mesh.Value with
+                    | Some md -> ArrayBuffer (Array.zeroCreate<float32> md.positions.Length) :> IBuffer
+                    | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
             let distBuf =
-                (cellPaint, loaded.pos) ||> AVal.map2 (fun d _ ->
+                (cellPaint, zeroBuf) ||> AVal.map2 (fun d z ->
                     match d with
                     | Some arr -> ArrayBuffer arr :> IBuffer
-                    | None ->
-                        match loaded.mesh.Value with
-                        | Some md -> ArrayBuffer (Array.zeroCreate<float32> md.positions.Length) :> IBuffer
-                        | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
+                    | None -> z)
             let shapeBuf = shapeBufOf loaded
             let distEncoding = cellPaint |> AVal.map (fun d -> if d.IsSome then 1 else 0)
             // Map ends from the unified pair range: enc 1 saturates at (lo, hi).
@@ -936,11 +1013,16 @@ module MeshView =
     // Gated by the strip's visibility so hidden tiles pay nothing.
     let buildRootCoverageNode (model : AdaptiveModel) (active : aval<bool>)
                               (view : aval<Trafo3d>) (proj : aval<Trafo3d>) : ISceneNode =
+        // Root as a HashSet-delta set: an edge commit/reroot that keeps the
+        // root yields an EMPTY delta, so the node (and its compiled render
+        // objects — one instance per tile) survives every RegGraph change
+        // that doesn't actually move the root. The IndexList.ofList form
+        // re-minted Index keys and rebuilt N tiles' nodes per graph change.
         let nodes =
             model.RegGraph
-            |> AVal.map (fun g -> g.Root |> Option.toList |> IndexList.ofList)
-            |> AList.ofAVal
-            |> AList.map (fun name ->
+            |> AVal.map (fun g -> match g.Root with Some r -> HashSet.single r | None -> HashSet.empty)
+            |> ASet.ofAVal
+            |> ASet.map (fun name ->
                 let loaded, trafo = offscreenMesh model name
                 let a = (active, loaded.fvc) ||> AVal.map2 (fun on c -> on && c > 3)
                 sg {
@@ -957,7 +1039,7 @@ module MeshView =
                         ])
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
                     Sg.Render loaded.fvc
-                }) |> AList.toASet
+                })
         sg {
             Sg.View view
             Sg.Proj proj

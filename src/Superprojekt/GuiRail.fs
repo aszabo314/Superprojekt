@@ -32,16 +32,24 @@ module GuiRail =
         "var el=__THIS__;"
         "function findBridge(){ return (el.parentElement&&el.parentElement.querySelector('.cw-brush-bridge'))||document.querySelector('.cw-brush-bridge'); }"
         "el._dots=[]; el._hb=-1; var dragging=false, range=null, anchorV=0;"
+        // Per-attribute parse caches: the payload embeds every sample of the
+        // scope (up to ~165 KB at graph scope), so a hover-only render must
+        // not re-JSON.parse it — only an actually-changed attribute re-parses.
+        "el._pv={}; el._d=null; el._bset=new Set(); el._dotsDirty=false;"
         "function emit(){ var b=findBridge(); if(!b) return; var ids=[];"
         "  if(range){ for(var i=0;i<el._dots.length;i++){ var dt=el._dots[i]; if(dt.v>=range[0]&&dt.v<=range[1]) ids.push(dt.gid); } }"
         "  b.value=ids.join(','); b.dispatchEvent(new Event('input',{bubbles:true})); }"
         "function niceStep(raw){ var mag=Math.pow(10,Math.floor(Math.log(raw)/Math.LN10)); var n=raw/mag; return (n<1.5?1:n<3.5?2:n<7.5?5:10)*mag; }"
         "function render(){"
-        "  var raw=el.getAttribute('data-chart')||'{}'; var d; try{d=JSON.parse(raw);}catch(e){return;}"
-        "  var braw=el.getAttribute('data-brushed')||''; var bset=new Set(braw.length?braw.split(',').map(Number):[]);"
+        "  var craw=el.getAttribute('data-chart')||'{}';"
+        "  if(craw!==el._pv.c){ el._pv.c=craw; try{el._d=JSON.parse(craw);}catch(e){el._d=null;} el._dots=[]; el._dotsDirty=true; }"
+        "  var d=el._d; if(!d) return;"
+        "  var braw=el.getAttribute('data-brushed')||'';"
+        "  if(braw!==el._pv.b){ el._pv.b=braw; el._bset=new Set(braw.length?braw.split(',').map(Number):[]); }"
+        "  var bset=el._bset;"
         "  var hraw=el.getAttribute('data-hover')||''; var hgid=hraw.length?parseInt(hraw):-1;"
         "  var hl=el.getAttribute('data-hilite')||'';"
-        "  el.innerHTML=''; el._dots=[];"
+        "  el.innerHTML='';"
         "  var W=el.clientWidth||280, H=el.clientHeight||150; var dpr=window.devicePixelRatio||1;"
         "  var cv=document.createElement('canvas'); cv.width=Math.round(W*dpr); cv.height=Math.round(H*dpr);"
         "  cv.style.width=W+'px'; cv.style.height=H+'px';"
@@ -107,8 +115,11 @@ module GuiRail =
         "  S.forEach(function(sn){ if(sn.med==null) return; g.globalAlpha=0.9; g.strokeStyle=(hl&&sn.name===hl)?'#d97706':sn.color; g.lineWidth=1.6;"
         "    g.beginPath(); g.moveTo(X(sn.med),axY); g.lineTo(X(sn.med),axY-9); g.stroke(); g.lineWidth=1; });"
         // Conceptual samples: never painted, but they ARE the brush targets.
+        // gids are the contiguous block [g0, g0+len) by construction, so the
+        // payload carries one offset instead of an explicit gid array.
         "  g.globalAlpha=1;"
-        "  S.forEach(function(sn){ if(sn.g) for(var q=0;q<sn.g.length;q++) el._dots.push({gid:sn.g[q],v:sn.s[q]}); });"
+        "  if(el._dotsDirty){ el._dotsDirty=false; el._dots=[];"
+        "    S.forEach(function(sn){ if(sn.s){ var b0=sn.g0|0; for(var q=0;q<sn.s.length;q++) el._dots.push({gid:b0+q,v:sn.s[q]}); } }); }"
         // Hovered bin: a thin outline column (the single-bin select preview).
         "  if(el._hb>=0&&el._hb<B&&!dragging){ var hbx=X(lo+el._hb*bw);"
         "    g.fillStyle='rgba(8,145,178,0.07)'; g.fillRect(hbx,axT,Math.max(1,X(lo+(el._hb+1)*bw)-hbx),axY-axT);"
@@ -153,8 +164,8 @@ module GuiRail =
     // readout. The Pin level narrows the diagram to the selected pin — gids
     // stay CANONICAL (indices into the full CellError sample concatenation),
     // so the brush keeps addressing the same 3D samples at either level.
-    let private inspectBody (env : Env<Message>) (model : AdaptiveModel) (a : string) (b : string) =
-        let chartData =
+    let private inspectBody (openA : aval<bool>) (env : Env<Message>) (model : AdaptiveModel) (a : string) (b : string) =
+        let chartDataCore =
             AVal.custom (fun t ->
                 let inv = System.Globalization.CultureInfo.InvariantCulture
                 let gf (v : float) =
@@ -236,13 +247,14 @@ module GuiRail =
                                     if vs.Length = 0 then "null"
                                     else gf ((Array.sort vs).[vs.Length / 2] * 1000.0)
                                 let med = if peeked then medOf fill elif r.Count > 0 then gf (r.Median * 1000.0) else "null"
-                                let gids = Array.init r.Samples.Length (fun k -> g0 + k)
                                 let hj = histOf fill |> Array.map string |> String.concat ","
                                 let hbj = hb |> Option.map (fun c -> c |> Array.map string |> String.concat ",") |> Option.defaultValue ""
+                                // gids are the contiguous canonical block [g0, g0+len)
+                                // — one offset instead of an explicit array (~40 % of
+                                // the payload).
                                 Some (
-                                    sprintf "{\"name\":\"%s\",\"color\":\"#787878\",\"med\":%s,\"g\":[%s],\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
-                                        name med
-                                        (gids |> Array.map string |> String.concat ",")
+                                    sprintf "{\"name\":\"%s\",\"color\":\"#787878\",\"med\":%s,\"g0\":%d,\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
+                                        name med g0
                                         (r.Samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
                                         hj hbj))
                         |> Array.choose id
@@ -250,6 +262,10 @@ module GuiRail =
                     let legF = if peeked then "as loaded" else "error now"
                     sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
                         title (gf lo) (gf hi) bins (gf lod) legF series)
+        // Collapsed dock ⇒ no payload compute or marshal at all (AVal.bind
+        // genuinely drops the data dependencies — the GuiTopBar `live` gate
+        // pattern); expanding recomputes once and the ResizeObserver repaints.
+        let chartData = openA |> AVal.bind (fun o -> if o then chartDataCore else AVal.constant "{}")
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
         let hoverData = model.HoverSample |> AVal.map (function Some g -> string g | None -> "")
         // The hovered pin row's name — its stack slice lights amber (F4↔F5).
@@ -316,7 +332,7 @@ module GuiRail =
     // edge — every error here is parent-relative (a child measured against the
     // neighbour one hop toward the root), so only established edges
     // contribute and an edgeless graph is legitimately empty.
-    let private graphBody (env : Env<Message>) (model : AdaptiveModel) =
+    let private graphBody (openA : aval<bool>) (env : Env<Message>) (model : AdaptiveModel) =
         // ONE pooled monochrome series: every established edge's samples
         // concatenated into a single distribution (pooled SAMPLES, not bin-wise
         // added counts) in the PEEKED state, plus ONE pooled before-outline
@@ -327,7 +343,7 @@ module GuiRail =
         // distribution (as-loaded ⇄ residual) on the FIXED axis below, so the
         // mass visibly collapses toward zero instead of rescaling to look
         // identical.
-        let chartData =
+        let chartDataCore =
             AVal.custom (fun t ->
                 let inv = System.Globalization.CultureInfo.InvariantCulture
                 let gf (v : float) =
@@ -373,15 +389,16 @@ module GuiRail =
                         if beforeSamples.Length = 0 then ""
                         else histOf beforeSamples |> Array.map string |> String.concat ","
                     let series =
-                        sprintf "{\"name\":\"graph\",\"color\":\"%s\",\"med\":%s,\"g\":[%s],\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
+                        sprintf "{\"name\":\"graph\",\"color\":\"%s\",\"med\":%s,\"g0\":0,\"s\":[%s],\"h\":[%s],\"hb\":[%s]}"
                             (c4bToHex (C4b(120uy, 120uy, 120uy))) med
-                            (Array.init samples.Length string |> String.concat ",")
                             (samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
                             (histOf samples |> Array.map string |> String.concat ",")
                             hbj
                     let legF = if peeked then "as loaded" else "error vs parents"
                     sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
                         title (gf lo) (gf hi) bins (gf lod) legF series)
+        // Collapsed dock ⇒ no payload compute or marshal — see inspectBody.
+        let chartData = openA |> AVal.bind (fun o -> if o then chartDataCore else AVal.constant "{}")
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
         let hoverData = model.HoverSample |> AVal.map (function Some g -> string g | None -> "")
         div {
@@ -443,16 +460,31 @@ module GuiRail =
         let visible =
             (model.Focus, model.Sel) ||> AVal.map2 (fun f s ->
                 f = FocusMatrix || s.Pair.IsSome)
-        let content =
-            (model.Focus, model.Sel) ||> AVal.map2 (fun f s ->
-                match f, s.Pair with
-                | FocusMatrix, _ -> IndexList.ofList [ graphBody env model ]
-                | _, Some (a, b) -> IndexList.ofList [ inspectBody env model a b ]
-                | _, None -> IndexList.empty)
-            |> AList.ofAVal
         // The collapse flag is per level (Matrix defaults collapsed, the pair
         // workspace open) — the header toggles the CURRENT level's flag.
         let openHere = (model.Focus, model.InspectOpen) ||> AVal.map2 LevelFlags.get
+        // The body keyed by VALUE through an amap: HashMap delta cancellation
+        // keeps the mounted body (and its chart node, observers and JS brush
+        // state) alive across Sel replacements with an unchanged pair and
+        // across Pair⇄Pin jumps — only a real key change (another pair,
+        // Matrix⇄pair) swaps the DOM subtree. The naive
+        // AVal.map2 (… IndexList.ofList) |> AList.ofAVal shape re-minted Index
+        // keys on every Sel change and tore the chart down per click.
+        let content =
+            (model.Focus, model.Sel)
+            ||> AVal.map2 (fun f s ->
+                match f, s.Pair with
+                | FocusMatrix, _ -> HashMap.single None ()
+                | _, Some p -> HashMap.single (Some p) ()
+                | _, None -> HashMap.empty)
+            |> AMap.ofAVal
+            |> AMap.map (fun k () ->
+                match k with
+                | None -> graphBody openHere env model
+                | Some (a, b) -> inspectBody openHere env model a b)
+            |> AMap.toASet
+            |> ASet.sortBy fst
+            |> AList.map snd
         div {
             Class "inspect-dock"
             Primitives.showWhen visible
@@ -870,14 +902,16 @@ module GuiRail =
                     | PairPossible -> "not registered yet"
                     | PairImpossible -> "insufficient overlap")
             let pairKey = PairCell.key a b
-            // The pair's pins, canonical order — rebuilt on pin add/delete only
-            // (identity projection; the sanctioned simple AList form at this size).
+            // Row-input projection on the Pins amap: a rings/reveal landing
+            // changes the pin record but not (ShortName, CreatedAt), so the
+            // Rem+Add delta cancels and the row DOM survives — a whole-map
+            // AVal.map would re-mint Index keys on every pin field change
+            // (~3 cache landings per pin after each solve).
             let pairPins =
-                model.ScanPins.Pins |> AMap.toAVal |> AVal.map (fun pins ->
-                    pins |> HashMap.toList |> List.map snd
-                    |> List.filter (fun p -> p.Pair = pairKey)
-                    |> List.sortBy (fun p -> p.CreatedAt, p.ShortName))
-            let pinCount = pairPins |> AVal.map List.length
+                model.ScanPins.Pins
+                |> AMap.filter (fun _ p -> p.Pair = pairKey)
+                |> AMap.map (fun _ p -> p.ShortName, p.CreatedAt)
+            let pinCount = pairPins |> AMap.toASet |> ASet.count
 
             // ── Committed-pin rows: the row BODY is inert — hovering
             // highlights the pin in 3D (the loud highlight + the tile
@@ -885,41 +919,42 @@ module GuiRail =
             // the three buttons are the only actions: fly-to, delete, open at
             // the Pin level. Radius editing lives in the Pin panel; point
             // re-picks at the Pin level via the armed pick.
-            let pinRow (p : ScanPin) =
-                let isSel = model.Sel |> AVal.map (fun s -> s.Pin = Some p.Id)
+            let pinRow (id : ScanPinId) (shortName : string) =
+                let isSel = model.Sel |> AVal.map (fun s -> s.Pin = Some id)
                 div {
                     Class "cw-pin-row"
                     classWhen "cw-pin-sel" isSel
-                    Dom.OnMouseEnter(fun _ -> env.Emit [SetTilePinHover (Some p.Id)])
+                    Dom.OnMouseEnter(fun _ -> env.Emit [SetTilePinHover (Some id)])
                     Dom.OnMouseLeave(fun _ -> env.Emit [SetTilePinHover None])
-                    span { Class "cw-pin-name"; p.ShortName }
+                    span { Class "cw-pin-name"; shortName }
                     button {
                         Class "mb cw-pin-btn"
                         Attribute("title", "Fly the camera to this pin")
-                        Dom.OnClick(fun _ -> env.Emit [ZoomToPin p.Id])
+                        Dom.OnClick(fun _ -> env.Emit [ZoomToPin id])
                         "⌖"
                     }
                     button {
                         Class "mb cw-del"
                         Attribute("title", "Delete pin")
                         Dom.OnClick(fun _ ->
-                            let ok = try JSRuntime.Instance.Invoke<bool>("confirm", sprintf "Delete pin %s? This cannot be undone." p.ShortName) with _ -> false
-                            if ok then env.Emit [ScanPinMsg (DeletePin p.Id)])
+                            let ok = try JSRuntime.Instance.Invoke<bool>("confirm", sprintf "Delete pin %s? This cannot be undone." shortName) with _ -> false
+                            if ok then env.Emit [ScanPinMsg (DeletePin id)])
                         "✕"
                     }
                     button {
                         Class "mb cw-pin-btn cw-goto"
                         Attribute("title", "Open this pin at the Pin level")
                         Dom.OnClick(fun _ ->
-                            env.Emit [LogReach("pair", "open-pin", p.ShortName); SelectPin p.Id; SetFocus FocusPin])
+                            env.Emit [LogReach("pair", "open-pin", shortName); SelectPin id; SetFocus FocusPin])
                         "▸"
                     }
                 }
             let pinList =
                 let rows =
                     pairPins
-                    |> AVal.map (fun ps -> IndexList.ofList (ps |> List.map pinRow))
-                    |> AList.ofAVal
+                    |> AMap.toASet
+                    |> ASet.sortBy (fun (_, (sn, at)) -> at, sn)
+                    |> AList.map (fun (id, (sn, _)) -> pinRow id sn)
                 div {
                     Class "cw-pins"
                     rows

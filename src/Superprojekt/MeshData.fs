@@ -69,14 +69,14 @@ module MeshData =
     let fetchDatasets (serverUrl : string) : Async<string[]> =
         async {
             let! json = Http.client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets") |> Async.AwaitTask
-            let doc = System.Text.Json.JsonDocument.Parse(json)
+            use doc = System.Text.Json.JsonDocument.Parse(json)
             return doc.RootElement.EnumerateArray() |> Seq.map (fun e -> e.GetString()) |> Seq.toArray
         }
 
     let fetchDefaultDataset (serverUrl : string) : Async<string> =
         async {
             let! json = Http.client.GetStringAsync(serverUrl.TrimEnd('/') + "/datasets/default") |> Async.AwaitTask
-            let doc = System.Text.Json.JsonDocument.Parse(json)
+            use doc = System.Text.Json.JsonDocument.Parse(json)
             return doc.RootElement.GetString()
         }
 
@@ -85,7 +85,7 @@ module MeshData =
         async {
             let url = sprintf "%s/datasets/%s/%s" (serverUrl.TrimEnd('/')) dataset segment
             let! json = Http.client.GetStringAsync(url) |> Async.AwaitTask
-            let doc = System.Text.Json.JsonDocument.Parse(json)
+            use doc = System.Text.Json.JsonDocument.Parse(json)
             return
                 doc.RootElement.EnumerateObject()
                 |> Seq.map (fun prop ->
@@ -102,7 +102,7 @@ module MeshData =
         async {
             let url = sprintf "%s/datasets/%s/bboxes" (serverUrl.TrimEnd('/')) dataset
             let! json = Http.client.GetStringAsync(url) |> Async.AwaitTask
-            let doc = System.Text.Json.JsonDocument.Parse(json)
+            use doc = System.Text.Json.JsonDocument.Parse(json)
             return
                 doc.RootElement.EnumerateObject()
                 |> Seq.map (fun prop ->

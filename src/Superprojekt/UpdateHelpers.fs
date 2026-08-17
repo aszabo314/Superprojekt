@@ -93,6 +93,7 @@ module UpdateHelpers =
 
     let showToast (env : Env<Message>) (text : string) (model : Model) =
         toastCts.Cancel()
+        toastCts.Dispose()
         toastCts <- new System.Threading.CancellationTokenSource()
         let token = toastCts.Token
         task {

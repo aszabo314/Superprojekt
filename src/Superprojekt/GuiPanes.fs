@@ -107,7 +107,7 @@ module GuiPanes =
                             let otherT =
                                 (RigidTransform.renderToWorld scale cc (AVal.force (MeshView.displayedMeshT model other))).Forward
                             let otherNum =
-                                (AVal.force (model.MeshOrder |> AMap.tryFind other) |> Option.defaultValue 0) + 1
+                                (HashMap.tryFind other (AVal.force model.MeshOrder.Content) |> Option.defaultValue 0) + 1
                             let! ok, r = Query.roiFit ApiConfig.apiBase.Value other otherT world curRadius 20 4.0
                             if not ok then
                                 env.Emit [ShowToast (sprintf "No centre here — mesh %d has no surface within reach (the region would have to grow past ×4)." otherNum)]

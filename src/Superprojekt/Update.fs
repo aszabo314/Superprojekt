@@ -263,6 +263,8 @@ module Update =
             { model with QuickPinRadius = max 0.01 v }
         | SetFlagScale v ->
             { model with FlagScale = clamp 0.1 10.0 v }
+        | SetMarkerWeight v ->
+            { model with MarkerWeight = clamp 0.5 3.0 v }
         | SetRevealRadius v ->
             let v = clamp 0.01 10.0 v
             if v = model.RevealRadius then model

@@ -25,6 +25,7 @@ type Message =
     // The correspondence markers' reveal extent (gear debug slider) —
     // outermost metric radius; a change invalidates every reveal.
     | SetRevealRadius of float
+    | SetMarkerWeight of float
     // Designate the registration-graph root (★, the navigator's overview
     // step). A tree member re-roots in place (registration kept, path edges
     // reversed); a mesh outside the registered tree clears the graph.

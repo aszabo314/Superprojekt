@@ -10,6 +10,63 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## F9 — aiming & linking legibility (2026-08-17, DONE)
+
+Spec: `ScanPin_v14_F9_aiming_linking_legibility.md` (final-release test-session
+fixes). Governing rule adopted: gold FILL = reference identity, gold
+OUTLINE/GLOW = transient hover/focus — highlighting is never a fill.
+
+- **T1 pin hover → strong top-down link**: `ScanPinScene.addHighlightRing`
+  recoloured white→gold (`Primitives.refGoldV3d`) — flows into the main-3D
+  loud highlight AND the tile highlight ring; the highlightNode label box goes
+  gold too. NEW `GuiPanes.addEdgeArrow` (off-frame link arrow: target outside
+  0.88 × the tile's ortho half-extents → ink-under-gold chevron clamped to the
+  frame border, aimed at the target, ~14 px via `unitsPerPx`, Z = the cam
+  centre plane) + a per-tile arrow segs node (passTwo, DepthTest.None) whose
+  T1 target is the `highlightPin` subject's centre (hovered row > focused
+  pin). Composes with the auto-refocus: on-frame = the gold ring, panned-away
+  = the arrow.
+- **T2 armed correspondence pick gates the tiles**: `.tile-pick-off` on the
+  non-armed pair tile while `ArmPoint` is armed (`pointer-events:none` +
+  `::after` veil rgba(15,23,42,.45) — the A9 scrim scoped to the strip, weaker
+  than A9's .5 so the T3 sibling reads through), `.tile-pick-on` on the armed
+  mesh's tile (white outline + accent glow, the A9 lit vocabulary).
+  Centre/probe picks accept both meshes and gate nothing.
+- **T3 sibling through the dim**: NEW `ScanPinScene.armedSiblingAt` — while
+  ArmPoint m is armed, the OTHER pair mesh's already-placed point of the pin
+  being edited (draft, else selected pin). Exempt from the armed ×0.15 fade
+  AND the mesh-solid muting (arming isolates the armed mesh, which would mute
+  the sibling — exactly the mark that must stay): full-strength crosshair +
+  gold halo in the main 3D (`addGoldHaloC`, GlyphLines CAM unit-circle ring)
+  and in its tile (world-space ink+gold rings at 1.25·h in crossSegs); the
+  T1 edge arrow also aims at it when off the tile's frame.
+- **T4 thicker correspondence glyph + knob**: crosshair rim 5.4→7.2 (ink 3.4 /
+  core 1.7 kept), reveal ground lines 1.4→2.2; ALL crosshair strokes and the
+  reveal width scale by NEW `Model.MarkerWeight` (init 1.0, clamp 0.5–3.0,
+  `SetMarkerWeight`, adaptify rerun) — gear "Debug & settings" slider "Marker
+  line weight" (0.5–3.0 ×, beside the reveal radius). `addCrosshairGlyph`/`C`
+  and `addRevealLines` gained the weight param; callers (main crosshairNode,
+  revealSegs, tile crossSegs, tile reveal) read the model inside their segs
+  AVals.
+- **T5 matrix hover → connected scanpins**: NEW `ScanPinScene.matrixLinkNode`
+  (main 3D, linesNodeTop): at FocusMatrix, a hovered cell (`MatrixHoverPair`,
+  key-normalized) gold-rings the pins of that pair; a hovered mesh subject
+  (`TileIsolateHover` — tree node / strip tile) gold-rings every pin on any
+  pair touching that mesh. Hover transients clear it by themselves; no state.
+- Docs updated in place (CLAUDE.md): colour-family rule (gold fill vs gold
+  outline), triplex crosshair + weight knob, arming bullet (tile gating +
+  sibling exemption), matrix-hover pin link, tile pin-row link + edge arrow.
+- Checklist: T1 ✔ (ScanPinScene.fs addHighlightRing/highlightNode ·
+  GuiPanes.fs addEdgeArrow + arrow node) · T2 ✔ (GuiPanes.fs meshTile classes ·
+  style.css .tile-pick-off/.tile-pick-on) · T3 ✔ (ScanPinScene.fs
+  armedSiblingAt/addGoldHaloC/crosshairNode · GuiPanes.fs crossSegs +
+  arrowSegs) · T4 ✔ (Model.fs MarkerWeight · Messages/Update · GuiTopBar
+  slider · ScanPinScene glyph builders) · T5 ✔ (ScanPinScene.fs
+  matrixLinkNode).
+- Build green after every task (0 errors, 52 pre-existing warnings); no shader
+  code touched (widths/colours are per-segment data), so no FShade→ESSL3 risk.
+  OWED: the interactive in-browser pass (hover/arm flows need a human).
+
 ## Test-session feedback round (2026-08-17)
 
 Five small fixes from a user session:

@@ -241,6 +241,10 @@ type Model =
         // Outermost metric radius of the correspondence markers' local-
         // geometry reveal (rings at ×0.2/×0.6/×1.0, cuts fade over it).
         RevealRadius         : float
+        // Gear multiplier on the correspondence glyph's stroke widths (the
+        // crosshair triplex + the reveal's ground lines) — texture noise is
+        // dataset-dependent, so legibility needs a knob.
+        MarkerWeight         : float
 
         SceneBounds    : Box3d
         MeshBounds     : Map<string, Box3d>
@@ -506,6 +510,7 @@ module Model =
             QuickPinRadius      = 0.5
             FlagScale           = 1.0
             RevealRadius        = 0.5
+            MarkerWeight        = 1.0
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             LoadTransforms        = Map.empty

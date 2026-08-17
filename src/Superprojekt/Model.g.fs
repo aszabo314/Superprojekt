@@ -1,5 +1,5 @@
-//0be3bd6d-1082-9117-c93f-d3a5e6614e56
-//9bbd7f12-abff-b7a3-e7c3-30d822ef92c7
+//4fa96e96-ac2e-b3bc-3a9d-267149d0e528
+//d207f568-c02c-3626-4f96-31412ec35607
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -31,6 +31,7 @@ type AdaptiveModel(value : Model) =
     let _QuickPinRadius_ = FSharp.Data.Adaptive.cval(value.QuickPinRadius)
     let _FlagScale_ = FSharp.Data.Adaptive.cval(value.FlagScale)
     let _RevealRadius_ = FSharp.Data.Adaptive.cval(value.RevealRadius)
+    let _MarkerWeight_ = FSharp.Data.Adaptive.cval(value.MarkerWeight)
     let _SceneBounds_ = FSharp.Data.Adaptive.cval(value.SceneBounds)
     let _MeshBounds_ = FSharp.Data.Adaptive.cval(value.MeshBounds)
     let _LoadTransforms_ = FSharp.Data.Adaptive.cval(value.LoadTransforms)
@@ -111,6 +112,7 @@ type AdaptiveModel(value : Model) =
             _QuickPinRadius_.Value <- value.QuickPinRadius
             _FlagScale_.Value <- value.FlagScale
             _RevealRadius_.Value <- value.RevealRadius
+            _MarkerWeight_.Value <- value.MarkerWeight
             _SceneBounds_.Value <- value.SceneBounds
             _MeshBounds_.Value <- value.MeshBounds
             _LoadTransforms_.Value <- value.LoadTransforms
@@ -184,6 +186,7 @@ type AdaptiveModel(value : Model) =
     member __.QuickPinRadius = _QuickPinRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.FlagScale = _FlagScale_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.RevealRadius = _RevealRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.MarkerWeight = _MarkerWeight_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.SceneBounds = _SceneBounds_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.Box3d>
     member __.MeshBounds = _MeshBounds_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Box3d>>
     member __.LoadTransforms = _LoadTransforms_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.Trafo3d>>

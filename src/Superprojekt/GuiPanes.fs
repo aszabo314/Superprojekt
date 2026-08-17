@@ -197,6 +197,30 @@ module GuiPanes =
     let private unitsPerPx (cam : TileCam) (w : int) =
         2.0 * halfWidthOf cam / float (max 1 w)
 
+    // The off-frame link arrow: when a highlighted target lies outside the
+    // tile's ortho frame, an ink-under-gold chevron at the frame border aims
+    // at it — the link must not silently fail. Top-down cam ⇒ screen +X/+Y =
+    // world +X/+Y; chevron sized in px via the units-per-px scale.
+    let private addEdgeArrow (out : ResizeArray<V3d * V3d * V4d * float>)
+                             (cam : TileCam) (clientSize : V2i) (target : V3d) =
+        let halfW = halfWidthOf cam
+        let halfH = halfW * float (max 1 clientSize.Y) / float (max 1 clientSize.X)
+        let d = V2d(target.X - cam.Centre.X, target.Y - cam.Centre.Y)
+        let mx = halfW * 0.88
+        let my = halfH * 0.88
+        if abs d.X > mx || abs d.Y > my then
+            let k =
+                min (if abs d.X > 1e-9 then mx / abs d.X else infinity)
+                    (if abs d.Y > 1e-9 then my / abs d.Y else infinity)
+            let u = unitsPerPx cam clientSize.X
+            let tip = V3d(cam.Centre.X + d.X * k, cam.Centre.Y + d.Y * k, cam.Centre.Z)
+            let dir = d.Normalized
+            let back = tip - V3d(dir.X, dir.Y, 0.0) * (14.0 * u)
+            let perp = V3d(-dir.Y, dir.X, 0.0) * (8.0 * u)
+            for w, col in [ 5.0, V4d(Primitives.pinInkV3d, 0.9); 3.0, V4d(Primitives.refGoldV3d, 0.95) ] do
+                out.Add(tip, back + perp, col, w)
+                out.Add(tip, back - perp, col, w)
+
     // Scene Z extent in render units — the eye-height margin that keeps the
     // whole terrain inside the ortho volume.
     let private zExtent (model : AdaptiveModel) (t : AdaptiveToken) =
@@ -320,6 +344,14 @@ module GuiPanes =
             classWhen "tile-off" (shownA |> AVal.map not)
             classWhen "tile-iso" isolated
             classWhen "tile-armed" (model.ArmedPick |> AVal.map Option.isSome)
+            // A correspondence pick is valid in exactly ONE tile — the armed
+            // mesh's tile lights, the other goes veiled AND inert (the A9
+            // scrim scoped to the tile pair). Centre/probe picks accept both
+            // meshes, so they gate nothing.
+            classWhen "tile-pick-off" (model.ArmedPick |> AVal.map (function
+                | Some (ArmPoint m) -> m <> name
+                | _ -> false))
+            classWhen "tile-pick-on" (model.ArmedPick |> AVal.map ((=) (Some (ArmPoint name))))
             // Wheel over a tile ZOOMS — the strip's overflow scroll must not
             // also fire; framework wheel listeners are passive, so the
             // default needs its own non-passive preventDefault.
@@ -425,7 +457,8 @@ module GuiPanes =
                             let reveal (dim : float) (localPt : V3d) (rv : RevealState) =
                                 match rv with
                                 | RevealReady lines ->
-                                    ScanPinScene.addRevealLines out (renderOf t) localPt rMax dim lines
+                                    ScanPinScene.addRevealLines out (renderOf t) localPt rMax
+                                        (model.MarkerWeight.GetValue t) dim lines
                                 | _ -> ()
                             for (id, p) in HashMap.toSeq pins do
                                 if p.Pair = pair then
@@ -500,9 +533,23 @@ module GuiPanes =
                             let armDim = armDimA.GetValue t
                             let h = 0.025 * camRadius.GetValue t
                             let col = meshColV3.GetValue t
+                            // The armed sibling stays FULL through the armed
+                            // fade (and the tile veil) and wears the gold
+                            // halo — the reference mark the user aims against.
+                            let sibling =
+                                match ScanPinScene.armedSiblingAt model t with
+                                | Some (sm, sp) when sm = name -> Some sp
+                                | _ -> None
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             let pt (dim : float) (local : V3d) =
-                                ScanPinScene.addCrosshairGlyph out (renderOf t local) V3d.IOO V3d.OIO h col dim
+                                let cR = renderOf t local
+                                let isSib = sibling = Some local
+                                ScanPinScene.addCrosshairGlyph out cR V3d.IOO V3d.OIO h col
+                                    (model.MarkerWeight.GetValue t)
+                                    (if isSib then 1.0 else dim)
+                                if isSib then
+                                    addRing out cR V3d.IOO V3d.OIO (1.25 * h) (V4d(Primitives.pinInkV3d, 0.9)) 4.6 24
+                                    addRing out cR V3d.IOO V3d.OIO (1.25 * h) (V4d(Primitives.refGoldV3d, 0.95)) 2.6 24
                             for (id, p) in HashMap.toSeq pins do
                                 if p.Pair = pair then
                                     pt (armDim * ScanPinScene.pinScopeDim model t id)
@@ -521,6 +568,37 @@ module GuiPanes =
                     Sg.BlendMode (AVal.constant BlendMode.Blend)
                     Sg.NoEvents
                     Lines.render crossSegs
+                }
+
+                // Off-frame link arrows: the highlighted pin points in from
+                // the frame border when this tile's view doesn't contain it
+                // (the on-frame case is the gold highlight ring above).
+                let arrowSegs =
+                    AVal.custom (fun t ->
+                        match (model.Sel.GetValue t).Pair with
+                        | Some (pa, pb) when name = pa || name = pb ->
+                            let cam = camA.GetValue t
+                            let cs = clientSize.GetValue t
+                            let out = ResizeArray<V3d * V3d * V4d * float>()
+                            (match ScanPinScene.highlightPin model t with
+                             | Some id ->
+                                (match HashMap.tryFind id (pinsVal.GetValue t) with
+                                 | Some p when p.Pair = (pa, pb) ->
+                                    addEdgeArrow out cam cs (renderOn t p.AnchorMesh p.CentreLocal)
+                                 | _ -> ())
+                             | None -> ())
+                            (match ScanPinScene.armedSiblingAt model t with
+                             | Some (sm, sp) when sm = name -> addEdgeArrow out cam cs (renderOf t sp)
+                             | _ -> ())
+                            out.ToArray()
+                        | _ -> [||])
+                sg {
+                    Sg.Active marksOn
+                    Sg.Pass RenderPass.passTwo
+                    Sg.DepthTest (AVal.constant DepthTest.None)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    Lines.render arrowSegs
                 }
             }
         }

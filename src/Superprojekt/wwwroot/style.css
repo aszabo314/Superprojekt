@@ -100,6 +100,18 @@ body.loaded { background: #f4f6f8; }
 }
 /* The isolate lock. */
 .mesh-tile.tile-iso { outline: 2px solid #1a56db; outline-offset: -2px; }
+/* Armed correspondence pick: the pick is valid in exactly ONE tile — the
+   other is veiled AND inert (the A9 scrim scoped to the strip; veil weaker
+   than A9's .5 so the exempt sibling mark reads through). */
+.mesh-tile.tile-pick-off { pointer-events: none; }
+.mesh-tile.tile-pick-off::after {
+    content: ''; position: absolute; inset: 0;
+    background: rgba(15, 23, 42, 0.45); z-index: 5;
+}
+.mesh-tile.tile-pick-on {
+    outline: 2px solid #ffffff; outline-offset: -2px;
+    box-shadow: 0 0 10px 3px rgba(26, 86, 219, 0.8);
+}
 /* An armed pick turns every view into a pick surface. */
 .mesh-tile.tile-armed { cursor: crosshair; }
 .pane-chip {

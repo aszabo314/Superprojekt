@@ -329,6 +329,7 @@ module GuiTopBar =
                         }
                         gearSlider "Pin flag scale" 0.2 5.0 0.1 (sprintf "%.1f×") model.FlagScale SetFlagScale
                         gearSlider "Marker reveal radius (m)" 0.05 2.0 0.05 (sprintf "%.2f m") model.RevealRadius SetRevealRadius
+                        gearSlider "Marker line weight" 0.5 3.0 0.1 (sprintf "%.1f×") model.MarkerWeight SetMarkerWeight
                         div {
                             Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Dataset" }

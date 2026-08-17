@@ -473,7 +473,11 @@ module GuiTopBar =
                             Class "tb-gear-row log-head"
                             span {
                                 Class "lp-sublabel"
-                                model.ReachLog |> AVal.map (fun l -> sprintf "Session log (%d)" (List.length l))
+                                // Bind-gated: ReachLog is never trimmed, so the
+                                // O(length) count must not run while closed.
+                                model.ReachLogOpen |> AVal.bind (fun o ->
+                                    if o then model.ReachLog |> AVal.map (fun l -> sprintf "Session log (%d)" (List.length l))
+                                    else AVal.constant "Session log")
                             }
                             button {
                                 Class "tb-gear-btn log-export"
@@ -493,7 +497,11 @@ module GuiTopBar =
                             }
                         }
                         let rows =
-                            model.ReachLog
+                            // Bind-gated: a CLOSED popover must cost zero per
+                            // logged action (showWhen only hides via CSS — the
+                            // 40-row rebuild would still run on every append).
+                            model.ReachLogOpen
+                            |> AVal.bind (fun o -> if o then model.ReachLog else AVal.constant [])
                             |> AVal.map (fun log ->
                                 log |> List.truncate 40 |> List.map (fun ev ->
                                     div {

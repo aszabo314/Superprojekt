@@ -391,6 +391,7 @@ module Update =
                 showToast env "Checkpoint belongs to another dataset — not applied" model
             else
                 bumpPairSolve ()
+                ScanPinUpdate.resetFigureDebounce ()
                 let model =
                     { jumpFocus FocusMatrix model with
                         Sel = FocusSelection.empty
@@ -574,6 +575,7 @@ module Update =
                 // Everything keyed by the old dataset's meshes/pins must go, and the
                 // scalar-map generations bump so old-dataset fetches land dead.
                 bumpPairOverlap ()
+                ScanPinUpdate.resetFigureDebounce ()
                 { model with
                     ActiveDataset = Some dataset
                     ScanPins = ScanPinModel.initial
@@ -861,34 +863,48 @@ module Update =
     // Single-flight per generation — a dataset switch bumps it, so the sweep of
     // a previous dataset can never land.
     let private ensurePairOverlaps (env : Env<Message>) (model : Model) : Model =
-        let names = model.MeshNames |> IndexList.toList
-        let missing =
-            [ for i in 0 .. names.Length - 2 do
-                for j in i + 1 .. names.Length - 1 do
-                    let k = PairCell.key names.[i] names.[j]
-                    if not (Map.containsKey k model.PairOverlaps) then yield k ]
-        if List.isEmpty missing || pairOverlapReqGen = pairOverlapGen then model
+        // Single-flight marker FIRST — O(1) per message once the sweep issued.
+        if pairOverlapReqGen = pairOverlapGen then model
         else
-            pairOverlapReqGen <- pairOverlapGen
-            let gen = pairOverlapGen
-            let jobs =
-                missing |> List.map (fun (a, b) ->
-                    let tA = (ModelTransforms.loadWorld model a).Forward
-                    let tB = (ModelTransforms.loadWorld model b).Forward
-                    async {
+            let names = model.MeshNames |> IndexList.toArray
+            // Names must belong to the ACTIVE dataset: between SetActiveDataset
+            // and CentroidsLoaded they are still the old dataset's — issuing
+            // then would consume the generation and the new dataset's sweep
+            // would never run.
+            let dsOk =
+                match model.ActiveDataset with
+                | Some ds ->
+                    names.Length > 1 && names |> Array.forall (fun n -> n.StartsWith(ds + "/"))
+                | None -> false
+            if not dsOk then model
+            else
+                let missing =
+                    [ for i in 0 .. names.Length - 2 do
+                        for j in i + 1 .. names.Length - 1 do
+                            let k = PairCell.key names.[i] names.[j]
+                            if not (Map.containsKey k model.PairOverlaps) then yield k ]
+                if List.isEmpty missing then model
+                else
+                    pairOverlapReqGen <- pairOverlapGen
+                    let gen = pairOverlapGen
+                    let jobs =
+                        missing |> List.map (fun (a, b) ->
+                            let tA = (ModelTransforms.loadWorld model a).Forward
+                            let tB = (ModelTransforms.loadWorld model b).Forward
+                            async {
+                                try
+                                    let! ok = Query.pairOverlap ApiConfig.apiBase.Value a tA b tB
+                                    return Some (a, b, ok)
+                                with _ -> return None
+                            })
+                    task {
                         try
-                            let! ok = Query.pairOverlap ApiConfig.apiBase.Value a tA b tB
-                            return Some (a, b, ok)
-                        with _ -> return None
-                    })
-            task {
-                try
-                    let! results = jobs |> Async.Parallel |> Async.StartAsTask
-                    let landed = results |> Array.choose id
-                    if landed.Length > 0 then env.Emit [PairOverlapComputed(gen, landed)]
-                with _ -> ()
-            } |> ignore
-            model
+                            let! results = Async.Parallel(jobs, maxDegreeOfParallelism = 6) |> Async.StartAsTask
+                            let landed = results |> Array.choose id
+                            if landed.Length > 0 then env.Emit [PairOverlapComputed(gen, landed)]
+                        with _ -> ()
+                    } |> ignore
+                    model
 
     // In-cell pairwise error: one batch for the cell's pins at the CURRENT
     // poses (+ the same pins at the pair edge's BEFORE poses when registered —
@@ -898,12 +914,17 @@ module Update =
         match model.Focus, model.Sel.Pair with
         | FocusMatrix, _ | _, None -> model
         | (FocusPair | FocusPin), Some (a, b) ->
+            // Cheap guards before the pin-list build — this postlude runs on
+            // every message (incl. per-frame Rendered) and the pin list scales
+            // with every pin placed in the session.
+            if model.CellError.IsSome || cellErrorReqGen = cellErrorGen then model
+            else
             let key = PairCell.key a b
             let pins =
                 model.ScanPins.Pins |> HashMap.toList |> List.map snd
                 |> List.filter (fun p -> p.Pair = key)
                 |> List.sortBy (fun p -> p.CreatedAt, p.ShortName)
-            if List.isEmpty pins || model.CellError.IsSome || cellErrorReqGen = cellErrorGen then model
+            if List.isEmpty pins then model
             else
                 cellErrorReqGen <- cellErrorGen
                 let gen = cellErrorGen
@@ -991,9 +1012,12 @@ module Update =
     // raw pre-registration disagreement) — and land in one message, so the
     // Matrix pose peek only ever swaps two complete streams.
     let private ensureGraphError (env : Env<Message>) (model : Model) : Model =
+        // Cheap guards before the edge-list build (per-message postlude).
+        if model.Focus <> FocusMatrix || model.GraphError.IsSome
+           || graphErrorReqGen = cellErrorGen then model
+        else
         let edges = model.RegGraph.Edges |> Map.toList |> List.sortBy fst
-        if model.Focus <> FocusMatrix || List.isEmpty edges
-           || model.GraphError.IsSome || graphErrorReqGen = cellErrorGen then model
+        if List.isEmpty edges then model
         else
             graphErrorReqGen <- cellErrorGen
             let gen = cellErrorGen
@@ -1047,9 +1071,12 @@ module Update =
     // peek repaints from resident buffers. Unregistered meshes are simply
     // absent — nothing fabricates error for a mesh that has no parent.
     let private ensureGraphDist (env : Env<Message>) (model : Model) : Model =
-        let edges = model.RegGraph.Edges |> Map.toList
-        if model.Focus <> FocusMatrix || not model.CellMapOn || List.isEmpty edges
+        // Cheap guards before the edge-list build (per-message postlude).
+        if model.Focus <> FocusMatrix || not model.CellMapOn
            || not (Map.isEmpty model.GraphDist) || graphDistReqGen = cellErrorGen then model
+        else
+        let edges = model.RegGraph.Edges |> Map.toList
+        if List.isEmpty edges then model
         else
             graphDistReqGen <- cellErrorGen
             let gen = cellErrorGen
@@ -1084,6 +1111,13 @@ module Update =
     // zero bookkeeping. Runs after every reducer step against the pre-step
     // model.
     let private trackSpanned (model0 : Model) (model : Model) =
+        // RegGraph is a record (reference type — the Trafo3d-struct pitfall
+        // does not apply): untouched messages copy it by reference, and
+        // MeshNames only ever changes in CentroidsLoaded, which replaces
+        // RegGraph too — so a reference match proves both spanned inputs
+        // are unchanged. Skips the O(meshes) walk on per-frame messages.
+        if System.Object.ReferenceEquals(model0.RegGraph, model.RegGraph) then model
+        else
         let names (m : Model) = m.MeshNames |> IndexList.toList
         let was = Workflow.spanned (names model0) model0.RegGraph
         let now = Workflow.spanned (names model) model.RegGraph

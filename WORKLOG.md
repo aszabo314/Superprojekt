@@ -10,6 +10,143 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## Performance improvements (2026-08-17)
+
+Session-degradation audit implemented per `performance-audit-spec.md` (WP-1…WP-12;
+the spec file is the transient working doc — delete at review). Symptom: input
+latency grew over a session while the renderer held vsync. Root causes: per-event
+work scaling with session content (pins/edges/samples), unbounded accumulation
+(mesh cache, ReachLog rendering, CTS dicts, JsonDocument rentals), and
+`AList.ofAVal` churn tearing down live DOM/GPU state.
+
+- **WP-1 `ensurePairOverlaps` (Update.fs)** — single-flight `reqGen` check now
+  FIRST (O(1) per message once issued); names via `IndexList.toArray` (the list
+  `.[i]` indexing was O(i) inside the n² loop → ~n³/message); NEW dataset-prefix
+  guard that returns **without consuming the generation** — fixes the real bug:
+  `SetActiveDataset` bumps the gen and clears `PairOverlaps` while `MeshNames`
+  still holds the OLD dataset's names, so the same-message postlude issued a
+  stale sweep, consumed the gen, and the new dataset's sweep never ran (matrix
+  read all-impossible after every switch). Flow now: switch → dsOk false, no
+  issue → `CentroidsLoaded` lands the new names → sweep issues. Fan-out capped
+  `Async.Parallel(jobs, 6)`. (`PairOverlapComputed` already gen-guards.)
+- **WP-2 postlude guards before allocation (Update.fs)** — `ensureCellError` no
+  longer builds+sorts the full pin list per message when cached (P grows with
+  every pin placed); `ensureGraphError`/`ensureGraphDist` check focus/cache
+  before materialising the edge list; `trackSpanned` short-circuits on
+  `ReferenceEquals(model0.RegGraph, model.RegGraph)` (record — reference-safe;
+  MeshNames only changes in CentroidsLoaded, which replaces RegGraph too).
+- **WP-3 chart bridge (GuiRail.fs)** — `chartJs.render()` caches per-attribute:
+  `data-chart` re-`JSON.parse`d and `_dots` rebuilt only when the string
+  actually changed; `data-brushed` re-split only on change (previously every
+  hover-rate render re-parsed the ~30–165 KB payload). Payload: the redundant
+  `"g":[0..n-1]` gid arrays (~40 %) replaced by one `"g0"` offset — gids are the
+  contiguous canonical block by construction; JS derives `gid = g0+q`.
+  `chartData` is now `openA |> AVal.bind`-gated (`inspectBody`/`graphBody` take
+  `openA`): a collapsed dock computes and marshals NOTHING.
+- **WP-4 list identity (GuiRail.fs, GuiTopBar.fs)** — `inspectPanel` content
+  keyed by VALUE through `AMap.ofAVal (HashMap.single key ())`: HashMap delta
+  cancellation keeps the chart node (observers, JS brush state, canvas) alive
+  across `Sel` replacements with an unchanged pair and Pair⇄Pin jumps; only a
+  real key change swaps the subtree. `pairPins` rebuilt as an incremental
+  projection (`AMap.filter |> AMap.map (ShortName, CreatedAt)`) so rings/reveal
+  landings cancel to empty deltas — one solve no longer tears the pin rows down
+  ~18×; `pinRow` takes `(id, shortName)`; `pinCount` = `ASet.count`. ReachLog
+  popover label + rows `AVal.bind`-gated on `ReachLogOpen` — a CLOSED popover
+  costs zero per logged action (the list itself stays untrimmed by design).
+- **WP-5 legend (GuiOverlays.fs)** — percentile crop memoised per
+  (mesh, buffer-reference) in a ref cell (the O(V log V) sort ran per mouse-move
+  while a crop target was hovered/locked); whole `legendJson` now
+  `AVal.bind`-gated on visibility; `hoveredValue` walks the block array without
+  `Array.toList`.
+- **WP-6 token-helper memos (MeshView.fs)** — `graphMapScopeAt`'s painted set
+  memoised on the `RegGraph` instance (was `Set.ofSeq` per call, called per pin
+  per marker recompute); `inspectRangeAt`'s pooled-distance range memoised on
+  the `GraphDist(Before)` Map instance (was E×V concat + 3 arrays + 2 sorts,
+  reached from four avals); `cellPaint`'s Pin-ROI mask memoised on
+  (buffer-ref, centre, r²) in a ref cell — rings landings no longer reallocate
+  the multi-MB masked array, and the stable reference keeps `distBuf` equal.
+- **WP-7 dim → `MarkDim` uniform (LineShader.fs, ScanPinScene.fs)** — `Lines`
+  fragment multiplies a `MarkDim` uniform (default 1; `Lines.renderWith`).
+  Per-pin rings and reveals split: geometry customs carry dim=1 and depend on
+  figure inputs alone; the armed/◎-hover/pin-scope/mesh-solid fades ride
+  per-node `dimA` uniforms; `pinShown` moved to `Sg.Active`; the anchorage cue
+  is its own Active-gated node (`cueSegsOf`); reveals split per SIDE (each
+  follows its own mesh's visibility; hidden ⇒ Active off, not empty geometry).
+  Draft area/reveal nodes restructured identically. Hover transients now cost
+  uniform updates, never ring/reveal re-tessellation.
+- **WP-8 `GlyphLines` (LineShader.fs, ScanPinScene.fs)** — new screen-constant
+  line-glyph pipeline (the Discs pattern): buffers hold centre + UNIT offsets;
+  `h = clamp(GlyphMinR, GlyphMaxR, GlyphFrac·eyeDist) × GlyphScale` in the
+  VERTEX stage; two variants — world-axis offsets (`renderWorld`: jacks via
+  `addGlyphBox`, flag pole+ring with per-pin axes baked into offsets) and
+  camera-plane offsets (`renderCam` + `GlyphRight/Up`: crosshairs via
+  `addCrosshairGlyphC`). Flag sizing = `flagHeightRender` with FlagScale
+  factored into `GlyphScale` (frac 0.10, clamp 0.1·ds…20·ds); crosshair frac
+  0.025 unclamped. `pinMarkerLines`/`crosshairNode`/`pinFlags` no longer read
+  `view` — a camera move re-tessellates NOTHING (was ~85 segs/pin/frame, ×5
+  trafo compositions per pin). `hoverRingNode`'s O(all-samples) gid lookup split
+  into a view-independent `hoverPosA`; the per-frame part is one 32-seg ring.
+- **WP-9 disc slot-alpha + zeroBuf (LineShader.fs, ScanPinScene.fs,
+  MeshView.fs)** — `Discs` gains a `DiscSlot` vertex attribute + `DiscAlpha`
+  `Arr<N<32>, V4f>` uniform (alpha in .X; slot = display index, the
+  OutlineMask/Blobs convention; α<0.004 discards): `brushedDots` geometry
+  depends on brush+data alone, `dotAlphas` moves the per-mesh visibility as 32
+  floats per hover (was up to 12000×17 vertices re-uploaded per hover
+  transient). `distBuf`'s None branch reuses one per-load `zeroBuf` (the pane
+  path's shape) instead of allocating a V-sized zero array per cellPaint
+  invalidation (every brush-drag hit it for every mesh).
+- **WP-10 JSON layer (Query.fs, MeshData.fs)** — `post` takes the parser as a
+  callback and `use`-scopes the `JsonDocument` (ArrayPool rentals were dropped
+  on every response — multi-MB for region-distance); all 9 query parsers moved
+  into callbacks (all fully materialise); `regionDistance` preallocates via
+  `GetArrayLength` (no ResizeArray doubling on multi-million-element arrays);
+  the four MeshData parse sites now `use` their documents.
+- **WP-11 lifecycle hygiene (MeshView.fs, ScanPinUpdate.fs, UpdateHelpers.fs,
+  Update.fs)** — `MeshView.meshes`/`pendingFinished`/`displayedTCache` evicted
+  on dataset switch (prefix-keyed, inside `loadMeshAsync` — the reducer cannot
+  call MeshView by compile order); switching back re-fetches (memory-bounded
+  beats cached-forever on a heap that never shrinks). Load-FAILURE path drops
+  the placeholder + pending callbacks so later rebuilds retry (was: dead
+  closures accumulated per request forever, peeks never gated). Figure-debounce
+  CTSs: replaced ones disposed; `DeletePin` drops its three entries; new
+  `ScanPinUpdate.resetFigureDebounce()` called from `SetActiveDataset` +
+  `ApplyCheckpoint`. Debounce is now tokenless `Task.Delay 250` + an
+  `IsCancellationRequested` check — a pose change no longer throws 3P
+  `OperationCanceledException`s (expensive on Mono WASM); late-cancel fetches
+  land dead on the existing stale guards. `showToast` disposes the replaced CTS.
+- **WP-12 stable identity at the adaptive edges (MeshView.fs, View.fs,
+  GuiPanes.fs)** — `displayedMeshT` memoised per mesh name (event handlers
+  force it per pick/hover; a fresh custom per call registered transient weak
+  edges on ~6 cvals each time; ONE AdaptiveModel per app); cache shares the
+  mesh-eviction lifecycle. `buildRootCoverageNode` root as
+  `HashSet.single |> ASet.ofAVal` — HashSet delta cancellation keeps the
+  per-tile nodes alive across every RegGraph change that doesn't move the root
+  (was: remove+add per graph change × N tiles). View.fs hover readout reads
+  `Pins.Content` (was a fresh `AMap.toAVal` forced per hover-gid change);
+  GuiPanes roiFit toast reads `MeshOrder.Content` (was a fresh `AMap.tryFind`).
+- **Deliberately unchanged** (see the spec's deferred list): offscreen
+  FBO/signature/task disposal (binary-only backend, rare trigger post-WP-11),
+  the per-frame `Rendered` message flow, ReachLog data growth, the
+  `body:has(.arm-flag.on)` scrim mechanism, View.fs's throttled brush-hover
+  scan, per-camera-frame `orientationIndicator`/`treeData` payloads.
+- Green: client type-check (`-p:WasmBuildNative=false`) 0 errors, only
+  pre-existing FS0044/FShade warnings; Supertests 97/97; integration 32/32 on
+  :8002. **In-browser verification** (headless Chromium via puppeteer-core at
+  the served app): zero console errors/warnings, all shaders compile ("cache
+  written"), full scene + tiles render; drove a complete pin placement through
+  the guided flow (centre via tile overlap patch, A/B via tile surfaces) — pin
+  minted, flag pole+ring+label (GlyphLines world), crosshair (GlyphLines cam),
+  area figure + tile reveal rings, and the Pin-level histogram (g0 payload) all
+  render correctly.
+- CLAUDE.md updated same-day (user-requested exception to the docs freeze):
+  the Adaptive-performance section's sanctioned-exception paragraph corrected
+  (jacks/crosshairs/flags now GlyphLines vertex-stage; CPU camera-rebuilds are
+  only the hover ring + highlight + label trafos) and a "Performance patterns"
+  block added — postlude guard-first, reference-keyed memos, MarkDim/DiscAlpha
+  uniforms, GlyphLines, AVal.bind gating of hidden UI, value-keyed single-child
+  swaps + delta-cancelling row projections, JS-bridge parse guards, JsonDocument
+  disposal, cache/CTS lifecycles.
+
 ## Peek-hold feedback + workspace error map flips with the pose peek (2026-08-06)
 
 - **Peek-hold visual feedback** (style.css only): while a peek button is

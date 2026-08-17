@@ -19,14 +19,33 @@ module ScanPinUpdate =
         System.Collections.Generic.Dictionary<int, System.Threading.CancellationTokenSource>()
 
     // Cancel-and-replace a figure's debounce token — the ONE debounce
-    // discipline (the next invalidation cancels the previous fetch).
+    // discipline (the next invalidation cancels the previous fetch). The
+    // replaced source is disposed; readers only touch IsCancellationRequested,
+    // which stays safe on a disposed source.
     let private restartCts (map : System.Collections.Generic.Dictionary<'k, System.Threading.CancellationTokenSource>) (id : 'k) =
         match map.TryGetValue id with
-        | true, cts -> cts.Cancel()
+        | true, cts -> cts.Cancel(); cts.Dispose()
         | _ -> ()
         let cts = new System.Threading.CancellationTokenSource()
         map.[id] <- cts
         cts.Token
+
+    let private dropCts (map : System.Collections.Generic.Dictionary<'k, System.Threading.CancellationTokenSource>) (id : 'k) =
+        match map.TryGetValue id with
+        | true, cts ->
+            cts.Cancel(); cts.Dispose()
+            map.Remove id |> ignore
+        | _ -> ()
+
+    // Cancel + drop EVERY figure debounce — dataset switch / checkpoint apply
+    // (the pins they guarded are gone wholesale).
+    let resetFigureDebounce () =
+        for KeyValue(_, cts) in ringsCts do cts.Cancel(); cts.Dispose()
+        ringsCts.Clear()
+        for KeyValue(_, cts) in revealCts do cts.Cancel(); cts.Dispose()
+        revealCts.Clear()
+        for KeyValue(_, cts) in draftCts do cts.Cancel(); cts.Dispose()
+        draftCts.Clear()
 
     // Mint the atomic pin from a COMPLETE draft — the only way a pin is born.
     // The draft's rings carry over when ready (no refetch flash); an in-flight
@@ -124,6 +143,9 @@ module ScanPinUpdate =
                 else pin)
 
         | DeletePin id ->
+            dropCts ringsCts id
+            dropCts revealCts (id, 0)
+            dropCts revealCts (id, 1)
             { sp with Pins = HashMap.remove id sp.Pins }
 
         // Stale guard: results only land while still RingsRunning; any intervening invalidation wins.
@@ -159,23 +181,26 @@ module ScanPinUpdate =
                            (mkMsg : Map<string, V3d[][]> -> Message) =
         task {
             try
-                do! System.Threading.Tasks.Task.Delay(250, token)
-                let! results =
-                    meshes
-                    |> List.map (fun (n, tw) -> async {
-                        try
-                            let cOwn = tw.Backward.TransformPos centre
-                            let! rings = Query.contactRings ApiConfig.apiBase.Value n cOwn radius 4096
-                            let ringsWorld = rings |> Array.map (Array.map tw.Forward.TransformPos)
-                            return if ringsWorld.Length = 0 then None else Some (n, ringsWorld)
-                        with _ -> return None })
-                    |> Async.Parallel
-                    |> Async.StartAsTask
+                // Tokenless delay + a check: a cancel must not THROW — Mono WASM
+                // exception dispatch is expensive and a pose change cancels
+                // 3×pins of these at once. A fetch that slips through a late
+                // cancel lands dead on the RingsRunning stale guards.
+                do! System.Threading.Tasks.Task.Delay 250
                 if not token.IsCancellationRequested then
-                    env.Emit [mkMsg (results |> Array.choose (fun r -> r) |> Map.ofArray)]
-            with
-            | :? System.OperationCanceledException -> ()
-            | _ -> ()
+                    let! results =
+                        meshes
+                        |> List.map (fun (n, tw) -> async {
+                            try
+                                let cOwn = tw.Backward.TransformPos centre
+                                let! rings = Query.contactRings ApiConfig.apiBase.Value n cOwn radius 4096
+                                let ringsWorld = rings |> Array.map (Array.map tw.Forward.TransformPos)
+                                return if ringsWorld.Length = 0 then None else Some (n, ringsWorld)
+                            with _ -> return None })
+                        |> Async.Parallel
+                        |> Async.StartAsTask
+                    if not token.IsCancellationRequested then
+                        env.Emit [mkMsg (results |> Array.choose (fun r -> r) |> Map.ofArray)]
+            with _ -> ()
         } |> ignore
 
     // One debounced correspondence-point reveal (the crosshair's local
@@ -190,15 +215,15 @@ module ScanPinUpdate =
         let radii = [| 0.2 * r; 0.6 * r; r |]
         task {
             try
-                do! System.Threading.Tasks.Task.Delay(250, token)
-                let! lines =
-                    Query.pointReveal ApiConfig.apiBase.Value mesh local radii planes 2048
-                    |> Async.StartAsTask
+                // Tokenless delay + a check — see fetchRings.
+                do! System.Threading.Tasks.Task.Delay 250
                 if not token.IsCancellationRequested then
-                    env.Emit [mkMsg lines]
-            with
-            | :? System.OperationCanceledException -> ()
-            | _ -> ()
+                    let! lines =
+                        Query.pointReveal ApiConfig.apiBase.Value mesh local radii planes 2048
+                        |> Async.StartAsTask
+                    if not token.IsCancellationRequested then
+                        env.Emit [mkMsg lines]
+            with _ -> ()
         } |> ignore
 
     // Lazy intersection-figure trigger, postlude after every reducer step:

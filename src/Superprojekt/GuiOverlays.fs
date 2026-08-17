@@ -140,14 +140,36 @@ module GuiOverlays =
                     match model.HoverReadout.GetValue t with
                     | Some (g, v) when g = gid -> Some v
                     | _ ->
-                        let rec find (i : int) (bs : InspectBlock list) =
-                            match bs with
-                            | [] -> None
-                            | b :: rest ->
-                                if i < b.Err.Samples.Length then Some b.Err.Samples.[i]
-                                else find (i - b.Err.Samples.Length) rest
-                        find gid (Array.toList (MeshView.inspectBlocksAt model t)))
-        let legendJson =
+                        let bs = MeshView.inspectBlocksAt model t
+                        let mutable i = gid
+                        let mutable k = 0
+                        let mutable found = None
+                        while found.IsNone && k < bs.Length do
+                            let n = bs.[k].Err.Samples.Length
+                            if i < n then found <- Some bs.[k].Err.Samples.[i]
+                            else i <- i - n; k <- k + 1
+                        found)
+        // Percentile-crop memo: the per-vertex buffer is reference-stable
+        // between refetches, but legendJson recomputes on hover-rate drivers
+        // (HoverSample, TileIsolateHover) — the O(V log V) sort must run once
+        // per (mesh, buffer), not per mouse-move.
+        let cropCache : (string * float32[] * (float * float) option) option ref = ref None
+        let cropOf (m : string) (arr : float32[]) =
+            match cropCache.Value with
+            | Some (cm, ca, r) when cm = m && System.Object.ReferenceEquals(ca, arr) -> r
+            | _ ->
+                let r =
+                    let valid =
+                        arr |> Array.choose (fun v ->
+                            if abs v < 1e20f then Some (float v) else None)
+                    if valid.Length < 8 then None
+                    else
+                        Array.sortInPlace valid
+                        let q p = valid.[min (valid.Length - 1) (int (p * float valid.Length))]
+                        Some (q 0.05, q 0.95)
+                cropCache.Value <- Some (m, arr, r)
+                r
+        let legendJsonCore =
             AVal.custom (fun t ->
                 let title, vLo, vHi, colorAt =
                     if diffOn.GetValue t then
@@ -198,15 +220,11 @@ module GuiOverlays =
                                 | None -> None
                         match target |> Option.bind (fun m -> distsOf m |> Option.map (fun d -> m, d)) with
                         | Some (m, arr) ->
-                            let valid =
-                                arr |> Array.choose (fun v ->
-                                    if abs v < 1e20f then Some (float v) else None)
-                            if valid.Length < 8 then title, vLo, vHi
-                            else
-                                Array.sortInPlace valid
-                                let q p = valid.[min (valid.Length - 1) (int (p * float valid.Length))]
-                                let cl = max vLo (q 0.05)
-                                let ch = min vHi (q 0.95)
+                            match cropOf m arr with
+                            | None -> title, vLo, vHi
+                            | Some (q05, q95) ->
+                                let cl = max vLo q05
+                                let ch = min vHi q95
                                 if ch - cl < 1e-6 then title, vLo, vHi
                                 else
                                     let order = model.MeshOrder.Content.GetValue t
@@ -244,9 +262,13 @@ module GuiOverlays =
                     else -1.0
                 sprintf "{\"title\":\"%s\",\"min\":\"%s\",\"max\":\"%s\",\"hov\":%.4f,\"stops\":[%s],\"ticks\":[%s]}"
                     title (fmt span vLo) (fmt span vHi) hov stops ticks)
+        let visA = (anyRangeOn, diffOn) ||> AVal.map2 (||)
+        // Hidden legend ⇒ zero compute (showWhen only hides via CSS; the bind
+        // genuinely drops the data dependencies).
+        let legendJson = visA |> AVal.bind (fun v -> if v then legendJsonCore else AVal.constant "{}")
         div {
             Class "color-legend"
-            Primitives.showWhen ((anyRangeOn, diffOn) ||> AVal.map2 (||))
+            Primitives.showWhen visA
             legendJson |> AVal.map (fun json -> Some (Attribute("data-legend", json)))
             Primitives.observedRender "data-legend" "{}" [
                 "  if(!d.stops) return;"

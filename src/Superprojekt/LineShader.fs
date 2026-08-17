@@ -27,6 +27,12 @@ module Lines =
         [<VertexId>]              id    : int
     }
 
+    // Whole-node alpha multiplier (default 1): per-pin hover/scope dims ride
+    // this uniform instead of the vertex colours, so a hover transient costs
+    // one uniform update instead of a full buffer re-tessellation.
+    type UniformScope with
+        member x.MarkDim : float32 = x?MarkDim
+
     let line (v : Vertex) =
         vertex {
             let m = uniform.ModelViewProjTrafo
@@ -130,7 +136,7 @@ module Lines =
         }
 
     let fragment (v : Vertex) =
-        fragment { return v.col }
+        fragment { return V4f(v.col.X, v.col.Y, v.col.Z, v.col.W * uniform.MarkDim) }
 
     let private buildBuffers (segments : aval<(V3d * V3d * V4d * float)[]>) =
         let buffers =
@@ -173,11 +179,12 @@ module Lines =
     // Alpha-blended lines; callers steer ordering via Sg.DepthTest/Sg.Pass.
     // Sg.DepthMask is never used (buggy here), so line fragments also write
     // depth — see SceneGraph.build.
-    let render (segments : aval<(V3d * V3d * V4d * float)[]>) =
+    let renderWith (dim : aval<float32>) (segments : aval<(V3d * V3d * V4d * float)[]>) =
         let p0Arr, p1Arr, colArr, widthArr, idxArr, count = buildBuffers segments
         sg {
             Sg.Shader { line; fragment }
             Sg.NoEvents
+            Sg.Uniform("MarkDim", dim)
             Sg.VertexAttributes(
                 HashMap.ofList [
                     "P0",        BufferView(p0Arr,    typeof<V3f>)
@@ -188,6 +195,9 @@ module Lines =
             Sg.Index(BufferView(idxArr, typeof<int>))
             Sg.Render count
         }
+
+    let render (segments : aval<(V3d * V3d * V4d * float)[]>) =
+        renderWith (AVal.constant 1.0f) segments
 
 // Flat camera-facing discs (the brushed-sample locators): a pure locator +
 // colour channel, no 3D body. Billboarding AND the screen-constant sizing run
@@ -213,11 +223,16 @@ module Discs =
         member x.DiscUp    : V3f     = x?DiscUp
         member x.DiscMinR  : float32 = x?DiscMinR
         member x.DiscMaxR  : float32 = x?DiscMaxR
+        // Per-mesh-slot alpha (slot = display index, the OutlineMask/Blobs
+        // convention; alpha in .X): hover/visibility fades move 32 floats
+        // instead of re-uploading every disc's vertices.
+        member x.DiscAlpha : Arr<N<32>, V4f> = x?DiscAlpha
 
     type Vertex = {
-        [<Position>]               pos : V4f
-        [<Semantic("DiscOffset")>] off : V2f
-        [<Semantic("DiscColor")>]  col : V4f
+        [<Position>]               pos  : V4f
+        [<Semantic("DiscOffset")>] off  : V2f
+        [<Semantic("DiscColor")>]  col  : V4f
+        [<Semantic("DiscSlot")>]   slot : float32
     }
 
     let vertex (v : Vertex) =
@@ -234,50 +249,61 @@ module Discs =
     // whitened surface. #292524 = Primitives.pinInk (defined later in compile order).
     let fragment (v : Vertex) =
         fragment {
-            if Vec.length v.off > 0.80f then return V4f(0.161f, 0.145f, 0.141f, v.col.W)
-            else return v.col
+            let a = uniform.DiscAlpha.[int v.slot].X
+            if a < 0.004f then discard()
+            if Vec.length v.off > 0.80f then return V4f(0.161f, 0.145f, 0.141f, v.col.W * a)
+            else return V4f(v.col.X, v.col.Y, v.col.Z, v.col.W * a)
         }
 
-    let private buildBuffers (dots : aval<(V3d * V4d)[]>) =
+    let private buildBuffers (dots : aval<(V3d * V4d * int)[]>) =
         let buffers =
             dots |> AVal.map (fun ds ->
                 let n = ds.Length
                 let vpd = segs + 1
-                let posBuf = Array.zeroCreate<V3f> (max 1 (n * vpd))
-                let offBuf = Array.zeroCreate<V2f> (max 1 (n * vpd))
-                let colBuf = Array.zeroCreate<V4f> (max 1 (n * vpd))
+                let posBuf  = Array.zeroCreate<V3f>     (max 1 (n * vpd))
+                let offBuf  = Array.zeroCreate<V2f>     (max 1 (n * vpd))
+                let colBuf  = Array.zeroCreate<V4f>     (max 1 (n * vpd))
+                let slotBuf = Array.zeroCreate<float32> (max 1 (n * vpd))
                 let indices = Array.zeroCreate<int> (max 1 (n * segs * 3))
                 for i in 0 .. n - 1 do
-                    let (c, col) = ds.[i]
+                    let (c, col, slot) = ds.[i]
                     let cf = V3f c
                     let colf = V4f(float32 col.X, float32 col.Y, float32 col.Z, float32 col.W)
+                    let sf = float32 (max 0 (min 31 slot))
                     let b = i * vpd
                     posBuf.[b] <- cf
                     offBuf.[b] <- V2f.Zero
                     colBuf.[b] <- colf
+                    slotBuf.[b] <- sf
                     for k in 0 .. segs - 1 do
                         let a = float32 k / float32 segs * 6.2831855f
                         posBuf.[b + 1 + k] <- cf
                         offBuf.[b + 1 + k] <- V2f(cos a, sin a)
                         colBuf.[b + 1 + k] <- colf
+                        slotBuf.[b + 1 + k] <- sf
                     let ib = i * segs * 3
                     for k in 0 .. segs - 1 do
                         indices.[ib + k * 3 + 0] <- b
                         indices.[ib + k * 3 + 1] <- b + 1 + k
                         indices.[ib + k * 3 + 2] <- b + 1 + (k + 1) % segs
-                posBuf, offBuf, colBuf, indices, n)
-        buffers |> AVal.map (fun (a,_,_,_,_) -> ArrayBuffer a :> IBuffer),
-        buffers |> AVal.map (fun (_,a,_,_,_) -> ArrayBuffer a :> IBuffer),
-        buffers |> AVal.map (fun (_,_,a,_,_) -> ArrayBuffer a :> IBuffer),
-        buffers |> AVal.map (fun (_,_,_,a,_) -> ArrayBuffer a :> IBuffer),
-        buffers |> AVal.map (fun (_,_,_,_,n) -> if n = 0 then 0 else n * segs * 3)
+                posBuf, offBuf, colBuf, slotBuf, indices, n)
+        buffers |> AVal.map (fun (a,_,_,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,a,_,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,a,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,a,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,_,a,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,_,_,n) -> if n = 0 then 0 else n * segs * 3)
 
-    // dots = (centre in render space, colour); minR/maxR are the render-space
-    // clamp of the screen-constant radius.
+    // dots = (centre in render space, colour, mesh display-index slot);
+    // minR/maxR clamp the screen-constant radius (render space); alphas =
+    // per-slot visibility (missing slots read 1.0).
     let render (view : aval<Trafo3d>) (minR : aval<float>) (maxR : aval<float>)
-               (dots : aval<(V3d * V4d)[]>) =
-        let posArr, offArr, colArr, idxArr, count = buildBuffers dots
+               (alphas : aval<float32[]>) (dots : aval<(V3d * V4d * int)[]>) =
+        let posArr, offArr, colArr, slotArr, idxArr, count = buildBuffers dots
         let camDir (d : V3d) = view |> AVal.map (fun (v : Trafo3d) -> V3f (v.Backward.TransformDir d))
+        let alphaArr =
+            alphas |> AVal.map (fun a ->
+                Array.init 32 (fun i -> V4f((if i < a.Length then a.[i] else 1.0f), 0.0f, 0.0f, 0.0f)))
         sg {
             Sg.Shader { vertex; fragment }
             Sg.NoEvents
@@ -285,15 +311,423 @@ module Discs =
             Sg.Uniform("DiscUp",    camDir V3d.OIO)
             Sg.Uniform("DiscMinR",  minR |> AVal.map float32)
             Sg.Uniform("DiscMaxR",  maxR |> AVal.map float32)
+            Sg.Uniform("DiscAlpha", alphaArr)
             Sg.VertexAttributes(
                 HashMap.ofList [
                     string DefaultSemantic.Positions, BufferView(posArr, typeof<V3f>)
                     "DiscOffset", BufferView(offArr, typeof<V2f>)
                     "DiscColor",  BufferView(colArr, typeof<V4f>)
+                    "DiscSlot",   BufferView(slotArr, typeof<float32>)
                 ])
             Sg.Index(BufferView(idxArr, typeof<int>))
             Sg.Render count
         }
+
+// Screen-constant line GLYPHS (pin jacks, correspondence crosshairs, flags):
+// the eye-distance sizing runs in the VERTEX shader (the Discs pattern), so
+// the buffers hold a glyph centre + UNIT offsets and rebuild only when the
+// glyph SET changes — a camera move costs uniform updates instead of
+// re-tessellating every pin's glyph on every frame.
+// h = clamp(GlyphMinR, GlyphMaxR, GlyphFrac × eyeDist(centre)) × GlyphScale;
+// endpoint = centre + off × h. Two offset frames: WORLD axes (jacks, flags —
+// per-glyph axes baked into the offsets) and the CAMERA plane (crosshairs —
+// off is 2D, GlyphRight/GlyphUp uniforms supply the frame, like Discs).
+module GlyphLines =
+    open Aardvark.Dom
+    open FSharp.Data.Adaptive
+    open FShade
+
+    type UniformScope with
+        member x.GlyphFrac  : float32 = x?GlyphFrac
+        member x.GlyphMinR  : float32 = x?GlyphMinR
+        member x.GlyphMaxR  : float32 = x?GlyphMaxR
+        member x.GlyphScale : float32 = x?GlyphScale
+        member x.GlyphRight : V3f     = x?GlyphRight
+        member x.GlyphUp    : V3f     = x?GlyphUp
+        member x.MarkDim    : float32 = x?MarkDim
+
+    type VertexW = {
+        [<Semantic("GlyphCenter")>] c     : V3f
+        [<Semantic("GOff0")>]       o0    : V3f
+        [<Semantic("GOff1")>]       o1    : V3f
+        [<Semantic("LineColor")>]   color : V4f
+        [<Semantic("LineWidth")>]   width : float32
+        [<Position>]                pos   : V4f
+        [<Color>]                   col   : V4f
+        [<VertexId>]                id    : int
+    }
+
+    type VertexC = {
+        [<Semantic("GlyphCenter")>] c     : V3f
+        [<Semantic("GOff0")>]       o0    : V2f
+        [<Semantic("GOff1")>]       o1    : V2f
+        [<Semantic("LineColor")>]   color : V4f
+        [<Semantic("LineWidth")>]   width : float32
+        [<Position>]                pos   : V4f
+        [<Color>]                   col   : V4f
+        [<VertexId>]                id    : int
+    }
+
+    // Both vertex bodies repeat Lines.line's clip/expand verbatim after
+    // computing (o, d) from the glyph attributes — FShade bodies are
+    // lambda-free, so the shared tail cannot be factored out.
+    let glyphWorld (v : VertexW) =
+        vertex {
+            let dEye = Vec.length (uniform.CameraLocation - v.c)
+            let h = (clamp uniform.GlyphMinR uniform.GlyphMaxR (uniform.GlyphFrac * dEye)) * uniform.GlyphScale
+            let m = uniform.ModelViewProjTrafo
+            let o = v.c + v.o0 * h
+            let d = (v.c + v.o1 * h) - o
+            let mutable tLo = 0.0f
+            let mutable tHi = 1.0f
+
+            let pl0  = -m.R3 - m.R0
+            let dir0 = Vec.dot pl0.XYZ d
+            let tp0  = (pl0.W + Vec.dot pl0.XYZ o) / -dir0
+            if dir0 > 1e-9f then
+                if tp0 < tHi then tHi <- tp0
+            elif dir0 < -1e-9f then
+                if tp0 > tLo then tLo <- tp0
+
+            let pl1  = -m.R3 + m.R0
+            let dir1 = Vec.dot pl1.XYZ d
+            let tp1  = (pl1.W + Vec.dot pl1.XYZ o) / -dir1
+            if dir1 > 1e-9f then
+                if tp1 < tHi then tHi <- tp1
+            elif dir1 < -1e-9f then
+                if tp1 > tLo then tLo <- tp1
+
+            let pl2  = -m.R3 - m.R1
+            let dir2 = Vec.dot pl2.XYZ d
+            let tp2  = (pl2.W + Vec.dot pl2.XYZ o) / -dir2
+            if dir2 > 1e-9f then
+                if tp2 < tHi then tHi <- tp2
+            elif dir2 < -1e-9f then
+                if tp2 > tLo then tLo <- tp2
+
+            let pl3  = -m.R3 + m.R1
+            let dir3 = Vec.dot pl3.XYZ d
+            let tp3  = (pl3.W + Vec.dot pl3.XYZ o) / -dir3
+            if dir3 > 1e-9f then
+                if tp3 < tHi then tHi <- tp3
+            elif dir3 < -1e-9f then
+                if tp3 > tLo then tLo <- tp3
+
+            let pl4  = -m.R3 - m.R2
+            let dir4 = Vec.dot pl4.XYZ d
+            let tp4  = (pl4.W + Vec.dot pl4.XYZ o) / -dir4
+            if dir4 > 1e-9f then
+                if tp4 < tHi then tHi <- tp4
+            elif dir4 < -1e-9f then
+                if tp4 > tLo then tLo <- tp4
+
+            let pl5  = -m.R3 + m.R2
+            let dir5 = Vec.dot pl5.XYZ d
+            let tp5  = (pl5.W + Vec.dot pl5.XYZ o) / -dir5
+            if dir5 > 1e-9f then
+                if tp5 < tHi then tHi <- tp5
+            elif dir5 < -1e-9f then
+                if tp5 > tLo then tLo <- tp5
+
+            if tHi > tLo then
+                let p0w = o + tLo * d
+                let p1w = o + tHi * d
+
+                let corner = v.id % 4
+                let mpX = if corner &&& 1 <> 0 then 1.0f else 0.0f
+                let mpY = if corner &&& 2 <> 0 then 1.0f else 0.0f
+
+                let vs   = uniform.ViewportSize
+                let p0c  = m * V4f(p0w, 1.0f)
+                let p1c  = m * V4f(p1w, 1.0f)
+                let p0n  = p0c.XYZ / p0c.W
+                let p1n  = p1c.XYZ / p1c.W
+
+                let pixelToNdc  = V2f(2.0f / float32 vs.X, 2.0f / float32 vs.Y)
+                let halfWidthPx = v.width * 0.5f
+
+                let diff     = p1n - p0n
+                let pixelDir = V2f(diff.X * float32 vs.X * 0.5f, diff.Y * float32 vs.Y * 0.5f)
+                let pixelLen = Vec.length pixelDir
+
+                let perpDir =
+                    if pixelLen > 1e-10f then V2f(-pixelDir.Y, pixelDir.X) / pixelLen
+                    else V2f(0.0f, 1.0f)
+                let lineDir =
+                    if pixelLen > 1e-10f then pixelDir / pixelLen
+                    else V2f(0.0f, 1.0f)
+
+                let perpSign = if mpX > 0.5f then 1.0f else -1.0f
+                let lineSign = if mpY > 0.5f then 1.0f else -1.0f
+                let perpOffset = perpDir * (perpSign * halfWidthPx) * pixelToNdc
+                let lineOffset = lineDir * (lineSign * halfWidthPx) * pixelToNdc
+
+                let basePos = if mpY > 0.5f then p1n.XY else p0n.XY
+                let xy      = basePos + perpOffset + lineOffset
+
+                let zT = if mpY > 0.5f then 1.0f else 0.0f
+                let z  = p0n.Z * (1.0f - zT) + p1n.Z * zT
+
+                return { v with pos = V4f(xy.X, xy.Y, z, 1.0f); col = v.color }
+            else
+                return { v with pos = V4f(2.0f, 2.0f, 2.0f, 1.0f); col = V4f.Zero }
+        }
+
+    let glyphCam (v : VertexC) =
+        vertex {
+            let dEye = Vec.length (uniform.CameraLocation - v.c)
+            let h = (clamp uniform.GlyphMinR uniform.GlyphMaxR (uniform.GlyphFrac * dEye)) * uniform.GlyphScale
+            let m = uniform.ModelViewProjTrafo
+            let o = v.c + (uniform.GlyphRight * v.o0.X + uniform.GlyphUp * v.o0.Y) * h
+            let d = (v.c + (uniform.GlyphRight * v.o1.X + uniform.GlyphUp * v.o1.Y) * h) - o
+            let mutable tLo = 0.0f
+            let mutable tHi = 1.0f
+
+            let pl0  = -m.R3 - m.R0
+            let dir0 = Vec.dot pl0.XYZ d
+            let tp0  = (pl0.W + Vec.dot pl0.XYZ o) / -dir0
+            if dir0 > 1e-9f then
+                if tp0 < tHi then tHi <- tp0
+            elif dir0 < -1e-9f then
+                if tp0 > tLo then tLo <- tp0
+
+            let pl1  = -m.R3 + m.R0
+            let dir1 = Vec.dot pl1.XYZ d
+            let tp1  = (pl1.W + Vec.dot pl1.XYZ o) / -dir1
+            if dir1 > 1e-9f then
+                if tp1 < tHi then tHi <- tp1
+            elif dir1 < -1e-9f then
+                if tp1 > tLo then tLo <- tp1
+
+            let pl2  = -m.R3 - m.R1
+            let dir2 = Vec.dot pl2.XYZ d
+            let tp2  = (pl2.W + Vec.dot pl2.XYZ o) / -dir2
+            if dir2 > 1e-9f then
+                if tp2 < tHi then tHi <- tp2
+            elif dir2 < -1e-9f then
+                if tp2 > tLo then tLo <- tp2
+
+            let pl3  = -m.R3 + m.R1
+            let dir3 = Vec.dot pl3.XYZ d
+            let tp3  = (pl3.W + Vec.dot pl3.XYZ o) / -dir3
+            if dir3 > 1e-9f then
+                if tp3 < tHi then tHi <- tp3
+            elif dir3 < -1e-9f then
+                if tp3 > tLo then tLo <- tp3
+
+            let pl4  = -m.R3 - m.R2
+            let dir4 = Vec.dot pl4.XYZ d
+            let tp4  = (pl4.W + Vec.dot pl4.XYZ o) / -dir4
+            if dir4 > 1e-9f then
+                if tp4 < tHi then tHi <- tp4
+            elif dir4 < -1e-9f then
+                if tp4 > tLo then tLo <- tp4
+
+            let pl5  = -m.R3 + m.R2
+            let dir5 = Vec.dot pl5.XYZ d
+            let tp5  = (pl5.W + Vec.dot pl5.XYZ o) / -dir5
+            if dir5 > 1e-9f then
+                if tp5 < tHi then tHi <- tp5
+            elif dir5 < -1e-9f then
+                if tp5 > tLo then tLo <- tp5
+
+            if tHi > tLo then
+                let p0w = o + tLo * d
+                let p1w = o + tHi * d
+
+                let corner = v.id % 4
+                let mpX = if corner &&& 1 <> 0 then 1.0f else 0.0f
+                let mpY = if corner &&& 2 <> 0 then 1.0f else 0.0f
+
+                let vs   = uniform.ViewportSize
+                let p0c  = m * V4f(p0w, 1.0f)
+                let p1c  = m * V4f(p1w, 1.0f)
+                let p0n  = p0c.XYZ / p0c.W
+                let p1n  = p1c.XYZ / p1c.W
+
+                let pixelToNdc  = V2f(2.0f / float32 vs.X, 2.0f / float32 vs.Y)
+                let halfWidthPx = v.width * 0.5f
+
+                let diff     = p1n - p0n
+                let pixelDir = V2f(diff.X * float32 vs.X * 0.5f, diff.Y * float32 vs.Y * 0.5f)
+                let pixelLen = Vec.length pixelDir
+
+                let perpDir =
+                    if pixelLen > 1e-10f then V2f(-pixelDir.Y, pixelDir.X) / pixelLen
+                    else V2f(0.0f, 1.0f)
+                let lineDir =
+                    if pixelLen > 1e-10f then pixelDir / pixelLen
+                    else V2f(0.0f, 1.0f)
+
+                let perpSign = if mpX > 0.5f then 1.0f else -1.0f
+                let lineSign = if mpY > 0.5f then 1.0f else -1.0f
+                let perpOffset = perpDir * (perpSign * halfWidthPx) * pixelToNdc
+                let lineOffset = lineDir * (lineSign * halfWidthPx) * pixelToNdc
+
+                let basePos = if mpY > 0.5f then p1n.XY else p0n.XY
+                let xy      = basePos + perpOffset + lineOffset
+
+                let zT = if mpY > 0.5f then 1.0f else 0.0f
+                let z  = p0n.Z * (1.0f - zT) + p1n.Z * zT
+
+                return { v with pos = V4f(xy.X, xy.Y, z, 1.0f); col = v.color }
+            else
+                return { v with pos = V4f(2.0f, 2.0f, 2.0f, 1.0f); col = V4f.Zero }
+        }
+
+    let fragmentW (v : VertexW) =
+        fragment { return V4f(v.col.X, v.col.Y, v.col.Z, v.col.W * uniform.MarkDim) }
+
+    let fragmentC (v : VertexC) =
+        fragment { return V4f(v.col.X, v.col.Y, v.col.Z, v.col.W * uniform.MarkDim) }
+
+    let private buildBuffersW (segments : aval<(V3d * V3d * V3d * V4d * float)[]>) =
+        let buffers =
+            segments |> AVal.map (fun segs ->
+                let n = segs.Length
+                let len = max 1 (4 * n)
+                let cBuf     = Array.zeroCreate<V3f>     len
+                let o0Buf    = Array.zeroCreate<V3f>     len
+                let o1Buf    = Array.zeroCreate<V3f>     len
+                let colBuf   = Array.zeroCreate<V4f>     len
+                let widthBuf = Array.zeroCreate<float32> len
+                let indices  = Array.zeroCreate<int>     (max 1 (6 * n))
+                for i in 0 .. n - 1 do
+                    let (c, o0, o1, col, w) = segs.[i]
+                    let cf  = V3f c
+                    let o0f = V3f o0
+                    let o1f = V3f o1
+                    let colf = V4f(float32 col.X, float32 col.Y, float32 col.Z, float32 col.W)
+                    let wf  = float32 w
+                    let b   = i * 4
+                    for k in 0 .. 3 do
+                        cBuf.[b + k]     <- cf
+                        o0Buf.[b + k]    <- o0f
+                        o1Buf.[b + k]    <- o1f
+                        colBuf.[b + k]   <- colf
+                        widthBuf.[b + k] <- wf
+                    let ib = i * 6
+                    indices.[ib + 0] <- b
+                    indices.[ib + 1] <- b + 1
+                    indices.[ib + 2] <- b + 2
+                    indices.[ib + 3] <- b + 1
+                    indices.[ib + 4] <- b + 3
+                    indices.[ib + 5] <- b + 2
+                cBuf, o0Buf, o1Buf, colBuf, widthBuf, indices, n)
+        buffers |> AVal.map (fun (a,_,_,_,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,a,_,_,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,a,_,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,a,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,_,a,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,_,_,a,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,_,_,_,n) -> if n = 0 then 0 else 6 * n)
+
+    let private buildBuffersC (segments : aval<(V3d * V2d * V2d * V4d * float)[]>) =
+        let buffers =
+            segments |> AVal.map (fun segs ->
+                let n = segs.Length
+                let len = max 1 (4 * n)
+                let cBuf     = Array.zeroCreate<V3f>     len
+                let o0Buf    = Array.zeroCreate<V2f>     len
+                let o1Buf    = Array.zeroCreate<V2f>     len
+                let colBuf   = Array.zeroCreate<V4f>     len
+                let widthBuf = Array.zeroCreate<float32> len
+                let indices  = Array.zeroCreate<int>     (max 1 (6 * n))
+                for i in 0 .. n - 1 do
+                    let (c, o0, o1, col, w) = segs.[i]
+                    let cf  = V3f c
+                    let o0f = V2f o0
+                    let o1f = V2f o1
+                    let colf = V4f(float32 col.X, float32 col.Y, float32 col.Z, float32 col.W)
+                    let wf  = float32 w
+                    let b   = i * 4
+                    for k in 0 .. 3 do
+                        cBuf.[b + k]     <- cf
+                        o0Buf.[b + k]    <- o0f
+                        o1Buf.[b + k]    <- o1f
+                        colBuf.[b + k]   <- colf
+                        widthBuf.[b + k] <- wf
+                    let ib = i * 6
+                    indices.[ib + 0] <- b
+                    indices.[ib + 1] <- b + 1
+                    indices.[ib + 2] <- b + 2
+                    indices.[ib + 3] <- b + 1
+                    indices.[ib + 4] <- b + 3
+                    indices.[ib + 5] <- b + 2
+                cBuf, o0Buf, o1Buf, colBuf, widthBuf, indices, n)
+        buffers |> AVal.map (fun (a,_,_,_,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,a,_,_,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,a,_,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,a,_,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,_,a,_,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,_,_,a,_) -> ArrayBuffer a :> IBuffer),
+        buffers |> AVal.map (fun (_,_,_,_,_,_,n) -> if n = 0 then 0 else 6 * n)
+
+    // segments = (centre, unit off0, unit off1, colour, width-px) — offsets in
+    // WORLD axes (per-glyph axes baked into the offsets).
+    let renderWorld (frac : aval<float32>) (minR : aval<float32>) (maxR : aval<float32>)
+                    (scale : aval<float32>)
+                    (segments : aval<(V3d * V3d * V3d * V4d * float)[]>) =
+        let cArr, o0Arr, o1Arr, colArr, widthArr, idxArr, count = buildBuffersW segments
+        sg {
+            Sg.Shader { glyphWorld; fragmentW }
+            Sg.NoEvents
+            Sg.Uniform("GlyphFrac",  frac)
+            Sg.Uniform("GlyphMinR",  minR)
+            Sg.Uniform("GlyphMaxR",  maxR)
+            Sg.Uniform("GlyphScale", scale)
+            Sg.Uniform("MarkDim",    AVal.constant 1.0f)
+            Sg.VertexAttributes(
+                HashMap.ofList [
+                    "GlyphCenter", BufferView(cArr,     typeof<V3f>)
+                    "GOff0",       BufferView(o0Arr,    typeof<V3f>)
+                    "GOff1",       BufferView(o1Arr,    typeof<V3f>)
+                    "LineColor",   BufferView(colArr,   typeof<V4f>)
+                    "LineWidth",   BufferView(widthArr, typeof<float32>)
+                ])
+            Sg.Index(BufferView(idxArr, typeof<int>))
+            Sg.Render count
+        }
+
+    // segments = (centre, unit off0, unit off1, colour, width-px) — offsets in
+    // the CAMERA plane (GlyphRight/GlyphUp from the view, like Discs).
+    let renderCam (view : aval<Trafo3d>)
+                  (frac : aval<float32>) (minR : aval<float32>) (maxR : aval<float32>)
+                  (scale : aval<float32>)
+                  (segments : aval<(V3d * V2d * V2d * V4d * float)[]>) =
+        let cArr, o0Arr, o1Arr, colArr, widthArr, idxArr, count = buildBuffersC segments
+        let camDir (d : V3d) = view |> AVal.map (fun (v : Trafo3d) -> V3f (v.Backward.TransformDir d))
+        sg {
+            Sg.Shader { glyphCam; fragmentC }
+            Sg.NoEvents
+            Sg.Uniform("GlyphFrac",  frac)
+            Sg.Uniform("GlyphMinR",  minR)
+            Sg.Uniform("GlyphMaxR",  maxR)
+            Sg.Uniform("GlyphScale", scale)
+            Sg.Uniform("GlyphRight", camDir V3d.IOO)
+            Sg.Uniform("GlyphUp",    camDir V3d.OIO)
+            Sg.Uniform("MarkDim",    AVal.constant 1.0f)
+            Sg.VertexAttributes(
+                HashMap.ofList [
+                    "GlyphCenter", BufferView(cArr,     typeof<V3f>)
+                    "GOff0",       BufferView(o0Arr,    typeof<V2f>)
+                    "GOff1",       BufferView(o1Arr,    typeof<V2f>)
+                    "LineColor",   BufferView(colArr,   typeof<V4f>)
+                    "LineWidth",   BufferView(widthArr, typeof<float32>)
+                ])
+            Sg.Index(BufferView(idxArr, typeof<int>))
+            Sg.Render count
+        }
+
+    // CPU-side glyph-seg builder: an axis-aligned box outline in UNIT space
+    // (offsets ×h at the vertex stage) — the pin jack's element.
+    let addGlyphBox (out : ResizeArray<V3d * V3d * V3d * V4d * float>)
+                    (c : V3d) (hx : float) (hy : float) (hz : float) (col : V4d) (width : float) =
+        let v = [|
+            V3d(-hx, -hy, -hz); V3d( hx, -hy, -hz); V3d( hx, hy, -hz); V3d(-hx, hy, -hz)
+            V3d(-hx, -hy,  hz); V3d( hx, -hy,  hz); V3d( hx, hy,  hz); V3d(-hx, hy,  hz) |]
+        let e = [| 0,1; 1,2; 2,3; 3,0; 4,5; 5,6; 6,7; 7,4; 0,4; 1,5; 2,6; 3,7 |]
+        for (a, b) in e do out.Add(c, v.[a], v.[b], col, width)
 
 // Shared line-glyph builders for the 3D + focus overlays — segments appended as
 // (a, b, colour, width) for Lines.render. ONE home so the conventions

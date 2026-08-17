@@ -380,7 +380,7 @@ module View =
                                         match bestHit with
                                         | Some (b, pos) ->
                                             let radius =
-                                                HashMap.tryFind b.Pin (AVal.force (model.ScanPins.Pins |> AMap.toAVal))
+                                                HashMap.tryFind b.Pin (AVal.force model.ScanPins.Pins.Content)
                                                 |> Option.map (fun p -> p.InnerRadius)
                                                 |> Option.defaultValue (AVal.force model.QuickPinRadius)
                                             let gen = UpdateHelpers.cellErrorGen

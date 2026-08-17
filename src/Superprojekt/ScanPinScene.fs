@@ -46,6 +46,19 @@ module ScanPinScene =
             out.Add(p0, p1, ink, 3.4)
             out.Add(p0, p1, core, 1.7)
 
+    // The main view's variant as GlyphLines CAM segments (centre + UNIT
+    // camera-plane offsets — the vertex stage applies the screen-constant h,
+    // so the buffer never rebuilds on a camera move).
+    let addCrosshairGlyphC (out : ResizeArray<V3d * V2d * V2d * V4d * float>)
+                           (cR : V3d) (col : V3d) (dim : float) =
+        let rim = V4d(1.0, 1.0, 1.0, 0.85 * dim)
+        let ink = V4d(Primitives.pinInkV3d, 0.9 * dim)
+        let core = V4d(col, 0.95 * dim)
+        for d in [| V2d.IO; -V2d.IO; V2d.OI; -V2d.OI |] do
+            out.Add(cR, d * 0.3, d * 1.0, rim, 5.4)
+            out.Add(cR, d * 0.3, d * 1.0, ink, 3.4)
+            out.Add(cR, d * 0.3, d * 1.0, core, 1.7)
+
     // The area figure's thin duplex equator ring.
     let addAreaRing (out : ResizeArray<V3d * V3d * V4d * float>)
                     (cR : V3d) (u : V3d) (v : V3d) (rR : float) (dim : float) =
@@ -125,6 +138,19 @@ module ScanPinScene =
             }
         let linesNode = linesNodeDT DepthTest.LessOrEqual
         let linesNodeTop = linesNodeDT DepthTest.None
+        // Dim-uniform variant: the node's hover/scope fade rides MarkDim, so a
+        // hover transient costs one uniform update instead of re-tessellating
+        // and re-uploading the node's whole buffer.
+        let linesNodeDim (depth : DepthTest) (active : aval<bool>) (dim : aval<float32>) segs =
+            sg {
+                Sg.Active active
+                Sg.View view
+                Sg.Proj proj
+                Sg.DepthTest (AVal.constant depth)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                Lines.renderWith dim segs
+            }
         let pinIdSet = model.ScanPins.Pins |> AMap.toASet |> ASet.map fst
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         // Project-wide up-normal (terrain-like data): the shared flag/ring axis;
@@ -253,10 +279,20 @@ module ScanPinScene =
                 }
             )
 
+        // The flag-height screen-constant sizing as GlyphLines uniforms:
+        // h = clamp(0.1·ds, 20·ds, 0.10·eyeDist) × FlagScale — exactly
+        // ScanPin.flagHeightRender with FlagScale factored out (the metric
+        // clamp bounds scale with it too).
+        let flagFrac = AVal.constant 0.10f
+        let flagMinR = datasetScale |> AVal.map (fun ds -> float32 (0.1 * ds))
+        let flagMaxR = datasetScale |> AVal.map (fun ds -> float32 (20.0 * ds))
+        let flagScaleA = model.FlagScale |> AVal.map float32
+
         // Visible pin-centre marker: a small, faint neutral wire-box jack on top
-        // (so the invisible pick proxy can't occlude it), sized by the
-        // screen-constant flag height (view-dependent by design — recomputes per
-        // camera move; a handful of pins keeps it cheap), NEVER rotated. The
+        // (so the invisible pick proxy can't occlude it), NEVER rotated. UNIT
+        // offsets — the vertex stage applies the screen-constant flag height,
+        // so a camera move never re-tessellates (hover fades stay vertex-baked:
+        // hover is rare next to camera frames and this buffer is small). The
         // draft's placed centre wears the same jack.
         let pinMarkerLines =
             let segs =
@@ -264,18 +300,14 @@ module ScanPinScene =
                     let pins = pinsVal.GetValue t
                     let cc = model.CommonCentroid.GetValue t
                     let scale = datasetScale.GetValue t
-                    let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
-                    let fs = model.FlagScale.GetValue t
-                    let out = ResizeArray<V3d * V3d * V4d * float>()
+                    let out = ResizeArray<V3d * V3d * V3d * V4d * float>()
                     let armDim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
                     let addJack (cR : V3d) (dim : float) =
                         let col = V4d(0.45, 0.48, 0.53, 0.4 * dim)
                         let w = 1.0
-                        let h = ScanPin.flagHeightRender scale fs (Vec.length (eye - cR))
-                        let l, thin = h * 0.10, h * 0.02
-                        addBoxOutline out cR l thin thin col w
-                        addBoxOutline out cR thin l thin col w
-                        addBoxOutline out cR thin thin l col w
+                        GlyphLines.addGlyphBox out cR 0.10 0.02 0.02 col w
+                        GlyphLines.addGlyphBox out cR 0.02 0.10 0.02 col w
+                        GlyphLines.addGlyphBox out cR 0.02 0.02 0.10 col w
                     for (id, p) in HashMap.toSeq pins do
                         if pinShownAt t p.Pair then
                             addJack (ScanPin.renderCentre cc scale (pinCentreWorldAt t p))
@@ -289,7 +321,15 @@ module ScanPinScene =
                         | None -> ()
                      | _ -> ())
                     out.ToArray())
-            linesNodeTop flagsActive segs
+            sg {
+                Sg.Active flagsActive
+                Sg.View view
+                Sg.Proj proj
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                GlyphLines.renderWorld flagFrac flagMinR flagMaxR flagScaleA segs
+            }
 
         // Pin influence figure, ONE builder for committed pins and the draft
         // (a draft is a pin with parts missing — placed parts render final):
@@ -299,33 +339,40 @@ module ScanPinScene =
         // over the duplex convention). Fades while a pick is armed (marks must
         // not hide the pick spot). Normal depth testing on purpose — occlusion
         // is the spatial cue.
+        // Geometry ONLY (dim = 1.0 baked): the armed/hover/scope fades ride the
+        // node's MarkDim uniform, and the anchorage cue is its own Sg.Active-
+        // gated node — so hover transients never re-tessellate the figure.
         let addAreaFigure (t : AdaptiveToken) (out : ResizeArray<V3d * V3d * V4d * float>)
-                          (scopeDim : float)
                           (anchorMesh : string) (centreLocal : V3d) (radius : float)
                           (rings : Map<string, V3d[][]>) =
             let cc = model.CommonCentroid.GetValue t
             let scale = datasetScale.GetValue t
-            let dim =
-                (if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0)
-                * anchorHoverDimAt t anchorMesh
-                * scopeDim
             let centre = (dispWorldAt t anchorMesh).Forward.TransformPos centreLocal
             let cR = ScanPin.renderCentre cc scale centre
             let rR = ScanPin.renderLength scale radius
             let axis = match upNormalA.GetValue t with Some u -> u | None -> V3d.OOI
             let nN, u, v = basisFromNormal axis
-            addAreaRing out cR u v rR dim
-            // Anchorage cue while the anchor mesh is isolated (or its
-            // isolation previewed) — the tiles' dashed second ring, in 3D.
-            (match isoCueMeshAt t with
-             | Some m when m = anchorMesh ->
-                addDashedRing out cR u v (rR * 1.08) (V4d(1.0, 1.0, 1.0, 0.85 * dim)) 1.5 64
-             | _ -> ())
+            addAreaRing out cR u v rR 1.0
             // 1 m direction indicator along the display axis — thin
             // + semitransparent (orientation, not geometry).
-            let axisCol = V4d(Primitives.pinInkV3d, 0.35 * dim)
+            let axisCol = V4d(Primitives.pinInkV3d, 0.35)
             out.Add(cR, cR + nN * ScanPin.renderLength scale 1.0, axisCol, 1.0)
-            addContactRings out (ScanPin.renderCentre cc scale) rings dim
+            addContactRings out (ScanPin.renderCentre cc scale) rings 1.0
+
+        // The anchorage cue (the tiles' dashed second ring, in 3D) — geometry
+        // from the pin's figure inputs alone; the isolation state gates the
+        // NODE, not the tessellation.
+        let cueSegsOf (t : AdaptiveToken) (anchorMesh : string) (centreLocal : V3d) (radius : float) =
+            let cc = model.CommonCentroid.GetValue t
+            let scale = datasetScale.GetValue t
+            let centre = (dispWorldAt t anchorMesh).Forward.TransformPos centreLocal
+            let cR = ScanPin.renderCentre cc scale centre
+            let rR = ScanPin.renderLength scale radius
+            let axis = match upNormalA.GetValue t with Some u -> u | None -> V3d.OOI
+            let _, u, v = basisFromNormal axis
+            let out = ResizeArray<V3d * V3d * V4d * float>()
+            addDashedRing out cR u v (rR * 1.08) (V4d(1.0, 1.0, 1.0, 0.85)) 1.5 64
+            out.ToArray()
 
         let pinRings =
             pinIdSet |> ASet.collect (fun id ->
@@ -334,32 +381,94 @@ module ScanPinScene =
                 // on this pin must not rebuild the ring geometry.
                 let geoVal = pinVal |> AVal.map (Option.map (fun p -> p.AnchorMesh, p.CentreLocal, p.InnerRadius, p.Pair))
                 let ringsVal = pinVal |> AVal.map (Option.map (fun p -> match p.ContactRings with RingsReady m -> m | _ -> Map.empty))
+                let shownA =
+                    AVal.custom (fun t ->
+                        match geoVal.GetValue t with
+                        | Some (_, _, _, pair) -> pinShownAt t pair
+                        | None -> false)
+                let activeA = (flagsActive, shownA) ||> AVal.map2 (&&)
+                // Hover/scope fades ride the MarkDim uniform (one uniform update
+                // per hover transient, never a buffer rebuild).
+                let dimA =
+                    AVal.custom (fun t ->
+                        match geoVal.GetValue t with
+                        | Some (anchorMesh, _, _, _) ->
+                            float32 (
+                                (if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0)
+                                * anchorHoverDimAt t anchorMesh
+                                * pinScopeDimAt t id)
+                        | None -> 1.0f)
                 let segs =
                     AVal.custom (fun t ->
                         match geoVal.GetValue t, ringsVal.GetValue t with
-                        | Some (anchorMesh, centreLocal, radius, pair), Some rings when pinShownAt t pair ->
+                        | Some (anchorMesh, centreLocal, radius, _), Some rings ->
                             let out = ResizeArray<V3d * V3d * V4d * float>()
-                            addAreaFigure t out (pinScopeDimAt t id) anchorMesh centreLocal radius rings
+                            addAreaFigure t out anchorMesh centreLocal radius rings
                             out.ToArray()
                         | _ -> [||])
-                ASet.ofList [ linesNode flagsActive segs ])
+                let cueActive =
+                    AVal.custom (fun t ->
+                        flagsActive.GetValue t
+                        && (match geoVal.GetValue t with
+                            | Some (anchorMesh, _, _, pair) ->
+                                pinShownAt t pair && isoCueMeshAt t = Some anchorMesh
+                            | None -> false))
+                let cueSegs =
+                    AVal.custom (fun t ->
+                        match geoVal.GetValue t with
+                        | Some (anchorMesh, centreLocal, radius, _) ->
+                            cueSegsOf t anchorMesh centreLocal radius
+                        | None -> [||])
+                ASet.ofList [
+                    linesNodeDim DepthTest.LessOrEqual activeA dimA segs
+                    linesNodeDim DepthTest.LessOrEqual cueActive dimA cueSegs
+                ])
 
         // The draft's area: the SAME figure, live from the moment the centre
         // lands (its contact rings arrive via the shared postlude).
         let draftAreaNode =
+            let draftGeo =
+                model.ScanPins.Placement |> AVal.map (function
+                    | PlacementActive d ->
+                        d.Area |> Option.map (fun (m, local) ->
+                            m, local, d.Radius, d.Pair,
+                            (match d.Rings with RingsReady r -> r | _ -> Map.empty))
+                    | PlacementIdle -> None)
+            let shownA =
+                AVal.custom (fun t ->
+                    flagsActive.GetValue t
+                    && (match draftGeo.GetValue t with
+                        | Some (_, _, _, pair, _) -> pinShownAt t pair
+                        | None -> false))
+            let dimA =
+                AVal.custom (fun t ->
+                    match draftGeo.GetValue t with
+                    | Some (m, _, _, _, _) ->
+                        float32 (
+                            (if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0)
+                            * anchorHoverDimAt t m)
+                    | None -> 1.0f)
             let segs =
                 AVal.custom (fun t ->
-                    match model.ScanPins.Placement.GetValue t with
-                    | PlacementActive d when pinShownAt t d.Pair ->
-                        match d.Area with
-                        | Some (m, local) ->
-                            let out = ResizeArray<V3d * V3d * V4d * float>()
-                            let rings = match d.Rings with RingsReady r -> r | _ -> Map.empty
-                            addAreaFigure t out 1.0 m local d.Radius rings
-                            out.ToArray()
-                        | None -> [||]
-                    | _ -> [||])
-            linesNode flagsActive segs
+                    match draftGeo.GetValue t with
+                    | Some (m, local, radius, _, rings) ->
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        addAreaFigure t out m local radius rings
+                        out.ToArray()
+                    | None -> [||])
+            let cueActive =
+                AVal.custom (fun t ->
+                    shownA.GetValue t
+                    && (match draftGeo.GetValue t with
+                        | Some (m, _, _, _, _) -> isoCueMeshAt t = Some m
+                        | None -> false))
+            let cueSegs =
+                AVal.custom (fun t ->
+                    match draftGeo.GetValue t with
+                    | Some (m, local, radius, _, _) -> cueSegsOf t m local radius
+                    | None -> [||])
+            [ linesNodeDim DepthTest.LessOrEqual shownA dimA segs
+              linesNodeDim DepthTest.LessOrEqual cueActive dimA cueSegs ]
 
         // Correspondence LOCATOR: a camera-aligned, screen-constant crosshair
         // whose centre IS the pick point — no 3D body, nothing occluded, an
@@ -371,25 +480,19 @@ module ScanPinScene =
         // (isolation/preview) MUTES to the fade level instead of floating at
         // full strength; the pair scope and the global armed fade apply on
         // top. One segs pass for committed pins AND the draft's placed
-        // points (view-dependent by design — recomputes per camera move; a
-        // handful of pins keeps it cheap).
+        // points; the screen-constant sizing and camera alignment run in the
+        // GlyphLines vertex stage, so a camera move never rebuilds the buffer.
         let crosshairNode =
             let segs =
                 AVal.custom (fun t ->
                     let pins = pinsVal.GetValue t
                     let cc = model.CommonCentroid.GetValue t
                     let s = datasetScale.GetValue t
-                    let vb = (view.GetValue t).Backward
-                    let eye = vb.TransformPos V3d.Zero
-                    let right = vb.TransformDir V3d.IOO
-                    let up = vb.TransformDir V3d.OIO
                     let armDim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
-                    let out = ResizeArray<V3d * V3d * V4d * float>()
-                    let addCrosshair (cR : V3d) (col : V3d) (dim : float) =
-                        addCrosshairGlyph out cR right up (0.025 * Vec.length (eye - cR)) col dim
+                    let out = ResizeArray<V3d * V2d * V2d * V4d * float>()
                     let pt (scopeDim : float) (mesh : string) (local : V3d) =
                         let vis = match markerAlphaAt t mesh with Some f -> f | None -> 0.15
-                        addCrosshair
+                        addCrosshairGlyphC out
                             (ScanPin.renderCentre cc s ((dispWorldAt t mesh).Forward.TransformPos local))
                             (meshColAt t mesh) (armDim * vis * scopeDim)
                     for (id, p) in HashMap.toSeq pins do
@@ -403,7 +506,17 @@ module ScanPinScene =
                         d.PointB |> Option.iter (pt 1.0 (snd d.Pair))
                      | _ -> ())
                     out.ToArray())
-            linesNodeTop notFullscreen segs
+            sg {
+                Sg.Active notFullscreen
+                Sg.View view
+                Sg.Proj proj
+                Sg.DepthTest (AVal.constant DepthTest.None)
+                Sg.BlendMode (AVal.constant BlendMode.Blend)
+                Sg.NoEvents
+                GlyphLines.renderCam view
+                    (AVal.constant 0.025f) (AVal.constant 0.0f) (AVal.constant 1.0e30f)
+                    (AVal.constant 1.0f) segs
+            }
 
         // The locator's INTERSECTION REVEAL: the local geometry of the
         // point's own mesh (concentric contact rings + vertical relief cuts,
@@ -411,54 +524,103 @@ module ScanPinScene =
         // metric distance from the point. Follows the mesh-solid visibility
         // rule (markerAlphaAt) and normal depth testing; the crosshair takes
         // the same factor but mutes instead of hiding.
+        // Geometry ONLY (dim = 1.0 baked; the per-segment distance fade stays
+        // in the vertices — it depends on the point alone): the mesh-solid
+        // visibility factor rides the node's MarkDim uniform, so a hover
+        // transient never re-tessellates the reveal — the heaviest per-pin
+        // line geometry in the scene.
         let revealSegs (t : AdaptiveToken) (out : ResizeArray<V3d * V3d * V4d * float>)
-                       (scopeDim : float) (mesh : string) (localPt : V3d) (lines : V3d[][]) =
+                       (mesh : string) (localPt : V3d) (lines : V3d[][]) =
+            let cc = model.CommonCentroid.GetValue t
+            let s = datasetScale.GetValue t
+            let tw = dispWorldAt t mesh
+            let rMax = max 0.01 (model.RevealRadius.GetValue t)
+            addRevealLines out (fun p -> ScanPin.renderCentre cc s (tw.Forward.TransformPos p))
+                localPt rMax 1.0 lines
+
+        // The mesh-solid alpha of one reveal side (markerAlphaAt semantics):
+        // hidden = 0 (the node's Active gate drops it), faded = 0.15, full = 1;
+        // × the global armed fade × the pin-scope dim.
+        let revealDim (t : AdaptiveToken) (mesh : string) (scopeDim : float) =
             match markerAlphaAt t mesh with
-            | None -> ()
+            | None -> 0.0f
             | Some f ->
-                let cc = model.CommonCentroid.GetValue t
-                let s = datasetScale.GetValue t
-                let dim = (if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0) * f * scopeDim
-                let tw = dispWorldAt t mesh
-                let rMax = max 0.01 (model.RevealRadius.GetValue t)
-                addRevealLines out (fun p -> ScanPin.renderCentre cc s (tw.Forward.TransformPos p))
-                    localPt rMax dim lines
+                float32 (
+                    (if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0)
+                    * f * scopeDim)
 
         let pointReveals =
             pinIdSet |> ASet.collect (fun id ->
                 let pinVal = pinsVal |> AVal.map (fun pins -> HashMap.tryFind id pins)
-                let rvVal =
-                    pinVal |> AVal.map (Option.map (fun p ->
-                        p.Pair, p.PointA, p.PointB,
-                        (match p.RevealA with RevealReady l -> l | _ -> [||]),
-                        (match p.RevealB with RevealReady l -> l | _ -> [||])))
-                let segs =
-                    AVal.custom (fun t ->
-                        match rvVal.GetValue t with
-                        | Some (pair, pa, pb, la, lb) when pinShownAt t pair ->
-                            let out = ResizeArray<V3d * V3d * V4d * float>()
-                            let sd = pinScopeDimAt t id
-                            revealSegs t out sd (fst pair) pa la
-                            revealSegs t out sd (snd pair) pb lb
-                            out.ToArray()
-                        | _ -> [||])
-                ASet.ofList [ linesNode notFullscreen segs ])
+                // One node per reveal SIDE — each side follows its OWN mesh's
+                // solid visibility.
+                let sideNode (side : int) =
+                    let rv =
+                        pinVal |> AVal.map (Option.map (fun p ->
+                            p.Pair,
+                            (if side = 0 then p.PointA else p.PointB),
+                            (match (if side = 0 then p.RevealA else p.RevealB) with
+                             | RevealReady l -> l | _ -> [||])))
+                    let meshOf (pair : string * string) = if side = 0 then fst pair else snd pair
+                    let dimA =
+                        AVal.custom (fun t ->
+                            match rv.GetValue t with
+                            | Some (pair, _, _) -> revealDim t (meshOf pair) (pinScopeDimAt t id)
+                            | None -> 0.0f)
+                    let activeA =
+                        AVal.custom (fun t ->
+                            notFullscreen.GetValue t
+                            && (match rv.GetValue t with
+                                | Some (pair, _, lines) -> lines.Length > 0 && pinShownAt t pair
+                                | None -> false)
+                            && dimA.GetValue t > 0.0f)
+                    let segs =
+                        AVal.custom (fun t ->
+                            match rv.GetValue t with
+                            | Some (pair, pt, lines) when lines.Length > 0 ->
+                                let out = ResizeArray<V3d * V3d * V4d * float>()
+                                revealSegs t out (meshOf pair) pt lines
+                                out.ToArray()
+                            | _ -> [||])
+                    linesNodeDim DepthTest.LessOrEqual activeA dimA segs
+                ASet.ofList [ sideNode 0; sideNode 1 ])
 
         let draftReveal =
-            let segs =
-                AVal.custom (fun t ->
-                    match model.ScanPins.Placement.GetValue t with
-                    | PlacementActive d when pinShownAt t d.Pair ->
-                        let out = ResizeArray<V3d * V3d * V4d * float>()
-                        (match d.PointA, d.RevealA with
-                         | Some p, RevealReady l -> revealSegs t out 1.0 (fst d.Pair) p l
-                         | _ -> ())
-                        (match d.PointB, d.RevealB with
-                         | Some p, RevealReady l -> revealSegs t out 1.0 (snd d.Pair) p l
-                         | _ -> ())
-                        out.ToArray()
-                    | _ -> [||])
-            linesNode notFullscreen segs
+            let sideNode (side : int) =
+                let rv =
+                    model.ScanPins.Placement |> AVal.map (function
+                        | PlacementActive d ->
+                            let pt = if side = 0 then d.PointA else d.PointB
+                            let lines =
+                                match (if side = 0 then d.RevealA else d.RevealB) with
+                                | RevealReady l -> l | _ -> [||]
+                            (match pt with
+                             | Some p when lines.Length > 0 -> Some (d.Pair, p, lines)
+                             | _ -> None)
+                        | PlacementIdle -> None)
+                let meshOf (pair : string * string) = if side = 0 then fst pair else snd pair
+                let dimA =
+                    AVal.custom (fun t ->
+                        match rv.GetValue t with
+                        | Some (pair, _, _) -> revealDim t (meshOf pair) 1.0
+                        | None -> 0.0f)
+                let activeA =
+                    AVal.custom (fun t ->
+                        notFullscreen.GetValue t
+                        && (match rv.GetValue t with
+                            | Some (pair, _, _) -> pinShownAt t pair
+                            | None -> false)
+                        && dimA.GetValue t > 0.0f)
+                let segs =
+                    AVal.custom (fun t ->
+                        match rv.GetValue t with
+                        | Some (pair, pt, lines) ->
+                            let out = ResizeArray<V3d * V3d * V4d * float>()
+                            revealSegs t out (meshOf pair) pt lines
+                            out.ToArray()
+                        | None -> [||])
+                linesNodeDim DepthTest.LessOrEqual activeA dimA segs
+            [ sideNode 0; sideNode 1 ]
 
         // Loud highlight of the focused/hovered pin (isolation OFF): a BOLD
         // dashed second ring around the ground ring, no depth test (reads
@@ -517,6 +679,10 @@ module ScanPinScene =
         // that mesh's solid visibility (the A10 marker rule): full, faded, or
         // gone with the mesh — no dot floats over absent geometry. At graph
         // scope every edge contributes its own owner.
+        // GEOMETRY depends on the brush + data alone; the per-mesh visibility
+        // fade rides the DiscAlpha slot-uniform (slot = display index — the
+        // OutlineMask convention), so a hover transient moves 32 floats
+        // instead of re-tessellating up to 12000 discs.
         let brushedDots =
             AVal.custom (fun t ->
                 let brush = model.BrushedSamples.GetValue t
@@ -528,19 +694,26 @@ module ScanPinScene =
                     // The dots ARE samples of the surface field: same ramp,
                     // same range as the false-colour map and the legend.
                     let lo, hi = MeshView.inspectRangeAt model t
-                    let out = ResizeArray<V3d * V4d>()
+                    let order = model.MeshOrder.Content.GetValue t
+                    let out = ResizeArray<V3d * V4d * int>()
                     let mutable gid = 0
                     for b in blocks do
-                        let vis = markerAlphaAt t b.Mov
+                        let slot = HashMap.tryFind b.Mov order |> Option.defaultValue 0
                         let r = b.Err
                         for i in 0 .. r.Samples.Length - 1 do
-                            match vis with
-                            | Some v when Set.contains gid brush && i < r.Positions.Length ->
+                            if Set.contains gid brush && i < r.Positions.Length then
                                 let c = Primitives.Diff.colorSignedV3 lo hi r.Samples.[i]
-                                out.Add(ScanPin.renderCentre cc s r.Positions.[i], V4d(c, v))
-                            | _ -> ()
+                                out.Add(ScanPin.renderCentre cc s r.Positions.[i], V4d(c, 1.0), slot)
                             gid <- gid + 1
                     out.ToArray())
+        let dotAlphas =
+            AVal.custom (fun t ->
+                let order = model.MeshOrder.Content.GetValue t
+                let a = Array.create 32 1.0f
+                for (mesh, idx) in HashMap.toSeq order do
+                    if idx >= 0 && idx < 32 then
+                        a.[idx] <- match markerAlphaAt t mesh with Some f -> float32 f | None -> 0.0f
+                a)
         let brushedSampleNode =
             sg {
                 Sg.Active notFullscreen
@@ -549,24 +722,22 @@ module ScanPinScene =
                 Sg.DepthTest (AVal.constant DepthTest.None)
                 Sg.BlendMode (AVal.constant BlendMode.Blend)
                 Sg.NoEvents
-                Discs.render view (discRadii |> AVal.map fst) (discRadii |> AVal.map snd) brushedDots
+                Discs.render view (discRadii |> AVal.map fst) (discRadii |> AVal.map snd) dotAlphas brushedDots
             }
 
         // The 3D-hovered dot's mark: a duplex ring around it (the diagram
         // cross-highlights the same gid). ONE glyph — the sanctioned
         // camera-dependent rebuild.
         let hoverRingNode =
-            let segs =
+            // The gid lookup walks the whole inspect stream — split from the
+            // view-dependent ring so it runs per HOVER change, not per camera
+            // frame while a dot is hovered.
+            let hoverPosA =
                 AVal.custom (fun t ->
                     match model.HoverSample.GetValue t with
                     | Some hov ->
                         let cc = model.CommonCentroid.GetValue t
                         let s = datasetScale.GetValue t
-                        let vb = (view.GetValue t).Backward
-                        let eye = vb.TransformPos V3d.Zero
-                        let right = vb.TransformDir V3d.IOO
-                        let up = vb.TransformDir V3d.OIO
-                        let minR, maxR = discRadii.GetValue t
                         let mutable found = None
                         let mutable gid = 0
                         for b in MeshView.inspectBlocksAt model t do
@@ -577,13 +748,21 @@ module ScanPinScene =
                                         markerAlphaAt t b.Mov
                                         |> Option.map (fun vis -> ScanPin.renderCentre cc s r.Positions.[i], vis)
                                 gid <- gid + 1
-                        match found with
-                        | Some (c, vis) ->
-                            let out = ResizeArray<V3d * V3d * V4d * float>()
-                            let rad = 2.2 * clamp minR maxR (float Discs.screenFrac * Vec.length (eye - c))
-                            duplex (fun col w -> addRing out c right up rad col w 32) (0.95 * vis) 1.4
-                            out.ToArray()
-                        | None -> [||]
+                        found
+                    | None -> None)
+            let segs =
+                AVal.custom (fun t ->
+                    match hoverPosA.GetValue t with
+                    | Some (c, vis) ->
+                        let vb = (view.GetValue t).Backward
+                        let eye = vb.TransformPos V3d.Zero
+                        let right = vb.TransformDir V3d.IOO
+                        let up = vb.TransformDir V3d.OIO
+                        let minR, maxR = discRadii.GetValue t
+                        let out = ResizeArray<V3d * V3d * V4d * float>()
+                        let rad = 2.2 * clamp minR maxR (float Discs.screenFrac * Vec.length (eye - c))
+                        duplex (fun col w -> addRing out c right up rad col w 32) (0.95 * vis) 1.4
+                        out.ToArray()
                     | None -> [||])
             linesNodeTop notFullscreen segs
 
@@ -621,9 +800,9 @@ module ScanPinScene =
             linesNode notFullscreen segs
 
         // Pin flag pole (far view): a neutral pole + top ring along the display
-        // axis per committed pin, screen-constant size (ScanPin.flagHeightRender:
-        // fixed screen fraction, world-clamped, gear-scaled — hence the view
-        // dependency).
+        // axis per committed pin. UNIT offsets (pole 0→axis, ring at the top,
+        // per-pin axes baked in) — the screen-constant flag height runs in the
+        // GlyphLines vertex stage, so a camera move never rebuilds the buffer.
         let pinFlags =
             let neutral = V4d(0.52, 0.55, 0.60, 0.75)
             let segs =
@@ -631,22 +810,32 @@ module ScanPinScene =
                     let pins  = pinsVal.GetValue t
                     let cc    = model.CommonCentroid.GetValue t
                     let scale = datasetScale.GetValue t
-                    let eye = (view.GetValue t).Backward.TransformPos V3d.Zero
-                    let fs = model.FlagScale.GetValue t
                     let up = upNormalA.GetValue t
-                    let out   = ResizeArray<V3d * V3d * V4d * float>()
+                    let out   = ResizeArray<V3d * V3d * V3d * V4d * float>()
                     for (_, p) in HashMap.toSeq pins do
                         if pinShownAt t p.Pair then
                             let col = neutral
                             let w   = 2.5
                             let aN, u, v = basisFromNormal (ScanPin.axisWith up p)
                             let c   = ScanPin.renderCentre cc scale (pinCentreWorldAt t p)
-                            let h   = ScanPin.flagHeightRender scale fs (Vec.length (eye - c))
-                            let top = c + aN * h
-                            out.Add(c, top, col, w)
-                            addRing out top u v (h * 0.16) col w 24
+                            out.Add(c, V3d.Zero, aN, col, w)
+                            for i in 0 .. 23 do
+                                let a0 = float i / 24.0 * Constant.PiTimesTwo
+                                let a1 = float (i + 1) / 24.0 * Constant.PiTimesTwo
+                                out.Add(c, aN + (u * cos a0 + v * sin a0) * 0.16,
+                                           aN + (u * cos a1 + v * sin a1) * 0.16, col, w)
                     out.ToArray())
-            ASet.ofList [ linesNode flagsActive segs ]
+            let node =
+                sg {
+                    Sg.Active flagsActive
+                    Sg.View view
+                    Sg.Proj proj
+                    Sg.DepthTest (AVal.constant DepthTest.LessOrEqual)
+                    Sg.BlendMode (AVal.constant BlendMode.Blend)
+                    Sg.NoEvents
+                    GlyphLines.renderWorld flagFrac flagMinR flagMaxR flagScaleA segs
+                }
+            ASet.ofList [ node ]
 
         // Pin identity flag name: the pin's ShortName floating above the flag top —
         // a WHITE core over four dark offset copies (poor-man's text outline), so
@@ -706,4 +895,4 @@ module ScanPinScene =
                     }
                 | None -> sg { Sg.NoEvents })
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointReveals; ASet.ofList [draftAreaNode; draftReveal; highlightNode; crosshairNode; brushedSampleNode; hoverRingNode; armPreviewMarks]; pinFlags; pinLabels])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointReveals; ASet.ofList (draftAreaNode @ draftReveal @ [highlightNode; crosshairNode; brushedSampleNode; hoverRingNode; armPreviewMarks]); pinFlags; pinLabels])

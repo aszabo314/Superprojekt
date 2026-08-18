@@ -448,6 +448,19 @@ body.loaded { background: #f4f6f8; }
     margin-left: auto;
     display: flex; align-items: center; gap: 6px;
 }
+/* User-study mode (/study): loud phase banner; the debug buttons fade to
+   ghost chrome — still clickable, a gear-menu dataset switch is the exit. */
+.tb-study {
+    display: flex; align-items: center; gap: 8px;
+    height: 26px; padding: 0 10px;
+    background: #e8effc; border: 1px solid #1a56db; border-radius: 4px;
+}
+.tb-study-text { color: #123c98; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.tb-study-start { background: #1a56db; border-color: #1447ba; color: #ffffff; }
+.tb-study-start:hover { background: #1447ba; }
+.tb-right.study-on .tb-btn-tiny { color: #cdd3da; border-color: #eceef2; background: #ffffff; }
+.tb-right.study-on .tb-btn-tiny:hover { background: #f6f7f9; color: #aab2bc; }
+
 .tb-coord {
     font-family: 'SF Mono', 'Monaco', monospace;
     font-size: 12px; color: #334155;

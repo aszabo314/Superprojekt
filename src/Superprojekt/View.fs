@@ -462,7 +462,8 @@ module View =
                     // the pin exit-guard popup (cancel = stay) > the blocking
                     // loop modal (cancel = discard the redundant edge) > the
                     // already-connected pre-warning (cancel = stay at the
-                    // matrix) > a CENTRELESS placement aborts straight to Pair (nothing
+                    // matrix) > the study-start confirm (cancel = keep warming
+                    // up) > a CENTRELESS placement aborts straight to Pair (nothing
                     // worth guarding yet — skips the disarm step on purpose) >
                     // armed-pick disarm > ascend one focus level. Ascending out
                     // of Pin with a centred draft raises the exit-guard (the
@@ -474,6 +475,8 @@ module View =
                         env.Emit [CancelLoopResolution]
                     elif (AVal.force model.PairConnectWarn).IsSome then
                         env.Emit [CancelPairConnectWarn]
+                    elif AVal.force model.StudyStartPending then
+                        env.Emit [SetStudyStartPending false]
                     else
                         let centrelessDraft =
                             AVal.force model.Focus = FocusPin &&
@@ -559,6 +562,7 @@ module View =
             GuiOverlays.loopModal env model
             GuiOverlays.pinExitModal env model
             GuiOverlays.pairConnectModal env model
+            GuiOverlays.studyStartModal env model
         }
 
 module App =

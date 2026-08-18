@@ -131,6 +131,8 @@ type Message =
     | SceneBoundsLoaded  of (string * Box3d)[]
     | DatasetsLoaded     of string[]
     | SetActiveDataset   of string
+    | SetStudyPhase      of StudyPhase
+    | SetStudyStartPending of bool
     | ScanPinMsg              of ScanPinMessage
     | SetRenderingMode of RenderingMode
     | ToggleGearPopover

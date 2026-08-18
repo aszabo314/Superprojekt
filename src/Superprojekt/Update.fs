@@ -580,6 +580,10 @@ module Update =
                 ScanPinUpdate.resetFigureDebounce ()
                 { model with
                     ActiveDataset = Some dataset
+                    // A dataset SWITCH exits user-study mode (boot's first load
+                    // has no previous dataset; the study-start button re-enters
+                    // via the SetStudyPhase riding behind it).
+                    Study = (if model.ActiveDataset.IsSome then StudyOff else model.Study)
                     ScanPins = ScanPinModel.initial
                     MeshBounds = Map.empty
                     LoadTransforms = Map.empty
@@ -617,6 +621,10 @@ module Update =
                     PairConnectWarn = None
                     PendingResolves = []
                     Toast = None }
+        | SetStudyPhase p ->
+            { model with Study = p }
+        | SetStudyStartPending v ->
+            { model with StudyStartPending = v }
         | SetRenderingMode m ->
             { model with RenderingMode = m }
         | ToggleGearPopover ->

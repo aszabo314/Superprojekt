@@ -29,12 +29,17 @@ module ServerActions =
     let init (env : Env<Message>) =
         task {
             try
+                // Before the fetches, so the study chrome never flashes debug-strength.
+                if ApiConfig.studyUrl.Value then env.Emit [SetStudyPhase StudyWarmup]
                 let! datasets = MeshData.fetchDatasets ApiConfig.apiBase.Value
                 env.Emit [DatasetsLoaded datasets]
                 let! autoLoad =
                     match ApiConfig.urlDataset.Value |> Option.filter (fun d -> datasets |> Array.contains d) with
                     | Some d -> async { return d }
-                    | None -> MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
+                    | None ->
+                        if ApiConfig.studyUrl.Value && datasets |> Array.contains StudyMode.warmupDataset then
+                            async { return StudyMode.warmupDataset }
+                        else MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
                 if not (System.String.IsNullOrEmpty autoLoad) && datasets |> Array.contains autoLoad then
                     env.Emit [SetActiveDataset autoLoad]
                     loadDataset env autoLoad

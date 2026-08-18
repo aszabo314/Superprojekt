@@ -10,6 +10,45 @@
 > *(A11 amendment instance completed 2026-07-30 — docs reconstructed.)*
 > *(A12–A13 amendment instance completed 2026-07-30 — docs reconstructed.)*
 
+## User-study mode (2026-08-18, DONE)
+
+`/study` at the end of the URL launches the app in user-study mode
+(`Model.Study : StudyPhase = StudyOff | StudyWarmup | StudyLive`; constants in
+`StudyMode`: warm-up = `ScanPin - UserStory` (initially DemoHaus, changed same
+day), study = `study`).
+
+- **Boot**: `ApiConfig.studyUrl` detects the path suffix; `apiBase` strips
+  `/study` like the `/s/` virtual route (the server's `MapFallbackToFile`
+  already serves index.html there — zero server changes).
+  `ServerActions.init` emits `SetStudyPhase StudyWarmup` BEFORE the dataset
+  fetches (no debug-strength flash) and auto-loads `DemoHaus` instead of the
+  server default (graceful fallback if absent).
+- **Top bar** (`GuiTopBar`, inside `.tb-right`): the `.tb-study` banner —
+  "Warm-up mode" + the accent-blue "Start User Study" button (toast if the
+  study dataset is missing). Banner is accent-blue tinted, NOT gold/amber —
+  gold fill is the reference's colour.
+- **Start-confirm modal** (follow-up same day): the button raises a blocking
+  confirm (`Model.StudyStartPending`, `GuiOverlays.studyStartModal` on the
+  loop-modal chrome) instead of switching directly; its confirm emits
+  `[SetStudyStartPending false; SetActiveDataset "study"; SetStudyPhase
+  StudyLive]` + `loadDataset`, after which the text reads "Study mode" and
+  the button is gone. Cancel/Esc = stay in warm-up; slotted into the ONE Esc
+  chain after the pair-connect pre-warning.
+- **Faint debug chrome**: `classWhen "study-on"` on `.tb-right`; CSS faints
+  the ▦/⚙/≣ tiny buttons to light-grey-on-white in both phases. They stay
+  clickable — the gear menu's dataset switch is the exit path.
+- **Exit rule**: the `SetActiveDataset` reducer sets `Study = StudyOff`
+  whenever a PREVIOUS dataset existed (`model.ActiveDataset.IsSome`) — boot's
+  first load is exempt, and the start button's own switch re-enters via the
+  `SetStudyPhase` riding behind it in the same emit batch.
+- Adaptify ran (Model.g.fs +5); build 0 errors / 52 pre-existing warnings.
+- **Verified in-browser** (playwright vs `localhost:8002/study`): warm-up
+  banner + button render, debug buttons faint, DemoHaus (not the server
+  default "study") auto-loads; Start flips the banner, removes the button,
+  streams the study dataset; a gear-menu switch to Hessigheim drops the
+  banner and restores the chrome; zero console errors. Screenshots in the
+  session scratchpad (`study-1-warmup/2-live/3-exited.png`).
+
 ## F9 — aiming & linking legibility (2026-08-17, DONE)
 
 Spec: `ScanPin_v14_F9_aiming_linking_legibility.md` (final-release test-session

@@ -1,5 +1,5 @@
-//4fa96e96-ac2e-b3bc-3a9d-267149d0e528
-//d207f568-c02c-3626-4f96-31412ec35607
+//f4016fff-23b8-f99a-0d68-39912deb7a88
+//6e9ddbaf-e66d-5a74-c7fb-d542a0e49544
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -20,6 +20,8 @@ type AdaptiveModel(value : Model) =
     let _CommonCentroid_ = FSharp.Data.Adaptive.cval(value.CommonCentroid)
     let _Datasets_ = FSharp.Data.Adaptive.cval(value.Datasets)
     let _ActiveDataset_ = FSharp.Data.Adaptive.cval(value.ActiveDataset)
+    let _Study_ = FSharp.Data.Adaptive.cval(value.Study)
+    let _StudyStartPending_ = FSharp.Data.Adaptive.cval(value.StudyStartPending)
     let _DatasetScales_ = FSharp.Data.Adaptive.cval(value.DatasetScales)
     let _DatasetCentroids_ = FSharp.Data.Adaptive.cval(value.DatasetCentroids)
     let _DatasetSensors_ = FSharp.Data.Adaptive.cval(value.DatasetSensors)
@@ -101,6 +103,8 @@ type AdaptiveModel(value : Model) =
             _CommonCentroid_.Value <- value.CommonCentroid
             _Datasets_.Value <- value.Datasets
             _ActiveDataset_.Value <- value.ActiveDataset
+            _Study_.Value <- value.Study
+            _StudyStartPending_.Value <- value.StudyStartPending
             _DatasetScales_.Value <- value.DatasetScales
             _DatasetCentroids_.Value <- value.DatasetCentroids
             _DatasetSensors_.Value <- value.DatasetSensors
@@ -175,6 +179,8 @@ type AdaptiveModel(value : Model) =
     member __.CommonCentroid = _CommonCentroid_ :> FSharp.Data.Adaptive.aval<Aardvark.Base.V3d>
     member __.Datasets = _Datasets_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
     member __.ActiveDataset = _ActiveDataset_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<Microsoft.FSharp.Core.string>>
+    member __.Study = _Study_ :> FSharp.Data.Adaptive.aval<StudyPhase>
+    member __.StudyStartPending = _StudyStartPending_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.DatasetScales = _DatasetScales_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.float>>
     member __.DatasetCentroids = _DatasetCentroids_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.V3d>>
     member __.DatasetSensors = _DatasetSensors_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, Aardvark.Base.V3d>>

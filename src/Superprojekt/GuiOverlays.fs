@@ -555,6 +555,41 @@ module GuiOverlays =
             }
         }
 
+    // The study-start confirm: blocking gate before the warm-up → study
+    // switch (the switch discards the warm-up scene). Esc cancels.
+    let studyStartModal (env : Env<Message>) (model : AdaptiveModel) =
+        div {
+            Class "modal-scrim"
+            Primitives.showWhen model.StudyStartPending
+            div {
+                Class "loop-modal"
+                div { Class "lm-title"; "Start the user study?" }
+                div {
+                    Class "lm-hint"
+                    "This ends the warm-up: the app switches to the study dataset, and the warm-up scene with everything placed in it is discarded."
+                }
+                div {
+                    Class "lm-buttons"
+                    button {
+                        Class "rail-btn lm-cancel"
+                        Attribute("title", "Stay in the warm-up (Esc)")
+                        Dom.OnClick(fun _ -> env.Emit [SetStudyStartPending false])
+                        "Keep warming up"
+                    }
+                    button {
+                        Class "rail-btn lm-confirm"
+                        Attribute("title", "Switch to the study dataset and begin")
+                        Dom.OnClick(fun _ ->
+                            env.Emit [SetStudyStartPending false
+                                      SetActiveDataset StudyMode.studyDataset
+                                      SetStudyPhase StudyLive]
+                            ServerActions.loadDataset env StudyMode.studyDataset)
+                        "Start the study"
+                    }
+                }
+            }
+        }
+
     // The already-connected pre-warning: front-half of the loop flow — opening
     // a cell whose meshes the tree already connects (indirectly) warns BEFORE
     // any placement; proceeding still leads to the loop-resolution modal on

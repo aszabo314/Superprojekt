@@ -68,6 +68,20 @@ type FocusLevel =
     | FocusPair
     | FocusPin
 
+// User-study mode, launched by the /study URL: warm-up on the demo dataset
+// first, then the proctored switch to the study dataset. Any debug-menu
+// dataset change exits the mode.
+type StudyPhase =
+    | StudyOff
+    | StudyWarmup
+    | StudyLive
+
+module StudyMode =
+    [<Literal>]
+    let warmupDataset = "ScanPin - UserStory"
+    [<Literal>]
+    let studyDataset = "study"
+
 // The ONE per-mesh 2D top-down camera (Setup survey tiles AND the Pin panes —
 // a mesh keeps its view across levels): Centre = the look-at point (render
 // space), Radius = the eye height above it. Pan/zoom-to-cursor only — no
@@ -220,6 +234,9 @@ type Model =
 
         Datasets         : string list
         ActiveDataset    : string option
+        Study            : StudyPhase
+        // The blocking confirm before the warm-up → study switch.
+        StudyStartPending : bool
         DatasetScales    : Map<string, float>
         DatasetCentroids : Map<string, V3d>
         // Measured scan-station positions (*sensor.txt, absolute world) —
@@ -499,6 +516,8 @@ module Model =
             CommonCentroid = V3d.Zero
             Datasets         = []
             ActiveDataset    = None
+            Study            = StudyOff
+            StudyStartPending = false
             DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
             DatasetCentroids = Map.empty
             DatasetSensors   = Map.empty

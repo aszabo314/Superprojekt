@@ -112,6 +112,33 @@ module GuiTopBar =
 
             div {
                 Class "tb-right"
+                classWhen "study-on" (model.Study |> AVal.map (fun s -> s <> StudyOff))
+                // User-study chrome (the /study URL): the phase banner — warm-up
+                // carries the proctor's start button. .study-on faints the debug
+                // buttons via CSS; they stay clickable, since a gear-menu dataset
+                // switch is the mode's exit path.
+                div {
+                    Class "tb-study"
+                    showWhen (model.Study |> AVal.map (fun s -> s <> StudyOff))
+                    span {
+                        Class "tb-study-text"
+                        model.Study |> AVal.map (function
+                            | StudyWarmup -> "Warm-up mode"
+                            | StudyLive   -> "Study mode"
+                            | StudyOff    -> "")
+                    }
+                    button {
+                        Class "tb-btn tb-study-start"
+                        showWhen (model.Study |> AVal.map ((=) StudyWarmup))
+                        Attribute("title", "End the warm-up: switch to the study dataset and begin the user study")
+                        Dom.OnClick(fun _ ->
+                            if AVal.force model.Datasets |> List.contains StudyMode.studyDataset then
+                                env.Emit [SetStudyStartPending true]
+                            else
+                                env.Emit [ShowToast (sprintf "Dataset '%s' not found on the server" StudyMode.studyDataset)])
+                        "Start User Study"
+                    }
+                }
                 div {
                     Class "tb-coord"
                     Attribute("title", "Cursor world coordinate (drops to the mean-elevation XY plane when off-mesh)")

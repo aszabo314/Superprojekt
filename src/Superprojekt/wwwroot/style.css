@@ -184,6 +184,9 @@ body.loaded { background: #f4f6f8; }
 }
 .tb-btn-active:hover { background: #1447ba; }
 
+.tb-ct { display: flex; }
+.tb-ct .ct { white-space: nowrap; padding: 2px 6px; font-weight: 600; }
+
 .tb-btn-tiny {
     height: 24px; width: 24px; padding: 0;
     background: transparent; border: 1px solid #c5cdd8;

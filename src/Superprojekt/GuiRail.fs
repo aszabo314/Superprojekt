@@ -327,7 +327,7 @@ module GuiRail =
                 Class "cw-chart-tools"
                 div {
                     Class "rail-isolate"
-                    Attribute("title", "False-colour error map in 3D: paints the MOV mesh's signed distance vs the reference on the same scale as this histogram (the reference is never error-coloured). At the Pin level the map narrows to the pin's area. The map and the histogram stay live together.")
+                    Attribute("title", "False-colour error map in 3D: paints the MOV mesh's signed distance vs the reference on the same scale as this histogram (the reference is never error-coloured). At the Pin level the map narrows to the pin's area. The map and the histogram stay live together; brushing the histogram turns the map off, and turning the map on clears the brush.")
                     compactToggle "Error map (3D)" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
                 }
                 button {
@@ -458,7 +458,7 @@ module GuiRail =
                 Class "cw-chart-tools"
                 div {
                     Class "rail-isolate"
-                    Attribute("title", "False-colour error map in 3D: paints every registered mesh with its own parent-relative error at once, on the same scale as this histogram. The reference root and unregistered meshes stay excluded outlines. The map and the histogram stay live together.")
+                    Attribute("title", "False-colour error map in 3D: paints every registered mesh with its own parent-relative error at once, on the same scale as this histogram. The reference root and unregistered meshes stay excluded outlines. The map and the histogram stay live together; brushing the histogram turns the map off, and turning the map on clears the brush.")
                     compactToggle "Error map (3D)" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
                 }
                 button {

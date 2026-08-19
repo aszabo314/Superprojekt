@@ -29,14 +29,14 @@ module GuiTopBar =
 
             // Isolate pins: a view/render mode, so it lives with the other
             // render controls, not among the inspection instruments. The flag
-            // stays per workflow level (LevelFlags) — the button reads and
+            // stays per workflow level (LevelFlags) — the checkbox reads and
             // toggles the CURRENT level's.
-            button {
-                Class "tb-btn"
-                classWhen "tb-btn-active" ((model.Focus, model.AnchorGhostMode) ||> AVal.map2 LevelFlags.get)
+            div {
+                Class "tb-ct"
                 Attribute("title", "Isolate pins: show only the pin patches; off shows the full textured meshes. Remembered per workflow level.")
-                Dom.OnClick(fun _ -> env.Emit [ToggleAnchorGhostMode])
-                "◍ Isolate pins"
+                compactToggle "◍ Isolate pins"
+                    ((model.Focus, model.AnchorGhostMode) ||> AVal.map2 LevelFlags.get)
+                    (fun () -> env.Emit [ToggleAnchorGhostMode])
             }
 
             // Spring-loaded peek buttons: press-and-hold twins of the V/B keys

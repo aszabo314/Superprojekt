@@ -20,6 +20,34 @@ about to arrive — log each entry below this marker as it lands.
 Still owed from earlier (needs a human): the interactive in-browser verify
 pass for F9 (hover/arm flows).
 
+## Study touch-ups: Isolate-pins checkbox + map/brush exclusivity (2026-08-19, DONE)
+
+Two study work items:
+
+- **"Isolate pins" looks like a checkbox now** (it read as a button): the
+  top-bar control reuses `compactToggle` (`.ct`/`.ct-box`, the same
+  primitive as "Error map (3D)" and the gear toggles) wrapped in a `.tb-ct`
+  div carrying the tooltip; `tb-ct` CSS keeps it nowrap/bold in the 28 px
+  bar. Same message (`ToggleAnchorGhostMode`), same per-level `LevelFlags`
+  read.
+- **Error map ⇄ brush are mutually clearing** (they were silently exclusive
+  — a brush suppressed the map in render while the checkbox stayed on):
+  `SetBrushedSamples` with a non-empty set turns `CellMapOn` off;
+  `ToggleCellMap` turning ON clears the brush (+ hover/readout); the
+  `AssessGlobalQuality` map-on path clears the brush too (jumpFocus only
+  clears it when the jump crosses scopes). Clearing the brush model-side is
+  safe: the `data-brushed` echo is authoritative, so the JS band nulls
+  itself. Both "Error map (3D)" tooltips document the behaviour.
+
+Verified headless on study 12/12 (checkbox renders + toggles; a guided
+3-click pin at an overlap spot → 300 chart samples; brush drag → map
+checkbox drops off; map re-enable → band+dots gone, Clear brush disabled;
+zero console errors). Placement-test gotcha for future scripts: the pin
+CENTRE only lands where BOTH pair meshes have surface (the placement
+prohibit), and ✚ point picks raycast their OWN mesh alone — use one
+known-overlap screen point for all three guided clicks
+(`scratchpad/map-brush-excl.mjs`).
+
 ## Feathered overlap area everywhere (2026-08-19, DONE)
 
 User request: the D4 T1 feathered overlap area (was placement-gate only)

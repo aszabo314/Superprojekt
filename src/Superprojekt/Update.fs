@@ -384,9 +384,12 @@ module Update =
                 { model with PinExitPending = Some FocusMatrix }
             else
                 let m = if model.Focus = FocusMatrix then model else jumpFocus FocusMatrix model
+                // Enabling the map drops the brush (exclusive render modes) —
+                // jumpFocus only clears it when the jump crosses scopes.
                 { m with
                     InspectOpen = LevelFlags.set FocusMatrix true m.InspectOpen
-                    CellMapOn = true }
+                    CellMapOn = true
+                    BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None }
         | LogReach(source, action, subject) ->
             logReach source action subject model
         | ToggleReachLog ->
@@ -507,7 +510,12 @@ module Update =
             // frame time.
             let st = ids |> List.truncate 12000 |> Set.ofList
             if model.BrushedSamples = st then model
-            else { model with BrushedSamples = st; HoverSample = None; HoverReadout = None }
+            else
+                // Brush and error map are exclusive render modes: a new brush
+                // switches the map off (it would be suppressed anyway).
+                { model with
+                    BrushedSamples = st; HoverSample = None; HoverReadout = None
+                    CellMapOn = model.CellMapOn && Set.isEmpty st }
         | SetHoverSample gid ->
             if model.HoverSample = gid then model
             else { model with HoverSample = gid; HoverReadout = None }
@@ -515,7 +523,13 @@ module Update =
             if gen <> cellErrorGen || model.HoverSample <> Some gid then model
             else { model with HoverReadout = Some (gid, v) }
         | ToggleCellMap ->
-            { model with CellMapOn = not model.CellMapOn }
+            // Brush and error map are exclusive render modes: enabling the map
+            // drops the brush (which would otherwise suppress it).
+            if model.CellMapOn then { model with CellMapOn = false }
+            else
+                { model with
+                    CellMapOn = true
+                    BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None }
         | SetPeekVis held ->
             // Pair-workspace scope (Pair AND Pin) + both pair meshes
             // GPU-resident + ANY effective isolation on a pair mesh — the

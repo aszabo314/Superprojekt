@@ -25,6 +25,14 @@ open MeshCache
 // than A (B above A, n points up). Swapping A ↔ B negates every value —
 // symmetric measure, antisymmetric sign.
 //
+// A scene-spanning cylinder (length ≤ 0 → auto from the posed bboxes) pierces
+// EVERY sheet of a 3D scene along the axis — ground, backsides, walls running
+// along the axis — so before any statistic each mesh's samples reduce to the
+// axial window |t − t₀| ≤ r around that mesh's OWN line crossing nearest the
+// pin plane (the atPoint nearest-crossing rule): the measured sheet is the one
+// through the pin, yet a sheet offset by up to halfLen (pre-registration
+// disagreement — what the long cylinder exists for) is still found.
+//
 // Median = median of the pooled values (≈ median(t_B) − median(t_A)).
 // LodHalfWidth = 1.96·√(σ_A² + σ_B²) over the two per-mesh axial spreads —
 // the 95 % level-of-detection half-width for every LoD band downstream.
@@ -218,6 +226,41 @@ let private sampleAlongAxis (mi : PairMesh) (centre : V3d) (axis : V3d) (radius 
             let stride = float arr.Length / float maxPoints
             Array.init maxPoints (fun i -> arr.[int (float i * stride)])
 
+// The per-mesh sheet window (see the header): t₀ = the mesh's line crossing
+// nearest t = 0 (two ε-backed rays, as in atPoint), falling back to the
+// sample nearest t = 0 when the axis line runs through a hole; keep samples
+// with |t − t₀| ≤ r. Pooling the whole cylinder instead poisons the medians
+// by metres on any 3D scene — a gap-split cluster is NOT enough, a wall
+// running along the axis smears samples continuously for metres.
+let private ownSheet (m : PairMesh) (centre : V3d) (axis : V3d) (radius : float) (halfLen : float) (samples : (float * V3d)[]) =
+    if samples.Length = 0 then samples
+    else
+        let pm = m.Lm.parsed
+        let inv = m.Transform.Inverse
+        let pL = inv.TransformPos centre - pm.centroid
+        let nL = (inv.TransformDir axis).Normalized
+        let eps = 1e-3
+        let mutable hu = RayHit()
+        let up = if m.Lm.scene.Intersect(V3f (pL - nL * eps), V3f nL, &hu) then Some (float hu.T - eps) else None
+        let mutable hd = RayHit()
+        let dn = if m.Lm.scene.Intersect(V3f (pL + nL * eps), V3f (-nL), &hd) then Some (eps - float hd.T) else None
+        let crossing =
+            match up, dn with
+            | Some u, Some d -> Some (if abs u <= abs d then u else d)
+            | Some t, None | None, Some t -> Some t
+            | None, None -> None
+        let t0 =
+            match crossing with
+            | Some t when abs t <= halfLen -> t
+            | _ -> samples |> Array.minBy (fun (t, _) -> abs t) |> fst
+        let kept = samples |> Array.filter (fun (t, _) -> abs (t - t0) <= radius)
+        if kept.Length > 0 then kept
+        else
+            // a crossing on a large sparsely-sampled triangle can miss every
+            // lattice sample — re-anchor on the sample nearest the crossing
+            let tn = samples |> Array.minBy (fun (t, _) -> abs (t - t0)) |> fst
+            samples |> Array.filter (fun (t, _) -> abs (t - tn) <= radius)
+
 let private quantile (sorted : float[]) (p : float) =
     let n = sorted.Length
     if n = 0 then 0.0
@@ -250,8 +293,11 @@ let private pinError (a : PairMesh) (b : PairMesh) (length : float) (maxPts : in
             if length > 0.0 then max 0.1 (min 1000.0 length)
             else autoLengthAlong [| a; b |] normal
         let halfLen = len * 0.5
-        let sA = sampleAlongAxis a roi.Centre normal roi.Radius halfLen maxPts
-        let sB = sampleAlongAxis b roi.Centre normal roi.Radius halfLen maxPts
+        let sample (m : PairMesh) =
+            sampleAlongAxis m roi.Centre normal roi.Radius halfLen maxPts
+            |> ownSheet m roi.Centre normal roi.Radius halfLen
+        let sA = sample a
+        let sB = sample b
         if sA.Length = 0 || sB.Length = 0 then
             failPin roi (sprintf "no overlap: %s has no surface inside the pin cylinder"
                                  (if sA.Length = 0 then a.Name else b.Name))

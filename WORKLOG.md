@@ -20,6 +20,50 @@ about to arrive — log each entry below this marker as it lands.
 Still owed from earlier (needs a human): the interactive in-browser verify
 pass for F9 (hover/arm flows).
 
+## Warm-up pin errors >0.5 m: pair-error sheet windowing (2026-08-19, DONE)
+
+User report: on the warm-up dataset ("ScanPin - UserStory") pins showed
+errors way past ±0.5 m where the surfaces visibly coincide.
+
+**Root cause** (server, `PairError.pinError`): the client always sends
+`length: 0`, so the sampling-cylinder length auto-derived from the posed
+bbox union along the pin normal (`autoLengthAlong`) — ~±10 m on this scene
+(the meshes span ~18–31 m; the "5×5×5" is only the central ROI, verified
+via vertex percentiles — no outliers). The warm-up scene is the first
+genuinely 3D dataset (sheets at multiple heights up to ~14 m apart), so
+the cylinder pierced SEVERAL sheets per mesh — ground, backsides, walls —
+and pooled them all: samples spanned ±10 m and the per-mesh anchor medians
+were poisoned (measured median −9.87 m at a spot where the surfaces agree
+to 1.7 mm). The 2.5D terrain datasets never hit this — one sheet per mesh,
+however long the cylinder.
+
+**Fix** (PairError.fs, server-only): per mesh, samples reduce to the axial
+window |t − t₀| ≤ r around that mesh's OWN line crossing nearest the pin
+plane (`ownSheet`: two ε-backed rays along ±n — exactly the `atPoint`
+nearest-crossing rule, which is why the ⊙ probe never had the bug;
+fallback = sample nearest t = 0 when the axis line runs through a hole).
+The long auto cylinder stays — it's what still finds a sheet offset by a
+pre-registration disagreement. First attempt was a gap-split cluster
+(split where consecutive t gaps > r): insufficient — a wall running along
+the axis smears samples continuously for metres, no gap to split on.
+Rejected: client-side length cap (belt-and-braces) — with the window in
+place it adds nothing and a cap below the raw baseline offset would break
+the Matrix Before state with "no overlap" failures.
+
+Verified against the live endpoint (probe scripts
+`scratchpad/pin-error-probe{,2}.mjs`, `pin-error-study.mjs`): at two
+warm-up spots where A/B agree to mm, the client call now returns medians
+0.013/−0.066 m (was 0.15 with ±10 m samples / −9.87); study terrain pair
+is byte-for-byte identical to the pre-fix baseline (r=0.5 count=2743
+median=−0.02129 lod=0.02864; r=1.25 count=11787 median=−0.02262
+lod=0.05867); integration suite 32/32 (determinism, swap antisymmetry,
+perturbation/correction all hold — the per-mesh rule is symmetric).
+`region-distance` (the error map) is structurally immune — closest-point
+distance can't jump to a far sheet.
+
+Also noted: both warm-up `*centroid.txt` files changed on 2026-08-19
+(identical values — consistent for a same-frame export; not implicated).
+
 ## Study touch-ups: Isolate-pins checkbox + map/brush exclusivity (2026-08-19, DONE)
 
 Two study work items:

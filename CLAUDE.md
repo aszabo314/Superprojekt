@@ -296,7 +296,7 @@ POST /api/query/closest                         → { found, point, distanceSqua
 POST /api/query/contact-rings                   → sphere–surface intersection polylines
 POST /api/query/point-reveal                    → correspondence-marker reveal: concentric sphere rings + plane∩surface cuts around a point, one flat polyline list (point + plane normals in the mesh's server frame — the caller bakes the displayed pose into the normals)
 POST /api/query/lsq-pairs                       → weighted rigid solve (absolute world transform + residuals + conditioning; 400 on <3 pairs)
-POST /api/query/pair-error                      → per-pin pooled symmetric error of mesh B rel A at explicit poses (median, LoD half-width, samples + positions; per-pin ok=false on no overlap — the batch never fails on it)
+POST /api/query/pair-error                      → per-pin pooled symmetric error of mesh B rel A at explicit poses (median, LoD half-width, samples + positions; per-pin ok=false on no overlap — the batch never fails on it; per mesh only the axial sheet nearest the pin plane is measured — a 3D scene's other sheets never pool in)
 POST /api/query/pair-error-at                   → exact signed value at one picked point (1 mm ray back-off so on-surface picks register)
 POST /api/query/pair-overlap                    → registerability of a pair at supplied poses (two-way closest-point coverage fractions)
 POST /api/query/region-distance                 → per-vertex signed M3C2 distance of a target mesh to a reference mesh, in the target's served vertex order; a vertex responds only where the vertical world line through it pierces the reference (Z-overlap), else 1e30 sentinel — so error is never fabricated in non-overlap fringes

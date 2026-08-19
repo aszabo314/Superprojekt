@@ -82,6 +82,13 @@ module StudyMode =
     [<Literal>]
     let studyDataset = "study"
 
+// Per-dataset defaults, keyed by dataset name — extend with one line each.
+// A dataset switch seeds the live setting from here.
+module DatasetDefaults =
+    let private pinRadii = Map.ofList [ StudyMode.warmupDataset, 1.25 ]
+    let pinRadius (dataset : string) =
+        Map.tryFind dataset pinRadii |> Option.defaultValue 0.5
+
 // The ONE per-mesh 2D top-down camera (Setup survey tiles AND the Pin panes —
 // a mesh keeps its view across levels): Centre = the look-at point (render
 // space), Radius = the eye height above it. Pan/zoom-to-cursor only — no
@@ -227,6 +234,11 @@ type Model =
         Camera         : OrbitState
         // The per-mesh 2D cameras (tiles + panes); reset on dataset switch.
         TileCams       : Map<string, TileCam>
+        // The SHARED tile orientation: the world direction that reads as
+        // screen-up, as a CCW angle from north-up (+Y). 0 = north-up; the
+        // strip's align control matches it to the main camera's heading.
+        // Reset on dataset switch.
+        TileRotation   : float
         MeshOrder      : HashMap<string,int>
         MeshNames      : IndexList<string>
         MeshesLoaded   : HashSet<string>
@@ -251,7 +263,16 @@ type Model =
         // "Isolate pins" (only the pin patches render) — an independent flag
         // per focus level (Pin defaults on, the survey levels off).
         AnchorGhostMode      : LevelFlags
+        // Seeded from DatasetDefaults.pinRadius on every dataset switch.
         QuickPinRadius       : float
+        // The placement gate's world-space feather (m): a spot is a valid pin
+        // location when BOTH pair meshes have surface within this radius —
+        // strict footprint overlap alone is slightly too tight for real
+        // features. Compared live against the PairProx vertex attribute.
+        FeatherRadius        : float
+        // How strongly the non-isolated meshes darken toward the scrim ink
+        // while a tile isolation (lock or preview) is in effect.
+        IsoDimStrength       : float
         // Gear multiplier on the screen-constant 3D pin-flag size AND its
         // world-metre clamp bounds (ScanPin.flagHeightRender).
         FlagScale            : float
@@ -320,6 +341,9 @@ type Model =
         // operation, and the save-as name being typed.
         Checkpoints         : string list
         CheckpointName      : string
+        // Crash protection: auto-save the data state to the reserved
+        // "autosave" checkpoint every ~minute (debug-menu checkbox).
+        AutoCkOn            : bool
 
         // ── In-cell error inspection (transient per cell — every cache clears
         // on nav/pin/pose changes via invalidateCellError). Sample values are
@@ -338,6 +362,11 @@ type Model =
         // colours describe the blinked pose. Lands with CellDist in ONE
         // message, so a peek never reads a half-landed flip.
         CellDistBefore      : float32[] option
+        // Per pair mesh, each vertex's Euclidean distance (metric m) to the
+        // OTHER pair mesh at the displayed poses, in served vertex order —
+        // the placement gate's feather test data (entries exist for the
+        // selected pair only; rides the cellErrorGen invalidation).
+        PairProx            : Map<string, float32[]>
         // The GRAPH-scope error stream (Matrix): every established edge's pins,
         // child-relative-to-parent, in canonical edge×pin order — the pooled
         // union the graph histogram and its brush read. Held in BOTH states so
@@ -373,8 +402,9 @@ type Model =
         // Pin-row hover: the tile cameras preview-frame this pin while it
         // lasts (a click makes the framing persistent via SelectPin).
         TilePinHover        : ScanPinId option
-        // ○ New pin button hover: lights the pair's overlap-region gate in the
-        // main 3D (only the overlap is a valid pin location). Transient.
+        // ○ New pin button hover: lights the pair's feathered placement gate
+        // in the main 3D (only the feathered overlap is a valid pin
+        // location). Transient.
         NewPinHover         : bool
         // The Pin panel's radius disclosure: the slider stays hidden until its
         // edit is clicked. Transient — collapses on pin change and focus jump.
@@ -510,6 +540,7 @@ module Model =
         {
             Camera         = OrbitState.create V3d.Zero 1.0 0.3 3.0 Button.Left Button.Middle
             TileCams       = Map.empty
+            TileRotation   = 0.0
             MeshOrder      = HashMap.empty
             MeshNames      = IndexList.empty
             MeshesLoaded   = HashSet.empty
@@ -527,6 +558,8 @@ module Model =
             SlopeThresholdDeg   = 15.0
             AnchorGhostMode     = { AtMatrix = false; AtPair = false; AtPin = true }
             QuickPinRadius      = 0.5
+            FeatherRadius       = 1.0
+            IsoDimStrength      = 0.65
             FlagScale           = 1.0
             RevealRadius        = 0.5
             MarkerWeight        = 1.0
@@ -550,10 +583,12 @@ module Model =
             ReachLogOpen        = false
             Checkpoints         = []
             CheckpointName      = ""
+            AutoCkOn            = true
             CellError           = None
             CellErrorBefore     = None
             CellDist            = None
             CellDistBefore      = None
+            PairProx            = Map.empty
             GraphError          = None
             GraphErrorBefore    = None
             GraphDist           = Map.empty

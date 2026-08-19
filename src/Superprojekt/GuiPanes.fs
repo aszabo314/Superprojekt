@@ -193,19 +193,28 @@ module GuiPanes =
     let private halfWidthOf (cam : TileCam) =
         cam.Radius * tan (30.0 * System.Math.PI / 180.0)
 
+    // The shared tile orientation: the world-XY directions that read as
+    // screen-right / screen-up at rotation r (CCW from north-up; 0 = +Y up).
+    // Every screen↔world conversion in the strip goes through this basis.
+    let private tileBasis (r : float) =
+        V3d(cos r, sin r, 0.0), V3d(-sin r, cos r, 0.0)
+
     // Render units per CSS pixel at the centre plane.
     let private unitsPerPx (cam : TileCam) (w : int) =
         2.0 * halfWidthOf cam / float (max 1 w)
 
     // The off-frame link arrow: when a highlighted target lies outside the
     // tile's ortho frame, an ink-under-gold chevron at the frame border aims
-    // at it — the link must not silently fail. Top-down cam ⇒ screen +X/+Y =
-    // world +X/+Y; chevron sized in px via the units-per-px scale.
-    let private addEdgeArrow (out : ResizeArray<V3d * V3d * V4d * float>)
+    // at it — the link must not silently fail. Frame test + clamp run in the
+    // rotated SCREEN frame (the tile basis); chevron sized in px via the
+    // units-per-px scale.
+    let private addEdgeArrow (out : ResizeArray<V3d * V3d * V4d * float>) (rot : float)
                              (cam : TileCam) (clientSize : V2i) (target : V3d) =
+        let right, up = tileBasis rot
         let halfW = halfWidthOf cam
         let halfH = halfW * float (max 1 clientSize.Y) / float (max 1 clientSize.X)
-        let d = V2d(target.X - cam.Centre.X, target.Y - cam.Centre.Y)
+        let dw = target - cam.Centre
+        let d = V2d(Vec.dot dw right, Vec.dot dw up)
         let mx = halfW * 0.88
         let my = halfH * 0.88
         if abs d.X > mx || abs d.Y > my then
@@ -213,10 +222,11 @@ module GuiPanes =
                 min (if abs d.X > 1e-9 then mx / abs d.X else infinity)
                     (if abs d.Y > 1e-9 then my / abs d.Y else infinity)
             let u = unitsPerPx cam clientSize.X
-            let tip = V3d(cam.Centre.X + d.X * k, cam.Centre.Y + d.Y * k, cam.Centre.Z)
+            let tip = cam.Centre + right * (d.X * k) + up * (d.Y * k)
             let dir = d.Normalized
-            let back = tip - V3d(dir.X, dir.Y, 0.0) * (14.0 * u)
-            let perp = V3d(-dir.Y, dir.X, 0.0) * (8.0 * u)
+            let dirW = right * dir.X + up * dir.Y
+            let perp = (right * -dir.Y + up * dir.X) * (8.0 * u)
+            let back = tip - dirW * (14.0 * u)
             for w, col in [ 5.0, V4d(Primitives.pinInkV3d, 0.9); 3.0, V4d(Primitives.refGoldV3d, 0.95) ] do
                 out.Add(tip, back + perp, col, w)
                 out.Add(tip, back - perp, col, w)
@@ -232,7 +242,8 @@ module GuiPanes =
         AVal.custom (fun t ->
             let c = camA.GetValue t
             let d = c.Radius + zExtent model t
-            CameraView.lookAt (c.Centre + V3d.OOI * d) c.Centre V3d.OIO |> CameraView.viewTrafo)
+            let _, up = tileBasis (model.TileRotation.GetValue t)
+            CameraView.lookAt (c.Centre + V3d.OOI * d) c.Centre up |> CameraView.viewTrafo)
 
     let private cam2dProj (model : AdaptiveModel) (camA : aval<TileCam>) (size : aval<V2i>) =
         AVal.custom (fun t ->
@@ -247,13 +258,15 @@ module GuiPanes =
                   near = 0.1; far = c.Radius + 2.0 * zext + 10.0; isOrtho = true }
             Frustum.projTrafo fr)
 
-    // The controller attributes: drag pans in the XY plane (anchored at the
-    // drag start — no incremental drift; screen right = +X, screen down = −Y),
-    // wheel zooms TO the cursor (the point under it stays put: its offset from
-    // the centre scales with the radius). A drag-free pointer-up (≤ 4 px) is a
-    // click → `onPick`; a drag-free move → `onHover Some`, leave → `onHover
-    // None` (the pin tiles' armed pick/preview; the survey tiles pass None).
-    let private cam2dAtts (env : Env<Message>) (name : string)
+    // The controller attributes: drag pans in the (rotated) view plane
+    // (anchored at the drag start — no incremental drift), wheel zooms TO the
+    // cursor (the point under it stays put: its offset from the centre scales
+    // with the radius). Screen deltas convert through the shared tile basis,
+    // so pan/zoom stay under the cursor at any orientation. A drag-free
+    // pointer-up (≤ 4 px) is a click → `onPick`; a drag-free move → `onHover
+    // Some`, leave → `onHover None` (the pin tiles' armed pick/preview; the
+    // survey tiles pass None).
+    let private cam2dAtts (env : Env<Message>) (model : AdaptiveModel) (name : string)
                           (camA : aval<TileCam>) (clientSize : aval<V2i>)
                           (onPick : (V2d -> unit) option)
                           (onHover : (V2d option -> unit) option) =
@@ -279,7 +292,8 @@ module GuiPanes =
                     if moved || d.Length >= 4.0 then
                         drag <- Some (p0, cam0, true)
                         let u = unitsPerPx cam0 (AVal.force clientSize).X
-                        env.Emit [SetTileCam(name, { cam0 with Centre = cam0.Centre - V3d(d.X * u, -d.Y * u, 0.0) })]
+                        let right, up = tileBasis (AVal.force model.TileRotation)
+                        env.Emit [SetTileCam(name, { cam0 with Centre = cam0.Centre - right * (d.X * u) + up * (d.Y * u) })]
                 | None ->
                     match onHover with
                     | Some h -> h (Some (V2d(float e.OffsetPosition.X, float e.OffsetPosition.Y)))
@@ -293,8 +307,10 @@ module GuiPanes =
                 let s = AVal.force clientSize
                 let u = unitsPerPx cam s.X
                 let k = 1.1 ** (e.DeltaY / 120.0)
-                let off = V3d((float e.OffsetPosition.X - float s.X * 0.5) * u,
-                              -(float e.OffsetPosition.Y - float s.Y * 0.5) * u, 0.0)
+                let right, up = tileBasis (AVal.force model.TileRotation)
+                let off =
+                    right * ((float e.OffsetPosition.X - float s.X * 0.5) * u)
+                    + up * (-(float e.OffsetPosition.Y - float s.Y * 0.5) * u)
                 env.Emit [SetTileCam(name, { Centre = cam.Centre + off - off * k; Radius = cam.Radius * k })])
         }
 
@@ -361,6 +377,10 @@ module GuiPanes =
                 idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
                 span { Class "pmx-sw"; (idxVal, isRoot) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (c4bToRgbCss (meshColorRoot r i))])) }
                 span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+                // The FULL server folder name, wrapping as needed — never
+                // shortened (study finding: abbreviations cost more than
+                // they save).
+                span { Class "pmx-name"; Primitives.meshFolder name }
                 span { Class "pmx-root-star"; isRoot |> AVal.map (fun r -> if r then "★" else "") }
             }
             renderControl {
@@ -395,20 +415,14 @@ module GuiPanes =
                     else
                         env.Emit [SetTileIsolateHover (p |> Option.map (fun _ -> name))]
 
-                cam2dAtts env name camA clientSize (Some pick) (Some hover)
+                cam2dAtts env model name camA clientSize (Some pick) (Some hover)
 
                 Sg.View view
                 Sg.Proj proj
                 Sg.Pass RenderPass.passZero
                 Sg.Uniform("ViewportSize", size)
 
-                // Tile-camera coverage MRT for the armed-placement
-                // isolate-overlap gate — rendered only while the gate reads it.
-                let covActive =
-                    (marksOn, model.ScanPins.Placement) ||> AVal.map2 (fun m pl ->
-                        m && (match pl with PlacementActive _ -> true | PlacementIdle -> false))
-                let cov0, cov1, _ = OutlineView.coverageOffscreen info model covActive view proj
-                MeshView.buildPaneScene model name shownA (otherA, cov0, cov1) size
+                MeshView.buildPaneScene model name shownA otherA size
 
                 // The gold reference outline: the ROOT mesh's footprint from
                 // this tile's camera, on top of everything.
@@ -541,15 +555,17 @@ module GuiPanes =
                                 | Some (sm, sp) when sm = name -> Some sp
                                 | _ -> None
                             let out = ResizeArray<V3d * V3d * V4d * float>()
+                            // Screen-aligned at any tile orientation.
+                            let bR, bU = tileBasis (model.TileRotation.GetValue t)
                             let pt (dim : float) (local : V3d) =
                                 let cR = renderOf t local
                                 let isSib = sibling = Some local
-                                ScanPinScene.addCrosshairGlyph out cR V3d.IOO V3d.OIO h col
+                                ScanPinScene.addCrosshairGlyph out cR bR bU h col
                                     (model.MarkerWeight.GetValue t)
                                     (if isSib then 1.0 else dim)
                                 if isSib then
-                                    addRing out cR V3d.IOO V3d.OIO (1.25 * h) (V4d(Primitives.pinInkV3d, 0.9)) 4.6 24
-                                    addRing out cR V3d.IOO V3d.OIO (1.25 * h) (V4d(Primitives.refGoldV3d, 0.95)) 2.6 24
+                                    addRing out cR bR bU (1.25 * h) (V4d(Primitives.pinInkV3d, 0.9)) 4.6 24
+                                    addRing out cR bR bU (1.25 * h) (V4d(Primitives.refGoldV3d, 0.95)) 2.6 24
                             for (id, p) in HashMap.toSeq pins do
                                 if p.Pair = pair then
                                     pt (armDim * ScanPinScene.pinScopeDim model t id)
@@ -579,16 +595,17 @@ module GuiPanes =
                         | Some (pa, pb) when name = pa || name = pb ->
                             let cam = camA.GetValue t
                             let cs = clientSize.GetValue t
+                            let rot = model.TileRotation.GetValue t
                             let out = ResizeArray<V3d * V3d * V4d * float>()
                             (match ScanPinScene.highlightPin model t with
                              | Some id ->
                                 (match HashMap.tryFind id (pinsVal.GetValue t) with
                                  | Some p when p.Pair = (pa, pb) ->
-                                    addEdgeArrow out cam cs (renderOn t p.AnchorMesh p.CentreLocal)
+                                    addEdgeArrow out rot cam cs (renderOn t p.AnchorMesh p.CentreLocal)
                                  | _ -> ())
                              | None -> ())
                             (match ScanPinScene.armedSiblingAt model t with
-                             | Some (sm, sp) when sm = name -> addEdgeArrow out cam cs (renderOf t sp)
+                             | Some (sm, sp) when sm = name -> addEdgeArrow out rot cam cs (renderOf t sp)
                              | _ -> ())
                             out.ToArray()
                         | _ -> [||])
@@ -633,5 +650,34 @@ module GuiPanes =
         div {
             Class "mesh-tiles"
             stripResizeHandle "Drag to resize the tile strip"
+            // The shared-orientation controls: align the tiles' vertical with
+            // the main camera's heading — its ground-projected view direction,
+            // or its up direction, whichever projection is longer (they are
+            // parallel for the roll-free orbit camera; the length pick only
+            // dodges the degenerate ends: top-down kills forward, horizontal
+            // kills up) — and the reset back to north-up.
+            div {
+                Class "tiles-head"
+                button {
+                    Class "rail-btn tiles-align"
+                    Attribute("title", "Rotate the tiles so their up direction matches the main camera's heading")
+                    Dom.OnClick(fun _ ->
+                        let cv = (AVal.force model.Camera.view : CameraView)
+                        let f = V2d(cv.Forward.X, cv.Forward.Y)
+                        let u = V2d(cv.Up.X, cv.Up.Y)
+                        let d = if f.Length >= u.Length then f else u
+                        if d.Length > 1e-6 then
+                            let dn = d.Normalized
+                            env.Emit [SetTileRotation (atan2 (-dn.X) dn.Y)])
+                    "⇱ Align to view"
+                }
+                button {
+                    Class "rail-btn tiles-north"
+                    classWhen "rail-btn-active" (model.TileRotation |> AVal.map (fun r -> abs r < 1e-9))
+                    Attribute("title", "Reset the tile orientation to north-up")
+                    Dom.OnClick(fun _ -> env.Emit [SetTileRotation 0.0])
+                    "N ↑"
+                }
+            }
             model.MeshNames |> AList.map (meshTile env model)
         }

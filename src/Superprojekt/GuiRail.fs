@@ -43,10 +43,13 @@ module GuiRail =
         "function niceStep(raw){ var mag=Math.pow(10,Math.floor(Math.log(raw)/Math.LN10)); var n=raw/mag; return (n<1.5?1:n<3.5?2:n<7.5?5:10)*mag; }"
         "function render(){"
         "  var craw=el.getAttribute('data-chart')||'{}';"
-        "  if(craw!==el._pv.c){ el._pv.c=craw; try{el._d=JSON.parse(craw);}catch(e){el._d=null;} el._dots=[]; el._dotsDirty=true; }"
+        "  if(craw!==el._pv.c){ el._pv.c=craw; try{el._d=JSON.parse(craw);}catch(e){el._d=null;} el._dots=[]; el._dotsDirty=true; if(!dragging) range=null; }"
         "  var d=el._d; if(!d) return;"
         "  var braw=el.getAttribute('data-brushed')||'';"
-        "  if(braw!==el._pv.b){ el._pv.b=braw; el._bset=new Set(braw.length?braw.split(',').map(Number):[]); }"
+        // The model echo is authoritative: once it changes (a clear, a new
+        // brush), the drag-local band must not shadow it — else clear-brush
+        // leaves a stale band painted forever.
+        "  if(braw!==el._pv.b){ el._pv.b=braw; el._bset=new Set(braw.length?braw.split(',').map(Number):[]); if(!dragging) range=null; }"
         "  var bset=el._bset;"
         "  var hraw=el.getAttribute('data-hover')||''; var hgid=hraw.length?parseInt(hraw):-1;"
         "  var hl=el.getAttribute('data-hilite')||'';"
@@ -132,8 +135,11 @@ module GuiRail =
         "    var hx=X(Math.max(lo,Math.min(hi,el._dots[q2].v)));"
         "    g.strokeStyle='#d97706'; g.lineWidth=1.8; g.beginPath(); g.moveTo(hx,axT); g.lineTo(hx,axY); g.stroke(); g.lineWidth=1; break; } } }"
         // Brush band: the local drag range, else reconstructed from the echo.
+        // The displayed range is kept on the element — the pointer handlers
+        // read it for the grab-and-move repositioning.
         "  var dispRange=range;"
         "  if(!dispRange&&bset.size){ var mn=1/0,mx=-1/0; for(var q3=0;q3<el._dots.length;q3++){ var dd=el._dots[q3]; if(bset.has(dd.gid)){ if(dd.v<mn)mn=dd.v; if(dd.v>mx)mx=dd.v; } } if(mx>=mn) dispRange=[mn,mx]; }"
+        "  el._dispRange=dispRange||null;"
         "  if(dispRange){ var x0b=X(dispRange[0]), x1b=X(dispRange[1]);"
         "    g.fillStyle='rgba(8,145,178,0.10)'; g.fillRect(x0b,axT,Math.max(1,x1b-x0b),axY-axT);"
         "    g.strokeStyle='#0891b2'; g.lineWidth=1.2; g.beginPath(); g.moveTo(x0b,axT); g.lineTo(x0b,axY); g.moveTo(x1b,axT); g.lineTo(x1b,axY); g.stroke(); }"
@@ -146,14 +152,32 @@ module GuiRail =
         "function snapRange(vA,vB){ var bn=el._bin; if(!bn) return [Math.min(vA,vB),Math.max(vA,vB)];"
         "  var b0=binOf(vA), b1=binOf(vB); var mn=Math.min(b0,b1), mx=Math.max(b0,b1);"
         "  return [bn.lo+mn*bn.bw, bn.lo+(mx+1)*bn.bw]; }"
-        "el.addEventListener('pointerdown',function(e){ if(e.button!==0) return; dragging=true; anchorV=cursorV(e); range=null; el.setPointerCapture(e.pointerId); });"
+        // Grab-and-move: a pointer-down INSIDE the drawn band repositions it
+        // (width preserved in whole bins, live emits so the dots follow);
+        // outside starts a fresh brush as before.
+        "var dragMode=null, grabOff=0, wBins=0;"
+        "el.addEventListener('pointerdown',function(e){ if(e.button!==0) return;"
+        "  var v=cursorV(e); var dr=el._dispRange;"
+        "  if(dr&&v>=dr[0]&&v<=dr[1]){ dragMode='move'; grabOff=v-dr[0]; var bn=el._bin;"
+        "    wBins=bn?Math.max(1,Math.round((dr[1]-dr[0])/bn.bw)):1; range=dr.slice(); }"
+        "  else { dragMode='new'; anchorV=v; range=null; }"
+        "  dragging=true; el.setPointerCapture(e.pointerId); });"
         "el.addEventListener('pointermove',function(e){ var v=cursorV(e);"
-        "  if(dragging){ range=snapRange(anchorV,v); render(); }"
-        "  else { var r=el.getBoundingClientRect(); var nb=(el._inPlot&&el._inPlot(e.clientX-r.left,e.clientY-r.top))?binOf(v):-1;"
+        "  if(dragging){"
+        "    if(dragMode==='move'){ var bn=el._bin; if(bn){"
+        "      var b0=Math.round((v-grabOff-bn.lo)/bn.bw); b0=Math.max(0,Math.min(bn.B-wBins,b0));"
+        "      var nr=[bn.lo+b0*bn.bw, bn.lo+(b0+wBins)*bn.bw];"
+        "      if(!range||nr[0]!==range[0]||nr[1]!==range[1]){ range=nr; emit(); render(); } }"
+        "      el.style.cursor='grabbing'; }"
+        "    else { range=snapRange(anchorV,v); render(); } }"
+        "  else { var r=el.getBoundingClientRect(); var inPlot=el._inPlot&&el._inPlot(e.clientX-r.left,e.clientY-r.top);"
+        "    var dr2=el._dispRange; el.style.cursor=(inPlot&&dr2&&v>=dr2[0]&&v<=dr2[1])?'grab':'';"
+        "    var nb=inPlot?binOf(v):-1;"
         "    if(nb!==el._hb){ el._hb=nb; render(); } } });"
-        "el.addEventListener('pointerleave',function(){ if(el._hb!==-1){ el._hb=-1; render(); } });"
+        "el.addEventListener('pointerleave',function(){ el.style.cursor=''; if(el._hb!==-1){ el._hb=-1; render(); } });"
         "el.addEventListener('pointerup',function(e){ if(!dragging) return; dragging=false;"
-        "  range=snapRange(anchorV,cursorV(e)); emit(); render(); });"
+        "  if(dragMode!=='move'){ range=snapRange(anchorV,cursorV(e)); }"
+        "  dragMode=null; el.style.cursor=''; emit(); render(); });"
         // Right-click = clear the brush (emit() with no range sends no gids).
         "el.addEventListener('contextmenu',function(e){ e.preventDefault(); dragging=false; range=null; emit(); render(); });"
         "render();"

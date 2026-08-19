@@ -60,6 +60,7 @@ module UpdateHelpers =
     let mutable cellDistReqGen = -1
     let mutable graphErrorReqGen = -1
     let mutable graphDistReqGen = -1
+    let mutable pairProxReqGen = -1
     let bumpCellError () = cellErrorGen <- cellErrorGen + 1
 
     // Pair-solve landing guard: PairSolved carries the generation it was
@@ -86,8 +87,17 @@ module UpdateHelpers =
         bumpCellError ()
         { model with
             CellError = None; CellErrorBefore = None; CellDist = None; CellDistBefore = None
+            PairProx = Map.empty
             GraphError = None; GraphErrorBefore = None
             GraphDist = Map.empty; GraphDistBefore = Map.empty
+            BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None }
+
+    // Arming a placement/edit pick needs the terrain texture bare: the error
+    // map goes off and the brush drops, and neither auto-restores (predictable
+    // — the user re-enables).
+    let clearInspectForPick (model : Model) =
+        { model with
+            CellMapOn = false
             BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None }
 
     let logReach (source : string) (action : string) (subject : string) (model : Model) =

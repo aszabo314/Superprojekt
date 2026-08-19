@@ -95,6 +95,18 @@ module MeshShader =
         // the ghost floor. The Sel vectors dot-select each pair mesh's channel
         // out of the two coverage targets.
         member x.OverlapPreview   : int = x?OverlapPreview
+        // Placement gate (armed centre / ○ New pin hover at Pair/Pin): a
+        // fragment is solid only where the OTHER pair mesh has surface within
+        // FeatherRadius (the PairProx vertex attribute, metric m) — the
+        // world-space feathered generalization of the strict footprint
+        // overlap. 0 until the proximity buffers have landed.
+        member x.PlacementGate    : int = x?PlacementGate
+        member x.FeatherRadius    : float32 = x?FeatherRadius
+        // Tile-isolation scrim strength: > 0 while an explicit isolation
+        // (lock or preview) is in effect — ghost-level fragments darken
+        // toward the armed-veil ink and keep a visible floor, so the
+        // isolated mesh pops. 0 = the plain ghost look.
+        member x.IsoDim           : float32 = x?IsoDim
         // Armed-centre aim: (cx,cy,cz,r) of the commit sphere in render space,
         // W <= 0 = off. The fragment stage paints the sphere∩surface
         // intersection as a white band — the live preview of the contact rings
@@ -128,6 +140,7 @@ module MeshShader =
         [<Semantic("WorldPosition")>]          wp : V4f
         [<Semantic("SurfaceDist")>]            sd : float32
         [<Semantic("ShapeQ")>]                 shq : float32
+        [<Semantic("PairProx")>]               px : float32
         [<FragCoord>]                          fc : V4f
     }
 
@@ -180,11 +193,16 @@ module MeshShader =
                 if blobsActive then
                     if inAnyBlob then 1.0f else 0.0f
                 else 1.0f
-            // Matrix-hover overlap preview: both hovered-pair coverage channels
-            // must cover this pixel (0.12 = the coverage composites' threshold —
-            // one additive 0.25 layer clears it).
+            // Placement gate: the fragment's own surface point must have the
+            // OTHER pair mesh within the feather radius (world-space, per
+            // vertex) — the feathered generalization of "both meshes present
+            // here". Matrix-hover overlap preview: both hovered-pair coverage
+            // channels must cover this pixel (0.12 = the coverage composites'
+            // threshold — one additive 0.25 layer clears it).
             let mutable overlapFull = true
-            if uniform.OverlapPreview <> 0 then
+            if uniform.PlacementGate <> 0 then
+                overlapFull <- v.px <= uniform.FeatherRadius
+            elif uniform.OverlapPreview <> 0 then
                 let vs = uniform.ViewportSize
                 let uv = V2f(v.fc.X / float32 vs.X, v.fc.Y / float32 vs.Y)
                 let ca = cov0Tex.Sample(uv)
@@ -200,6 +218,13 @@ module MeshShader =
                 alpha <- ghost + (1.0f - ghost) * maskFactor
             else
                 alpha <- ghost
+            // The isolation scrim keeps a visible dark floor on non-isolated
+            // meshes even where the ghost floor is off — the veil IS the
+            // signal (still non-solid: depth stays far, picks fall through).
+            let mutable isoVeil = false
+            if uniform.IsoDim > 0.0f && not uniform.MeshActive then
+                isoVeil <- true
+                alpha <- max alpha (uniform.IsoDim * 0.5f)
             if alpha < 1e-4f then discard()
             // α-gated depth: clamp ghost/outside fragments below opaqueThreshold
             // so only fully-solid surface writes natural depth (below).
@@ -228,8 +253,10 @@ module MeshShader =
                     let s = t * t * (3.0f - 2.0f * t)
                     blueCol * (1.0f - s) + hotCol * s
             // Ghost-level fragments always use the solid mesh colour so the
-            // silhouette reads uniformly regardless of mode.
-            let aboveGhost = alpha > ghost + 1e-4f
+            // silhouette reads uniformly regardless of mode. The isolation
+            // veil raised alpha above the floor without making the fragment
+            // solid — exclude it, or the painters would treat it as surface.
+            let aboveGhost = not isoVeil && alpha > ghost + 1e-4f
             let mutable baseRgb =
                 if not aboveGhost then
                     // Colour isolation reaches the ghost too: a ghosted mesh
@@ -320,6 +347,10 @@ module MeshShader =
             // opaque data ink over every painter (opaque ⇒ natural depth below,
             // so the line is pickable surface like any solid fragment).
             let mutable outRgb = baseRgb * shade
+            // The isolation scrim: darken the ghost colour toward the armed
+            // veil's ink (the same darkening vocabulary as the GUI scrim).
+            if isoVeil then
+                outRgb <- outRgb * (1.0f - uniform.IsoDim) + V3f(0.059f, 0.090f, 0.165f) * uniform.IsoDim
             // Armed-centre sphere∩surface band: derivative-antialiased (~2 px
             // screen-constant), white per the uncommitted convention, solid
             // fragments only — so it never paints on ghosts and vanishes with

@@ -1,5 +1,5 @@
-//f4016fff-23b8-f99a-0d68-39912deb7a88
-//6e9ddbaf-e66d-5a74-c7fb-d542a0e49544
+//e3b1affb-7d30-76d6-9af4-6fc911fa6c0e
+//75b2eb83-33b9-4c09-1fc2-6e5b07594f93
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -14,6 +14,7 @@ open Superprojekt
 type AdaptiveModel(value : Model) =
     let _Camera_ = AdaptiveOrbitState(value.Camera)
     let _TileCams_ = FSharp.Data.Adaptive.cval(value.TileCams)
+    let _TileRotation_ = FSharp.Data.Adaptive.cval(value.TileRotation)
     let _MeshOrder_ = FSharp.Data.Adaptive.cmap(value.MeshOrder)
     let _MeshNames_ = FSharp.Data.Adaptive.clist(value.MeshNames)
     let _MeshesLoaded_ = FSharp.Data.Adaptive.cset(value.MeshesLoaded)
@@ -31,6 +32,8 @@ type AdaptiveModel(value : Model) =
     let _SlopeThresholdDeg_ = FSharp.Data.Adaptive.cval(value.SlopeThresholdDeg)
     let _AnchorGhostMode_ = FSharp.Data.Adaptive.cval(value.AnchorGhostMode)
     let _QuickPinRadius_ = FSharp.Data.Adaptive.cval(value.QuickPinRadius)
+    let _FeatherRadius_ = FSharp.Data.Adaptive.cval(value.FeatherRadius)
+    let _IsoDimStrength_ = FSharp.Data.Adaptive.cval(value.IsoDimStrength)
     let _FlagScale_ = FSharp.Data.Adaptive.cval(value.FlagScale)
     let _RevealRadius_ = FSharp.Data.Adaptive.cval(value.RevealRadius)
     let _MarkerWeight_ = FSharp.Data.Adaptive.cval(value.MarkerWeight)
@@ -54,10 +57,12 @@ type AdaptiveModel(value : Model) =
     let _ReachLogOpen_ = FSharp.Data.Adaptive.cval(value.ReachLogOpen)
     let _Checkpoints_ = FSharp.Data.Adaptive.cval(value.Checkpoints)
     let _CheckpointName_ = FSharp.Data.Adaptive.cval(value.CheckpointName)
+    let _AutoCkOn_ = FSharp.Data.Adaptive.cval(value.AutoCkOn)
     let _CellError_ = FSharp.Data.Adaptive.cval(value.CellError)
     let _CellErrorBefore_ = FSharp.Data.Adaptive.cval(value.CellErrorBefore)
     let _CellDist_ = FSharp.Data.Adaptive.cval(value.CellDist)
     let _CellDistBefore_ = FSharp.Data.Adaptive.cval(value.CellDistBefore)
+    let _PairProx_ = FSharp.Data.Adaptive.cval(value.PairProx)
     let _GraphError_ = FSharp.Data.Adaptive.cval(value.GraphError)
     let _GraphErrorBefore_ = FSharp.Data.Adaptive.cval(value.GraphErrorBefore)
     let _GraphDist_ = FSharp.Data.Adaptive.cval(value.GraphDist)
@@ -97,6 +102,7 @@ type AdaptiveModel(value : Model) =
             __adaptive.MarkOutdated()
             _Camera_.Update(value.Camera)
             _TileCams_.Value <- value.TileCams
+            _TileRotation_.Value <- value.TileRotation
             _MeshOrder_.Value <- value.MeshOrder
             _MeshNames_.Value <- value.MeshNames
             _MeshesLoaded_.Value <- value.MeshesLoaded
@@ -114,6 +120,8 @@ type AdaptiveModel(value : Model) =
             _SlopeThresholdDeg_.Value <- value.SlopeThresholdDeg
             _AnchorGhostMode_.Value <- value.AnchorGhostMode
             _QuickPinRadius_.Value <- value.QuickPinRadius
+            _FeatherRadius_.Value <- value.FeatherRadius
+            _IsoDimStrength_.Value <- value.IsoDimStrength
             _FlagScale_.Value <- value.FlagScale
             _RevealRadius_.Value <- value.RevealRadius
             _MarkerWeight_.Value <- value.MarkerWeight
@@ -137,10 +145,12 @@ type AdaptiveModel(value : Model) =
             _ReachLogOpen_.Value <- value.ReachLogOpen
             _Checkpoints_.Value <- value.Checkpoints
             _CheckpointName_.Value <- value.CheckpointName
+            _AutoCkOn_.Value <- value.AutoCkOn
             _CellError_.Value <- value.CellError
             _CellErrorBefore_.Value <- value.CellErrorBefore
             _CellDist_.Value <- value.CellDist
             _CellDistBefore_.Value <- value.CellDistBefore
+            _PairProx_.Value <- value.PairProx
             _GraphError_.Value <- value.GraphError
             _GraphErrorBefore_.Value <- value.GraphErrorBefore
             _GraphDist_.Value <- value.GraphDist
@@ -173,6 +183,7 @@ type AdaptiveModel(value : Model) =
     member __.Current = __adaptive
     member __.Camera = _Camera_
     member __.TileCams = _TileCams_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, TileCam>>
+    member __.TileRotation = _TileRotation_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.MeshOrder = _MeshOrder_ :> FSharp.Data.Adaptive.amap<Microsoft.FSharp.Core.string, Microsoft.FSharp.Core.int>
     member __.MeshNames = _MeshNames_ :> FSharp.Data.Adaptive.alist<Microsoft.FSharp.Core.string>
     member __.MeshesLoaded = _MeshesLoaded_ :> FSharp.Data.Adaptive.aset<Microsoft.FSharp.Core.string>
@@ -190,6 +201,8 @@ type AdaptiveModel(value : Model) =
     member __.SlopeThresholdDeg = _SlopeThresholdDeg_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.AnchorGhostMode = _AnchorGhostMode_ :> FSharp.Data.Adaptive.aval<LevelFlags>
     member __.QuickPinRadius = _QuickPinRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.FeatherRadius = _FeatherRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
+    member __.IsoDimStrength = _IsoDimStrength_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.FlagScale = _FlagScale_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.RevealRadius = _RevealRadius_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.MarkerWeight = _MarkerWeight_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
@@ -213,10 +226,12 @@ type AdaptiveModel(value : Model) =
     member __.ReachLogOpen = _ReachLogOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.Checkpoints = _Checkpoints_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.list<Microsoft.FSharp.Core.string>>
     member __.CheckpointName = _CheckpointName_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.string>
+    member __.AutoCkOn = _AutoCkOn_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.CellError = _CellError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellErrorBefore = _CellErrorBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<((ScanPinId * Query.PairPinError))[]>>
     member __.CellDist = _CellDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.float32)[]>>
     member __.CellDistBefore = _CellDistBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(Microsoft.FSharp.Core.float32)[]>>
+    member __.PairProx = _PairProx_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>
     member __.GraphError = _GraphError_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(InspectBlock)[]>>
     member __.GraphErrorBefore = _GraphErrorBefore_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.option<(InspectBlock)[]>>
     member __.GraphDist = _GraphDist_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Collections.Map<Microsoft.FSharp.Core.string, (Microsoft.FSharp.Core.float32)[]>>

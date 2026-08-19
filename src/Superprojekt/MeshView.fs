@@ -546,6 +546,26 @@ module MeshView =
                     float32 (ScanPin.renderLength s (armCommitRadiusAt model t)))
             | _ -> V4f.Zero)
 
+    // The feathered placement gate (the ○ New pin hover and the armed centre
+    // pick at Pair/Pin): ON once the pair's proximity buffers have landed —
+    // solid where the OTHER pair mesh has surface within FeatherRadius of the
+    // fragment (the PairProx vertex attribute). Off while the buffers are in
+    // flight, so the gate never half-tests.
+    let placementGateUniforms (model : AdaptiveModel) =
+        let on =
+            AVal.custom (fun t ->
+                match model.Focus.GetValue t with
+                | FocusPair | FocusPin ->
+                    (match (model.Sel.GetValue t).Pair with
+                     | Some (a, b) when model.NewPinHover.GetValue t
+                                        || model.ArmedPick.GetValue t = Some ArmCentre ->
+                        let prox = model.PairProx.GetValue t
+                        Map.containsKey a prox && Map.containsKey b prox
+                     | _ -> false)
+                | FocusMatrix -> false)
+        on |> AVal.map (fun o -> if o then 1 else 0),
+        model.FeatherRadius |> AVal.map float32
+
     // name → display index, shared by the main pass and the offscreen outline passes.
     let private meshIndicesA (model : AdaptiveModel) =
         model.MeshNames |> AList.toAVal |> AVal.map (fun names ->
@@ -597,6 +617,28 @@ module MeshView =
         // Error-map isolation: the map's colours stand alone — every mesh
         // without error colour loses even its ghost.
         let mapIsoA = AVal.custom (mapIsolationAt model)
+        // The feathered placement gate + its radius (metric m, compared
+        // against the PairProx vertex attribute).
+        let placeGateU, featherU = placementGateUniforms model
+        // The tile-isolation scrim strength: lit while an EXPLICIT isolation
+        // (lock, tile/◎ hover preview, or an armed A/B pick) is in effect —
+        // the brush's default isolate deliberately not included — and stood
+        // down while a mode that zeroes the context floor owns the scene
+        // (brush colour isolation, Isolate pins, error-map isolation).
+        let isoDimU =
+            AVal.custom (fun t ->
+                let explicitIso =
+                    let iso, _ =
+                        MeshVisibility.effectiveNarrowing (model.PinFocusHover.GetValue t)
+                            (model.ArmedPick.GetValue t) (model.TileIsolateHover.GetValue t)
+                            (model.TileIsolate.GetValue t) ((model.Sel.GetValue t).Point)
+                    iso.IsSome
+                if explicitIso
+                   && not (brushActiveAt model t)
+                   && not (anchorGhostOn.GetValue t)
+                   && not (mapIsolationAt model t)
+                then float32 (model.IsoDimStrength.GetValue t)
+                else 0.0f)
         // The shown rule's shared inputs (the ONE effective narrowing) — ONE
         // context aval, N cheap per-mesh bool projections.
         let shownCtx =
@@ -730,6 +772,14 @@ module MeshView =
                     match d with
                     | Some arr -> ArrayBuffer arr :> IBuffer
                     | None -> z)
+            // The feather gate's per-vertex proximity (metric m); zero =
+            // "gate open" while no buffer is resident — the gate flag itself
+            // stays off until both pair buffers land.
+            let proxBuf =
+                (model.PairProx, zeroBuf) ||> AVal.map2 (fun m z ->
+                    match Map.tryFind name m with
+                    | Some arr -> ArrayBuffer arr :> IBuffer
+                    | None -> z)
             let shapeBuf = shapeBufOf loaded
             let distEncoding = cellPaint |> AVal.map (fun d -> if d.IsSome then 1 else 0)
             // Map ends from the unified pair range: enc 1 saturates at (lo, hi).
@@ -801,6 +851,9 @@ module MeshView =
                         (distEncoding, colorIsolate) ||> AVal.map2 (fun e ci ->
                             if e = 1 || ci > 0.5f then 1.0f else 0.0f))
                     Sg.Uniform("ColorIsolate", colorIsolate)
+                    Sg.Uniform("PlacementGate", placeGateU)
+                    Sg.Uniform("FeatherRadius", featherU)
+                    Sg.Uniform("IsoDim", isoDimU)
                     Sg.VertexAttributes(
                         HashMap.ofList [
                             string DefaultSemantic.Positions,               BufferView(loaded.pos, typeof<V3f>)
@@ -808,6 +861,7 @@ module MeshView =
                             string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
                             "SurfaceDist",                                  BufferView(distBuf, typeof<float32>)
                             "ShapeQ",                                       BufferView(shapeBuf, typeof<float32>)
+                            "PairProx",                                     BufferView(proxBuf, typeof<float32>)
                         ]
                     )
                     Sg.Index(BufferView(loaded.idx, typeof<int>))
@@ -1051,10 +1105,10 @@ module MeshView =
     // Overlap-preview uniforms: the on-flag + the active pair's coverage-
     // channel selectors over the two MRT targets (channel = display index,
     // 0-3 → target0, 4-7 → target1 — the OutlineCoverage layout). The gate
-    // lights for the MATRIX HOVER (pair preview) and for the pin-LOCATION
-    // interactions at Pair/Pin — the ○ New pin hover and the armed centre
-    // pick — where only the overlap is a valid spot. A pair mesh beyond the
-    // 8-channel cap disables the preview outright rather than half-testing.
+    // lights for the MATRIX HOVER alone (pair registerability preview) — the
+    // pin-LOCATION interactions use the world-space feathered placement gate
+    // instead (placementGateUniforms). A pair mesh beyond the 8-channel cap
+    // disables the preview outright rather than half-testing.
     let overlapPreviewUniforms (model : AdaptiveModel) =
         let idxA = meshIndicesA model
         let pairIdx =
@@ -1062,11 +1116,7 @@ module MeshView =
                 let pair =
                     match model.Focus.GetValue t with
                     | FocusMatrix -> model.MatrixHoverPair.GetValue t
-                    | FocusPair | FocusPin ->
-                        match (model.Sel.GetValue t).Pair with
-                        | Some p when model.NewPinHover.GetValue t
-                                      || model.ArmedPick.GetValue t = Some ArmCentre -> Some p
-                        | _ -> None
+                    | FocusPair | FocusPin -> None
                 match pair with
                 | Some (a, b) ->
                     let idx = idxA.GetValue t
@@ -1086,17 +1136,18 @@ module MeshView =
         pairIdx |> AVal.map (function Some (_, ib) -> sel ib 1 | None -> V4f.Zero)
 
     // One strip-tile mesh: the mesh `name` with the full shipped shader,
-    // inspection modes off but the per-mesh survey heatmap live. `overlap` =
-    // (other pair mesh — adaptive, Some while this tile's mesh sits in the
-    // selected pair — plus the tile-camera coverage MRT): the isolate-overlap
-    // gate engages while a placement is armed — solid only where the MRT
-    // covers the pixel in BOTH pair channels, the rest at the ghost floor —
-    // exactly the valid placement area.
+    // inspection modes off but the per-mesh survey heatmap live. `other` =
+    // the other pair mesh (adaptive, Some while this tile's mesh sits in the
+    // selected pair): the feathered placement gate engages while a placement
+    // is in flight — solid only where the other mesh has surface within
+    // FeatherRadius (the PairProx vertex attribute), the rest at the ghost
+    // floor — exactly the valid placement area, in world space like the main
+    // view's.
     let buildPaneScene
         (model : AdaptiveModel)
         (name : string)
         (paneActive : aval<bool>)
-        (overlap : aval<string option> * aval<IBackendTexture> * aval<IBackendTexture>)
+        (other : aval<string option>)
         (viewportSize : aval<V2i>) : ISceneNode =
         let loaded = loadMeshAsync (fun () -> ()) name
         let scale = scaleFor model name
@@ -1109,24 +1160,18 @@ module MeshView =
                 else
                     let i = Map.tryFind name m |> Option.defaultValue 0
                     V4f palette.[i % palette.Length])
-        let placing =
-            model.ScanPins.Placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
-        let otherA, cov0, cov1 = overlap
-        // The overlap gate needs BOTH pair channels below the 8-channel MRT cap;
-        // beyond it the gate disengages outright rather than half-testing.
-        let pairIdx =
-            (placing, otherA, meshIndices) |||> AVal.map3 (fun pl other idx ->
-                match other with
+        // The gate lights only once BOTH pair proximity buffers are resident,
+        // so it never half-tests while a fetch is in flight.
+        let paneGate =
+            AVal.custom (fun t ->
+                let pl =
+                    match model.ScanPins.Placement.GetValue t with
+                    | PlacementActive _ -> true | PlacementIdle -> false
+                match other.GetValue t with
                 | Some o when pl ->
-                    let ia = Map.tryFind name idx |> Option.defaultValue 8
-                    let ib = Map.tryFind o idx |> Option.defaultValue 8
-                    if ia < 8 && ib < 8 then Some (ia, ib) else None
-                | _ -> None)
-        let sel (k : int) (target : int) =
-            if k / 4 = target then
-                match k % 4 with
-                | 0 -> V4f.IOOO | 1 -> V4f.OIOO | 2 -> V4f.OOIO | _ -> V4f.OOOI
-            else V4f.Zero
+                    let prox = model.PairProx.GetValue t
+                    if Map.containsKey name prox && Map.containsKey o prox then 1 else 0
+                | _ -> 0)
         let active =
             (paneActive, loaded.fvc) ||> AVal.map2 (fun a fvc -> a && fvc > 3)
         let zeroBuf =
@@ -1134,10 +1179,11 @@ module MeshView =
                 match loaded.mesh.Value with
                 | Some md -> ArrayBuffer (Array.zeroCreate<float32> md.positions.Length) :> IBuffer
                 | None -> ArrayBuffer [| 0.0f; 0.0f; 0.0f |] :> IBuffer)
-        // IBackendTexture → ITexture through AVal.map (aval is invariant — a
-        // direct upcast of the aval itself does not typecheck).
-        let covTex0, covTex1 =
-            cov0 |> AVal.map (fun t -> t :> ITexture), cov1 |> AVal.map (fun t -> t :> ITexture)
+        let proxBuf =
+            (model.PairProx, zeroBuf) ||> AVal.map2 (fun m z ->
+                match Map.tryFind name m with
+                | Some arr -> ArrayBuffer arr :> IBuffer
+                | None -> z)
         // Survey heatmap inputs (same sensor/range conventions as the main pass).
         let sensorOrigin =
             fullTrafo |> AVal.map (fun t -> V3f (t.Forward.TransformPos V3d.Zero))
@@ -1153,13 +1199,18 @@ module MeshView =
                 MeshShader.shade
             }
             Sg.Uniform("ViewportSize", viewportSize)
-            Sg.Uniform("Coverage0", covTex0)
-            Sg.Uniform("Coverage1", covTex1)
-            Sg.Uniform("OverlapPreview", pairIdx |> AVal.map (fun o -> if o.IsSome then 1 else 0))
-            Sg.Uniform("OverlapSelA0", pairIdx |> AVal.map (function Some (ia, _) -> sel ia 0 | None -> V4f.Zero))
-            Sg.Uniform("OverlapSelA1", pairIdx |> AVal.map (function Some (ia, _) -> sel ia 1 | None -> V4f.Zero))
-            Sg.Uniform("OverlapSelB0", pairIdx |> AVal.map (function Some (_, ib) -> sel ib 0 | None -> V4f.Zero))
-            Sg.Uniform("OverlapSelB1", pairIdx |> AVal.map (function Some (_, ib) -> sel ib 1 | None -> V4f.Zero))
+            // The MRT overlap preview is the MAIN view's matrix-hover mode —
+            // never lit here, but the samplers need a binding.
+            Sg.Uniform("Coverage0", DefaultTextures.checkerboard)
+            Sg.Uniform("Coverage1", DefaultTextures.checkerboard)
+            Sg.Uniform("OverlapPreview", AVal.constant 0)
+            Sg.Uniform("OverlapSelA0", AVal.constant V4f.Zero)
+            Sg.Uniform("OverlapSelA1", AVal.constant V4f.Zero)
+            Sg.Uniform("OverlapSelB0", AVal.constant V4f.Zero)
+            Sg.Uniform("OverlapSelB1", AVal.constant V4f.Zero)
+            Sg.Uniform("PlacementGate", paneGate)
+            Sg.Uniform("FeatherRadius", model.FeatherRadius |> AVal.map float32)
+            Sg.Uniform("IsoDim", AVal.constant 0.0f)
             Sg.Uniform("DiffuseColorTexture", loaded.tex)
             Sg.Uniform("MeshActive",      AVal.constant true)
             Sg.Uniform("GhostOpacity",
@@ -1209,6 +1260,7 @@ module MeshView =
                     string DefaultSemantic.Normals,                 BufferView(loaded.nrm, typeof<V3f>)
                     "SurfaceDist",                                  BufferView(zeroBuf, typeof<float32>)
                     "ShapeQ",                                       BufferView(shapeBufOf loaded, typeof<float32>)
+                    "PairProx",                                     BufferView(proxBuf, typeof<float32>)
                 ]
             )
             Sg.Index(BufferView(loaded.idx, typeof<int>))

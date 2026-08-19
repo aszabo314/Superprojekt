@@ -194,6 +194,9 @@ module Update =
         | SetTileCam(mesh, cam) ->
             let cam = { cam with Radius = clamp 0.05 100000.0 cam.Radius }
             { model with TileCams = Map.add mesh cam model.TileCams }
+        | SetTileRotation r ->
+            let r = atan2 (sin r) (cos r)
+            if model.TileRotation = r then model else { model with TileRotation = r }
         | CentroidsLoaded centroids ->
             let common  = if centroids.Length > 0 then centroids |> Array.averageBy snd else V3d.Zero
             let names   = centroids |> Array.map fst |> IndexList.ofArray
@@ -261,6 +264,10 @@ module Update =
             { model with AnchorGhostMode = LevelFlags.set model.Focus (not (LevelFlags.get model.Focus lf)) lf }
         | SetQuickPinRadius v ->
             { model with QuickPinRadius = max 0.01 v }
+        | SetFeatherRadius v ->
+            { model with FeatherRadius = clamp 0.0 3.0 v }
+        | SetIsoDimStrength v ->
+            { model with IsoDimStrength = clamp 0.0 1.0 v }
         | SetFlagScale v ->
             { model with FlagScale = clamp 0.1 10.0 v }
         | SetMarkerWeight v ->
@@ -385,6 +392,8 @@ module Update =
             if model.CheckpointName = n then model else { model with CheckpointName = n }
         | SetCheckpoints names ->
             if model.Checkpoints = names then model else { model with Checkpoints = names }
+        | ToggleAutoCk ->
+            { model with AutoCkOn = not model.AutoCkOn }
         | ApplyCheckpoint(name, ds, g, pins) ->
             // The view pre-switches the dataset (a SetActiveDataset rides in
             // front of this message when needed), so a mismatch here means
@@ -439,10 +448,11 @@ module Update =
             else
                 // Arming enters the scrimmed quasi-mode: the top-bar menus
                 // close (an open one would float dead over the scrim).
-                { model with
-                    ArmedPick = Some target; ArmPreview = None
-                    GearPopoverOpen = false; MeshMenuOpen = false
-                    ReachLogOpen = false }
+                clearInspectForPick
+                    { model with
+                        ArmedPick = Some target; ArmPreview = None
+                        GearPopoverOpen = false; MeshMenuOpen = false
+                        ReachLogOpen = false }
         | SetArmPreview p ->
             if model.ArmedPick.IsNone then
                 if model.ArmPreview.IsSome then { model with ArmPreview = None } else model
@@ -466,6 +476,9 @@ module Update =
         | CellDistComputed(gen, after, before) ->
             if gen <> cellErrorGen then model
             else { model with CellDist = Some after; CellDistBefore = before }
+        | PairProxComputed(gen, buffers) ->
+            if gen <> cellErrorGen then model
+            else { model with PairProx = Map.ofList buffers }
         | GraphErrorComputed(gen, after, before) ->
             if gen <> cellErrorGen then model
             else { model with GraphError = Some after; GraphErrorBefore = Some before }
@@ -597,14 +610,18 @@ module Update =
                     Focus = FocusMatrix
                     Sel = FocusSelection.empty
                     TileCams = Map.empty
+                    TileRotation = 0.0
+                    QuickPinRadius = DatasetDefaults.pinRadius dataset
                     CellError = None
                     CellErrorBefore = None
                     CellDist = None
                     CellDistBefore = None
+                    PairProx = Map.empty
                     GraphError = None
                     GraphErrorBefore = None
                     GraphDist = Map.empty
                     GraphDistBefore = Map.empty
+                    CellMapOn = false
                     BrushedSamples = Set.empty
                     HoverSample = None
                     HoverReadout = None
@@ -644,9 +661,10 @@ module Update =
                 match msg with
                 | BeginPinTransaction (a, b) ->
                     frameOverlapTiles a b
-                        { jumpFocus FocusPin m with
-                            ArmedPick = Some ArmCentre
-                            Sel = { m.Sel with Pin = None; Point = None } }
+                        (clearInspectForPick
+                            { jumpFocus FocusPin m with
+                                ArmedPick = Some ArmCentre
+                                Sel = { m.Sel with Pin = None; Point = None } })
                 | _ -> m
             // A landed pick exits its arm (the spec'd disarm path); the tiles
             // re-frame on placement/edit — tight on the pin.
@@ -1000,6 +1018,43 @@ module Update =
                 } |> ignore
                 model
 
+    // The placement feather's proximity buffers: for each pair mesh, every
+    // vertex's Euclidean distance to the OTHER pair mesh at the displayed
+    // poses (metric m, served vertex order). Fetched once per pair selection;
+    // the feather-radius compare is a live shader uniform, so the gear slider
+    // never refetches. The last landing is memoized by (mesh, pose) key —
+    // pose-preserving invalidations (a radius edit bumps the shared
+    // generation) re-land it without a server round-trip.
+    let mutable private lastProx : ((string * M44d) * (string * M44d) * (string * float32[]) list) option = None
+    let private ensurePairProx (env : Env<Message>) (model : Model) : Model =
+        match model.Focus, model.Sel.Pair with
+        | FocusMatrix, _ | _, None -> model
+        | (FocusPair | FocusPin), Some (a, b) ->
+            if not (Map.isEmpty model.PairProx) || pairProxReqGen = cellErrorGen then model
+            else
+                pairProxReqGen <- cellErrorGen
+                let gen = cellErrorGen
+                let tA = (ModelTransforms.displayedWorld model a).Forward
+                let tB = (ModelTransforms.displayedWorld model b).Forward
+                match lastProx with
+                | Some (ka, kb, buffers) when ka = (a, tA) && kb = (b, tB) ->
+                    env.Emit [PairProxComputed(gen, buffers)]
+                    model
+                | _ ->
+                    task {
+                        try
+                            let! ds =
+                                Async.Parallel
+                                    [ Query.pairProximity ApiConfig.apiBase.Value a b tA tB
+                                      Query.pairProximity ApiConfig.apiBase.Value b a tB tA ]
+                                |> Async.StartAsTask
+                            let buffers = [a, ds.[0]; b, ds.[1]]
+                            lastProx <- Some ((a, tA), (b, tB), buffers)
+                            env.Emit [PairProxComputed(gen, buffers)]
+                        with _ -> ()
+                    } |> ignore
+                    model
+
     // The graph-scope error stream (Matrix): one pin batch per established
     // edge, measured child-relative-to-parent (pass the PARENT first — the
     // endpoint returns meshB relative to meshA, so the parent-relative
@@ -1130,6 +1185,7 @@ module Update =
         |> ScanPinUpdate.ensureRings env
         |> ensureCellError env
         |> ensureCellDist env
+        |> ensurePairProx env
         |> ensureGraphError env
         |> ensureGraphDist env
         |> ensurePairOverlaps env

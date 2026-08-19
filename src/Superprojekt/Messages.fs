@@ -8,6 +8,9 @@ type Message =
     // The per-mesh 2D camera (tiles + panes: pan / zoom-to-cursor), computed
     // view-side.
     | SetTileCam         of mesh : string * TileCam
+    // The shared tile orientation (CCW from north-up; the strip's align /
+    // reset controls).
+    | SetTileRotation    of float
     | CentroidsLoaded    of (string * V3d)[]
     | SensorsLoaded      of (string * V3d)[]
     | LoadFinished       of string
@@ -21,6 +24,10 @@ type Message =
     | SetIsolineOpacity of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
+    // The placement gate's world-space feather radius (gear debug slider).
+    | SetFeatherRadius of float
+    // The tile-isolation darkening strength (gear debug slider).
+    | SetIsoDimStrength of float
     | SetFlagScale of float
     // The correspondence markers' reveal extent (gear debug slider) —
     // outermost metric radius; a change invalidates every reveal.
@@ -63,13 +70,15 @@ type Message =
     | SetCheckpointName of string
     | SetCheckpoints of string list
     | ApplyCheckpoint of name:string * dataset:string * graph:RegGraph * pins:ScanPin list
+    // Crash protection: the ~1-min autosave's enable checkbox.
+    | ToggleAutoCk
     // Pair-level pin list: choose the pin (enables the Pin stop).
     | SelectPin of ScanPinId
     // Transient hover preview of the Pin-level arm buttons.
     | SetPinFocusHover of PinHover option
     // Pin-row hover: preview-frame the tile cameras onto this pin.
     | SetTilePinHover of ScanPinId option
-    // ○ New pin hover: light the pair's overlap-region gate.
+    // ○ New pin hover: light the pair's feathered placement gate.
     | SetNewPinHover of bool
     // The Pin panel's radius disclosure (slider hidden until clicked).
     | ToggleRadiusEdit
@@ -84,6 +93,9 @@ type Message =
     // ── In-cell error inspection. Results are gen-guarded (UpdateHelpers).
     | CellErrorComputed of gen:int * after:(ScanPinId * Query.PairPinError)[] * before:(ScanPinId * Query.PairPinError)[] option
     | CellDistComputed of gen:int * after:float32[] * before:float32[] option
+    // The placement feather's per-vertex proximity buffers (both pair meshes
+    // in one landing).
+    | PairProxComputed of gen:int * buffers:(string * float32[]) list
     // The graph-scope caches: the pooled per-edge sample stream and one map
     // buffer per registered child, each vs its parent — both states in ONE
     // message, so the Matrix pose peek can never show a half-landed flip.

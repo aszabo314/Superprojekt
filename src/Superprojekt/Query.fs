@@ -209,6 +209,28 @@ module Query =
                 arr)
         }
 
+    // Per-vertex Euclidean distance of each TARGET vertex to the OTHER mesh's
+    // surface at explicit poses (metric m, in the target's served vertex
+    // order) — the placement feather's gate buffer.
+    let pairProximity
+            (serverUrl : string)
+            (targetName : string) (otherName : string)
+            (targetTransform : M44d) (otherTransform : M44d)
+            : Async<float32[]> =
+        async {
+            let json =
+                sprintf """{"targetName":"%s","targetIndex":0,"otherName":"%s","otherIndex":0,"targetTransform":[%s],"otherTransform":[%s]}"""
+                    targetName otherName (m44json targetTransform) (m44json otherTransform)
+            return! post serverUrl "/query/pair-proximity" json (fun r ->
+                let dist = r.GetProperty "dist"
+                let arr = Array.zeroCreate<float32> (dist.GetArrayLength())
+                let mutable i = 0
+                for e in dist.EnumerateArray() do
+                    arr.[i] <- float32 (e.GetDouble())
+                    i <- i + 1
+                arr)
+        }
+
     // Pairwise overlap sufficiency at explicit poses (server defaults for the
     // distance/fraction/sampling knobs) → can the pair be registered at all.
     let pairOverlap

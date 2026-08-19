@@ -20,6 +20,42 @@ about to arrive — log each entry below this marker as it lands.
 Still owed from earlier (needs a human): the interactive in-browser verify
 pass for F9 (hover/arm flows).
 
+## Feathered overlap area everywhere (2026-08-19, DONE)
+
+User request: the D4 T1 feathered overlap area (was placement-gate only)
+must be THE overlap definition consistently across the app — hover
+previews, correspondence point placement, etc.
+
+- **One gate demand** (`MeshView.gateDemandAt`, shared by the main view and
+  every tile): Pair/Pin = the selected pair during ANY pin-location
+  interaction — placement transaction in flight, any armed pick (centre
+  AND the ✚ correspondence picks, previously ungated), the ○ New pin
+  hover, an arm-button hover preview (`PinFocusHover`, which is emitted by
+  the ✚/◯ arm buttons alone — the ◎/◉ focus buttons were reworked away
+  earlier, so no inspection conflation); Matrix = the HOVERED cell's pair.
+- **Matrix hover settles on the feather**: `PlacementGate` wins over
+  `OverlapPreview` in the shader (pre-existing priority), so the screen-
+  space MRT test survives ONLY as the hover's in-flight fallback — instant
+  answer, then the world-space feathered area takes over when the buffers
+  land (~2 s on the study meshes).
+- **Prox pipeline generalized** (`ensurePairProx`): subject = selected pair
+  (workspace) / hovered cell (Matrix); `proxWant`/`proxBusy`/`proxFail` +
+  pose-keyed FIFO memo `proxCache` (cap 12) in UpdateHelpers replace
+  `pairProxReqGen`+`lastProx`; 180 ms delay debounces hover sweeps; the
+  reducer accepts a landing only while still WANTED (a stale hover's
+  buffers can't evict the wanted pair's). `resetProxState` on dataset
+  switch; `invalidateCellError` clears the fail marker.
+- `buildPaneScene` lost its `other` param (the gate reads the demand);
+  tiles gate at Matrix hover too. `frameOverlapTiles` adds `FeatherRadius`
+  to the framed half-width. Gear slider renamed "Overlap feather (m)".
+- Verified headless 9/9 (fetch-on-hover 2 dirs, cache/single-flight on
+  re-hover, sweep debounce, placement/armed flows) + screenshots: MRT
+  fallback → feathered flip on the matrix hover; armed ✚ pick = isolated
+  AND feather-gated (main view + lit tile); gate holds through the whole
+  placement transaction. Zero console errors; builds 0 errors, no new
+  warnings. The DemoHaus dataset was broken (empty main view) and has been
+  DELETED from `src/Superserver/data/`; use study for testing.
+
 ## D1–D5 — study touch-up package (2026-08-19, DONE)
 
 Specs: `ScanPin_v14_D1…D5_*.md` (post-dry-run fixes). All 15 tasks done;

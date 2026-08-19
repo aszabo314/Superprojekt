@@ -24,7 +24,7 @@ type Message =
     | SetIsolineOpacity of float
     | ToggleAnchorGhostMode
     | SetQuickPinRadius of float
-    // The placement gate's world-space feather radius (gear debug slider).
+    // The overlap gate's world-space feather radius (gear debug slider).
     | SetFeatherRadius of float
     // The tile-isolation darkening strength (gear debug slider).
     | SetIsoDimStrength of float
@@ -93,8 +93,9 @@ type Message =
     // ── In-cell error inspection. Results are gen-guarded (UpdateHelpers).
     | CellErrorComputed of gen:int * after:(ScanPinId * Query.PairPinError)[] * before:(ScanPinId * Query.PairPinError)[] option
     | CellDistComputed of gen:int * after:float32[] * before:float32[] option
-    // The placement feather's per-vertex proximity buffers (both pair meshes
-    // in one landing).
+    // The feathered overlap gate's per-vertex proximity buffers — both
+    // subject-pair meshes in one landing (the selected pair, or the hovered
+    // cell's at Matrix); accepted only while still wanted.
     | PairProxComputed of gen:int * buffers:(string * float32[]) list
     // The graph-scope caches: the pooled per-edge sample stream and one map
     // buffer per registered child, each vs its parent — both states in ONE

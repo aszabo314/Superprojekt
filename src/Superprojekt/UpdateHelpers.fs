@@ -60,8 +60,31 @@ module UpdateHelpers =
     let mutable cellDistReqGen = -1
     let mutable graphErrorReqGen = -1
     let mutable graphDistReqGen = -1
-    let mutable pairProxReqGen = -1
     let bumpCellError () = cellErrorGen <- cellErrorGen + 1
+
+    // The feathered overlap gate's proximity pipeline: the subject pair
+    // currently wanted (selected pair in the workspace, hovered cell at
+    // Matrix) with its poses; ONE busy pipeline at a time (its start delay
+    // debounces matrix-hover sweeps); the last failed key so a dead server
+    // isn't hammered per frame; and a small pose-keyed FIFO memo so a
+    // revisited pair re-lands without a server round-trip.
+    let mutable proxWant : (string * string * M44d * M44d) option = None
+    let mutable proxBusy = false
+    let mutable proxFail : (string * string * M44d * M44d) option = None
+    let proxCache =
+        System.Collections.Generic.Dictionary<string * string * M44d * M44d, (string * float32[]) list>()
+    let private proxCacheOrder = System.Collections.Generic.Queue<string * string * M44d * M44d>()
+    let proxCacheAdd key buffers =
+        if not (proxCache.ContainsKey key) then
+            proxCache.[key] <- buffers
+            proxCacheOrder.Enqueue key
+            while proxCache.Count > 12 do
+                proxCache.Remove(proxCacheOrder.Dequeue()) |> ignore
+    let resetProxState () =
+        proxWant <- None
+        proxFail <- None
+        proxCache.Clear()
+        proxCacheOrder.Clear()
 
     // Pair-solve landing guard: PairSolved carries the generation it was
     // issued under; edits/aborts bump it so a stale solve can never land.
@@ -85,6 +108,7 @@ module UpdateHelpers =
     // outlives.
     let invalidateCellError (model : Model) =
         bumpCellError ()
+        proxFail <- None
         { model with
             CellError = None; CellErrorBefore = None; CellDist = None; CellDistBefore = None
             PairProx = Map.empty

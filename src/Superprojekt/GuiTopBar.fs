@@ -393,7 +393,7 @@ module GuiTopBar =
                             numberInput "Quick-pin radius (m)" 0.01 50.0 0.005 (sprintf "%.3f") model.QuickPinRadius (fun v ->
                                 env.Emit [SetQuickPinRadius v])
                         }
-                        gearSlider "Placement feather (m)" 0.0 3.0 0.05 (sprintf "%.2f m") model.FeatherRadius SetFeatherRadius
+                        gearSlider "Overlap feather (m)" 0.0 3.0 0.05 (sprintf "%.2f m") model.FeatherRadius SetFeatherRadius
                         gearSlider "Isolation darkening" 0.0 1.0 0.05 (sprintf "%.2f") model.IsoDimStrength SetIsoDimStrength
                         gearSlider "Pin flag scale" 0.2 5.0 0.1 (sprintf "%.1f×") model.FlagScale SetFlagScale
                         gearSlider "Marker reveal radius (m)" 0.05 2.0 0.05 (sprintf "%.2f m") model.RevealRadius SetRevealRadius

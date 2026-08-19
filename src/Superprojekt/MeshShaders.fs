@@ -89,17 +89,20 @@ module MeshShader =
         // ghost silhouette whitens with the surface, the intrinsic heatmaps are
         // suppressed), so the brushed dots are the only coloured signal left.
         member x.ColorIsolate     : float32 = x?ColorIsolate
-        // Matrix-hover overlap preview: 1 → a fragment is solid only where the
-        // footprint coverage MRT covers its pixel in BOTH hovered-pair channels
+        // Matrix-hover overlap preview — the IN-FLIGHT FALLBACK while the
+        // hovered pair's proximity buffers load (PlacementGate overrides it
+        // on landing): 1 → a fragment is solid only where the footprint
+        // coverage MRT covers its pixel in BOTH hovered-pair channels
         // (screen-space test along the camera ray); everything else drops to
         // the ghost floor. The Sel vectors dot-select each pair mesh's channel
         // out of the two coverage targets.
         member x.OverlapPreview   : int = x?OverlapPreview
-        // Placement gate (armed centre / ○ New pin hover at Pair/Pin): a
-        // fragment is solid only where the OTHER pair mesh has surface within
-        // FeatherRadius (the PairProx vertex attribute, metric m) — the
-        // world-space feathered generalization of the strict footprint
-        // overlap. 0 until the proximity buffers have landed.
+        // The feathered overlap gate — ONE demand rule for every scope
+        // (placement/edit interactions in the workspace, the hovered pair at
+        // Matrix): a fragment is solid only where the OTHER pair mesh has
+        // surface within FeatherRadius (the PairProx vertex attribute,
+        // metric m) — the world-space feathered generalization of the strict
+        // footprint overlap. 0 until the proximity buffers have landed.
         member x.PlacementGate    : int = x?PlacementGate
         member x.FeatherRadius    : float32 = x?FeatherRadius
         // Tile-isolation scrim strength: > 0 while an explicit isolation
@@ -193,10 +196,12 @@ module MeshShader =
                 if blobsActive then
                     if inAnyBlob then 1.0f else 0.0f
                 else 1.0f
-            // Placement gate: the fragment's own surface point must have the
-            // OTHER pair mesh within the feather radius (world-space, per
-            // vertex) — the feathered generalization of "both meshes present
-            // here". Matrix-hover overlap preview: both hovered-pair coverage
+            // The feathered overlap gate: the fragment's own surface point
+            // must have the OTHER pair mesh within the feather radius
+            // (world-space, per vertex) — the feathered generalization of
+            // "both meshes present here"; it wins over the preview below, so
+            // the settled area is the same everywhere. Matrix-hover overlap
+            // preview (the in-flight fallback): both hovered-pair coverage
             // channels must cover this pixel (0.12 = the coverage composites'
             // threshold — one additive 0.25 layer clears it).
             let mutable overlapFull = true

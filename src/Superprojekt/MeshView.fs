@@ -546,23 +546,40 @@ module MeshView =
                     float32 (ScanPin.renderLength s (armCommitRadiusAt model t)))
             | _ -> V4f.Zero)
 
-    // The feathered placement gate (the ○ New pin hover and the armed centre
-    // pick at Pair/Pin): ON once the pair's proximity buffers have landed —
-    // solid where the OTHER pair mesh has surface within FeatherRadius of the
-    // fragment (the PairProx vertex attribute). Off while the buffers are in
-    // flight, so the gate never half-tests.
+    // The feathered overlap gate's DEMAND — which pair the gate wants, ONE
+    // rule for the main view and every tile: inside the workspace the
+    // selected pair during any pin-location interaction (a placement
+    // transaction in flight, any armed pick, the ○ New pin hover, an
+    // arm-button hover preview); at Matrix the hovered cell's pair — there
+    // the feathered gate takes over from the screen-space MRT overlap
+    // preview the moment the proximity buffers land (the shader prioritizes
+    // PlacementGate over OverlapPreview).
+    let gateDemandAt (model : AdaptiveModel) (t : AdaptiveToken) =
+        match model.Focus.GetValue t with
+        | FocusPair | FocusPin ->
+            match (model.Sel.GetValue t).Pair with
+            | Some _ as pair when
+                model.NewPinHover.GetValue t
+                || (model.ArmedPick.GetValue t).IsSome
+                || (model.PinFocusHover.GetValue t).IsSome
+                || (match model.ScanPins.Placement.GetValue t with
+                    | PlacementActive _ -> true | PlacementIdle -> false) -> pair
+            | _ -> None
+        | FocusMatrix -> model.MatrixHoverPair.GetValue t
+
+    // The feathered overlap gate: ON while the demand names a pair whose
+    // proximity buffers have BOTH landed — solid where the OTHER pair mesh
+    // has surface within FeatherRadius of the fragment (the PairProx vertex
+    // attribute). Off while the buffers are in flight, so the gate never
+    // half-tests (at Matrix the MRT overlap preview covers the wait).
     let placementGateUniforms (model : AdaptiveModel) =
         let on =
             AVal.custom (fun t ->
-                match model.Focus.GetValue t with
-                | FocusPair | FocusPin ->
-                    (match (model.Sel.GetValue t).Pair with
-                     | Some (a, b) when model.NewPinHover.GetValue t
-                                        || model.ArmedPick.GetValue t = Some ArmCentre ->
-                        let prox = model.PairProx.GetValue t
-                        Map.containsKey a prox && Map.containsKey b prox
-                     | _ -> false)
-                | FocusMatrix -> false)
+                match gateDemandAt model t with
+                | Some (a, b) ->
+                    let prox = model.PairProx.GetValue t
+                    Map.containsKey a prox && Map.containsKey b prox
+                | None -> false)
         on |> AVal.map (fun o -> if o then 1 else 0),
         model.FeatherRadius |> AVal.map float32
 
@@ -1104,10 +1121,12 @@ module MeshView =
 
     // Overlap-preview uniforms: the on-flag + the active pair's coverage-
     // channel selectors over the two MRT targets (channel = display index,
-    // 0-3 → target0, 4-7 → target1 — the OutlineCoverage layout). The gate
-    // lights for the MATRIX HOVER alone (pair registerability preview) — the
-    // pin-LOCATION interactions use the world-space feathered placement gate
-    // instead (placementGateUniforms). A pair mesh beyond the 8-channel cap
+    // 0-3 → target0, 4-7 → target1 — the OutlineCoverage layout). Lights for
+    // the MATRIX HOVER alone, and only as the IN-FLIGHT FALLBACK there: the
+    // instant screen-space preview while the hovered pair's proximity
+    // buffers load — the feathered gate (placementGateUniforms) overrides it
+    // on landing, so the settled overlap area is the same world-space
+    // feathered one everywhere. A pair mesh beyond the 8-channel cap
     // disables the preview outright rather than half-testing.
     let overlapPreviewUniforms (model : AdaptiveModel) =
         let idxA = meshIndicesA model
@@ -1136,18 +1155,15 @@ module MeshView =
         pairIdx |> AVal.map (function Some (_, ib) -> sel ib 1 | None -> V4f.Zero)
 
     // One strip-tile mesh: the mesh `name` with the full shipped shader,
-    // inspection modes off but the per-mesh survey heatmap live. `other` =
-    // the other pair mesh (adaptive, Some while this tile's mesh sits in the
-    // selected pair): the feathered placement gate engages while a placement
-    // is in flight — solid only where the other mesh has surface within
-    // FeatherRadius (the PairProx vertex attribute), the rest at the ghost
-    // floor — exactly the valid placement area, in world space like the main
-    // view's.
+    // inspection modes off but the per-mesh survey heatmap live. The
+    // feathered overlap gate follows the SAME demand as the main view
+    // (gateDemandAt, scoped to this tile's mesh) — solid only where the
+    // other demand-pair mesh has surface within FeatherRadius (the PairProx
+    // vertex attribute), the rest at the ghost floor.
     let buildPaneScene
         (model : AdaptiveModel)
         (name : string)
         (paneActive : aval<bool>)
-        (other : aval<string option>)
         (viewportSize : aval<V2i>) : ISceneNode =
         let loaded = loadMeshAsync (fun () -> ()) name
         let scale = scaleFor model name
@@ -1164,13 +1180,10 @@ module MeshView =
         // so it never half-tests while a fetch is in flight.
         let paneGate =
             AVal.custom (fun t ->
-                let pl =
-                    match model.ScanPins.Placement.GetValue t with
-                    | PlacementActive _ -> true | PlacementIdle -> false
-                match other.GetValue t with
-                | Some o when pl ->
+                match gateDemandAt model t with
+                | Some (a, b) when name = a || name = b ->
                     let prox = model.PairProx.GetValue t
-                    if Map.containsKey name prox && Map.containsKey o prox then 1 else 0
+                    if Map.containsKey a prox && Map.containsKey b prox then 1 else 0
                 | _ -> 0)
         let active =
             (paneActive, loaded.fvc) ||> AVal.map2 (fun a fvc -> a && fvc > 3)

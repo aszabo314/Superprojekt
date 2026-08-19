@@ -168,14 +168,17 @@ module Update =
             | None -> model
 
     // The pair's overlap area (as-loaded world bbox intersection in XY; the
-    // union when they don't meet) — the new-transaction framing.
+    // union when they don't meet) — the new-transaction framing. The feather
+    // margin joins the half-width: the gate's legal area extends past the
+    // strict border by FeatherRadius.
     let private frameOverlapTiles (a : string) (b : string) (model : Model) =
         match Map.tryFind a model.MeshBounds, Map.tryFind b model.MeshBounds with
         | Some ba, Some bb when not ba.IsInvalid && not bb.IsInvalid ->
             let lo = V3d(max ba.Min.X bb.Min.X, max ba.Min.Y bb.Min.Y, min ba.Min.Z bb.Min.Z)
             let hi = V3d(min ba.Max.X bb.Max.X, min ba.Max.Y bb.Max.Y, max ba.Max.Z bb.Max.Z)
             let box = if lo.X < hi.X && lo.Y < hi.Y then Box3d(lo, hi) else ba.ExtendedBy bb
-            frameTiles [a; b] box.Center (max 1.0 (0.6 * max box.Size.X box.Size.Y)) model
+            frameTiles [a; b] box.Center
+                (max 1.0 (0.6 * max box.Size.X box.Size.Y + model.FeatherRadius)) model
         | _ -> model
 
     let private updateCore (env : Env<Message>) (model : Model) (msg : Message) =
@@ -477,7 +480,17 @@ module Update =
             if gen <> cellErrorGen then model
             else { model with CellDist = Some after; CellDistBefore = before }
         | PairProxComputed(gen, buffers) ->
-            if gen <> cellErrorGen then model
+            // A landing must also still be WANTED (the matrix hover may have
+            // moved to another cell mid-flight) — a stale pair's buffers
+            // would evict the wanted ones and flicker the gate.
+            let wanted =
+                match proxWant with
+                | Some (a, b, _, _) ->
+                    match buffers with
+                    | [ (x, _); (y, _) ] -> (x = a && y = b) || (x = b && y = a)
+                    | _ -> false
+                | None -> false
+            if gen <> cellErrorGen || not wanted then model
             else { model with PairProx = Map.ofList buffers }
         | GraphErrorComputed(gen, after, before) ->
             if gen <> cellErrorGen then model
@@ -590,6 +603,7 @@ module Update =
                 // Everything keyed by the old dataset's meshes/pins must go, and the
                 // scalar-map generations bump so old-dataset fetches land dead.
                 bumpPairOverlap ()
+                resetProxState ()
                 ScanPinUpdate.resetFigureDebounce ()
                 { model with
                     ActiveDataset = Some dataset
@@ -1018,42 +1032,66 @@ module Update =
                 } |> ignore
                 model
 
-    // The placement feather's proximity buffers: for each pair mesh, every
-    // vertex's Euclidean distance to the OTHER pair mesh at the displayed
-    // poses (metric m, served vertex order). Fetched once per pair selection;
-    // the feather-radius compare is a live shader uniform, so the gear slider
-    // never refetches. The last landing is memoized by (mesh, pose) key —
-    // pose-preserving invalidations (a radius edit bumps the shared
-    // generation) re-land it without a server round-trip.
-    let mutable private lastProx : ((string * M44d) * (string * M44d) * (string * float32[]) list) option = None
+    // The feathered overlap gate's proximity buffers: for each subject-pair
+    // mesh, every vertex's Euclidean distance to the OTHER pair mesh at the
+    // displayed poses (metric m, served vertex order). The SUBJECT follows
+    // the gate demand's scope — the selected pair inside the workspace, the
+    // HOVERED cell's pair at Matrix — through one debounced single-flight
+    // pipeline (a matrix-hover sweep only fetches the cell the cursor rests
+    // on; until the landing the screen-space MRT preview covers the wait).
+    // The feather-radius compare is a live shader uniform, so the gear
+    // slider never refetches; landings are memoized pose-keyed
+    // (UpdateHelpers.proxCache), so pair revisits and pose-preserving
+    // invalidations (a radius edit) re-land without a server round-trip.
+    // This postlude re-runs per message (incl. per-frame Rendered), which is
+    // what re-drives the pipeline after a want change mid-flight.
     let private ensurePairProx (env : Env<Message>) (model : Model) : Model =
-        match model.Focus, model.Sel.Pair with
-        | FocusMatrix, _ | _, None -> model
-        | (FocusPair | FocusPin), Some (a, b) ->
-            if not (Map.isEmpty model.PairProx) || pairProxReqGen = cellErrorGen then model
+        let subject =
+            match model.Focus with
+            | FocusPair | FocusPin -> model.Sel.Pair
+            | FocusMatrix -> model.MatrixHoverPair
+        match subject with
+        | None ->
+            proxWant <- None
+            model
+        | Some (a, b) ->
+            let key =
+                (a, b, (ModelTransforms.displayedWorld model a).Forward,
+                       (ModelTransforms.displayedWorld model b).Forward)
+            proxWant <- Some key
+            if (Map.containsKey a model.PairProx && Map.containsKey b model.PairProx)
+               || proxFail = Some key then model
             else
-                pairProxReqGen <- cellErrorGen
-                let gen = cellErrorGen
-                let tA = (ModelTransforms.displayedWorld model a).Forward
-                let tB = (ModelTransforms.displayedWorld model b).Forward
-                match lastProx with
-                | Some (ka, kb, buffers) when ka = (a, tA) && kb = (b, tB) ->
-                    env.Emit [PairProxComputed(gen, buffers)]
+                match proxCache.TryGetValue key with
+                | true, buffers ->
+                    env.Emit [PairProxComputed(cellErrorGen, buffers)]
                     model
                 | _ ->
-                    task {
-                        try
-                            let! ds =
-                                Async.Parallel
-                                    [ Query.pairProximity ApiConfig.apiBase.Value a b tA tB
-                                      Query.pairProximity ApiConfig.apiBase.Value b a tB tA ]
-                                |> Async.StartAsTask
-                            let buffers = [a, ds.[0]; b, ds.[1]]
-                            lastProx <- Some ((a, tA), (b, tB), buffers)
-                            env.Emit [PairProxComputed(gen, buffers)]
-                        with _ -> ()
-                    } |> ignore
-                    model
+                    if proxBusy then model
+                    else
+                        proxBusy <- true
+                        task {
+                            try
+                                do! System.Threading.Tasks.Task.Delay 180
+                                // The want may have moved during the delay —
+                                // fetch what is wanted NOW, not the trigger.
+                                match proxWant with
+                                | Some ((a, b, tA, tB) as key) when not (proxCache.ContainsKey key) ->
+                                    let gen = cellErrorGen
+                                    try
+                                        let! ds =
+                                            Async.Parallel
+                                                [ Query.pairProximity ApiConfig.apiBase.Value a b tA tB
+                                                  Query.pairProximity ApiConfig.apiBase.Value b a tB tA ]
+                                            |> Async.StartAsTask
+                                        let buffers = [a, ds.[0]; b, ds.[1]]
+                                        proxCacheAdd key buffers
+                                        env.Emit [PairProxComputed(gen, buffers)]
+                                    with _ -> proxFail <- Some key
+                                | _ -> ()
+                            finally proxBusy <- false
+                        } |> ignore
+                        model
 
     // The graph-scope error stream (Matrix): one pin batch per established
     // edge, measured child-relative-to-parent (pass the PARENT first — the

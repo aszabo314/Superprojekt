@@ -338,7 +338,8 @@ module GuiPanes =
             (model.ActiveDataset, model.DatasetScales) ||> AVal.map2 DatasetScale.active
         let pinsVal = model.ScanPins.Pins |> AMap.toAVal
         // The other pair mesh while this mesh sits in the selected pair —
-        // scopes the pin marks and feeds the armed-placement overlap gate.
+        // scopes the pin marks (the overlap gate reads the shared demand,
+        // MeshView.gateDemandAt, not this).
         let otherA =
             model.Sel |> AVal.map (fun s ->
                 match s.Pair with
@@ -422,7 +423,7 @@ module GuiPanes =
                 Sg.Pass RenderPass.passZero
                 Sg.Uniform("ViewportSize", size)
 
-                MeshView.buildPaneScene model name shownA otherA size
+                MeshView.buildPaneScene model name shownA size
 
                 // The gold reference outline: the ROOT mesh's footprint from
                 // this tile's camera, on top of everything.

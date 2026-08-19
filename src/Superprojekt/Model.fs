@@ -265,10 +265,11 @@ type Model =
         AnchorGhostMode      : LevelFlags
         // Seeded from DatasetDefaults.pinRadius on every dataset switch.
         QuickPinRadius       : float
-        // The placement gate's world-space feather (m): a spot is a valid pin
-        // location when BOTH pair meshes have surface within this radius —
-        // strict footprint overlap alone is slightly too tight for real
-        // features. Compared live against the PairProx vertex attribute.
+        // The overlap gate's world-space feather (m) — THE one overlap-area
+        // definition, every scope: a spot counts as overlap when BOTH pair
+        // meshes have surface within this radius (strict footprint overlap
+        // alone is slightly too tight for real features). Compared live
+        // against the PairProx vertex attribute.
         FeatherRadius        : float
         // How strongly the non-isolated meshes darken toward the scrim ink
         // while a tile isolation (lock or preview) is in effect.
@@ -362,10 +363,11 @@ type Model =
         // colours describe the blinked pose. Lands with CellDist in ONE
         // message, so a peek never reads a half-landed flip.
         CellDistBefore      : float32[] option
-        // Per pair mesh, each vertex's Euclidean distance (metric m) to the
-        // OTHER pair mesh at the displayed poses, in served vertex order —
-        // the placement gate's feather test data (entries exist for the
-        // selected pair only; rides the cellErrorGen invalidation).
+        // Per subject-pair mesh, each vertex's Euclidean distance (metric m)
+        // to the OTHER pair mesh at the displayed poses, in served vertex
+        // order — the feathered overlap gate's test data (entries exist for
+        // ONE pair at a time: the selected pair in the workspace, the
+        // hovered cell's at Matrix; rides the cellErrorGen invalidation).
         PairProx            : Map<string, float32[]>
         // The GRAPH-scope error stream (Matrix): every established edge's pins,
         // child-relative-to-parent, in canonical edge×pin order — the pooled

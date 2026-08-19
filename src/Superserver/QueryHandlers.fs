@@ -57,6 +57,19 @@ type RegionDistanceRequest = {
     RefTransform     : float[]
 }
 
+// Per-vertex Euclidean distance of each target vertex to the other mesh's
+// surface (unsigned, no overlap gate — the client's placement feather compares
+// it against a live radius), in the target's served vertex order.
+[<CLIMutable>]
+type PairProximityRequest = {
+    TargetName       : string
+    TargetIndex      : int
+    OtherName        : string
+    OtherIndex       : int
+    TargetTransform  : float[]
+    OtherTransform   : float[]
+}
+
 let inline toV3d (a : float[]) = V3d(a.[0], a.[1], a.[2])
 let inline fromV3d (v : V3d)   = [| v.X; v.Y; v.Z |]
 
@@ -181,6 +194,30 @@ let regionDistanceHandler : HttpHandler =
                         else dist.[i] <- float32 d
                     else dist.[i] <- 1e30f) |> ignore
         log.LogInformation("region-distance {Target} vs {Ref}: {Verts} verts", req.TargetName, req.RefName, pos.Length)
+        return json {| dist = dist |}
+    })
+
+// Plain closest-point distance per target vertex — deliberately WITHOUT
+// region-distance's Z-overlap gate: the placement feather needs the lateral
+// reach beyond the strict footprint that the gate exists to suppress.
+let pairProximityHandler : HttpHandler =
+    tryQuery "pair-proximity" (fun ctx -> task {
+        let log = ctx.GetLogger "Superserver"
+        let! req = ctx.BindJsonAsync<PairProximityRequest>()
+        let lmT = loadMesh req.TargetName req.TargetIndex
+        let lmO = loadMesh req.OtherName req.OtherIndex
+        let tT  = mat16 req.TargetTransform
+        let oInv = (mat16 req.OtherTransform).Inverse
+        let cT  = lmT.parsed.centroid
+        let cO  = lmO.parsed.centroid
+        let pos = lmT.parsed.positions
+        let dist = Array.zeroCreate<float32> pos.Length
+        Parallel.For(0, pos.Length, fun i ->
+                let vWorld = tT.TransformPos (V3d pos.[i] + cT)
+                let vOtherLocal = oInv.TransformPos vWorld - cO
+                let res = lmO.scene.GetClosestPoint(V3f vOtherLocal)
+                dist.[i] <- if res.IsValid then sqrt (float32 res.DistanceSquared) else 1e30f) |> ignore
+        log.LogInformation("pair-proximity {Target} vs {Other}: {Verts} verts", req.TargetName, req.OtherName, pos.Length)
         return json {| dist = dist |}
     })
 

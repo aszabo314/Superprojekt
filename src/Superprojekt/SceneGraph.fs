@@ -232,7 +232,8 @@ module SceneGraph =
                         && (abs (cam.targetPhi.GetValue t - cam.phi.GetValue t) > 1e-4
                             || abs (cam.targetTheta.GetValue t - cam.theta.GetValue t) > 1e-4)
                     let panning =
-                        drags |> MapExt.toSeq |> Seq.exists (fun (_, (_, b)) -> b = cam.panButton)
+                        drags |> MapExt.toSeq
+                        |> Seq.exists (fun (_, (_, b)) -> b = cam.panButton || b = Button.Button4)
                     let zooming =
                         let r = cam.radius.GetValue t
                         abs (cam.targetRadius.GetValue t - r) > 1e-3 * max 1e-6 r

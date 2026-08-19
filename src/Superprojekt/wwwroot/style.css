@@ -100,6 +100,18 @@ body.loaded { background: #f4f6f8; }
 }
 /* The isolate lock. */
 .mesh-tile.tile-iso { outline: 2px solid #1a56db; outline-offset: -2px; }
+/* Armed correspondence pick: the pick is valid in exactly ONE tile — the
+   other is veiled AND inert (the A9 scrim scoped to the strip; veil weaker
+   than A9's .5 so the exempt sibling mark reads through). */
+.mesh-tile.tile-pick-off { pointer-events: none; }
+.mesh-tile.tile-pick-off::after {
+    content: ''; position: absolute; inset: 0;
+    background: rgba(15, 23, 42, 0.45); z-index: 5;
+}
+.mesh-tile.tile-pick-on {
+    outline: 2px solid #ffffff; outline-offset: -2px;
+    box-shadow: 0 0 10px 3px rgba(26, 86, 219, 0.8);
+}
 /* An armed pick turns every view into a pick surface. */
 .mesh-tile.tile-armed { cursor: crosshair; }
 .pane-chip {
@@ -108,6 +120,16 @@ body.loaded { background: #f4f6f8; }
     background: rgba(255, 255, 255, 0.92); border: 1px solid #d7dce4;
     border-radius: 4px; padding: 3px 8px; font-size: 12px; font-weight: 600;
     pointer-events: none;
+}
+/* The FULL server folder name — wraps, never truncates. */
+.pmx-name {
+    font-weight: 600; color: #0f172a; min-width: 0;
+    white-space: normal; word-break: break-word;
+}
+/* The strip's orientation controls (align-to-view / north-up reset). */
+.tiles-head {
+    flex: none; display: flex; align-items: center; gap: 4px;
+    padding: 4px 4px 2px 4px;
 }
 
 /* Pick-value tooltip (the hovered sample's exact value) riding its 3D point. */
@@ -191,6 +213,14 @@ body.loaded { background: #f4f6f8; }
     cursor: ew-resize; z-index: 3; touch-action: none;
 }
 .left-handle:hover { background: rgba(26, 86, 219, 0.35); }
+/* Visible grip: the resize bars must read as draggable at first glance. */
+.left-handle::after, .tiles-handle::after {
+    content: ''; position: absolute; top: 50%; left: 50%;
+    width: 4px; height: 44px; transform: translate(-50%, -50%);
+    border-radius: 2px; background: #94a3b8;
+    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.9);
+}
+.left-handle:hover::after, .tiles-handle:hover::after { background: #1a56db; }
 .workflow-rail {
     position: relative;
     width: 100%;
@@ -270,12 +300,15 @@ body.loaded { background: #f4f6f8; }
 .home-nav {
     flex: 1 1 0; min-width: 0;
     display: flex; flex-direction: column;
-    border: 1px solid #e6eaf0; border-radius: 4px; background: #ffffff;
+    /* One shared, clearly visible frame — the tree and the matrix must read
+       as equal peer controls (neither dominates). */
+    border: 2px solid #94a3b8; border-radius: 4px; background: #ffffff;
 }
 .home-nav-head { padding: 3px 8px; background: #f8fafc; border-bottom: 1px solid #e6eaf0; flex: none; }
 .home-nav-body { padding: 4px; overflow: auto; min-height: 0; }
 .tree-canvas { overflow: auto; }
 .tree-bridge { display: none; }
+.ck-auto-bridge { display: none; }
 /* The finished ribbon — a mark ON the tree, derived from the spanned state
    (disconnecting clears it by itself). */
 .tree-ribbon {
@@ -436,6 +469,19 @@ body.loaded { background: #f4f6f8; }
     margin-left: auto;
     display: flex; align-items: center; gap: 6px;
 }
+/* User-study mode (/study): loud phase banner; the debug buttons fade to
+   ghost chrome — still clickable, a gear-menu dataset switch is the exit. */
+.tb-study {
+    display: flex; align-items: center; gap: 8px;
+    height: 26px; padding: 0 10px;
+    background: #e8effc; border: 1px solid #1a56db; border-radius: 4px;
+}
+.tb-study-text { color: #123c98; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.tb-study-start { background: #1a56db; border-color: #1447ba; color: #ffffff; }
+.tb-study-start:hover { background: #1447ba; }
+.tb-right.study-on .tb-btn-tiny { color: #cdd3da; border-color: #eceef2; background: #ffffff; }
+.tb-right.study-on .tb-btn-tiny:hover { background: #f6f7f9; color: #aab2bc; }
+
 .tb-coord {
     font-family: 'SF Mono', 'Monaco', monospace;
     font-size: 12px; color: #334155;
@@ -504,14 +550,6 @@ body.loaded { background: #f4f6f8; }
 .tb-mesh-popover { width: 340px; }
 .tb-gear-popover .pmx-num { color: #e2e8f0; }
 .tb-ref-btn { white-space: nowrap; flex: none; }
-
-/* The jump-to-sensor dropdown (left top cluster — anchors left, not right). */
-.tb-menu-left { left: 0; right: auto; }
-.tb-sensor-popover { width: 240px; }
-.tb-sensor-row { cursor: pointer; border-radius: 3px; padding: 2px 4px; }
-.tb-sensor-row:hover { background: #334155; }
-.tb-sensor { margin-right: 10px; }
-.tb-sensor-btn { height: 24px; padding: 0 8px; font-size: 11px; }
 
 /* The near/far cut sliders: each ONE bordered group (label · slider ·
    value box) matching the tb-btn chrome, without the loose inner gaps. */
@@ -601,7 +639,9 @@ body.loaded { background: #f4f6f8; }
     .tb-gear-popover { width: calc(100vw - 16px); }
     .tb-coord { font-size: 10px; }
 }
-.pmx { display: flex; flex-direction: column; gap: 3px; padding: 4px 2px; }
+/* fit-content: the boot fit-zoom measures the natural width (a block flex
+   column would report the panel width instead). */
+.pmx { display: flex; flex-direction: column; gap: 3px; padding: 4px 2px; width: fit-content; }
 .pmx-row { display: flex; gap: 3px; align-items: center; }
 .pmx-rowhead { width: 36px; display: flex; align-items: center; gap: 3px; flex: none; }
 .pmx-colhead { width: 22px; display: flex; align-items: center; justify-content: center; gap: 2px; flex: none; }

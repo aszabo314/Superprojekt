@@ -104,49 +104,12 @@ module Primitives =
             let n = raw / mag
             (if n < 1.5 then 1.0 elif n < 3.5 then 2.0 elif n < 7.5 then 5.0 else 10.0) * mag
 
-    // Friendly display names: drop the dataset prefix, then strip the longest common
-    // prefix + suffix shared across the whole mesh set, so e.g. {job_0789, job_0791, …}
-    // reads {0789, 0791, …}. Trailing digits of the common prefix (and leading digits
-    // of the common suffix) are kept, so a shared numeric id is never cut mid-number.
-    let private meshLocal (name : string) =
+    // Mesh display name = the server FOLDER name (the internal id drops only
+    // the dataset prefix). Never shortened — abbreviations cost the reader
+    // more than they save (study finding).
+    let meshFolder (name : string) =
         let s = name.IndexOf('/')
         if s >= 0 then name.[s + 1 ..] else name
-    let private commonPrefixLen (a : string) (b : string) =
-        let n = min a.Length b.Length
-        let mutable i = 0
-        while i < n && a.[i] = b.[i] do i <- i + 1
-        i
-    let private commonSuffixLen (a : string) (b : string) =
-        let n = min a.Length b.Length
-        let mutable i = 0
-        while i < n && a.[a.Length - 1 - i] = b.[b.Length - 1 - i] do i <- i + 1
-        i
-    let friendlyMap (names : string list) : Map<string, string> =
-        let locals = names |> List.map (fun n -> n, meshLocal n)
-        match locals with
-        | [] | [_] -> locals |> Map.ofList
-        | _ ->
-            let ls = locals |> List.map snd
-            let lcp = ls |> List.reduce (fun a b -> a.Substring(0, commonPrefixLen a b))
-            let lcs = ls |> List.reduce (fun a b -> a.Substring(a.Length - commonSuffixLen a b))
-            // keep a shared numeric id intact: back the prefix off its trailing digits,
-            // the suffix off its leading digits.
-            let pre =
-                let mutable e = lcp.Length
-                while e > 0 && System.Char.IsDigit lcp.[e - 1] do e <- e - 1
-                lcp.Substring(0, e)
-            let suf =
-                let mutable i = 0
-                while i < lcs.Length && System.Char.IsDigit lcs.[i] do i <- i + 1
-                lcs.Substring(i)
-            locals |> List.map (fun (full, loc) ->
-                let mutable r = loc
-                if pre.Length > 0 && r.Length > pre.Length && r.StartsWith pre then r <- r.Substring(pre.Length)
-                if suf.Length > 0 && r.Length > suf.Length && r.EndsWith suf then r <- r.Substring(0, r.Length - suf.Length)
-                full, (if r = "" then loc else r))
-            |> Map.ofList
-    let friendlyName (names : string list) (name : string) =
-        Map.tryFind name (friendlyMap names) |> Option.defaultValue (meshLocal name)
     let parseFloat (s : string) =
         match System.Double.TryParse(s, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
         | true, v -> Some v

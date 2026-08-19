@@ -134,9 +134,18 @@ module ApiConfig =
             let mutable path = uri.AbsolutePath
             // /s/{token} is a virtual route (server serves index.html) — must not shift the API base.
             if path.StartsWith "/s/" || path = "/s" then path <- ""
+            // /study is a virtual route too (user-study mode).
+            let trimmed = path.TrimEnd('/')
+            if trimmed.EndsWith "/study" then path <- trimmed.Substring(0, trimmed.Length - "/study".Length)
             if path.Contains('.') then path <- path.Substring(0, path.LastIndexOf('/') + 1)
             path <- path.TrimEnd('/')
             uri.GetLeftPart(System.UriPartial.Authority) + path + "/api"
+        )
+
+    // The /study virtual route launches user-study mode (ServerActions.init).
+    let studyUrl =
+        lazy (
+            System.Uri(Window.Location.Href).AbsolutePath.TrimEnd('/').EndsWith "/study"
         )
 
     // Optional ?dataset= startup override (ServerActions.init); unknown names

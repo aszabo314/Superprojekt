@@ -32,32 +32,48 @@ module ScanPinScene =
 
     // The correspondence locator's triplex arms (white rim / ink / identity
     // core), open-centred; `h` = the outer radius in render units — the
-    // caller supplies the view's screen-constant conversion.
+    // caller supplies the view's screen-constant conversion. `wt` = the gear
+    // Marker-line-weight multiplier (Model.MarkerWeight); the heavy rim is
+    // what keeps the glyph readable over noisy texture and the dark void.
     let addCrosshairGlyph (out : ResizeArray<V3d * V3d * V4d * float>)
                           (cR : V3d) (right : V3d) (up : V3d) (h : float)
-                          (col : V3d) (dim : float) =
+                          (col : V3d) (wt : float) (dim : float) =
         let rim = V4d(1.0, 1.0, 1.0, 0.85 * dim)
         let ink = V4d(Primitives.pinInkV3d, 0.9 * dim)
         let core = V4d(col, 0.95 * dim)
         for d in [| right; -right; up; -up |] do
             let p0 = cR + d * (0.3 * h)
             let p1 = cR + d * h
-            out.Add(p0, p1, rim, 5.4)
-            out.Add(p0, p1, ink, 3.4)
-            out.Add(p0, p1, core, 1.7)
+            out.Add(p0, p1, rim, 7.2 * wt)
+            out.Add(p0, p1, ink, 3.4 * wt)
+            out.Add(p0, p1, core, 1.7 * wt)
+
+    // The gold hover/focus halo around a crosshair, as GlyphLines CAM
+    // segments (unit-circle offsets — the vertex stage applies the
+    // screen-constant h): ink under gold, the outline treatment.
+    let addGoldHaloC (out : ResizeArray<V3d * V2d * V2d * V4d * float>)
+                     (cR : V3d) (dim : float) =
+        let n = 24
+        let r = 1.25
+        for w, col in [ 4.6, V4d(Primitives.pinInkV3d, 0.9 * dim)
+                        2.6, V4d(Primitives.refGoldV3d, 0.95 * dim) ] do
+            for i in 0 .. n - 1 do
+                let a0 = float i / float n * Constant.PiTimesTwo
+                let a1 = float (i + 1) / float n * Constant.PiTimesTwo
+                out.Add(cR, V2d(cos a0, sin a0) * r, V2d(cos a1, sin a1) * r, col, w)
 
     // The main view's variant as GlyphLines CAM segments (centre + UNIT
     // camera-plane offsets — the vertex stage applies the screen-constant h,
     // so the buffer never rebuilds on a camera move).
     let addCrosshairGlyphC (out : ResizeArray<V3d * V2d * V2d * V4d * float>)
-                           (cR : V3d) (col : V3d) (dim : float) =
+                           (cR : V3d) (col : V3d) (wt : float) (dim : float) =
         let rim = V4d(1.0, 1.0, 1.0, 0.85 * dim)
         let ink = V4d(Primitives.pinInkV3d, 0.9 * dim)
         let core = V4d(col, 0.95 * dim)
         for d in [| V2d.IO; -V2d.IO; V2d.OI; -V2d.OI |] do
-            out.Add(cR, d * 0.3, d * 1.0, rim, 5.4)
-            out.Add(cR, d * 0.3, d * 1.0, ink, 3.4)
-            out.Add(cR, d * 0.3, d * 1.0, core, 1.7)
+            out.Add(cR, d * 0.3, d * 1.0, rim, 7.2 * wt)
+            out.Add(cR, d * 0.3, d * 1.0, ink, 3.4 * wt)
+            out.Add(cR, d * 0.3, d * 1.0, core, 1.7 * wt)
 
     // The area figure's thin duplex equator ring.
     let addAreaRing (out : ResizeArray<V3d * V3d * V4d * float>)
@@ -76,18 +92,19 @@ module ScanPinScene =
                     for i in 0 .. rp.Length - 2 do
                         out.Add(rp.[i], rp.[i + 1], ringWhite, 1.6)
 
-    // The loud-highlight mark: a bold dashed double ring (ink under white)
-    // at ×1.18 of the area ring.
+    // The loud-highlight mark: a bold dashed double ring (ink under GOLD —
+    // gold outline/glow = transient hover/focus; gold FILL stays reference
+    // identity) at ×1.18 of the area ring.
     let addHighlightRing (out : ResizeArray<V3d * V3d * V4d * float>)
                          (cR : V3d) (u : V3d) (v : V3d) (rR : float) =
         addDashedRing out cR u v (rR * 1.18) (V4d(Primitives.pinInkV3d, 0.9)) 5.0 72
-        addDashedRing out cR u v (rR * 1.18) (V4d(1.0, 1.0, 1.0, 0.95)) 3.0 72
+        addDashedRing out cR u v (rR * 1.18) (V4d(Primitives.refGoldV3d, 0.95)) 3.0 72
 
     // The intersection reveal's white distance fade (`lines` in the point's
     // mesh's own frame; `toRender` bakes pose + dataset transform).
     let addRevealLines (out : ResizeArray<V3d * V3d * V4d * float>)
                        (toRender : V3d -> V3d) (localPt : V3d) (rMax : float)
-                       (dim : float) (lines : V3d[][]) =
+                       (wt : float) (dim : float) (lines : V3d[][]) =
         for line in lines do
             for i in 0 .. line.Length - 2 do
                 let a = line.[i]
@@ -99,7 +116,7 @@ module ScanPinScene =
                     if dMid <= rMax then 1.0 - 0.8 * ((dMid / rMax) ** 1.5)
                     else max 0.0 (0.2 * (1.0 - (dMid - rMax) / (0.15 * rMax)))
                 if fade > 0.01 then
-                    out.Add(toRender a, toRender b, V4d(1.0, 1.0, 1.0, 0.9 * fade * dim), 1.4)
+                    out.Add(toRender a, toRender b, V4d(1.0, 1.0, 1.0, 0.9 * fade * dim), 2.2 * wt)
 
     // The loud-highlight subject (pin-scope isolation OFF): the hovered pin
     // row's pin, else the focused pin inside the pair scopes.
@@ -112,6 +129,25 @@ module ScanPinScene =
                 match model.Focus.GetValue t with
                 | FocusPair | FocusPin -> (model.Sel.GetValue t).Pin
                 | FocusMatrix -> None
+
+    // While a correspondence pick is armed, the OTHER side's already-placed
+    // point of the pin being edited (the draft, else the selected pin) is
+    // the reference mark the user aims against — exempt from the armed fade
+    // and the mesh-solid muting, gold-haloed, arrowed when off a tile's
+    // frame. Returns (mesh, own-frame local point).
+    let armedSiblingAt (model : AdaptiveModel) (t : AdaptiveToken) : (string * V3d) option =
+        match model.ArmedPick.GetValue t, (model.Sel.GetValue t).Pair with
+        | Some (ArmPoint m), Some (a, b) when m = a || m = b ->
+            let other = if m = a then b else a
+            (match model.ScanPins.Placement.GetValue t with
+             | PlacementActive d ->
+                (if other = fst d.Pair then d.PointA else d.PointB)
+                |> Option.map (fun p -> other, p)
+             | PlacementIdle ->
+                (model.Sel.GetValue t).Pin
+                |> Option.bind (fun id -> HashMap.tryFind id (model.ScanPins.Pins.Content.GetValue t))
+                |> Option.map (fun p -> other, (if other = fst p.Pair then p.PointA else p.PointB)))
+        | _ -> None
 
     let build
             (env : Env<Message>)
@@ -489,12 +525,22 @@ module ScanPinScene =
                     let cc = model.CommonCentroid.GetValue t
                     let s = datasetScale.GetValue t
                     let armDim = if (model.ArmedPick.GetValue t).IsSome then 0.15 else 1.0
+                    let wt = model.MarkerWeight.GetValue t
+                    // The armed sibling (the point the user aims against)
+                    // stays FULL through every dim — armed fade, mesh-solid
+                    // muting, scope — and wears the gold halo (F9 rule 2).
+                    let sibling = armedSiblingAt model t
                     let out = ResizeArray<V3d * V2d * V2d * V4d * float>()
                     let pt (scopeDim : float) (mesh : string) (local : V3d) =
+                        let cR = ScanPin.renderCentre cc s ((dispWorldAt t mesh).Forward.TransformPos local)
+                        let isSibling =
+                            match sibling with
+                            | Some (sm, sp) -> sm = mesh && sp = local
+                            | None -> false
                         let vis = match markerAlphaAt t mesh with Some f -> f | None -> 0.15
-                        addCrosshairGlyphC out
-                            (ScanPin.renderCentre cc s ((dispWorldAt t mesh).Forward.TransformPos local))
-                            (meshColAt t mesh) (armDim * vis * scopeDim)
+                        let dim = if isSibling then 1.0 else armDim * vis * scopeDim
+                        addCrosshairGlyphC out cR (meshColAt t mesh) wt dim
+                        if isSibling then addGoldHaloC out cR 1.0
                     for (id, p) in HashMap.toSeq pins do
                         if pinShownAt t p.Pair then
                             let sd = pinScopeDimAt t id
@@ -536,7 +582,7 @@ module ScanPinScene =
             let tw = dispWorldAt t mesh
             let rMax = max 0.01 (model.RevealRadius.GetValue t)
             addRevealLines out (fun p -> ScanPin.renderCentre cc s (tw.Forward.TransformPos p))
-                localPt rMax 1.0 lines
+                localPt rMax (model.MarkerWeight.GetValue t) 1.0 lines
 
         // The mesh-solid alpha of one reveal side (markerAlphaAt semantics):
         // hidden = 0 (the node's Active gate drops it), faded = 0.15, full = 1;
@@ -656,10 +702,42 @@ module ScanPinScene =
                             for i in 0 .. 3 do
                                 out.Add(cs.[i], cs.[(i + 1) % 4], V4d(Primitives.pinInkV3d, 0.9), 4.0)
                             for i in 0 .. 3 do
-                                out.Add(cs.[i], cs.[(i + 1) % 4], V4d(1.0, 1.0, 1.0, 0.95), 2.2)
+                                out.Add(cs.[i], cs.[(i + 1) % 4], V4d(Primitives.refGoldV3d, 0.95), 2.2)
                             out.ToArray()
                         | _ -> [||]
                     | None -> [||])
+            linesNodeTop notFullscreen segs
+
+        // Matrix-scope hover link: a hovered pair cell rings ITS pins gold, a
+        // hovered mesh subject (tree node / strip tile) rings every pin on any
+        // pair touching that mesh — its full correspondence footprint. Gold
+        // outline treatment on top (reads through terrain); the hover
+        // transients clear it by themselves.
+        let matrixLinkNode =
+            let segs =
+                AVal.custom (fun t ->
+                    if model.Focus.GetValue t <> FocusMatrix then [||]
+                    else
+                        let hovPair =
+                            model.MatrixHoverPair.GetValue t
+                            |> Option.map (fun (x, y) -> PairCell.key x y)
+                        let hovMesh = model.TileIsolateHover.GetValue t
+                        if hovPair.IsNone && hovMesh.IsNone then [||]
+                        else
+                            let cc = model.CommonCentroid.GetValue t
+                            let scale = datasetScale.GetValue t
+                            let axis = match upNormalA.GetValue t with Some u -> u | None -> V3d.OOI
+                            let _, u, v = basisFromNormal axis
+                            let out = ResizeArray<V3d * V3d * V4d * float>()
+                            for (_, p) in HashMap.toSeq (pinsVal.GetValue t) do
+                                let linked =
+                                    (match hovPair with Some k -> p.Pair = k | None -> false)
+                                    || (match hovMesh with Some m -> fst p.Pair = m || snd p.Pair = m | None -> false)
+                                if linked then
+                                    addHighlightRing out
+                                        (ScanPin.renderCentre cc scale (pinCentreWorldAt t p)) u v
+                                        (ScanPin.renderLength scale p.InnerRadius)
+                            out.ToArray())
             linesNodeTop notFullscreen segs
 
         // Brushed diagram samples in 3D: flat camera-facing DISCS — a pure
@@ -895,4 +973,4 @@ module ScanPinScene =
                     }
                 | None -> sg { Sg.NoEvents })
 
-        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointReveals; ASet.ofList (draftAreaNode @ draftReveal @ [highlightNode; crosshairNode; brushedSampleNode; hoverRingNode; armPreviewMarks]); pinFlags; pinLabels])
+        ASet.unionMany (ASet.ofList [pinDots; ASet.ofList [pinMarkerLines]; pinRings; pointReveals; ASet.ofList (draftAreaNode @ draftReveal @ [highlightNode; matrixLinkNode; crosshairNode; brushedSampleNode; hoverRingNode; armPreviewMarks]); pinFlags; pinLabels])

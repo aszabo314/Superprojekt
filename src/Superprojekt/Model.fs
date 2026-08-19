@@ -68,6 +68,27 @@ type FocusLevel =
     | FocusPair
     | FocusPin
 
+// User-study mode, launched by the /study URL: warm-up on the demo dataset
+// first, then the proctored switch to the study dataset. Any debug-menu
+// dataset change exits the mode.
+type StudyPhase =
+    | StudyOff
+    | StudyWarmup
+    | StudyLive
+
+module StudyMode =
+    [<Literal>]
+    let warmupDataset = "ScanPin - UserStory"
+    [<Literal>]
+    let studyDataset = "study"
+
+// Per-dataset defaults, keyed by dataset name — extend with one line each.
+// A dataset switch seeds the live setting from here.
+module DatasetDefaults =
+    let private pinRadii = Map.ofList [ StudyMode.warmupDataset, 1.25 ]
+    let pinRadius (dataset : string) =
+        Map.tryFind dataset pinRadii |> Option.defaultValue 0.5
+
 // The ONE per-mesh 2D top-down camera (Setup survey tiles AND the Pin panes —
 // a mesh keeps its view across levels): Centre = the look-at point (render
 // space), Radius = the eye height above it. Pan/zoom-to-cursor only — no
@@ -213,6 +234,11 @@ type Model =
         Camera         : OrbitState
         // The per-mesh 2D cameras (tiles + panes); reset on dataset switch.
         TileCams       : Map<string, TileCam>
+        // The SHARED tile orientation: the world direction that reads as
+        // screen-up, as a CCW angle from north-up (+Y). 0 = north-up; the
+        // strip's align control matches it to the main camera's heading.
+        // Reset on dataset switch.
+        TileRotation   : float
         MeshOrder      : HashMap<string,int>
         MeshNames      : IndexList<string>
         MeshesLoaded   : HashSet<string>
@@ -220,6 +246,9 @@ type Model =
 
         Datasets         : string list
         ActiveDataset    : string option
+        Study            : StudyPhase
+        // The blocking confirm before the warm-up → study switch.
+        StudyStartPending : bool
         DatasetScales    : Map<string, float>
         DatasetCentroids : Map<string, V3d>
         // Measured scan-station positions (*sensor.txt, absolute world) —
@@ -234,13 +263,26 @@ type Model =
         // "Isolate pins" (only the pin patches render) — an independent flag
         // per focus level (Pin defaults on, the survey levels off).
         AnchorGhostMode      : LevelFlags
+        // Seeded from DatasetDefaults.pinRadius on every dataset switch.
         QuickPinRadius       : float
+        // The placement gate's world-space feather (m): a spot is a valid pin
+        // location when BOTH pair meshes have surface within this radius —
+        // strict footprint overlap alone is slightly too tight for real
+        // features. Compared live against the PairProx vertex attribute.
+        FeatherRadius        : float
+        // How strongly the non-isolated meshes darken toward the scrim ink
+        // while a tile isolation (lock or preview) is in effect.
+        IsoDimStrength       : float
         // Gear multiplier on the screen-constant 3D pin-flag size AND its
         // world-metre clamp bounds (ScanPin.flagHeightRender).
         FlagScale            : float
         // Outermost metric radius of the correspondence markers' local-
         // geometry reveal (rings at ×0.2/×0.6/×1.0, cuts fade over it).
         RevealRadius         : float
+        // Gear multiplier on the correspondence glyph's stroke widths (the
+        // crosshair triplex + the reveal's ground lines) — texture noise is
+        // dataset-dependent, so legibility needs a knob.
+        MarkerWeight         : float
 
         SceneBounds    : Box3d
         MeshBounds     : Map<string, Box3d>
@@ -299,6 +341,9 @@ type Model =
         // operation, and the save-as name being typed.
         Checkpoints         : string list
         CheckpointName      : string
+        // Crash protection: auto-save the data state to the reserved
+        // "autosave" checkpoint every ~minute (debug-menu checkbox).
+        AutoCkOn            : bool
 
         // ── In-cell error inspection (transient per cell — every cache clears
         // on nav/pin/pose changes via invalidateCellError). Sample values are
@@ -317,6 +362,11 @@ type Model =
         // colours describe the blinked pose. Lands with CellDist in ONE
         // message, so a peek never reads a half-landed flip.
         CellDistBefore      : float32[] option
+        // Per pair mesh, each vertex's Euclidean distance (metric m) to the
+        // OTHER pair mesh at the displayed poses, in served vertex order —
+        // the placement gate's feather test data (entries exist for the
+        // selected pair only; rides the cellErrorGen invalidation).
+        PairProx            : Map<string, float32[]>
         // The GRAPH-scope error stream (Matrix): every established edge's pins,
         // child-relative-to-parent, in canonical edge×pin order — the pooled
         // union the graph histogram and its brush read. Held in BOTH states so
@@ -352,8 +402,9 @@ type Model =
         // Pin-row hover: the tile cameras preview-frame this pin while it
         // lasts (a click makes the framing persistent via SelectPin).
         TilePinHover        : ScanPinId option
-        // ○ New pin button hover: lights the pair's overlap-region gate in the
-        // main 3D (only the overlap is a valid pin location). Transient.
+        // ○ New pin button hover: lights the pair's feathered placement gate
+        // in the main 3D (only the feathered overlap is a valid pin
+        // location). Transient.
         NewPinHover         : bool
         // The Pin panel's radius disclosure: the slider stays hidden until its
         // edit is clicked. Transient — collapses on pin change and focus jump.
@@ -393,8 +444,6 @@ type Model =
         // The hidden top-bar mesh menu: reference-root designation + per-mesh
         // render toggles (deliberately out of the workflow rail).
         MeshMenuOpen        : bool
-        // The top-bar jump-to-sensor dropdown (per-mesh main-camera jumps).
-        SensorMenuOpen      : bool
         // The docked inspection toolbox's expand state (collapsed = the thin
         // header edge alone) — an independent flag per focus level (Matrix
         // defaults collapsed, the pair workspace open); survives level jumps.
@@ -491,12 +540,15 @@ module Model =
         {
             Camera         = OrbitState.create V3d.Zero 1.0 0.3 3.0 Button.Left Button.Middle
             TileCams       = Map.empty
+            TileRotation   = 0.0
             MeshOrder      = HashMap.empty
             MeshNames      = IndexList.empty
             MeshesLoaded   = HashSet.empty
             CommonCentroid = V3d.Zero
             Datasets         = []
             ActiveDataset    = None
+            Study            = StudyOff
+            StudyStartPending = false
             DatasetScales    = Map.ofList ["SETSM_glacier", 0.01]
             DatasetCentroids = Map.empty
             DatasetSensors   = Map.empty
@@ -506,8 +558,11 @@ module Model =
             SlopeThresholdDeg   = 15.0
             AnchorGhostMode     = { AtMatrix = false; AtPair = false; AtPin = true }
             QuickPinRadius      = 0.5
+            FeatherRadius       = 1.0
+            IsoDimStrength      = 0.65
             FlagScale           = 1.0
             RevealRadius        = 0.5
+            MarkerWeight        = 1.0
             SceneBounds    = Box3d.Invalid
             MeshBounds     = Map.empty
             LoadTransforms        = Map.empty
@@ -528,10 +583,12 @@ module Model =
             ReachLogOpen        = false
             Checkpoints         = []
             CheckpointName      = ""
+            AutoCkOn            = true
             CellError           = None
             CellErrorBefore     = None
             CellDist            = None
             CellDistBefore      = None
+            PairProx            = Map.empty
             GraphError          = None
             GraphErrorBefore    = None
             GraphDist           = Map.empty
@@ -554,7 +611,6 @@ module Model =
             PendingResolves     = []
             GearPopoverOpen     = false
             MeshMenuOpen        = false
-            SensorMenuOpen      = false
             InspectOpen         = { AtMatrix = false; AtPair = true; AtPin = true }
             OutlineThreshold    = 0.004
             OutlineWidthPx      = 3.0

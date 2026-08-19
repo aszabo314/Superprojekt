@@ -29,12 +29,17 @@ module ServerActions =
     let init (env : Env<Message>) =
         task {
             try
+                // Before the fetches, so the study chrome never flashes debug-strength.
+                if ApiConfig.studyUrl.Value then env.Emit [SetStudyPhase StudyWarmup]
                 let! datasets = MeshData.fetchDatasets ApiConfig.apiBase.Value
                 env.Emit [DatasetsLoaded datasets]
                 let! autoLoad =
                     match ApiConfig.urlDataset.Value |> Option.filter (fun d -> datasets |> Array.contains d) with
                     | Some d -> async { return d }
-                    | None -> MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
+                    | None ->
+                        if ApiConfig.studyUrl.Value && datasets |> Array.contains StudyMode.warmupDataset then
+                            async { return StudyMode.warmupDataset }
+                        else MeshData.fetchDefaultDataset ApiConfig.apiBase.Value
                 if not (System.String.IsNullOrEmpty autoLoad) && datasets |> Array.contains autoLoad then
                     env.Emit [SetActiveDataset autoLoad]
                     loadDataset env autoLoad
@@ -55,6 +60,7 @@ module UpdateHelpers =
     let mutable cellDistReqGen = -1
     let mutable graphErrorReqGen = -1
     let mutable graphDistReqGen = -1
+    let mutable pairProxReqGen = -1
     let bumpCellError () = cellErrorGen <- cellErrorGen + 1
 
     // Pair-solve landing guard: PairSolved carries the generation it was
@@ -81,8 +87,17 @@ module UpdateHelpers =
         bumpCellError ()
         { model with
             CellError = None; CellErrorBefore = None; CellDist = None; CellDistBefore = None
+            PairProx = Map.empty
             GraphError = None; GraphErrorBefore = None
             GraphDist = Map.empty; GraphDistBefore = Map.empty
+            BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None }
+
+    // Arming a placement/edit pick needs the terrain texture bare: the error
+    // map goes off and the brush drops, and neither auto-restores (predictable
+    // — the user re-enables).
+    let clearInspectForPick (model : Model) =
+        { model with
+            CellMapOn = false
             BrushedSamples = Set.empty; HoverSample = None; HoverReadout = None }
 
     let logReach (source : string) (action : string) (subject : string) (model : Model) =

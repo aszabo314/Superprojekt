@@ -27,34 +27,6 @@ module GuiTopBar =
                     model.FarCutFrac (fun v -> env.Emit [SetFarCut v])
             }
 
-            // Jump-to-sensor: the ONE explicit per-mesh main-camera jump
-            // (the double-click/fly-to grammar's menu form).
-            div {
-                Class "tb-gear-wrap tb-sensor"
-                button {
-                    Class "tb-btn tb-sensor-btn"
-                    classWhen "tb-btn-active" model.SensorMenuOpen
-                    Attribute("title", "Fly the main camera to a mesh's scan-sensor viewpoint")
-                    Dom.OnClick(fun _ -> env.Emit [ToggleSensorMenu])
-                    "Sensor ▾"
-                }
-                div {
-                    Class "tb-gear-popover tb-menu-left tb-sensor-popover"
-                    showWhen model.SensorMenuOpen
-                    model.MeshNames |> AList.map (fun name ->
-                        let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-                        let isRoot = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
-                        div {
-                            Class "tb-gear-row tb-sensor-row"
-                            idxVal |> AVal.map (fun i ->
-                                Some (Attribute("title", sprintf "mesh %d — fly to its sensor viewpoint" (i + 1))))
-                            Dom.OnClick(fun _ -> env.Emit [FlyToSensor name; ToggleSensorMenu])
-                            span { Class "pmx-sw"; (idxVal, isRoot) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (c4bToRgbCss (meshColorRoot r i))])) }
-                            span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                        })
-                }
-            }
-
             // Isolate pins: a view/render mode, so it lives with the other
             // render controls, not among the inspection instruments. The flag
             // stays per workflow level (LevelFlags) — the button reads and
@@ -140,6 +112,33 @@ module GuiTopBar =
 
             div {
                 Class "tb-right"
+                classWhen "study-on" (model.Study |> AVal.map (fun s -> s <> StudyOff))
+                // User-study chrome (the /study URL): the phase banner — warm-up
+                // carries the proctor's start button. .study-on faints the debug
+                // buttons via CSS; they stay clickable, since a gear-menu dataset
+                // switch is the mode's exit path.
+                div {
+                    Class "tb-study"
+                    showWhen (model.Study |> AVal.map (fun s -> s <> StudyOff))
+                    span {
+                        Class "tb-study-text"
+                        model.Study |> AVal.map (function
+                            | StudyWarmup -> "Warm-up mode"
+                            | StudyLive   -> "Study mode"
+                            | StudyOff    -> "")
+                    }
+                    button {
+                        Class "tb-btn tb-study-start"
+                        showWhen (model.Study |> AVal.map ((=) StudyWarmup))
+                        Attribute("title", "End the warm-up: switch to the study dataset and begin the user study")
+                        Dom.OnClick(fun _ ->
+                            if AVal.force model.Datasets |> List.contains StudyMode.studyDataset then
+                                env.Emit [SetStudyStartPending true]
+                            else
+                                env.Emit [ShowToast (sprintf "Dataset '%s' not found on the server" StudyMode.studyDataset)])
+                        "Start User Study"
+                    }
+                }
                 div {
                     Class "tb-coord"
                     Attribute("title", "Cursor world coordinate (drops to the mean-elevation XY plane when off-mesh)")
@@ -232,6 +231,19 @@ module GuiTopBar =
                             env.Emit [ShowToast (if ok then sprintf "Checkpoint '%s' saved" name
                                                  else "Checkpoint could not be stored")]
                             ckRefresh ()
+                    // Crash protection: the silent ~1-min auto-save into the
+                    // reserved "autosave" checkpoint — no toast, no list
+                    // refresh (the gear click refreshes anyway).
+                    let ckAutoSave () =
+                        match AVal.force model.ActiveDataset with
+                        | None -> ()
+                        | Some ds ->
+                            let pins =
+                                model.ScanPins.Pins.Content |> AVal.force |> HashMap.toList
+                                |> List.map snd
+                                |> List.sortBy (fun p -> p.CreatedAt, p.ShortName)
+                            let json = CheckpointStore.serialize ds (AVal.force model.RegGraph) pins
+                            try JSRuntime.Instance.Invoke<bool>("spCkSave", "autosave", json) |> ignore with _ -> ()
                     let ckLoad (name : string) =
                         let json = try JSRuntime.Instance.Invoke<string>("spCkLoad", name) with _ -> ""
                         match CheckpointStore.tryDeserialize json with
@@ -251,6 +263,18 @@ module GuiTopBar =
                         Attribute("title", "Debug & settings")
                         Dom.OnClick(fun _ -> ckRefresh (); env.Emit [ToggleGearPopover])
                         "⚙"
+                    }
+                    // The auto-save timer: a hidden bridge ticks every minute
+                    // (the brush-bridge pattern — DOM interval → input event →
+                    // this handler); the checkbox gates the save, not the tick.
+                    input {
+                        Class "ck-auto-bridge"
+                        OnBoot [
+                            "(function(){ var el=__THIS__;"
+                            "setInterval(function(){ el.dispatchEvent(new Event('input',{bubbles:true})); },60000);"
+                            "})();"
+                        ]
+                        Dom.OnInput(fun _ -> if AVal.force model.AutoCkOn then ckAutoSave ())
                     }
                     let gearSlider label lo hi step fmt v (msg : float -> Message) =
                         div {
@@ -295,6 +319,20 @@ module GuiTopBar =
                                     if n = "" then env.Emit [ShowToast "Name the checkpoint first"]
                                     else ckSave n)
                                 "Save"
+                            }
+                        }
+                        div {
+                            Class "tb-gear-row"
+                            compactToggle "Auto-save (1 min)" model.AutoCkOn (fun () ->
+                                env.Emit [ToggleAutoCk])
+                            button {
+                                Class "tb-gear-btn"
+                                Attribute("title", "Recover the last auto-saved data state (the 'autosave' checkpoint)")
+                                Dom.OnClick(fun _ ->
+                                    let stored = try JSRuntime.Instance.Invoke<string>("spCkLoad", "autosave") with _ -> ""
+                                    if stored = "" then env.Emit [ShowToast "No autosave stored yet"]
+                                    else ckLoad "autosave")
+                                "Restore last checkpoint"
                             }
                         }
                         div {
@@ -355,8 +393,11 @@ module GuiTopBar =
                             numberInput "Quick-pin radius (m)" 0.01 50.0 0.005 (sprintf "%.3f") model.QuickPinRadius (fun v ->
                                 env.Emit [SetQuickPinRadius v])
                         }
+                        gearSlider "Placement feather (m)" 0.0 3.0 0.05 (sprintf "%.2f m") model.FeatherRadius SetFeatherRadius
+                        gearSlider "Isolation darkening" 0.0 1.0 0.05 (sprintf "%.2f") model.IsoDimStrength SetIsoDimStrength
                         gearSlider "Pin flag scale" 0.2 5.0 0.1 (sprintf "%.1f×") model.FlagScale SetFlagScale
                         gearSlider "Marker reveal radius (m)" 0.05 2.0 0.05 (sprintf "%.2f m") model.RevealRadius SetRevealRadius
+                        gearSlider "Marker line weight" 0.5 3.0 0.1 (sprintf "%.1f×") model.MarkerWeight SetMarkerWeight
                         div {
                             Class "tb-gear-row"
                             span { Class "lp-sublabel"; "Dataset" }
@@ -377,8 +418,8 @@ module GuiTopBar =
                             model.MeshNames |> AList.map (fun name ->
                                 let centroid = model.DatasetCentroids |> AVal.map (fun m -> Map.tryFind name m |> Option.defaultValue V3d.Zero)
                                 let numName =
-                                    (model.MeshOrder |> AMap.tryFind name, model.MeshNames.Content) ||> AVal.map2 (fun o ns ->
-                                        sprintf "%d  %s" ((Option.defaultValue 0 o) + 1) (Primitives.friendlyName (IndexList.toList ns) name))
+                                    model.MeshOrder |> AMap.tryFind name |> AVal.map (fun o ->
+                                        sprintf "%d  %s" ((Option.defaultValue 0 o) + 1) (Primitives.meshFolder name))
                                 div {
                                     Class "tb-gear-mesh-row"
                                     span { Class "tb-gear-mesh-name"; numName }
@@ -442,8 +483,8 @@ module GuiTopBar =
                                         (MeshView.displayedWorldAt model t name).Backward.TransformPos (eyeWorldA.GetValue t))
                                 let registered = model.ComposedPoses |> AVal.map (Map.containsKey name)
                                 let lab =
-                                    (model.MeshOrder |> AMap.tryFind name, model.MeshNames.Content) ||> AVal.map2 (fun o ns ->
-                                        sprintf "Eye in %d %s" ((Option.defaultValue 0 o) + 1) (Primitives.friendlyName (IndexList.toList ns) name))
+                                    model.MeshOrder |> AMap.tryFind name |> AVal.map (fun o ->
+                                        sprintf "Eye in %d %s" ((Option.defaultValue 0 o) + 1) (Primitives.meshFolder name))
                                 div {
                                     Class "tb-gear-row tb-cam-row"
                                     showWhen registered

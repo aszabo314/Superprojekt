@@ -137,9 +137,12 @@ module OrbitController =
                 | Some(start, button) ->
                     // RIGHT is the always-available camera hand (left is the
                     // pick while armed): right-drag orbits, Shift+right pans
-                    // (remapped to the pan button at the event edge).
+                    // (remapped to the pan button at the event edge). Bare
+                    // middle arrives as Button4 = the view-plane pan; the pan
+                    // button (Shift+drag) keeps the world-XY "helicopter" pan.
                     let left   = button = model.rotateButton || button = Button.Right
                     let middle = button = model.panButton
+                    let screenPan = button = Button.Button4
                     if isTouch || left then
                         let delta  = p - start
                         let dphi   = float delta.X * -0.005
@@ -152,6 +155,21 @@ module OrbitController =
                                     targetTheta = OrbitState.clamp model.thetaRange.X model.thetaRange.Y (model.targetTheta + dtheta) }
                         else
                             model
+                    elif screenPan then
+                        // In-view-plane pan (the bare-middle default): screen
+                        // axes map straight to view Right/Up — center.Z moves
+                        // with the plane, unlike the XY helicopter below.
+                        let delta = p - start
+                        let r = max model.radius 0.3
+                        let newCenter =
+                            model.center +
+                            model.view.Right * (float delta.X * -0.001 * r) +
+                            model.view.Up    * (float delta.Y *  0.001 * r)
+                        OrbitState.withView
+                            { model with
+                                dragStarts      = MapExt.add id (p, button) model.dragStarts
+                                centerAnimation = None
+                                center          = newCenter }
                     elif middle then
                         let delta = p - start
                         let newCenter =
@@ -288,14 +306,16 @@ module OrbitController =
         att {
             Dom.OnPointerDown((fun e ->
                 if e.PointerType = PointerType.Mouse then
-                    // Shift + left/right drag = XY pan: remap to the pan
-                    // (middle) button so the whole drag path treats it as a
-                    // pan. (Shift, not Ctrl — Ctrl+click is the secondary
-                    // click on macOS.) Right is the always-available camera
-                    // hand — it orbits bare and pans with Shift.
+                    // Shift + drag = the world-XY "helicopter" pan on any
+                    // button: remap to the pan (middle) button so the whole
+                    // drag path treats it as that pan. (Shift, not Ctrl —
+                    // Ctrl+click is the secondary click on macOS.) BARE middle
+                    // remaps to Button4 = the in-view-plane pan (the default);
+                    // right orbits bare and pans with Shift, unchanged.
                     let btn =
-                        if (e.Button = Button.Left || e.Button = Button.Right) && e.Shift
-                        then Button.Middle else e.Button
+                        if e.Shift then Button.Middle
+                        elif e.Button = Button.Middle then Button.Button4
+                        else e.Button
                     env.Emit [PointerDown(e.PointerId, btn, false, e.OffsetPosition)]
             ), pointerCapture = true)
             Dom.OnPointerUp((fun e ->

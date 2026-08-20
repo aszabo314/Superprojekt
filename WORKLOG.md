@@ -20,6 +20,33 @@ about to arrive — log each entry below this marker as it lands.
 Still owed from earlier (needs a human): the interactive in-browser verify
 pass for F9 (hover/arm flows).
 
+## Docs reconstruction pass: README + CLAUDE.md (2026-08-20, DONE)
+
+User-directed full refresh of both files (verified against the code by three
+parallel audit agents), the standing-rule reconstruction for everything since
+the last one. README rewritten as a purely functional description (code
+references now live in CLAUDE.md alone): port 8002 (5000 was Docker-internal
+only), dataset conventions (*sensor.txt, basename-matched atlas), docker-compose
+= traefik (no local port), the home TWO-navigator stage (tree + matrix,
+redundant-cell state, already-connected warning, assess-quality ribbon), the
+reworked pair workspace (⌖/✕/▸ rows, Solve → Finish two-step), the guided
+3-step placement (banner, auto-arming, roi-fit refuse/grow), the Edit-only pin
+panel, tile orientation controls, brush interactions incl. map/brush
+exclusivity, legend mesh-crop, checkpoints + autosave, session log, study
+mode, current mouse/key bindings (Space clean view, right-double-click).
+CLAUDE.md drift fixed: ArmProbe/probe passages DELETED (pair-error-at's one
+consumer = the hovered-dot readout), the ◎/◉ Isolate-&-focus column removed
+(Sel.Point rides Pin-level tile clicks; SelectPin = the ▸ button), Isolate
+pins = top-bar per-level checkbox (default ON at Pin), InspectOpen per-level,
+PendingResolves auto re-solve cascade, CellDistBefore (workspace peek is no
+longer an approximation), PairConnectWarn + study-start in the Esc chain,
+V-peek accepts effective (not just locked) isolation, roi-fit endpoint +
+CheckpointStore.fs in the lists, per-tile pair-coverage MRT wording, camera
+rests on the FIRST mesh's sensor, integration = 33 checks on :8002 needing
+Hessigheim, fshadeaot PostBuild + precompileShaders noted. Also fixed the one
+stale in-app string: the gear camera-readout tooltip still cited the deleted
+Sensor ▾ menu (GuiTopBar.fs).
+
 ## Panel default widths swapped: left small, tile strip big (2026-08-20, DONE)
 
 Study work item: the left column started big (home `--lefthomew` fallback

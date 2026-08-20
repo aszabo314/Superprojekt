@@ -458,7 +458,7 @@ module GuiTopBar =
                             Class "tb-gear-row"
                             span {
                                 Class "lp-sublabel"
-                                Attribute("title", "Live camera position in absolute world coordinates — the frame the *centroid.txt values live in. Park the eye where the scanner stood (Sensor ▾ jumps first-person; fully zoomed in, the eye sits ON the orbit centre) and copy.")
+                                Attribute("title", "Live camera position in absolute world coordinates — the frame the *centroid.txt values live in. Fully zoomed in, the eye sits ON the orbit centre — park it where the scanner stood and copy.")
                                 "Camera readout (world)"
                             }
                         }

@@ -79,7 +79,8 @@ body.loaded { background: #f4f6f8; }
 .mesh-tiles {
     position: fixed;
     top: 32px; right: 0; bottom: 0;
-    width: 244px;
+    width: 600px;
+    max-width: calc(100vw - 500px);
     display: flex; flex-direction: column; gap: 2px;
     padding-left: 6px;
     overflow-y: auto;
@@ -298,7 +299,7 @@ body.loaded { background: #f4f6f8; }
 
 /* ── The home stage: matrix ‖ tree, co-equal navigators (equal flex,
    identical chrome — parity is the experiment, keep neither dominant). ── */
-.left-col.left-col-home { width: var(--lefthomew, 600px); max-width: calc(100vw - 500px); }
+.left-col.left-col-home { width: var(--lefthomew, 380px); max-width: calc(100vw - 500px); }
 .home-stage { display: flex; gap: 8px; align-items: stretch; }
 .home-nav {
     flex: 1 1 0; min-width: 0;

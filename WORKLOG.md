@@ -20,6 +20,20 @@ about to arrive — log each entry below this marker as it lands.
 Still owed from earlier (needs a human): the interactive in-browser verify
 pass for F9 (hover/arm flows).
 
+## Panel default widths swapped: left small, tile strip big (2026-08-20, DONE)
+
+Study work item: the left column started big (home `--lefthomew` fallback
+600px) and the tile strip small (244px) — swapped so the left starts
+smaller than the right. `.mesh-tiles` default width 244 → 600px (+ the home
+column's `max-width: calc(100vw - 500px)` guard, so small windows keep room
+for the rest); `.left-col-home` fallback 600 → 380px (the resize handle's
+home MINIMUM — a literal 244 would sit below the floor and snap on first
+drag; the two home navigators need it). The workspace `--leftw` 256px
+default already sits under the strip and is untouched. The strip handle's
+drag max was 600 = the new default (shrink-only handle) — raised to
+`window.innerWidth - 500`, mirroring the home column's guard. CSS +
+`GuiPanes.stripResizeHandle` only; client type-check 0 errors.
+
 ## Warm-up pin errors >0.5 m: pair-error sheet windowing (2026-08-19, DONE)
 
 User report: on the warm-up dataset ("ScanPin - UserStory") pins showed

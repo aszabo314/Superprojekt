@@ -633,7 +633,7 @@ module GuiPanes =
                 "var h=__THIS__; var p=h.parentElement;"
                 "h.addEventListener('pointerdown',function(e){"
                 "  e.preventDefault(); h.setPointerCapture(e.pointerId);"
-                "  function mv(ev){ var w=Math.max(160,Math.min(600,window.innerWidth-ev.clientX)); p.style.width=w+'px'; }"
+                "  function mv(ev){ var w=Math.max(160,Math.min(window.innerWidth-500,window.innerWidth-ev.clientX)); p.style.width=w+'px'; }"
                 "  function up(){ h.removeEventListener('pointermove',mv); h.removeEventListener('pointerup',up); }"
                 "  h.addEventListener('pointermove',mv); h.addEventListener('pointerup',up); });"
                 "})();"

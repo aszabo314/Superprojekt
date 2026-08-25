@@ -33,6 +33,7 @@ obj/
 *.user
 /out
 **publish**
+!tools/publish-bundle.sh
 # study-mode runtime data (sessions, tokens, scores) — never committed
 src/Superserver/studies/*/data/
 src/Superserver/studies/*/tokens.jsonl

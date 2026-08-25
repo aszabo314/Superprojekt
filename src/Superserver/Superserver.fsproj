@@ -19,5 +19,39 @@
   <ItemGroup>
     <ProjectReference Include="..\Superprojekt\Superprojekt.fsproj" />
   </ItemGroup>
+  <PropertyGroup Condition="'$(Bundle)' == 'true'">
+    <DefineConstants>$(DefineConstants);BUNDLE</DefineConstants>
+    <PublishSingleFile>true</PublishSingleFile>
+    <SelfContained>true</SelfContained>
+    <IncludeAllContentForSelfExtract>true</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(Bundle)' == 'true'">
+    <Content Include="data/default.txt;data/study/**;data/ScanPin - UserStory/**"
+             Exclude="data/**/.DS_Store"
+             CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <!-- Static web assets (the WASM client's wwwroot) never reach
+       ResolvedFileToPublish before the single-file bundle is sealed: the
+       bundler runs inside CopyFilesToPublishDirectory's DEPENDENCY chain,
+       while the static-assets pipeline runs as BeforeTargets of
+       ComputeAndCopyFilesToPublishDirectory — dependencies first. So pull the
+       pipeline in early via DependsOnTargets and graft its computed publish
+       list into the bundle; the SDK's own loose wwwroot copy still happens
+       but only the exe ships. -->
+  <Target Name="BundleStaticWebAssets"
+          BeforeTargets="_ComputeFilesToBundle"
+          DependsOnTargets="CopyStaticWebAssetsToPublishDirectory"
+          Condition="'$(Bundle)' == 'true'">
+    <ItemGroup>
+      <_BundleStaticAsset Include="@(_PublishStaticWebAssetsTargetPath)" />
+      <_BundleStaticAsset>
+        <RelativePath>%(_BundleStaticAsset.TargetPath)</RelativePath>
+        <ExcludeFromSingleFile>false</ExcludeFromSingleFile>
+      </_BundleStaticAsset>
+      <ResolvedFileToPublish Include="@(_BundleStaticAsset)" />
+    </ItemGroup>
+    <Message Importance="high" Text="BundleStaticWebAssets: bundling @(_BundleStaticAsset->Count()) static web assets" />
+  </Target>
   <Import Project="..\..\.paket\Paket.Restore.targets" />
 </Project>

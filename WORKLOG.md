@@ -20,6 +20,39 @@ about to arrive — log each entry below this marker as it lands.
 Still owed from earlier (needs a human): the interactive in-browser verify
 pass for F9 (hover/arm flows).
 
+## Single-file distributable exe (2026-08-25, DONE)
+
+One self-extracting executable per platform (win-x64 / osx-arm64 / linux-x64)
+containing the self-contained server, the Release WASM client and the
+study + "ScanPin - UserStory" datasets; double-click starts the server on
+127.0.0.1:5055 (ephemeral fallback; fixed port keeps origin-scoped
+localStorage checkpoints across relaunches) and opens the default browser.
+Build: `tools/publish-bundle.sh [rids...]` → `publish/Superprojekt-*`.
+
+- Superserver.fsproj: `-p:Bundle=true` gate — single-file/self-extract
+  properties + the data Content glob + the `BundleStaticWebAssets` target.
+  The SDK never puts static web assets into the bundle (the bundler runs in
+  CopyFilesToPublishDirectory's DEPENDENCY chain, before the static-assets
+  pipeline, which is BeforeTargets of ComputeAndCopyFilesToPublishDirectory)
+  — the target pulls `CopyStaticWebAssetsToPublishDirectory` in early via
+  DependsOnTargets and grafts `_PublishStaticWebAssetsTargetPath` into
+  `ResolvedFileToPublish` with `RelativePath = %(TargetPath)`.
+- Program.fs: `#if BUNDLE` — content root pinned to `AppContext.BaseDirectory`
+  (the self-extraction dir; a double-click cwd is arbitrary and WebRoot would
+  miss), port probe, browser open, Start/WaitForShutdown.
+- Aardvark.Embree embeds all three platforms' natives in the managed dll
+  (runtime unpack via Aardvark.Init), so cross-publishing win/linux from
+  macOS carries them.
+
+Verified (osx-arm64, run from an unrelated cwd): datasets = exactly the two
+bundled; default = study; `/` and `/study` serve the shell; pair-error probe
+byte-identical to the known study baseline (median −0.02129, lod 0.02864);
+headless-Chromium boot of the TRIMMED Release client — full GUI, terrain +
+tiles render, zero console errors; warm relaunch 1 s (extraction cached
+under `~/.net/Superserver/<hash>`, first launch extracts ~467 MB once per
+build). win-x64/linux-x64 publish-verified only — needs a run on a real box.
+Unsigned: macOS right-click→Open, Windows SmartScreen "run anyway".
+
 ## Docs reconstruction pass: README + CLAUDE.md (2026-08-20, DONE)
 
 User-directed full refresh of both files (verified against the code by three

@@ -8,19 +8,42 @@ open MeshCache
 // ============================================================================
 // Pairwise reference-free error (v14 registration graph).
 //
-// Measure — the established M3C2-style signed distance, symmetrized. Given
-// meshes A and B at explicit world poses (rigid M44d; local + centroid →
-// world; the server holds no registration state — callers compose the poses),
-// the error at a pin (centre c, radius r) is measured along ONE shared axis n:
-// the PCA surface normal of the pooled A ∪ B vertex set inside the pin sphere,
-// oriented upward (n.Z ≥ 0). Each surface is deterministically point-sampled
-// inside the cylinder (axis n through c, radius r, half-length L/2); a
-// sample's axial coordinate is t = ⟨p − c, n⟩.
+// Measure — the established M3C2-style signed distance, symmetrized, paired
+// per sample. Given meshes A and B at explicit world poses (rigid M44d; local
+// + centroid → world; the server holds no registration state — callers compose
+// the poses), the error at a pin (centre c, radius r) is measured along ONE
+// shared axis n: the PCA surface normal of the pooled A ∪ B vertex set inside
+// the pin sphere, oriented upward (n.Z ≥ 0). Each surface is deterministically
+// point-sampled inside the cylinder (axis n through c, radius r, half-length
+// L/2); a sample's axial coordinate is t = ⟨p − c, n⟩.
+//
+// Each sample is paired with the OTHER mesh's crossing of the axis line
+// through the sample's own position — a correspondence at the sample's
+// lateral position. Never compare per-mesh footprint medians instead: on a
+// surface that is rough or 3D at pin scale, a footprint median measures which
+// sub-region of the footprint that mesh happens to cover (coverage differs —
+// resolution, holes, shadowing), fabricating decimetres of "error" between
+// cm-close surfaces, and the bias does not shrink with sample count.
+//
+// The partner search is relief-following and correspondence-gated: the ray
+// pair starts at the sample's own level shifted by the pin's sheet offset
+// t₀B − t₀A (each t₀ = that mesh's crossing nearest the pin plane along the
+// centre line — the two levels are at the SAME lateral point, so terrain
+// relief cancels and the offset tracks any rigid misregistration, metres-
+// scale before-states included), and a crossing pairs only within a small
+// tolerance of that expected level. Two scans of a 3D scene observe partly
+// DIFFERENT sheets (stations shadow differently); an ungated window pairs
+// those against each other and the median reports sheet distance, not error.
+// Gated, they drop out — a half-observed footprint contributes nothing
+// rather than bias. The cost: differential change beyond the tolerance
+// (within one pin) is clipped toward the pin-level offset; pins measure
+// registration error, the region-distance map measures change.
 //
 // Sign convention (deterministic for fixed (A, poseA, B, poseB)): a sample
-// value is the signed axial offset of B's surface relative to A's —
-//     B-sample:  v = t_B − median(t_A)   (at the B sample's world position)
-//     A-sample:  v = median(t_B) − t_A   (at the A sample's world position)
+// value is the signed axial offset of B's surface relative to A's at the
+// sample's lateral position —
+//     B-sample:  v = t_B − t_A(x)   (partner crossing on A)
+//     A-sample:  v = t_B(x) − t_A   (partner crossing on B)
 // pooled into ONE distribution per pin. Positive = B lies farther along +n
 // than A (B above A, n points up). Swapping A ↔ B negates every value —
 // symmetric measure, antisymmetric sign.
@@ -33,9 +56,10 @@ open MeshCache
 // through the pin, yet a sheet offset by up to halfLen (pre-registration
 // disagreement — what the long cylinder exists for) is still found.
 //
-// Median = median of the pooled values (≈ median(t_B) − median(t_A)).
-// LodHalfWidth = 1.96·√(σ_A² + σ_B²) over the two per-mesh axial spreads —
-// the 95 % level-of-detection half-width for every LoD band downstream.
+// Median = median of the pooled paired values. LodHalfWidth = 1.96·σ of the
+// paired values — the 95 % level-of-detection half-width for every LoD band
+// downstream; pairing cancels the common slope/roughness term a footprint
+// median carries, so the band states local disagreement, not terrain relief.
 // ============================================================================
 
 type PairMesh = {
@@ -117,7 +141,7 @@ let private eigenvectorFor (m00 : float) m01 m02 m11 m12 m22 (lambda : float) =
 // set of BOTH meshes inside the sphere — symmetric in (A, B); None below 6 pts.
 let private estimateNormal (a : PairMesh) (b : PairMesh) (centre : V3d) (radius : float) =
     let pts = ResizeArray<V3d>()
-    let collect (m : PairMesh) =
+    let collect strict (m : PairMesh) =
         let pm = m.Lm.parsed
         let inv = m.Transform.Inverse
         let cL = inv.TransformPos centre - pm.centroid
@@ -127,10 +151,17 @@ let private estimateNormal (a : PairMesh) (b : PairMesh) (centre : V3d) (radius 
         for vi in vertIds do
             if seen.Add vi then
                 let p = V3d pm.positions.[vi]
-                if (p - cL).LengthSquared <= r2 then
+                if not strict || (p - cL).LengthSquared <= r2 then
                     pts.Add (m.Transform.TransformPos (p + pm.centroid))
-    collect a
-    collect b
+    collect true a
+    collect true b
+    // Coarse meshes: a small sphere mid-triangle touches triangles whose
+    // corner vertices ALL lie outside r — fall back to the touching
+    // triangles' corners so sparse surface can still anchor a normal.
+    if pts.Count < 6 then
+        pts.Clear ()
+        collect false a
+        collect false b
     if pts.Count < 6 then None
     else
         let mutable mean = V3d.Zero
@@ -231,9 +262,11 @@ let private sampleAlongAxis (mi : PairMesh) (centre : V3d) (axis : V3d) (radius 
 // sample nearest t = 0 when the axis line runs through a hole; keep samples
 // with |t − t₀| ≤ r. Pooling the whole cylinder instead poisons the medians
 // by metres on any 3D scene — a gap-split cluster is NOT enough, a wall
-// running along the axis smears samples continuously for metres.
+// running along the axis smears samples continuously for metres. Returns the
+// anchor alongside the kept samples — the partner search windows on the
+// OTHER mesh's anchor.
 let private ownSheet (m : PairMesh) (centre : V3d) (axis : V3d) (radius : float) (halfLen : float) (samples : (float * V3d)[]) =
-    if samples.Length = 0 then samples
+    if samples.Length = 0 then 0.0, samples
     else
         let pm = m.Lm.parsed
         let inv = m.Transform.Inverse
@@ -254,12 +287,35 @@ let private ownSheet (m : PairMesh) (centre : V3d) (axis : V3d) (radius : float)
             | Some t when abs t <= halfLen -> t
             | _ -> samples |> Array.minBy (fun (t, _) -> abs t) |> fst
         let kept = samples |> Array.filter (fun (t, _) -> abs (t - t0) <= radius)
-        if kept.Length > 0 then kept
+        if kept.Length > 0 then t0, kept
         else
             // a crossing on a large sparsely-sampled triangle can miss every
             // lattice sample — re-anchor on the sample nearest the crossing
             let tn = samples |> Array.minBy (fun (t, _) -> abs (t - t0)) |> fst
-            samples |> Array.filter (fun (t, _) -> abs (t - tn) <= radius)
+            tn, samples |> Array.filter (fun (t, _) -> abs (t - tn) <= radius)
+
+// t of m's surface crossing along the axis line through a sample's world
+// position, nearest the EXPECTED partner level tExp (the sample's own level
+// shifted by the pin's sheet offset — see the header) and within the
+// correspondence gate — the atPoint two-ray rule cast from that level.
+let private partnerCrossing (m : PairMesh) (axis : V3d) (tExp : float) (gate : float) (tSample : float) (pWorld : V3d) =
+    let pm = m.Lm.parsed
+    let inv = m.Transform.Inverse
+    let qL = inv.TransformPos (pWorld + (tExp - tSample) * axis) - pm.centroid
+    let nL = (inv.TransformDir axis).Normalized
+    let eps = 1e-3
+    let mutable hu = RayHit()
+    let up = if m.Lm.scene.Intersect(V3f (qL - nL * eps), V3f nL, &hu) then Some (float hu.T - eps) else None
+    let mutable hd = RayHit()
+    let dn = if m.Lm.scene.Intersect(V3f (qL + nL * eps), V3f (-nL), &hd) then Some (eps - float hd.T) else None
+    let s =
+        match up, dn with
+        | Some u, Some d -> Some (if abs u <= abs d then u else d)
+        | Some t, None | None, Some t -> Some t
+        | None, None -> None
+    match s with
+    | Some s when abs s <= gate -> Some (tExp + s)
+    | _ -> None
 
 let private quantile (sorted : float[]) (p : float) =
     let n = sorted.Length
@@ -287,7 +343,7 @@ let private failPin (roi : PinRoi) (reason : string) =
 
 let private pinError (a : PairMesh) (b : PairMesh) (length : float) (maxPts : int) (roi : PinRoi) =
     match estimateNormal a b roi.Centre roi.Radius with
-    | None -> failPin roi "not enough vertices inside the pin sphere (need ≥ 6 pooled over both meshes)"
+    | None -> failPin roi "not enough surface inside the pin sphere (need ≥ 6 vertices pooled over both meshes)"
     | Some normal ->
         let len =
             if length > 0.0 then max 0.1 (min 1000.0 length)
@@ -296,36 +352,43 @@ let private pinError (a : PairMesh) (b : PairMesh) (length : float) (maxPts : in
         let sample (m : PairMesh) =
             sampleAlongAxis m roi.Centre normal roi.Radius halfLen maxPts
             |> ownSheet m roi.Centre normal roi.Radius halfLen
-        let sA = sample a
-        let sB = sample b
+        let t0A, sA = sample a
+        let t0B, sB = sample b
         if sA.Length = 0 || sB.Length = 0 then
             failPin roi (sprintf "no overlap: %s has no surface inside the pin cylinder"
                                  (if sA.Length = 0 then a.Name else b.Name))
         else
-            let tA = sA |> Array.map fst
-            let tB = sB |> Array.map fst
-            let medA = medianOf tA
-            let medB = medianOf tB
-            let stdA = stdOf tA
-            let stdB = stdOf tB
+            // Correspondence gate: how far the local B−A separation may deviate
+            // from the pin-level sheet offset and still pair. Wide enough for
+            // scan noise + resolution mismatch, tight enough to reject a
+            // different sheet; misregistration passes at any magnitude because
+            // the offset anchors track it.
+            let gate = max 0.05 (min 0.15 (0.3 * roi.Radius))
+            let offset = t0B - t0A
             let pooled =
                 Array.append
-                    (sB |> Array.map (fun (t, p) -> t - medA, p))
-                    (sA |> Array.map (fun (t, p) -> medB - t, p))
-            let samples, positions =
-                if pooled.Length <= 300 then
-                    pooled |> Array.map fst,
-                    pooled |> Array.collect (fun (_, p) -> [| p.X; p.Y; p.Z |])
-                else
-                    let stride = float pooled.Length / 300.0
-                    let idxs = Array.init 300 (fun k -> min (pooled.Length - 1) (int (float k * stride)))
-                    idxs |> Array.map (fun j -> fst pooled.[j]),
-                    idxs |> Array.collect (fun j -> let p = snd pooled.[j] in [| p.X; p.Y; p.Z |])
-            { Id = roi.Id; Ok = true; Reason = null; Normal = normal
-              Count = pooled.Length
-              Median = medianOf (pooled |> Array.map fst)
-              LodHalfWidth = 1.96 * sqrt (stdA * stdA + stdB * stdB)
-              Samples = samples; Positions = positions }
+                    (sB |> Array.choose (fun (tB, p) ->
+                        partnerCrossing a normal (tB - offset) gate tB p |> Option.map (fun tA -> tB - tA, p)))
+                    (sA |> Array.choose (fun (tA, p) ->
+                        partnerCrossing b normal (tA + offset) gate tA p |> Option.map (fun tB -> tB - tA, p)))
+            if pooled.Length = 0 then
+                failPin roi "no overlap: the two meshes share no corresponding surface inside the pin"
+            else
+                let values = pooled |> Array.map fst
+                let samples, positions =
+                    if pooled.Length <= 300 then
+                        values,
+                        pooled |> Array.collect (fun (_, p) -> [| p.X; p.Y; p.Z |])
+                    else
+                        let stride = float pooled.Length / 300.0
+                        let idxs = Array.init 300 (fun k -> min (pooled.Length - 1) (int (float k * stride)))
+                        idxs |> Array.map (fun j -> fst pooled.[j]),
+                        idxs |> Array.collect (fun j -> let p = snd pooled.[j] in [| p.X; p.Y; p.Z |])
+                { Id = roi.Id; Ok = true; Reason = null; Normal = normal
+                  Count = pooled.Length
+                  Median = medianOf values
+                  LodHalfWidth = 1.96 * stdOf values
+                  Samples = samples; Positions = positions }
 
 let run (args : PairErrorArgs) : PinPairError[] =
     args.Pins

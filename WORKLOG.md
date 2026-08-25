@@ -20,6 +20,35 @@ about to arrive — log each entry below this marker as it lands.
 Still owed from earlier (needs a human): the interactive in-browser verify
 pass for F9 (hover/arm flows).
 
+## Pair-error meaningless on the warm-up dataset (2026-08-25, DONE)
+
+Reported: on "ScanPin - UserStory" the pin error reads ≥ 0.5 m where the
+surfaces are verifiably a couple cm apart. Diagnosis (probe scripts, 16
+verified true-overlap points): the old statistic — difference of per-mesh
+FOOTPRINT MEDIANS of axial position inside the pin cylinder — assumes the
+footprint is planar and mutually covered. The warm-up scene is 3D and rough
+at pin scale (~30 % vertical wall by area, 2.8 m relief inside one r=1.25
+footprint; PartA median edge 25 cm with holes), so each mesh's median
+measured which sub-region it covered: 0.15–0.54 m of fabricated error,
+coverage bias that no sample count fixes. Control: single-line measurements
+along the same PCA axis were cm-accurate everywhere.
+
+Fix (PairError.fs): per-sample line correspondence — every cylinder sample
+pairs against the OTHER mesh's crossing along the axis line through its own
+position, cast at the sample's level shifted by the pin sheet offset
+t0B−t0A (relief-following; the anchors track misregistration at any
+magnitude, so before-states keep reporting metres) and gated at
+max(0.05, min(0.15, 0.3·r)) — different-sheet pairings drop out instead of
+biasing. LoD = 1.96·σ of the paired values (slope term cancels). Plus:
+estimateNormal falls back to touching-triangle corners when < 6 vertices lie
+strictly inside the sphere (sparse-mesh pins used to fail spuriously).
+
+Verified: warm-up true-overlap points r=1.25 |median| p50 0.29 m → 0.043 m
+(LoD 0.6–1.6 m → 0.09–0.18 m); study pair medians move ≤ 6 mm (inside old
+LoD), agree with independent at-point control to sub-mm; integration 32/32
+(swap antisymmetry exact, perturbation/correction relational checks hold).
+API shape unchanged — no client changes.
+
 ## Single-file distributable exe (2026-08-25, DONE)
 
 One self-extracting executable per platform (win-x64 / osx-arm64 / linux-x64)

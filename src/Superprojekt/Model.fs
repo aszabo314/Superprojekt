@@ -85,7 +85,7 @@ module StudyMode =
 // Per-dataset defaults, keyed by dataset name — extend with one line each.
 // A dataset switch seeds the live setting from here.
 module DatasetDefaults =
-    let private pinRadii = Map.ofList [ StudyMode.warmupDataset, 1.25 ]
+    let private pinRadii = Map.ofList [ StudyMode.warmupDataset, 1.9 ]
     let pinRadius (dataset : string) =
         Map.tryFind dataset pinRadii |> Option.defaultValue 0.5
 

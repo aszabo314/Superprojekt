@@ -1,0 +1,17 @@
+name: Deploy to Kingpin
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'RELEASE_NOTES.md'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger deploy webhook
+        run: |
+          curl -sf -X POST \
+            -H "X-Deploy-Token: ${{ secrets.DEPLOY_SECRET }}" \
+            https://kingpin.aardvarkians.com/deploy-webhook

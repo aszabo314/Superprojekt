@@ -1,5 +1,5 @@
-//fd74264d-d81d-0bcb-ea74-39cfa54fa8a1
-//75b2eb83-33b9-4c09-1fc2-6e5b07594f93
+//7fcf48cd-834d-0dea-8eba-4f355b876692
+//805fa5c7-8825-7865-8a8d-b2771fbe9040
 #nowarn "49" // upper case patterns
 #nowarn "66" // upcast is unncecessary
 #nowarn "1337" // internal types
@@ -86,6 +86,9 @@ type AdaptiveModel(value : Model) =
     let _GearPopoverOpen_ = FSharp.Data.Adaptive.cval(value.GearPopoverOpen)
     let _MeshMenuOpen_ = FSharp.Data.Adaptive.cval(value.MeshMenuOpen)
     let _InspectOpen_ = FSharp.Data.Adaptive.cval(value.InspectOpen)
+    let _ScreenshotMode_ = FSharp.Data.Adaptive.cval(value.ScreenshotMode)
+    let _ShotInspectOpen_ = FSharp.Data.Adaptive.cval(value.ShotInspectOpen)
+    let _ScaleBarTargetPx_ = FSharp.Data.Adaptive.cval(value.ScaleBarTargetPx)
     let _OutlineThreshold_ = FSharp.Data.Adaptive.cval(value.OutlineThreshold)
     let _OutlineWidthPx_ = FSharp.Data.Adaptive.cval(value.OutlineWidthPx)
     let _IsolineBands_ = FSharp.Data.Adaptive.cval(value.IsolineBands)
@@ -174,6 +177,9 @@ type AdaptiveModel(value : Model) =
             _GearPopoverOpen_.Value <- value.GearPopoverOpen
             _MeshMenuOpen_.Value <- value.MeshMenuOpen
             _InspectOpen_.Value <- value.InspectOpen
+            _ScreenshotMode_.Value <- value.ScreenshotMode
+            _ShotInspectOpen_.Value <- value.ShotInspectOpen
+            _ScaleBarTargetPx_.Value <- value.ScaleBarTargetPx
             _OutlineThreshold_.Value <- value.OutlineThreshold
             _OutlineWidthPx_.Value <- value.OutlineWidthPx
             _IsolineBands_.Value <- value.IsolineBands
@@ -255,6 +261,9 @@ type AdaptiveModel(value : Model) =
     member __.GearPopoverOpen = _GearPopoverOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.MeshMenuOpen = _MeshMenuOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
     member __.InspectOpen = _InspectOpen_ :> FSharp.Data.Adaptive.aval<LevelFlags>
+    member __.ScreenshotMode = _ScreenshotMode_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ShotInspectOpen = _ShotInspectOpen_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.bool>
+    member __.ScaleBarTargetPx = _ScaleBarTargetPx_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.OutlineThreshold = _OutlineThreshold_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.OutlineWidthPx = _OutlineWidthPx_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>
     member __.IsolineBands = _IsolineBands_ :> FSharp.Data.Adaptive.aval<Microsoft.FSharp.Core.float>

@@ -679,6 +679,12 @@ module Update =
         | ToggleInspectPanel ->
             let lf = model.InspectOpen
             { model with InspectOpen = LevelFlags.set model.Focus (not (LevelFlags.get model.Focus lf)) lf }
+        | ToggleScreenshotMode ->
+            { model with ScreenshotMode = not model.ScreenshotMode }
+        | ToggleShotInspect ->
+            { model with ShotInspectOpen = not model.ShotInspectOpen }
+        | SetScaleBarTarget px ->
+            { model with ScaleBarTargetPx = clamp 40.0 1200.0 px }
         | ScanPinMsg msg ->
             let m = ScanPinUpdate.handleMsg env model msg
             // New pin → enter Pin in placement with the CENTRE pick pre-armed
@@ -818,7 +824,7 @@ module Update =
                     let gen = pairSolveGen
                     // Pairs at the AS-LOADED baselines: the edge transform maps
                     // child-baseline points onto parent-baseline points, pose-
-                    // independent — ancestor registration composes on top (P1).
+                    // independent — ancestor registration composes on top.
                     let toBase mesh (local : V3d) =
                         (ModelTransforms.loadWorld model mesh).Forward.TransformPos local
                     let pairsArr =

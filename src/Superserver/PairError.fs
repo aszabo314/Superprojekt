@@ -6,7 +6,7 @@ open Aardvark.Embree
 open MeshCache
 
 // ============================================================================
-// Pairwise reference-free error (v14 registration graph).
+// Pairwise reference-free error (registration graph).
 //
 // Measure — the established M3C2-style signed distance, symmetrized, paired
 // per sample. Given meshes A and B at explicit world poses (rigid M44d; local

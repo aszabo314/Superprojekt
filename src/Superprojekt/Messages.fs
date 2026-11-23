@@ -113,7 +113,7 @@ type Message =
     // the reducer — a peek is refused unless both pair meshes are resident).
     | SetPeekVis of bool
     | SetPeekPose of bool
-    // ── The forced loop-resolution modal (P9): pick exactly one cycle edge to
+    // ── The forced loop-resolution modal: pick exactly one cycle edge to
     // remove (None = the just-added edge itself); confirm commits, cancel
     // discards the redundant edge and the prior tree stands.
     | SelectLoopEdge of string option
@@ -153,6 +153,11 @@ type Message =
     | ToggleMeshMenu
     // Collapse/expand the docked inspection toolbox.
     | ToggleInspectPanel
+    // Screenshot mode (documentation layout) + its histogram show/hide and
+    // scale-bar target length (CSS px).
+    | ToggleScreenshotMode
+    | ToggleShotInspect
+    | SetScaleBarTarget of float
     // In-view near-plane slice: cut-plane fraction of the eye→centre distance (0 = off).
     | SetNearCut of float
     // The far twin (fraction of the eye→centre distance; ≥ 2.495 = off).

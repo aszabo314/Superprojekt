@@ -1,74 +1,129 @@
 # Superprojekt
 
-Research prototype for interactive 3D inspection and **registration** of geological mesh datasets (multi-epoch scans of the same terrain). Two F# projects:
+Interactive 3D inspection and **pairwise registration** of geological mesh datasets — multi-epoch scans of the same terrain. Two F# projects:
 
-- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs spatial queries (Embree BVH ray/closest-point, sphere contact rings, the pairwise symmetric M3C2-style error measure, per-vertex signed distance, and a weighted rigid landmark solve). Also hosts the WASM client.
-- **Superprojekt** — Blazor WebAssembly client. Aardvark.Dom Elm-style architecture, WebGL2 rendering. Thin client by design — heavy compute lives on the server.
+- **Superserver** — ASP.NET Core + Giraffe. Serves mesh data and runs the spatial queries (Embree BVH ray/closest-point, sphere contact rings, the pairwise symmetric M3C2-style error measure, per-vertex signed distance, a weighted rigid landmark solve). Also hosts the client.
+- **Superprojekt** — Blazor WebAssembly client. Aardvark.Dom Elm-style architecture, WebGL2 rendering. Thin by design — heavy compute lives on the server.
 
 ## Run it
 
-You need the .NET 8 SDK and a recent browser. First-time setup:
+Needs the .NET 8 SDK and a recent browser.
 
 ```bash
 dotnet tool restore
 dotnet paket restore
+dotnet run --project src/Superserver     # API + client on http://localhost:8002
 ```
 
-Start the server (serves both the API and the WASM client):
-
-```bash
-dotnet run --project src/Superserver
-```
-
-Open `http://localhost:8002`. The default dataset (read from `src/Superserver/data/default.txt`) auto-loads on first paint; `?dataset=<name>` in the URL overrides it (unknown names fall back to the default). Opening `/study` instead starts **user-study mode** (see below).
+The default dataset (`src/Superserver/data/default.txt`) loads on first paint; `?dataset=<name>` overrides it (unknown names fall back to the default). `/study` starts user-study mode.
 
 ### Datasets
 
-Put OBJ files in `src/Superserver/data/<dataset>/<mesh>/`:
-
 ```
-data/
-  default.txt              # contents = name of the default dataset (missing/unknown → first dataset)
+src/Superserver/data/
+  default.txt              # name of the default dataset (missing/unknown → first dataset)
   <dataset>/
     <mesh>/
       *.obj                # one file per mesh part (alphabetical order = part order)
-      *centroid.txt        # "x y z" — the mesh origin's world position (zero if absent);
+      *centroid.txt        # "x y z" — world position of the mesh origin (zero if absent);
                            # for scan data the origin is the scan-sensor station
       *sensor.txt          # optional: the measured sensor station (absence is meaningful)
       <objname>_atlas.jpg  # texture atlas per OBJ file (falls back to <objname>.jpg)
 ```
 
-The first request for a mesh parses the OBJ + builds the spatial index; the result is cached for the process lifetime (the dataset bbox fetch warms the cache up front).
+A mesh is parsed and indexed on first request and cached for the process lifetime; loading a dataset warms the cache up front.
 
 ### Docker
 
-`Dockerfile` packages the published WASM bundle behind nginx on port 80, with `/api/` proxied to the server inside the container. The checked-in `docker-compose.yml` targets a traefik reverse-proxy deployment (external network, no published port) — for a plain local run, add a `ports:` mapping or run the image directly with `-p 80:80`.
+`Dockerfile` packages the published client behind nginx on port 80 with `/api/` proxied to the server inside the container. The checked-in `docker-compose.yml` targets a traefik reverse proxy (external network, no published port) — for a plain local run add a `ports:` mapping or run the image with `-p 80:80`.
+
+### Distributable
+
+```bash
+tools/publish-bundle.sh [rids…]          # default: win-x64 osx-arm64 linux-x64 → publish/Superprojekt-*
+```
+
+One self-extracting executable per platform containing the server, the client and the `study` + `ScanPin - UserStory` datasets. Starting it serves on `http://127.0.0.1:5055` (a free port if that one is taken) and opens the browser. The binaries are unsigned (macOS: right-click → Open; Windows: SmartScreen → Run anyway), and the first launch unpacks the bundle once.
 
 ## What you can do
 
-The app registers the epochs of a dataset **pairwise**: you build a tree of pairwise registrations, one pair at a time, and inspect the residual error inside each pair and across the whole tree. Navigation is a three-stop **focus rail** at the top of the left panel — **Matrix · Pair · Pin** — each stop a strictly smaller focus: pick a pair, work that pair, configure one pin. Jump freely among the enabled stops (Pair unlocks once a pair is chosen, Pin once a pin is chosen or being placed); the rail remembers your last pair and last pin, so hopping out and back restores where you were. `Esc` always backs out of the innermost thing first — an open dialog, a half-placed pin, an armed pick — then climbs the rail one level.
+The app registers the epochs of a dataset **pairwise**: you build a tree of pairwise registrations, one pair at a time, and inspect the residual error inside each pair and across the whole tree.
 
-- **Explore.** Orbit camera: left- or right-drag rotates, scroll zooms, bare middle-drag pans in the view plane, Shift + any button pans horizontally at constant height ("helicopter" pan). Double-click re-centres the orbit on the surface under the cursor (works on ghosted meshes too); right-double-click re-picks the orbit centre even while a pick is armed. The main 3D camera never moves on its own — only your explicit double-click/fly-to actions steer it (the small top-down tiles, by contrast, re-frame themselves to whatever you focus). Hold **Space** for a clean view — every annotation (pins, flags, cross, labels) hides while held. Per-mesh image-space silhouette outlines + world-Z elevation isolines are always on; the top-bar **▤ Cut** slider slices away terrain in front of the camera and **▤ Far** slices beyond a far plane (both with a flat-ink intersection band; both off at one end). A live **world-coordinate readout** in the top bar follows the cursor. The **⚙ gear** popover holds the dataset switcher, checkpoints, the rendering mode (Textured / Shaded / Slope) and the tuning sliders (outline threshold + thickness, isoline density + opacity, camera speed, ghost floor, shading strength, slope threshold, quick-pin radius, overlap feather, isolation darkening, pin flag scale, marker reveal radius, marker line weight), plus a dataset info block and a live camera readout with copy buttons.
-- **The tile strip.** One small top-down orthographic view per mesh down the right edge, present at every stop: at Matrix it shows **all** meshes (small multiples, all framed on the reference mesh's area so they compare directly), at Pair/Pin just the pair's two. Each tile follows its mesh's heatmap switch, carries the full mesh folder name, and overlays the reference mesh's footprint outline in gold, always on top. Drag inside a tile to pan, scroll to zoom toward the cursor, drag the strip's left edge to resize it. The strip header's **⇱ Align to view** rotates all tiles so "up" matches the main camera's heading; **N ↑** resets to north-up. **Clicking a tile isolates its mesh** in the 3D view — the others darken strongly toward the scrim ink (hover previews, click again — or jump levels — to clear); while a pick is armed, a tile click places the pick instead. A highlighted pin lying outside a tile's frame is pointed at by a chevron on the frame border, so it never silently leaves the link.
-- **Mesh setup (▦ menu).** The top-bar **▦** menu holds the out-of-workflow controls: **☆ Set reference** designates a mesh as the **reference root** of the registration tree (the only way to change it) — re-rooting onto a mesh already inside the registered tree *keeps* the registration (path edges reverse), designating an outside mesh clears it; a root change also resets the pair/pin selection. The same rows carry the per-mesh intrinsic heatmap switches (**Tex**tured / **D**i**st**ance range / **Sh**a**p**e quality / **Inc**idence angle).
-- **The home stage (Matrix).** Two navigators side by side, equal peers. The **pair matrix**: rows and columns are meshes in acquisition order; the upper-triangular cell (A,B) *is* the pair. Four states: a background hole = the pair doesn't overlap enough to register (checked server-side); an outlined vessel = possible; a filled cell = registered, fill strength = the solve's quality score; a faded borderless hint = possible but *redundant* — the two meshes are already connected through the tree, a direct link would only add a loop. The reference mesh is marked in gold in the heads. Hovering any cell previews the pair in 3D: only the true overlap area — everywhere the two surfaces come within the overlap-feather distance of each other — keeps its normal rendering, everything else drops to the ghost floor, so you see what a registration would actually work with before committing (a quick screen-space approximation answers instantly while the exact area loads). The hover also highlights the pair's pins and mirrors into the tree beside it. Clicking a possible or registered cell **selects the pair** and enters its Pair level; clicking a redundant cell first raises a warning ("These meshes are already connected") with the choice to proceed anyway. The **registration tree**: the reference root at the top, one node per registered mesh at its hop depth, unconnected meshes floating in a dashed "not connected yet" island. Hovering a node previews that mesh isolated in 3D; hovering or clicking an edge opens its pair. Once every mesh is connected, a "✓ all meshes connected" ribbon appears with **Assess global quality →**, which switches on the graph-wide error instruments.
-- **The pair workspace (Pair).** Only the two meshes of the pair render; the panel shows the pair header (A ↔ B), a live status line (registered at quality q / not registered / insufficient overlap), the pin list and the pair's two-step finish line: **⌖ Solve** lights once three pins exist, **✓ Finish pair** lights once the pair is registered and returns to the matrix. A workflow line counts down ("2 more pins needed to solve"). Each pin row carries **⌖** (fly the camera to the pin), **✕** (delete, with confirmation) and **▸** (open the pin at the Pin level); hovering a row highlights the pin in 3D, preview-frames every tile on it and lights its slice of the histogram.
-- **Pins (Pin).** A pin marks a corresponding surface patch in both meshes of the pair. **＋ New pin** starts a **guided three-step placement**: the centre, then one correspondence point per mesh — each landed click automatically arms the next step, a banner shows where you are ("Step 2 of 3 — place the correspondence point on mesh 4"), and **the pin exists the moment its three parts are placed** — there is no commit step. Picking is **arm-driven — nothing places without arming first**: while a pick is armed, everything that isn't a pick surface — the whole left panel, the top bar — falls behind a dark scrim and stops responding, the arming button lights up as the one way to cancel, the left mouse button picks instead of orbiting, and the cursor carries a white preview of what will be placed, synchronized across the main view and the tiles. The centre may only land where the pair genuinely overlaps — the placement highlight shows the valid region — and it validates against the other mesh: if the other mesh has no surface within reach the click is refused, and if the reach must grow the pin radius grows with it (with a toast either way). The centre lands on whichever mesh you hit (the pin anchors there and rides its pose); a point pick renders its own mesh alone while armed, so co-located surfaces can't steal the click, and its tile lights while the other tile veils. While a pick is armed all existing marks fade to near-invisible so they never hide the spot you're aiming at — except the *other* side's already-placed point of the pin you're editing, which stays full with a gold halo as the reference mark you aim against. A correspondence point is marked by a small **crosshair** in its mesh's colour — its open centre is the exact point, constant size at any zoom — plus a white **relief figure** on the surface around it (three concentric rings and two vertical cut lines, fading with distance) that shows the local terrain shape for comparing the two epochs. The Pin panel's **Edit** column re-arms any part of a committed pin: re-pick either point, move the centre (the pin re-anchors onto whichever mesh you hit), or open the radius slider; **✕ Cancel** aborts a placement (a placed centre asks for one confirmation — before that, `Esc` simply abandons it) and **✓ Finish pin** returns to the pair. Isolating one mesh of the pair is a tile click; **hovering always previews what a click would isolate** — the mesh you are pointing at is never the invisible one — and while a mesh is isolated the other mesh's relief figures hide, its crosshairs mute to a faint ghost (never vanish — they are the locators), every pin's area ring stays put, and pins anchored **to** the isolated mesh wear a dashed anchorage ring, the same cue the tiles use. The tiles auto-frame themselves: the pair's overlap area when placement opens, the pin tightly once placed. Pins are deleted from the pair workspace's list only.
-- **Solve.** With ≥3 pins, **⌖ Solve** runs the weighted rigid landmark solve over the pin point pairs and adds the result as an edge of the registration tree (the un-registered mesh moves onto the treed one; solving an already-registered pair replaces the edge). Re-picking a correspondence point or deleting a pin of a registered pair drops that edge — and everything registered through it — because the solve is no longer backed by its inputs; the dropped dependent pairs are then **re-solved automatically**, one after another, each announced as it lands (and announced too if it can no longer solve). Centre moves and radius edits re-scope the analysis only — the registration keeps.
-- **Loops.** Solving a pair whose meshes are *both* already in the tree would close a loop; the app measures how much the two paths disagree (angle + displacement) and opens a blocking dialog: keep the new edge and remove one existing edge of the loop (the weakest is pre-selected), or cancel and keep the old tree. The committed registration is always a spanning tree.
-- **Inspect a pair.** The **inspection toolbox** docks below the left rail at every stop — click its header to collapse it to a thin edge (remembered per stop). At the Pair and Pin levels it reads the selected pair: the chart shows the moving mesh's error across the pair's pins as a stacked 48-bin histogram (mm axis, pooled level-of-detection band); at the Pin level it narrows to the selected pin alone. Once the pair is registered the chart overlays the *before* distribution as a step outline — the solve visibly collapses the error. Drag an x-range across the chart to **brush** (a plain click selects a single bin; grab the drawn band to slide it; right-click clears): the brushed samples appear in 3D as flat dots — constant size on screen, so you can zoom straight onto the true coordinate — each coloured by its own error on the shared ramp and range. Brushing is the sole focus: the **scene drains to white** so only the dots carry colour — the moving mesh stays solid, the reference is reduced to its gold outline — and hovering a dot cross-highlights the chart, rings the dot, fetches the exact local error as a tooltip and marks the value on the colour bar. **Error map** (off by default) paints the signed difference on the moving mesh (diverging colour ramp + value isolines, one shared in-pair range capped at ±0.5 m, pale grey = no data, bottom-centre legend) — at the Pin level it paints only inside the pin's area. The map and the brush are mutually exclusive: brushing turns the map off, turning the map on clears the brush. Pointing at a mesh (tile, tree node or isolation) while the map paints **crops the legend** to that mesh's own error extent. Arming any placement pick clears both — a terrain pick needs the texture bare. **◍ Isolate pins** (a top-bar checkbox, remembered per stop, on by default at Pin) cuts the view down to the pin patches alone — it steps aside automatically while the centre pick is armed, so you can see where you're moving the pin. Drag the toolbox's **right edge** to enlarge the diagram: it grows in proportion until it reaches the bottom of the screen, then keeps widening.
-- **Inspect the whole graph.** At the **Matrix** stop the same toolbox answers the same questions about the *entire* registration tree at once. Everything here is measured **against the parent** — each registered mesh versus the neighbour one step closer to the reference — so only meshes you have actually registered take part, and before your first solve the panel is honestly empty (pre-registration error is a per-pair question). **Error map** paints every registered mesh with its own error simultaneously, all on one shared scale and one legend; the reference and anything not yet registered are reduced to plain outlines, because a white surface among the coloured ones would read as "registered and fine". The chart pools every edge's samples into one monochrome distribution — no per-edge colours, no second key — and **brushing is how you find the culprit**: drag an x-range and the offending samples light up in 3D on whichever meshes they came from.
-- **Peek keys.** Two spring-loaded comparators, as keys and as matching top-bar hold-buttons (◌ V / ↺ B, greyed out until their peek can land). With one of the pair's meshes isolated — a locked isolation or even just a hover — hold **V** to flip the isolation to the *other* mesh: same spot, other epoch (Pair and Pin only; the button is absent at Matrix, where flipping a pair means nothing). Hold **B** to drop the registration: at the Pair and Pin stops the moving mesh snaps to its as-loaded pose, and the error map repaints with the true as-loaded error while held; at **Matrix** the *whole graph* snaps back, map and histogram with it — both on the **same fixed scale**, so releasing shows the error genuinely collapse toward neutral instead of merely recolouring. Release restores instantly.
-- **Checkpoints.** The gear popover saves named snapshots of the data state — dataset, registration tree, pins — to the browser's local storage: save under a name, load (switching dataset first when needed), overwrite, delete. A silent **auto-save** (on by default) writes the state once a minute; **Restore last checkpoint** recovers it after a crash or an accidental reload.
-- **Session log.** The top-bar **≣** popover lists every navigation action of the session (time · source · action · subject) and exports it as JSON — the instrument behind the user studies.
+### Navigation
+
+A three-stop **focus rail** tops the left panel — **Matrix · Pair · Pin** — each stop a strictly smaller focus. Pair unlocks once a pair is chosen, Pin once a pin is chosen or being placed; the rail remembers the last pair and pin. `Esc` backs out of the innermost thing first (dialog, half-placed pin, armed pick), then climbs one level.
+
+### 3D view
+
+- **Camera**: left- or right-drag orbits, scroll zooms, middle-drag pans in the view plane, Shift + drag pans horizontally at constant height. Double-click re-centres the orbit on the surface under the cursor (ghosted meshes too); right-double-click does so even while a pick is armed. The main camera never moves on its own.
+- **Hold Space** for a clean view without annotations.
+- Silhouette outlines and elevation isolines are always on. The top-bar **▤ Cut** / **▤ Far** sliders slice away terrain in front of / beyond a plane. A world-coordinate readout follows the cursor.
+- **⚙ gear**: dataset switcher, checkpoints, rendering mode (Textured / Shaded / Slope), tuning sliders, dataset info, camera readout.
+- **▦ mesh menu**: **☆ Set reference** designates the root of the registration tree (re-rooting onto a registered mesh keeps the registration; an unregistered one clears it) and the per-mesh heatmaps (Texture / Distance range / Shape quality / Incidence angle).
+
+### Tile strip
+
+One small top-down orthographic view per mesh along the right edge: all meshes at Matrix (framed alike, so they compare directly), the pair's two at Pair/Pin. Each tile overlays the reference footprint in gold. Drag pans, scroll zooms, the left edge resizes the strip; **⇱ Align to view** rotates the tiles to the main camera's heading, **N ↑** resets. **Clicking a tile isolates its mesh** in 3D (hover previews, click again to clear); while a pick is armed the click places the pick instead. A highlighted pin outside a tile's frame is pointed at by a chevron on the border.
+
+### Matrix — the home stage
+
+- **Pair matrix**: rows/columns are meshes in acquisition order; the upper-triangular cell (A, B) *is* the pair. A hole = not enough overlap to register; an outlined cell = possible; a filled cell = registered (fill = solve quality); a faded hint = possible but redundant (already connected through the tree). Hovering a cell previews the pair's true overlap area in 3D; clicking selects the pair and enters Pair (a redundant cell asks first).
+- **Registration tree**: the reference root on top, registered meshes at their hop depth, unconnected meshes in a dashed island. Hover a node to isolate its mesh, click an edge to open its pair. Once every mesh is connected, **Assess global quality →** switches on the graph-wide error instruments.
+
+### Pair — the pair workspace
+
+Only the pair's two meshes render. The panel shows the pair header, a status line, the pin list and the finish line: **⌖ Solve** (needs three pins), then **✓ Finish pair**. Each pin row has **⌖** fly to, **✕** delete and **▸** open; hovering a row highlights the pin in 3D, the tiles and the histogram.
+
+### Pin
+
+A pin marks a corresponding surface patch in both meshes: a centre with a radius plus one correspondence point per mesh.
+
+- **＋ New pin** runs a guided three-step placement — centre, point on mesh A, point on mesh B. Each landed click arms the next step; the pin exists the moment all three parts are placed.
+- **Nothing places without arming.** While a pick is armed the rest of the UI falls behind a dark scrim, the arming button is the cancel, the left button picks instead of orbiting, and the cursor shows a white preview in the main view and the tiles.
+- The centre only lands where the pair genuinely overlaps (the valid region is highlighted); if the other mesh has no surface within reach the click is refused, and if the reach must grow, so does the pin radius. A point pick renders its own mesh alone, so co-located surfaces can't steal the click.
+- A correspondence point shows as a small crosshair in its mesh's colour (constant size, the open centre is the exact point) plus a white relief figure — rings and two vertical cut lines — tracing the local terrain shape.
+- The **Edit** column re-arms any part of an existing pin: re-pick a point, move the centre, change the radius. **✓ Finish pin** returns to the pair.
+
+### Solve and loops
+
+- **⌖ Solve** runs the rigid landmark solve over the pair's pin points and adds the result as a tree edge (the unregistered mesh moves onto the registered one; re-solving replaces the edge).
+- Re-picking a correspondence point or deleting a pin of a registered pair drops that edge and everything registered through it; the dropped pairs then re-solve automatically, one by one, each announced. Centre and radius edits keep the registration.
+- Solving a pair whose meshes are both already in the tree would close a loop. The app measures how far the two paths disagree and asks: keep the new edge and remove one existing edge of the loop (the weakest is pre-selected), or cancel. The registration is always a spanning tree.
+
+### Inspecting error
+
+The **inspection toolbox** docks below the rail at every stop (click its header to collapse; widening the left panel enlarges the chart).
+
+- **Chart**: at Pair, the moving mesh's error across the pair's pins as a stacked histogram (mm axis, level-of-detection band); at Pin, the selected pin alone. A registered pair overlays the *before* distribution as an outline.
+- **Brush**: drag an x-range (click = one bin, drag the band to slide it, right-click clears). The brushed samples appear in 3D as dots coloured by their error while the scene drains to white; hovering a dot shows its exact local error.
+- **Error map**: paints the signed difference on the moving mesh (diverging ramp + isolines, one shared range capped at ±0.5 m, pale grey = no data); at Pin, only inside the pin's area. Map and brush are mutually exclusive, and arming a pick clears both.
+- **◍ Isolate pins** (top bar) cuts the view down to the pin patches.
+- **At Matrix** the same toolbox reads the whole tree: every registered mesh is measured against its parent, the map paints all of them on one scale, and the chart pools every edge into one distribution — brush it to find which meshes the outliers come from.
+
+### Peek keys
+
+Spring-loaded, as keys and as top-bar hold-buttons. **V** (Pair/Pin, with a mesh isolated) flips the isolation to the pair's other mesh — same spot, other epoch. **B** drops the registration while held: the moving mesh (at Matrix, the whole graph) snaps to its as-loaded pose and the error display follows on a fixed scale, so releasing shows the error collapse.
+
+### Checkpoints and session log
+
+The gear popover saves named snapshots (dataset, registration tree, pins) to browser local storage; an auto-save runs once a minute and **Restore last checkpoint** recovers it. The top-bar **≣** popover lists every navigation action of the session and exports it as JSON.
+
+### Screenshot mode
+
+The top-bar **▣** button switches to a layout for documentation screenshots. Only the layout changes, the workflow stays the same.
+
+- The registration tree, the tile strip, the **▤ Cut** / **▤ Far** sliders and the orientation gizmo are hidden; the rail shrinks to the pair matrix.
+- The histogram sits to the right of the rail, titled "Deviation histogram" and without its legend, and is shown or hidden as a whole with the top-bar **Histogram** toggle. **Error map (3D)** and **⊗ Clear brush** move to the top bar.
+- At Pair, the pair header, the status line, **＋ New pin**, the pin-count line and **⌖ Solve → ✓ Finish pair** move to the top bar; the rail keeps the pin list. At Pin, everything except the Edit buttons moves there.
+- The rail, the histogram and the scale bar resize by dragging their invisible right edges. The scale bar drops its box for a bold label with a white outline, snaps to round distances, and moves anywhere on the page by dragging its invisible left edge.
 
 ## User-study mode
 
-Opening `/study` starts the study flow: a warm-up dataset auto-loads under a "Warm-up mode" banner with a **Start User Study** button; confirming the blocking dialog switches to the study dataset and the banner flips to "Study mode". The debug controls fade but stay clickable — switching datasets from the gear menu is the exit.
+`/study` loads a warm-up dataset under a "Warm-up mode" banner with a **Start User Study** button; confirming switches to the study dataset. Switching datasets from the gear menu exits.
 
 ## Architecture
 
-Elm-style: one model → update → view, with the registration state held as a rooted tree of pairwise rigid edges from which all mesh poses are composed. The server is stateless with respect to that tree — every query carries explicit transforms. `CLAUDE.md` documents the coding conventions, state rules, render-pipeline contracts, API endpoints and platform pitfalls.
+Elm-style: one model → update → view. The registration state is a rooted tree of pairwise rigid edges from which all mesh poses are composed; the server is stateless with respect to it — every query carries explicit transforms. `CLAUDE.md` documents the coding conventions, state rules, render-pipeline contracts, API endpoints and platform pitfalls.
 
 ## Tests
 
@@ -76,7 +131,7 @@ Elm-style: one model → update → view, with the registration state held as a 
 dotnet run --project src/Supertests        # pure-logic runner; exit code = failures
 ```
 
-Integration against a running server (requires the Hessigheim dataset):
+Integration against a running server (needs the Hessigheim dataset):
 
 ```bash
 dotnet run --project src/Superserver       # terminal 1 (localhost:8002)

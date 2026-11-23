@@ -455,7 +455,7 @@ module MeshView =
                 let u = acc / float cnt
                 if u.Length > 0.5 then Some u.Normalized else None)
 
-    // In-view near-plane cut (D1): (forward, distance, band) render-space
+    // In-view near-plane cut: (forward, distance, band) render-space
     // uniforms from the model fraction × the orbit radius; band ≈ screen-
     // constant (a fixed fraction of the cut distance). Dist 0 = off.
     let nearCutUniforms (model : AdaptiveModel) =

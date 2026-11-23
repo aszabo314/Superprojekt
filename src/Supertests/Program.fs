@@ -212,7 +212,7 @@ let regGraphTests () =
     let g1 = expectOk "first edge A→R" (RegGraph.tryAddEdge "A" "R" (tr 1.0) 1.0 g0)
     check "A joins the tree" (RegGraph.inTree g1 "A" && RegGraph.hasEdges g1)
     // both endpoints already connected ⇒ any further edge between them is a cycle
-    // Both-connected adds are now TRANSIENT loops (P9), never silent commits.
+    // Both-connected adds are TRANSIENT loops, never silent commits.
     expectLoop "A→R again ⇒ closes a transient loop" (RegGraph.tryAddEdge "A" "R" (tr 2.0) 1.0 g1)
     expectLoop "R→A ⇒ closes a transient loop" (RegGraph.tryAddEdge "R" "A" (tr 2.0) 1.0 g1)
     // neither endpoint connected ⇒ isolated component rejected

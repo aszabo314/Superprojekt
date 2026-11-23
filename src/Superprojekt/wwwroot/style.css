@@ -819,3 +819,96 @@ body:has(.arm-flag.on) .orient-indicator { opacity: 0.35; }
     pointer-events: auto;
     box-shadow: 0 0 0 2px #ffffff, 0 0 14px 5px rgba(26, 86, 219, 0.85);
 }
+
+/* ── Screenshot mode (documentation layout) ────────────────────────────
+   The View mounts .shot-flag.on (the arm-flag pattern). Layout only: the
+   registration tree and the tile strip hide, the left column becomes a row
+   (rail, then the histogram panel), the inspection + level chrome sit in a
+   wrapping top bar, and the scale bar swaps its box for a white outline. */
+.shot-flag { display: none; }
+/* What screenshot mode re-seats in the top bar; display:contents keeps the
+   rail's own layout untouched outside the mode. */
+.shot-moved { display: contents; }
+.shot-handle, .sb-handle, .sb-move, .sb-bridge { display: none; }
+.tb-shot, .tb-shot-level { display: flex; align-items: center; gap: 8px; }
+.tb-shot { margin-right: 6px; }
+.tb-shot-seat { display: contents; }
+.top-bar .rail-btn, .top-bar .cw-finish-btn {
+    height: 24px; padding: 0 10px; white-space: nowrap; box-shadow: none;
+}
+.tb-shot-level .cw-head { padding: 0; }
+.tb-shot-level .cw-state, .tb-shot-level .cw-remaining, .tb-shot-level .cw-cue {
+    white-space: nowrap; font-size: 11px; padding: 0;
+}
+.tb-shot-level .cw-steps, .tb-shot-level .cw-finish, .tb-shot-level .cw-draft {
+    border: none; padding: 0; margin: 0;
+}
+.tb-shot-level .cw-pin-name { flex: none; font-size: 12px; }
+
+body:has(.shot-flag.on) .top-bar {
+    height: auto; min-height: 28px; flex-wrap: wrap; row-gap: 2px;
+}
+body:has(.shot-flag.on) .top-bar > *, .tb-shot-level { min-height: 24px; }
+body:has(.shot-flag.on) .place-banner { top: calc(var(--tbh, 28px) + 12px); }
+body:has(.shot-flag.on) .mesh-tiles { visibility: hidden; pointer-events: none; }
+body:has(.shot-flag.on) .tb-cut,
+body:has(.shot-flag.on) .orient-indicator,
+body:has(.shot-flag.on) .home-nav-tree,
+body:has(.shot-flag.on) .left-handle,
+body:has(.shot-flag.on) .workflow-rail .shot-moved,
+body:has(.shot-flag.on) .inspect-dock-head,
+body:has(.shot-flag.on) .inspect-dock .cw-readout,
+body:has(.shot-flag.on) .inspect-dock .cw-chart-tools { display: none; }
+body:has(.shot-flag.on) .left-col,
+body:has(.shot-flag.on) .left-col.left-col-home {
+    top: calc(var(--tbh, 28px) + 4px);
+    width: auto; max-width: calc(100vw - 12px);
+    max-height: calc(100vh - var(--tbh, 28px) - 16px);
+    flex-direction: row; align-items: flex-start; gap: 0;
+}
+body:has(.shot-flag.on) .workflow-rail {
+    width: var(--shotrailw, 240px);
+    max-height: calc(100vh - var(--tbh, 28px) - 16px);
+}
+body:has(.shot-flag.on) .inspect-dock { width: var(--shotdockw, 360px); }
+body:has(.shot-flag.on) .inspect-dock .cw-inspect { padding-top: 0; border-top: none; }
+body:has(.shot-flag.on) .inspect-dock .cw-chart { height: var(--shotcharth, 230px); }
+/* Invisible width handles: the rail's and the histogram panel's right edges. */
+body:has(.shot-flag.on) .shot-handle {
+    display: block; flex: none; align-self: stretch;
+    width: 8px; min-height: 24px; cursor: ew-resize; touch-action: none;
+}
+
+/* Scale bar: no box — heavy ink with a thick white outline (the chained
+   drop-shadows dilate bar and label alike), bold label, and an invisible
+   right-edge handle that sets the target length and a left-edge one that
+   moves the bar. */
+body:has(.shot-flag.on) .scale-bar {
+    left: var(--sbx, 12px); bottom: var(--sby, 10px);
+    background: none; padding: 4px 12px;
+    filter: drop-shadow(3px 0 0 #fff) drop-shadow(-3px 0 0 #fff)
+            drop-shadow(0 3px 0 #fff) drop-shadow(0 -3px 0 #fff);
+}
+body:has(.shot-flag.on) .scale-bar .sb-bar { height: 14px; }
+body:has(.shot-flag.on) .scale-bar .sb-line { height: 4px; }
+body:has(.shot-flag.on) .scale-bar .sb-cap { width: 4px; height: 14px; }
+body:has(.shot-flag.on) .scale-bar .sb-label {
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    font-size: 16px; font-weight: 800; line-height: 1.2; margin-top: 3px;
+}
+body:has(.shot-flag.on) .scale-bar .sb-handle,
+body:has(.shot-flag.on) .scale-bar .sb-move {
+    display: block; position: absolute; top: 0; bottom: 0; width: 14px;
+    pointer-events: auto; touch-action: none;
+}
+body:has(.shot-flag.on) .scale-bar .sb-handle { right: 0; cursor: ew-resize; }
+body:has(.shot-flag.on) .scale-bar .sb-move { left: 0; cursor: move; }
+/* Armed veil: the row's box spans empty space beside its shorter panel, so
+   the veil rides the two panels instead (the rail never scrolls at Pin in
+   this layout). */
+body:has(.shot-flag.on):has(.arm-flag.on) .left-col::after { content: none; }
+body:has(.shot-flag.on):has(.arm-flag.on) .workflow-rail::after,
+body:has(.shot-flag.on):has(.arm-flag.on) .inspect-dock::after {
+    content: ""; position: absolute; inset: 0;
+    background: rgba(15, 23, 42, 0.5); z-index: 500;
+}

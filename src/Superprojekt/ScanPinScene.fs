@@ -528,7 +528,7 @@ module ScanPinScene =
                     let wt = model.MarkerWeight.GetValue t
                     // The armed sibling (the point the user aims against)
                     // stays FULL through every dim — armed fade, mesh-solid
-                    // muting, scope — and wears the gold halo (F9 rule 2).
+                    // muting, scope — and wears the gold halo.
                     let sibling = armedSiblingAt model t
                     let out = ResizeArray<V3d * V2d * V2d * V4d * float>()
                     let pt (scopeDim : float) (mesh : string) (local : V3d) =
@@ -754,7 +754,7 @@ module ScanPinScene =
             datasetScale |> AVal.map (fun s ->
                 ScanPin.renderLength s 0.005, ScanPin.renderLength s 0.5)
         // Each block's samples sit on ITS OWN moving mesh, so its dots follow
-        // that mesh's solid visibility (the A10 marker rule): full, faded, or
+        // that mesh's solid visibility (the marker rule): full, faded, or
         // gone with the mesh — no dot floats over absent geometry. At graph
         // scope every edge contributes its own owner.
         // GEOMETRY depends on the brush + data alone; the per-mesh visibility

@@ -188,6 +188,9 @@ module GuiRail =
         "})();"
     ]
 
+    // Screenshot mode's one histogram title (both scopes).
+    let private shotTitle = "Deviation histogram"
+
     // ── The inspection toolbox's body, keyed to ONE pair: the diagram, the
     // false-colour map toggle, the isolate-pins view mode and the hover
     // readout. The Pin level narrows the diagram to the selected pin — gids
@@ -217,7 +220,10 @@ module GuiRail =
                     match onlyPin |> Option.bind (fun id -> HashMap.tryFind id pins) with
                     | Some p -> sprintf "Pin %s — mesh %d error vs %d" p.ShortName (numOfN movM) (numOfN refM)
                     | None -> sprintf "Mesh %d error vs %d — across pins" (numOfN movM) (numOfN refM)
-                let title = if peeked then title0 + " — as loaded" else title0
+                // Screenshot mode: one fixed title, no legend (empty names
+                // skip the legend draw in chartJs).
+                let shot = model.ScreenshotMode.GetValue t
+                let title = if shot then shotTitle elif peeked then title0 + " — as loaded" else title0
                 match model.CellError.GetValue t with
                 | None ->
                     sprintf "{\"title\":\"%s\",\"ph\":\"place pins to measure\",\"lo\":-10,\"hi\":10,\"bins\":48,\"series\":[]}" title
@@ -294,16 +300,17 @@ module GuiRail =
                                         hj hbj))
                         |> Array.choose id
                         |> String.concat ","
-                    let legF = if peeked then "as loaded" else "error now"
-                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"ymax\":%d,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
-                        title (gf lo) (gf hi) bins (gf lod) ymax legF series)
+                    let legF = if shot then "" elif peeked then "as loaded" else "error now"
+                    let legL = if shot then "" else "before registration"
+                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"ymax\":%d,\"legF\":\"%s\",\"legL\":\"%s\",\"series\":[%s]}"
+                        title (gf lo) (gf hi) bins (gf lod) ymax legF legL series)
         // Collapsed dock ⇒ no payload compute or marshal at all (AVal.bind
         // genuinely drops the data dependencies — the GuiTopBar `live` gate
         // pattern); expanding recomputes once and the ResizeObserver repaints.
         let chartData = openA |> AVal.bind (fun o -> if o then chartDataCore else AVal.constant "{}")
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
         let hoverData = model.HoverSample |> AVal.map (function Some g -> string g | None -> "")
-        // The hovered pin row's name — its stack slice lights amber (F4↔F5).
+        // The hovered pin row's name — its stack slice lights amber.
         let hiliteData =
             (model.TilePinHover, model.ScanPins.Pins |> AMap.toAVal) ||> AVal.map2 (fun h pins ->
                 match h |> Option.bind (fun id -> HashMap.tryFind id pins) with
@@ -384,8 +391,10 @@ module GuiRail =
                 let gf (v : float) =
                     if System.Double.IsNaN v || System.Double.IsInfinity v then "0" else v.ToString("0.###", inv)
                 let peeked = MeshView.graphSideAt model t = EdgeBefore
+                let shot = model.ScreenshotMode.GetValue t
                 let title =
-                    if peeked then "Graph error vs parents — as loaded"
+                    if shot then shotTitle
+                    elif peeked then "Graph error vs parents — as loaded"
                     else "Graph error vs parents — all registered edges"
                 let blocks = MeshView.inspectBlocksAt model t
                 let samples = blocks |> Array.collect (fun b -> b.Err.Samples)
@@ -434,9 +443,10 @@ module GuiRail =
                             (samples |> Array.map (fun v -> gf (v * 1000.0)) |> String.concat ",")
                             (histOf samples |> Array.map string |> String.concat ",")
                             hbj
-                    let legF = if peeked then "as loaded" else "error vs parents"
-                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"ymax\":%d,\"legF\":\"%s\",\"legL\":\"before registration\",\"series\":[%s]}"
-                        title (gf lo) (gf hi) bins (gf lod) ymax legF series)
+                    let legF = if shot then "" elif peeked then "as loaded" else "error vs parents"
+                    let legL = if shot then "" else "before registration"
+                    sprintf "{\"title\":\"%s\",\"lo\":%s,\"hi\":%s,\"bins\":%d,\"lod\":%s,\"ymax\":%d,\"legF\":\"%s\",\"legL\":\"%s\",\"series\":[%s]}"
+                        title (gf lo) (gf hi) bins (gf lod) ymax legF legL series)
         // Collapsed dock ⇒ no payload compute or marshal — see inspectBody.
         let chartData = openA |> AVal.bind (fun o -> if o then chartDataCore else AVal.constant "{}")
         let brushedData = model.BrushedSamples |> AVal.map (fun s -> s |> Seq.map string |> String.concat ",")
@@ -502,7 +512,14 @@ module GuiRail =
                 f = FocusMatrix || s.Pair.IsSome)
         // The collapse flag is per level (Matrix defaults collapsed, the pair
         // workspace open) — the header toggles the CURRENT level's flag.
-        let openHere = (model.Focus, model.InspectOpen) ||> AVal.map2 LevelFlags.get
+        // Screenshot mode has no collapse: the panel is its histogram alone,
+        // shown or hidden wholesale by its own flag.
+        let openHere =
+            (model.ScreenshotMode, model.ShotInspectOpen,
+             (model.Focus, model.InspectOpen) ||> AVal.map2 LevelFlags.get)
+            |||> AVal.map3 (fun shot shotOpen levelOpen -> if shot then shotOpen else levelOpen)
+        let mounted =
+            (visible, model.ScreenshotMode, openHere) |||> AVal.map3 (fun v shot o -> v && (not shot || o))
         // The body keyed by VALUE through an amap: HashMap delta cancellation
         // keeps the mounted body (and its chart node, observers and JS brush
         // state) alive across Sel replacements with an unchanged pair and
@@ -527,7 +544,7 @@ module GuiRail =
             |> AList.map snd
         div {
             Class "inspect-dock"
-            Primitives.showWhen visible
+            Primitives.showWhen mounted
             div {
                 Class "inspect-dock-head"
                 Attribute("title", "Inspection toolbox — click to collapse/expand (remembered per workflow level)")
@@ -745,6 +762,195 @@ module GuiRail =
             }
         }
 
+    // ── The pair level's chrome — the A↔B header, the status line, New pin,
+    // the workflow line and the Solve→Finish two-step. Built per mount: the
+    // rail seats one instance around the pin list, screenshot mode seats a
+    // second one in the top bar (the rail's then hides via .shot-moved).
+    let private pairChrome (env : Env<Message>) (model : AdaptiveModel) (a : string) (b : string) =
+        let meshChip (name : string) =
+            let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
+            let rootVal = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
+            div {
+                Class "cw-chip"
+                idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
+                span { Class "pmx-sw"; (idxVal, rootVal) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (rgb (meshColorRoot r i))])) }
+                span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
+            }
+        let pairState =
+            (model.PairOverlaps, model.RegGraph) ||> AVal.map2 (fun po g ->
+                match PairCell.state po g a b with
+                | PairRegistered q -> sprintf "registered · quality %.2f" q
+                | PairPossible -> "not registered yet"
+                | PairImpossible -> "insufficient overlap")
+        let pairKey = PairCell.key a b
+        let pinCount =
+            model.ScanPins.Pins
+            |> AMap.filter (fun _ p -> p.Pair = pairKey)
+            |> AMap.map (fun _ p -> p.ShortName, p.CreatedAt)
+            |> AMap.toASet |> ASet.count
+        let registered =
+            model.RegGraph |> AVal.map (fun g -> (RegGraph.pairEdge a b g).IsSome)
+        let remainingLine =
+            (pinCount, registered) ||> AVal.map2 (fun n r ->
+                if n < 3 then
+                    sprintf "%d more pin%s needed to solve" (3 - n) (if 3 - n = 1 then "" else "s")
+                elif r then sprintf "%d pins placed — solved" n
+                else sprintf "%d pins placed — ready to solve" n)
+        let solveLit  = (pinCount, registered) ||> AVal.map2 (fun n r -> n >= 3 && not r)
+        {|
+            Head =
+                div {
+                    Class "cw-head"
+                    meshChip a
+                    span { Class "cw-link"; "↔" }
+                    meshChip b
+                }
+            State = div { Class "cw-state"; pairState }
+            NewPin =
+                button {
+                    Class "rail-btn cw-newpin"
+                    Attribute("title", "Place a pin on this pair: a guided three-step placement — the centre, then one correspondence point per mesh; each landed click arms the next step and the pin exists once all three are placed. Only the highlighted overlap region is a valid pin location")
+                    // Hover lights the pair's overlap-region gate (only the
+                    // overlap is a valid pin location); the click's focus
+                    // jump wipes the hover, and the pre-armed centre pick
+                    // carries the gate seamlessly.
+                    Dom.OnMouseEnter(fun _ -> env.Emit [SetNewPinHover true])
+                    Dom.OnMouseLeave(fun _ -> env.Emit [SetNewPinHover false])
+                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (BeginPinTransaction pairKey)])
+                    "＋ New pin"
+                }
+            Remaining = div { Class "cw-remaining"; remainingLine }
+            Steps =
+                div {
+                    Class "cw-steps"
+                    button {
+                        Class "rail-btn cw-solve"
+                        classWhen "cw-step-lit" solveLit
+                        pinCount |> AVal.map (fun n -> if n >= 3 then None else Some (Attribute("disabled", "disabled")))
+                        Attribute("title", "Solve this pair's edge from its pins (needs ≥3)")
+                        Dom.OnClick(fun _ ->
+                            if AVal.force pinCount >= 3 then env.Emit [SolvePair(a, b)])
+                        "⌖ Solve"
+                    }
+                    span { Class "cw-step-arrow"; "→" }
+                    button {
+                        Class "rail-btn cw-finish-btn"
+                        classWhen "cw-step-lit" registered
+                        registered |> AVal.map (fun r ->
+                            if r then None else Some (Attribute("disabled", "disabled")))
+                        Attribute("title", "Done with this pair — back to the matrix (enabled once the pair has been solved)")
+                        Dom.OnClick(fun _ ->
+                            env.Emit [LogReach("pair", "finish", a + " | " + b); SetFocus FocusMatrix])
+                        "✓ Finish pair"
+                    }
+                }
+        |}
+
+    // ── The pin level's chrome outside the Edit panel — name, status line,
+    // the placement cue and the workflow exits. Built per mount, like
+    // pairChrome.
+    let private pinChrome (env : Env<Message>) (model : AdaptiveModel) =
+        let placement = model.ScanPins.Placement
+        let placing = placement |> AVal.map (function PlacementActive _ -> true | PlacementIdle -> false)
+        let selPin =
+            (model.Sel, model.ScanPins.Pins |> AMap.toAVal) ||> AVal.map2 (fun s pins ->
+                s.Pin |> Option.bind (fun id -> HashMap.tryFind id pins))
+        // Placement progress cue (draft only — a committed pin needs none).
+        let cue =
+            placement |> AVal.map (function
+                | PlacementActive d ->
+                    sprintf "centre %s · %d of 2 points — the pin exists once all three are placed"
+                        (if d.Area.IsSome then "✓" else "·") (PinDraft.pointCount d)
+                | PlacementIdle -> "")
+        // The workflow exits: Cancel aborts an unfinished placement (the
+        // navigation guard still asks once a centre exists), Finish leaves a
+        // complete pin — both land back at Pair through the ONE navigation
+        // path.
+        let bothPoints =
+            placement |> AVal.map (function
+                | PlacementActive d -> d.PointA.IsSome && d.PointB.IsSome
+                | PlacementIdle -> false)
+        let cancelDisabled =
+            (placing, bothPoints) ||> AVal.map2 (fun pl bp ->
+                if pl && not bp then None else Some (Attribute("disabled", "disabled")))
+        {|
+            Head =
+                div {
+                    Class "cw-head"
+                    span {
+                        Class "cw-pin-name"
+                        (placing, selPin) ||> AVal.map2 (fun pl p ->
+                            if pl then "New pin"
+                            else match p with Some p -> sprintf "Pin %s" p.ShortName | None -> "—")
+                    }
+                }
+            State =
+                div {
+                    Class "cw-state"
+                    (placing, selPin) ||> AVal.map2 (fun pl p ->
+                        if pl then "guided placement: each landed click arms the next step"
+                        else
+                            match p with
+                            | Some _ -> "arm an edit to change geometry · tile clicks steer the view"
+                            | None -> "")
+                }
+            Cue =
+                div {
+                    Class "cw-draft"
+                    showWhen placing
+                    span { Class "cw-cue"; cue }
+                }
+            Exits =
+                div {
+                    Class "cw-finish"
+                    button {
+                        Class "rail-btn pin-cancel-btn"
+                        cancelDisabled
+                        Attribute("title", "Abort this pin placement and return to the pair (a placed centre asks for one confirmation)")
+                        Dom.OnClick(fun _ -> env.Emit [LogReach("pin", "cancel", ""); SetFocus FocusPair])
+                        "✕ Cancel"
+                    }
+                    button {
+                        Class "cw-finish-btn"
+                        placing |> AVal.map (fun pl ->
+                            if pl then Some (Attribute("disabled", "disabled")) else None)
+                        Attribute("title", "Done with this pin — back to the pair (enabled once the pin is complete)")
+                        Dom.OnClick(fun _ -> env.Emit [LogReach("pin", "finish", ""); SetFocus FocusPair])
+                        "✓ Finish pin"
+                    }
+                }
+        |}
+
+    // ── Screenshot mode's top-bar seat for the level chrome: the Pair
+    // level's header/status/New-pin/workflow line/Solve→Finish, the Pin
+    // level's name/status/cue/exits. Empty outside screenshot mode, so the
+    // second instance costs nothing there. Value-keyed like the inspection
+    // body: an unchanged (level, pair) key cancels, so Sel churn (pin/point
+    // selection) never re-mounts the buttons.
+    let shotLevelBar (env : Env<Message>) (model : AdaptiveModel) =
+        let content =
+            (model.ScreenshotMode, model.Focus, model.Sel)
+            |||> AVal.map3 (fun shot focus sel ->
+                match shot, focus, sel.Pair with
+                | true, FocusPair, Some p -> HashMap.single (false, p) ()
+                | true, FocusPin, Some p -> HashMap.single (true, p) ()
+                | _ -> HashMap.empty)
+            |> AMap.ofAVal
+            |> AMap.map (fun (atPin, (a, b)) () ->
+                if atPin then
+                    let pc = pinChrome env model
+                    div { Class "tb-shot-level"; pc.Head; pc.State; pc.Cue; pc.Exits }
+                else
+                    let pc = pairChrome env model a b
+                    div { Class "tb-shot-level"; pc.Head; pc.State; pc.NewPin; pc.Remaining; pc.Steps })
+            |> AMap.toASet
+            |> ASet.sortBy fst
+            |> AList.map snd
+        div {
+            Class "tb-shot-seat"
+            content
+        }
+
     let rail (env : Env<Message>) (model : AdaptiveModel) =
 
         // ── Mesh × mesh navigator: rows/cols = meshes in sensor (acquisition)
@@ -911,7 +1117,7 @@ module GuiRail =
                     div { Class "home-nav-body"; pairMatrixView () }
                 }
                 div {
-                    Class "home-nav"
+                    Class "home-nav home-nav-tree"
                     div { Class "home-nav-head"; span { Class "lp-sublabel"; "Registration tree" } }
                     div { Class "home-nav-body"; treePanel env model }
                 }
@@ -942,23 +1148,8 @@ module GuiRail =
 
         // ── Cell-workspace: scoped to ONE pair. The A↔B header pins the pair
         // identity for the whole stay; tools below operate on this pair as a
-        // toolkit, never as global modes (the remaining tools land P6–P8).
+        // toolkit, never as global modes.
         let cellWorkspace (a : string) (b : string) =
-            let meshChip (name : string) =
-                let idxVal = model.MeshOrder |> AMap.tryFind name |> AVal.map (Option.defaultValue 0)
-                let rootVal = model.RegGraph |> AVal.map (fun g -> g.Root = Some name)
-                div {
-                    Class "cw-chip"
-                    idxVal |> AVal.map (fun i -> Some (Attribute("title", sprintf "mesh %d" (i + 1))))
-                    span { Class "pmx-sw"; (idxVal, rootVal) ||> AVal.map2 (fun i r -> Some (Style [Css.Background (rgb (meshColorRoot r i))])) }
-                    span { Class "pmx-num"; idxVal |> AVal.map (fun i -> string (i + 1)) }
-                }
-            let pairState =
-                (model.PairOverlaps, model.RegGraph) ||> AVal.map2 (fun po g ->
-                    match PairCell.state po g a b with
-                    | PairRegistered q -> sprintf "registered · quality %.2f" q
-                    | PairPossible -> "not registered yet"
-                    | PairImpossible -> "insufficient overlap")
             let pairKey = PairCell.key a b
             // Row-input projection on the Pins amap: a rings/reveal landing
             // changes the pin record but not (ShortName, CreatedAt), so the
@@ -969,7 +1160,6 @@ module GuiRail =
                 model.ScanPins.Pins
                 |> AMap.filter (fun _ p -> p.Pair = pairKey)
                 |> AMap.map (fun _ p -> p.ShortName, p.CreatedAt)
-            let pinCount = pairPins |> AMap.toASet |> ASet.count
 
             // ── Committed-pin rows: the row BODY is inert — hovering
             // highlights the pin in 3D (the loud highlight + the tile
@@ -1021,61 +1211,14 @@ module GuiRail =
             // The panel READS as its sequence, top to bottom: [+ New pin] →
             // the pin list → the "N remaining" workflow line → the linked
             // Solve→Finish two-step (the lit step is the next one to take).
-            let registered =
-                model.RegGraph |> AVal.map (fun g -> (RegGraph.pairEdge a b g).IsSome)
-            let remainingLine =
-                (pinCount, registered) ||> AVal.map2 (fun n r ->
-                    if n < 3 then
-                        sprintf "%d more pin%s needed to solve" (3 - n) (if 3 - n = 1 then "" else "s")
-                    elif r then sprintf "%d pins placed — solved" n
-                    else sprintf "%d pins placed — ready to solve" n)
-            let solveLit  = (pinCount, registered) ||> AVal.map2 (fun n r -> n >= 3 && not r)
+            // .shot-moved (display:contents) marks what screenshot mode
+            // re-seats in the top bar.
+            let pc = pairChrome env model a b
             div {
                 Class "cw"
-                div {
-                    Class "cw-head"
-                    meshChip a
-                    span { Class "cw-link"; "↔" }
-                    meshChip b
-                }
-                div { Class "cw-state"; pairState }
-                button {
-                    Class "rail-btn cw-newpin"
-                    Attribute("title", "Place a pin on this pair: a guided three-step placement — the centre, then one correspondence point per mesh; each landed click arms the next step and the pin exists once all three are placed. Only the highlighted overlap region is a valid pin location")
-                    // Hover lights the pair's overlap-region gate (only the
-                    // overlap is a valid pin location); the click's focus
-                    // jump wipes the hover, and the pre-armed centre pick
-                    // carries the gate seamlessly.
-                    Dom.OnMouseEnter(fun _ -> env.Emit [SetNewPinHover true])
-                    Dom.OnMouseLeave(fun _ -> env.Emit [SetNewPinHover false])
-                    Dom.OnClick(fun _ -> env.Emit [ScanPinMsg (BeginPinTransaction pairKey)])
-                    "＋ New pin"
-                }
+                div { Class "shot-moved"; pc.Head; pc.State; pc.NewPin }
                 pinList
-                div { Class "cw-remaining"; remainingLine }
-                div {
-                    Class "cw-steps"
-                    button {
-                        Class "rail-btn cw-solve"
-                        classWhen "cw-step-lit" solveLit
-                        pinCount |> AVal.map (fun n -> if n >= 3 then None else Some (Attribute("disabled", "disabled")))
-                        Attribute("title", "Solve this pair's edge from its pins (needs ≥3)")
-                        Dom.OnClick(fun _ ->
-                            if AVal.force pinCount >= 3 then env.Emit [SolvePair(a, b)])
-                        "⌖ Solve"
-                    }
-                    span { Class "cw-step-arrow"; "→" }
-                    button {
-                        Class "rail-btn cw-finish-btn"
-                        classWhen "cw-step-lit" registered
-                        registered |> AVal.map (fun r ->
-                            if r then None else Some (Attribute("disabled", "disabled")))
-                        Attribute("title", "Done with this pair — back to the matrix (enabled once the pair has been solved)")
-                        Dom.OnClick(fun _ ->
-                            env.Emit [LogReach("pair", "finish", a + " | " + b); SetFocus FocusMatrix])
-                        "✓ Finish pair"
-                    }
-                }
+                div { Class "shot-moved"; pc.Remaining; pc.Steps }
             }
 
         // ── Pin level: configure ONE scanpin through the Edit panel — every
@@ -1161,71 +1304,13 @@ module GuiRail =
                                 | Some id -> env.Emit [ScanPinMsg (SetInnerRadius(id, v))]
                                 | None -> ())
                 }
-            // Placement progress cue (draft only — a committed pin needs none).
-            let draftCue =
-                let cue =
-                    placement |> AVal.map (function
-                        | PlacementActive d ->
-                            sprintf "centre %s · %d of 2 points — the pin exists once all three are placed"
-                                (if d.Area.IsSome then "✓" else "·") (PinDraft.pointCount d)
-                        | PlacementIdle -> "")
-                div {
-                    Class "cw-draft"
-                    showWhen placing
-                    span { Class "cw-cue"; cue }
-                }
+            let pc = pinChrome env model
             div {
                 Class "cw pin-level"
-                div {
-                    Class "cw-head"
-                    span {
-                        Class "cw-pin-name"
-                        (placing, selPin) ||> AVal.map2 (fun pl p ->
-                            if pl then "New pin"
-                            else match p with Some p -> sprintf "Pin %s" p.ShortName | None -> "—")
-                    }
-                }
-                div {
-                    Class "cw-state"
-                    (placing, selPin) ||> AVal.map2 (fun pl p ->
-                        if pl then "guided placement: each landed click arms the next step"
-                        else
-                            match p with
-                            | Some _ -> "arm an edit to change geometry · tile clicks steer the view"
-                            | None -> "")
-                }
+                div { Class "shot-moved"; pc.Head; pc.State }
                 controlPanel
                 radiusRow
-                draftCue
-                // The workflow exits: Cancel aborts an unfinished placement
-                // (the navigation guard still asks once a centre exists),
-                // Finish leaves a complete pin — both land back at Pair
-                // through the ONE navigation path.
-                let bothPoints =
-                    placement |> AVal.map (function
-                        | PlacementActive d -> d.PointA.IsSome && d.PointB.IsSome
-                        | PlacementIdle -> false)
-                let cancelDisabled =
-                    (placing, bothPoints) ||> AVal.map2 (fun pl bp ->
-                        if pl && not bp then None else Some (Attribute("disabled", "disabled")))
-                div {
-                    Class "cw-finish"
-                    button {
-                        Class "rail-btn pin-cancel-btn"
-                        cancelDisabled
-                        Attribute("title", "Abort this pin placement and return to the pair (a placed centre asks for one confirmation)")
-                        Dom.OnClick(fun _ -> env.Emit [LogReach("pin", "cancel", ""); SetFocus FocusPair])
-                        "✕ Cancel"
-                    }
-                    button {
-                        Class "cw-finish-btn"
-                        placing |> AVal.map (fun pl ->
-                            if pl then Some (Attribute("disabled", "disabled")) else None)
-                        Attribute("title", "Done with this pin — back to the pair (enabled once the pin is complete)")
-                        Dom.OnClick(fun _ -> env.Emit [LogReach("pin", "finish", ""); SetFocus FocusPair])
-                        "✓ Finish pin"
-                    }
-                }
+                div { Class "shot-moved"; pc.Cue; pc.Exits }
             }
 
         div {

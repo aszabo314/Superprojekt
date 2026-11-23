@@ -30,9 +30,9 @@ type RegGraph = {
     Edges : Map<string, RegEdge>
 }
 
-// Outcome of an edge add. Both-endpoints-already-connected is no longer a
+// Outcome of an edge add. Both-endpoints-already-connected is not a
 // rejection: it closes exactly ONE fundamental cycle, TRANSIENTLY accepted for
-// the caller to resolve (the P9 forced-resolution modal) — the COMMITTED graph
+// the caller to resolve (the forced-resolution modal) — the COMMITTED graph
 // stays the prior tree until then. Adds that would disconnect are still
 // impossible (edges only ever connect).
 type EdgeAddResult =

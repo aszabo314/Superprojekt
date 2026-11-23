@@ -324,7 +324,8 @@ module GuiPanes =
     let private meshTile (env : Env<Message>) (model : AdaptiveModel) (name : string) =
         // Strip scope: Matrix = every mesh, Pair/Pin = the selected pair only.
         let shownA =
-            (model.Focus, model.Sel) ||> AVal.map2 (fun f s ->
+            (model.Focus, model.Sel, model.ScreenshotMode) |||> AVal.map3 (fun f s shot ->
+                not shot &&
                 match f with
                 | FocusMatrix -> true
                 | FocusPair | FocusPin ->
@@ -362,9 +363,9 @@ module GuiPanes =
             classWhen "tile-iso" isolated
             classWhen "tile-armed" (model.ArmedPick |> AVal.map Option.isSome)
             // A correspondence pick is valid in exactly ONE tile — the armed
-            // mesh's tile lights, the other goes veiled AND inert (the A9
-            // scrim scoped to the tile pair). Centre/probe picks accept both
-            // meshes, so they gate nothing.
+            // mesh's tile lights, the other goes veiled AND inert (the armed
+            // scrim scoped to the tile pair). The centre pick accepts both
+            // meshes, so it gates nothing.
             classWhen "tile-pick-off" (model.ArmedPick |> AVal.map (function
                 | Some (ArmPoint m) -> m <> name
                 | _ -> false))

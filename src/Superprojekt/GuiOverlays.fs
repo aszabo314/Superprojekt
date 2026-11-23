@@ -71,10 +71,14 @@ module GuiOverlays =
             span { Class "pb-hint"; step |> AVal.map (function Some (_, h) -> h | None -> "") }
         }
 
-    let scaleBar (model : AdaptiveModel) (viewportSize : aval<V2i>) =
-        let targetPx = 100.0
+    // Screenshot mode makes the bar resizable: an invisible right-edge handle
+    // sets the target length and the bar snaps to the nice distance nearest
+    // it (the label stays a round number at every size).
+    let scaleBar (env : Env<Message>) (model : AdaptiveModel) (viewportSize : aval<V2i>) =
         let barInfo =
             AVal.custom (fun t ->
+                let targetPx =
+                    if model.ScreenshotMode.GetValue t then model.ScaleBarTargetPx.GetValue t else 100.0
                 let radius = model.Camera.radius.GetValue t
                 let vp = viewportSize.GetValue t
                 let scale = DatasetScale.active (model.ActiveDataset.GetValue t) (model.DatasetScales.GetValue t)
@@ -84,7 +88,7 @@ module GuiOverlays =
                 let realAt100 = targetPx * renderPerPixel / scale
                 let nice = niceRoundDistance realAt100
                 let px = nice * scale / renderPerPixel
-                let px = if System.Double.IsNaN px || System.Double.IsInfinity px then targetPx else max 10.0 (min 400.0 px)
+                let px = if System.Double.IsNaN px || System.Double.IsInfinity px then targetPx else max 10.0 (min (max 400.0 (2.0 * targetPx)) px)
                 px, formatMeters nice)
         let barPx = barInfo |> AVal.map fst
         let barLabel = barInfo |> AVal.map snd
@@ -98,6 +102,50 @@ module GuiOverlays =
                 span { Class "sb-cap sb-cap-r" }
             }
             div { Class "sb-label"; barLabel }
+            // Screenshot mode's left-edge move handle: pure DOM — the drag
+            // writes --sbx/--sby (left/bottom) on the bar, clamped on screen.
+            div {
+                Class "sb-move"
+                OnBoot [
+                    "(function(){"
+                    "var h=__THIS__; var sb=h.parentElement;"
+                    "h.addEventListener('pointerdown',function(e){"
+                    "  e.preventDefault(); h.setPointerCapture(e.pointerId);"
+                    "  var r=sb.getBoundingClientRect(); var ox=e.clientX-r.left, oy=r.bottom-e.clientY;"
+                    "  function mv(ev){"
+                    "    var x=Math.max(0,Math.min(window.innerWidth-r.width,ev.clientX-ox));"
+                    "    var y=Math.max(0,Math.min(window.innerHeight-r.height,window.innerHeight-ev.clientY-oy));"
+                    "    sb.style.setProperty('--sbx',x+'px'); sb.style.setProperty('--sby',y+'px'); }"
+                    "  function up(){ h.removeEventListener('pointermove',mv); h.removeEventListener('pointerup',up); }"
+                    "  h.addEventListener('pointermove',mv); h.addEventListener('pointerup',up); });"
+                    "})();"
+                ]
+            }
+            // rAF-coalesced drag → the hidden bridge input (the brush-bridge
+            // pattern); the target is measured from the bar's own left end.
+            div {
+                Class "sb-handle"
+                OnBoot [
+                    "(function(){"
+                    "var h=__THIS__; var sb=h.parentElement; var pend=null;"
+                    "function send(){ var b=sb.querySelector('.sb-bridge'), bar=sb.querySelector('.sb-bar'); var x=pend; pend=null;"
+                    "  if(!b||!bar||x===null) return;"
+                    "  b.value=String(Math.round(x-bar.getBoundingClientRect().left)); b.dispatchEvent(new Event('input',{bubbles:true})); }"
+                    "h.addEventListener('pointerdown',function(e){"
+                    "  e.preventDefault(); h.setPointerCapture(e.pointerId);"
+                    "  function mv(ev){ var first=(pend===null); pend=ev.clientX; if(first) requestAnimationFrame(send); }"
+                    "  function up(){ h.removeEventListener('pointermove',mv); h.removeEventListener('pointerup',up); }"
+                    "  h.addEventListener('pointermove',mv); h.addEventListener('pointerup',up); });"
+                    "})();"
+                ]
+            }
+            input {
+                Class "sb-bridge"
+                Dom.OnInput(fun e ->
+                    match System.Double.TryParse((e.Value : string), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture) with
+                    | true, v -> env.Emit [SetScaleBarTarget v]
+                    | _ -> ())
+            }
         }
 
     // Bottom-centre colour legend, two states: the in-cell DIFFERENCE map
@@ -332,7 +380,7 @@ module GuiOverlays =
             ]
         }
 
-    // The FORCED loop-resolution modal (P9): blocking, self-announcing — the
+    // The FORCED loop-resolution modal: blocking, self-announcing — the
     // whole interaction for a transient loop. It NAMES the two meshes the
     // redundant edge connects (number + swatch), defines the residual and the
     // per-edge quality numbers, embeds the registration tree, and previews

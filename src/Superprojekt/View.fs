@@ -282,7 +282,7 @@ module View =
                             } |> Async.Start
                 )
 
-                // Exact pairwise error at a metric-world point (the P0
+                // Exact pairwise error at a metric-world point (the
                 // exact-point endpoint), oriented MOV-relative-to-REF like every
                 // stored sample; k runs on the landed value. The pair comes from
                 // the hovered sample's own block, so a graph-scope dot measures
@@ -302,7 +302,7 @@ module View =
                     } |> Async.Start
 
                 Sg.OnTap(fun _ ->
-                    // No pick without an arm (A5): the armed pick captures the
+                    // No pick without an arm: the armed pick captures the
                     // click — centre and point both route through it; an
                     // unarmed tap does nothing here.
                     if (AVal.force model.ArmedPick).IsSome then
@@ -506,7 +506,14 @@ module View =
                 Primitives.classWhen "on" (model.ArmedPick |> AVal.map Option.isSome)
             }
 
-            GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>)
+            // Screenshot-mode hook for the layout rules (body:has(.shot-flag.on)),
+            // the arm-flag pattern.
+            div {
+                Class "shot-flag"
+                Primitives.classWhen "on" model.ScreenshotMode
+            }
+
+            GuiTopBar.topBar env model (hoverCoord :> aval<V3d option>) (GuiRail.shotLevelBar env model)
             // Left column: the navigator rail with the docked inspection
             // toolbox directly below it (one fixed flex column, so the dock
             // rides the rail's height).
@@ -516,8 +523,34 @@ module View =
                 // column widens there and returns to the narrow rail inside
                 // the pair workspace.
                 Primitives.classWhen "left-col-home" (model.Focus |> AVal.map ((=) FocusMatrix))
+                // Screenshot mode lays the column out as a ROW (rail, then the
+                // histogram panel to its right), each followed by its own
+                // invisible width handle; pure DOM — writes --shotrailw /
+                // --shotdockw (+ the aspect-true --shotcharth) on the column.
+                let shotHandle (target : string) (var : string) (minW : int) =
+                    div {
+                        Class "shot-handle"
+                        OnBoot [
+                            "(function(){"
+                            "var h=__THIS__; var col=h.parentElement;"
+                            sprintf "var sel='%s', vn='%s', minW=%d;" target var minW
+                            "h.addEventListener('pointerdown',function(e){"
+                            "  var t=col.querySelector(sel); if(!t||t.offsetParent===null) return;"
+                            "  e.preventDefault(); h.setPointerCapture(e.pointerId);"
+                            "  function mv(ev){"
+                            "    var w=Math.max(minW,Math.min(window.innerWidth*0.7,ev.clientX-t.getBoundingClientRect().left));"
+                            "    col.style.setProperty(vn,w+'px');"
+                            "    if(vn==='--shotdockw'){ var hMax=window.innerHeight-t.getBoundingClientRect().top-30;"
+                            "      col.style.setProperty('--shotcharth',Math.max(120,Math.min(hMax,(w-20)*160/236))+'px'); } }"
+                            "  function up(){ h.removeEventListener('pointermove',mv); h.removeEventListener('pointerup',up); }"
+                            "  h.addEventListener('pointermove',mv); h.addEventListener('pointerup',up); });"
+                            "})();"
+                        ]
+                    }
                 GuiRail.rail env model
+                shotHandle ".workflow-rail" "--shotrailw" 140
                 GuiRail.inspectPanel env model
+                shotHandle ".inspect-dock" "--shotdockw" 200
                 // ONE right-edge width-resize handle for the whole column
                 // (rail + inspection dock together — the left-side mirror of
                 // the tile strip's handle). Pure DOM; writes --leftw or
@@ -556,7 +589,7 @@ module View =
             }
             GuiOverlays.toast model
             GuiOverlays.placementBanner model
-            GuiOverlays.scaleBar model (viewportSize :> aval<V2i>)
+            GuiOverlays.scaleBar env model (viewportSize :> aval<V2i>)
             GuiOverlays.colorLegend model
             GuiOverlays.orientationIndicator model
             GuiOverlays.loopModal env model

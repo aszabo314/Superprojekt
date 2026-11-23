@@ -9,9 +9,18 @@ module GuiTopBar =
 
     open Primitives
 
-    let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) =
+    // levelSeat: the screenshot-mode seat for the Pair/Pin level chrome — it
+    // is built by GuiRail (compiled after this file), so the view passes it in.
+    let topBar (env : Env<Message>) (model : AdaptiveModel) (hoverCoord : aval<V3d option>) (levelSeat : DomNode) =
         div {
             Class "top-bar"
+            // Screenshot mode lets the bar wrap; the left column and the
+            // placement banner follow its height through --tbh.
+            OnBoot [
+                "(function(){ var el=__THIS__;"
+                "new ResizeObserver(function(){ document.documentElement.style.setProperty('--tbh',el.offsetHeight+'px'); }).observe(el);"
+                "})();"
+            ]
             div {
                 Class "tb-cut"
                 Attribute("title", "Near cut: slice the scene in place — the plane sits at this fraction of the distance to the orbit centre, a thick line marks the intersection; 0 = off")
@@ -109,6 +118,34 @@ module GuiTopBar =
                     " — available once the pair (at Matrix: the graph) is registered"
                     (AVal.constant true) canPose model.PeekPose (fun h -> env.Emit [SetPeekPose h])
             }
+
+            // Screenshot mode: the inspection controls leave the panel (which
+            // keeps the histogram alone) — its show/hide, the error-map
+            // toggle and the brush clear sit here, followed by the level
+            // chrome.
+            div {
+                Class "tb-shot"
+                showWhen model.ScreenshotMode
+                div {
+                    Class "tb-ct"
+                    Attribute("title", "Show or hide the histogram panel")
+                    compactToggle "Histogram" model.ShotInspectOpen (fun () -> env.Emit [ToggleShotInspect])
+                }
+                div {
+                    Class "tb-ct"
+                    Attribute("title", "False-colour error map in 3D on the histogram's scale: the moving mesh against its reference (at Matrix every registered mesh against its parent). Brushing the histogram turns the map off; turning the map on clears the brush.")
+                    compactToggle "Error map (3D)" model.CellMapOn (fun () -> env.Emit [ToggleCellMap])
+                }
+                button {
+                    Class "rail-btn cw-clearbrush"
+                    model.BrushedSamples |> AVal.map (fun s ->
+                        if Set.isEmpty s then Some (Attribute("disabled", "disabled")) else None)
+                    Attribute("title", "Clear the histogram brush selection (and its 3D dots)")
+                    Dom.OnClick(fun _ -> env.Emit [SetBrushedSamples []])
+                    "⊗ Clear brush"
+                }
+            }
+            levelSeat
 
             div {
                 Class "tb-right"
@@ -559,6 +596,13 @@ module GuiTopBar =
                             |> AList.ofAVal
                         div { Class "log-rows"; rows }
                     }
+                }
+                button {
+                    Class "tb-btn-tiny"
+                    classWhen "tb-btn-active" model.ScreenshotMode
+                    Attribute("title", "Screenshot mode: a documentation layout — the registration tree and the tile strip hide, the histogram sits beside the rail, the inspection and level controls move into this bar")
+                    Dom.OnClick(fun _ -> env.Emit [ToggleScreenshotMode])
+                    "▣"
                 }
             }
         }

@@ -450,6 +450,16 @@ type Model =
         // header edge alone) — an independent flag per focus level (Matrix
         // defaults collapsed, the pair workspace open); survives level jumps.
         InspectOpen         : LevelFlags
+        // Screenshot mode: a documentation layout (tree + tile strip hidden,
+        // the histogram beside the rail, level chrome in the top bar). Layout
+        // only — no workflow state changes with it.
+        ScreenshotMode      : bool
+        // Screenshot mode's histogram panel: shown/hidden wholesale (the
+        // per-level InspectOpen collapse is not used there).
+        ShotInspectOpen     : bool
+        // Screenshot mode's scale-bar target length in CSS px (the bar snaps
+        // to the nice distance nearest this length).
+        ScaleBarTargetPx    : float
 
         // Outline edge-detect threshold (depth Laplacian) + isoline band count over
         // the scene Z range + isoline alpha. Tunable from the gear menu; see
@@ -614,6 +624,9 @@ module Model =
             GearPopoverOpen     = false
             MeshMenuOpen        = false
             InspectOpen         = { AtMatrix = false; AtPair = true; AtPin = true }
+            ScreenshotMode      = false
+            ShotInspectOpen     = true
+            ScaleBarTargetPx    = 100.0
             OutlineThreshold    = 0.004
             OutlineWidthPx      = 3.0
             IsolineBands        = 700.0
